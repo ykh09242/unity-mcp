@@ -240,8 +240,16 @@ def safe_path(root: Path, name: str) -> Path:
 
 def bounded_bytes(path: Path, limit: int) -> bytes:
     """Bound allocations even if a regular file grows between metadata and reading."""
+    chunks: list[bytes] = []
+    remaining = limit + 1
     with path.open("rb") as stream:
-        content = stream.read(limit + 1)
+        while remaining > 0:
+            chunk = stream.read(min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    content = b"".join(chunks)
     require(len(content) <= limit, f"File exceeds bounded read: {path.name}")
     return content
 
@@ -264,6 +272,83 @@ class ReadBudget:
         self.remaining -= len(content)
         self.cached[path] = content
         return content
+
+
+@dataclass(frozen=True, slots=True)
+class _TaskIndex:
+    """Derived lookup data for one captured state; never retained across reads or mutations."""
+
+    tasks: dict[str, Record]
+    positions: dict[str, int]
+    groups: dict[str, frozenset[str]]
+    scopes: dict[str, tuple[tuple[str, str, str], ...]]
+    group_owners: dict[str, set[str]]
+    path_owners: dict[str, set[str]]
+    descendants: dict[str, set[str]]
+
+    @classmethod
+    def capture(cls, tasks: list[Record]) -> _TaskIndex:
+        by_id: dict[str, Record] = {}
+        positions: dict[str, int] = {}
+        groups: dict[str, frozenset[str]] = {}
+        scopes: dict[str, tuple[tuple[str, str, str], ...]] = {}
+        group_owners: dict[str, set[str]] = {}
+        path_owners: dict[str, set[str]] = {}
+        descendants: dict[str, set[str]] = {}
+        for position, task in enumerate(tasks):
+            identifier = string(task["id"], "task ID")
+            by_id[identifier] = task
+            positions[identifier] = position
+            groups[identifier] = frozenset(strings(task["conflict_groups"], "groups"))
+            selected = (
+                strings(Program.current_attempt(task)["scope"], "scope")
+                if task["status"] in OWNED_STATES
+                else strings(task["candidate_paths"], "candidate paths")
+            )
+            scopes[identifier] = tuple(
+                (path, path.casefold(), path.casefold().rstrip("/") + "/") for path in selected
+            )
+            if task["status"] not in OWNED_STATES:
+                continue
+            for group in groups[identifier]:
+                group_owners.setdefault(group, set()).add(identifier)
+            for _, folded, _ in scopes[identifier]:
+                path_owners.setdefault(folded.rstrip("/"), set()).add(identifier)
+                for offset, character in enumerate(folded):
+                    if character == "/":
+                        descendants.setdefault(folded[:offset].rstrip("/"), set()).add(identifier)
+        return cls(by_id, positions, groups, scopes, group_owners, path_owners, descendants)
+
+    def task(self, identifier: str) -> Record:
+        require(identifier in self.tasks, f"Unknown task: {identifier}")
+        return self.tasks[identifier]
+
+    def conflicts(self, identifier: str) -> list[Record]:
+        """Keep task order and original directional reasons while pruning unrelated owners."""
+        candidates: set[str] = set()
+        for group in self.groups[identifier]:
+            candidates.update(self.group_owners.get(group, ()))
+        for _, folded, _ in self.scopes[identifier]:
+            candidates.update(self.path_owners.get(folded.rstrip("/"), ()))
+            candidates.update(self.descendants.get(folded.rstrip("/"), ()))
+            for offset, character in enumerate(folded):
+                if character == "/":
+                    candidates.update(self.path_owners.get(folded[:offset].rstrip("/"), ()))
+        candidates.discard(identifier)
+        result: list[Record] = []
+        for other in sorted(candidates, key=self.positions.__getitem__):
+            reasons = set(self.groups[identifier] & self.groups[other])
+            for left, left_folded, left_prefix in self.scopes[identifier]:
+                for right, right_folded, right_prefix in self.scopes[other]:
+                    if (
+                        left_folded == right_folded
+                        or left_folded.startswith(right_prefix)
+                        or right_folded.startswith(left_prefix)
+                    ):
+                        reasons.add(f"scope: {left} / {right}")
+            if reasons:
+                result.append({"id": other, "reasons": sorted(reasons)})
+        return result
 
 
 @dataclass(slots=True)
@@ -2103,30 +2188,30 @@ class Program:
         for name, text in self.views(state).items():
             atomic_write(self.path(name), text.encode("utf-8"))
 
-    def status(self, state: Record, next_only: bool = False) -> Record:
+    def status(
+        self, state: Record, next_only: bool = False, *, _index: _TaskIndex | None = None
+    ) -> Record:
         tasks = [record(value, "task") for value in sequence(state["tasks"], "tasks")]
         active = [task for task in tasks if task["status"] in OWNED_STATES]
+        index = _index if _index is not None else _TaskIndex.capture(tasks)
+        goal = state.get("objective")
+        members = (
+            set(strings(record(goal, "objective")["task_ids"], "members"))
+            if goal is not None and record(goal, "objective").get("membership_revision") is not None
+            else None
+        )
         candidates: list[Json] = []
         for task in planning.task_order(state):
             if task["status"] != "planned" or task.get("disposition") in {"split", "retired"}:
                 continue
-            goal = state.get("objective")
-            if (
-                goal is not None
-                and record(goal, "objective").get("membership_revision") is not None
-                and task["id"] not in strings(record(goal, "objective")["task_ids"], "members")
-            ):
+            if members is not None and task["id"] not in members:
                 continue
             blocked = [
                 dependency
                 for dependency in strings(task["depends_on"], "depends_on")
-                if self.task(state, dependency)["status"] != "done"
+                if index.task(dependency)["status"] != "done"
             ]
-            collisions = [
-                {"id": other["id"], "reasons": self.collisions(task, other)}
-                for other in active
-                if self.collisions(task, other)
-            ]
+            collisions = index.conflicts(string(task["id"], "task ID"))
             if next_only and (blocked or collisions):
                 continue
             candidates.append(
@@ -2611,16 +2696,15 @@ def _capture_projection(
         result_tasks.append(item)
     governance = coordination.snapshot_metadata(state)
     categories = sequence(governance.get("categories", []), "categories")
+    category_by_task: dict[str, Json] = {}
+    for category_value in categories:
+        category = record(category_value, "category")
+        for identifier in sequence(category.get("task_ids", []), "category task_ids"):
+            category_by_task.setdefault(string(identifier, "category task ID"), category["id"])
     for value in result_tasks:
         task = record(value, "task")
-        task["category_id"] = next(
-            (
-                record(category, "category")["id"]
-                for category in categories
-                if task["id"]
-                in sequence(record(category, "category").get("task_ids", []), "category task_ids")
-            ),
-            task["workstream"],
+        task["category_id"] = category_by_task.get(
+            string(task["id"], "task ID"), task["workstream"]
         )
     result: Record = {
         "snapshot_version": 1,
