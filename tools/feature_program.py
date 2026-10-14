@@ -14,6 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -106,6 +107,12 @@ class PreparedChange:
 
     state: Record
     before_publish: Callable[[], None] | None = None
+
+
+def flow_module(name: str):
+    """Load an offline flow producer only when its supported operation is requested."""
+    prefix = "tools." if __package__ else ""
+    return importlib.import_module(prefix + "feature_program_" + name)
 
 
 def require(condition: bool, message: str) -> None:
@@ -2469,8 +2476,8 @@ def _delivery_history_projection(state: Record, revision: str) -> list[Record]:
     return histories
 
 
-def read_snapshot(repo: Path, program_dir: Path) -> Record:
-    return _read_projection(repo, program_dir)
+def read_snapshot(repo: Path, program_dir: Path, *, closure_plan: str | None = None) -> Record:
+    return _read_projection(repo, program_dir, closure_plan=closure_plan)
 
 
 def read_brief(repo: Path, program_dir: Path, task_id: str | None = None) -> Record:
@@ -2478,12 +2485,19 @@ def read_brief(repo: Path, program_dir: Path, task_id: str | None = None) -> Rec
 
 
 def _read_projection(
-    repo: Path, program_dir: Path, *, brief_only: bool = False, task_id: str | None = None
+    repo: Path,
+    program_dir: Path,
+    *,
+    brief_only: bool = False,
+    task_id: str | None = None,
+    closure_plan: str | None = None,
 ) -> Record:
     observations = _SourceObservations()
     token = _source_observations.set(observations)
     try:
-        return _capture_projection(repo, program_dir, observations, brief_only, task_id)
+        return _capture_projection(
+            repo, program_dir, observations, brief_only, task_id, closure_plan
+        )
     finally:
         _source_observations.reset(token)
 
@@ -2494,8 +2508,9 @@ def _capture_projection(
     source_observations: _SourceObservations,
     brief_only: bool,
     task_id: str | None,
+    closure_plan: str | None = None,
 ) -> Record:
-    """Return bounded recorded state for a local UI, without locks, Git or writes.
+    """Return bounded recorded state without locks or writes; selected plans inspect local Git.
 
     Integrity warnings keep recorded context visible when artifacts drift. Structural
     errors reject the snapshot. No evidence contents or source file bytes are served.
@@ -2647,7 +2662,8 @@ def _capture_projection(
     except OSError:
         warnings.append("Derived views unavailable; recorded registry remains readable.")
     result_tasks: list[Json] = []
-    verification_view = verification.projection(program, state, evidence_budget)
+    full_verification = verification.projection(program, state, evidence_budget, limit=None)
+    verification_view = verification.bound_projection(full_verification)
     delivery_histories = _delivery_history_projection(state, sha(initial))
     for task_index, task in enumerate(tasks):
         section = record(task["source"], "source section")
@@ -2835,6 +2851,66 @@ def _capture_projection(
                 ),
                 "task_id": task_item["id"],
                 "reference": reference,
+            }
+    # Complete assessed task facts join complete lanes before the queue orders and bounds once.
+    task_facts: Record = {}
+    for item in result_tasks:
+        task_item = record(item, "snapshot task")
+        identifier = str(task_item["id"])
+        observed = observations["submissions"].get(identifier, {"status": "not_assessed"})
+        submission_fact = {
+            **observed,
+            "status": "current" if observed["status"] == "observed" else observed["status"],
+        }
+        attempts = sequence(task_item["attempts"], "snapshot attempts")
+        rounds = record(attempts[-1], "latest attempt").get("rounds", []) if attempts else []
+        latest = record(rounds[-1], "latest round") if rounds else {}
+        receipt = record(latest.get("receipt_record", {}), "current receipt")
+        task_facts[identifier] = {
+            "submission": submission_fact,
+            "checks": deepcopy(receipt.get("checks", [])),
+        }
+    full_verification["task_facts"] = task_facts
+    result["review_queue"] = flow_module("queue").project(state, full_verification)
+    result["closure"] = flow_module("closure").readiness(
+        program, state, prevalidated=True, verification_facts=full_verification
+    )
+    closure_view = record(result["closure"], "closure projection")
+    closure_view["reference"] = {
+        "path": "backlog.json",
+        "revision": sha(initial),
+        "pointer": "/objective",
+    }
+    if closure_plan is not None:
+        plan_name = safe_relative(closure_plan)
+        try:
+            selected, plan_hash = read_json_frozen(program.path(plan_name), budget=evidence_budget)
+            plan_view = flow_module("closure").project_plan(
+                program,
+                state,
+                selected,
+                authoring.ClosureHost(program, identity_budget=evidence_budget),
+            )
+            plan_view["reference"] = {"path": plan_name, "sha256": plan_hash}
+            plan_view["observed_revision"] = sha(initial)
+            closure_view["plan"] = plan_view
+        except (ProgramError, coordination.GovernanceError, OSError) as exc:
+            selected_path = program.path(plan_name)
+            if not selected_path.is_file():
+                unavailable_evidence.add(selected_path)
+            closure_view["plan"] = {
+                "schema_version": 1,
+                "status": "unavailable",
+                "preparation": {"status": "unavailable"},
+                "preflight": {"status": "not_assessed", "current": False},
+                "publication": {"status": "blocked"},
+                "next_actor_id": coordination.current_director_id(state),
+                "next_action": "inspect_integrity",
+                "reasons": [str(exc)],
+                "accepted": False,
+                "remote_verified_by_tool": False,
+                "reference": {"path": plan_name},
+                "observed_revision": sha(initial),
             }
     lock = program.path(".feature-program.lock")
     lock_before: bytes | None = None
@@ -3353,8 +3429,11 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument(
         "--task", action="append", help="Portable task ID; repeat for multiple synthetic examples"
     )
-    commands.add_parser(
+    snapshot = commands.add_parser(
         "snapshot", help="Print bounded read-only dashboard JSON; never creates a lock"
+    )
+    snapshot.add_argument(
+        "--closure-plan", help="Explicit program-relative immutable closure plan/result JSON"
     )
     init = commands.add_parser("init")
     init.add_argument("--report")
@@ -3455,7 +3534,9 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    actual_argv = sys.argv[1:] if argv is None else argv
+    args = parser().parse_args(actual_argv)
+    args.live_delimited = "--" in actual_argv
     try:
         repo = args.repo.absolute()
         requested = Path(args.program_dir)
@@ -3472,10 +3553,26 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command in authoring.READ_COMMANDS:
             # Emit exactly the canonical bytes checked by the authoring output bound.
-            sys.stdout.buffer.write(canonical(authoring.read_command(program, args)))
+            result = authoring.read_command(program, args)
+            sys.stdout.buffer.write(canonical(result))
+            return (
+                1 if args.command == "closure-prepare" and result.get("status") == "failed" else 0
+            )
+        if args.command == "verification-run":
+            result = authoring.run_verification(program, args)
+            sys.stdout.buffer.write(canonical(result))
+            return 0
+        if args.command == "closure-resume":
+            result = authoring.resume_closure(program, args)
+            sys.stdout.buffer.write(canonical(result))
             return 0
         if args.command == "snapshot":
-            print(canonical(read_snapshot(repo, program.directory)).decode(), end="")
+            print(
+                canonical(
+                    read_snapshot(repo, program.directory, closure_plan=args.closure_plan)
+                ).decode(),
+                end="",
+            )
             return 0
         if args.command == "brief":
             # The bound covers emitted bytes, including on Windows: text-mode
