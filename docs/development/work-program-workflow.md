@@ -93,7 +93,8 @@ Use a compact allocation record for each assignment in task notes or linked priv
 | Contacts and capacity | Verified native contacts, current availability, model/effort provenance and staffing rationale |
 | Interfaces and gates | Prerequisites, peer contract/acknowledgement, shared writer and integration obligations |
 | Acceptance and evidence | Acceptance criteria, required checks, review and reproducible evidence locations |
-| Next trigger | Concrete start condition or next action, blocker if any, and handoff recipient/boundary |
+| Verification responsibility | Named verifier or resolver for each required lane, input scope, resource boundary and evidence destination |
+| Next trigger | Action possible now, awaited condition and its resolver, next start trigger, and handoff recipient/boundary |
 
 Isolate checkouts when concurrent source snapshots, build outputs or branches interfere.
 Isolation does not grant duplicate ownership: shared contracts and generated paths still
@@ -142,6 +143,75 @@ Include unresolved proposals and accepted contracts in handoffs and recovery che
 The dashboard links related work and its recorded owners; it is not a chat transport and
 does not launch or wake agents. Use native messaging for discussion and the durable registry
 for decisions that another worker or future session must rely on.
+
+## Parallel verification
+
+Assign an owner and criteria, implement the bounded unit, run independent code review, QA
+and PR CI in parallel, fix findings and recheck affected inputs, then let the final director
+accept the work, perform the authorized merge and beta validation, and clean up unused
+branches/checkouts safely.
+
+Name verification responsibilities before implementation freezes. Keep code ownership,
+verification responsibility and final acceptance distinct. Use the tool's optional
+[verification records](feature-program-tool.md#verification-requests-and-observations)
+for exact requests, progress, findings and actual observations; the existing task lifecycle
+remains authoritative. A request names the lane, verifier, check or criterion, verification
+input scope, evidence destination, resource boundary and next trigger. Input read scope may
+include shared tests or configuration beyond the worker's writable paths. Missing assignment
+or observation remains unrecorded, not a successful check or proof of an idle worker.
+
+Freeze one source-bound candidate and dispatch independent code review, QA and applicable PR
+CI as soon as each lane's own inputs are available. Pre-submission review records the actual
+candidate with no invented submission round. Native or browser QA also binds the built and
+served assets, fixture and environment. PR checks bind the reviewed head, current base and
+actual tested checkout or test-merge revision. A stable local digest alone does not establish
+provider execution. Collecting a lane early does not complete the task or permit merge;
+required current observations and the normal review, delivery and integrated-acceptance
+gates still apply.
+
+Reserve only resources that actually interfere: a shared browser session, generated build
+outputs, server port, checkout or timing environment. Record the owner, affected operations,
+reason and release trigger. An exclusive measurement interval may prevent competing tests
+or polling while unrelated review, preparation and continuity work continues. Isolation does
+not duplicate source ownership, authorize a new checkout or prove an unused resource is safe
+to remove. Recheck actual use before releasing or cleaning it up.
+
+Capture evidence while checks run: exact inputs, command and working directory or manual
+procedure, environment, output, actual outcome and observed times when available. Preserve
+failed, interrupted and incomplete observations. The tool resolves current context and
+references; preparation does not execute a command or authenticate a claimed result.
+Use observation-driven submission preparation to avoid recopying known hashes and check
+facts, then provide actual criterion acceptance evidence through the ordinary submit flow.
+Recover transcript-only evidence honestly when needed; do not repeat an unchanged successful
+check solely to obtain a differently formatted receipt.
+
+A reviewer returns all actionable findings discovered in the assigned bounded pass, with
+source identity, criterion or check, evidence, correction owner and affected verification.
+Separate required corrections from optional suggestions. Notify an urgent blocker promptly;
+completion of the bundle is not a reason to delay it. Uncovered criteria remain incomplete,
+and a later new finding is retained rather than suppressed by a fixed review-round limit.
+Recorded resolution does not clear a canonical rejection or accept a task by itself.
+
+For a correction, compare the prior and current source, tests, configuration, environment,
+method and obligation inputs. Rerun affected checks and obtain fresh review for changed
+submitted bytes. Reuse unchanged observations only with complete compatible input bindings,
+immutable evidence and an explicit applicability reason. Unknown or ambient input freshness
+requires verification. Equal owned paths or an unchanged registry revision is insufficient;
+unrelated notes alone need not invalidate equal stable inputs. Actual current PR and beta
+checks and fresh independent aggregate review remain separate required obligations.
+
+Track waiting only from explicit compatible observed endpoints or clearly qualified provider
+intervals. Name the wait cause, resolver and next trigger. Task status age, a publication time
+or a saved actor observation cannot measure worker activity. Missing or mixed-clock endpoints
+remain unknown; overlapping intervals are not summed as elapsed lead time. Preserve repeated
+waits, failures and retries without inventing utilization, ETA or a throughput improvement.
+
+Monitor outstanding lanes with a bounded current snapshot and the native tools' supported
+batch waits or provider reads. Wake for a completion, failure, actionable finding or required
+decision, and back off unchanged observations. At the existing allocation and review
+boundaries, a sub-director reports a concrete unstaffed lane, stale contract, source drift,
+needless wait or recovery omission with evidence, proposed correction, decision owner and
+next trigger. It does not take over authority after silence or add recurring status ceremony.
 
 ## Direction and repeated review
 
@@ -266,7 +336,10 @@ unsaved thoughts, and local state is not backed up by a public code push.
 
 Use a PR for each independently verifiable work unit; combine only closely coupled work.
 Keep existing commit conventions and stage explicit public paths. Review the complete
-public diff for private records before pushing.
+public diff for private records before pushing. When an authorized unit has a stable,
+reviewable public candidate, its PR checks may run alongside unfinished independent
+review or QA. Keep those pending obligations visible; an open PR or green CI result
+does not replace acceptance.
 
 In this repository, validate work branches through pull-request CI, including additional
 pushes to an open PR. Automatic push checks run after integration into `beta`; Python and

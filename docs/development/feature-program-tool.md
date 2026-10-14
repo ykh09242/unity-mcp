@@ -599,6 +599,89 @@ New `reviewer_role: "leader"` reviews also require this current director/legacy 
 reason. A self-review must use that honest role; the label alone grants no authority. Historical
 review receipts and staffing snapshots are preserved without replaying today's authority over them.
 
+## Verification requests and observations
+
+Programs may record optional verification facts in the existing canonical registry without
+adding task states or another status store. Use `verification-record --input` for a request,
+started, blocked, finished, canceled, finding or resolution event. It freezes the input and
+referenced artifacts, resolves current task/attempt/submission/source context, and publishes
+through the normal authority, revision, evidence and location guards. The command does not
+launch a check, acknowledge a peer, clear a task blocker or accept work.
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example verification-packet EXAMPLE-1
+python tools/feature_program.py --program-dir .work/programs/example verification-record --input evidence/EXAMPLE-1/attempt-1/request-1.json
+python tools/feature_program.py --program-dir .work/programs/example submission-inputs --input evidence/EXAMPLE-1/attempt-1/submit-request.json
+```
+
+The packet is a bounded JSON view of the current task definition, original acceptance,
+owned paths, verification input identity, exact current submission when present, required
+checks and recorded verification facts. It leaves a pre-submission context's submission
+null; it never invents a future attempt/round or criterion extracted from ambiguous prose.
+Existing Markdown `packet` and recovery `brief` remain available. Reads do not claim work,
+execute checks, acquire mutation locks or publish results.
+
+A record input uses these common fields:
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version`, `operation` | Version 1 and `verification-record` |
+| `id`, `kind`, `task_id` | Unique portable event ID, one supported event kind and exact task |
+| `actor_id`, `reason` | Actual acting participant and nonempty reason under current authority |
+| `expected_revision` | Current registry revision from brief/snapshot; refresh stale inputs before mutation |
+
+A request additionally names `lane`, `verifier_id`, `check_ids`, optional exact `criteria`,
+`input_scope`, `input_complete`, `evidence_destination` and `next_trigger`. Optional fields
+include environment identity, a resource name/boundary, a packet `context_path` and an explicit
+`supersedes` request. Keep verification read inputs separate from writable ownership. Include
+shared tests, configuration and runtime inputs that affect the check; an asserted complete
+scope is not automatic proof that every ambient dependency was captured. Do not recopy
+task/submission/context hashes or future submission numbers: the tool observes current
+context and freezes references.
+
+Subsequent events reference exact `request_id` and `request_version`, with the relevant actual
+method, timestamps, result, artifact, blocker or finding facts. A finished event records
+`method` with `execution_kind` and a command, structured argv/cwd or manual procedure;
+`result`; task-attempt `artifacts`; and actual observed `input_before`/`input_after` digests.
+Both input digests must match the compatible checked inputs to prepare a passing new check;
+missing digests remain nonpassing. These are execution observations, not copied record
+context: a fingerprint taken only when recording cannot certify what the check executed.
+Nonzero `exit_code` cannot be passed. `not_applicable` needs explicit `policy_evidence`.
+Timing uses actual `observed_at` with `clock_id`; missing endpoints remain unknown.
+Record actual reporter attribution when a director records an observation. Requests and overrides require current
+valid ownership/director authority; the named nonretired verifier records its own observations,
+or the current director records an explicit reasoned observation/override. Recorded actor IDs
+are not identity authentication or live contact endpoints. Retain original events and findings;
+a recorded resolution does not replace the normal independent review decision.
+
+Request/progress phase, observation outcome and current applicability are separate. A later
+failed, canceled, stale or unavailable event never revives an earlier matching success.
+Source, obligation, attempt or request changes retain history while invalidating applicable
+reliance. Missing legacy metadata stays optional/unknown; explicitly malformed new data fails
+rather than falling back to legacy. Snapshot/brief projection shares bounded request-local
+history validation and indexes; shortened display does not omit integrity checks.
+
+`submission-inputs` takes `task_id`, `owner`, selected finished `observation_ids`, `summary`,
+`next_action`, actual ordinary `acceptance_evidence`, `acceptance_complete` and `limitations`.
+It returns `status: not_assessed`, an ordinary execution `receipt`, `missing_fields` and
+`verification_refs`. Current changed paths, check facts and frozen references are resolved
+from matching observations instead of manually duplicating them. Missing or incompatible
+required observations and acceptance remain nonpassing. Save the reviewed ordinary receipt
+under the current task/attempt, supply actual criterion acceptance, and use the existing
+preview/submit/review flow. Preparation neither executes recorded command text nor converts
+process exit zero into behavioral acceptance.
+
+Reuse assessment compares complete declared production/test/configuration inputs, method,
+environment, check/criterion obligations and immutable result references. Equal compatible
+facts permit an advisory reuse candidate with a reason; changed or unknown inputs require
+recheck or remain not assessed. Fresh review for changed submission bytes, actual required
+PR/beta CI and independent integrated review are still required. A partial or stale finding
+bundle cannot supply missing acceptance. Waits use explicit compatible observed endpoints,
+clock and as-of context; task state age or a publication timestamp is not a wait duration.
+
+See the [parallel verification workflow](work-program-workflow.md#parallel-verification)
+for lane ownership, resource reservations, finding bundles and the final director's decisions.
+
 ## Explicit criterion coverage and acceptance diagnostics
 
 Coverage annotations are optional, append-only records outside objective and task definitions.
@@ -923,12 +1006,13 @@ preview commands and help requests are not transition inputs. For example:
 {"argv": ["submit", "TASK-1", "--owner", "worker", "--receipt", "evidence/TASK-1/attempt-1/execution.json"]}
 ```
 
-The 41 mutation families are explicit:
+The mutation families are explicit:
 
 | Family | Commands | Input |
 | --- | --- | --- |
 | Execution | claim, submit, complete, rework, resume, delivery | Exact task/owner and revalidation, execution, review, resolution or delivery receipt as required by the real command |
 | Progress | note, block, release, reopen, language, checkpoint | Existing CLI arguments; no invented receipt wrapper |
+| Verification | verification-record | `--input` optional exact request/progress/observation/finding facts; no task lifecycle transition |
 | Governance | category-set, actor-record, director-appoint, transfer, transfer-ack, transfer-accept, objective-record, objective-complete | `--input` governance receipt; applicable source, authority and independent review bindings |
 | Questions | question-issue, question-acknowledge, question-resolve, question-withdraw | `--input` bounded question receipt; exact question/answer version and current source |
 | Phases | phase-adopt, inventory-freeze, candidate-review, execution-accept | `--input` phase receipt with actual revision and planning binding |
@@ -994,10 +1078,52 @@ reason, exact `merge_identity` matching the receipt's `merge_commit`, actor_id,
 recorded_at and attempt-relative evidence. Legacy absence means unknown. Cleanup facts
 do not affect CI status, confer cleanup eligibility or perform any cleanup operation.
 
+### Recorded provider execution and advisory preparation
+
+A frozen provider file may supply a versioned `execution` envelope alongside the legacy
+provider fields. A receipt adopting that envelope also supplies exact `provider_context`;
+explicit adoption requires both. Legacy absence remains unassessed for the new execution
+facts and does not rewrite historical delivery. The external context states the repository,
+PR head/base/tested revision, expected receiving beta revision when applicable, current
+accepting director and each required stage/check. Captured requirements cannot be inferred
+from missing jobs.
+
+The envelope preserves run/attempt/job/selected-step identities, actual checkout and explicit
+test-merge relationship, capture completeness, output presence, policy applicability, retries
+and observed times. Required actual execution, authorized policy skips, explicit
+nonapplicability and advisory results remain distinct. A native-required criterion cannot
+use a policy skip. Later failed/canceled/pending/mismatched captures stay visible; old green
+records do not certify current source. PR checks, root premerge decision, exact squash mapping,
+beta execution and cleanup are separate stages. Task review still precedes canonical delivery.
+
+These read-only inputs use a frozen `provider: {path, sha256}` reference and exact
+`provider_context`:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example premerge-inputs --input premerge-request.json
+python tools/feature_program.py --program-dir .work/programs/example cleanup-inputs --input cleanup-request.json
+```
+
+Premerge assessment reports advisory ready/deferred/unknown using current recorded head/base,
+review/check context, squash method, expected-head guard and remote-inspection observation.
+Cleanup assessment additionally needs exact reviewed-head/squash/beta/content mapping, no
+later undelivered branch work, protection/dependent-PR and actual usage facts, plus verified
+preservation of required ignored artifacts/recovery. Unknown or in-use/dirty/protected facts
+defer cleanup. Neither command contacts a provider, merges, deletes or archives anything;
+`remote_verified_by_tool` remains false. The final director refreshes actual remote and usage
+facts and performs only already-authorized supported actions.
+
+One frozen capture can prepare individual task-bound delivery inputs without copying another
+attempt's evidence path. Actual required PR and receiving-beta execution remain necessary;
+parsing local JSON, a successful preflight or a recorded cleanup claim cannot replace them.
+See [CI validation](ci-validation.md#assessing-recorded-ci-for-delivery) and the
+[delivery workflow](work-program-workflow.md#pr-delivery-and-branch-cleanup).
+
 ## Tool verification
 
 ```sh
 python -m pytest tools/tests/test_feature_program.py tools/tests/test_feature_program_coordination.py tools/tests/test_feature_program_questions.py tools/tests/test_feature_program_authoring.py tools/tests/test_feature_program_web.py -q
+python -m pytest tools/tests/test_feature_program_verification.py tools/tests/test_feature_program_verification_integration.py tools/tests/test_feature_program_delivery.py -q
 python tools/format_scripts.py --check
 python tools/lint_python.py
 npm run format:check --prefix tools/feature_program_web
