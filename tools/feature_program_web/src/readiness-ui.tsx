@@ -168,6 +168,10 @@ export function ReadinessContext({
   const dependencies = currentCollection(snapshot, readiness?.unmet_dependencies, task.id);
   const submission = record(readiness?.submission);
   const peers = snapshotIndex(snapshot).tasks;
+  const agreement = record(readiness?.peer_agreement);
+  const agreementUnassessed =
+    agreement.status === 'unknown' &&
+    agreement.reason === 'Authored notes are context, not machine-assessed agreement.';
   return (
     <details className="readiness-context">
       <summary>
@@ -208,7 +212,7 @@ export function ReadinessContext({
             </div>
             <div>
               <dt>{i18n.t('Peer agreement')}</dt>
-              <dd>{i18n.t('Unknown')}</dd>
+              <dd>{i18n.t(agreementUnassessed ? 'Not assessed' : 'Unknown')}</dd>
             </div>
           </dl>
           {submission.status === 'stale' && (
@@ -365,7 +369,6 @@ export function GoalCoordination({ snapshot }: { readonly snapshot: Snapshot }) 
                     {i18n.t('Open question')}
                   </a>
                 )}
-                <OriginalRecord value={row} label="Original coordination context" />
               </li>
             ))}
           </ul>
@@ -402,7 +405,6 @@ export function GoalCoordination({ snapshot }: { readonly snapshot: Snapshot }) 
           )}
         </>
       )}
-      <OriginalRecord value={brief.attention} label="Original coordination summary" />
     </details>
   );
 }

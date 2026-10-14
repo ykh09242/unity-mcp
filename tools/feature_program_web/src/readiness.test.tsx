@@ -171,7 +171,9 @@ describe('canonical readiness and authored coordination context', () => {
       screen.getByRole('link', { name: 'Scope and history for S01' }).getAttribute('href'),
     ).toBe('#task/S01');
     expect(screen.getByText('Fresh receipt required')).toBeDefined();
-    expect(screen.getByText('Not assessed')).toBeDefined();
+    expect(screen.getByText('Claim authorization').nextElementSibling?.textContent).toBe(
+      'Not assessed',
+    );
     await userEvent.click(screen.getByText('This task scope reference'));
     expect(screen.getByText(/\/tasks\/1\/candidate_paths/)).toBeDefined();
   });
@@ -206,9 +208,28 @@ describe('canonical readiness and authored coordination context', () => {
     await userEvent.click(screen.getByText('Readiness context'));
     expect(screen.getByText('No claim-blocking scope conflicts recorded')).toBeDefined();
     expect(screen.getByText('No unmet dependencies recorded')).toBeDefined();
-    expect(screen.getAllByText('Not assessed')).toHaveLength(2);
-    expect(screen.getByText('Unknown')).toBeDefined();
+    expect(screen.getAllByText('Not assessed')).toHaveLength(3);
+    expect(screen.queryByText('Unknown')).toBeNull();
     expect(screen.queryByText('Ready to claim')).toBeNull();
+  });
+  it('retains unknown agreement when the supplied reason does not establish non-assessment', async () => {
+    // Given
+    const snapshot = parseSnapshot(fixture.snapshot);
+    const original = snapshot.tasks[0];
+    if (!original) throw new Error('Task missing');
+    const task = {
+      ...original,
+      readiness: {
+        ...record(original.readiness),
+        peer_agreement: { status: 'unknown', reason: 'Not yet verified by an observer' },
+      },
+    };
+    // When
+    render(<ReadinessContext snapshot={snapshot} task={task} />);
+    await userEvent.click(screen.getByText('Readiness context'));
+    // Then
+    expect(screen.getByText('Peer agreement').nextElementSibling?.textContent).toBe('Unknown');
+    expect(screen.getAllByText('Not assessed')).toHaveLength(2);
   });
   it('preserves all three authored peer claims and task-specific evidence without computing acceptance', async () => {
     const snapshot = parseSnapshot(fixture.snapshot);

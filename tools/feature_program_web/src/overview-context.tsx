@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { recordedCriterionResult } from './criterion-results';
 import { useI18n } from './i18n';
 import { items, record, records, string } from './model';
 import type { Json, Snapshot } from './model';
@@ -87,7 +88,6 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
   const brief = currentBrief(snapshot);
   const attention = brief ? currentCollection(snapshot, brief.attention, undefined, 50) : null;
   const shown = attention?.items.slice(0, expanded ? 50 : 5) || [];
-  const totals = record(brief?.attention_totals_by_kind);
   return (
     <section className="program-attention">
       <h3>
@@ -234,24 +234,6 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
           <Omission shown={attention.shown} total={attention.total} />
         </>
       )}
-      <details>
-        <summary>{i18n.t('Summary scope and source')}</summary>
-        <p>{i18n.t('Advisory context does not authorize execution or establish acceptance.')}</p>
-        <dl className="content-coverage">
-          {Object.entries(totals)
-            .filter(
-              ([, value]) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0,
-            )
-            .map(([kind, value]) => (
-              <div key={kind}>
-                <dt>{i18n.t(kindLabels[kind] || kind)}</dt>
-                <dd>{i18n.display(value)}</dd>
-              </div>
-            ))}
-        </dl>
-        <Locator value={brief?.reference} />
-        <OriginalRecord value={snapshot.brief} label="Original program summary" />
-      </details>
     </section>
   );
 }
@@ -308,6 +290,15 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
                         record(row.criterion).text_sha256 === criterion.text_sha256,
                     )
                   : undefined;
+              const completion =
+                compatible && valid ? recordedCriterionResult(snapshot, criterion) : null;
+              const completionSupplied =
+                compatible && record(snapshot.objective).completion != null;
+              const annotationAbsent =
+                compatible &&
+                coverage.legacy_absence === true &&
+                criterion.linkage === 'unknown' &&
+                criterion.knowledge === 'unknown';
               return (
                 <li key={index}>
                   <p className="prose">
@@ -319,10 +310,30 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
                     <p>{i18n.t('Current source binding is unavailable.')}</p>
                   ) : (
                     <>
-                      <p className="muted">
-                        {i18n.t('Linkage')}: {i18n.human(criterion.linkage)} · {i18n.t('Knowledge')}
-                        : {i18n.human(criterion.knowledge)}
-                      </p>
+                      {completion && (
+                        <p className="recorded-criterion-result">
+                          {i18n.t('Recorded completion result')}:{' '}
+                          {i18n.human(completion.result.status)}
+                        </p>
+                      )}
+                      {!completion && completionSupplied && (
+                        <p className="muted">
+                          {i18n.t('Recorded completion result is unavailable.')}
+                        </p>
+                      )}
+                      {annotationAbsent ? (
+                        !completion && (
+                          <p className="muted">
+                            {i18n.t('Explicit task links')}:{' '}
+                            {i18n.t('No coverage annotation recorded.')}
+                          </p>
+                        )
+                      ) : (
+                        <p className="muted">
+                          {i18n.t('Linkage')}: {i18n.human(criterion.linkage)} ·{' '}
+                          {i18n.t('Knowledge')}: {i18n.human(criterion.knowledge)}
+                        </p>
+                      )}
                       {contributors ? (
                         <>
                           <div className="coordination-links">
@@ -357,8 +368,27 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
                     </>
                   )}
                   <details>
-                    <summary>{i18n.t('Evidence and source')}</summary>
-                    <Locator value={criterion.reference} />
+                    <summary>{i18n.t('Review evidence')}</summary>
+                    {annotationAbsent && completion && (
+                      <p className="muted">{i18n.t('No coverage annotation recorded.')}</p>
+                    )}
+                    {completion && (
+                      <div className="recorded-completion-evidence">
+                        <p className="muted">
+                          {i18n.t(
+                            'Historical completion record; current acceptance is not inferred.',
+                          )}
+                        </p>
+                        <p>
+                          {i18n.t('Source freshness')}: {i18n.human(completion.sourceFreshness)}
+                        </p>
+                        <p>
+                          {i18n.t('Head freshness')}: {i18n.human(completion.headFreshness)}
+                        </p>
+                        <HistoryReferences value={completion.receipt} />
+                        <HistoryReferences value={completion.result.evidence} />
+                      </div>
+                    )}
                     {records(full?.links).map((link, n) => (
                       <div key={n}>
                         <a href={`#task/${encodeURIComponent(string(link.task_id))}`}>
@@ -377,7 +407,6 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
                       </div>
                     ))}
                     <CoverageObservations value={full?.recorded_observations} />
-                    <OriginalRecord value={full || criterion} label="Original criterion context" />
                   </details>
                 </li>
               );
@@ -412,7 +441,6 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
               ))}
             </ul>
             <Locator value={entry.receipt} />
-            <OriginalRecord value={entry} />
           </article>
         ))}
         {!records(coverage.history).length && <p>{i18n.t('No coverage annotation recorded.')}</p>}
@@ -429,7 +457,6 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
           {i18n.t('Integrated review')}:{' '}
           {i18n.human(compatible ? record(coverage.integrated_review).status : undefined)}
         </p>
-        <OriginalRecord value={snapshot.coverage} label="Original coverage" />
       </details>
     </div>
   );

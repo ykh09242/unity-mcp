@@ -640,7 +640,7 @@ function TaskList({
           </div>
           <p className="paging-range" role="status" aria-live="polite" aria-atomic="true">
             <span aria-hidden="true">
-              {i18n.t('{start}–{end} / {matching} tasks · {page} / {pages} pages', {
+              {i18n.t('{start}–{end} / {matching} · {page}/{pages}', {
                 start: page.start,
                 end: page.end,
                 matching: page.matching,
@@ -825,6 +825,7 @@ function TaskDetail({
 }) {
   const i18n = useI18n();
   const presentation = usePresentation();
+  const [contextOpen, setContextOpen] = useState(false);
   const returnClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
     if (onReturn && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
       event.preventDefault();
@@ -862,6 +863,28 @@ function TaskDetail({
           .trim()
           .split(/\n\s*\n/u)[0]
       : /^- Goal and expected result: (.+)$/m.exec(string(source.text))?.[1] || task.planning_note);
+  const contextBlocks = [
+    { label: 'Expected result', value: task.expected_result },
+    { label: 'Acceptance criteria', value: task.acceptance_criteria },
+    { label: 'Task description', value: taskBody(task) },
+  ].filter(
+    ({ value }, index, blocks) =>
+      value !== undefined &&
+      value !== null &&
+      value !== '' &&
+      (!Array.isArray(value) || value.length > 0) &&
+      !blocks.slice(0, index).some((previous) => semanticValueEqual(previous.value, value)),
+  );
+  const summaryRepeatedInContext = contextBlocks.some(
+    ({ value }) =>
+      semanticValueEqual(value, expectedResult) ||
+      (typeof value === 'string' &&
+        typeof expectedResult === 'string' &&
+        value
+          .trim()
+          .split(/\n\s*\n/u)
+          .includes(expectedResult.trim())),
+  );
   const handoffs = records(snapshot.handoffs).filter(
     (item) => !item.task_id || item.task_id === task.id,
   );
@@ -922,7 +945,10 @@ function TaskDetail({
                 <dd>{i18n.display(task.next_action)}</dd>
               </div>
             </dl>
-            <div className="expected-result-summary">
+            <div
+              className="expected-result-summary"
+              hidden={contextOpen && summaryRepeatedInContext}
+            >
               <h3>
                 {i18n.t(
                   translatedBody && !task.expected_result ? 'Task description' : 'Expected result',
@@ -960,9 +986,19 @@ function TaskDetail({
           <ContentOriginals entity="task" id={task.id} />
           <ReviewSummary snapshot={snapshot} task={task} />
           <Section title={i18n.t('Requirements and source context')}>
-            <details>
+            <details
+              className="task-source-context"
+              onToggle={(event) => {
+                if (event.target === event.currentTarget) setContextOpen(event.currentTarget.open);
+              }}
+            >
               <summary>{i18n.t('Full task context and evidence')}</summary>
-              <Prose value={task.expected_result || task.acceptance_criteria || taskBody(task)} />
+              {contextBlocks.map(({ label, value }) => (
+                <div key={label}>
+                  <h4>{i18n.t(label)}</h4>
+                  <Prose value={value} />
+                </div>
+              ))}
               <details>
                 <summary>{i18n.t('Original record')}</summary>
                 <pre className="source">{i18n.display(originalValue(source))}</pre>
@@ -990,13 +1026,13 @@ function TaskDetail({
                   ['Current owner', presentation.actor(ownerOf(task)) || i18n.t('Unassigned')],
                   ['Assigned actor', assignedActorId],
                   ['Role', i18n.human(assignment.role)],
-                  ['Model', assignment.model_id],
-                  ['Reasoning', i18n.human(assignment.reasoning_effort)],
-                  ['Provenance', i18n.human(assignment.provenance)],
+                  ['Model', i18n.personnel('model_id', assignment.model_id)],
+                  ['Reasoning', i18n.personnel('reasoning_effort', assignment.reasoning_effort)],
+                  ['Provenance', i18n.personnel('provenance', assignment.provenance)],
                   ['Staffing', i18n.human(actor.staffing_status)],
                   [
                     'Last observed',
-                    `${i18n.human(actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
+                    `${i18n.personnel('observed_status', actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
                   ],
                 ]}
               />
@@ -1059,12 +1095,15 @@ function Team({
             </p>
             <Fields
               values={[
-                ['Model', actor.model_id],
-                ['Reasoning', i18n.human(actor.reasoning_effort)],
-                ['Provenance', `${i18n.human(actor.provenance)} · ${i18n.t('saved')}`],
+                ['Model', i18n.personnel('model_id', actor.model_id)],
+                ['Reasoning', i18n.personnel('reasoning_effort', actor.reasoning_effort)],
+                [
+                  'Provenance',
+                  `${i18n.personnel('provenance', actor.provenance)} · ${i18n.t('saved')}`,
+                ],
                 [
                   'Last observed',
-                  `${i18n.human(actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
+                  `${i18n.personnel('observed_status', actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
                 ],
               ]}
             />
@@ -1609,6 +1648,7 @@ function Dashboard({
             detail={
               route.view === 'task' && (
                 <TaskDetail
+                  key={route.taskId}
                   snapshot={snapshot}
                   context={navigation}
                   taskId={route.taskId}
@@ -1631,6 +1671,7 @@ function Dashboard({
     else if (route.view === 'task')
       content = (
         <TaskDetail
+          key={route.taskId}
           snapshot={snapshot}
           context={navigation}
           taskId={route.taskId}
@@ -1873,24 +1914,22 @@ function Dashboard({
             {snapshot && <ContentLanguage snapshot={snapshot} />}
             <details className="local-help">
               <summary>{i18n.t('About this local view')}</summary>
+              <p>
+                {i18n.t(
+                  'Tasks are read only; use the program tool to change them. Enabled question answers can be saved here.',
+                )}
+              </p>
               <div className="rail-foot">
-                <p>{i18n.t('Task views are read only')}</p>
                 <p>{i18n.t('Refresh every 5 seconds')}</p>
                 <p>
                   {i18n.t('Snapshot:')} {i18n.date(snapshot?.generated_at)}
                 </p>
-                <p>{i18n.t('Fetch time and personnel observation time are separate.')}</p>
+                <p>
+                  {i18n.t(
+                    'Snapshot, fetch and personnel observation times are separate. Recorded ownership is not live presence.',
+                  )}
+                </p>
               </div>
-              <p>
-                {i18n.t(
-                  'Recorded local work. Task changes are managed through the program tool. Question answers can be saved here when enabled.',
-                )}
-              </p>
-              <p>
-                {i18n.t(
-                  'Start with the goal, choose a work scope, then inspect tasks and original evidence. Recorded ownership is not live agent presence.',
-                )}
-              </p>
             </details>
           </details>
           {snapshot && (
