@@ -3,7 +3,7 @@
 ## 0. Design references
 
 - Use a compact operational ledger with aligned status and ownership columns, a separate
-  personnel context and progressive disclosure for original records. These patterns support
+  personnel context and progressive disclosure for historical findings. These patterns support
   repeated inspection without a decorative dashboard-card hierarchy.
 - The [list-detail pattern](https://github.com/changeroa/StyleGallery/blob/main/patterns/split-sidebar/list-detail.md)
   places the category rail outside the list/detail composition. Source order follows reading
@@ -23,7 +23,7 @@
 ## 1. Atmosphere & Identity
 
 A quiet workspace for directors and contributors. Its signature is a nested category rail
-beside an aligned task ledger, with a separate page for task context. Visible task provenance,
+beside an aligned task ledger, with a separate page for task context. Visible responsibility,
 review acceptance, and recorded delivery make the meaning of progress easy to inspect.
 Content jobs: rail navigates; progress explains; filters locate; task rows compare; detail
 proves; checkpoint and personnel retain context. Overview is a concise progress and action
@@ -52,9 +52,9 @@ Status meaning always has a text label. No decorative chromatic edges or glowing
 
 ## 3. Typography
 
-Local system sans-serif; task IDs and source labels use local system monospace.
+Local system sans-serif; task IDs and technical labels use local system monospace.
 No font downloads. Body 14px/1.5, metadata 12px, section labels 11px, task details 24px,
-workspace title 28px. Weights 400, 510 and 590. Headings track at -0.025em. Full source
+workspace title 28px. Weights 400, 510 and 590. Headings track at -0.025em. Full authored
 context preserves line breaks and wraps unbroken strings.
 
 ## 4. Spacing & Layout
@@ -62,7 +62,7 @@ context preserves line breaks and wraps unbroken strings.
 Four-pixel base with 4, 8, 12, 16, 24 and 32px steps. Desktop rail 224px, main fluid with
 a readable maximum for prose-oriented pages. Work uses the full available main pane,
 with a flexible ledger and contextual detail; prose inside detail retains a readable measure.
-Task pages have source and assignment columns; below 1100px those stack. Below 700px navigation and content also stack. Above 1100px the rail and workspace
+Task pages have task context and verification columns; below 1100px those stack. Below 700px navigation and content also stack. Above 1100px the rail and workspace
 each own vertical scrolling inside a bounded viewport shell, with `min-block-size: 0`.
 Below that width the document owns scrolling. Reading and keyboard order follow the DOM.
 
@@ -76,19 +76,19 @@ Below that width the document owns scrolling. Reading and keyboard order follow 
   The exact one-line next-action glimpse and clipped title have a keyboard/touch path to full detail.
 - Filters: visibly labeled native search/select controls. Empty results explain recovery.
   Snapshot polling preserves search values, task selection, expanded details and row focus.
-- Detail: source prose, requirements, dependencies, checks, recorded ownership/settings,
+- Detail: task description, requirements, dependencies, checks, recorded ownership/settings,
   blocker/next action, delivery, handoffs and historical attempts. No editable controls.
   Dependencies and advisory relations link to referenced tasks and name their current
   recorded owner/contact. Missing tasks or contacts stay explicit; a contact label does not
   establish an active agent or provide a message transport.
-- Personnel: management nesting, recorded assignment, settings provenance, last observed
+- Personnel: management nesting, recorded assignment, saved settings, last observed
   status and staffing history. Saved fields never imply authenticated runtime settings.
 - Familiar utility and paging actions use pinned local Lucide SVGs, 18px glyphs and 40px
   square targets, localized accessible names and focus/hover tooltips. Domain actions retain text.
 - Refresh status uses reserved language/status/action slots: initial loading, observed timestamp, stale integrity and unavailable
   snapshots. Failed refresh retains previous records with explicit observation time.
 - Progress: native labeled progress element counts reviewed leaf tasks. Recorded PR/CI
-  occupies a separate block and explicitly describes its unauthenticated provenance.
+  occupies a separate block and identifies saved outcomes rather than live provider state.
 - Question inbox: current questions have concise links; more than three fold into a
   disclosure. Applied and withdrawn history stays collapsed. The form preserves typed text
   across polling, offers recorded choices, prevents duplicate submit and retries with the
@@ -100,8 +100,8 @@ Below that width the document owns scrolling. Reading and keyboard order follow 
   human content follows the program's recorded session language through a separate source-bound
   presentation view. A current entry must match its typed identity, origin and original value;
   stale, withdrawn, unavailable or missing entries retain the original. Actor aliases never
-  replace IDs used by routes, filters, list keys or assignments. Original text and exact locators
-  are disclosed beside the relevant entity, not in a global prose list in the navigation rail.
+  replace IDs used by routes, filters, list keys or assignments. Internal originals and exact
+  bindings support validation; they are not exposed as audit panels or original-text toggles.
   Saved answers, drafts, technical evidence, IDs and model settings remain original. Clicking
   a translated option explicitly copies its visible wording into the editable answer. Locale
   and presentation updates preserve existing drafts, caret, navigation and frozen retry payloads.
@@ -146,11 +146,11 @@ task paths and frozen evidence without computing acceptance or review readiness.
 Delivery observations remain in canonical append order, independently of current delivery.
 PR, CI conclusions, revision mismatches, merge and cleanup are separate facts. Missing
 projection differs from an explicitly empty history. Local event times never imply provider
-observation times; absent or ambiguous times stay unknown. Original records and exact
-references remain available in secondary disclosures, with longer reference lists expanded
-on demand. No source-file endpoint or provider query is introduced.
+observation times; absent or ambiguous times stay unknown. Useful historical checks and
+findings remain available in secondary disclosures. No source-file endpoint, reference
+inventory, original-record panel or provider query is introduced.
 
-Team rows show compact saved role/model/effort/provenance for current assignees. Staffing
+Team rows show compact saved role/model/effort for current assignees. Staffing
 history compares frozen claim settings with current saved metadata; it does not infer a
 running agent changed settings. Transfer stages retain every supplied acknowledgement and
 compare only supplied context. Objective membership and source amendments expose explicit
@@ -165,7 +165,7 @@ retain their actionable links without an expanded duplicate list before the obje
 Overview consumes only the supplied, revision-bound program brief and coverage records.
 Attention includes every supplied kind, uses a short initial list with an explicit expansion,
 and distinguishes visible, supplied and omitted counts. Missing or mismatched projections
-remain unavailable. Exact source references and complete supplied originals are secondary.
+remain unavailable. Technical source references remain internal validation context.
 Criterion contributors, uncovered reasons, frozen checks, annotation freshness, recorded
 objective acceptance and integrated review remain separate observations. None establishes
 claim authority or criterion completion by inference.
@@ -179,3 +179,46 @@ prevents duplicate reads. Initial loading retains a disabled control. Explicit f
 continues at its stable search field. Question filters share a wide row and stack at narrow
 widths; narrow navigation preserves complete English words. Korean prose retains ordinary
 word boundaries with emergency wrapping for long technical identifiers.
+
+## Recorded coordination and parallel verification
+
+Work adds a narrow coordination filter to its existing hash context and browser presets.
+No-recorded-blocker work requires a current planned candidate with valid dependency and
+collision totals both zero. Omitted positive totals remain blockers; absent or mismatched
+factors remain unavailable. This view never authorizes a claim, and fresh revalidation remains
+required. Recorded-priority sorting follows supplied priority, phase and stable task identity.
+Overview links to those same filtered results without another task narrative list.
+
+Task rows keep title, status and code ownership aligned, with a concise coordination glimpse.
+The task Information panel shows explicit verifier, resolver, blocker and next trigger in
+independent verification rows. Essential actions are visible without expanding a disclosure.
+Progress phase, reported outcome and current applicability are separate facts; stale success
+remains visible and does not count as current passing verification. Recheck reasons and
+current finding bundles use concise progressive disclosure; historical attempts remain on
+History. Finding resolutions never imply task acceptance. PR CI and later beta execution
+retain separate recorded stages and optional policy skips, not-applicable or advisory outcomes.
+Accepted work and delivery remain separate. Team links recorded verification responsibility
+to the relevant work without estimating liveness, capacity or utilization.
+
+Waiting duration uses only supplied observed start/end or start/as-of pairs with compatible
+clocks and consistent numeric duration. Unknown intervals never become zero, publication
+time or browser time never supplies a missing endpoint, and repeated waits are not added as
+lead time. Open waits are qualified by their explicit observation time. No second poller,
+live ticking duration or repeated assistive announcement is introduced.
+
+Optional verification projections use current revision/task references and honest collection
+counts. Never-recorded legacy/planned optional verification and provider sections remain
+absent. Adopted requests with genuinely missing, stale or unavailable facts retain concise
+actionable diagnostics. Unfinished unknown outcomes and never-assessed recheck labels do not
+duplicate the visible phase. Known assigned checks use localized labels; custom IDs remain
+original. Request/observation identity keeps row keys stable. The same native control and
+neutral-separator grammar is retained, with no broad redesign, nested tables or lane cards.
+New human narratives preserve typed source-bound session-language presentation; system
+copy follows the selected interface language. Root-owned actual built CLI/dashboard QA and
+fresh independent review remain necessary before claiming visual or integration acceptance.
+Provider stages may be recorded before reviewed task completion through bound verification
+requests; ordinary delivery still requires reviewed completion. Aggregate stage keys include
+request identity and stage ID. Lane-bound provider details remain visible when not represented
+by the current task aggregate/delivery, and newer absent/failed/stale observations never revive
+an older capture. Retry history displays execution phase and actual reported outcome separately,
+so a completed failed attempt cannot look successful after a later passing retry.

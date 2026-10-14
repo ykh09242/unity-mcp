@@ -41,6 +41,8 @@ const narrative = new Set([
   'team_state',
   'criterion',
   'planning_note',
+  'next_trigger',
+  'statement',
 ]);
 const recordKinds = new Set([
   'objective_record',
@@ -56,7 +58,7 @@ const recordKinds = new Set([
   'checkpoint',
 ]);
 
-/** Original API records remain separate from the display view, including nested raw disclosures. */
+/** Original API records remain separate from the validated human presentation view. */
 export function originalValue<T extends Json | undefined>(value: T): T {
   if (!value || typeof value !== 'object') return value;
   const original = originals.get(value);
@@ -112,6 +114,7 @@ function byId(value: Json | undefined, id: string): JsonRecord | undefined {
 function permitted(target: JsonRecord): boolean {
   const kind = text(target.kind),
     field = text(target.field);
+  if (kind === 'verification') return ['reason', 'next_trigger', 'statement'].includes(field);
   if (recordKinds.has(kind))
     return narrative.has(field) || (kind === 'checkpoint' && field === 'title');
   const fields: Readonly<Record<string, readonly string[]>> = {
@@ -142,6 +145,10 @@ function matchesField(target: JsonRecord, path: readonly string[]): boolean {
     taskPart = path[2],
     questionPart = path[3] === 'issued' ? path[4] : path[3];
   const correctContainer =
+    (kind === 'verification' &&
+      root === 'verification' &&
+      path[1] === 'records' &&
+      path[3] === 'input') ||
     kind === 'receipt_narrative' ||
     (['objective', 'objective_criterion', 'objective_record'].includes(kind) &&
       root === 'objective') ||
@@ -230,6 +237,49 @@ function locations(
       )
       .map((root) => [root.value, path]);
   if (origin.revision !== snapshot.revision) return [];
+  if (kind === 'verification') {
+    const context = object(object(entry.binding).context);
+    const task = snapshot.tasks.find((item) => item.id === context.task_id);
+    const projection = object(task?.verification);
+    if (!task || projection.task_id !== task.id) return [];
+    const projectionRef = object(projection.reference);
+    if (projectionRef.revision !== snapshot.revision || projectionRef.task_id !== task.id)
+      return [];
+    const result: [Json, readonly string[]][] = [];
+    const matches = (value: JsonRecord, recordId: Json | undefined) => {
+      const ref = object(value);
+      return (
+        recordId === id &&
+        ref.path === 'backlog.json' &&
+        ref.revision === snapshot.revision &&
+        ref.task_id === task.id &&
+        text(origin.pointer).startsWith(text(ref.pointer) + '/input/')
+      );
+    };
+    for (const lane of rows(object(projection.lanes).items)) {
+      if (
+        lane.phase !== 'canceled' &&
+        matches(object(lane.request_reference), lane.request_id) &&
+        path.slice(3).join('/') === 'input/next_trigger'
+      )
+        result.push([lane, ['next_trigger']]);
+      if (matches(object(lane.observation_reference), lane.observation_id)) {
+        if (lane.phase === 'canceled' && path.slice(3).join('/') === 'input/next_trigger')
+          result.push([lane, ['next_trigger']]);
+        if (path.slice(3).join('/') === 'input/blocker/reason')
+          result.push([object(lane.blocker), ['reason']]);
+        if (path.slice(3).join('/') === 'input/blocker/next_trigger')
+          result.push([object(lane.blocker), ['next_trigger']]);
+      }
+    }
+    for (const finding of rows(object(projection.findings).items))
+      if (
+        matches(object(finding.reference), finding.id) &&
+        path.slice(3).join('/') === 'input/statement'
+      )
+        result.push([finding, ['statement']]);
+    return result;
+  }
   if (path[0] === 'tasks') {
     const task = snapshot.tasks.find((item) => item.id === id);
     if (!task) return [];

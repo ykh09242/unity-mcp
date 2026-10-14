@@ -3,6 +3,7 @@ import { useI18n } from './i18n';
 import type { Snapshot } from './model';
 import { categoryBreadcrumbs, columns, navigationHash, navigationSearch } from './navigation';
 import type { Route, ViewPreferences, WorkContext } from './navigation';
+import { coordinationLabels } from './throughput';
 
 export function NavigationSearch({
   snapshot,
@@ -209,6 +210,24 @@ export function ViewControls({
       </div>
       <details className="view-options">
         <summary aria-label={i18n.t('View options and presets')}>{i18n.t('View settings')}</summary>
+        <button
+          type="button"
+          aria-pressed={context.filters.coordination === 'available'}
+          onClick={() =>
+            onContext({
+              ...context,
+              filters: {
+                ...context.filters,
+                coordination: 'available',
+                status: '',
+                sort: 'priority',
+              },
+              paging: { ...context.paging, index: 0 },
+            })
+          }
+        >
+          {i18n.t(coordinationLabels.available!)}
+        </button>
         <button
           type="button"
           aria-pressed={

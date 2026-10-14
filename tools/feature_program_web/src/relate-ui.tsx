@@ -7,6 +7,7 @@ import type { WorkContext } from './navigation';
 import { taskNeighborhood, workload, workloadHref } from './relate';
 import { snapshotIndex } from './selectors';
 import { StaffingHistory } from './history-ui';
+import { VerificationResponsibilities } from './throughput-ui';
 
 export function Workload({
   snapshot,
@@ -53,6 +54,7 @@ export function Workload({
         {i18n.t('{count} tasks', { count: scopedTasks(snapshot, context.scope).length })} ·{' '}
         {i18n.t('Current assignments from saved task records')}
       </p>
+      <VerificationResponsibilities snapshot={snapshot} context={context} />
       {context.scope === 'current' && goalTaskIds(snapshot) === null ? (
         <p className="empty">
           {i18n.t(

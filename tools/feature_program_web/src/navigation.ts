@@ -7,6 +7,7 @@ import { firstWorkPage, pageSize } from './paging';
 import type { WorkPage } from './paging';
 import { selectTasks, snapshotIndex } from './selectors';
 import type { TaskFilters } from './selectors';
+import { coordinationViews, verificationContext } from './throughput';
 
 export type View = 'overview' | 'work' | 'team' | 'task' | 'question' | 'questions' | 'evidence';
 export type TaskSection = 'information' | 'related' | 'history';
@@ -45,11 +46,12 @@ export const defaultContext: WorkContext = {
   selected: null,
 };
 const statuses = ['planned', 'active', 'blocked', 'review', 'done'] as const;
-const sorts = ['id', 'title', 'status', 'owner', 'phase'] as const;
+const sorts = ['id', 'title', 'status', 'owner', 'phase', 'priority'] as const;
 const questionKeys = ['qview', 'qstate', 'qsearch', 'qgoal', 'qtask', 'qselected'] as const;
 const keys = [
   'scope',
   'status',
+  'coordination',
   'owner',
   'workstream',
   'category',
@@ -143,13 +145,32 @@ export function parseNavigation(
       candidate === '__unassigned' ||
       !index ||
       index.tasksByOwner.has(candidate) ||
-      index.actors.has(candidate),
+      index.actors.has(candidate) ||
+      Boolean(
+        snapshot?.tasks.some((task) =>
+          verificationContext(snapshot, task)?.lanes.items.some(
+            (lane) =>
+              lane.verifier_id === candidate ||
+              lane.resolver_id === candidate ||
+              record(lane.blocker).resolver_id === candidate,
+          ),
+        ),
+      ),
   );
   const workstreams = new Set([
     ...(snapshot?.tasks.map((task) => string(task.workstream)) || []),
     ...records(snapshot?.workstreams).map((stream) => string(stream.id)),
   ]);
   const filters: TaskFilters = {
+    ...(value('coordination', base.filters.coordination || '')
+      ? {
+          coordination: validate(
+            'coordination',
+            value('coordination', base.filters.coordination || ''),
+            (candidate) => coordinationViews.some((view) => view === candidate),
+          ),
+        }
+      : {}),
     search: value('q', base.filters.search).slice(0, 300),
     status: validate('status', value('status', base.filters.status), (candidate) =>
       statuses.some((status) => status === candidate),

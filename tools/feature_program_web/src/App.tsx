@@ -53,6 +53,8 @@ import {
 import type { Navigation, Route, TaskSection, ViewPreferences, WorkContext } from './navigation';
 import type { TaskFilters } from './selectors';
 import { Breadcrumbs, NavigationSearch, ViewControls } from './navigation-ui';
+import { CoordinationGlimpse, CoordinationSummary, VerificationLanes } from './throughput-ui';
+import { coordinationLabels, coordinationViews, verificationContext } from './throughput';
 
 type Filters = TaskFilters;
 const statuses = ['planned', 'active', 'blocked', 'review', 'done'] as const;
@@ -337,6 +339,10 @@ function Overview({
       </div>
       <Objective snapshot={snapshot} />
       <ProgramAttention snapshot={snapshot} />
+      <CoordinationSummary
+        snapshot={snapshot}
+        context={{ ...context, scope: goalTaskIds(snapshot) ? 'current' : 'all' }}
+      />
       <Progress snapshot={snapshot} />
       <div className="status-strip">
         {statuses.map((status) => (
@@ -480,9 +486,11 @@ function TaskList({
           {i18n.t(
             title === 'Status'
               ? 'All statuses'
-              : title === 'Owner'
+              : title === 'Owner' || title === 'Responsible actor'
                 ? 'All owners'
-                : 'All workstreams',
+                : title === 'View'
+                  ? 'All views'
+                  : 'All workstreams',
           )}
         </option>
         {options.map(([value, name]) => (
@@ -493,7 +501,21 @@ function TaskList({
       </select>
     </label>
   );
-  const owners = [...index.tasksByOwner.keys()].filter(Boolean).sort();
+  const owners = [
+    ...new Set([
+      ...index.tasksByOwner.keys(),
+      ...snapshot.tasks.flatMap(
+        (task) =>
+          verificationContext(snapshot, task)?.lanes.items.flatMap((lane) => [
+            string(lane.verifier_id),
+            string(lane.resolver_id),
+            string(record(lane.blocker).resolver_id),
+          ]) || [],
+      ),
+    ]),
+  ]
+    .filter(Boolean)
+    .sort();
   const workstreams = records(snapshot.workstreams);
   return (
     <div
@@ -525,10 +547,21 @@ function TaskList({
               'Status',
               statuses.map((status) => [status, i18n.statusLabel(status)]),
             )}
-            {select('owner', 'Owner', [
-              ...owners.map((owner) => [owner, presentation.actor(owner)] as const),
-              ['__unassigned', 'Unassigned'],
-            ])}
+            {select(
+              'owner',
+              ['verification', 'waiting'].includes(filters.coordination || '')
+                ? 'Responsible actor'
+                : 'Owner',
+              [
+                ...owners.map((owner) => [owner, presentation.actor(owner)] as const),
+                ['__unassigned', 'Unassigned'],
+              ],
+            )}
+            {select(
+              'coordination',
+              'View',
+              coordinationViews.map((view) => [view, i18n.t(coordinationLabels[view]!)]),
+            )}
             {select(
               'workstream',
               'Workstream',
@@ -547,9 +580,13 @@ function TaskList({
                 value={filters.sort}
                 onChange={(event) => onChange({ ...filters, sort: event.target.value })}
               >
-                {['id', 'title', 'status', 'owner', 'phase'].map((value) => (
+                {['id', 'title', 'status', 'owner', 'phase', 'priority'].map((value) => (
                   <option key={value} value={value}>
-                    {value === 'id' ? i18n.t('Task ID') : i18n.human(value)}
+                    {value === 'priority'
+                      ? i18n.t('Recorded priority')
+                      : value === 'id'
+                        ? i18n.t('Task ID')
+                        : i18n.human(value)}
                   </option>
                 ))}
               </select>
@@ -584,24 +621,28 @@ function TaskList({
                   ? 'Search'
                   : key === 'owner'
                     ? 'Owner'
-                    : key === 'category'
-                      ? 'Category'
-                      : key === 'status'
-                        ? 'Status'
-                        : 'Workstream',
+                    : key === 'coordination'
+                      ? 'View'
+                      : key === 'category'
+                        ? 'Category'
+                        : key === 'status'
+                          ? 'Status'
+                          : 'Workstream',
               )}
               :{' '}
-              {key === 'status'
-                ? i18n.statusLabel(value)
-                : key === 'owner' && value === '__unassigned'
-                  ? i18n.t('Unassigned')
-                  : key === 'owner'
-                    ? presentation.actor(value)
-                    : key === 'category'
-                      ? string(index.categories.get(value)?.title) || value
-                      : key === 'workstream'
-                        ? presentation.workstream(value)
-                        : value}{' '}
+              {key === 'coordination'
+                ? i18n.t(coordinationLabels[value] || value)
+                : key === 'status'
+                  ? i18n.statusLabel(value)
+                  : key === 'owner' && value === '__unassigned'
+                    ? i18n.t('Unassigned')
+                    : key === 'owner'
+                      ? presentation.actor(value)
+                      : key === 'category'
+                        ? string(index.categories.get(value)?.title) || value
+                        : key === 'workstream'
+                          ? presentation.workstream(value)
+                          : value}{' '}
               ×
             </button>
           ))}
@@ -735,6 +776,7 @@ function TaskList({
                       {i18n.display(task.next_action, 'No next action recorded')}
                     </span>
                   )}
+                  <CoordinationGlimpse snapshot={snapshot} task={task} />
                 </span>
                 <Status value={task.status} />
                 {preferences.columns.includes('owner') && (
@@ -1028,6 +1070,7 @@ function TaskDetail({
               </details>
             </Section>
             <ReviewSummary snapshot={snapshot} task={task} />
+            <VerificationLanes snapshot={snapshot} task={task} />
             {(description.criteria || distinctCriteria) && (
               <div className="content-section">
                 <details className="task-acceptance-criteria">
