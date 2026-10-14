@@ -4,7 +4,7 @@ Run from the repository root:
     python tools/feature_program_web.py --repo . --program-dir .work/programs/default
 Task views are read-only. The sole write endpoint saves answers to existing director
 questions with a same-origin session token. Use --read-only to disable responses.
-No Git command, native-agent action, network lookup or browser launch occurs here.
+No Git mutation, native-agent action, network lookup or browser launch occurs here.
 """
 
 from __future__ import annotations
@@ -350,7 +350,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def create_server(
-    repo: Path, program_dir: Path, host: str = "127.0.0.1", port: int = 8765, responses: bool = True
+    repo: Path,
+    program_dir: Path,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    responses: bool = True,
+    *,
+    closure_plan: str | None = None,
+    execution_capture: str | None = None,
 ):
     """Create a server without reading or modifying the configured program."""
     repository = repo.resolve()
@@ -359,7 +366,16 @@ def create_server(
     return DashboardServer(
         host,
         port,
-        lambda: feature_program.read_snapshot(repository, directory),
+        lambda: (
+            feature_program.read_snapshot(repository, directory)
+            if closure_plan is None and execution_capture is None
+            else feature_program.read_snapshot(
+                repository,
+                directory,
+                closure_plan=closure_plan,
+                execution_capture=execution_capture,
+            )
+        ),
         (
             lambda question_id, version, answer, submission_id: (
                 feature_program_questions.record_answer(
@@ -382,10 +398,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--read-only", action="store_true", help="Disable responses to director questions"
     )
+    parser.add_argument(
+        "--closure-plan", help="Explicit program-relative immutable closure plan/result JSON"
+    )
+    parser.add_argument(
+        "--execution-capture", help="Explicit program-relative sealed actual execution capture JSON"
+    )
     args = parser.parse_args(argv)
     try:
         with create_server(
-            args.repo, args.program_dir, args.host, args.port, not args.read_only
+            args.repo,
+            args.program_dir,
+            args.host,
+            args.port,
+            not args.read_only,
+            closure_plan=args.closure_plan,
+            execution_capture=args.execution_capture,
         ) as server:
             print(f"Local work-program dashboard: {server.url}", flush=True)
             print(

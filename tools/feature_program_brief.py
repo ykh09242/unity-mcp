@@ -741,6 +741,15 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
             )
     attention.sort(key=lambda item: (item["priority"], item["kind"], item["entity_id"]))
     for row in attention:
+        row["actionability"] = "actionable"
+        if (
+            row["kind"] == "objective"
+            and objective
+            and objective.get("status") == "active"
+            and any(by_id[identifier]["status"] != "done" for identifier in objective["task_ids"])
+        ):
+            row["attention_kind"] = "completion_reminder"
+            row["actionability"] = "routine"
         row["criterion_impact"] = collection(
             [
                 criterion["criterion"]
@@ -817,6 +826,60 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
         },
         "reference": ref(""),
     }
+    queue = snapshot.get("review_queue")
+    queue_view = None
+    if queue is not None:
+        queue_view = {
+            key: deepcopy(queue.get(key))
+            for key in ("schema_version", "queue_version", "status", "observed_revision", "counts")
+        }
+        queue_rows = queue["rows"]
+        queue_view["rows"] = {
+            **{
+                key: deepcopy(queue_rows[key]) for key in ("total", "shown", "omitted", "reference")
+            },
+            "items": [
+                _prose(
+                    {
+                        key: deepcopy(row.get(key))
+                        for key in (
+                            "row_id",
+                            "kind",
+                            "task_id",
+                            "request_id",
+                            "action",
+                            "next_actor_id",
+                            "next_action",
+                            "reference",
+                        )
+                    },
+                    ("next_action",),
+                )
+                for row in queue_rows["items"]
+            ],
+        }
+    closure = snapshot.get("closure")
+    closure_view = None
+    if closure is not None:
+        closure_ref = ref("/objective")
+        closure_view = {
+            key: deepcopy(closure.get(key))
+            for key in (
+                "schema_version",
+                "status",
+                "accepted",
+                "objective_id",
+                "next_actor_id",
+                "next_action",
+                "task_counts",
+                "plan",
+            )
+        }
+        closure_view["requirements"] = {
+            **deepcopy(closure["requirements"]),
+            "reference": closure_ref,
+        }
+        closure_view["reference"] = closure_ref
     program_view = {
         **envelope,
         "counts": snapshot["counts"],
@@ -828,6 +891,8 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
             "integrated_review_not_assessed": 1,
         },
         "coverage_history": collection(coverage_history, ref("/coverage_annotations")),
+        "review_queue": queue_view,
+        "closure": closure_view,
         "verification": {
             "status": snapshot.get("verification", {}).get("status", "absent"),
             "history": deepcopy(snapshot.get("verification", {}).get("history")),

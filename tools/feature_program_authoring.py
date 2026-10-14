@@ -1,6 +1,7 @@
-"""Read-only authoring over the authoritative work-program preparations.
+"""Authoring over authoritative preparations plus explicit guarded flow host dispatch.
 
-No filesystem publication, lock acquisition, provider access or agent operations belong here.
+Stored requests remain inert. Only explicit live execution and normal record publication
+perform those actions; closure preparation may materialize immutable evidence files.
 """
 
 from __future__ import annotations
@@ -8,7 +9,9 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
+import os
 from types import ModuleType
 from typing import TYPE_CHECKING, Callable, Final
 
@@ -47,6 +50,15 @@ READ_COMMANDS: Final = frozenset(
         "submission-inputs",
         "premerge-inputs",
         "cleanup-inputs",
+        "inputs-prepare",
+        "inputs-capture",
+        "inputs-compare",
+        "review-queue",
+        "review-assignment",
+        "verification-observation",
+        "verification-environment",
+        "closure-readiness",
+        "closure-prepare",
     }
 )
 PUBLICATION_COMMANDS: Final = frozenset(
@@ -160,6 +172,74 @@ def add_commands(commands) -> None:
     for name in ("submission-inputs", "premerge-inputs", "cleanup-inputs"):
         command = commands.add_parser(name, help="Prepare ordinary input from frozen observations")
         command.add_argument("--input", required=True, help="Program-relative preparation JSON")
+
+    command = commands.add_parser("inputs-prepare", help="Declare a finite known check input scope")
+    command.add_argument("--check-id", required=True)
+    command.add_argument("--path", action="append", required=True)
+    command.add_argument("--complete", action="store_true")
+    command = commands.add_parser(
+        "inputs-capture", help="Capture exact declared inputs without execution"
+    )
+    for field in ("manifest", "environment", "method"):
+        command.add_argument("--" + field, required=True, help="Program-relative frozen JSON")
+    command.add_argument("--git-revision", help="Explicit local Git object revision")
+    command = commands.add_parser(
+        "inputs-compare", help="Compare frozen input captures conservatively"
+    )
+    command.add_argument("--before", required=True)
+    command.add_argument("--after", required=True)
+    commands.add_parser("review-queue", help="Project complete review obligations once")
+    command = commands.add_parser(
+        "review-assignment", help="Prepare an explicit verifier assignment"
+    )
+    command.add_argument("--input", required=True)
+    command = commands.add_parser(
+        "verification-environment", help="Read actual runtime identity without execution"
+    )
+    command.add_argument(
+        "--environment", help="Optional program-relative safe declared environment JSON"
+    )
+    command.add_argument(
+        "argv", nargs=argparse.REMAINDER, help="-- followed by executable and arguments"
+    )
+    command = commands.add_parser(
+        "verification-observation", help="Prepare an observation from actual frozen capture"
+    )
+    command.add_argument("--capture", required=True, help="Program-relative capture reference JSON")
+    command.add_argument(
+        "--request", required=True, help="Program-relative current request binding JSON"
+    )
+    commands.add_parser("closure-readiness", help="Observe ordinary closure requirements")
+    command = commands.add_parser(
+        "closure-prepare", help="Preflight the full record sequence without publication"
+    )
+    command.add_argument("--input", required=True)
+    command.add_argument(
+        "--result-path", help="Optional immutable evidence path for actual preparation result"
+    )
+    command = commands.add_parser(
+        "verification-run", help="Execute one explicit live argv with immutable evidence"
+    )
+    command.add_argument("id")
+    command.add_argument("--owner", required=True)
+    command.add_argument(
+        "--request", required=True, help="Program-relative current adopted request binding JSON"
+    )
+    command.add_argument("--expected-revision", required=True)
+    command.add_argument("--capture-dir", required=True)
+    command.add_argument("--cwd", default=".")
+    command.add_argument("--execution-kind", default="test")
+    command.add_argument("--timeout-seconds", type=float, default=300)
+    command.add_argument("--stream-limit-bytes", type=int, default=1024 * 1024)
+    command.add_argument("--artifact", action="append", default=[])
+    command.add_argument("argv", nargs="*", help="-- followed by live executable and arguments")
+    command = commands.add_parser(
+        "closure-resume",
+        help="Publish only uncommitted exact record stages using current task/director authority",
+    )
+    command.add_argument("--plan", required=True)
+    command.add_argument("--owner", required=True)
+    command.add_argument("--expected-revision", required=True)
 
 
 def _parsers() -> dict[str, argparse.ArgumentParser]:
@@ -1425,6 +1505,393 @@ def recovery_readiness(program: Program, state: Record) -> Record:
     return result
 
 
+def flow_read(
+    program: Program, state: Record, args: argparse.Namespace, refs: list[Json]
+) -> Record:
+    """Read finite flow inputs; recorded plans and method text remain inert."""
+    core = _core()
+
+    def frozen(name: str) -> Record:
+        value, captured = core.read_json_frozen(program.path(name), limit=LIMIT)
+        refs.append({"path": name, "sha256": captured})
+        return value
+
+    program.require_current_location()
+    program.validate(state)
+    match args.command:
+        case "inputs-prepare":
+            return core.flow_module("inputs").prepare_manifest(
+                args.check_id, args.path, complete=args.complete
+            )
+        case "inputs-capture":
+            producer = core.flow_module("inputs")
+            manifest = producer.normalize_manifest(frozen(args.manifest))
+            environment, method = frozen(args.environment), frozen(args.method)
+            if args.git_revision is not None:
+                return producer.capture_git_inputs(
+                    program,
+                    manifest,
+                    revision=args.git_revision,
+                    environment=environment,
+                    method=method,
+                )
+            capture = producer.capture_inputs(
+                program, manifest, environment=environment, method=method
+            )
+            refreshed = producer.capture_inputs(
+                program, manifest, environment=environment, method=method
+            )
+            core.require(
+                capture["input_digest"] == refreshed["input_digest"],
+                "Declared inputs changed during capture; refresh",
+            )
+            return capture
+        case "inputs-compare":
+            return core.flow_module("inputs").compare_inputs(
+                frozen(args.before), frozen(args.after)
+            )
+        case "review-queue":
+            return core.read_snapshot(program.repo, program.directory)["review_queue"]
+        case "review-assignment":
+            return core.flow_module("queue").prepare_assignment(program, state, frozen(args.input))
+        case "verification-environment":
+            live_argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+            core.require(bool(live_argv), "Runtime identity requires an explicit executable")
+            declared = frozen(args.environment) if args.environment is not None else None
+            return core.flow_module("execution").observe_environment(program, live_argv, declared)
+        case "verification-observation":
+            return core.flow_module("execution").prepare_observation(
+                program, state, frozen(args.capture), frozen(args.request)
+            )
+        case "closure-readiness":
+            return core.flow_module("closure").readiness(program, state)
+        case "closure-prepare":
+            request = frozen(args.input)
+            host = ClosureHost(program)
+            try:
+                result = core.flow_module("closure").prepare_inputs(program, state, request, host)
+            except _errors() as exc:
+                if args.result_path is None:
+                    raise
+                result = {
+                    "schema_version": 1,
+                    "kind": "closure_preparation_failure",
+                    "status": "failed",
+                    "initial_revision": phases.revision(state),
+                    "producer": host.identity(),
+                    "refs": deepcopy(refs),
+                    "failure": {"reason": str(exc), "failure_type": type(exc).__name__},
+                    "accepted": False,
+                    "remote_verified_by_tool": False,
+                }
+            if args.result_path is not None:
+                name = core.safe_relative(args.result_path)
+                valid = name.startswith("evidence/_coordination/attempt-1/") or any(
+                    task["attempts"]
+                    and name.startswith(
+                        f"evidence/{task['id']}/attempt-{task['attempts'][-1]['number']}/"
+                    )
+                    for task in state["tasks"]
+                )
+                core.require(
+                    valid, "Closure result must be current task/attempt or coordination evidence"
+                )
+                program.verify_refs(refs)
+                core.require(
+                    phases.revision(program.load()) == phases.revision(state),
+                    "Registry changed during result capture",
+                )
+                encoded = core.canonical(result)
+                core.require(len(encoded) <= LIMIT, "Closure result exceeds 8 MiB")
+                path = program.path(name)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.exists():
+                    core.require(
+                        path.is_file() and core.bounded_bytes(path, LIMIT) == encoded,
+                        "Immutable closure result already exists with different bytes",
+                    )
+                else:
+                    with path.open("xb") as stream:
+                        stream.write(encoded)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+            return result
+        case _:
+            raise core.ProgramError("Unsupported flow read operation")
+
+
+@dataclass(frozen=True, slots=True)
+class ClosureHost:
+    """Use the normal guarded publisher for detached closure stages and exact recovery."""
+
+    program: Program
+    source_binding: Record | None = None
+    frozen_refs: list[Json] = field(default_factory=list)
+    identity_budget: ReadBudget | None = None
+
+    def revision(self, state: Record) -> str:
+        return phases.revision(state)
+
+    def load(self) -> Record:
+        return self.program.load()
+
+    def identity(self) -> Record:
+        core = _core()
+        names = (
+            "feature_program.py",
+            "feature_program_authoring.py",
+            "feature_program_inputs.py",
+            "feature_program_execution.py",
+            "feature_program_queue.py",
+            "feature_program_closure.py",
+            "feature_program_verification.py",
+            "feature_program_coverage.py",
+            "feature_program_coordination.py",
+            "feature_program_phases.py",
+            "feature_program_planning.py",
+            "feature_program_delivery.py",
+        )
+        return {
+            "schema_version": 1,
+            "producer": "feature_program_flow",
+            "protocol_version": 1,
+            "source_hashes": {
+                name: core.sha(
+                    self.identity_budget.read(Path(__file__).with_name(name), LIMIT)
+                    if self.identity_budget is not None
+                    else core.bounded_bytes(Path(__file__).with_name(name), LIMIT)
+                )
+                for name in names
+            },
+        }
+
+    def publisher_authority(self, state: Record, payload: Record, owner: str) -> None:
+        """Apply the same current task/director publisher check in preview and publication."""
+        task_id = payload.get("id")
+        task_owner = (
+            self.program.task(state, str(task_id)).get("owner")
+            if task_id is not None and any(item["id"] == task_id for item in state["tasks"])
+            else None
+        )
+        verification._task_authority(state, owner, task_owner)
+
+    def prepare(
+        self,
+        state: Record,
+        operation: str,
+        payload: Record,
+        observed_at: str,
+        *,
+        owner: str | None = None,
+    ) -> PreparedChange:
+        core = _core()
+        core.require(
+            operation in COMMANDS - PUBLICATION_COMMANDS
+            and operation in core.flow_module("closure").OPERATIONS,
+            "Unsupported closure stage operation",
+        )
+        parser = deepcopy(_parsers()[operation])
+        parser.exit_on_error = False
+        parser.error = lambda message: (_ for _ in ()).throw(core.ProgramError(message))
+        actions = {action.dest: action for action in parser._actions if action.dest != "help"}
+        core.require(set(payload) <= set(actions), "Unknown closure stage payload fields")
+        if owner is not None:
+            self.publisher_authority(state, payload, owner)
+        argv: list[str] = []
+        for field, action in actions.items():
+            if field not in payload:
+                continue
+            value = payload[field]
+            values = (
+                core.sequence(value, field)
+                if isinstance(action, argparse._AppendAction)
+                else [value]
+            )
+            for item in values:
+                if isinstance(action, argparse._StoreTrueAction):
+                    core.require(type(item) is bool, "Closure boolean argument must be explicit")
+                    if item:
+                        argv.append(action.option_strings[0])
+                else:
+                    core.require(
+                        isinstance(item, (str, int, float)) and not isinstance(item, bool),
+                        "Invalid closure argument value",
+                    )
+                    if action.option_strings:
+                        argv.append(action.option_strings[0])
+                    argv.append(str(item))
+        try:
+            args = parser.parse_args(argv)
+        except argparse.ArgumentError as exc:
+            raise core.ProgramError(str(exc)) from exc
+        args.command = operation
+        head = self.program.current_head() if operation in HEAD_COMMANDS else None
+        dirty = (
+            core.git(self.program.repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+            if operation == "checkpoint"
+            else ""
+        )
+        with coordination.preparation_clock(observed_at):
+            return prepare(self.program, state, args, observed_head=head, observed_dirty=dirty)
+
+    def preflight(self, prepared: PreparedChange) -> None:
+        # Detached predecessor states cannot satisfy a real-registry mutation guard.
+        # Semantic preparation and normal save validation still inspect all frozen facts.
+        self.program.prepare_save(prepared.state)
+
+    def inspect_stage(self, state: Record, stage: Record) -> Record:
+        core = _core()
+        events = core.sequence(state.get("events"), "canonical events")
+        length = stage.get("event_prefix_length")
+        core.require(type(length) is int and length >= 0, "Invalid closure event prefix length")
+        appended = core.sequence(stage.get("appended_events"), "closure appended events")
+        core.require(
+            core.digest(appended) == stage.get("appended_events_sha256"),
+            "Closure event digest changed",
+        )
+        if core.digest(events[:length]) != stage.get("event_prefix_sha256"):
+            return {"status": "conflict", "reason": "Canonical predecessor event prefix changed"}
+        if events[length : length + len(appended)] == appended and len(events) >= length + len(
+            appended
+        ):
+            self.program.verify_refs(core.sequence(stage.get("refs", []), "closure stage refs"))
+            views = self.program.views(state)
+            drift = any(
+                not self.program.path(name).is_file()
+                or core.bounded_bytes(self.program.path(name), LIMIT) != text.encode("utf-8")
+                for name, text in views.items()
+            )
+            return {"status": "committed", "view_recovery_required": drift}
+        if phases.revision(state) == stage.get("before_revision"):
+            return {"status": "not_started"}
+        return {"status": "conflict", "reason": "Canonical record is not an exact planned stage"}
+
+    def publish(self, stage: Record, expected_revision: str, owner: str) -> Record:
+        core = _core()
+        with self.program.lock():
+            current = self.program.load()
+            core.require(
+                phases.revision(current) == expected_revision == stage.get("before_revision"),
+                "Closure current revision changed; reprepare remaining stages",
+            )
+            core.require(
+                self.inspect_stage(current, stage)["status"] == "not_started",
+                "Closure stage already committed or conflicting",
+            )
+            if self.source_binding is not None:
+                core.require(
+                    self.program.current_head() == self.source_binding.get("source_head")
+                    and self.program.source_digest(
+                        core.strings(self.source_binding.get("scope"), "closure source scope")
+                    )
+                    == self.source_binding.get("source_digest"),
+                    "Closure source or HEAD changed before publication",
+                )
+            self.program.verify_refs(self.frozen_refs)
+            operation = core.string(stage.get("operation"), "closure operation")
+            payload = core.record(stage.get("payload"), "closure payload")
+            self.publisher_authority(current, payload, owner)
+            self.program.verify_refs(core.sequence(stage.get("refs", []), "closure refs"))
+            prepared = self.prepare(
+                current,
+                operation,
+                payload,
+                core.string(stage.get("observed_at"), "stage timestamp"),
+            )
+            _preflight(self.program, prepared)
+            core.require(
+                phases.revision(prepared.state) == stage.get("after_revision"),
+                "Closure stage preparation changed; reprepare remaining stages",
+            )
+            try:
+                self.program.save(prepared.state, before_publish=prepared.before_publish)
+            except core.ProgramError as exc:
+                committed = core.read_json(self.program.path("backlog.json"))
+                if phases.revision(committed) != stage.get("after_revision"):
+                    raise
+                return {
+                    "status": "committed_view_failed",
+                    "revision": phases.revision(committed),
+                    "reason": str(exc),
+                }
+            return {"status": "committed", "revision": phases.revision(prepared.state)}
+
+
+def resume_closure(program: Program, args: argparse.Namespace) -> Record:
+    """Resume exact immutable record stages without invoking any captured command."""
+    core = _core()
+    plan, captured = core.read_json_frozen(program.path(args.plan), limit=LIMIT)
+    program.verify_refs([{"path": args.plan, "sha256": captured}])
+    result = core.flow_module("closure").resume_plan(
+        program,
+        plan,
+        ClosureHost(
+            program,
+            core.record(plan.get("source_binding"), "closure source binding"),
+            [
+                *core.sequence(plan.get("refs", []), "closure refs"),
+                {"path": args.plan, "sha256": captured},
+            ],
+        ),
+        args.owner,
+        args.expected_revision,
+    )
+    core.require(len(core.canonical(result)) <= LIMIT, "Closure result exceeds 8 MiB")
+    return result
+
+
+def run_verification(program: Program, args: argparse.Namespace) -> Record:
+    """Guard one explicit live invocation, release the lock, then capture actual execution."""
+    core = _core()
+    execution = core.flow_module("execution")
+    live_argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+    core.require(
+        getattr(args, "live_delimited", False) and bool(live_argv),
+        "verification-run requires explicit live argv after --",
+    )
+    with program.lock():
+        state = program.load()
+        binding, captured = core.read_json_frozen(program.path(args.request), limit=LIMIT)
+        core.require(
+            binding.get("task_id") == args.id
+            and binding.get("actor_id") == args.owner
+            and binding.get("expected_revision") == args.expected_revision
+            and phases.revision(state) == args.expected_revision,
+            "Run task, actor or current revision does not match explicit binding",
+        )
+        program.verify_refs([{"path": args.request, "sha256": captured}])
+        invocation = {
+            "argv": live_argv,
+            "cwd": args.cwd,
+            "execution_kind": args.execution_kind,
+            "timeout_seconds": args.timeout_seconds,
+            "stream_limit_bytes": args.stream_limit_bytes,
+            "capture_dir": args.capture_dir,
+            "artifacts": args.artifact,
+        }
+        prepared = execution.prepare_run(program, state, invocation, binding)
+        program.verify_refs([{"path": args.request, "sha256": captured}])
+        core.require(
+            phases.revision(program.load()) == args.expected_revision,
+            "Registry changed before explicit execution",
+        )
+    # The producer alone executes live argv. No canonical lock survives this boundary.
+    result = execution.execute_run(prepared)
+    result["publication"] = "pending"
+    result["acceptance_complete"] = False
+    try:
+        current = program.load()
+        result["observation"] = execution.prepare_observation(
+            program, current, result["capture_ref"], binding
+        )
+        result["observation_status"] = "prepared"
+    except _errors() as exc:
+        result["observation_status"] = "unavailable"
+        result["observation_reasons"] = [str(exc)]
+    core.require(len(core.canonical(result)) <= LIMIT, "Execution result exceeds 8 MiB")
+    return result
+
+
 def read_command(program: Program, args: argparse.Namespace) -> Record:
     core = _core()
     if args.command == "authoring-support":
@@ -1436,7 +1903,19 @@ def read_command(program: Program, args: argparse.Namespace) -> Record:
     )
     refs: list[Json] = []
     observed_head: str | None = None
-    if args.command == "preview":
+    if args.command in {
+        "inputs-prepare",
+        "inputs-capture",
+        "inputs-compare",
+        "review-queue",
+        "review-assignment",
+        "verification-observation",
+        "verification-environment",
+        "closure-readiness",
+        "closure-prepare",
+    }:
+        result = flow_read(program, state, args, refs)
+    elif args.command == "preview":
         command, ref = _request(program, args.request)
         refs.append(ref)
         result = preview(program, state, command)
