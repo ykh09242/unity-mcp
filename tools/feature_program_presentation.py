@@ -163,7 +163,10 @@ def _protected(text: str) -> list[str] | None:
 
 @dataclass(frozen=True, slots=True)
 class Catalog:
-    """One bounded observation; the contained target map is its local accumulator."""
+    """One bounded observation; targets share detached source descriptors read-only.
+
+    Public projections copy each returned row independently from this local accumulator.
+    """
 
     program: Program
     state: Record
@@ -367,13 +370,17 @@ def catalog(program: Program, state: Record, budget: ReadBudget, revision: str) 
     for index, actor in enumerate(state.get("actors", [])):
         actors[str(actor["id"])] = (actor, f"/actors/{index}/id", None)
         result.prose("F15", str(actor["id"]), actor, f"/actors/{index}")
+    captured_sources: dict[int, Record] = {}
     for ti, task in enumerate(state.get("tasks", [])):
         identifier = str(task["id"])
         path = f"/tasks/{ti}"
         section = task["source"]
         source = planning.source_for_task(state, task)
+        source_identity = id(source)
+        if source_identity not in captured_sources:
+            captured_sources[source_identity] = deepcopy(source)
         context = {
-            "source": deepcopy(source),
+            "source": captured_sources[source_identity],
             "section_sha256": section.get("sha256", core.digest(section)),
         }
         result.add(
@@ -858,7 +865,9 @@ def bind_input(
         )
         row = observed.targets.get(key)
         require(withdrawing or row["disposition"] == "eligible", str((row or {}).get("reason")))
-        operation["binding"] = row["binding"] if row is not None else latest[key][2]["binding"]
+        operation["binding"] = deepcopy(
+            row["binding"] if row is not None else latest[key][2]["binding"]
+        )
         operation["supersedes"] = latest[key][1]["input"]["id"] if key in latest else None
         if operation.get("action") == "set" and operation.get("mode") != "original":
             require(isinstance(operation.get("text"), str), "Presentation text required")
