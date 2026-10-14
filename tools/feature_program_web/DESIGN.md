@@ -222,3 +222,54 @@ request identity and stage ID. Lane-bound provider details remain visible when n
 by the current task aggregate/delivery, and newer absent/failed/stale observations never revive
 an older capture. Retry history displays execution phase and actual reported outcome separately,
 so a completed failed attempt cannot look successful after a later passing retry.
+
+## Input, execution, review queue and selected closure plans
+
+Optional versioned input and execution summaries extend the current verification lane.
+Check inputs keeps comparison, applicability and input completeness separate; declared
+group counts and changed/missing/unknown facts use one sibling detail disclosure.
+Captured execution distinguishes process result, reported check result, capture completeness
+and canonical evidence publication. Safe artifact/output counts retain missing/truncated
+facts without exposing invocation, environment, raw files or output contents. Run history
+retains earlier failure, interruption, unavailable capture and explicit reuse. A newer
+observation without a capture never revives an earlier successful run as current evidence.
+
+Work exposes a visible Task ledger / Review queue mode using the existing working area.
+Queue rows retain producer order and stable obligation identity: lane requests, submitted
+task reviews and explicit check coverage gaps. Essential next actor/action and the first
+blocker remain visible; optional actor/state context uses one Review details disclosure.
+Code ownership and next verification responsibility remain distinct. Team consumes the
+same projection and links to the same filtered Work mode. Queue readiness is recorded
+input readiness, not native contact, resource availability or claim authority. No execution,
+assignment, messaging or approval controls are added to the browser.
+
+The backend computes queue counts and ordering over complete assessed facts before its
+display bound. The browser preserves supplied order, then filters/paginates supplied rows.
+Every positive backend omission remains visible; filtered absence with omitted rows stays
+unknown. Open-item counts use only the supplied complete readiness counts. Ordinary task
+ownership filters keep their original behavior. Mode, readiness and actor filters roundtrip
+through hash routes/presets; explicit removal retains the stable search field. Desktop and
+narrow queue layouts retain the shell's existing scroll owners and stable gutters.
+
+Overview leads with the objective and progress context. It links to recorded next review
+work without repeating full task narratives. Only an explicitly typed routine completion
+reminder is omitted from prominent alerts; genuine unknown, stale, failed or blocked facts
+remain inspectable. Ordinary unfinished implementation does not produce a premature final
+closure alert.
+
+Objective closure keeps actual readiness and the supplied next actor/action separate from
+task acceptance and delivery/CI. An explicitly selected immutable closure plan adds its
+actual preparation, preflight and per-stage publication facts. Historical preflight remains
+qualified; stale/failed preparation, partial publication and committed view failure never
+look like objective acceptance. The current action is visible before one Publication stages
+disclosure. Exact committed stage observations stay historical through record-only resume.
+Legacy absence produces no invented plan, and unavailable/malformed selected facts remain
+explicit. Plan references and validation digests remain internal; no plan/source browser,
+global plan registry, scan or executable stored text is exposed.
+
+System labels use concise English/Korean copy. Human narrative copies require current typed
+task/request identity, original value and source-bound presentation; technical IDs remain
+original. Stable request/run/stage keys preserve connected focus and open sibling details
+through refresh, alongside the existing question draft/caret/retry guarantees. New native
+producer-backed wide/narrow and initial/partial/delivered verification remains root-owned;
+automated tests and compilation do not establish native visual or speech conformance.

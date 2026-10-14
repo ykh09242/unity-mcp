@@ -2745,3 +2745,128 @@ select {
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
+
+/* Flow automation follows the existing ledger and sibling disclosure grammar. */
+.work-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-block-end: var(--s3);
+}
+.work-mode button[aria-pressed='true'] {
+  background: var(--hover);
+  color: var(--ink);
+}
+.review-queue {
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+.queue-labels,
+.queue-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(7rem, 0.55fr) minmax(0, 1.4fr);
+  gap: var(--s3);
+}
+.queue-labels {
+  padding-block: var(--s2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.queue-row {
+  padding-block: var(--s3);
+  border-block-end: 1px solid var(--line);
+}
+.queue-row.selected {
+  background: rgb(255 255 255 / 10%);
+}
+.queue-identity,
+.queue-responsibility,
+.queue-state {
+  min-inline-size: 0;
+}
+.queue-task.task-button {
+  display: block;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  overflow-wrap: anywhere;
+}
+.queue-identity p,
+.queue-action,
+.queue-trigger,
+.queue-reason {
+  font-size: 12px;
+}
+.queue-action,
+.queue-state,
+.flow-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+  align-items: baseline;
+}
+.queue-trigger,
+.queue-reason {
+  margin-block-start: var(--s2);
+}
+.queue-details {
+  margin-block-start: var(--s2);
+}
+.flow-summary {
+  margin-block-start: var(--s3);
+  padding-block-start: var(--s3);
+  border-block-start: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.flow-summary p,
+.flow-counts,
+.flow-facts,
+.flow-details-list {
+  font-size: 12px;
+}
+.flow-summary p,
+.flow-counts {
+  margin-block-start: var(--s2);
+}
+.flow-facts {
+  margin-block: var(--s2);
+}
+.flow-facts > div {
+  display: grid;
+  grid-template-columns: minmax(6rem, 0.5fr) minmax(0, 1fr);
+  gap: var(--s2);
+  padding-block: var(--s1);
+}
+.flow-facts dt {
+  color: var(--muted);
+}
+.flow-facts dd {
+  margin: 0;
+  min-inline-size: 0;
+}
+.flow-details-list {
+  padding-inline-start: var(--s4);
+}
+.flow-details-list > li {
+  margin-block: var(--s2);
+}
+.closure-summary {
+  margin-block: var(--s4);
+}
+.closure-attention {
+  margin-block: var(--s3);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .queue-labels {
+    display: none;
+  }
+  .queue-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s2);
+  }
+  .flow-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

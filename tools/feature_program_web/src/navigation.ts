@@ -1,3 +1,4 @@
+import { queueActorIds, queueFilters } from './flow-queue';
 import { defaultQuestions, questionStages } from './question-state';
 import { actorLabel, originalValue, presentedActorIds } from './presentation';
 import type { QuestionContext } from './question-state';
@@ -52,6 +53,7 @@ const keys = [
   'scope',
   'status',
   'coordination',
+  'queue_readiness',
   'owner',
   'workstream',
   'category',
@@ -146,6 +148,7 @@ export function parseNavigation(
       !index ||
       index.tasksByOwner.has(candidate) ||
       index.actors.has(candidate) ||
+      Boolean(snapshot && queueActorIds(snapshot).includes(candidate)) ||
       Boolean(
         snapshot?.tasks.some((task) =>
           verificationContext(snapshot, task)?.lanes.items.some(
@@ -168,6 +171,15 @@ export function parseNavigation(
             'coordination',
             value('coordination', base.filters.coordination || ''),
             (candidate) => coordinationViews.some((view) => view === candidate),
+          ),
+        }
+      : {}),
+    ...(value('queue_readiness', base.filters.queue_readiness || '')
+      ? {
+          queue_readiness: validate(
+            'queue_readiness',
+            value('queue_readiness', base.filters.queue_readiness || ''),
+            (candidate) => queueFilters.some((status) => status === candidate),
           ),
         }
       : {}),

@@ -24,6 +24,14 @@ that an agent is currently running.
 **Team** shows management relationships, role responsibilities, settings provenance and
 handoffs. Returning from a task preserves the ledger filters and selected task.
 
+Work also offers a read-only Review queue with explicit readiness and next responsibility.
+It shares current producer facts with Team, retains submitted reviews and check coverage gaps,
+and qualifies omitted or unavailable work. Task Information keeps check inputs, actual captured
+execution, evidence completeness and retry history separate from acceptance and delivery.
+An explicit server `--closure-plan` selects one immutable local plan or captured preparation
+failure for current preparation/preflight/publication inspection. It adds no browser execution
+or publication controls.
+
 Director questions appear on Overview. Their pages support suggested choices and text
 answers. Saving an answer means it is stored locally; director acknowledgement and applied
 outcome are later, separate recorded steps. A withdrawn question is shown as withdrawn.

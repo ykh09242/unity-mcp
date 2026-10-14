@@ -1,3 +1,6 @@
+import { ClosureSummary, ClosureAttention } from './flow-closure-ui';
+import { ReviewQueueList, QueueAttention } from './flow-queue-ui';
+import { queueActorIds, queueFilters } from './flow-queue';
 import { TaskDescription, taskDescriptionParts } from './task-description';
 import { CriterionCoverage, ProgramAttention } from './overview-context';
 import { LanguageProvider, language, useI18n } from './i18n';
@@ -339,6 +342,11 @@ function Overview({
       </div>
       <Objective snapshot={snapshot} />
       <ProgramAttention snapshot={snapshot} />
+      <QueueAttention
+        snapshot={snapshot}
+        context={{ ...context, scope: goalTaskIds(snapshot) ? 'current' : 'all' }}
+      />
+      <ClosureAttention snapshot={snapshot} context={context} />
       <CoordinationSummary
         snapshot={snapshot}
         context={{ ...context, scope: goalTaskIds(snapshot) ? 'current' : 'all' }}
@@ -423,6 +431,7 @@ function TaskList({
   onFocusHandled,
   onRevealTask,
   preferences = defaultPreferences,
+  context = defaultContext,
   taskHref,
   detail,
 }: {
@@ -438,11 +447,13 @@ function TaskList({
   readonly onFocusHandled: (token: number) => void;
   readonly onRevealTask: (id: string) => void;
   readonly preferences?: ViewPreferences;
+  readonly context?: WorkContext;
   readonly taskHref?: (id: string) => string;
   readonly detail?: ReactNode;
 }) {
   const i18n = useI18n();
   const index = snapshotIndex(snapshot);
+  const queueMode = filters.coordination === 'review_queue';
   const page = useMemo(() => taskPage(sorted, paging), [sorted, paging]);
   const presentation = usePresentation();
   const selectedRef = useRef<HTMLAnchorElement>(null);
@@ -450,6 +461,7 @@ function TaskList({
   const searchRef = useRef<HTMLInputElement>(null);
   const focusedRow = useRef<string | null>(null);
   useEffect(() => {
+    if (queueMode) return;
     if (page.index !== paging.index) onPage({ ...paging, index: page.index });
     if (focusRequest) {
       const target = focusRequest.taskId ? selectedRef.current : null;
@@ -463,7 +475,7 @@ function TaskList({
     ) {
       sizeRef.current?.focus({ preventScroll: true });
     }
-  }, [page, paging, onPage, focusRequest, onFocusHandled]);
+  }, [page, paging, onPage, focusRequest, onFocusHandled, queueMode]);
   const selectedPage = selected ? taskPageIndex(sorted, selected, paging.size) : null;
   const controls = [
     ['First page', 0, 'first'],
@@ -480,7 +492,15 @@ function TaskList({
       {i18n.t(title)}
       <select
         value={filters[key]}
-        onChange={(event) => onChange({ ...filters, [key]: event.target.value })}
+        onChange={(event) =>
+          onChange({
+            ...filters,
+            [key]: event.target.value,
+            ...(key === 'coordination' && event.target.value !== 'review_queue'
+              ? { queue_readiness: '' }
+              : {}),
+          })
+        }
       >
         <option value="">
           {i18n.t(
@@ -504,6 +524,7 @@ function TaskList({
   const owners = [
     ...new Set([
       ...index.tasksByOwner.keys(),
+      ...queueActorIds(snapshot),
       ...snapshot.tasks.flatMap(
         (task) =>
           verificationContext(snapshot, task)?.lanes.items.flatMap((lane) => [
@@ -528,6 +549,26 @@ function TaskList({
             : null;
       }}
     >
+      {snapshot.review_queue !== undefined && (
+        <nav className="work-mode" aria-label={i18n.t('Work view')}>
+          <button
+            type="button"
+            aria-pressed={!queueMode}
+            onClick={() => onChange({ ...filters, coordination: '', queue_readiness: '' })}
+          >
+            {i18n.t('Task ledger')}
+          </button>
+          <button
+            type="button"
+            aria-pressed={queueMode}
+            onClick={() =>
+              onChange({ ...filters, coordination: 'review_queue', queue_readiness: 'open' })
+            }
+          >
+            {i18n.t('Review queue')}
+          </button>
+        </nav>
+      )}
       <form className="filters" role="search" onSubmit={(event) => event.preventDefault()}>
         <label className="search">
           {i18n.t('Search tasks')}
@@ -549,7 +590,7 @@ function TaskList({
             )}
             {select(
               'owner',
-              ['verification', 'waiting'].includes(filters.coordination || '')
+              ['verification', 'waiting', 'review_queue'].includes(filters.coordination || '')
                 ? 'Responsible actor'
                 : 'Owner',
               [
@@ -557,11 +598,14 @@ function TaskList({
                 ['__unassigned', 'Unassigned'],
               ],
             )}
-            {select(
-              'coordination',
-              'View',
-              coordinationViews.map((view) => [view, i18n.t(coordinationLabels[view]!)]),
-            )}
+            {!queueMode &&
+              select(
+                'coordination',
+                'View',
+                coordinationViews
+                  .filter((view) => view !== 'review_queue')
+                  .map((view) => [view, i18n.t(coordinationLabels[view]!)]),
+              )}
             {select(
               'workstream',
               'Workstream',
@@ -574,25 +618,43 @@ function TaskList({
                     (stream) => [stream, stream],
                   ),
             )}
-            <label>
-              {i18n.t('Sort')}
-              <select
-                value={filters.sort}
-                onChange={(event) => onChange({ ...filters, sort: event.target.value })}
-              >
-                {['id', 'title', 'status', 'owner', 'phase', 'priority'].map((value) => (
-                  <option key={value} value={value}>
-                    {value === 'priority'
-                      ? i18n.t('Recorded priority')
-                      : value === 'id'
-                        ? i18n.t('Task ID')
-                        : i18n.human(value)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {!queueMode && (
+              <label>
+                {i18n.t('Sort')}
+                <select
+                  value={filters.sort}
+                  onChange={(event) => onChange({ ...filters, sort: event.target.value })}
+                >
+                  {['id', 'title', 'status', 'owner', 'phase', 'priority'].map((value) => (
+                    <option key={value} value={value}>
+                      {value === 'priority'
+                        ? i18n.t('Recorded priority')
+                        : value === 'id'
+                          ? i18n.t('Task ID')
+                          : i18n.human(value)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
         </details>
+        {queueMode && (
+          <label>
+            {i18n.t('Readiness')}
+            <select
+              value={filters.queue_readiness || ''}
+              onChange={(event) => onChange({ ...filters, queue_readiness: event.target.value })}
+            >
+              <option value="">{i18n.t('All readiness states')}</option>
+              {queueFilters.map((status) => (
+                <option key={status} value={status}>
+                  {status === 'open' ? i18n.t('Open review items') : i18n.human(status)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </form>
       <div className="active-filters" aria-label={i18n.t('Active filters')}>
         {Object.entries(filters).some(([key, value]) => key !== 'sort' && Boolean(value)) && (
@@ -613,7 +675,11 @@ function TaskList({
               key={key}
               onClick={() => {
                 searchRef.current?.focus({ preventScroll: true });
-                onChange({ ...filters, [key]: '' });
+                onChange({
+                  ...filters,
+                  [key]: '',
+                  ...(key === 'coordination' ? { queue_readiness: '' } : {}),
+                });
               }}
             >
               {i18n.t(
@@ -621,190 +687,222 @@ function TaskList({
                   ? 'Search'
                   : key === 'owner'
                     ? 'Owner'
-                    : key === 'coordination'
-                      ? 'View'
-                      : key === 'category'
-                        ? 'Category'
-                        : key === 'status'
-                          ? 'Status'
-                          : 'Workstream',
+                    : key === 'queue_readiness'
+                      ? 'Readiness'
+                      : key === 'coordination'
+                        ? 'View'
+                        : key === 'category'
+                          ? 'Category'
+                          : key === 'status'
+                            ? 'Status'
+                            : 'Workstream',
               )}
               :{' '}
-              {key === 'coordination'
-                ? i18n.t(coordinationLabels[value] || value)
-                : key === 'status'
-                  ? i18n.statusLabel(value)
-                  : key === 'owner' && value === '__unassigned'
-                    ? i18n.t('Unassigned')
-                    : key === 'owner'
-                      ? presentation.actor(value)
-                      : key === 'category'
-                        ? string(index.categories.get(value)?.title) || value
-                        : key === 'workstream'
-                          ? presentation.workstream(value)
-                          : value}{' '}
+              {key === 'queue_readiness'
+                ? i18n.human(value)
+                : key === 'coordination'
+                  ? i18n.t(coordinationLabels[value] || value)
+                  : key === 'status'
+                    ? i18n.statusLabel(value)
+                    : key === 'owner' && value === '__unassigned'
+                      ? i18n.t('Unassigned')
+                      : key === 'owner'
+                        ? presentation.actor(value)
+                        : key === 'category'
+                          ? string(index.categories.get(value)?.title) || value
+                          : key === 'workstream'
+                            ? presentation.workstream(value)
+                            : value}{' '}
               ×
             </button>
           ))}
       </div>
-      <div className="ledger-summary">
-        <nav className="paging" aria-label={i18n.t('Work pages')}>
-          <label>
-            {i18n.t('Tasks per page')}
-            <select
-              ref={sizeRef}
-              value={paging.size}
-              onChange={(event) => onPage({ index: 0, size: pageSize(event.target.value) })}
-            >
-              {pageSizes.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="paging-actions">
-            {controls.map(([label, target, icon]) => (
-              <IconButton
-                key={label}
-                icon={icon}
-                label={i18n.t(label)}
-                aria-disabled={
-                  !page.count || target < 0 || target >= page.count || target === page.index
-                }
-                onClick={() => {
-                  if (page.count && target >= 0 && target < page.count && target !== page.index)
-                    onPage({ ...paging, index: target });
-                }}
-              />
-            ))}
-          </div>
-          <p className="paging-range" role="status" aria-live="polite" aria-atomic="true">
-            <span aria-hidden="true">
-              {i18n.t('{start}–{end} / {matching} · {page}/{pages}', {
-                start: page.start,
-                end: page.end,
-                matching: page.matching,
-                page: page.count ? page.index + 1 : 0,
-                pages: page.count,
-              })}
-            </span>
-            <span className="sr-only">
-              {i18n.t(
-                'Showing {start}–{end} of {matching} matching tasks · Page {page} of {pages}',
-                {
-                  start: page.start,
-                  end: page.end,
-                  matching: page.matching,
-                  page: page.count ? page.index + 1 : 0,
-                  pages: page.count,
-                },
-              )}
-            </span>
-          </p>
-        </nav>
-        {selected && selectedPage !== page.index && (
-          <p className="selection-context">
-            {i18n.t(
-              !index.tasks.has(selected)
-                ? 'Selected task {id} is no longer available.'
-                : selectedPage === null
-                  ? 'Selected task {id} does not match these filters.'
-                  : selectedPage !== page.index
-                    ? 'Selected task {id} is on another page.'
-                    : 'Selected task: {id}',
-              { id: selected },
-            )}
-            {selectedPage !== null && (
-              <button type="button" onClick={() => onRevealTask(selected)}>
-                {i18n.t('Show selected task')}
-              </button>
-            )}
-          </p>
-        )}
-      </div>
-      <div className={`work-stage ${detail ? 'has-preview' : ''}`}>
-        <section className="ledger-pane" aria-label={i18n.t('Task ledger')}>
-          <div className="row-labels" aria-hidden="true">
-            <span>
-              {i18n.t(preferences.columns.includes('category') ? 'Task / category' : 'Task')}
-            </span>
-            <span>{i18n.t('Status')}</span>
-            {preferences.columns.includes('owner') && (
-              <span className="owner-label">{i18n.t('Owner')}</span>
-            )}
-          </div>
-          <div className="task-list" role="region" aria-label={i18n.t('Work')} tabIndex={0}>
-            {page.tasks.map((task) => (
-              <a
-                key={task.id}
-                href={taskHref?.(task.id) || `#task/${encodeURIComponent(task.id)}`}
-                className={`task-button ${selected === task.id ? 'selected' : ''}`}
-                ref={task.id === selected ? selectedRef : undefined}
-                data-task-id={task.id}
-                aria-current={selected === task.id ? 'true' : undefined}
-                onClick={(event) => {
-                  if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
-                    if (taskHref) event.preventDefault();
-                    onOpenTask(task.id);
-                  }
-                }}
-              >
-                <span>
-                  <span className="task-identity">
-                    <span className="mono task-id">{task.id}</span>{' '}
-                    <span className="task-title">{task.title}</span>
-                  </span>
-                  <span className="task-meta">
-                    {preferences.columns.includes('category') && (
-                      <>
-                        {' '}
-                        ·{' '}
-                        {i18n.display(
-                          index.categories.get(string(task.category_id))?.title || task.workstream,
-                          'Uncategorized',
-                        )}
-                      </>
-                    )}
-                    {preferences.columns.includes('workstream') && (
-                      <> · {i18n.display(presentation.workstream(task.workstream))}</>
-                    )}
-                  </span>
-                  {hasActionGlance(task) && (
-                    <span className="task-next-action">
-                      <span className="sr-only">{i18n.t('Next action')} · </span>
-                      {i18n.display(task.next_action, 'No next action recorded')}
-                    </span>
-                  )}
-                  <CoordinationGlimpse snapshot={snapshot} task={task} />
+      {queueMode ? (
+        <div className={`work-stage ${detail ? 'has-preview' : ''}`}>
+          <ReviewQueueList
+            snapshot={snapshot}
+            tasks={sorted}
+            filters={filters}
+            navigation={{
+              context,
+              paging,
+              selected,
+              focusRequest,
+              onPage,
+              onFocusHandled,
+              onOpenTask,
+              taskHref,
+            }}
+          />
+          {detail && (
+            <section className="detail-pane" aria-label={i18n.t('Task inspection')}>
+              {detail}
+            </section>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="ledger-summary">
+            <nav className="paging" aria-label={i18n.t('Work pages')}>
+              <label>
+                {i18n.t('Tasks per page')}
+                <select
+                  ref={sizeRef}
+                  value={paging.size}
+                  onChange={(event) => onPage({ index: 0, size: pageSize(event.target.value) })}
+                >
+                  {pageSizes.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="paging-actions">
+                {controls.map(([label, target, icon]) => (
+                  <IconButton
+                    key={label}
+                    icon={icon}
+                    label={i18n.t(label)}
+                    aria-disabled={
+                      !page.count || target < 0 || target >= page.count || target === page.index
+                    }
+                    onClick={() => {
+                      if (page.count && target >= 0 && target < page.count && target !== page.index)
+                        onPage({ ...paging, index: target });
+                    }}
+                  />
+                ))}
+              </div>
+              <p className="paging-range" role="status" aria-live="polite" aria-atomic="true">
+                <span aria-hidden="true">
+                  {i18n.t('{start}–{end} / {matching} · {page}/{pages}', {
+                    start: page.start,
+                    end: page.end,
+                    matching: page.matching,
+                    page: page.count ? page.index + 1 : 0,
+                    pages: page.count,
+                  })}
                 </span>
-                <Status value={task.status} />
-                {preferences.columns.includes('owner') && (
-                  <span className="task-owner">
-                    {task.status === 'done' && !ownerOf(task) ? (
-                      <span aria-label={i18n.t('No current owner')}>—</span>
-                    ) : (
-                      presentation.actor(ownerOf(task)) || i18n.t('Unassigned')
-                    )}
-                  </span>
+                <span className="sr-only">
+                  {i18n.t(
+                    'Showing {start}–{end} of {matching} matching tasks · Page {page} of {pages}',
+                    {
+                      start: page.start,
+                      end: page.end,
+                      matching: page.matching,
+                      page: page.count ? page.index + 1 : 0,
+                      pages: page.count,
+                    },
+                  )}
+                </span>
+              </p>
+            </nav>
+            {selected && selectedPage !== page.index && (
+              <p className="selection-context">
+                {i18n.t(
+                  !index.tasks.has(selected)
+                    ? 'Selected task {id} is no longer available.'
+                    : selectedPage === null
+                      ? 'Selected task {id} does not match these filters.'
+                      : selectedPage !== page.index
+                        ? 'Selected task {id} is on another page.'
+                        : 'Selected task: {id}',
+                  { id: selected },
                 )}
-              </a>
-            ))}
-            {!sorted.length && (
-              <p className="empty">
-                {snapshot.tasks.length
-                  ? i18n.t('No tasks match these filters. Clear filters to see all work.')
-                  : i18n.t('This program has no tasks.')}
+                {selectedPage !== null && (
+                  <button type="button" onClick={() => onRevealTask(selected)}>
+                    {i18n.t('Show selected task')}
+                  </button>
+                )}
               </p>
             )}
           </div>
-        </section>
-        {detail && (
-          <section className="detail-pane" aria-label={i18n.t('Task inspection')}>
-            {detail}
-          </section>
-        )}
-      </div>
+          <div className={`work-stage ${detail ? 'has-preview' : ''}`}>
+            <section className="ledger-pane" aria-label={i18n.t('Task ledger')}>
+              <div className="row-labels" aria-hidden="true">
+                <span>
+                  {i18n.t(preferences.columns.includes('category') ? 'Task / category' : 'Task')}
+                </span>
+                <span>{i18n.t('Status')}</span>
+                {preferences.columns.includes('owner') && (
+                  <span className="owner-label">{i18n.t('Owner')}</span>
+                )}
+              </div>
+              <div className="task-list" role="region" aria-label={i18n.t('Work')} tabIndex={0}>
+                {page.tasks.map((task) => (
+                  <a
+                    key={task.id}
+                    href={taskHref?.(task.id) || `#task/${encodeURIComponent(task.id)}`}
+                    className={`task-button ${selected === task.id ? 'selected' : ''}`}
+                    ref={task.id === selected ? selectedRef : undefined}
+                    data-task-id={task.id}
+                    aria-current={selected === task.id ? 'true' : undefined}
+                    onClick={(event) => {
+                      if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+                        if (taskHref) event.preventDefault();
+                        onOpenTask(task.id);
+                      }
+                    }}
+                  >
+                    <span>
+                      <span className="task-identity">
+                        <span className="mono task-id">{task.id}</span>{' '}
+                        <span className="task-title">{task.title}</span>
+                      </span>
+                      <span className="task-meta">
+                        {preferences.columns.includes('category') && (
+                          <>
+                            {' '}
+                            ·{' '}
+                            {i18n.display(
+                              index.categories.get(string(task.category_id))?.title ||
+                                task.workstream,
+                              'Uncategorized',
+                            )}
+                          </>
+                        )}
+                        {preferences.columns.includes('workstream') && (
+                          <> · {i18n.display(presentation.workstream(task.workstream))}</>
+                        )}
+                      </span>
+                      {hasActionGlance(task) && (
+                        <span className="task-next-action">
+                          <span className="sr-only">{i18n.t('Next action')} · </span>
+                          {i18n.display(task.next_action, 'No next action recorded')}
+                        </span>
+                      )}
+                      <CoordinationGlimpse snapshot={snapshot} task={task} />
+                    </span>
+                    <Status value={task.status} />
+                    {preferences.columns.includes('owner') && (
+                      <span className="task-owner">
+                        {task.status === 'done' && !ownerOf(task) ? (
+                          <span aria-label={i18n.t('No current owner')}>—</span>
+                        ) : (
+                          presentation.actor(ownerOf(task)) || i18n.t('Unassigned')
+                        )}
+                      </span>
+                    )}
+                  </a>
+                ))}
+                {!sorted.length && (
+                  <p className="empty">
+                    {snapshot.tasks.length
+                      ? i18n.t('No tasks match these filters. Clear filters to see all work.')
+                      : i18n.t('This program has no tasks.')}
+                  </p>
+                )}
+              </div>
+            </section>
+            {detail && (
+              <section className="detail-pane" aria-label={i18n.t('Task inspection')}>
+                {detail}
+              </section>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1071,6 +1169,7 @@ function TaskDetail({
             </Section>
             <ReviewSummary snapshot={snapshot} task={task} />
             <VerificationLanes snapshot={snapshot} task={task} />
+            <ClosureSummary snapshot={snapshot} taskId={task.id} />
             {(description.criteria || distinctCriteria) && (
               <div className="content-section">
                 <details className="task-acceptance-criteria">
@@ -1676,24 +1775,34 @@ function Dashboard({
         <>
           <div className="page-heading work-heading">
             <div>
-              <h2>{i18n.t(scope === 'current' ? 'Current goal' : 'All work')}</h2>
+              <h2>
+                {i18n.t(
+                  filters.coordination === 'review_queue'
+                    ? 'Review queue'
+                    : scope === 'current'
+                      ? 'Current goal'
+                      : 'All work',
+                )}
+              </h2>
             </div>
-            <span className="muted">
-              <span className="sr-only">
-                {i18n.t('{shown} of {total} tasks', {
-                  shown: matchingTaskCount,
-                  total: scopedTaskCount,
-                })}
+            {filters.coordination !== 'review_queue' && (
+              <span className="muted">
+                <span className="sr-only">
+                  {i18n.t('{shown} of {total} tasks', {
+                    shown: matchingTaskCount,
+                    total: scopedTaskCount,
+                  })}
+                </span>
+                <span aria-hidden="true">
+                  {matchingTaskCount === scopedTaskCount
+                    ? i18n.t('{count} tasks', { count: matchingTaskCount })
+                    : i18n.t('{shown} / {total} tasks', {
+                        shown: matchingTaskCount,
+                        total: scopedTaskCount,
+                      })}
+                </span>
               </span>
-              <span aria-hidden="true">
-                {matchingTaskCount === scopedTaskCount
-                  ? i18n.t('{count} tasks', { count: matchingTaskCount })
-                  : i18n.t('{shown} / {total} tasks', {
-                      shown: matchingTaskCount,
-                      total: scopedTaskCount,
-                    })}
-              </span>
-            </span>
+            )}
           </div>
           {scope === 'current' && !goalTaskIds(snapshot) && (
             <p className="empty">
@@ -1723,6 +1832,7 @@ function Dashboard({
             onFocusHandled={focusHandled}
             onRevealTask={revealTask}
             preferences={preferences}
+            context={navigation}
             taskHref={(id) =>
               navigationHash({ view: 'task', taskId: id }, { ...navigation, selected: id })
             }

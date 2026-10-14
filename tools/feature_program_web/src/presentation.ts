@@ -388,6 +388,42 @@ function updateDerivedCopies(snapshot: Snapshot): void {
       }
     }
   };
+  const queue = object(snapshot.review_queue);
+  if (queue.observed_revision === snapshot.revision) {
+    for (const row of rows(object(queue.rows).items)) {
+      const task = snapshot.tasks.find((item) => item.id === row.task_id);
+      if (!task) continue;
+      const ref = object(row.reference);
+      if (
+        ref.path !== 'backlog.json' ||
+        ref.revision !== snapshot.revision ||
+        ref.task_id !== task.id
+      )
+        continue;
+      if (row.kind !== 'verification_lane') {
+        if (originalValue(row).next_action === originalValue(task).next_action)
+          copy(row, task, ['next_action'], true);
+        continue;
+      }
+      for (const lane of rows(object(object(task.verification).lanes).items)) {
+        const request = object(lane.request_reference);
+        if (
+          lane.request_id !== row.request_id ||
+          lane.request_version !== row.request_version ||
+          request.path !== 'backlog.json' ||
+          request.revision !== snapshot.revision ||
+          request.task_id !== task.id ||
+          request.pointer !== ref.pointer
+        )
+          continue;
+        const blocker = object(lane.blocker);
+        if (originalValue(blocker).next_trigger === originalValue(row).next_trigger)
+          copy(row, blocker, ['next_trigger'], true);
+        else if (originalValue(lane).next_trigger === originalValue(row).next_trigger)
+          copy(row, lane, ['next_trigger'], true);
+      }
+    }
+  }
   // Repeated criterion text has its own ordinal/hash identity, not a prose match.
   const criteria = rows(object(snapshot.coverage).criteria);
   const completion = object(objective.completion),
