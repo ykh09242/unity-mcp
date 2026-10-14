@@ -13,6 +13,18 @@ import { SnapshotResponse } from './useSnapshot';
 import { LanguageProvider, PREFERENCE_KEY } from './i18n';
 
 describe('flow verification summaries', () => {
+  it.each(['constructor', '__proto__', 'toString', 'Ordinary authored input limitation'])(
+    'preserves unfamiliar reason %s in the primary and detail positions in both languages',
+    (reason) => {
+      const content = <CheckInputs value={{ ...flowInput, reasons: [reason, reason] }} />;
+      const view = render(<LanguageProvider>{content}</LanguageProvider>);
+      expect(screen.getAllByText(reason)).toHaveLength(2);
+      view.unmount();
+      localStorage.setItem(PREFERENCE_KEY, 'ko');
+      render(<LanguageProvider>{content}</LanguageProvider>);
+      expect(screen.getAllByText(reason)).toHaveLength(2);
+    },
+  );
   it.each(['en', 'ko'])(
     'uses actual publication facts for the recording instruction in both capture surfaces in %s',
     (locale) => {

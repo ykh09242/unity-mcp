@@ -4,6 +4,9 @@ import { useI18n } from './i18n';
 import { inputSummary, inputGroupLabels } from './flow-inputs';
 import type { InputCounts } from './flow-inputs';
 
+function inputReasonLabel(reason: string): string {
+  return Object.hasOwn(flowReasonLabels, reason) ? flowReasonLabels[reason] || reason : reason;
+}
 function Counts({ counts }: { readonly counts: InputCounts }) {
   const i18n = useI18n();
   const labels = [
@@ -46,9 +49,7 @@ export function CheckInputs({ value }: { readonly value: Json | undefined }) {
       <Counts counts={summary.counts} />
       {summary.nextAction && <p className="flow-next-action">{i18n.t(summary.nextAction)}</p>}
       {summary.reasons[0] && (
-        <p className="lane-warning">
-          {i18n.warning(flowReasonLabels[summary.reasons[0]] || summary.reasons[0])}
-        </p>
+        <p className="lane-warning">{i18n.warning(inputReasonLabel(summary.reasons[0]))}</p>
       )}
       <details className="lane-details">
         <summary>{i18n.t('Input details')}</summary>
@@ -64,7 +65,7 @@ export function CheckInputs({ value }: { readonly value: Json | undefined }) {
         {summary.reasons.length > 1 && (
           <ul>
             {summary.reasons.slice(1).map((reason, index) => (
-              <li key={index}>{i18n.warning(flowReasonLabels[reason] || reason)}</li>
+              <li key={index}>{i18n.warning(inputReasonLabel(reason))}</li>
             ))}
           </ul>
         )}
