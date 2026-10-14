@@ -1037,3 +1037,21 @@ def test_selected_provider_missing_capture_is_nonpassing_but_submit_can_continue
     # Then it remains nonpassing, but an ordinary independent implementation receipt may submit.
     assert draft["receipt"]["acceptance_complete"] is False
     assert fixture.run("submit", "S01", "--owner", "worker", "--receipt", fixture.receipt()) == 0
+
+
+@pytest.mark.parametrize("adopted", [False, True])
+def test_publication_guard_allows_new_planned_task_without_existing_identity(fixture, adopted):
+    # Given canonical existing tasks, optionally with adopted verification history.
+    if adopted:
+        assert fixture.claim() == 0
+        record(fixture, request(fixture))
+    state = fixture.program.load()
+    future = deepcopy(state)
+    new_task = deepcopy(future["tasks"][1])
+    new_task.update({"id": "new-planned", "candidate_paths": ["src/new-planned.py"]})
+    future["tasks"].append(new_task)
+    # When a reviewed admission/split proposal reaches the shared publication guard.
+    guard = verification.publication_guard(fixture.program, future)
+    # Then newly planned identity is not looked up as an existing completion transition.
+    assert guard is None
+    assert fixture.program.path("backlog.json").read_bytes() == fp.canonical(state)

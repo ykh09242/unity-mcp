@@ -1797,16 +1797,23 @@ def publication_guard(program: ProgramAccess, future: Record) -> Callable[[], No
         ref for item in appended for ref in _items(item["evidence"], "verification evidence")
     ]
     old_refs = set()
+    original_tasks: dict[str, Record] = {}
     for task_value in _items(original.get("tasks", []), "tasks"):
-        for attempt_value in _items(_record(task_value, "task").get("attempts", []), "attempts"):
+        original_task = _record(task_value, "task")
+        original_tasks[str(original_task["id"])] = original_task
+        for attempt_value in _items(original_task.get("attempts", []), "attempts"):
             for ref in _items(_record(attempt_value, "attempt").get("evidence", []), "evidence"):
                 old_refs.add(core.digest(ref))
     relied: list[tuple[str, Record, Record]] = []
     completed_tasks = []
     for task_value in _items(future.get("tasks", []), "tasks"):
         task = _record(task_value, "task")
-        old_task = program.task(original, str(task["id"]))
-        if task.get("status") == "done" and old_task.get("status") == "review":
+        old_task = original_tasks.get(str(task["id"]))
+        if (
+            task.get("status") == "done"
+            and old_task is not None
+            and old_task.get("status") == "review"
+        ):
             validate_completion(program, original, str(task["id"]))
             completed_tasks.append(str(task["id"]))
         for attempt_value in _items(task.get("attempts", []), "attempts"):
