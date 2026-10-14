@@ -433,6 +433,8 @@ progress::-moz-progress-bar {
 .objective h3.objective-title {
   font-size: 20px;
   margin-block-end: var(--s4);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .objective details {
   margin-block-start: var(--s4);
