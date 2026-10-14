@@ -10,6 +10,17 @@ import { korean } from './translations';
 
 export type Language = 'en' | 'ko';
 export const PREFERENCE_KEY = 'work-program-language';
+const personnelFields = ['model_id', 'reasoning_effort', 'provenance', 'observed_status'] as const;
+export type PersonnelField = (typeof personnelFields)[number];
+export function isPersonnelField(value: string): value is PersonnelField {
+  return personnelFields.some((field) => field === value);
+}
+const unverifiedLabels: Readonly<Record<PersonnelField, string | null>> = {
+  model_id: null,
+  reasoning_effort: null,
+  provenance: 'Provenance unverified',
+  observed_status: 'Status not verified',
+};
 type MessageKey = keyof typeof korean;
 function messageKey(value: string): value is MessageKey {
   return Object.prototype.hasOwnProperty.call(korean, value);
@@ -44,6 +55,15 @@ export function translationTools(locale: Language) {
   const display = (value: Json | undefined, fallback = 'Unknown') => {
     if (value === null || value === undefined || value === '') return t(fallback);
     return typeof value === 'number' ? number(value) : originalDisplay(value);
+  };
+  const personnel = (field: PersonnelField, value: Json | undefined) => {
+    if (value === null || value === undefined || value === '') return t('Not recorded');
+    const unverified = unverifiedLabels[field];
+    return field === 'model_id'
+      ? display(value)
+      : value === 'unknown' && unverified
+        ? t(unverified)
+        : t(originalHuman(value));
   };
   const date = (value: Json | undefined) => {
     if (typeof value !== 'string' || !value) return t('Not recorded');
@@ -91,6 +111,7 @@ export function translationTools(locale: Language) {
     t,
     number,
     display,
+    personnel,
     date,
     warning,
     human: (value: Json | undefined) => t(originalHuman(value)),

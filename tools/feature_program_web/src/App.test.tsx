@@ -580,7 +580,7 @@ describe('work program user outcomes', () => {
     const comparison = panel.querySelector<HTMLElement>('.history-comparison section');
     if (!comparison) throw new Error('Settings comparison missing');
     expect(within(comparison).getByText('Current settings').parentElement?.textContent).toContain(
-      'Unknown',
+      'Not recorded',
     );
     expect(within(panel).queryByText('unrelated-current-model')).toBeNull();
     expect(within(panel).queryByText('Unrelated history')).toBeNull();

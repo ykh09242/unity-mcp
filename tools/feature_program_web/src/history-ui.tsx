@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useI18n } from './i18n';
+import { isPersonnelField, useI18n } from './i18n';
 import { usePresentation } from './presentation-ui';
 import { items, record, records, safeUrl, string } from './model';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
@@ -228,7 +228,9 @@ function Compare({
                   ? 'Unchanged'
                   : row.status === 'different'
                     ? 'Different'
-                    : 'Unknown',
+                    : isPersonnelField(row.field)
+                      ? 'Comparison unavailable'
+                      : 'Unknown',
               )}
             </span>
           </h5>
@@ -241,7 +243,11 @@ function Compare({
             ).map(([key, value], index) => (
               <div key={key}>
                 <h6>{i18n.t(labels[index] || '')}</h6>
-                <Text value={value} />
+                {isPersonnelField(row.field) ? (
+                  <span className="history-text">{i18n.personnel(row.field, value)}</span>
+                ) : (
+                  <Text value={value} />
+                )}
               </div>
             ))}
           </div>
@@ -815,9 +821,12 @@ export function StaffingHistory({
               <Facts
                 values={[
                   ['Reason', event.reason],
-                  ['Model', record(event.metadata).model_id],
-                  ['Reasoning', record(event.metadata).reasoning_effort],
-                  ['Provenance', record(event.metadata).provenance],
+                  ['Model', i18n.personnel('model_id', record(event.metadata).model_id)],
+                  [
+                    'Reasoning',
+                    i18n.personnel('reasoning_effort', record(event.metadata).reasoning_effort),
+                  ],
+                  ['Provenance', i18n.personnel('provenance', record(event.metadata).provenance)],
                   ['Previous actor', event.predecessor_id],
                   ['Next actor', event.successor_id],
                 ]}

@@ -100,9 +100,12 @@ export function Workload({
                       <div className="allocation-settings">
                         <span className="muted" aria-label={i18n.t('Saved settings')}>
                           {i18n.human(index.actors.get(row.owner)?.role)} ·{' '}
-                          {i18n.display(index.actors.get(row.owner)?.model_id)} ·{' '}
-                          {i18n.human(index.actors.get(row.owner)?.reasoning_effort)} ·{' '}
-                          {i18n.human(index.actors.get(row.owner)?.provenance)}
+                          {i18n.personnel('model_id', index.actors.get(row.owner)?.model_id)} ·{' '}
+                          {i18n.personnel(
+                            'reasoning_effort',
+                            index.actors.get(row.owner)?.reasoning_effort,
+                          )}{' '}
+                          · {i18n.personnel('provenance', index.actors.get(row.owner)?.provenance)}
                         </span>
                         <StaffingHistory actor={index.actors.get(row.owner) || {}} />
                       </div>

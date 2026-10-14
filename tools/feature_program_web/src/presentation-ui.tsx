@@ -107,7 +107,7 @@ export function ContentLanguage({ snapshot }: { readonly snapshot: Snapshot }) {
       </summary>
       <p>
         {i18n.t(
-          'Reviewed content follows the recorded session language. Interface language is separate. Originals and technical identities are preserved.',
+          'Session language is separate from the interface. Originals and technical IDs are preserved.',
         )}
       </p>
       <p>

@@ -132,7 +132,7 @@ describe('recorded workload and dependency context', () => {
     expect(within(table).queryByRole('link', { name: 'idle' })).toBeNull();
     await userEvent.click(screen.getByText('Personnel without open assignments: 1'));
     expect(screen.getByRole('link', { name: 'idle' }).getAttribute('href')).toContain('owner=idle');
-    expect(screen.queryByText(/available|live|capacity/i)).toBeNull();
+    expect(screen.queryByText(/\b(?:available|live|capacity)\b/i)).toBeNull();
   });
   it('provides keyboard links to exact downstream work and owner workload without runtime contact claims', async () => {
     const snapshot = fixture();

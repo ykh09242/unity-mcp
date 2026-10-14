@@ -64,6 +64,12 @@ export const korean = {
   'Retained history': '보존된 이력',
   'Full task context and evidence': '작업 내용과 근거',
   'Content language': '내용 언어',
+  'Session language is separate from the interface. Originals and technical IDs are preserved.':
+    '세션 언어는 화면 언어와 별개예요. 원문과 기술 ID는 보존돼요.',
+  'Tasks are read only; use the program tool to change them. Enabled question answers can be saved here.':
+    '작업은 읽기 전용이며 프로그램 도구에서 변경해요. 답변이 활성화되면 여기에서 저장할 수 있어요.',
+  'Snapshot, fetch and personnel observation times are separate. Recorded ownership is not live presence.':
+    '기록 생성·조회·담당자 관찰 시각은 각각 달라요. 기록된 담당은 현재 접속 상태를 뜻하지 않아요.',
   'Original text and sources': '원문과 출처',
   'Reviewed content follows the recorded session language. Interface language is separate. Originals and technical identities are preserved.':
     '검토된 내용은 세션 언어로 표시해요. 화면 언어와는 별개이며 원문과 기술 식별자는 그대로 보존돼요.',
@@ -375,6 +381,9 @@ export const korean = {
   'Program navigation': '프로그램 탐색',
   'Program content': '프로그램 내용',
   Views: '화면',
+  'Provenance unverified': '설정 출처 미확인',
+  'Status not verified': '상태 미확인',
+  'Comparison unavailable': '비교 불가',
   Unknown: '알 수 없음',
   unknown: '알 수 없음',
   active: '활성',
