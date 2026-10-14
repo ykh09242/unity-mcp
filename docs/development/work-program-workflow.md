@@ -84,6 +84,17 @@ context and supervision load, without a fixed worker count. Verify native contac
 runtime observations; retain inherited or unknown settings honestly. Distinguish actual
 implementation from preparation, research and review in progress reports.
 
+Use one review-obligation queue for recorded verification lanes, submitted task reviews and
+required-check gaps. Count and order the complete assessed facts before reducing the display;
+a short visible lane list cannot establish that no obligation remains. Distinguish the next
+verifier, implementation owner and blocker resolver. Explicitly choose the verifier when
+preparing an assignment; a saved actor status is not current availability or capacity.
+A superseded request recorded as running remains resource-use uncertainty until an actual
+terminal observation. Use `review-queue` and `review-assignment` for this read/preparation step.
+A queue row neither starts a worker nor adds a mandatory lane to a
+legacy task. Resolve routine contracts directly with the responsible peer and escalate only
+missing authority, ownership overlap or consequential unresolved decisions.
+
 Use a compact allocation record for each assignment in task notes or linked private evidence:
 
 | Field | Required record |
@@ -179,11 +190,53 @@ to remove. Recheck actual use before releasing or cleaning it up.
 Capture evidence while checks run: exact inputs, command and working directory or manual
 procedure, environment, output, actual outcome and observed times when available. Preserve
 failed, interrupted and incomplete observations. The tool resolves current context and
-references; preparation does not execute a command or authenticate a claimed result.
+references; record/input preparation does not execute a command or authenticate a claimed
+result. The explicit `verification-run` invocation executes live argv and captures its
+actual result; it does not itself publish a finished record or accept the task.
 Use observation-driven submission preparation to avoid recopying known hashes and check
 facts, then provide actual criterion acceptance evidence through the ordinary submit flow.
 Recover transcript-only evidence honestly when needed; do not repeat an unchanged successful
 check solely to obtain a differently formatted receipt.
+
+### Lean execution and record-only recovery
+
+Keep these identities separate: writable ownership, a check's executed inputs, manual
+criterion acceptance inputs, the actual provider-tested tree and aggregate/browser inputs.
+Declare the source, tests, configuration, immutable fixture/build assets and environment
+that affect each check. Include imported test helpers and command-loaded plugins; do not
+use a whole-program union as every check's profile. A broad suite still needs its actual
+full input closure. Missing or unknown dependencies prevent a passing reuse assessment.
+Keep directory membership, missing paths and raw bytes exact. A lock file does not certify
+the installed environment, and a matching owned scope does not prove the whole checked input.
+
+Use the explicit `verification-run` invocation for one actual command, then prepare records
+from its
+immutable result. Supply live argv, working directory, meaningful runtime/environment and
+limits. Stored method, plan and canonical command text remain inert. Capture before/after
+inputs, both streams, selected artifacts, actual exit, interruption and source drift.
+Timeout, unsupported supervision, unresolved descendant cleanup, stream overflow, missing
+artifacts and incomplete finalization remain visible; exit zero alone cannot establish a
+passing behavioral check. Do not hold a canonical mutation lock while the child executes.
+Manual acceptance and actual native/provider observations remain distinct evidence.
+
+For explicitly compatible targets, attach the same original capture byte-for-byte inside
+each current task/attempt evidence directory. Retain its original executor, invocation,
+times and origin references. Assess each target's authority, obligations, attempt/submission,
+method/environment, input completeness and latest adverse facts separately. Attachment
+neither runs the command again nor creates passing results for another task by itself.
+A different task's evidence prefix or review cannot be borrowed as acceptance.
+
+Preflight an intended record sequence against each projected predecessor, including later
+artifact paths, schemas, authority, source and acceptance prerequisites, before publishing
+its first stage. Closure preparation may materialize inert task-local evidence/documents;
+those files are not canonical committed stages. Every real stage still rechecks current
+guards. After interruption, inspect
+the exact saved canonical record and immutable receipt before deciding what remains. Retain
+already committed failed/nonpassing stages; publish only uncommitted stages. Recover a
+postcommit view failure with the normal render recovery rather than replaying its ID.
+Historical backlog hashes describe historical observations; they are not the next mutation's
+revision. Record-only retry must not rerun an unchanged successful check or perform remote
+merge/cleanup. Keep human criterion decisions and independent verdicts explicitly supplied.
 
 A reviewer returns all actionable findings discovered in the assigned bounded pass, with
 source identity, criterion or check, evidence, correction owner and affected verification.

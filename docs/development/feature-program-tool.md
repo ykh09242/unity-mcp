@@ -695,6 +695,194 @@ clock and as-of context; task state age or a publication timestamp is not a wait
 See the [parallel verification workflow](work-program-workflow.md#parallel-verification)
 for lane ownership, resource reservations, finding bundles and the final director's decisions.
 
+## Precise inputs and a lean verification flow
+
+Input and queue preparation use the same selected program as verification records:
+
+| Command | Purpose |
+| --- | --- |
+| `inputs-prepare --check-id ID --path PATH [--path PATH] [--complete]` | Prepare an explicit finite check declaration; mark completeness only after checking all dependencies. |
+| `inputs-capture --manifest JSON --environment JSON --method JSON [--git-revision REVISION]` | Capture declared working-tree inputs or exact local Git-object inputs with explicit environment/method identities. |
+| `inputs-compare --before JSON --after JSON` | Compare captured identity conservatively without executing recorded methods. |
+| `review-queue` | Inspect the complete assessed obligations through one bounded ordered queue. |
+| `review-assignment --input JSON` | Prepare an assignment with an explicitly chosen verifier; publish through ordinary preview and verification-record. |
+| `verification-environment [--environment JSON] -- EXECUTABLE ARGS` | Observe executable and safe declared environment identities without launching it. |
+| `verification-observation --capture JSON --request JSON` | Prepare a finished event from a sealed capture reference and its current request binding. |
+| `closure-readiness` | Inspect exact remaining task, verification, review and delivery prerequisites. |
+| `closure-prepare --input JSON [--result-path PATH]` | Prepare a supported closure input or preflight a complete record plan; optionally retain its actual result immutably. |
+
+
+JSON arguments name frozen files relative to the selected program. These preparation/read
+commands do not execute a check, choose a worker, accept a task or publish a canonical record.
+`closure-prepare` may materialize inert private evidence as described below; it is not an
+execution command. `verification-run` is the explicit command-execution entry point.
+
+Keep check applicability separate from writable ownership. A check input description names
+source, tests, configuration and immutable fixture/build/served artifacts, its declared
+obligations, environment and method, plus completeness and unknown dependencies. Capture
+exact files and directory membership, including missing paths and defined exclusions.
+Matching source paths alone do not establish the executing runtime or private fixture.
+An exact local Git-object capture proves object bytes at the stated revision; it does not
+prove execution, remote authentication or equivalence after newline normalization.
+
+A check can remain applicable after an unrelated change only when its complete declared
+inputs, method/environment and obligations still match. Canonical owned-write freshness
+and task/attempt/submission guards continue independently. Broader manual acceptance or
+aggregate/browser evidence must retain its actual broader read scope. Legacy requests
+without new input metadata keep their existing behavior; malformed explicit data fails.
+Newer failed, canceled, unavailable or incomplete observations cannot revive older success.
+
+An explicitly invoked execution capture records one actual command. Its live argv is the
+execution request; recorded request/method/plan text is never evaluated. Before/after input
+identity, actual executable/runtime, cwd, limits, timestamps, process outcome, bounded raw
+streams and selected artifacts remain linked to the original request. Capture completeness,
+process result, canonical publication, task review and provider delivery are separate facts.
+Unsupported supervision or unresolved interruption/output/artifact finalization cannot be
+reported as a complete passing capture. Recording its outcome remains a later guarded step.
+
+The practical sequence is to declare inputs and verification responsibility, capture the
+check once, prepare its attributable observation and task-local evidence, review missing
+facts, and use the ordinary submission/review/delivery flow. Exact-byte attachments may
+serve explicitly compatible current task obligations while preserving one original capture.
+Each target retains separate authority, check/criterion mapping, source, method/environment,
+attempt/submission and adverse-event validation. This is neither automatic cross-task
+acceptance nor a shared evidence namespace or cache.
+
+Use the complete recorded review obligations to identify the next verifier, review decision
+or missing required check. Request fields may be absent for ordinary task reviews/check
+gaps. Readiness and totals come from complete assessed facts before display reduction;
+queue rows do not prove live capacity, authorize claims or execute assignments.
+
+Preparation of a local publication sequence validates every intended stage against the
+projected preceding state. A real write still checks fresh authority, source, artifact and
+revision guards. Resume recognizes exact already saved records, including failed results
+and committed view failures; only uncommitted stages remain to publish. Render recovery
+is separate. No preparation/import/preview/resume operation executes stored commands,
+replays the original process, inspects remote state or performs physical cleanup.
+
+### Declare, run once, then record
+
+`inputs-prepare` supports `format_python`, `scoped_tests`, `web_build` and `manual`. It emits
+a manifest with `schema_version: 1`, `checks`, categorized `groups` (`source`, `test`,
+`config`), `artifact_refs` and `completeness`. Selectors bind path, file/directory kind,
+required presence and applicable check IDs. The default is unknown completeness. Inspect
+shared imports, loaded plugins/configuration, runtime and artifact dependencies before
+using `--complete`; a known template does not discover them automatically.
+
+Environment JSON names safe `facts`, `unknowns` and an optional label. The environment
+reader adds exact executable identity and hashed allowlisted environment values without
+invoking a version probe. Method JSON describes actual argv, cwd and execution kind.
+These identities must match the later live invocation. Use program-relative frozen files;
+immutable private fixture/build evidence is represented by references, not `.work` source
+selectors. An adopted verification request may use `manifest_path` or inline
+`input_manifest`, `input_capture_path`, `environment_identity` and `method_identity`.
+The tool resolves current task/source and frozen identities instead of requiring copied
+context hashes. Prepare and record the request before invoking its execution.
+
+For an already adopted current request, the run binding JSON supplies `task_id`, `actor_id`,
+`request_id`, integer `request_version`, fresh `expected_revision`, actual `reason` and
+`next_action`; optional `run_id` names the capture. Task/actor/revision must match the CLI.
+Place capture evidence under the current task/attempt in a new directory. This specimen
+requires a real claimed task, adopted request, inspected inputs and an authorized check;
+its example script and placeholder revision are not passing evidence:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example verification-run --owner worker-example --request evidence/EXAMPLE-1/attempt-1/run-binding.json --expected-revision CURRENT_REVISION --capture-dir evidence/EXAMPLE-1/attempt-1/run-1 --timeout-seconds 120 --stream-limit-bytes 1048576 EXAMPLE-1 -- python tools/example_check.py
+```
+
+The `--` separator and live executable/arguments are required. Cwd is an existing repository
+directory (`--cwd .` by default). Supported execution kinds are test, static, compile and
+native; the label does not prove native execution. Timeout is positive and at most 3600
+seconds; per-stream limit is positive and at most 8 MiB. Repeated `--artifact` selects up to
+16 repository artifacts, each at most 8 MiB and at most 32 MiB in total. Defaults are
+300 seconds and 1 MiB per stream. Implicit `.bat`, `.cmd` and `.ps1` wrappers are rejected; use an
+explicit interpreter only within the authorized invocation. Unsupported supervision and
+unresolved descendant/stream/artifact cleanup remain incomplete results. An unresolved
+Windows launch retains unknown outcome and unresolved cleanup; a late child is not resumed.
+On POSIX, the configured timeout cannot interrupt a blocked native process-creation call
+before the OS returns. Limits and supervision therefore do not promise a hard launch-time
+bound on every platform; retain incomplete evidence rather than claiming success.
+
+The runner briefly guards authority/location/current revision, reserves immutable start
+and capture evidence, releases the canonical lock, then executes exactly that live argv.
+It retains raw output, input-before/after and actual process/capture outcomes. The returned
+`publication: pending` and false acceptance mean that execution did not publish a canonical
+finished event or accept work. A prepared observation is an existing `verification-record`
+input; save it under `evidence/_verification/attempt-1/` and use normal preview/record.
+If observation preparation was unavailable after the actual run, correct the current
+binding and use `verification-observation --capture JSON --request JSON` against the
+sealed capture; do not invoke the process again just to package its result. Capture JSON
+there is a `{path, sha256}` reference file, not an edited run result.
+
+### Preflight and resume records
+
+`closure-prepare` input selects `kind: plan`, `attachments`, `delivery`, `completion`,
+`cleanup`, `applicability` or `postconditions`. Non-plan kinds put their ordinary preparation request under
+`input`. A plan supplies `owner_id`, explicit source `scope`, optional immutable `refs` and
+`attachments`, and nonempty `stages`. Each stage has `id`, an existing allowed `operation`,
+its explicit `payload`, actual `observed_at`, and optional inert `documents`. No arbitrary
+command execution is permitted by a stage. Returned ordinary delivery/completion/cleanup
+inputs still need actual criteria, independent review, current provider and cleanup facts.
+
+Attachment rows name `origin_ref: {path, sha256}`, task/attempt and exact destination.
+Explicit attachment `materialize: true`, and plan preparation, can create new inert
+private evidence files; an existing destination must already have identical bytes.
+Stage documents likewise contain explicit ordinary JSON and may bind their projected
+expected revision mechanically. Full projected-sequence preflight happens before the
+first canonical publication, not before all evidence-file creation. A failed preparation
+may leave those immutable inert files; inspect and reuse exact bytes without overwriting
+or treating their existence as a committed stage.
+
+Delivery and applicability preparation can explicitly materialize individual ordinary
+receipts through a top-level `receipt_destinations` map from task ID to its exact current
+attempt evidence path. Completion uses a top-level `receipt_destination` under coordination
+evidence. Delivery task `assembly_prefix` prepares exact task-local copies of shared
+immutable evidence and policy attachments; only typed policy-reference locations may be
+remapped with retained reversible origin proof. Raw capture facts and per-task authority,
+source, prefix and obligation checks remain unchanged. None of these copies publishes a
+canonical delivery/completion or makes missing required facts pass.
+
+For an actual canonical postcondition inspection, use `kind: postconditions` and
+`input: {}`. It reports current completion/review references and whether observed current
+source matches completion. Native final display stays separately not assessed: local
+postconditions cannot certify a browser observation or finish the native tool goal.
+
+`--result-path` retains exact successful preparation output or an actual failed-preparation
+JSON document. Use a new current task/attempt evidence path or
+`evidence/_coordination/attempt-1/`; changed bytes at an existing path reject. Failed
+preparation stays `status: failed`, false acceptance and CLI exit 1, even when its failure
+document was saved successfully. Do not treat artifact creation or a prior success as
+current preflight. No canonical record is published by this result capture.
+
+To inspect an explicitly selected immutable plan/result, `snapshot --closure-plan JSON`
+uses the same producer assessment that the local web service receives with
+`--closure-plan JSON`. This option selects data to display; it does not create a new plan,
+run stages or accept work. Preparation, preflight, publication and next responsibility stay
+separate. Missing/stale/malformed selected evidence remains unavailable or nonpassing,
+while legacy views without a selected plan keep their existing behavior.
+
+Save the returned plan unchanged at a new program-relative evidence path. Resume requires
+its owner and the fresh current registry revision:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example closure-resume --plan evidence/_coordination/attempt-1/record-plan.json --owner director-example --expected-revision CURRENT_REVISION
+```
+
+This command publishes only exact uncommitted normal record stages under fresh guards.
+Its owner must satisfy the normal current director or existing stage task authority.
+Verification-record plan stages without positional task binding require the current
+director (or the existing legacy leader); knowing an actor ID is insufficient. Direct
+`verification-record` still supports the assigned verifier under its normal task guards.
+Already committed failed/nonpassing stages are retained. A `view_recovery_required` result
+names `render`; recover the derived view before continuing, without repeating the saved
+stage. Source, producer, input or predecessor drift requires refreshed preparation of the
+remaining records. Historical hashes and receipt filenames must not be rewritten to force
+a match. Resume never executes the original captured command, a remote merge or cleanup.
+
+See the [lean workflow](work-program-workflow.md#lean-execution-and-record-only-recovery)
+and [read-only authoring](#read-only-authoring) for the existing acceptance and preview
+boundaries. Actual review, current PR/beta CI and the director's final acceptance still apply.
+
 ## Explicit criterion coverage and acceptance diagnostics
 
 Coverage annotations are optional, append-only records outside objective and task definitions.
@@ -908,6 +1096,22 @@ or rewrite source text, saved answers or task IDs. Dates and numbers follow the 
 For dashboard changes, use the [web interface review procedure](web-ui-review.md) to choose
 proportionate interaction and visual checks. The [annotated design resources](web-ui-resources.md)
 explain the relevant principles, application checks and limits.
+
+### Review queue and current flow summaries
+
+Work keeps its existing Task ledger and Review queue modes. Queue readiness and responsible
+actor filters follow the producer's recorded order, exact lane/task-review/check-gap
+identities and honest omitted totals. Team uses the same next-responsibility facts;
+Overview links to the queue. Missing current capacity or an actor's saved status does not
+mean that actor is available, and these views neither assign nor execute work.
+
+Task Information presents Check inputs, Captured execution and Objective closure summaries
+with the essential next action before sibling one-level details. Input applicability,
+process outcome/capture completeness, preparation/publication, accepted task review and
+delivery remain distinct. Selecting a closure plan on the service supplies the recorded
+producer assessment, not new approval. No additional rail page, board or browser execution,
+assignment or arbitrary write control is introduced. Existing question responses retain
+their separate authorized surface.
 
 ## Director questions and answers
 

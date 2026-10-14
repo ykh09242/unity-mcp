@@ -60,6 +60,25 @@ inspects actual current PR jobs and receiving-beta jobs, refreshes head/base/rev
 immediately before the authorized expected-head squash, and records the returned mapping.
 Cleanup remains a separate observed action under the existing usage and preservation rules.
 
+### Precise execution inputs and attached evidence
+
+Preserve the actual provider-tested checkout and command input closure when preparing local
+verification records. Owned task paths, declared test/config/runtime inputs and reviewed
+PR head are different identities. A test-merge capture retains its exact base/head relation;
+a scoped byte comparison does not certify an unrelated local runtime or replace required
+provider execution. Do not normalize raw Git/file bytes to make differing captures match.
+
+One original run's immutable raw evidence may be attached byte-for-byte for explicitly
+compatible task obligations. Each target keeps its own current source/attempt/submission,
+required checks, authority and evidence paths. Retain the original run/attempt/job/step,
+method/environment and outcome; attachment or closure preparation is not a new CI run.
+Failures, interruption, missing output and policy skips survive packaging and retries.
+`closure-resume` performs record-only publication recovery, never provider execution or a
+remote merge. The explicitly invoked `verification-run` command executes its supplied live
+argv; that local execution cannot substitute for required actual provider checks.
+Actual current PR/beta checks, immediate expected-head premerge inspection, independent
+acceptance and safe physical cleanup remain unchanged requirements.
+
 ## Runner images
 
 All GitHub-hosted Linux jobs use `ubuntu-26.04` explicitly, including validation,
