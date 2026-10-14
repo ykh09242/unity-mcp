@@ -341,6 +341,7 @@ def _input_shape(value: Record) -> None:
                         "input_capture_before",
                         "input_capture_after",
                         "run_capture_ref",
+                        "attachment_manifest_ref",
                     }
                     _require(value.get("result") in RESULTS, "Invalid observed result")
                     method = _record(value.get("method"), "observation method")
@@ -445,9 +446,18 @@ def _input_shape(value: Record) -> None:
         )
     if "provider_ref" in value:
         _ref(value["provider_ref"])
-    for name in ("input_capture_before", "input_capture_after", "run_capture_ref"):
+    for name in (
+        "input_capture_before",
+        "input_capture_after",
+        "run_capture_ref",
+        "attachment_manifest_ref",
+    ):
         if name in value:
             _ref(value[name])
+    _require(
+        "attachment_manifest_ref" not in value or "run_capture_ref" in value,
+        "Attachment manifest requires exact execution origin",
+    )
     _require(
         ("input_capture_before" in value) == ("input_capture_after" in value),
         "Both actual input capture references are required",
@@ -562,6 +572,87 @@ def _capture(program: ProgramAccess, name: str, reads: _Reads) -> Record:
     return {"path": name, "sha256": core.sha(content)}
 
 
+def _attachment_manifest_refs(
+    program: ProgramAccess, value: Record, context: Record, reads: _Reads
+) -> list[Json]:
+    """Validate typed exact-byte copies, including empty streams, without waiving artifact policy."""
+    if "attachment_manifest_ref" not in value:
+        return []
+    manifest_ref = _ref(value["attachment_manifest_ref"])
+    origin_ref = _ref(value["run_capture_ref"])
+    prefix = f"evidence/{value['task_id']}/attempt-{context['attempt']}/"
+    _require(
+        str(manifest_ref["path"]).startswith(prefix), "Attachment manifest escaped target scope"
+    )
+    program.verify_refs([manifest_ref, origin_ref], reads.artifacts)
+    manifest = _core().read_json(program.path(str(manifest_ref["path"])), budget=reads.artifacts)
+    _require(
+        set(manifest) == {"schema_version", "task_id", "attempt", "origin_ref", "attachments"}
+        and type(manifest.get("schema_version")) is int
+        and manifest["schema_version"] == 1,
+        "Invalid attachment manifest schema",
+    )
+    _require(
+        manifest["task_id"] == value["task_id"]
+        and type(manifest["attempt"]) is int
+        and manifest["attempt"] == context["attempt"]
+        and _ref(manifest["origin_ref"]) == origin_ref,
+        "Attachment manifest target or origin mismatch",
+    )
+    run = _execution()._read_capture(program, origin_ref, reads.artifacts)
+    allowed = [origin_ref, _ref(run["start_ref"])]
+    for name in ("input_capture_before", "input_capture_after"):
+        if run.get(name) is not None:
+            allowed.append(_ref(run[name]))
+    for output in _record(run["outputs"], "captured outputs").values():
+        if output.get("path") is not None:
+            allowed.append(_ref({"path": output["path"], "sha256": output["sha256"]}))
+    for artifact in _items(run["artifacts"]["captured"], "captured artifacts"):
+        allowed.append(_ref({"path": artifact["path"], "sha256": artifact["sha256"]}))
+    rows = _items(manifest["attachments"], "exact attachments")
+    _require(bool(rows) and len(rows) <= MAX_RECORDS, "Invalid attachment count")
+    refs: list[Json] = [manifest_ref, origin_ref]
+    targets: set[str] = set()
+    for raw in rows:
+        row = _record(raw, "exact attachment")
+        _require(
+            set(row) == {"origin_ref", "attachment_ref", "byte_count"}, "Invalid attachment row"
+        )
+        source, target = _ref(row["origin_ref"]), _ref(row["attachment_ref"])
+        _require(source in allowed, "Attachment origin is not sealed execution evidence")
+        _require(
+            str(target["path"]).startswith(prefix)
+            and target["path"] != manifest_ref["path"]
+            and target["path"] != source["path"],
+            "Attachment copy escaped target scope or reused its origin",
+        )
+        folded = str(target["path"]).casefold()
+        _require(folded not in targets, "Duplicate attachment target")
+        targets.add(folded)
+        _require(
+            type(row["byte_count"]) is int and row["byte_count"] >= 0, "Invalid attachment size"
+        )
+        program.verify_refs([source, target], reads.artifacts)
+        source_bytes = reads.artifacts.read(program.path(str(source["path"])), LIMIT)
+        target_bytes = reads.artifacts.read(program.path(str(target["path"])), LIMIT)
+        _require(
+            source["sha256"] == target["sha256"]
+            and source_bytes == target_bytes
+            and len(target_bytes) == row["byte_count"],
+            "Attachment bytes or size differ from execution origin",
+        )
+        refs.extend([source, target])
+    return refs
+
+
+def _verify_attachment_evidence(program: ProgramAccess, item: Record, reads: _Reads) -> None:
+    required = _attachment_manifest_refs(program, item["input"], item["context"], reads)
+    _require(
+        all(ref in item["evidence"] for ref in required),
+        "Attachment transitive references are not frozen evidence",
+    )
+
+
 def validate(state: Record) -> None:
     """Reject malformed supplied history without adding prerequisites to legacy programs."""
     seen: dict[str, Record] = {}
@@ -609,6 +700,8 @@ def validate(state: Record) -> None:
         _require(item["receipt"] in refs, "Verification input is not frozen evidence")
         for ref in refs:
             _ref(ref)
+        if "attachment_manifest_ref" in value:
+            _require(value["attachment_manifest_ref"] in refs, "Attachment manifest is not frozen")
         context = _record(item["context"], "resolved verification context")
         _require(
             context.get("task_id") == value["task_id"]
@@ -748,6 +841,9 @@ def verify_history(program: ProgramAccess, state: Record, budget: ReadBudget | N
     validate(state)
     reader = budget if budget is not None else _core().ReadBudget(64 * 1024 * 1024)
     program.verify_refs(evidence_references(state), reader)
+    reads = _reads(reader)
+    for item in _records(state):
+        _verify_attachment_evidence(program, item, reads)
     for item in _records(state):
         ref = _ref(item["receipt"])
         raw = _core().read_json(program.path(str(ref["path"])), budget=reader)
@@ -835,6 +931,7 @@ def _applicable(
 ) -> tuple[bool, list[str]]:
     core = _core()
     reads.index(state)
+    _verify_attachment_evidence(program, item, reads)
     request = reads.record_index[str(item["request_id"])]
     value = _record(request["input"], "request")
     current = _context(program, state, str(value["task_id"]), reads)
@@ -1233,6 +1330,7 @@ def prepare_record(
                 "Incomplete or failed execution cannot become passed",
             )
             refs.append(ref)
+        refs.extend(_attachment_manifest_refs(program, value, context, reads))
         if value["kind"] == "finished" and "reuse" in value:
             origin = index.get(str(value["reuse"]["observation_id"]))
             _require(origin is not None, "Unknown reuse origin")
@@ -1372,7 +1470,9 @@ def packet(
             else [],
             "task_criterion_extraction": "unknown",
         },
-        "verification": projection(program, state, reads.artifacts)["tasks"].get(task_id),
+        "verification": bound_projection(
+            projection(program, state, reads.artifacts, limit=None), display=False
+        )["tasks"].get(task_id),
         "reference": _reference(state, "/tasks", task_id),
     }
     reads.recheck(program)
@@ -1860,7 +1960,7 @@ def _input_summary(program: ProgramAccess, request: Record, applicability: str) 
     }
 
 
-def bound_projection(full: Record, *, limit: int = MAX_ROWS) -> Record:
+def bound_projection(full: Record, *, limit: int = MAX_ROWS, display: bool = True) -> Record:
     """Bound already assessed facts once; never recapture inputs or hide counts."""
     _require(type(limit) is int and 0 <= limit <= MAX_RECORDS, "Invalid verification row limit")
     result = deepcopy(full)
@@ -1868,6 +1968,11 @@ def bound_projection(full: Record, *, limit: int = MAX_ROWS) -> Record:
     for task in result["tasks"].values():
         collections.extend([task["lanes"], task["findings"]])
         for lane in task["lanes"]["items"]:
+            # New exact input authoring facts stay internal; display uses the safe summary.
+            if display:
+                context = lane.get("context", {})
+                for key in ("input_manifest", "input_capture"):
+                    context.pop(key, None)
             if lane.get("execution_history") is not None:
                 collections.append(lane["execution_history"])
     for collection in collections:
@@ -1882,11 +1987,17 @@ def projection(
     budget: ReadBudget | None = None,
     *,
     limit: int | None = MAX_ROWS,
+    selected_capture_ref: Record | None = None,
 ) -> Record:
-    """Project recorded phases/outcomes separately from current source applicability."""
+    """Project recorded outcomes and an explicitly selected immutable execution separately."""
     validate(state)
     reads = _reads(budget)
     records = _records(state)
+    selected = (
+        _execution().project_capture(program, state, selected_capture_ref, budget=reads.artifacts)
+        if selected_capture_ref is not None
+        else None
+    )
     requests: dict[tuple[str, str], Record] = {}
     by_request: dict[str, list[Record]] = {}
     requests_by_task: dict[str, list[Record]] = {}
@@ -1898,6 +2009,7 @@ def projection(
         by_request.setdefault(str(item["request_id"]), []).append(item)
         try:
             program.verify_refs(_items(item["evidence"], "verification evidence"), reads.artifacts)
+            _verify_attachment_evidence(program, item, reads)
         except (OSError, _core().ProgramError) as exc:
             integrity[str(value["id"])] = str(exc)
         if value["kind"] == "request":
@@ -2014,6 +2126,7 @@ def projection(
                         "groups": {"total": 0, "shown": 0, "omitted": 0, "items": []},
                     }
             executions = []
+            execution_refs = []
             execution_events = [
                 event
                 for event in records
@@ -2024,6 +2137,7 @@ def projection(
                 origin = event["input"].get("run_capture_ref")
                 if origin is None:
                     continue
+                execution_refs.append(origin)
                 try:
                     program.verify_refs([origin], reads.artifacts)
                     run = _core().read_json(
@@ -2050,9 +2164,47 @@ def projection(
                             "reasons": ["unavailable_capture"],
                         }
                     )
+            if executions and value.get("run_capture_ref") is not None:
+                lanes[-1]["execution_summary"] = executions[-1]
+            if selected is not None and selected["task_id"] == task_id and selected["lane"] == lane:
+                selected_summary = deepcopy(selected["summary"])
+                selected_summary["observation_draft"] = {
+                    key: deepcopy(selected["observation_draft"][key])
+                    for key in ("status", "reasons")
+                }
+                selected_summary["current"] = (
+                    selected["current"] is True
+                    and selected["request_id"] == request["request_id"]
+                    and selected["request_version"] == request["request_version"]
+                )
+                selected_summary["currentness"] = (
+                    "current"
+                    if selected_summary["current"]
+                    else "stale"
+                    if selected["currentness"] == "current"
+                    else selected["currentness"]
+                )
+                selected_summary["reasons"] = list(
+                    dict.fromkeys([*selected_summary["reasons"], *selected["reasons"]])
+                )
+                matches = [
+                    index
+                    for index, origin in enumerate(execution_refs)
+                    if origin == selected_capture_ref
+                ]
+                if matches:
+                    # Distinct observations remain history, even when their raw capture is equal.
+                    selected_summary.update(deepcopy(executions[matches[-1]]))
+                    selected_summary["reasons"] = list(
+                        dict.fromkeys([*selected_summary["reasons"], *selected["reasons"]])
+                    )
+                    executions[matches[-1]] = selected_summary
+                else:
+                    executions.append(selected_summary)
+                if selected_summary["current"]:
+                    # Display actual process facts without changing canonical phase or result.
+                    lanes[-1]["execution_summary"] = selected_summary
             if executions:
-                if value.get("run_capture_ref") is not None:
-                    lanes[-1]["execution_summary"] = executions[-1]
                 lanes[-1]["execution_history"] = {
                     "total": len(executions),
                     "shown": len(executions),
@@ -2142,6 +2294,25 @@ def projection(
             ),
         },
     }
+    if selected is not None:
+        result["selected_execution"] = {
+            key: deepcopy(selected[key])
+            for key in (
+                "schema_version",
+                "task_id",
+                "attempt",
+                "lane",
+                "request_id",
+                "request_version",
+                "current",
+                "currentness",
+                "summary",
+                "reasons",
+            )
+        }
+        result["selected_execution"]["observation_draft"] = {
+            key: deepcopy(selected["observation_draft"][key]) for key in ("status", "reasons")
+        }
     reads.recheck(program)
     if limit is not None:
         result = bound_projection(result, limit=limit)

@@ -1405,3 +1405,425 @@ def test_primary_execution_origin_cannot_be_rebound_to_other_context(fixture):
             ),
         )
     # Then exact run-origin receipt/context identity is independently required.
+
+
+def selected_projection_facts(fixture, monkeypatch, *, current=True, result="passed"):
+    # Adapter fixture only: producer validation and real execution are tested by the runner owner.
+    captured, _, ref = shared_run_fixture(fixture)
+    run = fp.read_json(fixture.program.path(ref["path"]))
+    summary = verification._execution().summarize_capture(run)
+    summary["reported_check_result"] = result
+    if result == "failed":
+        summary["process_result"] = "exited"
+        summary["reasons"] = ["Observed process failed"]
+    facts = {
+        "schema_version": 1,
+        "task_id": "S01",
+        "attempt": 1,
+        "lane": "tests",
+        "request_id": "request-1",
+        "request_version": 1,
+        "current": current,
+        "currentness": "current" if current else "stale",
+        "reasons": [] if current else ["Selected execution is stale"],
+        "summary": summary,
+        "observation_draft": {"status": "prepared", "reasons": [], "payload": "must stay private"},
+        "reference": ref,
+    }
+    seen = []
+
+    def project(program, state, actual_ref, *, budget=None):
+        assert program is fixture.program
+        assert actual_ref == ref
+        assert budget is not None
+        seen.append(actual_ref)
+        return deepcopy(facts)
+
+    monkeypatch.setattr(verification._execution(), "project_capture", project, raising=False)
+    return captured, ref, facts, seen
+
+
+def test_explicit_pending_capture_projects_safe_facts_without_recording(fixture, monkeypatch):
+    # Given an exact producer-validated pending capture selected for its current request.
+    _, ref, _, seen = selected_projection_facts(fixture, monkeypatch)
+    before = fixture.program.path("backlog.json").read_bytes()
+    # When the read-only projection receives that exact immutable reference.
+    full = verification.projection(
+        fixture.program, fixture.program.load(), selected_capture_ref=ref, limit=None
+    )
+    lane = full["tasks"]["S01"]["lanes"]["items"][0]
+    # Then actual process facts appear while canonical chronology and state stay pending.
+    assert lane["phase"] == "requested"
+    assert lane["result"] == "pending"
+    assert lane["execution_summary"]["reported_check_result"] == "passed"
+    assert lane["execution_summary"]["publication"]["status"] == "pending"
+    assert lane["execution_summary"]["current"] is True
+    assert lane["execution_history"]["total"] == 1
+    assert full["selected_execution"]["observation_draft"] == {"status": "prepared", "reasons": []}
+    assert "payload" not in full["selected_execution"]["observation_draft"]
+    assert "reference" not in full["selected_execution"]
+    assert fixture.program.path("backlog.json").read_bytes() == before
+    assert seen == [ref]
+
+
+def test_superseded_selected_capture_is_history_without_current_summary(fixture, monkeypatch):
+    # Given retained selected facts for a superseded request.
+    _, ref, facts, _ = selected_projection_facts(fixture, monkeypatch, current=False)
+    record(fixture, request(fixture, "request-2", supersedes="request-1"))
+    # When the same explicit sealed selection is projected against the new current request.
+    full = verification.projection(
+        fixture.program, fixture.program.load(), selected_capture_ref=ref
+    )
+    lane = full["tasks"]["S01"]["lanes"]["items"][0]
+    # Then it stays visible as stale history and cannot become a current success fallback.
+    assert lane["request_id"] == "request-2"
+    assert "execution_summary" not in lane
+    assert lane["execution_history"]["items"][0]["current"] is False
+    assert full["selected_execution"]["currentness"] == facts["currentness"]
+
+
+@pytest.mark.parametrize("result", ["failed", "unknown"])
+def test_selected_capture_does_not_replace_canonical_adverse_result(fixture, monkeypatch, result):
+    # Given a newer canonical adverse observation and a stale selected older capture.
+    _, ref, _, _ = selected_projection_facts(fixture, monkeypatch, current=False)
+    record(fixture, observation(fixture, "adverse-result", result=result))
+    # When explicitly selected retained process facts are displayed.
+    full = verification.projection(
+        fixture.program, fixture.program.load(), selected_capture_ref=ref
+    )
+    lane = full["tasks"]["S01"]["lanes"]["items"][0]
+    # Then the actual latest canonical outcome and absence of current captured facts survive.
+    assert lane["phase"] == "finished"
+    assert lane["result"] == result
+    assert "execution_summary" not in lane
+    assert lane["execution_history"]["items"][0]["current"] is False
+
+
+def test_selected_recorded_capture_keeps_publication_and_deduplicates_history(fixture, monkeypatch):
+    # Given a capture already referenced by its ordinary recorded observation.
+    captured, ref, _, _ = selected_projection_facts(fixture, monkeypatch)
+    run = fp.read_json(fixture.program.path(ref["path"]))
+    record(
+        fixture,
+        observation(
+            fixture,
+            method=captured["method"],
+            input_before=captured["input_digest"],
+            input_after=captured["input_digest"],
+            input_capture_before=run["input_capture_before"],
+            input_capture_after=run["input_capture_after"],
+            run_capture_ref=ref,
+            artifacts=[ref["path"]],
+        ),
+    )
+    # When that same sealed capture is selected again without a new execution.
+    full = verification.projection(
+        fixture.program, fixture.program.load(), selected_capture_ref=ref
+    )
+    lane = full["tasks"]["S01"]["lanes"]["items"][0]
+    # Then publication remains recorded and the actual run appears once.
+    assert lane["execution_summary"]["publication"]["status"] == "recorded"
+    assert lane["execution_summary"]["publication"]["observation_id"] == "finished-1"
+    assert lane["execution_history"]["total"] == 1
+
+
+def test_new_selected_adverse_process_remains_visible_after_recorded_success(fixture, monkeypatch):
+    # Given a prior canonical success and a newly selected current failed actual process.
+    captured, ref, _, _ = selected_projection_facts(fixture, monkeypatch, result="failed")
+    run = fp.read_json(fixture.program.path(ref["path"]))
+    record(
+        fixture,
+        observation(
+            fixture,
+            method=captured["method"],
+            input_before=captured["input_digest"],
+            input_after=captured["input_digest"],
+            input_capture_before=run["input_capture_before"],
+            input_capture_after=run["input_capture_after"],
+        ),
+    )
+    # When the producer confirms that the explicit selection is the current process fact.
+    full = verification.projection(
+        fixture.program, fixture.program.load(), selected_capture_ref=ref
+    )
+    lane = full["tasks"]["S01"]["lanes"]["items"][0]
+    # Then pending adverse process facts are prominent without rewriting canonical acceptance.
+    assert lane["result"] == "passed"
+    assert lane["execution_summary"]["reported_check_result"] == "failed"
+    assert lane["execution_summary"]["publication"]["status"] == "pending"
+
+
+def test_selected_capture_invalid_producer_reference_is_not_silently_ignored(fixture, monkeypatch):
+    # Given an explicit ref rejected by the producer's exact immutable validation.
+    _, ref, _, _ = selected_projection_facts(fixture, monkeypatch)
+
+    def reject(*_args, **_kwargs):
+        raise fp.ProgramError("Selected capture immutable origin is invalid")
+
+    monkeypatch.setattr(verification._execution(), "project_capture", reject)
+    # When the host requests that selection, it receives the guard failure rather than older green.
+    with pytest.raises(fp.ProgramError):
+        verification.projection(fixture.program, fixture.program.load(), selected_capture_ref=ref)
+
+
+def test_bound_projection_omits_new_raw_inputs_but_keeps_internal_authoring(fixture):
+    # Given exact input authoring facts including environment and structured invocation.
+    assert fixture.claim() == 0
+    value, captured = manifest_request(fixture)
+    record(fixture, value)
+    full = verification.projection(fixture.program, fixture.program.load(), limit=None)
+    internal = full["tasks"]["S01"]["lanes"]["items"][0]
+    assert internal["context"]["input_capture"] == captured
+    assert internal["context"]["input_manifest"] == captured["manifest"]
+    # When display copies are bounded after all input applicability assessment.
+    bounded = verification.bound_projection(full)
+    display = bounded["tasks"]["S01"]["lanes"]["items"][0]
+    # Then new raw facts are absent, safe assessment and legacy context remain, internal facts persist.
+    assert "input_capture" not in display["context"]
+    assert "input_manifest" not in display["context"]
+    assert display["context"]["input_digest"] == captured["input_digest"]
+    assert display["context"]["source_digest"] == internal["context"]["source_digest"]
+    assert display["input_summary"] == internal["input_summary"]
+    assert internal["context"]["input_capture"] == captured
+    assert internal["context"]["input_manifest"] == captured["manifest"]
+    packet = verification.packet(fixture.program, fixture.program.load(), "S01")
+    authoring = packet["verification"]["lanes"]["items"][0]
+    assert authoring["context"]["input_capture"] == captured
+    assert authoring["context"]["input_manifest"] == captured["manifest"]
+
+
+def test_distinct_selected_capture_with_same_run_id_preserves_failed_history(fixture, monkeypatch):
+    # Given a recorded failure whose display run name equals a later selected pending capture.
+    captured, ref, facts, _ = selected_projection_facts(fixture, monkeypatch)
+    failed = fp.read_json(fixture.program.path(ref["path"]))
+    failed["process"]["exit_code"] = 1
+    name = fixture.write("evidence/S01/attempt-1/prior-failed-same-name.json", failed)
+    failed_ref = {"path": name, "sha256": fp.sha(fixture.program.path(name).read_bytes())}
+    record(
+        fixture,
+        observation(
+            fixture,
+            result="failed",
+            method=captured["method"],
+            input_before=captured["input_digest"],
+            input_after=captured["input_digest"],
+            input_capture_before=failed["input_capture_before"],
+            input_capture_after=failed["input_capture_after"],
+            run_capture_ref=failed_ref,
+            artifacts=[name],
+        ),
+    )
+    # When the producer validates the later selection independently by exact immutable ref.
+    full = verification.projection(
+        fixture.program, fixture.program.load(), selected_capture_ref=ref
+    )
+    lane = full["tasks"]["S01"]["lanes"]["items"][0]
+    history = lane["execution_history"]["items"]
+    # Then the old adverse row survives and its recorded publication never transfers by name.
+    assert len(history) == 2
+    assert history[0]["run_id"] == history[1]["run_id"] == facts["summary"]["run_id"]
+    assert history[0]["reported_check_result"] == "failed"
+    assert history[0]["publication"]["status"] == "recorded"
+    assert history[1]["publication"]["status"] == "pending"
+    assert lane["result"] == "failed"
+    assert lane["execution_summary"]["publication"]["status"] == "pending"
+
+
+def test_same_selected_ref_preserves_distinct_canonical_adverse_observations(fixture, monkeypatch):
+    # Given a passing raw process capture referenced by distinct passed and failed observations.
+    captured, ref, _, _ = selected_projection_facts(fixture, monkeypatch)
+    run = fp.read_json(fixture.program.path(ref["path"]))
+    for identifier, result in (("first-passed", "passed"), ("latest-failed", "failed")):
+        record(
+            fixture,
+            observation(
+                fixture,
+                identifier,
+                result=result,
+                method=captured["method"],
+                input_before=captured["input_digest"],
+                input_after=captured["input_digest"],
+                input_capture_before=run["input_capture_before"],
+                input_capture_after=run["input_capture_after"],
+                run_capture_ref=ref,
+                artifacts=[ref["path"]],
+            ),
+        )
+    # When that same actual raw capture is selected again for display.
+    full = verification.projection(
+        fixture.program, fixture.program.load(), selected_capture_ref=ref
+    )
+    lane = full["tasks"]["S01"]["lanes"]["items"][0]
+    history = lane["execution_history"]["items"]
+    # Then process bytes cannot erase the latest recorded failure or either observation row.
+    assert [row["reported_check_result"] for row in history] == ["passed", "failed"]
+    assert [row["publication"]["observation_id"] for row in history] == [
+        "first-passed",
+        "latest-failed",
+    ]
+    assert lane["result"] == "failed"
+    assert lane["execution_summary"]["reported_check_result"] == "failed"
+    assert lane["execution_summary"]["publication"]["observation_id"] == "latest-failed"
+
+
+def test_actual_selected_pending_capture_uses_runner_binding_without_recording(fixture):
+    # Given a real harmless process captured once under its exact adopted request.
+    from tools.tests.test_feature_program_execution import prepare
+
+    assert fixture.claim() == 0
+    prepared = prepare(
+        fixture, "from pathlib import Path; Path('adapter-counter.txt').write_text('1')"
+    )
+    run = verification._execution().execute_run(prepared)
+    before = fixture.program.path("backlog.json").read_bytes()
+    # When the actual sealed ref is explicitly selected through the complete producer adapter.
+    result = verification.projection(
+        fixture.program, fixture.program.load(), selected_capture_ref=run["capture_ref"]
+    )
+    lane = result["tasks"]["S01"]["lanes"]["items"][0]
+    # Then pending process facts are visible without a rerun, publication or raw input display.
+    assert lane["phase"] == "requested"
+    assert lane["result"] == "pending"
+    assert lane["execution_summary"]["reported_check_result"] == "passed"
+    assert lane["execution_summary"]["current"] is True
+    assert lane["execution_summary"]["publication"]["status"] == "pending"
+    assert lane["execution_summary"]["observation_draft"]["status"] == "prepared"
+    assert "input_capture" not in lane["context"]
+    assert "input_manifest" not in lane["context"]
+    assert result["selected_execution"]["currentness"] == "current"
+    assert fixture.program.path("backlog.json").read_bytes() == before
+    assert (fixture.program.repo / "adapter-counter.txt").read_text() == "1"
+
+
+def exact_empty_attachment_fixture(fixture):
+    # Synthetic sealed-reference fixture for validation; real stream reuse is tested by closure.
+    captured, target, ref = shared_run_fixture(fixture)
+    run = fp.read_json(fixture.program.path(ref["path"]))
+    empty_path = fixture.program.path("evidence/S01/attempt-1/empty-stderr.bin")
+    empty_path.write_bytes(b"")
+    run["outputs"]["stderr"] = {
+        "path": "evidence/S01/attempt-1/empty-stderr.bin",
+        "sha256": fp.sha(b""),
+        "bytes_seen": 0,
+        "bytes_retained": 0,
+        "truncated": False,
+    }
+    start_name = fixture.write("evidence/S01/attempt-1/attachment-start.json", run)
+    run["start_ref"] = {
+        "path": start_name,
+        "sha256": fp.sha(fixture.program.path(start_name).read_bytes()),
+    }
+    run_name = fixture.write("evidence/S01/attempt-1/attachment-run.json", run)
+    origin = {"path": run_name, "sha256": fp.sha(fixture.program.path(run_name).read_bytes())}
+    origins = [
+        origin,
+        run["input_capture_before"],
+        run["input_capture_after"],
+        {"path": run["outputs"]["stderr"]["path"], "sha256": run["outputs"]["stderr"]["sha256"]},
+    ]
+    rows = []
+    for index, source in enumerate(origins):
+        raw = fixture.program.path(source["path"]).read_bytes()
+        name = f"evidence/S02/attempt-1/exact-copy-{index}.bin"
+        path = fixture.program.path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        rows.append(
+            {
+                "origin_ref": source,
+                "attachment_ref": {"path": name, "sha256": fp.sha(raw)},
+                "byte_count": len(raw),
+            }
+        )
+    manifest = {
+        "schema_version": 1,
+        "task_id": "S02",
+        "attempt": 1,
+        "origin_ref": origin,
+        "attachments": rows,
+    }
+    manifest_name = fixture.write("evidence/S02/attempt-1/attachment-manifest.json", manifest)
+    manifest_ref = {
+        "path": manifest_name,
+        "sha256": fp.sha(fixture.program.path(manifest_name).read_bytes()),
+    }
+    value = observation(
+        fixture,
+        "target-empty-stream",
+        task_id="S02",
+        request_id=target["request_id"],
+        method=captured["method"],
+        input_before=captured["input_digest"],
+        input_after=captured["input_digest"],
+        input_capture_before=rows[1]["attachment_ref"],
+        input_capture_after=rows[2]["attachment_ref"],
+        run_capture_ref=origin,
+        attachment_manifest_ref=manifest_ref,
+        artifacts=[manifest_name],
+    )
+    return value, manifest, rows
+
+
+def test_typed_manifest_retains_exact_zero_byte_target_copy(fixture):
+    # Given a task-local typed manifest for unchanged exact copies including an empty stream.
+    value, _, rows = exact_empty_attachment_fixture(fixture)
+    # When normal canonical preparation checks exact origin and target bindings.
+    event = record(fixture, value)
+    # Then zero-byte copies are frozen evidence, and ordinary artifacts stay nonempty.
+    assert rows[-1]["byte_count"] == 0
+    assert rows[-1]["attachment_ref"] in event["evidence"]
+    assert rows[-1]["origin_ref"] in event["evidence"]
+    assert value["attachment_manifest_ref"] in event["evidence"]
+    verification.verify_history(fixture.program, fixture.program.load())
+
+
+@pytest.mark.parametrize("change", ["tamper", "missing", "omit_retained"])
+def test_typed_empty_target_copy_cannot_be_lost_from_history(fixture, change):
+    # Given a normally recorded exact empty target copy.
+    value, _, rows = exact_empty_attachment_fixture(fixture)
+    record(fixture, value)
+    state = fixture.program.load()
+    target = fixture.program.path(rows[-1]["attachment_ref"]["path"])
+    # When bytes, presence, or the retained transitive edge is changed afterward.
+    if change == "tamper":
+        target.write_bytes(b"changed")
+    elif change == "missing":
+        target.unlink()
+    else:
+        state["verification"]["records"][-1]["evidence"].remove(rows[-1]["attachment_ref"])
+    # Then historical reliance rejects the missing exact attachment rather than laundering it.
+    with pytest.raises(fp.ProgramError):
+        verification.verify_history(fixture.program, state)
+
+
+@pytest.mark.parametrize("change", ["attempt", "count", "origin", "target_scope"])
+def test_typed_attachment_manifest_rejects_target_size_and_unsealed_origins(fixture, change):
+    # Given a complete proposed attachment graph before canonical recording.
+    value, manifest, rows = exact_empty_attachment_fixture(fixture)
+    if change == "attempt":
+        manifest["attempt"] = 2
+    elif change == "count":
+        rows[-1]["byte_count"] = 1
+    elif change == "origin":
+        name = fixture.write("evidence/S01/attempt-1/unsealed-extra.json", {"extra": True})
+        rows[-1]["origin_ref"] = {
+            "path": name,
+            "sha256": fp.sha(fixture.program.path(name).read_bytes()),
+        }
+    else:
+        rows[-1]["attachment_ref"] = rows[-1]["origin_ref"]
+    name = value["attachment_manifest_ref"]["path"]
+    fixture.program.path(name).write_bytes(fp.canonical(manifest))
+    value["attachment_manifest_ref"]["sha256"] = fp.sha(fixture.program.path(name).read_bytes())
+    # When the typed graph crosses the normal record boundary, malformed copies remain invalid.
+    with pytest.raises(fp.ProgramError):
+        record(fixture, value)
+
+
+def test_typed_attachment_route_does_not_waive_nonempty_artifact_rule(fixture):
+    # Given a valid typed zero-byte stream copy but no nonempty ordinary evidence artifact.
+    value, _, rows = exact_empty_attachment_fixture(fixture)
+    value["artifacts"] = [rows[-1]["attachment_ref"]["path"]]
+    # When the empty raw copy is wrongly used as the ordinary artifact itself.
+    with pytest.raises(fp.ProgramError):
+        record(fixture, value)
