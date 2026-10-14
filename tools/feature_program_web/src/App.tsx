@@ -640,7 +640,7 @@ function TaskList({
           </div>
           <p className="paging-range" role="status" aria-live="polite" aria-atomic="true">
             <span aria-hidden="true">
-              {i18n.t('{start}–{end} / {matching} tasks · {page} / {pages} pages', {
+              {i18n.t('{start}–{end} / {matching} · {page}/{pages}', {
                 start: page.start,
                 end: page.end,
                 matching: page.matching,

@@ -115,6 +115,8 @@ describe('paging interaction context', () => {
     await work();
     expect(rows()).toHaveLength(50);
     expect(screen.getByText('123 of 123 tasks')).toBeDefined();
+    expect(screen.getByText('1–50 / 123 · 1/3').getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getByText('Showing 1–50 of 123 matching tasks · Page 1 of 3')).toBeDefined();
     const next = screen.getByRole('button', { name: 'Next page' });
     next.focus();
     await user.keyboard('{Enter}');

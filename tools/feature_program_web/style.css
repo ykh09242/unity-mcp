@@ -1133,24 +1133,34 @@ summary {
 }
 .paging label {
   display: flex;
+  flex-direction: row;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--s2);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+.paging select {
+  inline-size: 4.5rem;
+  max-inline-size: 5.5rem;
+}
+.ledger-summary .paging select {
+  inline-size: 4.5rem;
 }
 .paging-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--s2);
+  flex-wrap: nowrap;
+  gap: var(--s1);
 }
 .paging button[aria-disabled='true'] {
   color: var(--muted);
   cursor: default;
 }
 .paging-range {
-  flex-basis: 100%;
+  flex: 0 0 auto;
   margin: 0;
-  word-break: keep-all;
-  overflow-wrap: anywhere;
+  margin-inline-start: auto;
+  font-size: 12px;
+  white-space: nowrap;
 }
 .selection-context {
   display: flex;
@@ -1481,16 +1491,15 @@ summary {
   }
   .ledger-summary .paging label {
     flex-direction: row;
-    justify-content: space-between;
-    flex: 1 1 100%;
+    justify-content: flex-start;
+    flex: 0 0 auto;
   }
   .ledger-summary .paging select {
-    inline-size: auto;
+    inline-size: 4.5rem;
   }
   .ledger-summary .paging-actions {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    inline-size: 100%;
+    display: flex;
+    inline-size: auto;
   }
   .ledger-summary .paging-actions button {
     padding-inline: var(--s1);

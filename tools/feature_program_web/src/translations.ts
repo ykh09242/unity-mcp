@@ -12,6 +12,13 @@ export const korean = {
   'Explicit criterion links': '명시된 기준 연결',
   'Show fewer attention items': '간략히 보기',
   'Show all supplied attention items': '제공된 주의 항목 모두 보기',
+  'Recorded completion result': '기록된 완료 판정',
+  'Recorded completion result is unavailable.': '기록된 완료 판정을 확인할 수 없어요.',
+  'Explicit task links': '작업 연결 기록',
+  'Review evidence': '검토 근거',
+  'Historical completion record; current acceptance is not inferred.':
+    '과거 완료 기록이며 현재 승인 상태를 새로 판정하지 않아요.',
+  '{start}–{end} / {matching} · {page}/{pages}': '{start}–{end} / {matching} · {page}/{pages}',
   'Summary scope and source': '요약 범위와 원본',
   'Advisory context does not authorize execution or establish acceptance.':
     '참고 정보이며, 실행 권한이나 완료 승인을 뜻하지 않아요.',

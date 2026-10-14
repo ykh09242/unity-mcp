@@ -55,7 +55,12 @@ const rotate = (value: number, bits: number) => (value >>> bits) | (value << (32
 
 /** Synchronous SHA-256 keeps the captured display view atomic at render time. */
 export function presentationDigest(value: Json): string {
-  const source = new TextEncoder().encode(canonicalJson(value));
+  return textDigest(canonicalJson(value));
+}
+
+/** Exact UTF-8 criterion identity, without JSON encoding or normalization. */
+export function textDigest(value: string): string {
+  const source = new TextEncoder().encode(value);
   const bytes = new Uint8Array(Math.ceil((source.length + 9) / 64) * 64);
   bytes.set(source);
   bytes[source.length] = 128;

@@ -404,7 +404,7 @@ describe('supplied Overview context', () => {
     );
     expect(screen.getByText('Remaining explicit gap')).toBeTruthy();
     expect(screen.getByText('Declared links do not establish criterion acceptance.')).toBeTruthy();
-    await userEvent.click(screen.getByText('Evidence and source'));
+    await userEvent.click(screen.getByText('Review evidence'));
     expect(screen.getByText('tools/test.py')).toBeTruthy();
     expect(screen.getByText('Native failure')).toBeTruthy();
     expect(screen.getByText('failed')).toBeTruthy();

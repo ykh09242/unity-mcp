@@ -369,7 +369,6 @@ export function GoalCoordination({ snapshot }: { readonly snapshot: Snapshot }) 
                     {i18n.t('Open question')}
                   </a>
                 )}
-                <OriginalRecord value={row} label="Original coordination context" />
               </li>
             ))}
           </ul>
@@ -406,7 +405,6 @@ export function GoalCoordination({ snapshot }: { readonly snapshot: Snapshot }) 
           )}
         </>
       )}
-      <OriginalRecord value={brief.attention} label="Original coordination summary" />
     </details>
   );
 }
