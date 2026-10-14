@@ -7,7 +7,7 @@ from copy import deepcopy
 
 import pytest
 
-from tools.tests.test_feature_program_phases import gate  # noqa: F401
+from tools.tests.test_feature_program_phases import GateFixture, gate  # noqa: F401
 from tools.tests.test_feature_program_authoring import preview, normalized, tree
 from tools.tests.test_feature_program import fp
 
@@ -488,6 +488,150 @@ def test_compact_missing_ledger_with_2000_tasks_has_no_row_cap(gate):
     # it must reject, not return an arbitrary successful prefix of the 2000 tasks.
     with pytest.raises(fp.ProgramError, match="no truncated prefix"):
         p.projection(gate.program, state, inventory=True)
+
+
+def test_catalog_detaches_and_shares_only_the_same_captured_source(gate: GateFixture) -> None:
+    # Given two original tasks and two tasks from a separate supplemental descriptor.
+    state = gate.program.load()
+    state["source"]["metadata"] = {"labels": ["Original descriptor"]}
+    supplemental = deepcopy(state["source"])
+    supplemental["path"] = "discovery/supplemental.md"
+    supplemental["task_ids"] = ["EXTRA1", "EXTRA2"]
+    supplemental["metadata"]["labels"] = ["Supplemental descriptor"]
+    state["source_intakes"] = [{"id": "extra", "source": supplemental}]
+    for identifier in supplemental["task_ids"]:
+        task = deepcopy(state["tasks"][0])
+        task["id"] = identifier
+        task["source_intake_id"] = "extra"
+        state["tasks"].append(task)
+    before = deepcopy(state)
+    # When the complete catalog is captured once without modifying the supplied state.
+    observed = p.catalog(gate.program, state, fp.ReadBudget(), "a" * 64)
+    # Then original/supplemental values are exact, detached and shared only by source identity.
+    titles = {
+        row["target"]["entity_id"]: row
+        for row in observed.targets.values()
+        if row["family"] == "F06"
+    }
+    sources = {
+        identifier: row["binding"]["context"]["source"] for identifier, row in titles.items()
+    }
+    assert state == before
+    assert sources["S01"] == before["source"]
+    assert sources["EXTRA1"] == before["source_intakes"][0]["source"]
+    assert sources["S01"] is sources["S02"] and sources["S01"] is not state["source"]
+    assert sources["EXTRA1"] is sources["EXTRA2"] and sources["EXTRA1"] is not supplemental
+    assert sources["S01"] is not sources["EXTRA1"]
+    for identifier, row in titles.items():
+        task = next(task for task in state["tasks"] if task["id"] == identifier)
+        assert row["binding"]["context"] == {
+            "source": supplemental if identifier.startswith("EXTRA") else state["source"],
+            "section_sha256": task["source"]["sha256"],
+        }
+        assert row["original"] == task["source"]["title"]
+    sources["S01"]["metadata"]["labels"].append("Local catalog mutation")
+    sources["EXTRA1"]["task_ids"].append("Local catalog task")
+    assert state == before
+    assert sources["EXTRA1"]["metadata"]["labels"] == ["Supplemental descriptor"]
+
+
+def test_inventory_nested_source_metadata_is_independent_per_returned_row(
+    gate: GateFixture,
+) -> None:
+    # Given a captured source with nested extension metadata and a complete task ID list.
+    state = gate.program.load()
+    state["source"]["metadata"] = {"labels": ["Original descriptor"]}
+    before = deepcopy(state)
+    # When one returned inventory row's nested source metadata is edited by its consumer.
+    result = p.projection(gate.program, state, inventory=True)
+    unchanged_inventory = deepcopy(result)
+    rows = [row for row in result["targets"] if row["family"] == "F06"]
+    first = rows[0]["binding"]["context"]["source"]
+    first["metadata"]["labels"].append("Consumer edit")
+    first["task_ids"].append("Consumer task")
+    # Then other returned rows, the captured state and future reads retain their exact source.
+    assert rows[1]["binding"]["context"]["source"] == before["source"]
+    assert state == before
+    assert p.projection(gate.program, state, inventory=True) == unchanged_inventory
+
+
+@pytest.mark.parametrize("supplemental", [False, True])
+def test_catalog_observes_changed_nested_source_on_the_next_call(
+    gate: GateFixture, supplemental: bool
+) -> None:
+    # Given a prior catalog of either the original or a supplemental captured descriptor.
+    state = gate.program.load()
+    source = state["source"]
+    if supplemental:
+        source = deepcopy(source)
+        state["source_intakes"] = [{"id": "extra", "source": source}]
+        state["tasks"][0]["source_intake_id"] = "extra"
+    source["metadata"] = {"labels": ["Before"]}
+    previous = p.catalog(gate.program, state, fp.ReadBudget(), "a" * 64)
+    previous_rows = deepcopy(previous.targets)
+    source["metadata"]["labels"] = ["After"]
+    source["task_ids"].append("Fresh descriptor ID")
+    # When a new catalog observes the changed descriptor, even under the same revision string.
+    current = p.catalog(gate.program, state, fp.ReadBudget(), "a" * 64)
+    # Then all keys/originals remain exact and only the affected source binding changes.
+    assert previous.targets == previous_rows
+    assert current.targets.keys() == previous.targets.keys()
+    for key, row in current.targets.items():
+        if row["family"] in {"F06", "F07"} and (
+            not supplemental or row["target"]["entity_id"] == "S01"
+        ):
+            old = previous.targets[key]
+            context = row["binding"]["context"]
+            assert context["source"] == source
+            assert row == {
+                **old,
+                "binding": {
+                    **old["binding"],
+                    "context": {**old["binding"]["context"], "source": source},
+                },
+            }
+        else:
+            assert row == previous.targets[key]
+
+
+def test_authoring_bindings_detach_nested_sources_between_task_operations(
+    gate: GateFixture,
+) -> None:
+    # Given one authoring request containing two titles from the same source descriptor.
+    state = gate.program.load()
+    state["communication_language"] = "ko"
+    state["source"]["metadata"] = {"labels": ["Original descriptor"]}
+    before = deepcopy(state)
+    draft: fp.Record = {
+        "schema_version": 1,
+        "operation": "presentation-record",
+        "id": "two-titles",
+        "program_id": state["program_id"],
+        "actor_id": "director",
+        "locale": "ko",
+        "reason": "Synthetic authoring isolation check",
+        "authors": ["writer"],
+        "expected_revision": None,
+        "review": None,
+        "operations": [
+            {
+                "action": "set",
+                "target": {"kind": "task_title", "entity_id": identifier, "field": "title"},
+                "mode": "original",
+            }
+            for identifier in ("S01", "S02")
+        ],
+    }
+    # When the consumer edits one returned operation's nested descriptor metadata.
+    bound = p.bind_input(gate.program, state, draft)
+    unchanged_binding = deepcopy(bound)
+    first = bound["operations"][0]["binding"]["context"]["source"]
+    first["metadata"]["labels"].append("Consumer edit")
+    first["task_ids"].append("Consumer task")
+    # Then the other operation, supplied state and later bound request stay independent.
+    assert bound["operations"][1]["binding"]["context"]["source"] == before["source"]
+    assert state == before
+    assert p.bind_input(gate.program, state, draft) == unchanged_binding
 
 
 @pytest.mark.parametrize("field", ["kind", "entity_id", "field", "mode"])
