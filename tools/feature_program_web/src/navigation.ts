@@ -322,12 +322,6 @@ export function navigationSearch(
         originalLabel: string(originalValue(question).prompt || originalValue(question).title),
         route: { view: 'question' as const, questionId: id },
       })),
-      ...[...index.evidenceLabels].map(([id, label]) => ({
-        kind: 'evidence' as const,
-        id,
-        label,
-        route: { view: 'evidence' as const, evidencePath: id },
-      })),
     ];
     navigationSearchCache.set(snapshot, all);
   }

@@ -786,8 +786,8 @@ questions are enabled by default; add `--read-only` to disable that one write su
 Use another port and explicit program directory to inspect another program.
 
 Overview shows the objective, progress, blockers and next action. Work provides category,
-status and text filters; each task has a separate detail page with source context, linked
-dependencies and advisory relations, their recorded owners, attempts,
+status and text filters; each task has a separate detail page with readable descriptions,
+acceptance criteria, linked dependencies and advisory relations, their recorded owners, attempts,
 reviews and delivery. Team shows role responsibilities, recorded model settings, observations
 and handoffs. A reviewed task and a recorded PR/CI result are different measurements.
 
@@ -1095,9 +1095,11 @@ completed, released or rejected submissions do not gain a new freshness prerequi
 The dashboard applies verified current presentation independently of the interface selector.
 Goals, criteria, tasks, questions and recorded people use consistent displayed labels in lists,
 details, search and accessible names; routes and filter values retain canonical IDs. Search
-accepts original and displayed labels, but never indexes answers or drafts. The content-language
-disclosure reports catalog coverage, while entity-scoped disclosures retain original wording
-and exact source locators. Unavailable or non-current presentation falls back to the original.
+accepts original and displayed task labels, but never indexes answers, drafts or technical
+evidence references. Dedicated original/source audit panels and redundant content-language
+metadata are omitted from the dashboard. Exact originals, source locators and catalog coverage
+remain available in local program records and through the CLI. Unavailable or non-current
+presentation falls back to the original content.
 
 For a translated question option, an explicit click copies the exact visible label into a new
 editable freeform answer. The answer endpoint still receives only `question_id`, `version`,

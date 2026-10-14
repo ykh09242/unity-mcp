@@ -1,5 +1,6 @@
 // Interface translations only. Reviewed authored content uses its separate source-bound resolver.
 export const korean = {
+  'Data integrity': '데이터 확인',
   'Source integrity': '원본 무결성',
   Recovery: '복구',
   'Attention summary is unavailable. Recorded work remains inspectable.':
@@ -70,6 +71,22 @@ export const korean = {
   'Current records': '현재 기록',
   'Retained history': '보존된 이력',
   'Full task context and evidence': '작업 내용과 근거',
+  'Show all notes': '모든 메모 보기',
+  'Show fewer notes': '메모 줄여 보기',
+  Requirements: '요구 사항',
+  'Full task description': '전체 작업 설명',
+  'Read the task description below for purpose and method.':
+    '아래 작업 설명에서 목적과 방법을 확인하세요.',
+  'Constraints and findings': '제약과 발견 사항',
+  'Summary text is shortened.': '요약이 축약되어 있어요.',
+  'Text is shortened.': '내용이 축약되어 있어요.',
+  'This content cannot be displayed.': '이 내용을 표시할 수 없어요.',
+  'This note cannot be displayed.': '이 메모를 표시할 수 없어요.',
+  'Review the reported issues': '보고된 문제를 검토하세요.',
+  'Recorded review findings': '기록된 검토 결과',
+  'Record unavailable': '기록을 표시할 수 없어요',
+  'Record details are not shown in this view.': '이 화면에서는 기록의 상세 정보를 표시하지 않아요.',
+  'Find task, person or question': '작업, 담당자, 질문 찾기',
   'Content language': '내용 언어',
   'Session language is separate from the interface. Originals and technical IDs are preserved.':
     '세션 언어는 화면 언어와 별개예요. 원문과 기술 ID는 보존돼요.',
@@ -593,6 +610,7 @@ export const korean = {
   'No personnel record': '담당자 정보 없음',
   '{owner} · {status}: {count}': '{owner} · {status}: {count}개',
   'Assignments for {owner}': '{owner}의 담당 작업',
+  'No task relationships recorded.': '기록된 작업 관계가 없어요.',
   'Task relationships': '작업 관계',
   'Depends on': '선행 작업',
   'Required by': '후속 작업',

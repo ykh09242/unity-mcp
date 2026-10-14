@@ -20,8 +20,10 @@ public documentation in the language required by its authoring rules.
 
 For existing human content in another language, use the reviewed, source-bound presentation
 catalog rather than changing canonical source or past answers. The dashboard uses only current
-entries for the recorded session language and keeps exact originals discoverable beside the
-relevant entity. Inspect both current and historical coverage; a working fallback or a passing
+entries for the recorded session language. Preserve exact originals and evidence in local
+program records; show task content and actionable results in the dashboard without original/source
+audit disclosures or duplicate content-language metadata. Inspect both current and historical
+coverage through the program tools; a working fallback or a passing
 schema check does not establish complete translation or readable rendered output. Keep the
 program-specific catalog and language-review evidence under the ignored program directory.
 Verify original/displayed search, canonical identity, long prose, keyboard navigation and

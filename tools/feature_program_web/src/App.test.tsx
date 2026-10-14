@@ -160,6 +160,52 @@ describe('work program user outcomes', () => {
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
   });
+  it('places actionable attention directly after the goal before progress and separate category responsibility', async () => {
+    const base = fixture();
+    const reference = { path: 'backlog.json', revision: base.revision, pointer: '/objective' };
+    const attention = {
+      items: [
+        {
+          kind: 'blocked',
+          entity_id: 'A1',
+          reason: 'Attention ordering reason',
+          next_action: 'Keep useful action',
+          reference,
+          observed_revision: base.revision,
+          task_ids: ['A1'],
+        },
+      ],
+      shown: 1,
+      total: 1,
+      omitted: 0,
+      reference,
+    };
+    const view = render(
+      <App
+        loader={async () =>
+          parseSnapshot({
+            ...base,
+            brief: {
+              brief_version: 1,
+              revision: base.revision,
+              program_id: base.program_id,
+              reference,
+              attention,
+            },
+          })
+        }
+      />,
+    );
+    await screen.findByText('Attention ordering reason');
+    const goal = view.container.querySelector('.objective');
+    const panel = view.container.querySelector('.program-attention');
+    const progress = view.container.querySelector('.metrics');
+    if (!goal || !panel || !progress) throw new Error('Overview landmark missing');
+    expect(goal.nextElementSibling).toBe(panel);
+    expect(panel.compareDocumentPosition(progress)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(panel.closest('.overview-grid')).toBeNull();
+    expect(screen.getByText('Keep useful action')).toBeTruthy();
+  });
   it('keeps current objective progress separate from retained historical task records', async () => {
     const base = fixture();
     render(
@@ -285,7 +331,7 @@ describe('work program user outcomes', () => {
     await navigate('#question/Q');
     const input = screen.getByLabelText('Your answer');
     await user.type(input, 'Keep the draft');
-    const disclosure = screen.getByText('Question scope and response history').closest('details');
+    const disclosure = screen.getByText('About answers and drafts').closest('details');
     if (disclosure) disclosure.open = true;
     let resolve: ((value: unknown) => void) | undefined;
     loader.mockImplementation(
@@ -456,14 +502,8 @@ describe('work program user outcomes', () => {
     if (!panel) throw new Error('Assignment panel missing');
     expect(within(panel).getAllByText('model-v1').length).toBeGreaterThan(0);
     expect(within(panel).getAllByText('high').length).toBeGreaterThan(0);
-    const modelComparison = panel.querySelector<HTMLElement>('.history-comparison section');
-    if (!modelComparison) throw new Error('Settings comparison missing');
-    expect(within(modelComparison).getByText('At claim').parentElement?.textContent).toContain(
-      'model-v1',
-    );
-    expect(
-      within(modelComparison).getByText('Current settings').parentElement?.textContent,
-    ).toContain('model-v2');
+    expect(panel.querySelector('.history-comparison')).toBeNull();
+    expect(within(panel).queryByText('model-v2')).toBeNull();
     await navigate('#team');
     expect(screen.getAllByText('model-v2').length).toBeGreaterThan(0);
   });
@@ -522,14 +562,10 @@ describe('work program user outcomes', () => {
       await navigate('#task/A1');
       const panel = screen.getByRole('heading', { name: 'Recorded assignment' }).parentElement;
       if (!panel) throw new Error('Assignment panel missing');
-      const comparison = panel.querySelector<HTMLElement>('.history-comparison section');
-      if (!comparison) throw new Error('Settings comparison missing');
-      expect(within(comparison).getByText('Current settings').parentElement?.textContent).toContain(
-        'current-saved-model',
-      );
-      expect(within(comparison).getByText('At claim').parentElement?.textContent).toContain(
-        'claim-model',
-      );
+      expect(panel.querySelector('.history-comparison')).toBeNull();
+      expect(
+        within(panel).getAllByText('Model', { selector: 'dt' })[0]?.nextElementSibling?.textContent,
+      ).toBe('claim-model');
       expect(within(panel).getByText('Recorded staffing rationale')).toBeDefined();
       expect(within(panel).getByText('Assigned actor').nextElementSibling?.textContent).toBe(
         'recorded-worker',
@@ -577,11 +613,7 @@ describe('work program user outcomes', () => {
     await navigate('#task/A1');
     const panel = screen.getByRole('heading', { name: 'Recorded assignment' }).parentElement;
     if (!panel) throw new Error('Assignment panel missing');
-    const comparison = panel.querySelector<HTMLElement>('.history-comparison section');
-    if (!comparison) throw new Error('Settings comparison missing');
-    expect(within(comparison).getByText('Current settings').parentElement?.textContent).toContain(
-      'Not recorded',
-    );
+    expect(panel.querySelector('.history-comparison')).toBeNull();
     expect(within(panel).queryByText('unrelated-current-model')).toBeNull();
     expect(within(panel).queryByText('Unrelated history')).toBeNull();
     expect(within(panel).getByText('No personnel record')).toBeDefined();
@@ -691,18 +723,11 @@ describe('work program user outcomes', () => {
       expect(within(notes).getByText('Keep this legacy note unchanged.')).toBeDefined();
       expect(
         within(notes).getAllByText(
-          locale === 'ko'
-            ? '인식할 수 없는 메모 형식입니다. 원래 기록을 확인하세요.'
-            : 'Unrecognized note format. Inspect the original record.',
+          locale === 'ko' ? '이 메모를 표시할 수 없어요.' : 'This note cannot be displayed.',
         ),
       ).toHaveLength(2);
-      const originalRecords = notes.querySelectorAll('details');
-      expect(originalRecords).toHaveLength(4);
-      expect([...originalRecords].every((detail) => !detail.hasAttribute('open'))).toBe(true);
-      for (const detail of originalRecords) await userEvent.click(detail.querySelector('summary')!);
-      expect(notes.textContent).toContain('Keep additional fields');
-      expect(notes.textContent).toContain('Preserve the nested record');
-      expect(notes.textContent).toContain('"reason": 17');
+      expect(notes.querySelectorAll('details, pre')).toHaveLength(0);
+      expect(notes.textContent).not.toContain('\"reason\": 17');
     },
   );
 });

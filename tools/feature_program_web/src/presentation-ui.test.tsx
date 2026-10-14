@@ -2,10 +2,9 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { parseSnapshot, record } from './model';
+import { parseSnapshot } from './model';
 import { presentationDigest } from './presentation-digest';
-import { LanguageProvider, PREFERENCE_KEY } from './i18n';
-import { ContentLanguage } from './presentation-ui';
+import { PREFERENCE_KEY } from './i18n';
 import type { AnswerSaver } from './questions';
 
 function fixture(option = '검토한 선택지', state = 'current') {
@@ -61,103 +60,6 @@ function fixture(option = '검토한 선택지', state = 'current') {
   });
 }
 const sessionLoader = async () => ({ responsesEnabled: true, nonce: 'local-test-nonce' });
-describe('content review coverage', () => {
-  it.each(['en', 'ko'] as const)(
-    'distinguishes supplied fallback and original modes in %s',
-    (locale) => {
-      localStorage.setItem(PREFERENCE_KEY, locale);
-      const raw = fixture();
-      const snapshot = parseSnapshot({
-        ...raw,
-        presentation: {
-          ...record(raw.presentation),
-          totals: {
-            total: 36,
-            current_translated: 1,
-            current_original: 2,
-            original_only: 3,
-            missing: 4,
-            stale: 5,
-            withdrawn: 6,
-            unavailable: 15,
-          },
-          periods: { current: { total: 10 }, historical: { total: 26 } },
-        },
-      });
-      const { container } = render(
-        <LanguageProvider>
-          <ContentLanguage snapshot={snapshot} />
-        </LanguageProvider>,
-      );
-      fireEvent.click(
-        screen.getByText(locale === 'ko' ? '내용 언어: 한국어' : 'Content language: Korean'),
-      );
-      const expected =
-        locale === 'ko'
-          ? [
-              '번역·별칭',
-              '원문 유지',
-              '원문 전용',
-              '검토 누락',
-              '검토 갱신 필요',
-              '검토 철회',
-              '원문 확인 불가',
-              '현재 기록',
-              '보존된 이력',
-            ]
-          : [
-              'Translated or aliased',
-              'Original retained',
-              'Original only',
-              'Missing review',
-              'Stale review',
-              'Withdrawn review',
-              'Source unavailable',
-              'Current records',
-              'Retained history',
-            ];
-      expected.forEach((label, index) => {
-        const term = screen.getByText(label);
-        expect(term.tagName).toBe('DT');
-        expect(term.nextElementSibling?.textContent).toBe(
-          String([1, 2, 3, 4, 5, 6, 15, 10, 26][index]),
-        );
-      });
-      expect(container.querySelector('details')?.open).toBe(true);
-    },
-  );
-
-  it.each(['revision', 'locale', 'missing totals'] as const)(
-    'does not report compatible coverage for %s',
-    (mismatch) => {
-      localStorage.setItem(PREFERENCE_KEY, 'en');
-      const raw = fixture();
-      const snapshot = parseSnapshot({
-        ...raw,
-        presentation: {
-          ...record(raw.presentation),
-          ...(mismatch === 'revision'
-            ? { revision: 'older' }
-            : mismatch === 'locale'
-              ? { locale: 'en' }
-              : {}),
-          ...(mismatch === 'missing totals'
-            ? {}
-            : { totals: { total: 9, current_translated: 0, current_original: 0, withdrawn: 9 } }),
-          periods: { historical: { total: 9 } },
-        },
-      });
-      render(
-        <LanguageProvider>
-          <ContentLanguage snapshot={snapshot} />
-        </LanguageProvider>,
-      );
-      expect(screen.getByText('Content coverage is unavailable.')).toBeTruthy();
-      expect(screen.queryByText('Withdrawn review')).toBeNull();
-      expect(screen.queryByText('Retained history')).toBeNull();
-    },
-  );
-});
 function start() {
   localStorage.setItem(PREFERENCE_KEY, 'en');
   window.history.replaceState(null, '', '#question/Q1?qview=all&qselected=Q1');
@@ -196,19 +98,63 @@ describe('reviewed content and answer state', () => {
       },
     });
     render(<App loader={async () => snapshot} sessionLoader={sessionLoader} />);
-    const summary = await screen.findByText('Full task context and evidence');
+    const summary = await screen.findByText('Full task description');
     await userEvent.setup().click(summary);
     const human = summary.closest('details')!;
     expect(human.open).toBe(true);
     expect(human.textContent).toContain('완료 조건: 모든 항목을 보존해요.');
-    const technical = human.querySelector('details')!;
-    expect(technical.open).toBe(false);
-    await userEvent.setup().click(technical.querySelector('summary')!);
-    expect(technical.open).toBe(true);
-    expect(JSON.parse(technical.querySelector('pre')!.textContent!)).toEqual({
-      text: '### T1. Task\n' + body,
-    });
+    expect(human.querySelector('details')).toBeNull();
+    expect(human.querySelector('pre')).toBeNull();
   });
+  it.each(['en', 'ko'])(
+    'formats the default visible translated task-description summary as a list with inline code in %s UI',
+    async (locale) => {
+      start();
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      window.history.replaceState(null, '', '#task/T1?scope=all&full=1');
+      const body = '- Preserve purpose\n- Keep authored method\n';
+      const reviewed = '- 목표: 의미를 유지해요\n- 방법: `src/retain.ts`를 확인해요\n';
+      const raw = fixture();
+      const snapshot = parseSnapshot({
+        ...raw,
+        tasks: [
+          { id: 'T1', title: 'Task', status: 'active', source: { text: '### T1. Task\n' + body } },
+        ],
+        presentation: {
+          schema_version: 1,
+          revision: 'one',
+          locale: 'ko',
+          entries: {
+            body: {
+              status: 'current',
+              mode: 'translated',
+              text: reviewed,
+              target: { kind: 'task_content', entity_id: 'T1', field: 'source_body' },
+              origin: { path: 'backlog.json', pointer: '/tasks/0/source/text', revision: 'one' },
+              binding: {
+                program_id: 'language-test',
+                source_value_sha256: presentationDigest(body),
+                context: { projection_rule: 'section_after_first_heading_v1' },
+              },
+            },
+          },
+        },
+      });
+      const before = JSON.stringify(snapshot);
+      const view = render(<App loader={async () => snapshot} sessionLoader={sessionLoader} />);
+      await screen.findByRole('heading', { name: 'Task' });
+      const glance = view.container.querySelector<HTMLElement>('.expected-result-summary');
+      if (!glance) throw new Error('Default task-description summary missing');
+      expect(glance.hidden).toBe(false);
+      expect(glance.querySelectorAll('ul li')).toHaveLength(2);
+      expect(glance.querySelector('code')?.textContent).toBe('src/retain.ts');
+      expect(glance.textContent).toContain('목표: 의미를 유지해요');
+      expect(view.container.querySelector<HTMLDetailsElement>('.task-source-context')?.open).toBe(
+        false,
+      );
+      expect(JSON.stringify(snapshot)).toBe(before);
+    },
+  );
   it('keeps two equal actor aliases as separate workload rows with canonical destinations', async () => {
     start();
     window.history.replaceState(null, '', '#team?scope=all');
@@ -275,17 +221,10 @@ describe('reviewed content and answer state', () => {
     expect(window.location.hash).not.toContain('Private');
     expect(JSON.stringify(localStorage)).not.toContain('Private');
     expect(sessionStorage.length).toBe(0);
-    const originals = document.querySelector<HTMLDetailsElement>(
-      '.question-form .content-originals',
-    );
-    expect(originals).not.toBeNull();
-    await user.click(originals!.querySelector('summary')!);
-    const optionSource = [...originals!.querySelectorAll('details')].find((row) =>
-      row.textContent?.includes('/options/0'),
-    )!;
-    await user.click(optionSource.querySelector('summary')!);
-    expect(screen.getByText('Original option')).toBeDefined();
-    expect(document.querySelector('.rail .content-originals')).toBeNull();
+    expect(
+      document.querySelector('.content-originals, .content-language, .original-record'),
+    ).toBeNull();
+    expect(screen.queryByText('Original option')).toBeNull();
   });
 
   it('saves only the explicitly clicked visible option and preserves the exact retry tuple when presentation changes', async () => {

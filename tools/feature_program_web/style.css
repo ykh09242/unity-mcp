@@ -388,11 +388,6 @@ progress::-moz-progress-bar {
   font-size: 12px;
   color: var(--muted);
 }
-.overview-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--s8);
-}
 .content-section {
   margin-block-start: var(--s6);
   padding-block-start: var(--s6);
@@ -1087,10 +1082,6 @@ summary {
   .rail-head {
     margin-block-end: var(--s4);
   }
-  .overview-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-  }
   .category-tree {
     margin-block-start: var(--s6);
   }
@@ -1760,7 +1751,7 @@ summary {
 .task-next-action {
   color: var(--muted);
   font-size: 13px;
-  margin-block-start: 5px;
+  margin-block-start: 0;
 }
 .task-meta {
   font-size: 11px;
@@ -2400,26 +2391,30 @@ select {
 .dependency-neighborhood h3 {
   font-size: 15px;
 }
-.dependency-neighborhood > details {
-  border-block-end: 1px solid var(--line);
-  padding-block: 8px;
+.neighbor-group + .neighbor-group {
+  margin-block-start: var(--s4);
 }
-.dependency-neighborhood summary {
-  font-size: 14px;
-}
-.dependency-neighborhood summary .muted {
-  margin-inline-start: 6px;
+.neighbor-group h4 {
+  display: flex;
+  gap: var(--s2);
+  font-size: 13px;
 }
 .dependency-neighborhood ul {
   padding: 0;
   margin-block: 8px;
   list-style: none;
 }
-.dependency-neighborhood li {
-  padding-block: 8px;
+.neighbor-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s3);
+  padding-block: var(--s2);
 }
 .neighbor-task {
-  display: block;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  word-break: keep-all;
   overflow-wrap: anywhere;
 }
 .neighbor-task .mono {
@@ -2431,7 +2426,7 @@ select {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  margin-block-start: 5px;
+  margin-block-start: 0;
   font-size: 12px;
 }
 .neighbor-meta a {
@@ -2518,4 +2513,70 @@ select {
 .source-locator {
   min-inline-size: 0;
   overflow-wrap: anywhere;
+}
+
+.task-description {
+  max-inline-size: 76ch;
+  color: var(--body);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.task-description > * + * {
+  margin-block-start: var(--s3);
+}
+.task-description p,
+.task-description li {
+  white-space: pre-wrap;
+}
+.task-description ul,
+.task-description ol {
+  margin-block: var(--s3);
+  padding-inline-start: var(--s6);
+}
+.task-description li + li {
+  margin-block-start: var(--s2);
+}
+.task-description code {
+  font-size: 0.92em;
+  color: var(--ink);
+  background: var(--raised);
+  border-radius: var(--radius);
+  padding-inline: var(--s1);
+  overflow-wrap: anywhere;
+}
+
+.program-attention {
+  margin-block: var(--s6);
+  padding-block: var(--s3);
+  border-block: 1px solid var(--line);
+}
+.program-attention h3 {
+  margin-block-end: var(--s2);
+}
+.attention-empty {
+  margin-block: var(--s4);
+}
+.attention-reason {
+  flex: 1 1 20rem;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.attention-entity,
+.attention-meta {
+  font-size: 12px;
+}
+.attention-action {
+  margin-block: var(--s2);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.attention-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s3);
+  margin-block-start: var(--s2);
+}
+.attention-meta .coordination-links {
+  margin: 0;
 }

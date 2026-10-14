@@ -137,7 +137,7 @@ describe('recorded workload and dependency context', () => {
   it('provides keyboard links to exact downstream work and owner workload without runtime contact claims', async () => {
     const snapshot = fixture();
     render(<DependencyNeighborhood snapshot={snapshot} task={snapshot.tasks[1]!} />);
-    const downstream = screen.getByText('Required by').closest('details')!;
+    const downstream = screen.getByText('Required by').closest<HTMLElement>('.neighbor-group')!;
     expect(within(downstream).getAllByRole('link')).toHaveLength(4);
     const task = within(downstream).getByRole('link', { name: 'A Alpha' });
     task.focus();
@@ -149,6 +149,41 @@ describe('recorded workload and dependency context', () => {
     expect(task.getAttribute('href')).toBe('#task/A');
     expect(screen.getByText('In review')).toBeDefined();
     expect(screen.queryByText(/contact:/)).toBeNull();
+  });
+  it('keeps populated hard and advisory relationships, real counts and unavailable peers without empty groups', () => {
+    const snapshot = fixture();
+    const task = snapshot.tasks[0];
+    if (!task) throw new Error('Task missing');
+    const before = JSON.stringify(snapshot);
+    const view = render(<DependencyNeighborhood snapshot={snapshot} task={task} />);
+    const upstream = screen.getByRole('region', { name: 'Depends on' });
+    const advisory = screen.getByRole('region', { name: 'Related tasks · advisory' });
+    expect(upstream.querySelector('h4')?.textContent).toContain('2');
+    expect(within(upstream).getByRole('link', { name: 'B Beta' }).getAttribute('href')).toBe(
+      '#task/B',
+    );
+    expect(within(upstream).getByText('missing · Task unavailable')).toBeTruthy();
+    expect(within(advisory).getByRole('link', { name: 'C Gamma' }).getAttribute('href')).toBe(
+      '#task/C',
+    );
+    expect(screen.queryByRole('region', { name: 'Required by' })).toBeNull();
+    expect(view.container.querySelector('.relationship-help, details')).toBeNull();
+    expect(screen.queryByText('None recorded')).toBeNull();
+    expect(JSON.stringify(snapshot)).toBe(before);
+  });
+  it('shows one concise empty state when all relationship groups are empty', () => {
+    const snapshot = parseSnapshot({
+      snapshot_version: 1,
+      revision: 'empty',
+      program_id: 'empty',
+      tasks: [{ id: 'T', title: 'Task', status: 'active' }],
+    });
+    const task = snapshot.tasks[0];
+    if (!task) throw new Error('Task missing');
+    const view = render(<DependencyNeighborhood snapshot={snapshot} task={task} />);
+    expect(screen.getByText('No task relationships recorded.')).toBeTruthy();
+    expect(view.container.querySelectorAll('.neighbor-group, details')).toHaveLength(0);
+    expect(screen.queryByText('None recorded')).toBeNull();
   });
   it('offers locally named icon controls without changing link destinations or guarded disabled semantics', async () => {
     render(

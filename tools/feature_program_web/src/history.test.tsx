@@ -8,12 +8,10 @@ import {
 } from './history';
 import { parseSnapshot, record } from './model';
 import type { JsonRecord, Task } from './model';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { LanguageProvider, PREFERENCE_KEY } from './i18n';
 import {
   DeliveryHistory,
-  HistoryReferences,
-  MembershipHistory,
   ReviewSummary,
   StaffingHistory,
   TaskHistory,
@@ -115,11 +113,9 @@ describe('readable history surfaces', () => {
     );
     expect(screen.getByText(/Time unknown/)).toBeDefined();
     expect(screen.getByText('Keep checkout for follow-up')).toBeDefined();
-    expect(screen.getByText('merge-exact')).toBeDefined();
-    expect(screen.getByText('/tasks/0/deliveries/0')).toBeDefined();
-    expect(screen.getByRole('link', { name: ref.path }).getAttribute('href')).toBe(
-      '#evidence/' + encodeURIComponent(ref.path),
-    );
+    expect(screen.queryByText('merge-exact')).toBeNull();
+    expect(screen.queryByText('/tasks/0/deliveries/0')).toBeNull();
+    expect(screen.queryByRole('link', { name: ref.path })).toBeNull();
   });
   it('keeps current review, independent readiness limits, old findings and explicit criterion paths separate', () => {
     const task = taskFixture({
@@ -199,8 +195,8 @@ describe('readable history surfaces', () => {
     expect(screen.getByText('Independent complete review')).toBeDefined();
     expect(screen.getByText('No live source check')).toBeDefined();
     expect(screen.getAllByText('Original finding remains').length).toBeGreaterThan(0);
-    expect(screen.getByText('src/exact.ts')).toBeDefined();
-    expect(screen.getByText('criterion-hash')).toBeDefined();
+    expect(screen.queryByText('src/exact.ts')).toBeNull();
+    expect(screen.queryByText('criterion-hash')).toBeNull();
     expect(screen.getAllByText('failed').length).toBeGreaterThan(0);
     expect(screen.getAllByText('passed').length).toBeGreaterThan(0);
   });
@@ -346,68 +342,8 @@ describe('readable history surfaces', () => {
     );
     expect(screen.getByText('Preserve domain context')).toBeDefined();
     expect(screen.getByText('earlier-worker')).toBeDefined();
-    const comparison = document.querySelector<HTMLElement>('.history-comparison section');
-    if (!comparison) throw new Error('Missing comparison');
-    expect(within(comparison).getByText('At claim').parentElement?.textContent).toContain(
-      'old-model',
-    );
-    expect(within(comparison).getByText('Current settings').parentElement?.textContent).toContain(
-      'new-model',
-    );
-  });
-  it('links explicit membership additions/removals and preserves changed source binding and receipt', () => {
-    render(
-      <MembershipHistory
-        snapshot={snapshotFixture(taskFixture(), {
-          objective: {
-            membership_revision: 2,
-            membership_history: [
-              {
-                revision: 2,
-                added: ['A1'],
-                removed: ['B2'],
-                before_binding: { task_definition_digest: 'old' },
-                after_binding: { task_definition_digest: 'new' },
-                evidence: [ref],
-              },
-            ],
-          },
-          amendments: [
-            {
-              id: 'change',
-              changes: [
-                { id: 'A1', before: { dependencies: ['B2'] }, after: { dependencies: [] } },
-              ],
-              receipt: ref,
-            },
-          ],
-        })}
-      />,
-    );
-    expect(
-      screen
-        .getAllByRole('link', { name: 'A1' })
-        .every((link) => link.getAttribute('href') === '#task/A1'),
-    ).toBe(true);
-    expect(screen.getByRole('link', { name: 'B2' }).getAttribute('href')).toBe('#task/B2');
-    expect(screen.getByText('old')).toBeDefined();
-    expect(screen.getByText('new')).toBeDefined();
-    expect(screen.getAllByRole('link', { name: ref.path }).length).toBe(2);
-  });
-  it('offers the complete reference list without fetching source paths or unsafe links', () => {
-    render(
-      <HistoryReferences
-        value={Array.from({ length: 7 }, (_, i) => ({
-          path: i === 6 ? 'javascript:alert(1)' : `evidence/A1/attempt-1/${i}.txt`,
-          sha256: `hash-${i}`,
-        }))}
-      />,
-    );
-    expect(screen.getAllByRole('link')).toHaveLength(5);
-    fireEvent.click(screen.getByRole('button', { name: 'Show all 7 references' }));
-    expect(screen.getAllByRole('link')).toHaveLength(6);
-    expect(screen.getByText('javascript:alert(1)')).toBeDefined();
-    expect(screen.getByText('hash-6')).toBeDefined();
+    expect(screen.getByText('old-model')).toBeDefined();
+    expect(document.querySelector('.history-comparison, .original-record')).toBeNull();
   });
   it('localizes known review and attempt states while retaining authored Korean and unknown values', () => {
     localStorage.setItem(PREFERENCE_KEY, 'ko');
@@ -439,10 +375,10 @@ describe('readable history surfaces', () => {
     expect(screen.getByText('승인됨')).toBeDefined();
     expect(screen.getByText(/담당 해제/)).toBeDefined();
     expect(screen.getByText('디렉터')).toBeDefined();
-    expect(screen.getByText('작업 범위')).toBeDefined();
+    expect(screen.queryByText('작업 범위')).toBeNull();
     expect(screen.getByText('Original 한글 action')).toBeDefined();
   });
-  it('keeps the chosen comparison and expanded history through a changed snapshot', () => {
+  it('keeps expanded operational history through a changed snapshot without comparison audits', () => {
     const task = taskFixture({
       attempts: [1, 2, 3].map((number) => ({
         number,
@@ -454,8 +390,6 @@ describe('readable history surfaces', () => {
     const disclosure = screen.getByText('Attempt and review history').closest('details');
     if (!disclosure) throw new Error('Missing history disclosure');
     disclosure.open = true;
-    const select = screen.getByLabelText('Previous attempt');
-    fireEvent.change(select, { target: { value: '1' } });
     const updated = { ...task, next_action: 'New authored action after polling' };
     view.rerender(
       <TaskHistory
@@ -465,9 +399,8 @@ describe('readable history surfaces', () => {
     );
     expect(screen.getByText('Attempt and review history').closest('details')).toBe(disclosure);
     expect(disclosure.open).toBe(true);
-    expect(screen.getByLabelText('Previous attempt')).toBe(select);
-    expect((select as HTMLSelectElement).value).toBe('1');
-    expect(screen.getAllByText('attempt-1.ts').length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText('Previous attempt')).toBeNull();
+    expect(screen.queryByText('attempt-1.ts')).toBeNull();
   });
 });
 

@@ -104,8 +104,7 @@ export function Workload({
                           {i18n.personnel(
                             'reasoning_effort',
                             index.actors.get(row.owner)?.reasoning_effort,
-                          )}{' '}
-                          · {i18n.personnel('provenance', index.actors.get(row.owner)?.provenance)}
+                          )}
                         </span>
                         <StaffingHistory actor={index.actors.get(row.owner) || {}} />
                       </div>
@@ -182,26 +181,30 @@ export function DependencyNeighborhood({
   readonly snapshot: Snapshot;
   readonly task: Task;
 }) {
-  const i18n = useI18n();
-  const presentation = usePresentation();
+  const i18n = useI18n(),
+    presentation = usePresentation();
   const neighborhood = taskNeighborhood(snapshot, task);
   const groups = [
     ['upstream', 'Depends on'],
     ['downstream', 'Required by'],
     ['related', 'Related tasks · advisory'],
   ] as const;
+  const nonempty = groups.filter(([key]) => neighborhood[key].length > 0);
   return (
     <section className="dependency-neighborhood" aria-label={i18n.t('Task relationships')}>
       <h3>{i18n.t('Task relationships')}</h3>
-      {groups.map(([key, label]) => (
-        <details key={key} open={key !== 'related' || undefined}>
-          <summary>
-            {i18n.t(label)} <span className="muted">{neighborhood[key].length}</span>
-          </summary>
-          {neighborhood[key].length ? (
+      {!nonempty.length ? (
+        <p className="muted">{i18n.t('No task relationships recorded.')}</p>
+      ) : (
+        nonempty.map(([key, label]) => (
+          <section className="neighbor-group" key={key} aria-label={i18n.t(label)}>
+            <h4>
+              <span>{i18n.t(label)}</span>
+              <span className="muted">{i18n.number(neighborhood[key].length)}</span>
+            </h4>
             <ul>
               {neighborhood[key].map(({ id, task: peer }) => (
-                <li key={id}>
+                <li className="neighbor-row" key={id}>
                   {peer ? (
                     <>
                       <a className="neighbor-task" href={`#task/${encodeURIComponent(id)}`}>
@@ -229,19 +232,9 @@ export function DependencyNeighborhood({
                 </li>
               ))}
             </ul>
-          ) : (
-            <p className="muted">{i18n.t('None recorded')}</p>
-          )}
-        </details>
-      ))}
-      <details className="relationship-help">
-        <summary>{i18n.t('About these relationships')}</summary>
-        <p className="muted">
-          {i18n.t(
-            'Dependencies describe required work, not claim permission. Related tasks are advisory. Owners reflect saved assignments, not live availability.',
-          )}
-        </p>
-      </details>
+          </section>
+        ))
+      )}
     </section>
   );
 }

@@ -36,7 +36,7 @@ function start() {
   window.history.replaceState(null, '', '#task/A?full=1');
 }
 async function context() {
-  const summary = await screen.findByText('Full task context and evidence');
+  const summary = await screen.findByText('Full task description');
   const disclosure = summary.closest('details');
   const glance = document.querySelector<HTMLElement>('.expected-result-summary');
   if (!disclosure || !glance) throw new Error('Task context missing');
@@ -56,8 +56,10 @@ describe('task context and refresh continuity', () => {
       .map((element) => element.textContent)
       .join('\n');
     expect(humanText).toContain('Retain unique acceptance.');
-    expect(humanText).toContain('Exact purpose.\n\nUnique method.');
-    expect(disclosure.querySelector('details')?.open).toBe(false);
+    expect(
+      Array.from(disclosure.querySelectorAll('.task-description p'), (node) => node.textContent),
+    ).toEqual(['Exact purpose.', 'Unique method.']);
+    expect(disclosure.querySelector('details')).toBeNull();
   });
   it('suppresses only the duplicated glance while full source context is expanded', async () => {
     // Given

@@ -1,5 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { recordedCriterionResult } from './criterion-results';
 import { LanguageProvider, PREFERENCE_KEY } from './i18n';
@@ -197,7 +196,7 @@ describe('source-bound recorded criterion results', () => {
   });
   it.each(['ko', 'en'])(
     'foregrounds the actual historical result and keeps annotations and evidence in %s details',
-    async (locale) => {
+    (locale) => {
       localStorage.setItem(PREFERENCE_KEY, locale);
       render(
         <LanguageProvider>
@@ -208,26 +207,11 @@ describe('source-bound recorded criterion results', () => {
         locale === 'ko' ? '기록된 완료 판정: 통과' : 'Recorded completion result: passed',
       );
       expect(result.closest('details')).toBeNull();
-      const summary = screen.getByText(locale === 'ko' ? '검토 근거' : 'Review evidence');
-      const details = summary.closest('details');
-      expect(details).not.toBeNull();
-      if (!details) throw new Error('Review evidence is not a disclosure');
-      expect(
-        within(details).getByText(
-          locale === 'ko' ? '기준 연결 기록이 없어요.' : 'No coverage annotation recorded.',
-        ),
-      ).toBeTruthy();
+      expect(screen.queryByText(locale === 'ko' ? '검토 근거' : 'Review evidence')).toBeNull();
+      expect(screen.queryByRole('link', { name: 'evidence/completion.json' })).toBeNull();
       expect(screen.queryByText(/^(Linkage|연결 상태):/)).toBeNull();
-      await userEvent.click(summary);
-      expect(details.open).toBe(true);
       expect(
-        within(details)
-          .getByRole('link', { name: 'evidence/completion.json' })
-          .getAttribute('href'),
-      ).toBe('#evidence/evidence%2Fcompletion.json');
-      expect(within(details).getByRole('link', { name: 'evidence/review.json' })).toBeTruthy();
-      expect(
-        within(details).getByText(
+        screen.getByText(
           locale === 'ko'
             ? '과거 완료 기록이며 현재 승인 상태를 새로 판정하지 않아요.'
             : 'Historical completion record; current acceptance is not inferred.',
@@ -278,7 +262,7 @@ describe('source-bound recorded criterion results', () => {
       ])
         expect(labels).not.toContain(label);
       // The deliberate context disclosure keeps its diagnostic record, rather than deleting all originals.
-      expect(view.container.querySelector('.original-record')).toBeTruthy();
+      expect(view.container.querySelector('.original-record')).toBeNull();
       expect(JSON.stringify(snapshot)).toBe(before);
     },
   );

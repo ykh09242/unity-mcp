@@ -4,9 +4,8 @@ import { useI18n } from './i18n';
 import { items, record, records, string } from './model';
 import type { Json, Snapshot } from './model';
 import { currentCollection, currentReference } from './readiness';
-import { OriginalRecord } from './readiness-ui';
 import { usePresentation } from './presentation-ui';
-import { CoverageObservations, HistoryReferences } from './history-ui';
+import { CoverageObservations } from './history-ui';
 
 const systemActions: Readonly<Record<string, string>> = {
   objective: 'Inspect the objective-completion prerequisites',
@@ -31,7 +30,7 @@ export function currentBrief(snapshot: Snapshot) {
 }
 
 const kindLabels: Readonly<Record<string, string>> = {
-  integrity: 'Source integrity',
+  integrity: 'Data integrity',
   recovery: 'Recovery',
   question: 'Question',
   objective: 'Current objective',
@@ -45,19 +44,6 @@ const kindLabels: Readonly<Record<string, string>> = {
   coverage: 'Criterion links',
   transfer: 'Personnel handoffs',
 };
-
-function Locator({ value }: { readonly value: Json | undefined }) {
-  const i18n = useI18n();
-  const ref = record(value);
-  return (
-    <p className="mono muted source-locator">
-      {string(ref.path) || i18n.t('Unknown')}
-      {string(ref.pointer)}
-      {string(ref.revision) && <> · {string(ref.revision)}</>}
-      {string(ref.sha256) && <> · {string(ref.sha256)}</>}
-    </p>
-  );
-}
 
 function Omission({ shown, total }: { readonly shown: number; readonly total: number }) {
   const i18n = useI18n();
@@ -75,9 +61,7 @@ function Omission({ shown, total }: { readonly shown: number; readonly total: nu
 function Shortened({ value }: { readonly value: Json | undefined }) {
   const i18n = useI18n();
   return items(record(value).truncated_fields).length ? (
-    <p className="muted">
-      {i18n.t('Summary text is shortened. Inspect the referenced source for full context.')}
-    </p>
+    <p className="muted">{i18n.t('Summary text is shortened.')}</p>
   ) : null;
 }
 
@@ -88,6 +72,10 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
   const brief = currentBrief(snapshot);
   const attention = brief ? currentCollection(snapshot, brief.attention, undefined, 50) : null;
   const shown = attention?.items.slice(0, expanded ? 50 : 5) || [];
+  if (attention?.total === 0)
+    return (
+      <p className="attention-empty muted">{i18n.t('No current attention items recorded.')}</p>
+    );
   return (
     <section className="program-attention">
       <h3>
@@ -100,67 +88,92 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
         </p>
       ) : (
         <>
-          {attention.total === 0 && (
-            <p className="muted">{i18n.t('No current attention items recorded.')}</p>
-          )}
           <ul className="attention-items">
             {shown.map((value, index) => {
-              const row = record(value);
-              const source = record(row.reference);
+              const row = record(value),
+                source = record(row.reference),
+                kind = string(row.kind),
+                entityId = string(row.entity_id);
               const recoveryReference =
-                row.kind === 'recovery' &&
+                kind === 'recovery' &&
                 Boolean(string(source.path)) &&
                 source.revision === undefined &&
                 source.pointer === undefined;
               const valid =
                 (currentReference(snapshot, row.reference) || recoveryReference) &&
                 row.observed_revision === snapshot.revision;
-              const impact = currentCollection(snapshot, row.criterion_impact);
               const generatedAction =
-                Boolean(systemActions[string(row.kind)]) &&
-                systemActions[string(row.kind)] === row.next_action &&
-                (row.kind !== 'objective' ||
+                Boolean(systemActions[kind]) &&
+                systemActions[kind] === row.next_action &&
+                (kind !== 'objective' ||
                   (row.entity_id === record(snapshot.objective).id &&
                     !Object.hasOwn(record(snapshot.objective), 'next_action')));
+              const question =
+                kind === 'question'
+                  ? records(snapshot.questions).find((item) => item.id === entityId)
+                  : undefined;
+              const decisionStatus =
+                generatedAction &&
+                question &&
+                row.reason === 'Recorded decision state: ' + string(question.status)
+                  ? string(question.status)
+                  : '';
+              const meaningfulAction =
+                string(row.next_action).trim() &&
+                !(generatedAction && (kind === 'integrity' || kind === 'question')) &&
+                row.next_action !== row.reason;
               return (
-                <li key={`${string(row.kind)}:${string(row.entity_id)}:${index}`}>
+                <li key={`${kind}:${entityId}:${index}`}>
                   <div className="attention-heading">
-                    <strong>
-                      {i18n.t(kindLabels[string(row.kind)] || string(row.kind) || 'Unknown')}
-                    </strong>
-                    <span className="mono">{string(row.entity_id)}</span>
+                    <strong>{i18n.t(kindLabels[kind] || kind || 'Unknown')}</strong>
+                    {entityId && !(kind === 'integrity' && /^\d+$/u.test(entityId)) && (
+                      <span className="mono attention-entity">{entityId}</span>
+                    )}
+                    {valid &&
+                      (decisionStatus ? (
+                        <span className="badge">{i18n.human(decisionStatus)}</span>
+                      ) : (
+                        <span className="attention-reason">
+                          {i18n.warning(row.reason || 'Unknown')}
+                        </span>
+                      ))}
                   </div>
                   {!valid ? (
                     <p>{i18n.t('Current source binding is unavailable.')}</p>
                   ) : (
                     <>
-                      <p className="prose">{i18n.warning(row.reason || 'Unknown')}</p>
-                      <p className="prose">
-                        {generatedAction
-                          ? i18n.t(string(row.next_action))
-                          : i18n.display(row.next_action, 'No next action recorded')}
-                      </p>
-                      <p className="muted">
-                        {i18n.t('Responsible actor')}:{' '}
-                        {presentation.actor(row.responsible_actor_id) || i18n.t('Unknown')}
-                      </p>
-                      <Shortened value={row} />
-                      <div className="coordination-links">
-                        {row.kind === 'question' && string(row.entity_id) && (
-                          <a href={`#question/${encodeURIComponent(string(row.entity_id))}`}>
-                            {i18n.t('Open question')}
-                          </a>
+                      {meaningfulAction && (
+                        <p className="attention-action">
+                          {generatedAction
+                            ? i18n.t(string(row.next_action))
+                            : i18n.display(row.next_action)}
+                        </p>
+                      )}
+                      <div className="attention-meta muted">
+                        {string(row.responsible_actor_id) && (
+                          <span>
+                            {i18n.t('Responsible actor')}:{' '}
+                            {presentation.actor(row.responsible_actor_id)}
+                          </span>
                         )}
-                        {items(row.task_ids)
-                          .map(string)
-                          .filter(Boolean)
-                          .slice(0, 5)
-                          .map((id) => (
-                            <a key={id} href={`#task/${encodeURIComponent(id)}`}>
-                              {presentation.taskReference(id)}
+                        <div className="coordination-links">
+                          {kind === 'question' && entityId && (
+                            <a href={`#question/${encodeURIComponent(entityId)}`}>
+                              {i18n.t('Open question')}
                             </a>
-                          ))}
+                          )}
+                          {items(row.task_ids)
+                            .map(string)
+                            .filter(Boolean)
+                            .slice(0, 5)
+                            .map((id) => (
+                              <a key={id} href={`#task/${encodeURIComponent(id)}`}>
+                                {presentation.taskReference(id)}
+                              </a>
+                            ))}
+                        </div>
                       </div>
+                      <Shortened value={row} />
                       {items(row.task_ids).length > 5 && (
                         <details>
                           <summary>
@@ -183,35 +196,6 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
                       )}
                     </>
                   )}
-                  <details>
-                    <summary>{i18n.t('Context and source')}</summary>
-                    <Locator value={row.reference} />
-                    <p className="muted">
-                      {i18n.t('Criterion impact includes explicit links only.')}
-                    </p>
-                    {impact ? (
-                      <>
-                        <p>
-                          {i18n.t('Explicit criterion links')}: {i18n.number(impact.total)}
-                        </p>
-                        <ul>
-                          {impact.items.map((item, n) => (
-                            <li key={n}>
-                              {i18n.t('Criterion')}{' '}
-                              {typeof record(item).ordinal === 'number'
-                                ? i18n.number(Number(record(item).ordinal) + 1)
-                                : i18n.t('Unknown')}{' '}
-                              <span className="mono muted">{string(record(item).text_sha256)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                        <Omission shown={impact.shown} total={impact.total} />
-                      </>
-                    ) : (
-                      <p>{i18n.t('Unknown')}</p>
-                    )}
-                    <OriginalRecord value={row} />
-                  </details>
                 </li>
               );
             })}
@@ -247,16 +231,8 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
     : null;
   const coverage = record(snapshot.coverage);
   const compatible = coverage.objective_id === record(snapshot.objective).id;
-  const latestAnnotation = compatible ? records(coverage.history).at(-1) : undefined;
-  const acceptance = compatible ? record(coverage.recorded_objective_acceptance) : {};
   return (
     <div className="criterion-coverage">
-      {latestAnnotation && latestAnnotation.freshness !== 'current' && (
-        <p className="notice">
-          {i18n.t('Latest criterion annotation')}: {i18n.human(latestAnnotation.freshness)}.{' '}
-          {i18n.t('Earlier links are not substituted for the current observation.')}
-        </p>
-      )}
       {!criteria ? (
         <>
           <p className="muted">{i18n.t('Criterion coverage is unavailable.')}</p>
@@ -271,6 +247,11 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
       ) : (
         <>
           <p className="muted">{i18n.t('Declared links do not establish criterion acceptance.')}</p>
+          {compatible && record(snapshot.objective).completion != null && (
+            <p className="muted">
+              {i18n.t('Historical completion record; current acceptance is not inferred.')}
+            </p>
+          )}
           <ol>
             {criteria.items.map((value, index) => {
               const criterion = record(value);
@@ -367,47 +348,12 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
                       <Shortened value={criterion} />
                     </>
                   )}
-                  <details>
-                    <summary>{i18n.t('Review evidence')}</summary>
-                    {annotationAbsent && completion && (
-                      <p className="muted">{i18n.t('No coverage annotation recorded.')}</p>
-                    )}
-                    {completion && (
-                      <div className="recorded-completion-evidence">
-                        <p className="muted">
-                          {i18n.t(
-                            'Historical completion record; current acceptance is not inferred.',
-                          )}
-                        </p>
-                        <p>
-                          {i18n.t('Source freshness')}: {i18n.human(completion.sourceFreshness)}
-                        </p>
-                        <p>
-                          {i18n.t('Head freshness')}: {i18n.human(completion.headFreshness)}
-                        </p>
-                        <HistoryReferences value={completion.receipt} />
-                        <HistoryReferences value={completion.result.evidence} />
-                      </div>
-                    )}
-                    {records(full?.links).map((link, n) => (
-                      <div key={n}>
-                        <a href={`#task/${encodeURIComponent(string(link.task_id))}`}>
-                          {presentation.taskReference(link.task_id)}
-                        </a>
-                        <ul>
-                          {items(link.paths).map((path, k) => (
-                            <li className="mono" key={k}>
-                              {string(path)}
-                            </li>
-                          ))}
-                        </ul>
-                        {records(link.records).map((entry, k) => (
-                          <HistoryReferences key={k} value={entry.receipt} />
-                        ))}
-                      </div>
-                    ))}
-                    <CoverageObservations value={full?.recorded_observations} />
-                  </details>
+                  {records(full?.recorded_observations).length > 0 && (
+                    <details>
+                      <summary>{i18n.t('Recorded review findings')}</summary>
+                      <CoverageObservations value={full?.recorded_observations} />
+                    </details>
+                  )}
                 </li>
               );
             })}
@@ -427,37 +373,6 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
           )}
         </>
       )}
-      <details>
-        <summary>{i18n.t('Coverage source history')}</summary>
-        {records(coverage.history).map((entry, index) => (
-          <article key={index}>
-            <p>
-              {i18n.display(entry.id)} · {i18n.human(entry.freshness)} ·{' '}
-              {i18n.date(entry.recorded_at)}
-            </p>
-            <ul>
-              {items(entry.reasons).map((reason, n) => (
-                <li key={n}>{i18n.display(reason)}</li>
-              ))}
-            </ul>
-            <Locator value={entry.receipt} />
-          </article>
-        ))}
-        {!records(coverage.history).length && <p>{i18n.t('No coverage annotation recorded.')}</p>}
-        <p>
-          {i18n.t('Recorded objective acceptance')}: {i18n.human(acceptance.status)}
-        </p>
-        <p>
-          {i18n.t('Source freshness')}: {i18n.human(acceptance.source_freshness)}
-        </p>
-        <p>
-          {i18n.t('Head freshness')}: {i18n.human(acceptance.head_freshness)}
-        </p>
-        <p>
-          {i18n.t('Integrated review')}:{' '}
-          {i18n.human(compatible ? record(coverage.integrated_review).status : undefined)}
-        </p>
-      </details>
     </div>
   );
 }

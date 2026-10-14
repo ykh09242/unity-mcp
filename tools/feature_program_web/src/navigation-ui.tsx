@@ -46,7 +46,7 @@ export function NavigationSearch({
           {i18n.t('Search across records')} <kbd>Ctrl K</kbd>
         </summary>
         <label htmlFor="navigation-query">
-          {i18n.t('Find task, person, question or evidence')} <kbd>Ctrl K</kbd>
+          {i18n.t('Find task, person or question')} <kbd>Ctrl K</kbd>
         </label>
         <input
           id="navigation-query"

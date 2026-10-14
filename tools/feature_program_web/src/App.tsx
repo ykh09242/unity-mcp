@@ -1,12 +1,8 @@
+import { TaskDescription } from './task-description';
 import { CriterionCoverage, ProgramAttention } from './overview-context';
 import { LanguageProvider, language, useI18n } from './i18n';
 import { originalValue, presentSnapshot, taskBody } from './presentation';
-import {
-  ContentLanguage,
-  ContentOriginals,
-  PresentationProvider,
-  usePresentation,
-} from './presentation-ui';
+import { PresentationProvider, usePresentation } from './presentation-ui';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -25,9 +21,8 @@ import { DependencyNeighborhood, Workload } from './relate-ui';
 import { hasActionGlance, workloadHref } from './relate';
 import { CoordinationNotes, GoalCoordination, ReadinessContext } from './readiness-ui';
 import {
+  ContentValue,
   DeliveryHistory,
-  EvidenceReferences,
-  MembershipHistory,
   ReviewSummary,
   StaffingHistory,
   TaskHistory,
@@ -91,7 +86,9 @@ function Fields({ values }: { readonly values: readonly (readonly [string, Json 
       {values.map(([key, value]) => (
         <div key={key}>
           <dt>{i18n.t(key)}</dt>
-          <dd>{i18n.display(presentation.field(key, value))}</dd>
+          <dd>
+            <ContentValue value={presentation.field(key, value)} />
+          </dd>
         </div>
       ))}
     </dl>
@@ -109,13 +106,21 @@ function Prose({
     return value.length ? (
       <ul className="prose-list">
         {value.map((item, index) => (
-          <li key={index}>{i18n.display(item)}</li>
+          <li key={index}>
+            <ContentValue value={item} />
+          </li>
         ))}
       </ul>
     ) : (
       <p className="muted">{i18n.t(fallback)}</p>
     );
-  return <p className="prose">{i18n.display(value, fallback)}</p>;
+  return value !== null && typeof value === 'object' ? (
+    <div className="prose">
+      <ContentValue value={value} />
+    </div>
+  ) : (
+    <p className="prose">{i18n.display(value, fallback)}</p>
+  );
 }
 function Status({ value }: { readonly value: Json | undefined }) {
   const i18n = useI18n();
@@ -201,7 +206,6 @@ function CategoryTreeView({
         </span>
       </button>
       {walk(null, new Set())}
-      {selected && <ContentOriginals entity="category" id={selected} />}
       {!index.categories.size && <p className="muted">{i18n.t('No categories recorded.')}</p>}
       {filtered && !matching.size && (
         <p className="muted">{i18n.t('No category members match these filters.')}</p>
@@ -332,6 +336,7 @@ function Overview({
         </a>
       </div>
       <Objective snapshot={snapshot} />
+      <ProgramAttention snapshot={snapshot} />
       <Progress snapshot={snapshot} />
       <div className="status-strip">
         {statuses.map((status) => (
@@ -341,37 +346,32 @@ function Overview({
           </div>
         ))}
       </div>
-      <ContentOriginals entity="goal" id={string(record(snapshot.objective).id)} />
-      <MembershipHistory snapshot={snapshot} />
-      <div className="overview-grid">
-        <Section title={i18n.t('Areas and responsibility')}>
-          {categories.length ? (
-            categories.map((category) => {
-              const ids = categoryTasks(snapshot, string(category.id));
-              const tasks = tasksInScope.filter((task) => ids.has(task.id));
-              const done = tasks.filter((task) => task.status === 'done').length;
-              const owners = [...new Set(tasks.map(ownerOf).filter(Boolean))];
-              return (
-                <div className="area-row" key={string(category.id)}>
-                  <div>
-                    <strong>{i18n.display(category.title)}</strong>
-                    <p className="muted">
-                      {i18n.t('Recorded owners:')}{' '}
-                      {owners.map(presentation.actor).join(', ') || i18n.t('No assignment yet')}
-                    </p>
-                  </div>
-                  <span className="mono">
-                    {done}/{tasks.length}
-                  </span>
+      <Section title={i18n.t('Areas and responsibility')}>
+        {categories.length ? (
+          categories.map((category) => {
+            const ids = categoryTasks(snapshot, string(category.id));
+            const tasks = tasksInScope.filter((task) => ids.has(task.id));
+            const done = tasks.filter((task) => task.status === 'done').length;
+            const owners = [...new Set(tasks.map(ownerOf).filter(Boolean))];
+            return (
+              <div className="area-row" key={string(category.id)}>
+                <div>
+                  <strong>{i18n.display(category.title)}</strong>
+                  <p className="muted">
+                    {i18n.t('Recorded owners:')}{' '}
+                    {owners.map(presentation.actor).join(', ') || i18n.t('No assignment yet')}
+                  </p>
                 </div>
-              );
-            })
-          ) : (
-            <p className="muted">{i18n.t('No category hierarchy recorded.')}</p>
-          )}
-        </Section>
-        <ProgramAttention snapshot={snapshot} />
-      </div>
+                <span className="mono">
+                  {done}/{tasks.length}
+                </span>
+              </div>
+            );
+          })
+        ) : (
+          <p className="muted">{i18n.t('No category hierarchy recorded.')}</p>
+        )}
+      </Section>
       {records(snapshot.questions).some(
         (question) =>
           !string(record(snapshot.objective).id) ||
@@ -798,12 +798,10 @@ function Handoff({ handoff }: { readonly handoff: JsonRecord }) {
         ]}
       />
       <details>
-        <summary>{i18n.t('Constraints, findings and evidence')}</summary>
+        <summary>{i18n.t('Constraints and findings')}</summary>
         <Prose value={outgoing.constraints} />
         <Prose value={outgoing.unresolved_findings} fallback="No unresolved findings recorded" />
-        <pre className="source">{i18n.display(originalValue(handoff))}</pre>
       </details>
-      <ContentOriginals entity="handoff" id={string(handoff.id)} />
       <TransferHistory handoff={handoff} />
     </article>
   );
@@ -954,16 +952,20 @@ function TaskDetail({
                   translatedBody && !task.expected_result ? 'Task description' : 'Expected result',
                 )}
               </h3>
-              <Prose
-                value={expectedResult}
-                fallback="Read the full source context below for task purpose and method."
-              />
+              {translatedBody && !task.expected_result && typeof expectedResult === 'string' ? (
+                <TaskDescription text={expectedResult} />
+              ) : (
+                <Prose
+                  value={expectedResult}
+                  fallback="Read the task description below for purpose and method."
+                />
+              )}
             </div>
             <details className="expected-result">
               <summary>{i18n.t('Planning and metadata')}</summary>
               <Prose
                 value={task.planning_note}
-                fallback="Read the full source context below for task purpose and method."
+                fallback="Read the task description below for purpose and method."
               />
               <Fields
                 values={[
@@ -983,26 +985,25 @@ function TaskDetail({
               />
             </details>
           </Section>
-          <ContentOriginals entity="task" id={task.id} />
           <ReviewSummary snapshot={snapshot} task={task} />
-          <Section title={i18n.t('Requirements and source context')}>
+          <Section title={i18n.t('Requirements')}>
             <details
               className="task-source-context"
               onToggle={(event) => {
                 if (event.target === event.currentTarget) setContextOpen(event.currentTarget.open);
               }}
             >
-              <summary>{i18n.t('Full task context and evidence')}</summary>
+              <summary>{i18n.t('Full task description')}</summary>
               {contextBlocks.map(({ label, value }) => (
                 <div key={label}>
                   <h4>{i18n.t(label)}</h4>
-                  <Prose value={value} />
+                  {label === 'Task description' && typeof value === 'string' ? (
+                    <TaskDescription text={value} />
+                  ) : (
+                    <Prose value={value} />
+                  )}
                 </div>
               ))}
-              <details>
-                <summary>{i18n.t('Original record')}</summary>
-                <pre className="source">{i18n.display(originalValue(source))}</pre>
-              </details>
             </details>
           </Section>
           <QuestionLinks snapshot={snapshot} taskId={taskId} context={context} />
@@ -1028,7 +1029,6 @@ function TaskDetail({
                   ['Role', i18n.human(assignment.role)],
                   ['Model', i18n.personnel('model_id', assignment.model_id)],
                   ['Reasoning', i18n.personnel('reasoning_effort', assignment.reasoning_effort)],
-                  ['Provenance', i18n.personnel('provenance', assignment.provenance)],
                   ['Staffing', i18n.human(actor.staffing_status)],
                   [
                     'Last observed',
@@ -1080,7 +1080,6 @@ function Team({
           <article className="actor-record">
             <div className="actor-heading">
               <h3>{presentation.actor(id)}</h3>
-              <ContentOriginals entity="actor" id={id} />
               <span className="badge">
                 {i18n.human(actor.role)} · {i18n.human(actor.staffing_status)}
               </span>
@@ -1097,10 +1096,6 @@ function Team({
               values={[
                 ['Model', i18n.personnel('model_id', actor.model_id)],
                 ['Reasoning', i18n.personnel('reasoning_effort', actor.reasoning_effort)],
-                [
-                  'Provenance',
-                  `${i18n.personnel('provenance', actor.provenance)} · ${i18n.t('saved')}`,
-                ],
                 [
                   'Last observed',
                   `${i18n.personnel('observed_status', actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
@@ -1138,18 +1133,6 @@ function Team({
             'Management relationships and assignments are recorded by the director. This page does not poll live agent sessions.',
           )}
         </p>
-        <p className="muted">
-          {i18n.t('Program communication language')}:{' '}
-          {snapshot.communication_language === 'ko'
-            ? '한국어'
-            : snapshot.communication_language === 'en'
-              ? 'English'
-              : i18n.t('Not recorded')}
-          {' · '}
-          {i18n.t(
-            'Reviewed content follows the recorded session language. Original records remain available.',
-          )}
-        </p>
         <Section title={i18n.t('Final director')}>
           <Fields
             values={[
@@ -1164,7 +1147,6 @@ function Team({
           <details>
             <summary>{i18n.t('Authority and responsibility')}</summary>
             <Prose value={items(responsibilities.director).map((item) => i18n.t(string(item)))} />
-            <pre className="source">{i18n.display(originalValue(director))}</pre>
           </details>
         </Section>
         <Section title={i18n.t('Management hierarchy')}>
@@ -1696,35 +1678,24 @@ function Dashboard({
         />
       );
     else if (route.view === 'evidence') {
-      const supplied = snapshotIndex(snapshot).evidenceByPath.get(route.evidencePath || '');
-      const references = supplied?.filter(
-        (reference, index) =>
-          supplied.findIndex((other) => semanticValueEqual(reference, other)) === index,
-      );
       content = (
         <>
-          <a
-            className="back-link"
+          <IconLink
+            icon="back"
+            label={i18n.t(
+              selected && snapshotIndex(snapshot).tasks.has(selected)
+                ? 'Back to task'
+                : 'Back to work',
+            )}
             href={navigationHash(
               selected && snapshotIndex(snapshot).tasks.has(selected)
                 ? { view: 'task', taskId: selected }
                 : { view: 'work' },
               navigation,
             )}
-          >
-            {i18n.t(
-              selected && snapshotIndex(snapshot).tasks.has(selected)
-                ? 'Back to task'
-                : 'Back to work',
-            )}
-          </a>
-          <h2>{i18n.t('Evidence record')}</h2>
-          <p className="mono">{route.evidencePath}</p>
-          {references?.length ? (
-            <EvidenceReferences references={references} path={route.evidencePath || ''} />
-          ) : (
-            <p className="empty">{i18n.t('Record unavailable in this snapshot')}</p>
-          )}
+          />
+          <h2>{i18n.t('Record unavailable')}</h2>
+          <p className="empty">{i18n.t('Record details are not shown in this view.')}</p>
         </>
       );
     } else {
@@ -1911,7 +1882,6 @@ function Dashboard({
                   />
                 </details>
               )}
-            {snapshot && <ContentLanguage snapshot={snapshot} />}
             <details className="local-help">
               <summary>{i18n.t('About this local view')}</summary>
               <p>

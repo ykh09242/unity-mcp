@@ -33,7 +33,7 @@ describe('supplied Overview context', () => {
         'Inspect the objective-completion prerequisites',
         '목표 완료 조건을 확인하세요.',
       ],
-      ['integrity', 'Inspect original records and artifacts', '원문과 근거를 확인하세요'],
+      ['integrity', 'Inspect original records and artifacts', '보고된 문제를 검토하세요.'],
       [
         'acceptance',
         'Inspect the exact submission/review binding',
@@ -83,7 +83,11 @@ describe('supplied Overview context', () => {
           <ProgramAttention snapshot={raw} />
         </LanguageProvider>,
       );
-      expect(screen.getByText(locale === 'ko' ? translated! : action!)).toBeTruthy();
+      if (kind === 'integrity' || kind === 'question') {
+        expect(screen.queryByText(locale === 'ko' ? translated! : action!)).toBeNull();
+      } else {
+        expect(screen.getByText(locale === 'ko' ? translated! : action!)).toBeTruthy();
+      }
       expect(record(record(raw.brief).attention).items).toEqual([
         expect.objectContaining({ next_action: action }),
       ]);
@@ -189,6 +193,92 @@ describe('supplied Overview context', () => {
       expect(raw.tasks[0]?.next_action).toBe(original);
     },
   );
+  it.each(['en', 'ko'])(
+    'keeps genuine warning/action and entity routes in compact attention without generated duplicates in %s',
+    (locale) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      const { snapshot, brief, ref, collection } = fixture();
+      const rows = [
+        {
+          kind: 'integrity',
+          entity_id: '0',
+          reason: 'A genuine warning remains',
+          next_action: 'Inspect original records and artifacts',
+          responsible_actor_id: 'director',
+          reference: ref,
+          observed_revision: snapshot.revision,
+          task_ids: ['S01'],
+        },
+        {
+          kind: 'question',
+          entity_id: 'Q1',
+          reason: 'Recorded decision state: answered',
+          next_action: 'Inspect the saved answer, acknowledgement and application separately',
+          responsible_actor_id: 'director',
+          reference: ref,
+          observed_revision: snapshot.revision,
+        },
+        {
+          kind: 'blocked',
+          entity_id: 'S01',
+          reason: 'Resolve the concrete blocker',
+          next_action: 'Run the meaningful repair',
+          responsible_actor_id: 'worker',
+          reference: ref,
+          observed_revision: snapshot.revision,
+        },
+      ];
+      const raw = parseSnapshot({
+        ...snapshot,
+        questions: [{ id: 'Q1', status: 'answered' }],
+        brief: { ...brief, attention: collection(rows) },
+      });
+      const before = JSON.stringify(raw);
+      const view = render(
+        <LanguageProvider>
+          <ProgramAttention snapshot={raw} />
+        </LanguageProvider>,
+      );
+      expect(screen.getByText('A genuine warning remains')).toBeTruthy();
+      expect(screen.getByText('Run the meaningful repair')).toBeTruthy();
+      expect(screen.queryByText('0', { exact: true })).toBeNull();
+      expect(screen.getByText(locale === 'ko' ? '데이터 확인' : 'Data integrity')).toBeTruthy();
+      expect(view.container.textContent).not.toContain('Recorded decision state:');
+      expect(view.container.textContent).not.toContain('Inspect original records');
+      expect(
+        screen
+          .getByRole('link', { name: locale === 'ko' ? '질문 보기' : 'Open question' })
+          .getAttribute('href'),
+      ).toBe('#question/Q1');
+      expect(view.container.querySelector('a[href="#task/S01"]')).toBeTruthy();
+      expect(JSON.stringify(raw)).toBe(before);
+    },
+  );
+  it('distinguishes a compact verified-empty attention state from unavailable or omitted input', () => {
+    const { snapshot, brief, collection } = fixture();
+    const view = render(
+      <ProgramAttention
+        snapshot={parseSnapshot({ ...snapshot, brief: { ...brief, attention: collection([]) } })}
+      />,
+    );
+    expect(screen.getByText('No current attention items recorded.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: /Needs attention/ })).toBeNull();
+    view.rerender(
+      <ProgramAttention
+        snapshot={parseSnapshot({ ...snapshot, brief: { ...brief, attention: collection([], 2) } })}
+      />,
+    );
+    expect(screen.queryByText('No current attention items recorded.')).toBeNull();
+    expect(screen.getByText('0 / 2 shown · 2 omitted')).toBeTruthy();
+    view.rerender(
+      <ProgramAttention
+        snapshot={parseSnapshot({ ...snapshot, brief: { ...brief, revision: 'stale' } })}
+      />,
+    );
+    expect(
+      screen.getByText('Attention summary is unavailable. Recorded work remains inspectable.'),
+    ).toBeTruthy();
+  });
   it('retains an observed recovery artifact reference without inventing a backlog revision', () => {
     const { snapshot, brief, collection } = fixture();
     const row = {
@@ -404,12 +494,11 @@ describe('supplied Overview context', () => {
     );
     expect(screen.getByText('Remaining explicit gap')).toBeTruthy();
     expect(screen.getByText('Declared links do not establish criterion acceptance.')).toBeTruthy();
-    await userEvent.click(screen.getByText('Review evidence'));
-    expect(screen.getByText('tools/test.py')).toBeTruthy();
+    await userEvent.click(screen.getByText('Recorded review findings'));
+    expect(screen.queryByText('tools/test.py')).toBeNull();
     expect(screen.getByText('Native failure')).toBeTruthy();
     expect(screen.getByText('failed')).toBeTruthy();
-    await userEvent.click(screen.getByText('Coverage source history'));
-    expect(screen.getByText('Exact source drift')).toBeTruthy();
-    expect(screen.getByText(/Head freshness: not assessed/i)).toBeTruthy();
+    expect(screen.queryByText('Coverage source history')).toBeNull();
+    expect(screen.queryByText('Exact source drift')).toBeNull();
   });
 });
