@@ -1,5 +1,6 @@
 // Interface translations only. Reviewed authored content uses its separate source-bound resolver.
 export const korean = {
+  'Data integrity': '데이터 확인',
   'Source integrity': '원본 무결성',
   Recovery: '복구',
   'Attention summary is unavailable. Recorded work remains inspectable.':
@@ -609,6 +610,7 @@ export const korean = {
   'No personnel record': '담당자 정보 없음',
   '{owner} · {status}: {count}': '{owner} · {status}: {count}개',
   'Assignments for {owner}': '{owner}의 담당 작업',
+  'No task relationships recorded.': '기록된 작업 관계가 없어요.',
   'Task relationships': '작업 관계',
   'Depends on': '선행 작업',
   'Required by': '후속 작업',

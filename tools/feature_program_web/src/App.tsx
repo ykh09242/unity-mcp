@@ -336,6 +336,7 @@ function Overview({
         </a>
       </div>
       <Objective snapshot={snapshot} />
+      <ProgramAttention snapshot={snapshot} />
       <Progress snapshot={snapshot} />
       <div className="status-strip">
         {statuses.map((status) => (
@@ -345,35 +346,32 @@ function Overview({
           </div>
         ))}
       </div>
-      <div className="overview-grid">
-        <Section title={i18n.t('Areas and responsibility')}>
-          {categories.length ? (
-            categories.map((category) => {
-              const ids = categoryTasks(snapshot, string(category.id));
-              const tasks = tasksInScope.filter((task) => ids.has(task.id));
-              const done = tasks.filter((task) => task.status === 'done').length;
-              const owners = [...new Set(tasks.map(ownerOf).filter(Boolean))];
-              return (
-                <div className="area-row" key={string(category.id)}>
-                  <div>
-                    <strong>{i18n.display(category.title)}</strong>
-                    <p className="muted">
-                      {i18n.t('Recorded owners:')}{' '}
-                      {owners.map(presentation.actor).join(', ') || i18n.t('No assignment yet')}
-                    </p>
-                  </div>
-                  <span className="mono">
-                    {done}/{tasks.length}
-                  </span>
+      <Section title={i18n.t('Areas and responsibility')}>
+        {categories.length ? (
+          categories.map((category) => {
+            const ids = categoryTasks(snapshot, string(category.id));
+            const tasks = tasksInScope.filter((task) => ids.has(task.id));
+            const done = tasks.filter((task) => task.status === 'done').length;
+            const owners = [...new Set(tasks.map(ownerOf).filter(Boolean))];
+            return (
+              <div className="area-row" key={string(category.id)}>
+                <div>
+                  <strong>{i18n.display(category.title)}</strong>
+                  <p className="muted">
+                    {i18n.t('Recorded owners:')}{' '}
+                    {owners.map(presentation.actor).join(', ') || i18n.t('No assignment yet')}
+                  </p>
                 </div>
-              );
-            })
-          ) : (
-            <p className="muted">{i18n.t('No category hierarchy recorded.')}</p>
-          )}
-        </Section>
-        <ProgramAttention snapshot={snapshot} />
-      </div>
+                <span className="mono">
+                  {done}/{tasks.length}
+                </span>
+              </div>
+            );
+          })
+        ) : (
+          <p className="muted">{i18n.t('No category hierarchy recorded.')}</p>
+        )}
+      </Section>
       {records(snapshot.questions).some(
         (question) =>
           !string(record(snapshot.objective).id) ||
@@ -954,10 +952,14 @@ function TaskDetail({
                   translatedBody && !task.expected_result ? 'Task description' : 'Expected result',
                 )}
               </h3>
-              <Prose
-                value={expectedResult}
-                fallback="Read the task description below for purpose and method."
-              />
+              {translatedBody && !task.expected_result && typeof expectedResult === 'string' ? (
+                <TaskDescription text={expectedResult} />
+              ) : (
+                <Prose
+                  value={expectedResult}
+                  fallback="Read the task description below for purpose and method."
+                />
+              )}
             </div>
             <details className="expected-result">
               <summary>{i18n.t('Planning and metadata')}</summary>

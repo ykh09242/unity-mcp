@@ -106,6 +106,55 @@ describe('reviewed content and answer state', () => {
     expect(human.querySelector('details')).toBeNull();
     expect(human.querySelector('pre')).toBeNull();
   });
+  it.each(['en', 'ko'])(
+    'formats the default visible translated task-description summary as a list with inline code in %s UI',
+    async (locale) => {
+      start();
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      window.history.replaceState(null, '', '#task/T1?scope=all&full=1');
+      const body = '- Preserve purpose\n- Keep authored method\n';
+      const reviewed = '- 목표: 의미를 유지해요\n- 방법: `src/retain.ts`를 확인해요\n';
+      const raw = fixture();
+      const snapshot = parseSnapshot({
+        ...raw,
+        tasks: [
+          { id: 'T1', title: 'Task', status: 'active', source: { text: '### T1. Task\n' + body } },
+        ],
+        presentation: {
+          schema_version: 1,
+          revision: 'one',
+          locale: 'ko',
+          entries: {
+            body: {
+              status: 'current',
+              mode: 'translated',
+              text: reviewed,
+              target: { kind: 'task_content', entity_id: 'T1', field: 'source_body' },
+              origin: { path: 'backlog.json', pointer: '/tasks/0/source/text', revision: 'one' },
+              binding: {
+                program_id: 'language-test',
+                source_value_sha256: presentationDigest(body),
+                context: { projection_rule: 'section_after_first_heading_v1' },
+              },
+            },
+          },
+        },
+      });
+      const before = JSON.stringify(snapshot);
+      const view = render(<App loader={async () => snapshot} sessionLoader={sessionLoader} />);
+      await screen.findByRole('heading', { name: 'Task' });
+      const glance = view.container.querySelector<HTMLElement>('.expected-result-summary');
+      if (!glance) throw new Error('Default task-description summary missing');
+      expect(glance.hidden).toBe(false);
+      expect(glance.querySelectorAll('ul li')).toHaveLength(2);
+      expect(glance.querySelector('code')?.textContent).toBe('src/retain.ts');
+      expect(glance.textContent).toContain('목표: 의미를 유지해요');
+      expect(view.container.querySelector<HTMLDetailsElement>('.task-source-context')?.open).toBe(
+        false,
+      );
+      expect(JSON.stringify(snapshot)).toBe(before);
+    },
+  );
   it('keeps two equal actor aliases as separate workload rows with canonical destinations', async () => {
     start();
     window.history.replaceState(null, '', '#team?scope=all');

@@ -160,6 +160,52 @@ describe('work program user outcomes', () => {
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
   });
+  it('places actionable attention directly after the goal before progress and separate category responsibility', async () => {
+    const base = fixture();
+    const reference = { path: 'backlog.json', revision: base.revision, pointer: '/objective' };
+    const attention = {
+      items: [
+        {
+          kind: 'blocked',
+          entity_id: 'A1',
+          reason: 'Attention ordering reason',
+          next_action: 'Keep useful action',
+          reference,
+          observed_revision: base.revision,
+          task_ids: ['A1'],
+        },
+      ],
+      shown: 1,
+      total: 1,
+      omitted: 0,
+      reference,
+    };
+    const view = render(
+      <App
+        loader={async () =>
+          parseSnapshot({
+            ...base,
+            brief: {
+              brief_version: 1,
+              revision: base.revision,
+              program_id: base.program_id,
+              reference,
+              attention,
+            },
+          })
+        }
+      />,
+    );
+    await screen.findByText('Attention ordering reason');
+    const goal = view.container.querySelector('.objective');
+    const panel = view.container.querySelector('.program-attention');
+    const progress = view.container.querySelector('.metrics');
+    if (!goal || !panel || !progress) throw new Error('Overview landmark missing');
+    expect(goal.nextElementSibling).toBe(panel);
+    expect(panel.compareDocumentPosition(progress)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(panel.closest('.overview-grid')).toBeNull();
+    expect(screen.getByText('Keep useful action')).toBeTruthy();
+  });
   it('keeps current objective progress separate from retained historical task records', async () => {
     const base = fixture();
     render(

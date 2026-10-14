@@ -30,7 +30,7 @@ export function currentBrief(snapshot: Snapshot) {
 }
 
 const kindLabels: Readonly<Record<string, string>> = {
-  integrity: 'Source integrity',
+  integrity: 'Data integrity',
   recovery: 'Recovery',
   question: 'Question',
   objective: 'Current objective',
@@ -72,6 +72,10 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
   const brief = currentBrief(snapshot);
   const attention = brief ? currentCollection(snapshot, brief.attention, undefined, 50) : null;
   const shown = attention?.items.slice(0, expanded ? 50 : 5) || [];
+  if (attention?.total === 0)
+    return (
+      <p className="attention-empty muted">{i18n.t('No current attention items recorded.')}</p>
+    );
   return (
     <section className="program-attention">
       <h3>
@@ -84,15 +88,14 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
         </p>
       ) : (
         <>
-          {attention.total === 0 && (
-            <p className="muted">{i18n.t('No current attention items recorded.')}</p>
-          )}
           <ul className="attention-items">
             {shown.map((value, index) => {
-              const row = record(value);
-              const source = record(row.reference);
+              const row = record(value),
+                source = record(row.reference),
+                kind = string(row.kind),
+                entityId = string(row.entity_id);
               const recoveryReference =
-                row.kind === 'recovery' &&
+                kind === 'recovery' &&
                 Boolean(string(source.path)) &&
                 source.revision === undefined &&
                 source.pointer === undefined;
@@ -100,54 +103,77 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
                 (currentReference(snapshot, row.reference) || recoveryReference) &&
                 row.observed_revision === snapshot.revision;
               const generatedAction =
-                Boolean(systemActions[string(row.kind)]) &&
-                systemActions[string(row.kind)] === row.next_action &&
-                (row.kind !== 'objective' ||
+                Boolean(systemActions[kind]) &&
+                systemActions[kind] === row.next_action &&
+                (kind !== 'objective' ||
                   (row.entity_id === record(snapshot.objective).id &&
                     !Object.hasOwn(record(snapshot.objective), 'next_action')));
+              const question =
+                kind === 'question'
+                  ? records(snapshot.questions).find((item) => item.id === entityId)
+                  : undefined;
+              const decisionStatus =
+                generatedAction &&
+                question &&
+                row.reason === 'Recorded decision state: ' + string(question.status)
+                  ? string(question.status)
+                  : '';
+              const meaningfulAction =
+                string(row.next_action).trim() &&
+                !(generatedAction && (kind === 'integrity' || kind === 'question')) &&
+                row.next_action !== row.reason;
               return (
-                <li key={`${string(row.kind)}:${string(row.entity_id)}:${index}`}>
+                <li key={`${kind}:${entityId}:${index}`}>
                   <div className="attention-heading">
-                    <strong>
-                      {i18n.t(kindLabels[string(row.kind)] || string(row.kind) || 'Unknown')}
-                    </strong>
-                    <span className="mono">{string(row.entity_id)}</span>
+                    <strong>{i18n.t(kindLabels[kind] || kind || 'Unknown')}</strong>
+                    {entityId && !(kind === 'integrity' && /^\d+$/u.test(entityId)) && (
+                      <span className="mono attention-entity">{entityId}</span>
+                    )}
+                    {valid &&
+                      (decisionStatus ? (
+                        <span className="badge">{i18n.human(decisionStatus)}</span>
+                      ) : (
+                        <span className="attention-reason">
+                          {i18n.warning(row.reason || 'Unknown')}
+                        </span>
+                      ))}
                   </div>
                   {!valid ? (
                     <p>{i18n.t('Current source binding is unavailable.')}</p>
                   ) : (
                     <>
-                      <p className="prose">{i18n.warning(row.reason || 'Unknown')}</p>
-                      <p className="prose">
-                        {generatedAction
-                          ? i18n.t(
-                              row.kind === 'integrity'
-                                ? 'Review the reported issues'
-                                : string(row.next_action),
-                            )
-                          : i18n.display(row.next_action, 'No next action recorded')}
-                      </p>
-                      <p className="muted">
-                        {i18n.t('Responsible actor')}:{' '}
-                        {presentation.actor(row.responsible_actor_id) || i18n.t('Unknown')}
-                      </p>
-                      <Shortened value={row} />
-                      <div className="coordination-links">
-                        {row.kind === 'question' && string(row.entity_id) && (
-                          <a href={`#question/${encodeURIComponent(string(row.entity_id))}`}>
-                            {i18n.t('Open question')}
-                          </a>
+                      {meaningfulAction && (
+                        <p className="attention-action">
+                          {generatedAction
+                            ? i18n.t(string(row.next_action))
+                            : i18n.display(row.next_action)}
+                        </p>
+                      )}
+                      <div className="attention-meta muted">
+                        {string(row.responsible_actor_id) && (
+                          <span>
+                            {i18n.t('Responsible actor')}:{' '}
+                            {presentation.actor(row.responsible_actor_id)}
+                          </span>
                         )}
-                        {items(row.task_ids)
-                          .map(string)
-                          .filter(Boolean)
-                          .slice(0, 5)
-                          .map((id) => (
-                            <a key={id} href={`#task/${encodeURIComponent(id)}`}>
-                              {presentation.taskReference(id)}
+                        <div className="coordination-links">
+                          {kind === 'question' && entityId && (
+                            <a href={`#question/${encodeURIComponent(entityId)}`}>
+                              {i18n.t('Open question')}
                             </a>
-                          ))}
+                          )}
+                          {items(row.task_ids)
+                            .map(string)
+                            .filter(Boolean)
+                            .slice(0, 5)
+                            .map((id) => (
+                              <a key={id} href={`#task/${encodeURIComponent(id)}`}>
+                                {presentation.taskReference(id)}
+                              </a>
+                            ))}
+                        </div>
                       </div>
+                      <Shortened value={row} />
                       {items(row.task_ids).length > 5 && (
                         <details>
                           <summary>
