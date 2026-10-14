@@ -405,6 +405,7 @@ describe('work program user outcomes', () => {
     render(<App loader={async () => fixture()} />);
     await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#task/A1');
+    await userEvent.click(screen.getByRole('tab', { name: 'History' }));
     expect(screen.getByText('Pending acknowledgement')).toBeDefined();
     expect(
       screen.getByText('A pending handoff does not assign or activate the successor.'),
@@ -498,6 +499,7 @@ describe('work program user outcomes', () => {
     render(<App loader={async () => changed} />);
     await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#task/A1');
+    await userEvent.click(screen.getByRole('tab', { name: 'History' }));
     const panel = screen.getByRole('heading', { name: 'Recorded assignment' }).parentElement;
     if (!panel) throw new Error('Assignment panel missing');
     expect(within(panel).getAllByText('model-v1').length).toBeGreaterThan(0);
@@ -560,6 +562,7 @@ describe('work program user outcomes', () => {
       render(<App loader={async () => snapshot} />);
       await screen.findByRole('heading', { name: 'Overview' });
       await navigate('#task/A1');
+      await userEvent.click(screen.getByRole('tab', { name: 'History' }));
       const panel = screen.getByRole('heading', { name: 'Recorded assignment' }).parentElement;
       if (!panel) throw new Error('Assignment panel missing');
       expect(panel.querySelector('.history-comparison')).toBeNull();
@@ -611,6 +614,7 @@ describe('work program user outcomes', () => {
     render(<App loader={async () => snapshot} />);
     await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#task/A1');
+    await userEvent.click(screen.getByRole('tab', { name: 'History' }));
     const panel = screen.getByRole('heading', { name: 'Recorded assignment' }).parentElement;
     if (!panel) throw new Error('Assignment panel missing');
     expect(panel.querySelector('.history-comparison')).toBeNull();
@@ -638,6 +642,7 @@ describe('work program user outcomes', () => {
     );
     await screen.findByRole('heading', { name: 'Overview' });
     await navigate('#task/A1');
+    await userEvent.click(screen.getByRole('tab', { name: 'Related work' }));
     expect(screen.getByText('Depends on')).toBeDefined();
     expect(screen.getByText('Related tasks · advisory')).toBeDefined();
     await userEvent.click(screen.getByText('Related tasks · advisory'));
@@ -709,6 +714,9 @@ describe('work program user outcomes', () => {
         name: locale === 'ko' ? '개요' : 'Overview',
       });
       await navigate('#task/A1');
+      await userEvent.click(
+        screen.getByRole('tab', { name: locale === 'ko' ? '관련 작업' : 'Related work' }),
+      );
       await userEvent.click(
         screen.getByText(locale === 'ko' ? '협업 메모' : 'Authored coordination notes'),
       );

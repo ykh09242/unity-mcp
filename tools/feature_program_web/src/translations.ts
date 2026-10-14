@@ -1,5 +1,10 @@
 // Interface translations only. Reviewed authored content uses its separate source-bound resolver.
 export const korean = {
+  'No related work recorded.': '기록된 관련 작업이 없습니다.',
+  'Task sections': '작업 상세 보기',
+  History: '이력',
+  'Related work': '관련 작업',
+  'Task information': '작업 정보',
   'Data integrity': '데이터 확인',
   'Source integrity': '원본 무결성',
   Recovery: '복구',

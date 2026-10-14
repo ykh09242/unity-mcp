@@ -18,7 +18,7 @@ import type { Json, JsonRecord, Snapshot } from './model';
 import { snapshotIndex } from './selectors';
 import { IconButton, IconLink } from './icons';
 import { DependencyNeighborhood, Workload } from './relate-ui';
-import { hasActionGlance, workloadHref } from './relate';
+import { hasActionGlance, taskNeighborhood, workloadHref } from './relate';
 import { CoordinationNotes, GoalCoordination, ReadinessContext } from './readiness-ui';
 import {
   ContentValue,
@@ -50,7 +50,7 @@ import {
   selectWorkTasks,
   writePreferences,
 } from './navigation';
-import type { Navigation, Route, ViewPreferences, WorkContext } from './navigation';
+import type { Navigation, Route, TaskSection, ViewPreferences, WorkContext } from './navigation';
 import type { TaskFilters } from './selectors';
 import { Breadcrumbs, NavigationSearch, ViewControls } from './navigation-ui';
 
@@ -813,6 +813,8 @@ function TaskDetail({
   returnHref = '#work',
   fullHref,
   onReturn,
+  section = 'information',
+  onSection,
 }: {
   readonly context?: WorkContext;
   readonly snapshot: Snapshot;
@@ -820,6 +822,8 @@ function TaskDetail({
   readonly returnHref?: string;
   readonly fullHref?: string;
   readonly onReturn?: () => void;
+  readonly section?: TaskSection;
+  readonly onSection: (section: TaskSection) => void;
 }) {
   const i18n = useI18n();
   const presentation = usePresentation();
@@ -886,6 +890,18 @@ function TaskDetail({
   const handoffs = records(snapshot.handoffs).filter(
     (item) => !item.task_id || item.task_id === task.id,
   );
+  const neighborhood = taskNeighborhood(snapshot, task);
+  const hasRelationships = Object.values(neighborhood).some((group) => group.length > 0);
+  const hasQuestions = records(snapshot.questions).some((question) =>
+    items(question.affected_task_ids).includes(task.id),
+  );
+  const hasNotes = task.notes != null && (Array.isArray(task.notes) ? task.notes.length > 0 : true);
+  const taskSections = [
+    ['information', 'Task information'],
+    ['related', 'Related work'],
+    ['history', 'History'],
+  ] as const;
+  const sectionId = (value: TaskSection) => `task-${encodeURIComponent(task.id)}-${value}`;
   return (
     <>
       <nav className="detail-actions" aria-label={i18n.t('Task navigation')}>
@@ -921,140 +937,213 @@ function TaskDetail({
         </div>
         <Status value={task.status} />
       </div>
-      <div className="task-detail-grid">
-        <div>
-          <Section title={i18n.t('Next action')}>
-            <dl className="fields">
-              <div>
-                <dt>{i18n.t('Owner')}</dt>
-                <dd>
-                  <a
-                    href={workloadHref('all', ownerOf(task))}
-                    aria-label={i18n.t('Assignments for {owner}', {
-                      owner: presentation.actor(ownerOf(task)) || i18n.t('Unassigned'),
-                    })}
-                  >
-                    {presentation.actor(ownerOf(task)) || i18n.t('Unassigned')}
-                  </a>
-                </dd>
-              </div>
-              <div>
-                <dt>{i18n.t('Next action')}</dt>
-                <dd>{i18n.display(task.next_action)}</dd>
-              </div>
-            </dl>
-            <div
-              className="expected-result-summary"
-              hidden={contextOpen && summaryRepeatedInContext}
-            >
-              <h3>
-                {i18n.t(
-                  translatedBody && !task.expected_result ? 'Task description' : 'Expected result',
+      <div className="task-detail-tabs" role="tablist" aria-label={i18n.t('Task sections')}>
+        {taskSections.map(([value, label], index) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            id={`${sectionId(value)}-tab`}
+            aria-controls={sectionId(value)}
+            aria-selected={section === value}
+            tabIndex={section === value ? 0 : -1}
+            data-section={value}
+            onClick={() => onSection(value)}
+            onKeyDown={(event) => {
+              const nextIndex =
+                event.key === 'ArrowRight'
+                  ? (index + 1) % taskSections.length
+                  : event.key === 'ArrowLeft'
+                    ? (index + taskSections.length - 1) % taskSections.length
+                    : event.key === 'Home'
+                      ? 0
+                      : event.key === 'End'
+                        ? taskSections.length - 1
+                        : null;
+              if (nextIndex === null) return;
+              const next = taskSections[nextIndex];
+              if (!next) return;
+              event.preventDefault();
+              onSection(next[0]);
+              event.currentTarget.parentElement
+                ?.querySelector<HTMLButtonElement>(`[data-section="${next[0]}"]`)
+                ?.focus();
+            }}
+          >
+            {i18n.t(label)}
+          </button>
+        ))}
+      </div>
+      <section
+        className="task-detail-panel"
+        role="tabpanel"
+        id={sectionId('information')}
+        aria-labelledby={`${sectionId('information')}-tab`}
+        hidden={section !== 'information'}
+        tabIndex={0}
+      >
+        <div className="task-detail-grid">
+          <div>
+            <Section title={i18n.t('Next action')}>
+              <dl className="fields">
+                <div>
+                  <dt>{i18n.t('Owner')}</dt>
+                  <dd>
+                    <a
+                      href={workloadHref('all', ownerOf(task))}
+                      aria-label={i18n.t('Assignments for {owner}', {
+                        owner: presentation.actor(ownerOf(task)) || i18n.t('Unassigned'),
+                      })}
+                    >
+                      {presentation.actor(ownerOf(task)) || i18n.t('Unassigned')}
+                    </a>
+                  </dd>
+                </div>
+                <div>
+                  <dt>{i18n.t('Next action')}</dt>
+                  <dd>{i18n.display(task.next_action)}</dd>
+                </div>
+              </dl>
+              <div
+                className="expected-result-summary"
+                hidden={contextOpen && summaryRepeatedInContext}
+              >
+                <h3>
+                  {i18n.t(
+                    translatedBody && !task.expected_result
+                      ? 'Task description'
+                      : 'Expected result',
+                  )}
+                </h3>
+                {translatedBody && !task.expected_result && typeof expectedResult === 'string' ? (
+                  <TaskDescription text={expectedResult} />
+                ) : (
+                  <Prose
+                    value={expectedResult}
+                    fallback="Read the task description below for purpose and method."
+                  />
                 )}
-              </h3>
-              {translatedBody && !task.expected_result && typeof expectedResult === 'string' ? (
-                <TaskDescription text={expectedResult} />
-              ) : (
+              </div>
+              <details className="expected-result">
+                <summary>{i18n.t('Planning and metadata')}</summary>
                 <Prose
-                  value={expectedResult}
+                  value={task.planning_note}
                   fallback="Read the task description below for purpose and method."
                 />
-              )}
-            </div>
-            <details className="expected-result">
-              <summary>{i18n.t('Planning and metadata')}</summary>
-              <Prose
-                value={task.planning_note}
-                fallback="Read the task description below for purpose and method."
-              />
-              <Fields
-                values={[
-                  [
-                    'Blocker',
-                    task.blocker ||
-                      attempt.blocker ||
-                      (task.status === 'blocked' ? task.next_action : i18n.t('None recorded')),
-                  ],
-                  ['Workstream', task.workstream],
-                  ['Phase', task.phase],
-                  [
-                    'Category',
-                    snapshotIndex(snapshot).categories.get(string(task.category_id))?.title,
-                  ],
-                ]}
-              />
-            </details>
-          </Section>
-          <ReviewSummary snapshot={snapshot} task={task} />
-          <Section title={i18n.t('Requirements')}>
-            <details
-              className="task-source-context"
-              onToggle={(event) => {
-                if (event.target === event.currentTarget) setContextOpen(event.currentTarget.open);
-              }}
-            >
-              <summary>{i18n.t('Full task description')}</summary>
-              {contextBlocks.map(({ label, value }) => (
-                <div key={label}>
-                  <h4>{i18n.t(label)}</h4>
-                  {label === 'Task description' && typeof value === 'string' ? (
-                    <TaskDescription text={value} />
-                  ) : (
-                    <Prose value={value} />
-                  )}
-                </div>
-              ))}
-            </details>
-          </Section>
-          <QuestionLinks snapshot={snapshot} taskId={taskId} context={context} />
-          <DependencyNeighborhood snapshot={snapshot} task={task} />
-          <ReadinessContext snapshot={snapshot} task={task} />
-          <CoordinationNotes task={task} />
-          <Section title={i18n.t('Required checks')}>
-            <details>
-              <summary>{i18n.t('Required checks')}</summary>
-              <Prose value={task.required_checks} fallback="No required checks recorded" />
-            </details>
-          </Section>
-          <TaskHistory snapshot={snapshot} task={task} />
+                <Fields
+                  values={[
+                    [
+                      'Blocker',
+                      task.blocker ||
+                        attempt.blocker ||
+                        (task.status === 'blocked' ? task.next_action : i18n.t('None recorded')),
+                    ],
+                    ['Workstream', task.workstream],
+                    ['Phase', task.phase],
+                    [
+                      'Category',
+                      snapshotIndex(snapshot).categories.get(string(task.category_id))?.title,
+                    ],
+                  ]}
+                />
+              </details>
+            </Section>
+            <ReviewSummary snapshot={snapshot} task={task} />
+            <Section title={i18n.t('Requirements')}>
+              <details
+                className="task-source-context"
+                onToggle={(event) => {
+                  if (event.target === event.currentTarget)
+                    setContextOpen(event.currentTarget.open);
+                }}
+              >
+                <summary>{i18n.t('Full task description')}</summary>
+                {contextBlocks.map(({ label, value }) => (
+                  <div key={label}>
+                    <h4>{i18n.t(label)}</h4>
+                    {label === 'Task description' && typeof value === 'string' ? (
+                      <TaskDescription text={value} />
+                    ) : (
+                      <Prose value={value} />
+                    )}
+                  </div>
+                ))}
+              </details>
+            </Section>
+          </div>
+          <div className="task-context">
+            <ReadinessContext snapshot={snapshot} task={task} />
+            <Section title={i18n.t('Required checks')}>
+              <details>
+                <summary>{i18n.t('Required checks')}</summary>
+                <Prose value={task.required_checks} fallback="No required checks recorded" />
+              </details>
+            </Section>
+          </div>
         </div>
-        <div className="task-context">
-          <Section title={i18n.t('Recorded assignment')}>
-            <details>
-              <summary>{i18n.t('Recorded assignment')}</summary>
-              <Fields
-                values={[
-                  ['Current owner', presentation.actor(ownerOf(task)) || i18n.t('Unassigned')],
-                  ['Assigned actor', assignedActorId],
-                  ['Role', i18n.human(assignment.role)],
-                  ['Model', i18n.personnel('model_id', assignment.model_id)],
-                  ['Reasoning', i18n.personnel('reasoning_effort', assignment.reasoning_effort)],
-                  ['Staffing', i18n.human(actor.staffing_status)],
-                  [
-                    'Last observed',
-                    `${i18n.personnel('observed_status', actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
-                  ],
-                ]}
-              />
-              {assignedActorId && !snapshotIndex(snapshot).actors.has(assignedActorId) && (
-                <p className="muted">{i18n.t('No personnel record')}</p>
-              )}
-              <StaffingHistory actor={actor} assignment={assignment} />
-            </details>
-          </Section>
-          <DeliveryHistory task={task} />
-          <Section title={i18n.t('Personnel handoffs')}>
-            <details>
-              <summary>{i18n.t('Personnel handoffs')}</summary>
-              {handoffs.length ? (
-                handoffs.map((handoff) => <Handoff key={string(handoff.id)} handoff={handoff} />)
-              ) : (
-                <p className="muted">{i18n.t('No handoff recorded for this task.')}</p>
-              )}
-            </details>
-          </Section>
-        </div>
-      </div>
+      </section>
+      <section
+        className="task-detail-panel"
+        role="tabpanel"
+        id={sectionId('related')}
+        aria-labelledby={`${sectionId('related')}-tab`}
+        hidden={section !== 'related'}
+        tabIndex={0}
+      >
+        {hasRelationships || hasQuestions || hasNotes ? (
+          <>
+            {hasRelationships && <DependencyNeighborhood snapshot={snapshot} task={task} />}
+            <QuestionLinks snapshot={snapshot} taskId={taskId} context={context} />
+            {hasNotes && <CoordinationNotes task={task} />}
+          </>
+        ) : (
+          <p className="muted">{i18n.t('No related work recorded.')}</p>
+        )}
+      </section>
+      <section
+        className="task-detail-panel"
+        role="tabpanel"
+        id={sectionId('history')}
+        aria-labelledby={`${sectionId('history')}-tab`}
+        hidden={section !== 'history'}
+        tabIndex={0}
+      >
+        <TaskHistory snapshot={snapshot} task={task} />
+        <Section title={i18n.t('Recorded assignment')}>
+          <details>
+            <summary>{i18n.t('Recorded assignment')}</summary>
+            <Fields
+              values={[
+                ['Current owner', presentation.actor(ownerOf(task)) || i18n.t('Unassigned')],
+                ['Assigned actor', assignedActorId],
+                ['Role', i18n.human(assignment.role)],
+                ['Model', i18n.personnel('model_id', assignment.model_id)],
+                ['Reasoning', i18n.personnel('reasoning_effort', assignment.reasoning_effort)],
+                ['Staffing', i18n.human(actor.staffing_status)],
+                [
+                  'Last observed',
+                  `${i18n.personnel('observed_status', actor.observed_status)} · ${i18n.date(actor.observed_at)}`,
+                ],
+              ]}
+            />
+            {assignedActorId && !snapshotIndex(snapshot).actors.has(assignedActorId) && (
+              <p className="muted">{i18n.t('No personnel record')}</p>
+            )}
+            <StaffingHistory actor={actor} assignment={assignment} disclosure={false} />
+          </details>
+        </Section>
+        <DeliveryHistory task={task} />
+        <Section title={i18n.t('Personnel handoffs')}>
+          <details>
+            <summary>{i18n.t('Personnel handoffs')}</summary>
+            {handoffs.length ? (
+              handoffs.map((handoff) => <Handoff key={string(handoff.id)} handoff={handoff} />)
+            ) : (
+              <p className="muted">{i18n.t('No handoff recorded for this task.')}</p>
+            )}
+          </details>
+        </Section>
+      </section>
     </>
   );
 }
@@ -1634,6 +1723,10 @@ function Dashboard({
                   snapshot={snapshot}
                   context={navigation}
                   taskId={route.taskId}
+                  section={route.section}
+                  onSection={(section) =>
+                    navigate({ ...route, section: section === 'information' ? undefined : section })
+                  }
                   onReturn={returnToWork}
                   returnHref={navigationHash(
                     { view: 'work' },
@@ -1657,6 +1750,10 @@ function Dashboard({
           snapshot={snapshot}
           context={navigation}
           taskId={route.taskId}
+          section={route.section}
+          onSection={(section) =>
+            navigate({ ...route, section: section === 'information' ? undefined : section })
+          }
           onReturn={returnToWork}
           returnHref={navigationHash(
             { view: 'work' },
@@ -1748,6 +1845,7 @@ function Dashboard({
     applyPreset,
     returnToWork,
     openTask,
+    navigate,
     focusHandled,
     revealTask,
     session,

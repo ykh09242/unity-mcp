@@ -1577,7 +1577,8 @@ summary {
   overflow-wrap: anywhere;
 }
 .history-event-heading h3,
-.history-event-heading h4 {
+.history-event-heading h4,
+.history-event-heading h5 {
   margin: 0;
 }
 .history-events {
@@ -2579,4 +2580,55 @@ select {
 }
 .attention-meta .coordination-links {
   margin: 0;
+}
+
+.history-block {
+  margin-block-start: var(--s4);
+}
+.history-block > h4,
+.history-block > h5,
+.history-event-heading > h5 {
+  margin: 0;
+  font-size: 13px;
+}
+.history-attempt > .history-event-heading h4 {
+  font-size: 14px;
+}
+.history-block .history-events {
+  margin-block: var(--s2);
+}
+
+.task-detail-tabs {
+  display: flex;
+  gap: var(--s2);
+  border-block-end: 1px solid var(--line);
+  margin-block-end: var(--s4);
+}
+.task-detail-tabs [role='tab'] {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 0;
+  border-block-end: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  white-space: normal;
+}
+.task-detail-tabs [aria-selected='true'] {
+  border-block-end-color: var(--accent);
+  color: var(--ink);
+  font-weight: 600;
+}
+.task-detail-panel {
+  min-width: 0;
+}
+.task-detail-panel[hidden] {
+  display: none;
+}
+.task-detail-panel > .content-section {
+  margin-block: var(--s4);
+}
+.task-detail-panel > .content-section:has(> details) > h3 {
+  display: none;
 }

@@ -142,7 +142,7 @@ describe('truthful personnel metadata', () => {
     async (labels) => {
       // Given
       localStorage.setItem(PREFERENCE_KEY, labels.locale);
-      window.history.replaceState(null, '', '#task/T1?full=1');
+      window.history.replaceState(null, '', '#task/T1?full=1&section=history');
       render(<App loader={async () => snapshot()} />);
       // When
       const heading = await screen.findByRole('heading', { name: labels.assignment });
