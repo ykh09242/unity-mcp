@@ -1,4 +1,4 @@
-import { items, record, string } from './model';
+import { items, record, records, string } from './model';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
 import { currentCollection, currentReference, recordedReadiness } from './readiness';
 
@@ -192,6 +192,61 @@ export function providerContext(snapshot: Snapshot, task: Task) {
 }
 export function providerStageKey(stage: JsonRecord) {
   return JSON.stringify([string(stage.request_id), string(stage.id)]);
+}
+// Attachment metadata can differ when the same captured execution is adopted at delivery.
+// Missing execution identity is deliberately not eligible for display deduplication.
+export function providerStageIdentity(stage: JsonRecord): string | null {
+  const source = record(stage.source);
+  const history = records(stage.history);
+  const knownId = (value: Json | undefined) =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+  const knownSha = (value: Json | undefined) =>
+    /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(string(value));
+  if (
+    stage.current !== true ||
+    !['head_sha', 'base_sha', 'tested_sha'].every((key) => knownSha(source[key])) ||
+    !records(stage.checks).length ||
+    stage.checks_omitted !== 0 ||
+    stage.history_omitted !== 0 ||
+    !history.length ||
+    history.some(
+      (run) =>
+        !knownId(run.run_id) ||
+        !knownId(run.run_attempt) ||
+        !Number.isFinite(Date.parse(string(run.captured_at))) ||
+        !knownSha(run.head_sha) ||
+        !knownSha(run.checkout_sha) ||
+        run.jobs_omitted !== 0 ||
+        run.jobs_total !== items(run.job_ids).length ||
+        run.jobs_shown !== items(run.job_ids).length ||
+        !items(run.job_ids).length ||
+        !items(run.job_ids).every(knownId),
+    ) ||
+    records(stage.checks).some(
+      (check) => !knownId(check.run_id) || !knownId(check.run_attempt) || !knownId(check.job_id),
+    )
+  )
+    return null;
+  const ordered = (value: Json): Json =>
+    Array.isArray(value)
+      ? value.map(ordered)
+      : value !== null && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.entries(value)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([key, child]) => [key, ordered(child)]),
+          )
+        : value;
+  const attachmentKeys = new Set([
+    'request_id',
+    'lane',
+    'verifier_id',
+    'reference',
+    'provider_reference',
+  ]);
+  return JSON.stringify(
+    ordered(Object.fromEntries(Object.entries(stage).filter(([key]) => !attachmentKeys.has(key)))),
+  );
 }
 export function hasProviderRecord(value: Json | undefined) {
   const provider = record(value);
