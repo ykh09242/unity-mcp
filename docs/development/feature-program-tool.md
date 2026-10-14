@@ -850,10 +850,17 @@ first canonical publication, not before all evidence-file creation. A failed pre
 may leave those immutable inert files; inspect and reuse exact bytes without overwriting
 or treating their existence as a committed stage.
 
-Delivery and applicability preparation can explicitly materialize individual ordinary
-receipts through a top-level `receipt_destinations` map from task ID to its exact current
-attempt evidence path. Completion uses a top-level `receipt_destination` under coordination
-evidence. Delivery task `assembly_prefix` prepares exact task-local copies of shared
+Delivery preparation can explicitly materialize individual ordinary receipts through a
+top-level `receipt_destinations` map from task ID to its exact current task/attempt path.
+Applicability receipt destinations instead use `evidence/_verification/attempt-1/`, the
+existing verification control-input namespace. Copied raw capture/task artifacts stay under
+the exact target task/attempt. The prepared finished observation's `attachment_manifest_ref`
+binds nonempty typed metadata with original/target references and byte counts, including
+legitimate zero-byte raw copies. Those copies remain exact transitive evidence; ordinary
+canonical artifacts still require nonempty bytes.
+
+Completion uses a top-level `receipt_destination` under coordination evidence. Delivery
+task `assembly_prefix` prepares exact task-local copies of shared
 immutable evidence and policy attachments; only typed policy-reference locations may be
 remapped with retained reversible origin proof. Raw capture facts and per-task authority,
 source, prefix and obligation checks remain unchanged. None of these copies publishes a
