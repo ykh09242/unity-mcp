@@ -78,7 +78,7 @@ def normalize_manifest(value: Json) -> Record:
     groups = _record(manifest["groups"], "input groups")
     core.require(set(groups) == set(GROUPS), "Manifest requires source/test/config groups")
     normalized: Record = {}
-    seen: dict[str, str] = {}
+    seen: dict[str, tuple[str, Record]] = {}
     for group in GROUPS:
         entries = []
         for raw in core.sequence(groups[group], "input selectors"):
@@ -106,8 +106,11 @@ def normalize_manifest(value: Json) -> Record:
                 "check_ids": selected,
             }
             key = path.casefold()
-            core.require(key not in seen, "Duplicate or conflicting input path declaration")
-            seen[key] = group
+            previous = seen.get(key)
+            if previous is not None:
+                core.require(previous == (group, entry), "Conflicting input path declaration")
+                continue
+            seen[key] = (group, entry)
             entries.append(entry)
         core.require(len(entries) <= 10000, "Input selector count exceeds bound")
         normalized[group] = sorted(entries, key=lambda item: str(item["path"]))

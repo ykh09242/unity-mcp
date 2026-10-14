@@ -411,3 +411,65 @@ def test_optional_input_wrong_kind_is_unknown(fixture, declared_kind):
     result = capture(fixture, manifest)
     # Then absence policy never certifies a different object kind as complete inputs.
     assert result["completeness"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "paths", [["tools/format_scripts.py"], ["tools/format_scripts.py", "tools/format_scripts.py"]]
+)
+def test_formatter_self_path_is_coalesced_with_template_dependency(paths):
+    # Given an explicit formatter-self check, possibly repeated by the live CLI.
+    # When the finite format template adds the same inspected checker dependency.
+    result = inputs.prepare_manifest("format_python", paths)
+    # Then the exact declaration appears once without dropping its dependency policy.
+    assert result["groups"]["source"] == [
+        {
+            "path": "tools/format_scripts.py",
+            "kind": "file",
+            "required": True,
+            "check_ids": ["format_lint"],
+        }
+    ]
+    assert result["completeness"]["status"] == "unknown"
+
+
+def test_identical_normalized_selectors_coalesce_without_changing_input_identity(fixture):
+    # Given equivalent implicit/explicit sorted check mappings for the same source.
+    manifest = declaration()
+    manifest["checks"] = ["scoped_tests", "format_lint"]
+    before = capture(fixture, manifest)
+    manifest["groups"]["source"].append(
+        {
+            "path": "src/S01.py",
+            "kind": "file",
+            "required": True,
+            "check_ids": ["format_lint", "scoped_tests"],
+        }
+    )
+    # When the redundant declaration is normalized and captured.
+    after = capture(fixture, manifest)
+    # Then the duplicate contributes neither an extra path nor a different check input identity.
+    assert inputs.manifest_scope(after["manifest"]) == ["src/S01.py"]
+    assert before["input_digest"] == after["input_digest"]
+
+
+@pytest.mark.parametrize("variation", ["category", "kind", "required", "checks"])
+def test_conflicting_redundant_selector_definitions_still_fail(variation):
+    # Given two declarations that collide at one path but disagree on a meaningful field.
+    manifest = declaration()
+    manifest["checks"] = ["scoped_tests", "format_lint"]
+    conflicting = deepcopy(manifest["groups"]["source"][0])
+    group = "source"
+    match variation:
+        case "category":
+            group = "test"
+        case "kind":
+            conflicting["kind"] = "directory"
+        case "required":
+            conflicting["required"] = False
+        case "checks":
+            conflicting["check_ids"] = ["scoped_tests"]
+    manifest["groups"][group].append(conflicting)
+    # When the declarations cross the manifest boundary.
+    with pytest.raises(fp.ProgramError):
+        inputs.normalize_manifest(manifest)
+    # Then coalescing never hides conflicting category/kind/policy/check obligations.
