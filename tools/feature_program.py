@@ -3565,10 +3565,28 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
+def parse_command_args(argv: list[str]) -> argparse.Namespace:
+    """Parse host arguments strictly and preserve explicitly delimited live argv verbatim."""
+    command_parser = parser()
+    args, remaining = command_parser.parse_known_args(argv)
+    live_delimited = "--" in argv
+    if args.command == "verification-run" and live_delimited:
+        # Python 3.11 leaves the trailing nargs='*' positional unconsumed when
+        # options follow the task ID. Never ask argparse to parse the live tail.
+        boundary = argv.index("--")
+        args = command_parser.parse_args(argv[:boundary])
+        if args.argv:
+            command_parser.error("Live command arguments must follow --")
+        args.argv = argv[boundary + 1 :]
+    elif remaining:
+        command_parser.error("unrecognized arguments: " + " ".join(remaining))
+    args.live_delimited = live_delimited
+    return args
+
+
 def main(argv: list[str] | None = None) -> int:
     actual_argv = sys.argv[1:] if argv is None else argv
-    args = parser().parse_args(actual_argv)
-    args.live_delimited = "--" in actual_argv
+    args = parse_command_args(actual_argv)
     try:
         repo = args.repo.absolute()
         requested = Path(args.program_dir)

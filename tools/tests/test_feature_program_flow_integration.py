@@ -546,3 +546,97 @@ def test_current_director_preflights_and_publishes_distinct_stage_authors(gate, 
     )
     assert result["status"] == "published"
     assert fp.phases.revision(fixture.program.load()) == plan["stages"][-1]["after_revision"]
+
+
+@pytest.mark.parametrize("task_first", [True, False])
+def test_verification_run_parser_preserves_delimited_live_argv_and_host_identity(task_first):
+    options = [
+        "--owner",
+        "qa",
+        "--request",
+        "binding.json",
+        "--expected-revision",
+        "revision",
+        "--capture-dir",
+        "evidence/S01/attempt-1/run",
+        "--timeout-seconds",
+        "10",
+    ]
+    host = ["S01", *options] if task_first else [*options, "S01"]
+    live = [
+        "/home/runner/Server/.venv/bin/python",
+        "-c",
+        'print("--")',
+        "--owner",
+        "child-owner",
+        "--request",
+        "child-binding",
+        "--help",
+        "--",
+        "",
+        "--",
+    ]
+    args = fp.parse_command_args(
+        ["--program-dir", "verification-run", "verification-run", *host, "--", *live]
+    )
+    assert args.command == "verification-run"
+    assert args.id == "S01"
+    assert args.owner == "qa"
+    assert args.request == "binding.json"
+    assert args.expected_revision == "revision"
+    assert args.program_dir == "verification-run"
+    assert args.argv == live
+    assert args.live_delimited is True
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["status", "--unknown"],
+        ["status", "--", "child-only"],
+        [
+            "verification-run",
+            "S01",
+            "--owner",
+            "qa",
+            "--request",
+            "binding.json",
+            "--expected-revision",
+            "revision",
+            "--capture-dir",
+            "evidence/S01/attempt-1/run",
+            "--unknown",
+            "--",
+            "python",
+            "-c",
+            "pass",
+        ],
+        [
+            "verification-run",
+            "S01",
+            "--owner",
+            "qa",
+            "--request",
+            "binding.json",
+            "--expected-revision",
+            "revision",
+            "--capture-dir",
+            "evidence/S01/attempt-1/run",
+            "undelimited-child",
+            "--",
+            "python",
+            "-c",
+            "pass",
+        ],
+    ],
+)
+def test_live_tail_boundary_keeps_host_and_nonrunner_unknown_arguments_rejected(argv):
+    with pytest.raises(SystemExit) as error:
+        fp.parse_command_args(argv)
+    assert error.value.code == 2
+
+
+def test_nonrunner_delimited_positional_still_uses_normal_parser():
+    args = fp.parse_command_args(["packet", "--", "S01"])
+    assert args.command == "packet"
+    assert args.id == "S01"
