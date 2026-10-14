@@ -1085,3 +1085,323 @@ def test_registry_publication_guards_reject_one_byte_over_inherited_limit(fixtur
         fp.authoring.delivery_publication_guard(fixture.program, state)
     # Then bounded rejection leaves the original bytes unchanged rather than bypassing the read.
     assert fixture.program.path("backlog.json").read_bytes() == oversized
+
+
+def manifest_request(fixture):
+    import feature_program_inputs as inputs
+
+    manifest = {
+        "schema_version": 1,
+        "checks": ["scoped_tests"],
+        "groups": {
+            "source": [{"path": "src/S01.py", "kind": "file", "required": True}],
+            "test": [],
+            "config": [],
+        },
+        "artifact_refs": [],
+        "completeness": {
+            "status": "complete",
+            "reason": "Fixture complete scope",
+            "unknowns": [],
+            "evidence_refs": [],
+        },
+    }
+    environment = {"facts": {"runtime": "fixture-runtime"}, "unknowns": []}
+    method = {"procedure": "Fixture procedure", "execution_kind": "manual", "version": "1"}
+    captured = inputs.capture_inputs(
+        fixture.program, manifest, environment=environment, method=method
+    )
+    return request(
+        fixture,
+        check_ids=["scoped_tests"],
+        input_manifest=manifest,
+        environment_identity=environment,
+        method_identity=method,
+    ), captured
+
+
+def test_manifest_check_identity_survives_unrelated_owned_change_but_task_context_is_stale(fixture):
+    # Given a complete scoped check with a wider owned write boundary.
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    state["tasks"][0]["attempts"][0]["scope"] = ["src/S01.py", "src/S02.py"]
+    fixture.program.path("backlog.json").write_bytes(fp.canonical(state))
+    value, captured = manifest_request(fixture)
+    record(fixture, value)
+    before_path = fixture.write("evidence/S01/attempt-1/before.json", captured)
+    capture_ref = {
+        "path": before_path,
+        "sha256": fp.sha(fixture.program.path(before_path).read_bytes()),
+    }
+    record(
+        fixture,
+        observation(
+            fixture,
+            method=captured["method"],
+            input_before=captured["input_digest"],
+            input_after=captured["input_digest"],
+            input_capture_before=capture_ref,
+            input_capture_after=capture_ref,
+        ),
+    )
+    (fixture.program.repo / "src/S02.py").write_bytes(b"unrelated-owned-change")
+    # When current facts are assessed.
+    lane = verification.projection(fixture.program, fixture.program.load())["tasks"]["S01"][
+        "lanes"
+    ]["items"][0]
+    # Then input precision never disguises changed submitted/owned task bytes.
+    assert lane["applicability"] == "stale"
+    assert lane["input_summary"]["status"] == "unchanged"
+
+
+def test_manifest_observation_requires_actual_complete_before_after_capture_refs(fixture):
+    # Given a complete declared request but only a copied digest claim.
+    assert fixture.claim() == 0
+    value, captured = manifest_request(fixture)
+    event = record(fixture, value)
+    latest = record(
+        fixture,
+        observation(
+            fixture,
+            method=captured["method"],
+            input_before=captured["input_digest"],
+            input_after=captured["input_digest"],
+        ),
+    )
+    # When claimed pass is assessed for ordinary acceptance.
+    problems = verification._observation_problems(latest, event)
+    # Then missing actual execution captures remain nonpassing.
+    assert problems
+    assert (
+        verification.submission_inputs(
+            fixture.program, fixture.program.load(), submission(fixture)
+        )["receipt"]["acceptance_complete"]
+        is False
+    )
+
+
+def test_full_projection_bounds_once_after_complete_assessment(fixture):
+    # Given three distinct adopted required lanes.
+    assert fixture.claim() == 0
+    for index in range(3):
+        record(fixture, request(fixture, f"request-{index}", lane=f"lane-{index}"))
+    # When the host obtains full facts and separately bounds for display.
+    full = verification.projection(fixture.program, fixture.program.load(), limit=None)
+    bounded = verification.bound_projection(full, limit=1)
+    # Then queue consumers see the whole assessed set and display counts remain truthful.
+    assert len(full["tasks"]["S01"]["lanes"]["items"]) == 3
+    assert bounded["tasks"]["S01"]["lanes"]["shown"] == 1
+    assert bounded["tasks"]["S01"]["lanes"]["omitted"] == 2
+    assert all(
+        "input_complete" in lane and "resource" in lane
+        for lane in full["tasks"]["S01"]["lanes"]["items"]
+    )
+
+
+def test_explicit_manifest_scope_cannot_omit_declared_shared_dependency(fixture):
+    # Given a manifest declaring an additional test dependency.
+    assert fixture.claim() == 0
+    value, _ = manifest_request(fixture)
+    value["input_manifest"]["groups"]["test"] = [
+        {"path": "shared.py", "kind": "file", "required": True}
+    ]
+    # When a request falsely retains the owned-only public scope.
+    with pytest.raises(fp.ProgramError):
+        record(fixture, value)
+    # Then the record is rejected rather than silently trimming shared inputs.
+
+
+def test_nonpassing_manifest_drift_is_retained_truthfully(fixture):
+    # Given actual before capture and a source edit observed before the after capture.
+    import feature_program_inputs as inputs
+
+    assert fixture.claim() == 0
+    value, before = manifest_request(fixture)
+    record(fixture, value)
+    (fixture.program.repo / "src/S01.py").write_bytes(b"actual-drift")
+    after = inputs.capture_inputs(
+        fixture.program,
+        before["manifest"],
+        environment=before["environment"],
+        method=before["method"],
+    )
+    refs = []
+    for label, captured in (("before", before), ("after", after)):
+        name = fixture.write(f"evidence/S01/attempt-1/{label}-drift.json", captured)
+        refs.append({"path": name, "sha256": fp.sha(fixture.program.path(name).read_bytes())})
+    # When the actual unequal captured inputs accompany a nonpassing observation.
+    event = record(
+        fixture,
+        observation(
+            fixture,
+            result="unknown",
+            method=before["method"],
+            input_before=before["input_digest"],
+            input_after=after["input_digest"],
+            input_capture_before=refs[0],
+            input_capture_after=refs[1],
+        ),
+    )
+    # Then drift remains immutable recorded evidence rather than a lost or rebound result.
+    assert event["input"]["input_before"] != event["input"]["input_after"]
+    assert event["input"]["result"] == "unknown"
+    assert (
+        verification.projection(fixture.program, fixture.program.load())["tasks"]["S01"]["lanes"][
+            "items"
+        ][0]["applicability"]
+        == "stale"
+    )
+
+
+def test_categorized_capture_reference_cannot_escape_target_attempt(fixture):
+    # Given an otherwise complete captured request and an original capture outside task prefix.
+    assert fixture.claim() == 0
+    value, captured = manifest_request(fixture)
+    record(fixture, value)
+    name = fixture.write("evidence/_verification/attempt-1/foreign-capture.json", captured)
+    ref = {"path": name, "sha256": fp.sha(fixture.program.path(name).read_bytes())}
+    # When a passing observation tries to use the foreign path instead of an exact task-local attachment.
+    with pytest.raises(fp.ProgramError):
+        record(
+            fixture,
+            observation(
+                fixture,
+                method=captured["method"],
+                input_before=captured["input_digest"],
+                input_after=captured["input_digest"],
+                input_capture_before=ref,
+                input_capture_after=ref,
+            ),
+        )
+    # Then normal task-attempt namespace guard remains enforced.
+
+
+def shared_run_fixture(fixture):
+    # Synthetic actual-fact shape for guards; no product process execution is claimed.
+    assert fixture.claim() == 0
+    assert fixture.claim("S02", owner="worker-two") == 0
+    value, captured = manifest_request(fixture)
+    origin = record(fixture, value)
+    target = record(
+        fixture,
+        {
+            **value,
+            "id": "target-request",
+            "task_id": "S02",
+            "actor_id": "worker-two",
+            "expected_revision": fp.phases.revision(fixture.program.load()),
+            "evidence_destination": "evidence/S02/attempt-1/",
+        },
+    )
+    name = fixture.write("evidence/S01/attempt-1/run-inputs.json", captured)
+    ref = {"path": name, "sha256": fp.sha(fixture.program.path(name).read_bytes())}
+    output = fixture.evidence("S01", label="run-output")
+    output_ref = {
+        "path": output,
+        "sha256": fp.sha(fixture.program.path(output).read_bytes()),
+        "bytes_seen": 1,
+        "bytes_retained": 1,
+        "truncated": False,
+    }
+    run = {
+        "schema_version": 1,
+        "producer": "feature_program_execution",
+        "run_id": "fixture-run",
+        "task_id": "S01",
+        "attempt": 1,
+        "request_id": origin["request_id"],
+        "request_version": origin["request_version"],
+        "actor_id": "qa",
+        "request_receipt": origin["receipt"],
+        "request_context_digest": fp.digest(origin["context"]),
+        "input_capture_before": ref,
+        "input_capture_after": ref,
+        "method": captured["method"],
+        "environment": captured["environment"],
+        "process": {"outcome": "exited", "exit_code": 0, "started_at": None, "ended_at": None},
+        "comparison": {"status": "unchanged"},
+        "outputs": {"stdout": output_ref, "stderr": output_ref},
+        "artifacts": {"requested": [], "captured": [], "missing": []},
+        "completeness": {"status": "complete", "reasons": []},
+        "publication": {"status": "pending"},
+        "next_action": "Explicit per-task inspection",
+    }
+    run_name = fixture.write("evidence/S01/attempt-1/actual-run-shape.json", run)
+    run_ref = {"path": run_name, "sha256": fp.sha(fixture.program.path(run_name).read_bytes())}
+    return captured, target, run_ref
+
+
+def test_explicit_compatible_task_attachment_is_advisory_and_task_guarded(fixture):
+    # Given one frozen actual-fact capture and separately authorized compatible task requests.
+    _, target, run_ref = shared_run_fixture(fixture)
+    before = deepcopy(fixture.program.load())
+    # When exact target applicability is inspected without copies or publication.
+    result = verification.attachment_bindings(fixture.program, before, ["S02"], run_ref)
+    # Then the candidate keeps target authority/request identity but grants no task transition.
+    assert result["items"][0]["status"] == "attachment_candidate"
+    assert result["items"][0]["request_id"] == target["request_id"]
+    assert result["items"][0]["authority_checked"] is True
+    assert fixture.program.load() == before
+
+
+@pytest.mark.parametrize("change", ["authority", "source", "adverse"])
+def test_shared_run_cannot_bypass_target_authority_source_or_latest_adverse(fixture, change):
+    # Given exact compatible captures and a distinct current target task.
+    _, target, run_ref = shared_run_fixture(fixture)
+    kwargs = {}
+    match change:
+        case "authority":
+            kwargs["actor_id"] = "unrelated"
+        case "source":
+            (fixture.program.repo / "src/S02.py").write_bytes(b"changed-owned-target")
+        case "adverse":
+            captured = target["context"]["input_capture"]
+            path = fixture.write("evidence/S02/attempt-1/target-capture.json", captured)
+            ref = {"path": path, "sha256": fp.sha(fixture.program.path(path).read_bytes())}
+            record(
+                fixture,
+                observation(
+                    fixture,
+                    "target-failed",
+                    task_id="S02",
+                    request_id=target["request_id"],
+                    result="failed",
+                    method=captured["method"],
+                    input_before=captured["input_digest"],
+                    input_after=captured["input_digest"],
+                    input_capture_before=ref,
+                    input_capture_after=ref,
+                    artifacts=[fixture.evidence("S02", label="adverse")],
+                ),
+            )
+    # When the single prior raw capture is offered to that target.
+    result = verification.attachment_bindings(
+        fixture.program, fixture.program.load(), ["S02"], run_ref, **kwargs
+    )
+    # Then exact input equality cannot silently authorize that task's acceptance.
+    assert result["items"][0]["status"] == "not_assessed"
+
+
+def test_primary_execution_origin_cannot_be_rebound_to_other_context(fixture):
+    # Given a retained run with exact input refs but an altered original request context.
+    captured, _, run_ref = shared_run_fixture(fixture)
+    run = fp.read_json(fixture.program.path(run_ref["path"]))
+    run["request_context_digest"] = "f" * 64
+    name = fixture.write("evidence/S01/attempt-1/rebound-run.json", run)
+    ref = {"path": name, "sha256": fp.sha(fixture.program.path(name).read_bytes())}
+    # When the otherwise passing raw result is offered to the original task.
+    with pytest.raises(fp.ProgramError):
+        record(
+            fixture,
+            observation(
+                fixture,
+                method=captured["method"],
+                input_before=captured["input_digest"],
+                input_after=captured["input_digest"],
+                input_capture_before=run["input_capture_before"],
+                input_capture_after=run["input_capture_after"],
+                run_capture_ref=ref,
+                artifacts=[name],
+            ),
+        )
+    # Then exact run-origin receipt/context identity is independently required.

@@ -668,3 +668,46 @@ def test_existing_native_actor_ids_flow_through_verification_roles(gate):
     records = gate.program.load()["verification"]["records"]
     assert records[1]["input"]["blocker"]["resolver_id"] == "/root/resolver"
     assert records[-1]["input"]["reporter_id"] == "/root/native_qa"
+
+
+def test_real_cli_manifest_capture_record_and_precise_summary(fixture, capsys):
+    # Given an active fixture and explicit inspected input facts under immutable evidence paths.
+    from tools.tests.test_feature_program_verification import manifest_request
+
+    assert fixture.claim() == 0
+    value, captured = manifest_request(fixture)
+    manifest_path = fixture.write("evidence/S01/attempt-1/manifest.json", value["input_manifest"])
+    environment_path = fixture.write(
+        "evidence/S01/attempt-1/environment.json", value["environment_identity"]
+    )
+    method_path = fixture.write("evidence/S01/attempt-1/method.json", value["method_identity"])
+    capsys.readouterr()
+    # When the actual read-only producer CLI captures the supplied declared closure.
+    assert (
+        fixture.run(
+            "inputs-capture",
+            "--manifest",
+            manifest_path,
+            "--environment",
+            environment_path,
+            "--method",
+            method_path,
+        )
+        == 0
+    )
+    actual = json.loads(capsys.readouterr().out)
+    # Then its exact identity can be adopted and shown without claiming execution.
+    assert actual["input_digest"] == captured["input_digest"]
+    capture_path = fixture.write("evidence/S01/attempt-1/cli-capture.json", actual)
+    value.pop("input_manifest")
+    value.pop("environment_identity")
+    value.pop("method_identity")
+    value["manifest_path"] = manifest_path
+    value["input_capture_path"] = capture_path
+    record_cli(fixture, value)
+    lane = fp.read_snapshot(fixture.program.repo, fixture.program.directory)["verification"][
+        "tasks"
+    ]["S01"]["lanes"]["items"][0]
+    assert lane["phase"] == "requested"
+    assert lane["input_summary"]["status"] == "unchanged"
+    assert lane["input_summary"]["completeness"] == "complete"

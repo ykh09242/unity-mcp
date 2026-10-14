@@ -54,6 +54,22 @@ def _core() -> ModuleType:
     return feature_program
 
 
+def _inputs() -> ModuleType:
+    if __package__:
+        from tools import feature_program_inputs
+    else:
+        import feature_program_inputs
+    return feature_program_inputs
+
+
+def _execution() -> ModuleType:
+    if __package__:
+        from tools import feature_program_execution
+    else:
+        import feature_program_execution
+    return feature_program_execution
+
+
 def _provider() -> ModuleType:
     if __package__:
         from tools import feature_program_delivery
@@ -240,6 +256,12 @@ def _input_shape(value: Record) -> None:
                 "provider_context_path",
                 "provider_source_mapping_path",
                 "supersedes",
+                "input_manifest",
+                "manifest_path",
+                "input_capture_path",
+                "environment_identity",
+                "method_identity",
+                "provider_input_mapping_path",
             }
             _id(value.get("lane"), "lane")
             _actor_id(value.get("verifier_id"), "verifier_id")
@@ -254,6 +276,15 @@ def _input_shape(value: Record) -> None:
                 type(value.get("input_complete")) is bool,
                 "Input completeness must be explicit boolean",
             )
+            _require(
+                not ("input_manifest" in value and "manifest_path" in value),
+                "Choose inline input_manifest or manifest_path",
+            )
+            if "input_manifest" in value:
+                _inputs().normalize_manifest(value["input_manifest"])
+            for name in ("manifest_path", "input_capture_path", "provider_input_mapping_path"):
+                if name in value:
+                    core.safe_relative(_text(value[name], name))
             core.safe_relative(
                 _text(value.get("evidence_destination"), "evidence destination").rstrip("/")
             )
@@ -307,11 +338,15 @@ def _input_shape(value: Record) -> None:
                         "classification",
                         "policy_evidence",
                         "reuse",
+                        "input_capture_before",
+                        "input_capture_after",
+                        "run_capture_ref",
                     }
                     _require(value.get("result") in RESULTS, "Invalid observed result")
                     method = _record(value.get("method"), "observation method")
                     _require(
-                        set(method) <= {"command", "argv", "cwd", "procedure", "execution_kind"},
+                        set(method)
+                        <= {"command", "argv", "cwd", "procedure", "execution_kind", "version"},
                         "Invalid observation method fields",
                     )
                     _require(
@@ -327,7 +362,11 @@ def _input_shape(value: Record) -> None:
                     )
                     if "argv" in method:
                         _require(
-                            bool(_texts(method["argv"], "recorded argv")), "Empty recorded argv"
+                            bool(_items(method["argv"], "recorded argv"))
+                            and type(method["argv"][0]) is str
+                            and bool(method["argv"][0].strip())
+                            and all(type(argument) is str for argument in method["argv"]),
+                            "Invalid recorded argv",
                         )
                     for key in ("command", "cwd", "procedure"):
                         if key in method:
@@ -358,7 +397,8 @@ def _input_shape(value: Record) -> None:
                         and value.get("input_after") is not None
                     ):
                         _require(
-                            value["input_before"] == value["input_after"],
+                            value["result"] != "passed"
+                            or value["input_before"] == value["input_after"],
                             "Observed inputs changed during verification",
                         )
                     if "reuse" in value:
@@ -398,8 +438,20 @@ def _input_shape(value: Record) -> None:
         case _:
             raise core.ProgramError("Invalid verification kind")
     _require(set(value) <= allowed, "Unknown verification input fields")
+    if value.get("provider_input_mapping_path") is not None:
+        _require(
+            value.get("provider_context_path") is not None,
+            "Executed input mapping requires provider context",
+        )
     if "provider_ref" in value:
         _ref(value["provider_ref"])
+    for name in ("input_capture_before", "input_capture_after", "run_capture_ref"):
+        if name in value:
+            _ref(value[name])
+    _require(
+        ("input_capture_before" in value) == ("input_capture_after" in value),
+        "Both actual input capture references are required",
+    )
     _time(value.get("observed_at"), "observed_at")
     _time(value.get("as_of"), "as_of")
     if value.get("observed_at") is not None or value.get("as_of") is not None:
@@ -611,6 +663,20 @@ def validate(state: Record) -> None:
                     context.get("owned_write_scope"), "owned scope"
                 ):
                     _core().safe_relative(name)
+                if "input_capture" in context:
+                    captured = _inputs().validate_capture(context["input_capture"])
+                    _require(
+                        captured["input_digest"] == context["input_digest"],
+                        "Stored capture digest mismatch",
+                    )
+                    _require(
+                        captured["manifest"] == context["input_manifest"],
+                        "Stored manifest mismatch",
+                    )
+                    _require(
+                        _inputs().manifest_scope(captured["manifest"]) == context["input_scope"],
+                        "Stored manifest scope mismatch",
+                    )
                 versions[key] = version
                 prior_requests[key] = item
                 if value.get("provider_context_path") is not None:
@@ -777,7 +843,12 @@ def _applicable(
     if not _compatible(_record(item["context"], "context"), current, submitted=submitted):
         reasons.append("Task, attempt, submission, source or obligation context changed")
     scope = _texts(value["input_scope"], "input scope")
-    if core.digest(reads.snapshot(program, scope)) != request["context"].get("input_digest"):
+    if "input_capture" in request["context"]:
+        reads.snapshot(program, scope)
+        comparison = _input_comparison(program, request)
+        if comparison["status"] != "unchanged":
+            reasons.extend(comparison["reasons"] or ["Verification input completeness unknown"])
+    elif core.digest(reads.snapshot(program, scope)) != request["context"].get("input_digest"):
         reasons.append("Verification input scope changed")
     latest_lane = reads.latest_lane.get((str(value["task_id"]), str(value["lane"])))
     if latest_lane is not None and latest_lane["request_id"] != request["request_id"]:
@@ -908,6 +979,51 @@ def prepare_record(
                 "observed_head": observed_head,
             }
         )
+        manifest = value.get("input_manifest")
+        if value.get("manifest_path") is not None:
+            ref = _capture(program, str(value["manifest_path"]), reads)
+            manifest = core.read_json(program.path(str(ref["path"])), budget=reads.artifacts)
+            refs.append(ref)
+        captured = None
+        if value.get("input_capture_path") is not None:
+            ref = _capture(program, str(value["input_capture_path"]), reads)
+            captured = _inputs().validate_capture(
+                core.read_json(program.path(str(ref["path"])), budget=reads.artifacts)
+            )
+            _require(
+                manifest is None or _inputs().normalize_manifest(manifest) == captured["manifest"],
+                "Manifest differs from frozen capture",
+            )
+            manifest = captured["manifest"]
+            context["input_capture_ref"] = ref
+            refs.append(ref)
+        if manifest is not None:
+            parsed = _inputs().normalize_manifest(manifest)
+            _require(
+                _inputs().manifest_scope(parsed) == scope,
+                "Manifest differs from declared public input scope",
+            )
+            _require(
+                parsed["checks"] == sorted(value["check_ids"]), "Manifest check obligations differ"
+            )
+            current_capture = _inputs().capture_inputs(
+                program,
+                parsed,
+                environment=captured["environment"]
+                if captured
+                else value.get("environment_identity"),
+                method=captured["method"] if captured else value.get("method_identity"),
+            )
+            _require(
+                captured is None or current_capture["input_digest"] == captured["input_digest"],
+                "Frozen input capture is stale",
+            )
+            context.update(
+                input_manifest=parsed,
+                input_capture=current_capture,
+                input_digest=current_capture["input_digest"],
+            )
+            refs.extend(parsed["artifact_refs"] + parsed["completeness"]["evidence_refs"])
         if value.get("provider_context_path") is not None:
             provider_context_ref = _capture(
                 program, _text(value["provider_context_path"], "provider context path"), reads
@@ -920,6 +1036,51 @@ def prepare_record(
             except _provider().DeliveryError as exc:
                 raise core.ProgramError(str(exc)) from exc
             refs.extend(_provider_source_mapping(program, value, context, expected_provider, reads))
+            _require(
+                "input_capture" not in context
+                or value.get("provider_input_mapping_path") is not None,
+                "Manifest provider execution requires exact tested input mapping",
+            )
+            if value.get("provider_input_mapping_path") is not None:
+                mapping_ref = _capture(program, str(value["provider_input_mapping_path"]), reads)
+                mapping = core.read_json(
+                    program.path(str(mapping_ref["path"])), budget=reads.artifacts
+                )
+                _require(
+                    set(mapping) == {"schema_version", "tested_revision", "snapshots", "evidence"},
+                    "Invalid provider executed input mapping",
+                )
+                _require(
+                    type(mapping["schema_version"]) is int
+                    and mapping["schema_version"] == 1
+                    and mapping["tested_revision"] == expected_provider["pr"]["tested_sha"],
+                    "Provider executed input revision differs",
+                )
+                _require("input_capture" in context, "Provider input mapping requires manifest")
+                tested = _inputs().capture_git_inputs(
+                    program,
+                    context["input_manifest"],
+                    revision=str(mapping["tested_revision"]),
+                    environment=context["input_capture"]["environment"],
+                    method=context["input_capture"]["method"],
+                )
+                _require(
+                    mapping["snapshots"]
+                    == tested["snapshots"]
+                    == context["input_capture"]["snapshots"],
+                    "Provider executed source/test/config inputs differ",
+                )
+                refs.extend(
+                    [
+                        mapping_ref,
+                        *[
+                            _capture(program, name, reads)
+                            for name in _texts(mapping["evidence"], "input mapping evidence")
+                        ],
+                    ]
+                )
+                _require(bool(mapping["evidence"]), "Provider input mapping needs evidence")
+                context["provider_input_mapping_ref"] = mapping_ref
             context["provider_context_ref"] = provider_context_ref
             refs.append(provider_context_ref)
             for stage in expected_provider["stages"]:
@@ -970,11 +1131,108 @@ def prepare_record(
             )
             for path in _texts(value["affected_paths"], "affected paths"):
                 core.safe_path(program.repo, path)
-        if value["kind"] == "finished" and value.get("input_before") is not None:
+        if (
+            value["kind"] == "finished"
+            and value.get("input_before") is not None
+            and value["result"] == "passed"
+        ):
             _require(
                 value["input_before"] == context.get("input_digest"),
                 "Observed input differs from frozen request",
             )
+        if value["kind"] == "finished" and "input_capture_before" in value:
+            _require("input_capture" in context, "Actual captures require adopted input manifest")
+            for name in ("input_capture_before", "input_capture_after"):
+                ref = _ref(value[name])
+                _require(
+                    context["attempt"] is None
+                    or str(ref["path"]).startswith(
+                        f"evidence/{value['task_id']}/attempt-{context['attempt']}/"
+                    ),
+                    "Actual capture reference must be task-local",
+                )
+                program.verify_refs([ref], reads.artifacts)
+                actual = _inputs().validate_capture(
+                    core.read_json(program.path(str(ref["path"])), budget=reads.artifacts)
+                )
+                _require(
+                    value["result"] != "passed"
+                    or actual["input_digest"] == context["input_digest"],
+                    "Passing actual capture differs from request",
+                )
+                _require(
+                    actual["method"] == value["method"],
+                    "Actual capture method differs from observation",
+                )
+                refs.extend(
+                    [ref, *actual["artifact_refs"], *actual["completeness"]["evidence_refs"]]
+                )
+        if value["kind"] == "finished" and "run_capture_ref" in value:
+            ref = _ref(value["run_capture_ref"])
+            program.verify_refs([ref], reads.artifacts)
+            run = core.read_json(program.path(str(ref["path"])), budget=reads.artifacts)
+            _require(
+                run.get("producer") == "feature_program_execution",
+                "Invalid actual execution producer",
+            )
+            if "input_capture_before" in value:
+                _require(
+                    run.get("input_capture_before") is not None
+                    and run.get("input_capture_after") is not None
+                    and run["input_capture_before"]["sha256"]
+                    == value["input_capture_before"]["sha256"]
+                    and run["input_capture_after"]["sha256"]
+                    == value["input_capture_after"]["sha256"],
+                    "Execution origin input captures differ",
+                )
+            for name in ("input_capture_before", "input_capture_after"):
+                if run.get(name) is not None:
+                    origin_ref = _ref(run[name])
+                    program.verify_refs([origin_ref], reads.artifacts)
+                    refs.append(origin_ref)
+            for output in _record(run.get("outputs", {}), "execution output refs").values():
+                if output.get("path") is None:
+                    continue
+                origin_ref = _ref({"path": output["path"], "sha256": output["sha256"]})
+                program.verify_refs([origin_ref], reads.artifacts)
+                refs.append(origin_ref)
+            if run.get("task_id") != value["task_id"] or run.get("request_id") != request_id:
+                bindings = attachment_bindings(
+                    program,
+                    state,
+                    [str(value["task_id"])],
+                    ref,
+                    actor_id=str(value["actor_id"]),
+                    reporter_id=value.get("reporter_id"),
+                )
+                _require(
+                    bindings["items"][0]["status"] == "attachment_candidate",
+                    "Execution cannot supply compatible target task evidence",
+                )
+            if run.get("task_id") == value["task_id"] and run.get("request_id") == request_id:
+                _require(
+                    run.get("request_receipt") == request["receipt"]
+                    and run.get("request_context_digest") == core.digest(request["context"])
+                    and run.get("attempt") == context["attempt"],
+                    "Actual execution request context differs",
+                )
+            if run.get("start_ref") is not None:
+                origin_ref = _ref(run["start_ref"])
+                program.verify_refs([origin_ref], reads.artifacts)
+                refs.append(origin_ref)
+            for artifact in _items(
+                _record(run.get("artifacts", {}), "execution artifacts").get("captured", []),
+                "captured execution artifacts",
+            ):
+                origin_ref = _ref({"path": artifact["path"], "sha256": artifact["sha256"]})
+                program.verify_refs([origin_ref], reads.artifacts)
+                refs.append(origin_ref)
+            summary = _execution().summarize_capture(run)
+            _require(
+                value["result"] != "passed" or summary["reported_check_result"] == "passed",
+                "Incomplete or failed execution cannot become passed",
+            )
+            refs.append(ref)
         if value["kind"] == "finished" and "reuse" in value:
             origin = index.get(str(value["reuse"]["observation_id"]))
             _require(origin is not None, "Unknown reuse origin")
@@ -1074,13 +1332,18 @@ def _reference(state: Record, pointer: str, task_id: str | None = None) -> Recor
 
 
 def _collection(
-    state: Record, rows: list[Json], pointer: str, task_id: str | None = None
+    state: Record,
+    rows: list[Json],
+    pointer: str,
+    task_id: str | None = None,
+    *,
+    limit: int | None = MAX_ROWS,
 ) -> Record:
     return {
         "total": len(rows),
-        "shown": min(len(rows), MAX_ROWS),
-        "omitted": max(0, len(rows) - MAX_ROWS),
-        "items": rows[:MAX_ROWS],
+        "shown": len(rows) if limit is None else min(len(rows), limit),
+        "omitted": 0 if limit is None else max(0, len(rows) - limit),
+        "items": rows[:] if limit is None else rows[:limit],
         "reference": _reference(state, pointer, task_id),
     }
 
@@ -1201,8 +1464,15 @@ def assess_reuse(program: ProgramAccess, state: Record, origin: Record, target: 
     ):
         reasons.append("Origin lacks passing complete stable input observation")
     program.verify_refs(_items(origin["evidence"], "origin evidence"), reads.artifacts)
-    current_input = _core().digest(
-        reads.snapshot(program, _texts(new["input_scope"], "input scope"))
+    current_input = (
+        _inputs().capture_inputs(
+            program,
+            new_request["context"]["input_manifest"],
+            environment=new_request["context"]["input_capture"]["environment"],
+            method=new_request["context"]["input_capture"]["method"],
+        )["input_digest"]
+        if "input_capture" in new_request["context"]
+        else _core().digest(reads.snapshot(program, _texts(new["input_scope"], "input scope")))
     )
     if current_input != target["context"].get("input_digest"):
         reasons.append("Current verification inputs changed")
@@ -1317,8 +1587,15 @@ def _observation_problems(
     problems = []
     if assigned.get("input_complete") is not True:
         problems.append("Complete verification input closure unknown")
+    captured = request["context"].get("input_capture")
+    if captured is not None:
+        if captured["completeness"]["status"] != "complete":
+            problems.append("Declared categorized inputs or environment incomplete")
+        if value.get("input_capture_before") is None or value.get("input_capture_after") is None:
+            problems.append("Actual categorized before/after input captures missing")
     if (
-        assigned.get("environment") is not None
+        captured is None
+        and assigned.get("environment") is not None
         and value.get("environment") != assigned["environment"]
     ):
         problems.append("Recorded environment differs from request")
@@ -1339,7 +1616,273 @@ def _observation_problems(
     return problems
 
 
-def projection(program: ProgramAccess, state: Record, budget: ReadBudget | None = None) -> Record:
+def attachment_bindings(
+    program: ProgramAccess,
+    state: Record,
+    target_task_ids: list[str],
+    run_capture_ref: Record,
+    *,
+    actor_id: str | None = None,
+    reporter_id: Json = None,
+) -> Record:
+    """Assess explicit task-local attachment targets without copying or accepting them."""
+    core = _core()
+    validate(state)
+    reads = _reads()
+    reads.index(state)
+    ref = _ref(run_capture_ref)
+    program.verify_refs([ref], reads.artifacts)
+    run = core.read_json(program.path(str(ref["path"])), budget=reads.artifacts)
+    _require(
+        run.get("producer") == "feature_program_execution" and run.get("schema_version") == 1,
+        "Invalid execution capture origin",
+    )
+    origin = reads.record_index.get(str(run.get("request_id")))
+    _require(
+        origin is not None
+        and origin["input"]["kind"] == "request"
+        and origin["input"]["task_id"] == run.get("task_id")
+        and origin["request_version"] == run.get("request_version"),
+        "Execution origin request identity differs",
+    )
+    _require(
+        run.get("request_receipt") == origin["receipt"]
+        and run.get("request_context_digest") == core.digest(origin["context"])
+        and run.get("attempt") == origin["context"]["attempt"],
+        "Original execution request context differs",
+    )
+    capture_refs = [
+        _ref(run[name])
+        for name in ("input_capture_before", "input_capture_after")
+        if run.get(name) is not None
+    ]
+    program.verify_refs(capture_refs, reads.artifacts)
+    before, after = None, None
+    if len(capture_refs) == 2:
+        before = _inputs().validate_capture(
+            core.read_json(program.path(str(capture_refs[0]["path"])), budget=reads.artifacts)
+        )
+        after = _inputs().validate_capture(
+            core.read_json(program.path(str(capture_refs[1]["path"])), budget=reads.artifacts)
+        )
+    comparison = (
+        _inputs().compare_inputs(before, after)
+        if before is not None and after is not None
+        else {"status": "not_assessed"}
+    )
+    items = []
+    selected = core.strings(target_task_ids, "attachment targets")
+    _require(bool(selected), "Explicit attachment targets required")
+    for task_id in selected:
+        reasons = []
+        task = program.task(state, task_id)
+        request = reads.latest_lane.get((task_id, str(origin["input"]["lane"])))
+        authority_checked = False
+        context = _context(program, state, task_id, reads)
+        if request is None or "input_capture" not in request["context"]:
+            reasons.append("Explicit target input request unavailable")
+        else:
+            try:
+                _authority(
+                    state,
+                    task,
+                    {
+                        "actor_id": actor_id or run["actor_id"],
+                        "kind": "finished",
+                        "reporter_id": reporter_id,
+                    },
+                    request,
+                )
+                authority_checked = True
+            except core.ProgramError as exc:
+                reasons.append(str(exc))
+            if not _compatible(
+                request["context"],
+                context,
+                submitted=_carried_by_submission(program, request, context, reads),
+            ):
+                reasons.append("Target task source, submission or obligations changed")
+            if request["input"]["check_ids"] != origin["input"]["check_ids"] or request[
+                "input"
+            ].get("criteria", []) != origin["input"].get("criteria", []):
+                reasons.append("Target check or criterion mapping differs")
+            target_capture = request["context"]["input_capture"]
+            if (
+                before is None
+                or target_capture["input_digest"] != before["input_digest"]
+                or _input_comparison(program, request)["status"] != "unchanged"
+            ):
+                reasons.append("Target executed input closure changed or unknown")
+            latest = reads.latest_event[str(request["request_id"])]["input"]
+            if (
+                latest["kind"] in {"blocked", "canceled"}
+                or latest["kind"] == "finished"
+                and latest.get("result") != "passed"
+            ):
+                reasons.append("Target has newer adverse verification")
+        if (
+            comparison["status"] != "unchanged"
+            or before is None
+            or before["input_digest"] != origin["context"].get("input_digest")
+        ):
+            reasons.append("Actual run input closure changed or unknown")
+        if request is not None and before is not None:
+            problems = _observation_problems(
+                {
+                    "input": {
+                        "result": "passed",
+                        "method": before["method"],
+                        "input_before": before["input_digest"],
+                        "input_after": after["input_digest"] if after else None,
+                        "input_capture_before": run.get("input_capture_before"),
+                        "input_capture_after": run.get("input_capture_after"),
+                    },
+                },
+                request,
+            )
+            reasons.extend(problems)
+        if _execution().summarize_capture(run)["reported_check_result"] != "passed":
+            reasons.append("Actual run did not provide complete passing evidence")
+        origin_latest = reads.latest_event[str(origin["request_id"])]["input"]
+        latest_origin_request = reads.latest_lane[
+            (str(origin["input"]["task_id"]), str(origin["input"]["lane"]))
+        ]
+        if (
+            latest_origin_request["request_id"] != origin["request_id"]
+            or origin_latest["kind"] in {"blocked", "canceled"}
+            or origin_latest["kind"] == "finished"
+            and origin_latest.get("result") != "passed"
+        ):
+            reasons.append("Origin has newer superseding or adverse verification")
+        items.append(
+            {
+                "task_id": task_id,
+                "attempt": context["attempt"],
+                "status": "not_assessed" if reasons else "attachment_candidate",
+                "requirements": [
+                    "Exact-byte task-local attachments",
+                    "Normal per-task recording and independent acceptance",
+                ],
+                "reasons": reasons,
+                "context": context,
+                "evidence_refs": [ref, *capture_refs],
+                "authority_checked": authority_checked,
+                "request_id": request["request_id"] if request else None,
+                "request_version": request["request_version"] if request else None,
+                "verifier_id": request["input"]["verifier_id"] if request else None,
+                "actor_id": actor_id or run["actor_id"],
+            }
+        )
+    reads.recheck(program)
+    return {
+        "schema_version": 1,
+        "status": "attachment_candidates"
+        if all(item["status"] == "attachment_candidate" for item in items)
+        else "not_assessed",
+        "advisory": True,
+        "items": items,
+    }
+
+
+def _input_comparison(program: ProgramAccess, request: Record) -> Record:
+    captured = request["context"]["input_capture"]
+    current = _inputs().capture_inputs(
+        program,
+        captured["manifest"],
+        environment=captured["environment"],
+        method=captured["method"],
+    )
+    return _inputs().compare_inputs(captured, current)
+
+
+def _input_summary(program: ProgramAccess, request: Record, applicability: str) -> Record:
+    comparison = _input_comparison(program, request)
+    captured = request["context"]["input_capture"]
+    groups = []
+    for group in ("source", "test", "config", "artifact", "environment", "method", "check"):
+        differences = [row for row in comparison["differences"] if row["group"] == group]
+        known = len(captured["snapshots"].get(group, {}))
+        if group == "environment":
+            known = len(captured["environment"]["facts"])
+        if group == "artifact":
+            known = len(captured["artifact_refs"])
+        if group == "method":
+            known = len(captured["method"])
+        if group == "check":
+            known = len(captured["checks"])
+        unknown = 0
+        if group == "environment":
+            unknown = len(captured["environment"]["unknowns"])
+        if group == "method":
+            unknown = int("structured_method" in comparison["unknowns"])
+        if group in {"source", "test", "config"}:
+            paths = {str(item["path"]) for item in captured["manifest"]["groups"][group]}
+            unknown = sum(
+                reason.partition(":")[0] in {"required_input", "input_kind"}
+                and reason.partition(":")[2] in paths
+                for reason in comparison["unknowns"]
+            )
+        if group == "check":
+            unknown = len(
+                [
+                    reason
+                    for reason in comparison["unknowns"]
+                    if reason not in captured["environment"]["unknowns"]
+                    and reason != "structured_method"
+                    and reason.partition(":")[0] not in {"required_input", "input_kind"}
+                ]
+            )
+        groups.append(
+            {
+                "id": group,
+                "status": "changed" if differences else comparison["status"],
+                "counts": {
+                    "known": known,
+                    "changed": len(differences),
+                    "missing": sum(row["kind"] == "missing" for row in differences),
+                    "unknown": unknown,
+                },
+            }
+        )
+    return {
+        "schema_version": 1,
+        "status": comparison["status"],
+        "applicability": applicability,
+        "completeness": "unknown" if comparison["status"] == "not_assessed" else "complete",
+        "next_action": "Inspect unknown inputs"
+        if comparison["status"] == "not_assessed"
+        else "Recheck affected checks"
+        if comparison["status"] == "changed"
+        else "Inspect current task obligations",
+        "reasons": comparison["reasons"],
+        "counts": comparison["counts"],
+        "groups": {"total": len(groups), "shown": len(groups), "omitted": 0, "items": groups},
+    }
+
+
+def bound_projection(full: Record, *, limit: int = MAX_ROWS) -> Record:
+    """Bound already assessed facts once; never recapture inputs or hide counts."""
+    _require(type(limit) is int and 0 <= limit <= MAX_RECORDS, "Invalid verification row limit")
+    result = deepcopy(full)
+    collections = [result["history"], result["integrity"]["records"]]
+    for task in result["tasks"].values():
+        collections.extend([task["lanes"], task["findings"]])
+        for lane in task["lanes"]["items"]:
+            if lane.get("execution_history") is not None:
+                collections.append(lane["execution_history"])
+    for collection in collections:
+        rows = collection["items"][:limit]
+        collection.update(items=rows, shown=len(rows), omitted=collection["total"] - len(rows))
+    return result
+
+
+def projection(
+    program: ProgramAccess,
+    state: Record,
+    budget: ReadBudget | None = None,
+    *,
+    limit: int | None = MAX_ROWS,
+) -> Record:
     """Project recorded phases/outcomes separately from current source applicability."""
     validate(state)
     reads = _reads(budget)
@@ -1416,6 +1959,13 @@ def projection(program: ProgramAccess, state: Record, budget: ReadBudget | None 
                     "check_ids": deepcopy(request["input"]["check_ids"]),
                     "criteria": deepcopy(request["input"].get("criteria", [])),
                     "verifier_id": request["input"]["verifier_id"],
+                    "input_complete": request["input"]["input_complete"],
+                    "environment": request["input"].get("environment"),
+                    "resource": deepcopy(request["input"].get("resource")),
+                    "evidence_destination": request["input"]["evidence_destination"],
+                    "observation_problems": _observation_problems(latest, request)
+                    if value["kind"] == "finished"
+                    else [],
                     "resolver_id": blocker.get("resolver_id") if blocker else None,
                     "next_trigger": blocker["next_trigger"]
                     if blocker
@@ -1449,6 +1999,66 @@ def projection(program: ProgramAccess, state: Record, budget: ReadBudget | None 
                     },
                 }
             )
+            if "input_capture" in request["context"]:
+                try:
+                    lanes[-1]["input_summary"] = _input_summary(program, request, applicability)
+                except (OSError, _core().ProgramError):
+                    lanes[-1]["input_summary"] = {
+                        "schema_version": 1,
+                        "status": "not_assessed",
+                        "applicability": "unavailable",
+                        "completeness": "unknown",
+                        "next_action": "Inspect unavailable inputs",
+                        "reasons": ["unavailable_inputs"],
+                        "counts": {"known": 0, "changed": 0, "missing": 0, "unknown": 1},
+                        "groups": {"total": 0, "shown": 0, "omitted": 0, "items": []},
+                    }
+            executions = []
+            execution_events = [
+                event
+                for event in records
+                if event["input"]["task_id"] == task_id
+                and reads.record_index[str(event["request_id"])]["input"]["lane"] == lane
+            ]
+            for event in execution_events:
+                origin = event["input"].get("run_capture_ref")
+                if origin is None:
+                    continue
+                try:
+                    program.verify_refs([origin], reads.artifacts)
+                    run = _core().read_json(
+                        program.path(str(origin["path"])), budget=reads.artifacts
+                    )
+                    summary = _execution().summarize_capture(run)
+                    summary["publication"] = {
+                        "status": "recorded",
+                        "observation_id": event["input"]["id"],
+                    }
+                    summary["reused"] = (
+                        run.get("task_id") != task_id
+                        or run.get("request_id") != event["request_id"]
+                    )
+                    if event["input"]["kind"] == "finished":
+                        summary["reported_check_result"] = event["input"]["result"]
+                    executions.append(summary)
+                except (OSError, _core().ProgramError):
+                    executions.append(
+                        {
+                            "schema_version": 1,
+                            "status": "unavailable",
+                            "next_action": "Inspect unavailable capture",
+                            "reasons": ["unavailable_capture"],
+                        }
+                    )
+            if executions:
+                if value.get("run_capture_ref") is not None:
+                    lanes[-1]["execution_summary"] = executions[-1]
+                lanes[-1]["execution_history"] = {
+                    "total": len(executions),
+                    "shown": len(executions),
+                    "omitted": 0,
+                    "items": executions,
+                }
             if (
                 request["context"].get("provider_context_ref") is not None
                 or value.get("provider_ref") is not None
@@ -1504,8 +2114,8 @@ def projection(program: ProgramAccess, state: Record, budget: ReadBudget | None 
                 )
         tasks[task_id] = {
             "task_id": task_id,
-            "lanes": _collection(state, lanes, "/verification/records", task_id),
-            "findings": _collection(state, findings, "/verification/records", task_id),
+            "lanes": _collection(state, lanes, "/verification/records", task_id, limit=None),
+            "findings": _collection(state, findings, "/verification/records", task_id, limit=None),
             "reference": _reference(state, "/verification/records", task_id),
         }
     history = [
@@ -1521,17 +2131,20 @@ def projection(program: ProgramAccess, state: Record, budget: ReadBudget | None 
         "schema_version": 1,
         "status": "recorded" if "verification" in state else "absent",
         "tasks": tasks,
-        "history": _collection(state, history, "/verification/records"),
+        "history": _collection(state, history, "/verification/records", limit=None),
         "integrity": {
             "unavailable_total": len(integrity),
             "records": _collection(
                 state,
                 [{"id": identifier, "reason": reason} for identifier, reason in integrity.items()],
                 "/verification/records",
+                limit=None,
             ),
         },
     }
     reads.recheck(program)
+    if limit is not None:
+        result = bound_projection(result, limit=limit)
     _require(
         len(_core().canonical(result)) <= OUTPUT_LIMIT, "Verification projection exceeds 8 MiB"
     )
