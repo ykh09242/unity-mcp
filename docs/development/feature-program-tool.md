@@ -610,9 +610,14 @@ launch a check, acknowledge a peer, clear a task blocker or accept work.
 
 ```sh
 python tools/feature_program.py --program-dir .work/programs/example verification-packet EXAMPLE-1
-python tools/feature_program.py --program-dir .work/programs/example verification-record --input evidence/EXAMPLE-1/attempt-1/request-1.json
+python tools/feature_program.py --program-dir .work/programs/example verification-record --input evidence/_verification/attempt-1/request-1.json
 python tools/feature_program.py --program-dir .work/programs/example submission-inputs --input evidence/EXAMPLE-1/attempt-1/submit-request.json
 ```
+
+Record inputs belong under `evidence/_verification/attempt-1/`, the immutable program
+verification event ledger. Check output and ordinary execution/acceptance artifacts remain
+under the checked task's current `evidence/TASK-ID/attempt-N/` directory. The record input
+path and the task-output evidence path serve different purposes.
 
 The packet is a bounded JSON view of the current task definition, original acceptance,
 owned paths, verification input identity, exact current submission when present, required
@@ -640,7 +645,7 @@ task/submission/context hashes or future submission numbers: the tool observes c
 context and freezes references.
 
 Subsequent events reference exact `request_id` and `request_version`, with the relevant actual
-method, timestamps, result, artifact, blocker or finding facts. A finished event records
+method, timestamps, result, artifact, blocker or finding facts. A finished local check observation records
 `method` with `execution_kind` and a command, structured argv/cwd or manual procedure;
 `result`; task-attempt `artifacts`; and actual observed `input_before`/`input_after` digests.
 Both input digests must match the compatible checked inputs to prepare a passing new check;
@@ -670,6 +675,14 @@ required observations and acceptance remain nonpassing. Save the reviewed ordina
 under the current task/attempt, supply actual criterion acceptance, and use the existing
 preview/submit/review flow. Preparation neither executes recorded command text nor converts
 process exit zero into behavioral acceptance.
+
+Ordinary submission may precede pending review, QA or CI. New accepted completion checks
+the full latest adopted required-lane set: every request intersecting current required check
+IDs needs a current applicable finished passing observation, complete executed inputs and
+compatible method/environment, including passing provider assessment when adopted. Omitting
+optional receipt references does not bypass those requirements. Later adverse observations
+across superseding requests with overlapping check IDs also prevent old-success reuse.
+Historical terminal records and programs without verification metadata keep legacy behavior.
 
 Reuse assessment compares complete declared production/test/configuration inputs, method,
 environment, check/criterion obligations and immutable result references. Equal compatible
@@ -1088,6 +1101,23 @@ PR head/base/tested revision, expected receiving beta revision when applicable, 
 accepting director and each required stage/check. Captured requirements cannot be inferred
 from missing jobs.
 
+Before reviewed completion, a verification request may adopt `provider_context_path`,
+a program-relative frozen JSON file containing that expected context. A finished observation
+uses `provider_ref: {path, sha256}` for the captured provider file and its `.execution`
+envelope. This exposes operational PR/CI stage facts through the verification lane; it does
+not publish canonical delivery. Missing latest capture stays pending, and later failure,
+cancellation or stale inputs cannot resurrect an older passing capture.
+
+When provider PR head differs from the recording repository HEAD, the request also needs
+`provider_source_mapping_path`. This frozen JSON has exactly `schema_version: 1`,
+`provider_head`, `scope`, `provider_snapshot`, `local_snapshot` and nonempty `evidence`.
+The director records the actual immutable Git-blob comparison. The tool requires the
+expected provider head, exact owned scope and both maps equal the current scoped source
+snapshot, retaining directory markers/membership and missing paths. It freezes comparison
+evidence and rechecks source consistency before publication. A supplied map must validate
+even when heads match. This establishes recorded byte consistency, not remote authentication;
+commit labels or a prose override cannot replace the map.
+
 The envelope preserves run/attempt/job/selected-step identities, actual checkout and explicit
 test-merge relationship, capture completeness, output presence, policy applicability, retries
 and observed times. Required actual execution, authorized policy skips, explicit
@@ -1248,7 +1278,7 @@ Use `presentation-inventory` to enumerate all supported typed targets and their 
 values, source bindings and locators. `--locale TAG` inspects another exact tag without changing
 the program. Targets include goals and criteria, workstreams and categories, task titles and
 human narrative, current and historical reasons, question wording and options, actor aliases,
-and already referenced receipt summaries. The inventory identifies all 22 field families,
+and already referenced receipt summaries. The inventory identifies every supported field family,
 including static UI copy and protected original-only data. It does not read arbitrary target
 paths or hydrate unrelated evidence files. Technical evidence, commands, IDs, paths, model
 values and saved answers remain original. Unsegmentable mixed markup stays original-only.
