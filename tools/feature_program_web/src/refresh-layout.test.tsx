@@ -36,53 +36,71 @@ function start() {
   window.history.replaceState(null, '', '#task/A?full=1');
 }
 async function context() {
-  const summary = await screen.findByText('Full task description');
+  await screen.findByRole('heading', { name: 'Complete context' });
+  const summary = screen.getByText('Acceptance criteria', { selector: 'summary' });
   const disclosure = summary.closest('details');
-  const glance = document.querySelector<HTMLElement>('.expected-result-summary');
-  if (!disclosure || !glance) throw new Error('Task context missing');
-  return { summary, disclosure, glance };
+  const description = document.querySelector<HTMLElement>('.task-description-content');
+  if (!disclosure || !description) throw new Error('Task context missing');
+  return { summary, disclosure, description };
 }
 
-describe('task context and refresh continuity', () => {
-  it('reveals distinct acceptance and full task content when source context opens', async () => {
-    // Given
+describe('single task description and refresh continuity', () => {
+  it('shows complete description once and keeps distinct acceptance initially collapsed', async () => {
     start();
     render(<App loader={async () => fixture()} />);
-    const { summary, disclosure } = await context();
-    // When
-    await userEvent.click(summary);
-    // Then
-    const humanText = [...disclosure.querySelectorAll('.prose, .prose-list')]
-      .map((element) => element.textContent)
-      .join('\n');
-    expect(humanText).toContain('Retain unique acceptance.');
+    const { summary, disclosure, description } = await context();
+    expect(disclosure.open).toBe(false);
+    expect(screen.getAllByText('Acceptance criteria')).toHaveLength(1);
     expect(
-      Array.from(disclosure.querySelectorAll('.task-description p'), (node) => node.textContent),
+      [...description.querySelectorAll('.task-description p')].map((node) => node.textContent),
     ).toEqual(['Exact purpose.', 'Unique method.']);
-    expect(disclosure.querySelector('details')).toBeNull();
-  });
-  it('suppresses only the duplicated glance while full source context is expanded', async () => {
-    // Given
-    start();
-    render(<App loader={async () => fixture()} />);
-    const { summary, glance } = await context();
-    expect(glance.hidden).toBe(false);
-    // When
+    expect(screen.getAllByText('Exact purpose.')).toHaveLength(1);
+    expect(screen.queryByText('Full task description')).toBeNull();
+    expect(document.querySelector('.task-source-context')).toBeNull();
     await userEvent.click(summary);
-    // Then
-    await waitFor(() => expect(glance.hidden).toBe(true));
+    expect(disclosure.open).toBe(true);
+    expect(disclosure.textContent).toContain('Retain unique acceptance.');
+    expect(disclosure.querySelector('details')).toBeNull();
+    expect(description.hidden).toBe(false);
+    expect(screen.getAllByText('Exact purpose.')).toHaveLength(1);
+  });
+  it('retains a distinct expected result and combines exact duplicated criteria only once', async () => {
+    start();
+    const original = fixture();
+    const body =
+      'Exact purpose.\n\nUnique method.\n\nAcceptance criteria:\n\n1. Keep wording.\n2. Keep behavior.';
+    const snapshot = {
+      ...original,
+      tasks: original.tasks.map((task) =>
+        task.id === 'A'
+          ? {
+              ...task,
+              expected_result: 'Distinct delivered result.',
+              acceptance_criteria: ['Keep wording.', 'Keep behavior.'],
+              source: { text: '### A. Complete context\n' + body },
+            }
+          : task,
+      ),
+    };
+    const before = JSON.stringify(snapshot);
+    render(<App loader={async () => snapshot} />);
+    const { disclosure } = await context();
+    expect(screen.getAllByText('Distinct delivered result.')).toHaveLength(1);
+    expect(screen.getAllByText('Keep wording.')).toHaveLength(1);
+    expect(screen.getAllByText('Keep behavior.')).toHaveLength(1);
+    expect(disclosure.querySelectorAll('ol li')).toHaveLength(2);
+    expect(disclosure.open).toBe(false);
+    expect(JSON.stringify(snapshot)).toBe(before);
   });
   it.each(['unchanged', 'changed'] as const)(
-    'retains expanded context and its scroll anchor through a %s same-task refresh',
+    'retains criteria disclosure, single description, focus and scroll through a %s same-task refresh',
     async (change) => {
-      // Given
       start();
       const snapshot = fixture();
       const loader = vi.fn().mockResolvedValue(new SnapshotResponse(200, 'one', snapshot));
       render(<App loader={loader} />);
-      const { summary, disclosure, glance } = await context();
+      const { summary, disclosure, description } = await context();
       await userEvent.click(summary);
-      await waitFor(() => expect(disclosure.open).toBe(true));
       const main = screen.getByRole('main');
       main.scrollTop = 180;
       summary.focus();
@@ -92,35 +110,30 @@ describe('task context and refresh continuity', () => {
           ? new SnapshotResponse(304, 'one')
           : new SnapshotResponse(200, 'two', { ...snapshot, revision: 'two' }),
       );
-      // When
       fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
       await waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
       await act(async () => {});
-      // Then
       expect((await context()).disclosure).toBe(disclosure);
       expect(disclosure.open).toBe(true);
-      expect(glance.hidden).toBe(true);
+      expect(description.hidden).toBe(false);
+      expect(screen.getAllByText('Exact purpose.')).toHaveLength(1);
       expect(window.location.hash).toBe(hash);
       expect(document.activeElement).toBe(summary);
       expect(main.scrollTop).toBe(180);
     },
   );
-  it('resets source disclosure when the selected task changes', async () => {
-    // Given
+  it('does not carry the previous task criteria disclosure into another task', async () => {
     start();
     render(<App loader={async () => fixture()} />);
     const first = await context();
     await userEvent.click(first.summary);
-    await waitFor(() => expect(first.disclosure.open).toBe(true));
-    // When
     await act(async () => {
       window.location.hash = '#task/B?full=1';
       window.dispatchEvent(new HashChangeEvent('hashchange'));
     });
-    // Then
     await screen.findByRole('heading', { name: 'Other record' });
-    const second = await context();
-    expect(second.disclosure.open).toBe(false);
-    expect(second.glance.hidden).toBe(false);
+    expect(document.querySelector('.task-acceptance-criteria')).toBeNull();
+    expect(screen.getAllByText('Different purpose.')).toHaveLength(1);
+    expect(document.querySelector<HTMLElement>('.task-description-content')?.hidden).toBe(false);
   });
 });

@@ -79,9 +79,6 @@ export const korean = {
   'Show all notes': '모든 메모 보기',
   'Show fewer notes': '메모 줄여 보기',
   Requirements: '요구 사항',
-  'Full task description': '전체 작업 설명',
-  'Read the task description below for purpose and method.':
-    '아래 작업 설명에서 목적과 방법을 확인하세요.',
   'Constraints and findings': '제약과 발견 사항',
   'Summary text is shortened.': '요약이 축약되어 있어요.',
   'Text is shortened.': '내용이 축약되어 있어요.',

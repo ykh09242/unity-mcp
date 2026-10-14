@@ -66,7 +66,7 @@ function start() {
 }
 
 describe('reviewed content and answer state', () => {
-  it('opens the complete reviewed task body without automatically opening the duplicate technical source', async () => {
+  it('shows the complete reviewed task body once without a duplicate description disclosure', async () => {
     start();
     window.history.replaceState(null, '', '#task/T1?scope=all&page=1&size=50&full=1');
     const raw = fixture();
@@ -98,22 +98,26 @@ describe('reviewed content and answer state', () => {
       },
     });
     render(<App loader={async () => snapshot} sessionLoader={sessionLoader} />);
-    const summary = await screen.findByText('Full task description');
-    await userEvent.setup().click(summary);
-    const human = summary.closest('details')!;
-    expect(human.open).toBe(true);
+    await screen.findByRole('heading', { name: 'Task' });
+    const human = document.querySelector<HTMLElement>('.task-description-content')!;
+    expect(screen.getAllByText('전체 목적을 확인해요.')).toHaveLength(1);
+    expect(screen.queryByText('Full task description')).toBeNull();
     expect(human.textContent).toContain('완료 조건: 모든 항목을 보존해요.');
     expect(human.querySelector('details')).toBeNull();
     expect(human.querySelector('pre')).toBeNull();
   });
   it.each(['en', 'ko'])(
-    'formats the default visible translated task-description summary as a list with inline code in %s UI',
+    'formats the single visible translated task description as a list with inline code in %s UI',
     async (locale) => {
       start();
       localStorage.setItem(PREFERENCE_KEY, locale);
       window.history.replaceState(null, '', '#task/T1?scope=all&full=1');
       const body = '- Preserve purpose\n- Keep authored method\n';
-      const reviewed = '- 목표: 의미를 유지해요\n- 방법: `src/retain.ts`를 확인해요\n';
+      const reviewed =
+        '- 목표: 의미를 유지해요\n- 방법: `src/retain.ts`를 확인해요\n\n완료 기준:\n\n' +
+        Array.from({ length: 7 }, (_, index) => `${index + 1}. 고유 완료 조건 ${index + 1}`).join(
+          '\n',
+        );
       const raw = fixture();
       const snapshot = parseSnapshot({
         ...raw,
@@ -143,15 +147,24 @@ describe('reviewed content and answer state', () => {
       const before = JSON.stringify(snapshot);
       const view = render(<App loader={async () => snapshot} sessionLoader={sessionLoader} />);
       await screen.findByRole('heading', { name: 'Task' });
-      const glance = view.container.querySelector<HTMLElement>('.expected-result-summary');
+      const glance = view.container.querySelector<HTMLElement>('.task-description-content');
       if (!glance) throw new Error('Default task-description summary missing');
       expect(glance.hidden).toBe(false);
       expect(glance.querySelectorAll('ul li')).toHaveLength(2);
       expect(glance.querySelector('code')?.textContent).toBe('src/retain.ts');
       expect(glance.textContent).toContain('목표: 의미를 유지해요');
-      expect(view.container.querySelector<HTMLDetailsElement>('.task-source-context')?.open).toBe(
-        false,
+      const criteria = view.container.querySelector<HTMLDetailsElement>(
+        '.task-acceptance-criteria',
       );
+      expect(criteria?.open).toBe(false);
+      expect(criteria?.querySelectorAll('ol li')).toHaveLength(7);
+      expect(glance.textContent).not.toContain('고유 완료 조건');
+      await userEvent.click(criteria!.querySelector('summary')!);
+      expect(criteria?.open).toBe(true);
+      expect(screen.getAllByText('고유 완료 조건 7')).toHaveLength(1);
+      expect(glance.hidden).toBe(false);
+      expect(view.container.querySelector('.task-source-context')).toBeNull();
+      expect(view.container.querySelectorAll('.task-description-content')).toHaveLength(1);
       expect(JSON.stringify(snapshot)).toBe(before);
     },
   );
