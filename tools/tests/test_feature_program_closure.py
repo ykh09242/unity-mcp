@@ -496,3 +496,89 @@ def test_cleanup_resources_keep_eligible_and_in_use_observations_independent(fix
     assert result["resources"][1]["status"] == "deferred"
     assert result["accepted"] is False
     assert result["remote_verified_by_tool"] is False
+
+
+def test_compatible_actual_run_preserves_empty_stream_and_records_nonempty_metadata(fixture):
+    from tools.tests.test_feature_program_execution import execution, prepare
+    from tools.tests.test_feature_program_verification import record
+
+    # Given one actual shared invocation, explicit compatible target request and empty raw stderr.
+    assert fixture.claim() == 0
+    assert fixture.claim("S02", owner="worker-two") == 0
+    prepared = prepare(
+        fixture,
+        "from pathlib import Path; counter = Path('shared-counter.txt'); counter.write_text(str(int(counter.read_text()) + 1) if counter.exists() else '1'); print('shared')",
+    )
+    origin = fixture.program.load()["verification"]["records"][-1]["input"]
+    record(
+        fixture,
+        {
+            **origin,
+            "id": "target-shared-request",
+            "task_id": "S02",
+            "actor_id": "worker-two",
+            "expected_revision": fp.phases.revision(fixture.program.load()),
+            "evidence_destination": "evidence/S02/attempt-1/",
+        },
+    )
+    actual = execution.execute_run(prepared)
+    stderr_ref = actual["capture"]["outputs"]["stderr"]
+    assert fixture.program.path(stderr_ref["path"]).read_bytes() == b""
+    supplied = {
+        "task_ids": ["S02"],
+        "run_capture_ref": actual["capture_ref"],
+        "actor_id": "qa",
+        "observations": [
+            {
+                "task_id": "S02",
+                "id": "target-shared-finished",
+                "reason": "Actual compatible sealed invocation",
+                "attachment_prefix": "evidence/S02/attempt-1/shared-capture",
+            }
+        ],
+    }
+    path = "evidence/_verification/attempt-1/shared-finished.json"
+    result = closure.prepare_inputs(
+        fixture.program,
+        fixture.program.load(),
+        {"kind": "applicability", "input": supplied, "receipt_destinations": {"S02": path}},
+        Host(fixture.program),
+    )
+    item = result["inputs"][0]
+    assert item["receipt_ref"]["path"] == path
+    with pytest.raises(closure.ClosureError):
+        closure.prepare_inputs(
+            fixture.program,
+            fixture.program.load(),
+            {
+                "kind": "applicability",
+                "input": supplied,
+                "receipt_destinations": {
+                    "S02": "evidence/S02/attempt-1/wrong-control-receipt.json"
+                },
+            },
+            Host(fixture.program),
+        )
+    assert not fixture.program.path("evidence/S02/attempt-1/wrong-control-receipt.json").exists()
+    # When the ordinary guarded recorder admits the actual compatible evidence.
+    assert fixture.run("verification-record", "--input", path) == 0
+    # Then empty bytes remain exact while their sealed nonempty provenance is frozen once.
+    empty = [row for row in item["attachments"] if row["byte_count"] == 0]
+    assert len(empty) == 1
+    assert fixture.program.path(empty[0]["attachment_ref"]["path"]).read_bytes() == b""
+    manifest = fp.read_json(fixture.program.path(item["attachment_manifest_ref"]["path"]))
+    assert {
+        key: empty[0][key] for key in ("origin_ref", "attachment_ref", "byte_count")
+    } in manifest["attachments"]
+    assert manifest["origin_ref"] == actual["capture_ref"]
+    assert all(
+        fixture.program.path(name).stat().st_size > 0 for name in item["receipt"]["artifacts"]
+    )
+    saved = fixture.program.load()["verification"]["records"][-1]
+    assert empty[0]["origin_ref"] in saved["evidence"]
+    assert item["attachment_manifest_ref"] in saved["evidence"]
+    assert (fixture.program.repo / "shared-counter.txt").read_text() == "1"
+    fixture.program.path(empty[0]["attachment_ref"]["path"]).write_bytes(b"Changed target copy")
+    with pytest.raises(fp.ProgramError):
+        fixture.program.load()
+    assert (fixture.program.repo / "shared-counter.txt").read_text() == "1"

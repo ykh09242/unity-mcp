@@ -707,6 +707,24 @@ def prepare_applicability(program: Program, state: Record, request: Record) -> R
         after_ref = _record(copies[2]["attachment_ref"], "after attachment")
         before = core.authoring.provider_observation(program, before_ref)
         after = core.authoring.provider_observation(program, after_ref)
+        manifest: Record = {
+            "schema_version": 1,
+            "task_id": task_id,
+            "attempt": number,
+            "origin_ref": run_ref,
+            "attachments": [
+                {
+                    key: deepcopy(value[key])
+                    for key in ("origin_ref", "attachment_ref", "byte_count")
+                }
+                for value in copies
+            ],
+        }
+        manifest_path = f"{prefix}/attachment-manifest.json"
+        manifest_bytes = core.canonical(manifest)
+        _require(len(manifest_bytes) <= LIMIT, "Attachment manifest exceeds 8 MiB")
+        _exact_write(program.path(manifest_path), manifest_bytes)
+        manifest_ref = {"path": manifest_path, "sha256": core.sha(manifest_bytes)}
         observation: Record = {
             "schema_version": 1,
             "operation": "verification-record",
@@ -728,8 +746,14 @@ def prepare_applicability(program: Program, state: Record, request: Record) -> R
             "input_capture_before": before_ref,
             "input_capture_after": after_ref,
             "run_capture_ref": run_ref,
+            "attachment_manifest_ref": manifest_ref,
             "artifacts": [
-                str(_record(value["attachment_ref"], "attachment")["path"]) for value in copies
+                manifest_path,
+                *[
+                    str(_record(value["attachment_ref"], "attachment")["path"])
+                    for value in copies
+                    if value["byte_count"] > 0
+                ],
             ],
         }
         if "reporter_id" in request:
@@ -741,6 +765,7 @@ def prepare_applicability(program: Program, state: Record, request: Record) -> R
                 "task_id": task_id,
                 "receipt": observation,
                 "attachments": copies,
+                "attachment_manifest_ref": manifest_ref,
                 "origin_ref": run_ref,
                 "published": False,
             }
@@ -825,9 +850,14 @@ def _materialize_receipts(program: Program, result: Record, destinations: Record
             state = program.load()
             attempt = program.current_attempt(program.task(state, task_id))["number"]
         path = core.safe_relative(_text(destinations[task_id], "ordinary receipt destination"))
+        prefix = (
+            "evidence/_verification/attempt-1/"
+            if receipt.get("operation") == "verification-record"
+            else f"evidence/{task_id}/attempt-{attempt}/"
+        )
         _require(
-            path.startswith(f"evidence/{task_id}/attempt-{attempt}/"),
-            "Receipt destination differs from task attempt",
+            path.startswith(prefix),
+            "Receipt destination differs from ordinary operation namespace",
         )
         raw = core.canonical(receipt)
         _require(len(raw) <= LIMIT, "Ordinary receipt exceeds 8 MiB")
