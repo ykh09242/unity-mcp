@@ -1815,6 +1815,8 @@ class Program:
             require(role == "leader", "Self-review must be honestly labeled leader review")
             coordination.require_task_authority(state, reviewer)
         refs += self.evidence(args.id, number, strings(review.get("evidence"), "review evidence"))
+        if verdict == "accepted":
+            verification.validate_completion(self, state, args.id)
         attempt["evidence"] = sequence(attempt["evidence"], "evidence") + refs
         submission["review"] = refs[0]
         sequence(attempt["rounds"], "rounds")[-1] = submission
@@ -2779,7 +2781,10 @@ def _capture_projection(
             )
         )
         original_task = tasks[task_index]
-        deliveries = sequence(original_task.get("deliveries", []), "deliveries")
+        current_delivery = (
+            program.current_delivery(original_task) if original_task["status"] == "done" else {}
+        )
+        deliveries = [current_delivery] if current_delivery.get("metadata") is not None else []
         provider_ref = (
             record(record(deliveries[-1], "delivery")["metadata"], "metadata").get(
                 "provider_observation"
@@ -2814,12 +2819,23 @@ def _capture_projection(
                 "reference": {
                     "path": "backlog.json",
                     "revision": sha(initial),
-                    "pointer": f"/tasks/{task_index}/deliveries",
+                    "pointer": f"/tasks/{task_index}/deliveries"
+                    if deliveries
+                    else "/verification/records",
                     "task_id": task_item["id"],
                 },
                 "provider_reference": deepcopy(provider_ref),
             }
         )
+        if not deliveries:
+            reference = record(task_item["provider_execution"], "provider execution")["reference"]
+            task_item["provider_execution"] = {
+                **authoring.early_provider_execution(
+                    task_item["verification"], record(reference, "provider reference")
+                ),
+                "task_id": task_item["id"],
+                "reference": reference,
+            }
     lock = program.path(".feature-program.lock")
     lock_before: bytes | None = None
     lock_unavailable: str | None = None

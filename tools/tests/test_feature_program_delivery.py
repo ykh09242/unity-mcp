@@ -740,3 +740,31 @@ def test_unexplained_failed_run_never_self_declares_advisory_exclusion():
     result = delivery.assess_execution(capture, expected)
     # Then unknown failures still block.
     assert result["status"] == "failed"
+
+
+def test_public_expected_context_validation_needs_no_provider_and_detaches_input():
+    # Given an expected plan before actual provider execution exists.
+    _, expected = fixture()
+    # When the independent public context boundary parses it.
+    parsed = delivery.validate_context(expected)
+    parsed["pr"]["base_sha"] = OTHER
+    # Then parsing creates no provider result and does not alias authored expectations.
+    assert expected["pr"]["base_sha"] == BASE
+    assert "observations" not in parsed["stages"][0]
+
+
+@pytest.mark.parametrize("malformation", ["unknown", "wrong_stage_revision", "missing_policy"])
+def test_public_context_entry_rejects_malformed_expectations_without_capture(malformation):
+    # Given an explicit malformed independently authored expectation.
+    _, expected = fixture()
+    match malformation:
+        case "unknown":
+            expected["remote_verified"] = True
+        case "wrong_stage_revision":
+            expected["stages"][0]["expected_sha"] = OTHER
+        case "missing_policy":
+            expected["stages"][0]["checks"][0]["mode"] = "policy_skip"
+    # When no actual provider capture is available yet.
+    with pytest.raises(delivery.DeliveryError):
+        delivery.validate_context(expected)
+    # Then request validation cannot invent a capture or bypass existing policy guards.

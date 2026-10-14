@@ -54,6 +54,14 @@ def _core() -> ModuleType:
     return feature_program
 
 
+def _provider() -> ModuleType:
+    if __package__:
+        from tools import feature_program_delivery
+    else:
+        import feature_program_delivery
+    return feature_program_delivery
+
+
 def _require(condition: bool, reason: str) -> None:
     _core().require(condition, reason)
 
@@ -76,6 +84,11 @@ def _id(value: Json, label: str) -> str:
     result = _text(value, label)
     _require(_core().portable_task_id(result), f"Invalid {label}")
     return result
+
+
+def _actor_id(value: Json, label: str) -> str:
+    """Reuse established actor identity semantics; actors are not portable filenames."""
+    return _core().coordination._text(value, label)
 
 
 def _texts(value: Json, label: str) -> list[str]:
@@ -132,15 +145,15 @@ def _task_authority(state: Record, actor: str, owner: Json = None) -> None:
 
 def _authority(state: Record, task: Record, value: Record, request: Record | None) -> None:
     core = _core()
-    actor = _id(value.get("actor_id"), "acting actor")
+    actor = _actor_id(value.get("actor_id"), "acting actor")
     _actor(state, actor)
     director = core.coordination.current_director_id(state) or "leader"
     if request is None:
         _task_authority(state, actor, task.get("owner"))
-        _actor(state, _id(value.get("verifier_id"), "assigned verifier"))
+        _actor(state, _actor_id(value.get("verifier_id"), "assigned verifier"))
         return
     request_input = _record(request["input"], "request input")
-    verifier = _id(request_input.get("verifier_id"), "assigned verifier")
+    verifier = _actor_id(request_input.get("verifier_id"), "assigned verifier")
     _actor(state, verifier)
     participants = {verifier}
     if value.get("kind") in {"finding", "resolution"} and task.get("owner") is not None:
@@ -151,7 +164,7 @@ def _authority(state: Record, task: Record, value: Record, request: Record | Non
         actor == director, "Only assigned participant or current director may record observation"
     )
     _task_authority(state, actor)
-    reporter = _id(value.get("reporter_id"), "director recording requires actual reporter_id")
+    reporter = _actor_id(value.get("reporter_id"), "director recording requires actual reporter_id")
     _actor(state, reporter)
     _require(reporter in participants, "Reported origin must be assigned participant")
 
@@ -190,7 +203,7 @@ def _input_shape(value: Record) -> None:
     )
     _id(value.get("id"), "verification ID")
     _id(value.get("task_id"), "task ID")
-    _id(value.get("actor_id"), "actor ID")
+    _actor_id(value.get("actor_id"), "actor ID")
     _text(value.get("expected_revision"), "expected revision")
     _text(value.get("reason"), "verification reason")
     kind = _text(value.get("kind"), "event kind")
@@ -224,10 +237,12 @@ def _input_shape(value: Record) -> None:
                 "evidence_destination",
                 "next_trigger",
                 "context_path",
+                "provider_context_path",
+                "provider_source_mapping_path",
                 "supersedes",
             }
-            for key in ("lane", "verifier_id"):
-                _id(value.get(key), key)
+            _id(value.get("lane"), "lane")
+            _actor_id(value.get("verifier_id"), "verifier_id")
             _require(
                 bool(_texts(value.get("check_ids"), "check IDs")), "Request needs check identities"
             )
@@ -248,6 +263,18 @@ def _input_shape(value: Record) -> None:
                 _require(set(resource) == {"name", "boundary"}, "Resource requires name/boundary")
                 _text(resource.get("name"), "resource name")
                 _text(resource.get("boundary"), "resource boundary")
+            if "provider_context_path" in value:
+                _core().safe_relative(
+                    _text(value["provider_context_path"], "provider context path")
+                )
+            if "provider_source_mapping_path" in value:
+                _core().safe_relative(
+                    _text(value["provider_source_mapping_path"], "provider source mapping path")
+                )
+                _require(
+                    "provider_context_path" in value,
+                    "Provider source mapping requires expected context",
+                )
         case "started" | "blocked" | "finished" | "canceled" | "finding" | "resolution":
             allowed |= {"request_id", "request_version"}
             _id(value.get("request_id"), "request ID")
@@ -268,7 +295,7 @@ def _input_shape(value: Record) -> None:
                     _text(blocker.get("reason"), "blocker reason")
                     _text(blocker.get("next_trigger"), "blocker trigger")
                     if blocker["resolver_id"] is not None:
-                        _id(blocker["resolver_id"], "resolver")
+                        _actor_id(blocker["resolver_id"], "resolver")
                 case "finished":
                     allowed |= {
                         "result",
@@ -371,6 +398,8 @@ def _input_shape(value: Record) -> None:
         case _:
             raise core.ProgramError("Invalid verification kind")
     _require(set(value) <= allowed, "Unknown verification input fields")
+    if "provider_ref" in value:
+        _ref(value["provider_ref"])
     _time(value.get("observed_at"), "observed_at")
     _time(value.get("as_of"), "as_of")
     if value.get("observed_at") is not None or value.get("as_of") is not None:
@@ -584,6 +613,20 @@ def validate(state: Record) -> None:
                     _core().safe_relative(name)
                 versions[key] = version
                 prior_requests[key] = item
+                if value.get("provider_context_path") is not None:
+                    provider_ref = _ref(context.get("provider_context_ref"))
+                    _require(
+                        provider_ref in refs
+                        and provider_ref["path"] == value["provider_context_path"],
+                        "Provider expectation reference differs from frozen request",
+                    )
+                if value.get("provider_source_mapping_path") is not None:
+                    source_ref = _ref(context.get("provider_source_mapping_ref"))
+                    _require(
+                        source_ref in refs
+                        and source_ref["path"] == value["provider_source_mapping_path"],
+                        "Provider source mapping reference differs from frozen request",
+                    )
             case "started" | "blocked" | "finished" | "canceled" | "finding" | "resolution":
                 request = seen.get(str(value["request_id"]))
                 _require(
@@ -749,6 +792,55 @@ def _applicable(
     return not reasons, reasons
 
 
+def _provider_source_mapping(
+    program: ProgramAccess, value: Record, context: Record, expected: Record, reads: _Reads
+) -> list[Json]:
+    name = value.get("provider_source_mapping_path")
+    _require(
+        name is not None or expected["pr"]["head_sha"] == context["observed_head"],
+        "Distinct provider HEAD requires frozen source-equivalence mapping",
+    )
+    if name is None:
+        return []
+    ref = _capture(program, _text(name, "provider source mapping path"), reads)
+    mapping = _core().read_json(program.path(str(ref["path"])), budget=reads.artifacts)
+    _require(
+        set(mapping)
+        == {
+            "schema_version",
+            "provider_head",
+            "scope",
+            "provider_snapshot",
+            "local_snapshot",
+            "evidence",
+        }
+        and type(mapping["schema_version"]) is int
+        and mapping["schema_version"] == 1,
+        "Invalid provider source mapping schema",
+    )
+    scope = _texts(mapping["scope"], "mapped source scope")
+    _require(
+        mapping["provider_head"] == expected["pr"]["head_sha"]
+        and sorted(scope) == context["owned_write_scope"],
+        "Provider source mapping head/scope mismatch",
+    )
+    actual = reads.snapshot(program, scope)
+    _require(
+        _record(mapping["provider_snapshot"], "provider source snapshot")
+        == _record(mapping["local_snapshot"], "local source snapshot")
+        == actual,
+        "Provider source equivalence differs from actual scoped files",
+    )
+    _require(
+        _core().digest(actual) == context["source_digest"],
+        "Mapped source digest differs from request",
+    )
+    names = _texts(mapping["evidence"], "comparison evidence")
+    _require(bool(names), "Source equivalence requires immutable comparison evidence")
+    context["provider_source_mapping_ref"] = ref
+    return [ref, *[_capture(program, path, reads) for path in names]]
+
+
 def prepare_record(
     program: ProgramAccess, state: Record, input_path: str, *, observed_head: str
 ) -> PreparedChange:
@@ -816,6 +908,24 @@ def prepare_record(
                 "observed_head": observed_head,
             }
         )
+        if value.get("provider_context_path") is not None:
+            provider_context_ref = _capture(
+                program, _text(value["provider_context_path"], "provider context path"), reads
+            )
+            provider_context = core.read_json(
+                program.path(str(provider_context_ref["path"])), budget=reads.artifacts
+            )
+            try:
+                expected_provider = _provider().validate_context(provider_context)
+            except _provider().DeliveryError as exc:
+                raise core.ProgramError(str(exc)) from exc
+            refs.extend(_provider_source_mapping(program, value, context, expected_provider, reads))
+            context["provider_context_ref"] = provider_context_ref
+            refs.append(provider_context_ref)
+            for stage in expected_provider["stages"]:
+                for check in stage["checks"]:
+                    for name in check["policy_evidence"]:
+                        refs.append(_capture(program, name, reads))
         number = context["attempt"]
         destination = str(value["evidence_destination"])
         prefix = (
@@ -900,9 +1010,14 @@ def prepare_record(
             )
         refs.append(_capture(program, name, reads))
     if value.get("provider_ref") is not None:
+        _require(
+            context.get("provider_context_ref") is not None,
+            "Provider observation requires explicit frozen expected context",
+        )
         ref = _ref(value["provider_ref"])
         program.verify_refs([ref], reads.artifacts)
         refs.append(ref)
+        _provider_assessment(program, {"context": context}, {"input": value}, reads, "current")
     item = {
         "input": deepcopy(value),
         "receipt": refs[0],
@@ -1029,6 +1144,41 @@ def assess_reuse(program: ProgramAccess, state: Record, origin: Record, target: 
     latest_origin = reads.latest_event.get(str(origin["request_id"]))
     if latest_origin is not None and latest_origin["input"]["id"] != before["id"]:
         reasons.append("Newer origin event prevents reuse of old success")
+    origin_seen = False
+    for newer in _records(state):
+        if newer["input"]["id"] == before["id"]:
+            origin_seen = True
+            continue
+        if not origin_seen or newer["input"]["kind"] not in {
+            "started",
+            "blocked",
+            "finished",
+            "canceled",
+        }:
+            continue
+        newer_request = index[str(newer["request_id"])]["input"]
+        relevant = (
+            newer_request["task_id"] == new["task_id"]
+            and newer_request["lane"] == new["lane"]
+            and bool(set(newer_request["check_ids"]) & set(new["check_ids"]))
+        )
+        if not relevant:
+            continue
+        if newer["input"]["kind"] != "finished" or newer["input"].get("result") != "passed":
+            reasons.append(
+                "Newer relevant request has failed, canceled or unavailable verification"
+            )
+            break
+        if _observation_problems(newer, index[str(newer["request_id"])]):
+            reasons.append("Newer relevant observation has incomplete verification inputs")
+            break
+        try:
+            program.verify_refs(
+                _items(newer["evidence"], "newer verification evidence"), reads.artifacts
+            )
+        except (OSError, _core().ProgramError):
+            reasons.append("Newer relevant verification evidence is unavailable")
+            break
     if before.get("environment") is None or after.get("environment") is None:
         return {
             "status": "not_assessed",
@@ -1062,6 +1212,65 @@ def assess_reuse(program: ProgramAccess, state: Record, origin: Record, target: 
         "reasons": reasons,
         "advisory": True,
     }
+
+
+def _provider_assessment(
+    program: ProgramAccess, request: Record, observation: Record, reads: _Reads, applicability: str
+) -> Record:
+    expected_ref = request["context"].get("provider_context_ref")
+    captured_ref = observation["input"].get("provider_ref")
+    if expected_ref is None and captured_ref is None:
+        return {"adopted": False, "status": "not_assessed"}
+    _require(expected_ref is not None, "Provider observation lacks explicit expected context")
+    program.verify_refs([_ref(expected_ref)], reads.artifacts)
+    expected = _core().read_json(program.path(str(expected_ref["path"])), budget=reads.artifacts)
+    try:
+        _provider().validate_context(expected)
+        if captured_ref is None:
+            return {
+                "adopted": True,
+                "status": "pending",
+                "stages": [],
+                "reasons": ["Provider capture is not recorded on latest observation"],
+                "remote_verified_by_tool": False,
+                "applicability": applicability,
+                "current": applicability == "current",
+                "provider_context_reference": deepcopy(expected_ref),
+                "provider_reference": None,
+            }
+        program.verify_refs([_ref(captured_ref)], reads.artifacts)
+        captured = _core().read_json(
+            program.path(str(captured_ref["path"])), budget=reads.artifacts
+        )
+        result = _provider().assess_execution(captured.get("execution"), expected)
+    except _provider().DeliveryError as exc:
+        raise _core().ProgramError(str(exc)) from exc
+    result.update(
+        {
+            "adopted": True,
+            "applicability": applicability,
+            "current": applicability == "current",
+            "provider_context_reference": deepcopy(expected_ref),
+            "provider_reference": deepcopy(captured_ref),
+        }
+    )
+    if applicability != "current":
+        result["recorded_status"] = result["status"]
+        if result["status"] == "passed":
+            result["status"] = "not_assessed"
+        result["reasons"].append("Local verification source/context is not currently applicable")
+        for stage in result["stages"]:
+            stage["current"] = False
+            if stage["status"] == "passed":
+                stage["recorded_status"], stage["status"] = "passed", "not_assessed"
+    if observation["input"].get("kind") == "canceled" or observation["input"].get("result") in {
+        "failed",
+        "unknown",
+        "not_run",
+    }:
+        result["recorded_status"], result["status"] = result["status"], "failed"
+        result["reasons"].append("Latest local observation is canceled or nonpassing")
+    return result
 
 
 def _waiting(events: list[Record]) -> Record:
@@ -1240,6 +1449,36 @@ def projection(program: ProgramAccess, state: Record, budget: ReadBudget | None 
                     },
                 }
             )
+            if (
+                request["context"].get("provider_context_ref") is not None
+                or value.get("provider_ref") is not None
+            ):
+                try:
+                    provider_execution = _provider_assessment(
+                        program, request, latest, reads, applicability
+                    )
+                except (OSError, _core().ProgramError) as exc:
+                    provider_execution = {
+                        "adopted": True,
+                        "status": "unavailable",
+                        "stages": [],
+                        "reasons": [str(exc)],
+                        "current": False,
+                        "applicability": "unavailable",
+                        "remote_verified_by_tool": False,
+                    }
+                provider_execution.update(
+                    {
+                        "task_id": task_id,
+                        "request_id": request["request_id"],
+                        "reference": _reference(
+                            state, f"/verification/records/{positions[str(value['id'])]}", task_id
+                        ),
+                    }
+                )
+                for stage in provider_execution["stages"]:
+                    stage["request_id"] = request["request_id"]
+                lanes[-1]["provider_execution"] = provider_execution
         for item in findings_by_task.get(task_id, []):
             value = item["input"]
             if value["task_id"] == task_id and value["kind"] == "finding":
@@ -1321,6 +1560,13 @@ def validate_receipt_refs(
         request_item = _index(state)[str(item["request_id"])]
         problems = _observation_problems(item, request_item)
         _require(not problems, "Invalid verification reliance: " + "; ".join(problems))
+        provider_assessment = _provider_assessment(program, request_item, item, reads, "current")
+        if provider_assessment["adopted"]:
+            _require(
+                provider_assessment["status"] == "passed"
+                and provider_assessment.get("current") is True,
+                "Explicit provider verification reliance did not pass",
+            )
         if not submitted:
             checks = {
                 _record(value, "check")["id"]: _record(value, "check")
@@ -1373,6 +1619,18 @@ def submission_inputs(program: ProgramAccess, state: Record, request: Record) ->
         problems = _observation_problems(item, request_item, include_result=False)
         if problems:
             missing.append({"observation_id": identifier, "reasons": problems})
+            continue
+        provider_assessment = _provider_assessment(program, request_item, item, reads, "current")
+        if provider_assessment["adopted"] and (
+            provider_assessment["status"] != "passed"
+            or provider_assessment.get("current") is not True
+        ):
+            missing.append(
+                {
+                    "observation_id": identifier,
+                    "reasons": ["Selected provider evidence is not passing and current"],
+                }
+            )
             continue
         stable = (
             value.get("input_before") is not None
@@ -1481,6 +1739,43 @@ def submission_inputs(program: ProgramAccess, state: Record, request: Record) ->
     return result
 
 
+def validate_completion(program: ProgramAccess, state: Record, task_id: str) -> None:
+    """Require adopted current required lanes at acceptance, without gating submit or history."""
+    if "verification" not in state:
+        return
+    validate(state)
+    reads = _reads()
+    reads.index(state)
+    task = program.task(state, task_id)
+    required = set(_texts(task["required_checks"], "required checks"))
+    for (identifier, lane), request in reads.latest_lane.items():
+        if identifier != task_id or not (required & set(request["input"]["check_ids"])):
+            continue
+        latest = reads.latest_event[str(request["request_id"])]
+        _require(
+            latest["input"]["kind"] == "finished",
+            f"Required verification lane remains pending: {lane}",
+        )
+        program.verify_refs(
+            _items(request["evidence"], "request evidence")
+            + _items(latest["evidence"], "observation evidence"),
+            reads.artifacts,
+        )
+        applicable, reasons = _applicable(program, state, latest, reads)
+        _require(applicable, f"Required verification lane is stale: {lane}: " + "; ".join(reasons))
+        problems = _observation_problems(latest, request)
+        _require(
+            not problems, f"Required verification lane did not pass: {lane}: " + "; ".join(problems)
+        )
+        assessment = _provider_assessment(program, request, latest, reads, "current")
+        if assessment["adopted"]:
+            _require(
+                assessment["status"] == "passed" and assessment.get("current") is True,
+                f"Required provider lane did not pass: {lane}",
+            )
+    reads.recheck(program)
+
+
 def publication_guard(program: ProgramAccess, future: Record) -> Callable[[], None] | None:
     """Recheck newly declared frozen reliance against the original registry before publication."""
     core = _core()
@@ -1507,8 +1802,13 @@ def publication_guard(program: ProgramAccess, future: Record) -> Callable[[], No
             for ref in _items(_record(attempt_value, "attempt").get("evidence", []), "evidence"):
                 old_refs.add(core.digest(ref))
     relied: list[tuple[str, Record, Record]] = []
+    completed_tasks = []
     for task_value in _items(future.get("tasks", []), "tasks"):
         task = _record(task_value, "task")
+        old_task = program.task(original, str(task["id"]))
+        if task.get("status") == "done" and old_task.get("status") == "review":
+            validate_completion(program, original, str(task["id"]))
+            completed_tasks.append(str(task["id"]))
         for attempt_value in _items(task.get("attempts", []), "attempts"):
             for ref_value in _items(
                 _record(attempt_value, "attempt").get("evidence", []), "evidence"
@@ -1519,7 +1819,7 @@ def publication_guard(program: ProgramAccess, future: Record) -> Callable[[], No
                     if receipt.get("verification_refs"):
                         validate_receipt_refs(program, original, receipt, str(task["id"]))
                         relied.append((str(task["id"]), receipt, ref))
-    if not relied and not appended:
+    if not relied and not appended and not completed_tasks:
         return None
     revision = core.phases.revision(original)
 
@@ -1530,6 +1830,8 @@ def publication_guard(program: ProgramAccess, future: Record) -> Callable[[], No
             "Verification reliance registry changed before publication",
         )
         program.verify_refs(appended_refs)
+        for task_id in completed_tasks:
+            validate_completion(program, current, task_id)
         for task_id, receipt, ref in relied:
             program.verify_refs([ref])
             validate_receipt_refs(program, current, receipt, task_id)

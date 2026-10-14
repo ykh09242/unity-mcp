@@ -416,3 +416,255 @@ def test_shared_provider_capture_has_one_read_plus_one_final_recheck(gate, monke
     monkeypatch.setattr(fp, "bounded_bytes", counted_reader)
     result = fp.authoring.delivery_inputs(gate.program, gate.program.load(), value)
     assert len(result["inputs"]) == 2 and len(reads) == 2
+
+
+def early_provider_capture(gate):
+    assert gate.fixture.claim("S01") == 0
+    gate.fixture.submit("S01")
+    assert gate.fixture.claim("S02", owner="second-worker") == 0
+    receipt = gate.fixture.receipt("S02")
+    assert gate.fixture.run("submit", "S02", "--owner", "second-worker", "--receipt", receipt) == 0
+    capture = provider_execution_request(gate)
+    provider = json.loads(gate.program.path(capture["provider"]["path"]).read_bytes())
+    name = gate.fixture.write(
+        "evidence/_verification/attempt-1/early-provider-capture.json", provider
+    )
+    capture["provider"] = {"path": name, "sha256": fp.sha(gate.program.path(name).read_bytes())}
+    return capture
+
+
+@pytest.mark.parametrize("task_status", ["active", "review"])
+def test_early_provider_cli_projection_before_reviewed_delivery(gate, capsys, task_status):
+    capture = early_provider_capture(gate)
+    if task_status == "active":
+        review = gate.fixture.review("S01", accepted=False)
+        assert gate.fixture.run("rework", "S01", "--review", review) == 0
+    context = gate.fixture.write(
+        "evidence/S01/attempt-1/early-provider-context.json",
+        capture["tasks"][0]["provider_context"],
+    )
+    record_cli(
+        gate.fixture,
+        request(
+            gate.fixture,
+            "early-pr",
+            lane="pr-ci",
+            check_ids=["scoped_tests"],
+            provider_context_path=context,
+        ),
+    )
+    record_cli(
+        gate.fixture,
+        observation(
+            gate.fixture, "early-pr-result", request_id="early-pr", provider_ref=capture["provider"]
+        ),
+    )
+    snapshot = fp.read_snapshot(gate.program.repo, gate.program.directory)
+    task = next(item for item in snapshot["tasks"] if item["id"] == "S01")
+    assert task["status"] == task_status and not gate.program.task(gate.program.load(), "S01").get(
+        "deliveries"
+    )
+    assert task["provider_execution"]["status"] == "passed"
+    stage = task["provider_execution"]["stages"][0]
+    assert stage["request_id"] == "early-pr" and stage["checks"][0]["run_id"] == 12
+    assert stage["source"]["tested_sha"] == "a" * 40
+    assert task["provider_execution"]["reference"]["revision"] == snapshot["revision"]
+    # A newer canceled observation has no capture; the prior green cannot return.
+    current = gate.program.load()
+    record_cli(
+        gate.fixture,
+        {
+            "schema_version": 1,
+            "operation": "verification-record",
+            "id": "cancel-early",
+            "kind": "canceled",
+            "task_id": "S01",
+            "actor_id": "qa",
+            "reason": "Explicitly canceled new observation",
+            "request_id": "early-pr",
+            "request_version": 1,
+            "expected_revision": fp.phases.revision(current),
+            "next_trigger": "Collect new actual PR execution",
+        },
+    )
+    canceled = fp.read_snapshot(gate.program.repo, gate.program.directory)
+    task = next(item for item in canceled["tasks"] if item["id"] == "S01")
+    assert task["provider_execution"]["status"] != "passed"
+    assert task["provider_execution"].get("stages", []) == []
+
+
+def test_current_required_lane_gates_complete_without_voluntary_review_refs(gate, capsys):
+    assert gate.fixture.claim() == 0
+    gate.fixture.submit()
+    record_cli(
+        gate.fixture,
+        request(
+            gate.fixture, "required-review", lane="independent-check", check_ids=["acceptance"]
+        ),
+    )
+    review = gate.fixture.review(accepted=True)
+    original = gate.program.path("backlog.json").read_bytes()
+    preview_request = gate.fixture.write(
+        "pending-complete-preview.json", {"argv": ["complete", "S01", "--review", review]}
+    )
+    capsys.readouterr()
+    assert gate.fixture.run("preview", "--request", preview_request) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["status"] == "failed"
+    assert gate.fixture.run("complete", "S01", "--review", review) == 1
+    assert gate.program.path("backlog.json").read_bytes() == original
+    record_cli(
+        gate.fixture,
+        observation(gate.fixture, "required-review-result", request_id="required-review"),
+    )
+    assert gate.fixture.run("complete", "S01", "--review", review) == 0
+
+
+def test_early_provider_context_is_frozen_and_stale_source_cannot_pass(gate):
+    capture = early_provider_capture(gate)
+    context = gate.fixture.write(
+        "evidence/S01/attempt-1/early-provider-context.json",
+        capture["tasks"][0]["provider_context"],
+    )
+    record_cli(
+        gate.fixture,
+        request(
+            gate.fixture,
+            "early-pr",
+            lane="pr-ci",
+            check_ids=["scoped_tests"],
+            provider_context_path=context,
+        ),
+    )
+    record_cli(
+        gate.fixture,
+        observation(
+            gate.fixture, "early-pr-result", request_id="early-pr", provider_ref=capture["provider"]
+        ),
+    )
+    (gate.program.repo / "src/S01.py").write_text("changed = True\n", encoding="utf-8")
+    snapshot = fp.read_snapshot(gate.program.repo, gate.program.directory)
+    task = next(item for item in snapshot["tasks"] if item["id"] == "S01")
+    assert task["provider_execution"]["status"] != "passed"
+    assert task["provider_execution"]["applicability"] == "stale"
+    gate.program.path(context).write_bytes(b"{}\n")
+    unavailable = fp.read_snapshot(gate.program.repo, gate.program.directory)
+    task = next(item for item in unavailable["tasks"] if item["id"] == "S01")
+    assert task["provider_execution"]["status"] != "passed"
+    assert task["provider_execution"]["applicability"] == "unavailable"
+
+
+def test_failed_early_provider_execution_blocks_complete_even_with_passing_reported_result(gate):
+    capture = early_provider_capture(gate)
+    provider_path = gate.program.path(capture["provider"]["path"])
+    provider = json.loads(provider_path.read_bytes())
+    provider["execution"]["stages"][0]["observations"][0]["jobs"][0]["steps"][0]["conclusion"] = (
+        "failure"
+    )
+    provider_path.write_bytes(fp.canonical(provider))
+    capture["provider"]["sha256"] = fp.sha(provider_path.read_bytes())
+    context = gate.fixture.write(
+        "evidence/S01/attempt-1/early-provider-context.json",
+        capture["tasks"][0]["provider_context"],
+    )
+    record_cli(
+        gate.fixture,
+        request(
+            gate.fixture,
+            "early-pr",
+            lane="pr-ci",
+            check_ids=["scoped_tests"],
+            provider_context_path=context,
+        ),
+    )
+    record_cli(
+        gate.fixture,
+        observation(
+            gate.fixture, "early-pr-result", request_id="early-pr", provider_ref=capture["provider"]
+        ),
+    )
+    task = next(
+        item
+        for item in fp.read_snapshot(gate.program.repo, gate.program.directory)["tasks"]
+        if item["id"] == "S01"
+    )
+    assert task["provider_execution"]["status"] == "failed"
+    review = gate.fixture.review(accepted=True)
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.run("complete", "S01", "--review", review) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_malformed_early_provider_context_rejects_before_canonical_write(gate):
+    early_provider_capture(gate)
+    context = gate.fixture.write("evidence/S01/attempt-1/early-provider-context.json", {})
+    value = request(gate.fixture, "bad-early-pr", lane="pr-ci", provider_context_path=context)
+    name = gate.fixture.write("evidence/_verification/attempt-1/bad-early-pr.json", value)
+    before = tree(gate.program.repo)
+    assert gate.fixture.run("verification-record", "--input", name) == 1
+    assert tree(gate.program.repo) == before
+
+
+def test_existing_native_actor_ids_flow_through_verification_roles(gate):
+    for identifier in ("/root/implementer", "/root/native_qa", "/root/resolver"):
+        name = gate.fixture.write(
+            f"native-actor-{identifier.rsplit('/', 1)[-1]}.json",
+            {
+                "id": identifier,
+                "role": "worker",
+                "parent_id": "director",
+                "decision": "new",
+                "reason": "Actual native-style fixture identity, not authentication",
+                "provenance": "unknown",
+                "model_id": None,
+                "reasoning_effort": None,
+                "observed_status": "unknown",
+            },
+        )
+        assert gate.fixture.run("actor-record", "--input", name) == 0
+    assert gate.fixture.claim(owner="/root/implementer") == 0
+    record_cli(
+        gate.fixture,
+        request(
+            gate.fixture,
+            "native-request",
+            actor_id="/root/implementer",
+            verifier_id="/root/native_qa",
+        ),
+    )
+    record_cli(
+        gate.fixture,
+        {
+            "schema_version": 1,
+            "operation": "verification-record",
+            "id": "native-block",
+            "kind": "blocked",
+            "task_id": "S01",
+            "actor_id": "director",
+            "reporter_id": "/root/native_qa",
+            "reason": "Director preserves the actual native reporter",
+            "request_id": "native-request",
+            "request_version": 1,
+            "blocker": {
+                "reason": "Explicit native fixture wait",
+                "resolver_id": "/root/resolver",
+                "next_trigger": "Release resource",
+            },
+        },
+    )
+    record_cli(
+        gate.fixture,
+        observation(
+            gate.fixture,
+            "native-result",
+            actor_id="director",
+            reporter_id="/root/native_qa",
+            request_id="native-request",
+        ),
+    )
+    snapshot = fp.read_snapshot(gate.program.repo, gate.program.directory)
+    lane = snapshot["verification"]["tasks"]["S01"]["lanes"]["items"][0]
+    assert lane["verifier_id"] == "/root/native_qa"
+    records = gate.program.load()["verification"]["records"]
+    assert records[1]["input"]["blocker"]["resolver_id"] == "/root/resolver"
+    assert records[-1]["input"]["reporter_id"] == "/root/native_qa"

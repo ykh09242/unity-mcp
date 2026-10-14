@@ -317,6 +317,11 @@ def _context(value: Json) -> Record:
     return context
 
 
+def validate_context(value: Json) -> Record:
+    """Parse detached expected obligations independently of any provider capture or lifecycle."""
+    return deepcopy(_context(value))
+
+
 def validate_execution(value: Json) -> Record:
     """Parse a bounded explicit version-1 capture; return detached caller-recorded facts."""
     capture = _record(value, "Provider execution")

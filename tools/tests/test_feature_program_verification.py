@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.tests.test_feature_program import HEAD, fp, make_small_program  # noqa: E402
 import feature_program_verification as verification  # noqa: E402
+from tools.tests.test_feature_program_delivery import fixture as provider_fixture  # noqa: E402
 
 
 @pytest.fixture
@@ -724,3 +725,315 @@ def test_preparation_never_executes_recorded_commands_or_acquires_lock(fixture, 
     # Then metadata is preserved without trusted execution or acceptance.
     assert event["input"]["method"]["command"] == "synthetic $(never-execute)"
     assert result["status"] == "not_assessed"
+
+
+@pytest.mark.parametrize("outcome", ["failed", "unknown", "canceled", "blocked"])
+def test_reuse_rejects_newer_adverse_outcome_across_superseding_requests(fixture, outcome):
+    # Given the reviewer's exact chronology: original pass, newer same-lane adverse fact.
+    assert fixture.claim() == 0
+    record(fixture, request(fixture))
+    origin = record(fixture, observation(fixture))
+    second = record(fixture, request(fixture, "request-2", supersedes="request-1"))
+    later = observation(
+        fixture,
+        "newer-adverse",
+        request_id="request-2",
+        request_version=second["request_version"],
+        result=outcome,
+    )
+    if outcome in {"canceled", "blocked"}:
+        later["kind"] = outcome
+        for name in ("result", "method", "environment", "input_before", "input_after"):
+            later.pop(name)
+        if outcome == "canceled":
+            later["next_trigger"] = "Fresh verification request"
+        else:
+            later["blocker"] = {
+                "reason": "Actual fixture blocker",
+                "resolver_id": "qa",
+                "next_trigger": "Resolve fixture blocker",
+            }
+    record(fixture, later)
+    third = record(fixture, request(fixture, "request-3", supersedes="request-2"))
+    target = {
+        "input": observation(
+            fixture, request_id="request-3", request_version=third["request_version"]
+        ),
+        "context": third["context"],
+        "request_id": "request-3",
+    }
+    # When reuse tries to select the much older original pass after supersession.
+    assessment = verification.assess_reuse(fixture.program, fixture.program.load(), origin, target)
+    # Then no unchanged digest can revive success across relevant newer adverse evidence.
+    assert assessment["status"] == "recheck_required"
+
+
+@pytest.mark.parametrize("phase", ["request", "started", "blocked", "failed"])
+def test_completion_honors_required_current_lanes_without_voluntary_refs(fixture, phase):
+    # Given actual submitted work and a current future review/QA lane.
+    assert fixture.claim() == 0
+    fixture.submit()
+    record(fixture, request(fixture, actor_id="leader"))
+    if phase != "request":
+        value = observation(
+            fixture,
+            "gate-observation",
+            kind="finished" if phase == "failed" else phase,
+            result="failed",
+        )
+        if phase in {"started", "blocked"}:
+            for name in ("result", "input_after"):
+                value.pop(name)
+            if phase == "blocked":
+                for name in ("method", "environment", "input_before"):
+                    value.pop(name)
+                value["blocker"] = {
+                    "reason": "Synthetic required QA blocker",
+                    "resolver_id": "qa",
+                    "next_trigger": "Run required QA",
+                }
+        record(fixture, value)
+    # When acceptance is assessed independently of voluntary receipt refs.
+    with pytest.raises(fp.ProgramError):
+        verification.validate_completion(fixture.program, fixture.program.load(), "S01")
+
+
+def test_completion_accepts_current_finished_lane_and_preserves_legacy(fixture):
+    # Given a submitted task without optional verification metadata.
+    assert fixture.claim() == 0
+    fixture.submit()
+    state = fixture.program.load()
+    verification.validate_completion(fixture.program, state, "S01")
+    record(fixture, request(fixture, actor_id="leader"))
+    record(fixture, observation(fixture))
+    # When every adopted required lane has current actual passing observations.
+    verification.validate_completion(fixture.program, fixture.program.load(), "S01")
+    # Then assessment grants no task transition itself.
+    assert fixture.program.load()["tasks"][0]["status"] == "review"
+
+
+def provider_pair(fixture, *, different_head=False):
+    capture, expected = provider_fixture()
+    if not different_head:
+        expected["pr"]["head_sha"] = HEAD
+        capture["pr"]["head_sha"] = HEAD
+        capture["test_merge"]["head_sha"] = HEAD
+        capture["stages"][0]["observations"][0]["head_sha"] = HEAD
+    context_path = fixture.write(
+        "evidence/_verification/attempt-1/provider-expected.json", expected
+    )
+    provider_path = fixture.write(
+        "evidence/_verification/attempt-1/provider-captured.json", {"execution": capture}
+    )
+    provider_ref = {
+        "path": provider_path,
+        "sha256": fp.sha(fixture.program.path(provider_path).read_bytes()),
+    }
+    return context_path, provider_ref, expected
+
+
+def test_submitted_task_exposes_actual_early_provider_assessment_without_delivery(fixture):
+    # Given actual submitted work with a frozen expected CI plan and captured run.
+    assert fixture.claim() == 0
+    fixture.submit()
+    context_path, provider_ref, _ = provider_pair(fixture)
+    record(
+        fixture,
+        request(fixture, actor_id="leader", lane="pr_ci", provider_context_path=context_path),
+    )
+    record(fixture, observation(fixture, provider_ref=provider_ref))
+    # When the ordinary verification projection is prepared before reviewed completion.
+    lane = verification.projection(fixture.program, fixture.program.load())["tasks"]["S01"][
+        "lanes"
+    ]["items"][0]
+    # Then real staged provider facts are visible without inventing delivery or authentication.
+    assert lane["provider_execution"]["status"] == "passed"
+    assert lane["provider_execution"]["stages"][0]["current"] is True
+    assert lane["provider_execution"]["remote_verified_by_tool"] is False
+    assert fixture.program.load()["tasks"][0]["status"] == "review"
+
+
+def test_early_provider_no_latest_capture_does_not_revive_older_pass(fixture):
+    # Given a passing provider capture then a later canceled current observation.
+    assert fixture.claim() == 0
+    context_path, provider_ref, _ = provider_pair(fixture)
+    record(fixture, request(fixture, lane="pr_ci", provider_context_path=context_path))
+    record(fixture, observation(fixture, provider_ref=provider_ref))
+    canceled = observation(
+        fixture, "cancel-provider", kind="canceled", next_trigger="New CI capture"
+    )
+    for name in ("result", "method", "environment", "input_before", "input_after"):
+        canceled.pop(name)
+    record(fixture, canceled)
+    # When the latest operational event lacks provider capture.
+    lane = verification.projection(fixture.program, fixture.program.load())["tasks"]["S01"][
+        "lanes"
+    ]["items"][0]
+    # Then prior green provider data is not selected as current.
+    assert lane["provider_execution"]["status"] != "passed"
+    assert lane["provider_execution"]["stages"] == []
+
+
+@pytest.mark.parametrize(
+    "fault", ["head", "scope", "snapshot", "missing_evidence", "missing_mapping", "malformed"]
+)
+def test_distinct_provider_head_requires_exact_frozen_source_equivalence(fixture, fault):
+    # Given distinct recorder/provider heads with a correctly observed task snapshot.
+    assert fixture.claim() == 0
+    context_path, _, expected = provider_pair(fixture, different_head=True)
+    snapshot = fixture.program.source_snapshot(["src/S01.py"])
+    mapping = {
+        "schema_version": 1,
+        "provider_head": expected["pr"]["head_sha"],
+        "scope": ["src/S01.py"],
+        "provider_snapshot": snapshot,
+        "local_snapshot": snapshot,
+        "evidence": [fixture.evidence("S01", label="blob-comparison")],
+    }
+    match fault:
+        case "head":
+            mapping["provider_head"] = "f" * 40
+        case "scope":
+            mapping["scope"] = ["src/S02.py"]
+        case "snapshot":
+            mapping["provider_snapshot"] = {"src/S01.py": "f" * 64}
+        case "missing_evidence":
+            mapping["evidence"] = []
+        case "malformed":
+            mapping["unexpected"] = True
+        case "missing_mapping":
+            pass
+    mapping_path = fixture.write("evidence/_verification/attempt-1/source-mapping.json", mapping)
+    value = request(fixture, lane="pr_ci", provider_context_path=context_path)
+    if fault != "missing_mapping":
+        value["provider_source_mapping_path"] = mapping_path
+    name = fixture.write("evidence/_verification/attempt-1/request-mapping.json", value)
+    # When malformed or absent explicit equivalence is prepared.
+    with pytest.raises(fp.ProgramError):
+        verification.prepare_record(
+            fixture.program, fixture.program.load(), name, observed_head=HEAD
+        )
+
+
+def test_distinct_provider_head_retains_exact_identity_with_valid_mapping(fixture):
+    # Given actual distinct provider identity and an explicit frozen file comparison.
+    assert fixture.claim() == 0
+    context_path, provider_ref, expected = provider_pair(fixture, different_head=True)
+    snapshot = fixture.program.source_snapshot(["src/S01.py"])
+    mapping_path = fixture.write(
+        "evidence/_verification/attempt-1/source-equivalence.json",
+        {
+            "schema_version": 1,
+            "provider_head": expected["pr"]["head_sha"],
+            "scope": ["src/S01.py"],
+            "provider_snapshot": snapshot,
+            "local_snapshot": snapshot,
+            "evidence": [fixture.evidence("S01", label="exact-blob-comparison")],
+        },
+    )
+    event = record(
+        fixture,
+        request(
+            fixture,
+            lane="pr_ci",
+            provider_context_path=context_path,
+            provider_source_mapping_path=mapping_path,
+        ),
+    )
+    record(fixture, observation(fixture, provider_ref=provider_ref))
+    # When source equivalence is assessed without rewriting remote identity to local HEAD.
+    lane = verification.projection(fixture.program, fixture.program.load())["tasks"]["S01"][
+        "lanes"
+    ]["items"][0]
+    # Then both identities remain distinct and the original expected provider run is assessed.
+    assert event["context"]["observed_head"] == HEAD
+    assert (
+        lane["provider_execution"]["stages"][0]["source"]["head_sha"]
+        == expected["pr"]["head_sha"]
+        != HEAD
+    )
+    assert lane["provider_execution"]["status"] == "passed"
+
+
+def test_native_actor_identity_is_distinct_from_portable_event_ids(fixture):
+    # Given the actual established native owner naming contract accepted by claim.
+    owner, verifier = "/root/throughput_state", "/root/throughput_code_review"
+    assert fixture.claim(owner=owner) == 0
+    event = record(fixture, request(fixture, actor_id=owner, verifier_id=verifier))
+    blocked = observation(
+        fixture,
+        "native-blocker",
+        kind="blocked",
+        actor_id=verifier,
+        blocker={
+            "reason": "Native reviewer resource",
+            "resolver_id": owner,
+            "next_trigger": "Native review resumes",
+        },
+    )
+    for name in ("result", "method", "environment", "input_before", "input_after"):
+        blocked.pop(name)
+    # When the exact native verifier and resolver are recorded without aliases.
+    record(fixture, blocked)
+    lane = verification.projection(fixture.program, fixture.program.load())["tasks"]["S01"][
+        "lanes"
+    ]["items"][0]
+    # Then actor strings survive while request/event IDs remain portable.
+    assert event["input"]["actor_id"] == owner
+    assert lane["verifier_id"] == verifier and lane["resolver_id"] == owner
+
+
+@pytest.mark.parametrize("fault", ["missing_execution", "malformed_expected", "null_reference"])
+def test_early_provider_explicit_malformed_data_is_not_legacy_absence(fixture, fault):
+    # Given an explicitly adopted early provider plan.
+    assert fixture.claim() == 0
+    context_path, provider_ref, _ = provider_pair(fixture)
+    if fault == "malformed_expected":
+        fixture.write(context_path, {"unexpected": True})
+        value = request(fixture, lane="pr_ci", provider_context_path=context_path)
+    else:
+        record(fixture, request(fixture, lane="pr_ci", provider_context_path=context_path))
+        if fault == "missing_execution":
+            fixture.write(provider_ref["path"], {})
+            provider_ref["sha256"] = fp.sha(fixture.program.path(provider_ref["path"]).read_bytes())
+        value = observation(
+            fixture, provider_ref=None if fault == "null_reference" else provider_ref
+        )
+    name = fixture.write("evidence/_verification/attempt-1/malformed-provider-input.json", value)
+    # When explicit malformed context/capture is prepared.
+    with pytest.raises(fp.ProgramError):
+        verification.prepare_record(
+            fixture.program, fixture.program.load(), name, observed_head=HEAD
+        )
+
+
+def test_early_provider_source_change_cannot_display_current_green(fixture):
+    # Given passing provider observations on an exact expected current source.
+    assert fixture.claim() == 0
+    context_path, provider_ref, _ = provider_pair(fixture)
+    record(fixture, request(fixture, lane="pr_ci", provider_context_path=context_path))
+    record(fixture, observation(fixture, provider_ref=provider_ref))
+    (fixture.program.repo / "src/S01.py").write_text("source_changed = True\n", encoding="utf-8")
+    # When the current source no longer matches the frozen request.
+    lane = verification.projection(fixture.program, fixture.program.load())["tasks"]["S01"][
+        "lanes"
+    ]["items"][0]
+    # Then recorded provider success remains historical and cannot show current green.
+    assert lane["applicability"] == "stale"
+    assert lane["provider_execution"]["current"] is False
+    assert lane["provider_execution"]["status"] != "passed"
+
+
+def test_selected_provider_missing_capture_is_nonpassing_but_submit_can_continue(fixture):
+    # Given future CI pending while local implementation is ready for ordinary submission.
+    assert fixture.claim() == 0
+    context_path, _, _ = provider_pair(fixture)
+    record(fixture, request(fixture, lane="pr_ci", provider_context_path=context_path))
+    record(fixture, observation(fixture))
+    # When a caller tries to use unobserved CI as a passing selected check.
+    draft = verification.submission_inputs(
+        fixture.program, fixture.program.load(), submission(fixture)
+    )
+    # Then it remains nonpassing, but an ordinary independent implementation receipt may submit.
+    assert draft["receipt"]["acceptance_complete"] is False
+    assert fixture.run("submit", "S01", "--owner", "worker", "--receipt", fixture.receipt()) == 0

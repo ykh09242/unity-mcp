@@ -1122,6 +1122,78 @@ def provider_policy_paths(context: Record) -> list[str]:
     return sorted(paths)
 
 
+def early_provider_execution(value: Json, reference: Record) -> Record:
+    """Project already assessed current lanes without a delivery or provider read."""
+    core = _core()
+    if value is None:
+        return {"status": "not_assessed", "remote_verified_by_tool": False}
+    task = core.record(value, "verification task")
+    lanes = core.record(task["lanes"], "verification lanes")
+    executions: list[Record] = []
+    stages: list[Json] = []
+    total = 0
+    for item in core.sequence(lanes["items"], "verification lanes"):
+        lane = core.record(item, "verification lane")
+        provider = lane.get("provider_execution")
+        if provider is None:
+            continue
+        execution = core.record(provider, "lane provider execution")
+        if execution.get("adopted") is not True:
+            continue
+        executions.append(execution)
+        rows = core.sequence(execution.get("stages", []), "provider stages")
+        total += int(execution.get("total", len(rows)))
+        for row in rows:
+            stages.append(
+                {
+                    **deepcopy(core.record(row, "provider stage")),
+                    "request_id": lane["request_id"],
+                    "lane": lane["lane"],
+                    "reference": deepcopy(
+                        execution.get(
+                            "reference",
+                            lane.get("observation_reference") or lane["request_reference"],
+                        )
+                    ),
+                    "provider_reference": deepcopy(execution.get("provider_reference")),
+                }
+            )
+    if not executions:
+        return {"status": "not_assessed", "remote_verified_by_tool": False}
+    statuses = {str(item.get("status", "not_assessed")) for item in executions}
+    applicability = {str(item.get("applicability", "unknown")) for item in executions}
+    status = next(
+        (
+            candidate
+            for candidate in ("failed", "pending", "unavailable", "not_assessed")
+            if candidate in statuses
+        ),
+        "passed" if statuses == {"passed"} else "not_assessed",
+    )
+    if lanes["omitted"] and status == "passed":
+        status = "not_assessed"
+    return {
+        "adopted": True,
+        "basis": "recorded_verification_lanes",
+        "status": status,
+        "applicability": next(
+            (
+                candidate
+                for candidate in ("unavailable", "stale", "unknown")
+                if candidate in applicability
+            ),
+            "current",
+        ),
+        "remote_verified_by_tool": False,
+        "reference": deepcopy(reference),
+        "stages": stages[:32],
+        "total": total,
+        "shown": min(32, len(stages)),
+        "omitted": total - min(32, len(stages)),
+        "omitted_lanes": lanes["omitted"],
+    }
+
+
 def provider_preparation(program: Program, request: Record, command: str) -> Record:
     """Prepare a provider decision from exact caller-captured bytes; never authorize it."""
     ref = coverage.reference(request.get("provider"))
