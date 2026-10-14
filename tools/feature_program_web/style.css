@@ -2622,6 +2622,8 @@ select {
 }
 .task-detail-panel {
   min-width: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .task-detail-panel[hidden] {
   display: none;
