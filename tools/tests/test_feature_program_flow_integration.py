@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from tools.tests.test_feature_program import HEAD, fp, make_small_program
+from tools.tests.test_feature_program_phases import gate  # noqa: F401
 
 
 @pytest.fixture
@@ -416,3 +417,59 @@ def test_snapshot_queue_counts_all_gaps_before_display_bound(tmp_path, monkeypat
     assert queue["rows"]["omitted"] == 130
     assert queue["counts"]["kind"]["required_check_gap"] == 180
     assert snapshot["brief"]["review_queue"]["rows"]["total"] == 180
+
+
+def test_closure_preflight_checks_plan_publisher_on_every_projected_stage(fixture, capsys):
+    assert fixture.claim("S01", owner="worker-A") == 0
+    assert fixture.claim("S02", owner="worker-B") == 0
+    first = stage("first", "Valid first author", "worker-A")
+    second = stage("second", "Valid second author", "worker-B")
+    second["payload"]["id"] = "S02"
+    request = fixture.write(
+        "distinct-author-plan.json",
+        {
+            "owner_id": "worker-A",
+            "scope": ["src/S01.py", "src/S02.py"],
+            "stages": [first, second],
+        },
+    )
+    before = fixture.program.path("backlog.json").read_bytes()
+    capsys.readouterr()
+    assert fixture.run("closure-prepare", "--input", request) == 1
+    assert "current director" in capsys.readouterr().err
+    assert fixture.program.path("backlog.json").read_bytes() == before
+
+
+def test_current_director_preflights_and_publishes_distinct_stage_authors(gate, capsys):
+    fixture = gate.fixture
+    assert fixture.claim("S01", owner="worker-A") == 0
+    assert fixture.claim("S02", owner="worker-B") == 0
+    first = stage("first", "Valid first author", "worker-A")
+    second = stage("second", "Valid second author", "worker-B")
+    second["payload"]["id"] = "S02"
+    request = fixture.write(
+        "director-distinct-author-plan.json",
+        {
+            "owner_id": "director",
+            "scope": ["src/S01.py", "src/S02.py"],
+            "stages": [first, second],
+        },
+    )
+    before = fixture.program.path("backlog.json").read_bytes()
+    plan = output(fixture, capsys, "closure-prepare", "--input", request)
+    assert len(plan["stages"]) == 2
+    assert fixture.program.path("backlog.json").read_bytes() == before
+    plan_name = fixture.write("evidence/_coordination/attempt-1/director-plan.json", plan)
+    result = output(
+        fixture,
+        capsys,
+        "closure-resume",
+        "--plan",
+        plan_name,
+        "--owner",
+        "director",
+        "--expected-revision",
+        plan["initial_revision"],
+    )
+    assert result["status"] == "published"
+    assert fp.phases.revision(fixture.program.load()) == plan["stages"][-1]["after_revision"]

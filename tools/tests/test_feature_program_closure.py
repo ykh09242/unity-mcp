@@ -160,6 +160,44 @@ def test_later_invalid_stage_preflight_keeps_registry_unchanged(fixture):
     assert fixture.program.path("backlog.json").read_bytes() == before
 
 
+@pytest.mark.parametrize("publisher,permitted", [("worker-a", False), ("leader", True)])
+def test_every_projected_stage_checks_actual_plan_publisher_authority(
+    fixture, publisher, permitted
+):
+    # Given two individually authorized payload authors owning distinct tasks.
+    assert fixture.claim("S01", owner="worker-a") == 0
+    assert fixture.claim("S02", owner="worker-b") == 0
+    host = Host(fixture.program)
+    before = fixture.program.path("backlog.json").read_bytes()
+    request = {
+        "owner_id": publisher,
+        "scope": ["src/S01.py", "src/S02.py"],
+        "stages": [
+            {
+                "id": f"note-{task_id}",
+                "operation": "note",
+                "payload": {
+                    "id": task_id,
+                    "owner": author,
+                    "reason": "Actual owned observation",
+                    "next_action": "Inspect evidence",
+                },
+                "observed_at": f"2026-10-15T00:00:0{index}+00:00",
+            }
+            for index, (task_id, author) in enumerate((("S01", "worker-a"), ("S02", "worker-b")), 1)
+        ],
+    }
+    # When the whole plan is preflighted for its actual publisher.
+    if permitted:
+        result = closure.prepare_plan(fixture.program, host.load(), request, host)
+        assert result["preflight"]["status"] == "validated"
+    else:
+        with pytest.raises(fp.ProgramError):
+            closure.prepare_plan(fixture.program, host.load(), request, host)
+    # Then a payload author's permission never substitutes for the plan publisher's permission.
+    assert fixture.program.path("backlog.json").read_bytes() == before
+
+
 def test_partial_sequence_resumes_exact_remaining_events(fixture):
     # Given two actually published stages of a four-stage ordinary record plan.
     assert fixture.claim() == 0

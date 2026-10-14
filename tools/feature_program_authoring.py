@@ -1665,8 +1665,24 @@ class ClosureHost:
             },
         }
 
+    def publisher_authority(self, state: Record, payload: Record, owner: str) -> None:
+        """Apply the same current task/director publisher check in preview and publication."""
+        task_id = payload.get("id")
+        task_owner = (
+            self.program.task(state, str(task_id)).get("owner")
+            if task_id is not None and any(item["id"] == task_id for item in state["tasks"])
+            else None
+        )
+        verification._task_authority(state, owner, task_owner)
+
     def prepare(
-        self, state: Record, operation: str, payload: Record, observed_at: str
+        self,
+        state: Record,
+        operation: str,
+        payload: Record,
+        observed_at: str,
+        *,
+        owner: str | None = None,
     ) -> PreparedChange:
         core = _core()
         core.require(
@@ -1679,6 +1695,8 @@ class ClosureHost:
         parser.error = lambda message: (_ for _ in ()).throw(core.ProgramError(message))
         actions = {action.dest: action for action in parser._actions if action.dest != "help"}
         core.require(set(payload) <= set(actions), "Unknown closure stage payload fields")
+        if owner is not None:
+            self.publisher_authority(state, payload, owner)
         argv: list[str] = []
         for field, action in actions.items():
             if field not in payload:
@@ -1772,13 +1790,7 @@ class ClosureHost:
             self.program.verify_refs(self.frozen_refs)
             operation = core.string(stage.get("operation"), "closure operation")
             payload = core.record(stage.get("payload"), "closure payload")
-            task_id = payload.get("id")
-            task_owner = (
-                self.program.task(current, str(task_id)).get("owner")
-                if task_id is not None and any(item["id"] == task_id for item in current["tasks"])
-                else None
-            )
-            verification._task_authority(current, owner, task_owner)
+            self.publisher_authority(current, payload, owner)
             self.program.verify_refs(core.sequence(stage.get("refs", []), "closure refs"))
             prepared = self.prepare(
                 current,

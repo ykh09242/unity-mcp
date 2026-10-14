@@ -50,7 +50,13 @@ class ClosureHost(Protocol):
     def revision(self, state: Record) -> str: ...
     def identity(self) -> Record: ...
     def prepare(
-        self, state: Record, operation: str, payload: Record, observed_at: str
+        self,
+        state: Record,
+        operation: str,
+        payload: Record,
+        observed_at: str,
+        *,
+        owner: str | None = None,
     ) -> PreparedChange: ...
     def preflight(self, prepared: PreparedChange) -> None: ...
     def inspect_stage(self, state: Record, stage: Record) -> Record: ...
@@ -933,7 +939,7 @@ def prepare_plan(program: Program, state: Record, request: Record, host: Closure
                     }
                 )
         events = deepcopy(_items(proposal.get("events"), "predecessor events"))
-        prepared = host.prepare(proposal, operation, payload, observed_at)
+        prepared = host.prepare(proposal, operation, payload, observed_at, owner=owner)
         host.preflight(prepared)
         after_events = _items(prepared.state.get("events"), "prepared events")
         _require(
