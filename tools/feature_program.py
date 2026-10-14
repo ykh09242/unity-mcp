@@ -39,6 +39,8 @@ if __package__:
     import tools.feature_program_planning as planning
     import tools.feature_program_presentation as presentation
     import tools.feature_program_questions as questions
+    import tools.feature_program_verification as verification
+    import tools.feature_program_delivery as provider_delivery
 else:
     import feature_program_authoring as authoring
     import feature_program_brief as brief
@@ -48,6 +50,8 @@ else:
     import feature_program_planning as planning
     import feature_program_presentation as presentation
     import feature_program_questions as questions
+    import feature_program_verification as verification
+    import feature_program_delivery as provider_delivery
 
 
 Json: TypeAlias = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
@@ -827,6 +831,9 @@ class Program:
             self.verify_refs(planning.evidence_references(state), budget)
             coverage.verify_history(self, state, budget)
             presentation.verify_history(self, state, budget)
+        verification.validate(state)
+        if verify_artifacts:
+            verification.verify_history(self, state, budget)
 
     def verify_terminal(
         self, task: Record, attempt: Record, budget: ReadBudget | None = None
@@ -1637,6 +1644,7 @@ class Program:
         self.verify_refs(sequence(attempt["evidence"], "evidence"))
         receipt, receipt_refs = self.frozen_json(args.id, number, args.receipt)
         coverage.validate_receipt_refs(self, state, receipt, args.id)
+        verification.validate_receipt_refs(self, state, receipt, args.id)
         require(
             receipt.get("task_id") == args.id and receipt.get("attempt") == number,
             "Receipt identity mismatch",
@@ -1770,6 +1778,7 @@ class Program:
         require(type(number) is int, "Invalid attempt number")
         review, refs = self.frozen_json(args.id, number, args.review)
         coverage.validate_receipt_refs(self, state, review, args.id)
+        verification.validate_receipt_refs(self, state, review, args.id)
         require(
             review.get("task_id") == args.id and review.get("attempt") == number,
             "Review identity mismatch",
@@ -1900,6 +1909,17 @@ class Program:
                 ),
                 "Delivery facts differ from frozen provider observation",
             )
+        if (
+            receipt.get("provider_observation") is not None
+            or receipt.get("provider_context") is not None
+        ):
+            assessment = authoring.provider_execution(self, receipt, budget)
+            if (
+                assessment["adopted"]
+                and assessment["status"] != "passed"
+                and status == "ci_recorded_success"
+            ):
+                status = "ci_failed" if assessment["status"] == "failed" else "ci_pending"
         return status
 
     def delivery(self, state: Record, args: argparse.Namespace) -> None:
@@ -2171,11 +2191,17 @@ class Program:
     def save(self, state: Record, *, before_publish: Callable[[], None] | None = None) -> None:
         self.require_current_location()
         reliance_guard = coverage.publication_guard(self, state)
+        verification_guard = verification.publication_guard(self, state)
+        provider_guard = authoring.delivery_publication_guard(self, state)
         encoded = self.prepare_save(state)
         if before_publish is not None:
             before_publish()
         if reliance_guard is not None:
             reliance_guard()
+        if verification_guard is not None:
+            verification_guard()
+        if provider_guard is not None:
+            provider_guard()
         atomic_write(self.path("backlog.json"), encoded)
         try:
             self.render(state)
@@ -2543,6 +2569,7 @@ def _capture_projection(
         + coverage.evidence_references(state)
         + authoring.delivery_evidence_references(state)
         + presentation.evidence_references(state)
+        + verification.evidence_references(state)
     )
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
@@ -2618,6 +2645,7 @@ def _capture_projection(
     except OSError:
         warnings.append("Derived views unavailable; recorded registry remains readable.")
     result_tasks: list[Json] = []
+    verification_view = verification.projection(program, state, evidence_budget)
     delivery_histories = _delivery_history_projection(state, sha(initial))
     for task_index, task in enumerate(tasks):
         section = record(task["source"], "source section")
@@ -2737,11 +2765,61 @@ def _capture_projection(
         "source_intakes": state.get("source_intakes", []),
         "amendments": state.get("amendments", []),
         "execution_priorities": state.get("execution_priorities"),
+        "verification": verification_view,
         "coverage": coverage.projection(program, state, evidence_budget),
         "presentation": presentation.projection(
             program, state, evidence_budget, revision=sha(initial)
         ),
     }
+    for task_index, item in enumerate(result_tasks):
+        task_item = record(item, "task")
+        task_item["verification"] = deepcopy(
+            record(verification_view.get("tasks", {}), "verification tasks").get(
+                str(task_item["id"])
+            )
+        )
+        original_task = tasks[task_index]
+        deliveries = sequence(original_task.get("deliveries", []), "deliveries")
+        provider_ref = (
+            record(record(deliveries[-1], "delivery")["metadata"], "metadata").get(
+                "provider_observation"
+            )
+            if deliveries
+            else None
+        )
+        provider_available = True
+        if provider_ref is not None:
+            frozen_provider = record(provider_ref, "provider reference")
+            provider_path = program.path(str(frozen_provider["path"]))
+            provider_available = (
+                provider_path not in unavailable_evidence
+                and sha((evidence_budget.cached or {}).get(provider_path, b""))
+                == frozen_provider["sha256"]
+            )
+        task_item["provider_execution"] = (
+            authoring.provider_execution(
+                program,
+                record(record(deliveries[-1], "delivery")["metadata"], "metadata"),
+                evidence_budget,
+            )
+            if deliveries and provider_available
+            else {
+                "status": "unavailable" if not provider_available else "not_assessed",
+                "remote_verified_by_tool": False,
+            }
+        )
+        record(task_item["provider_execution"], "provider execution").update(
+            {
+                "task_id": task_item["id"],
+                "reference": {
+                    "path": "backlog.json",
+                    "revision": sha(initial),
+                    "pointer": f"/tasks/{task_index}/deliveries",
+                    "task_id": task_item["id"],
+                },
+                "provider_reference": deepcopy(provider_ref),
+            }
+        )
     lock = program.path(".feature-program.lock")
     lock_before: bytes | None = None
     lock_unavailable: str | None = None
@@ -3194,9 +3272,9 @@ def starter(program: Program, args: argparse.Namespace) -> None:
         "README.md": "# Local work-program recovery\n\nRead DIRECTOR.md, DECISIONS.md and CHECKPOINT.md if present. Inspect actual Git state and recorded claims before changing anything. Never infer a live worker or completion from a saved name. Keep all real plans, source, state and evidence local/ignored.\n\nThe generated source/plan are synthetic examples: replace them, review the complete scope, and explicitly initialize with tools/feature_program.py init --review-baseline CURRENT_REVIEWED_SHA. For a custom --program-dir, supply its repository-relative --report and --planning paths. No backlog or passing evidence is created by starter. Use status/check/packet and bounded revalidation before each claim.\n",
         "DIRECTOR.md": "# Final director contract\n\nThe human supplies the major objective and completion criteria. The final director decomposes it and decides task purposes, methods, priority, scope, conflicts, acceptance, assignments and authorized delivery within that objective. Check current user authority before Git/PR/CI/merge actions; authority is not granted by this template. Create, reuse, replace or retire workers/sub-directors according to independent work, capability, ownership, cost and observed availability; do not enforce a fixed staff count. Record reasons, exact verified launch settings or inherited/unknown values, and evidence. Native agent creation happens outside this tool. A saved address is not live-agent proof.\n\nSub-directors audit bounded areas, continuity, blockers and requirements. Multiple sub-directors may report to the final director; hierarchy does not grant merge authority or promote them automatically. Consult their durable record after compaction. Verify claims, complete acceptance, source hashes and actual latest-revision CI before accepting delivery. Repeated review must bind changed bytes.\n\nWhen the final director accepts the entire objective against its explicit criteria/evidence, record that verdict and assign next-goal setting to the human. Wait in awaiting_next_goal; do not invent or autonomously start another major objective. Start the next preserved cycle only after an explicit human goal arrives.\n",
         "SUBDIRECTOR.md": "# Bounded oversight and continuity\n\nAudit assigned areas and report goal/criteria drift, ownership conflicts, stale evidence and unrecorded decisions to the final director. Multiple sub-directors may oversee independent areas; only the appointed final director arbitrates conflicts and authorized integration. Inspect actual diffs/evidence against the goal, not only worker self-reports. Review at claim/start, meaningful milestones, changed assumptions/scope, final review/merge and recovery.\n\nUse note/block/rework/release/handoff to record drift, correction and fresh source validation. Routine methods can be corrected within the approved objective. If the director is uncertain about a material objective, acceptance or scope conflict, ask the human a focused question with options/tradeoffs and block only dependent work. Never infer consent from elapsed time. Preserve the reply and latest decision pointers before resuming.\n",
-        "WORKER.md": "# Worker assignment and evidence\n\nRead the task packet and current decisions. Own only the explicit claimed paths and attempt evidence; preserve others' edits. Revalidate complete acceptance at actual HEAD and scoped digest before claim. Capture executed commands/outcomes honestly. Compilation and native execution are distinct. Block only affected work. Submit immutable execution receipts for review; never mark done from a chat message.\n\nBefore replacement, preserve outgoing goal, constraints, HEAD, scope/digest, changed paths, evidence, decisions, unresolved findings and next action. The director records explicit release; the incoming worker acknowledges the handoff and freshly revalidates before claiming a new attempt. Timeout alone never authorizes takeover.\n",
-        "REVIEW.md": "# Repeated review contract\n\nCompare the entire original acceptance against the exact submitted receipt/source hashes and real evidence. Record accepted or rejected review with precise findings. Leader/self review needs an honest reason, never a claim of independence. Rework retains frozen rounds and uses unique filenames for new evidence. Completed attempts remain historical; regressions require a reasoned leader reopening and new revalidation. Caller-recorded CI is distinct from verified remote observations and merge.\n",
-        "EVIDENCE.md": "# Evidence protocol\n\nEvidence belongs under evidence/TASK/attempt-N/ and becomes immutable when admitted. Use template TASK --kind revalidation|execution|review|delivery for failing-safe JSON skeletons. Replace every placeholder with actual facts; absent, skipped or unavailable verification never means passed. Native checks cannot be replaced by compilation. Do not store credentials, raw user data, private configuration contents or huge logs.\n",
+        "WORKER.md": "# Worker assignment and evidence\n\nRead the task packet and current decisions. Own only the explicit claimed paths and attempt evidence; preserve others' edits. Revalidate complete acceptance at actual HEAD and scoped digest before claim. Capture executed commands/outcomes honestly. Compilation and native execution are distinct. Block only affected work. Submit immutable execution receipts for review; never mark done from a chat message.\n\nBefore replacement, preserve outgoing goal, constraints, HEAD, scope/digest, changed paths, evidence, decisions, unresolved findings and next action. The director records explicit release; the incoming worker acknowledges the handoff and freshly revalidates before claiming a new attempt. Timeout alone never authorizes takeover.\n\nUse a source-bound verification request to name the check, verifier, input scope, resource boundary, evidence destination and next trigger. Capture actual command or manual procedure, inputs, output and outcome as verification runs. A request or started record is not a passed result. Submit preparation resolves current context and matching observations; supply actual criterion acceptance and use the ordinary submit transition.\n",
+        "REVIEW.md": "# Repeated review contract\n\nCompare the entire original acceptance against the exact submitted receipt/source hashes and real evidence. Record accepted or rejected review with precise findings. Leader/self review needs an honest reason, never a claim of independence. Rework retains frozen rounds and uses unique filenames for new evidence. Completed attempts remain historical; regressions require a reasoned leader reopening and new revalidation. Caller-recorded CI is distinct from verified remote observations and merge.\n\nReview the exact frozen candidate and every assigned criterion. Independent code review, QA and PR CI may proceed concurrently when inputs and resources permit. Return all actionable findings discovered in the bounded pass, with affected checks and correction owner; report uncovered criteria as incomplete. Retain earlier failures and obtain fresh review for changed source.\n",
+        "EVIDENCE.md": "# Evidence protocol\n\nEvidence belongs under evidence/TASK/attempt-N/ and becomes immutable when admitted. Use template TASK --kind revalidation|execution|review|delivery for failing-safe JSON skeletons. Replace every placeholder with actual facts; absent, skipped or unavailable verification never means passed. Native checks cannot be replaced by compilation. Do not store credentials, raw user data, private configuration contents or huge logs.\n\nKeep request, execution observation and acceptance separate. Reuse only compatible complete source/test/config/environment/obligation inputs with immutable result references and an explicit reason; unknown inputs require verification. Record waits only from observed compatible endpoints, never task status age. Required current PR/beta execution and integrated acceptance remain separate obligations.\n",
         "DECISIONS.md": "# Local program decisions\n\nNo execution, staffing or delivery authorization is implied by these synthetic starter files. Record current human authorization, affected tasks, rationale and consequences before applying new direction. Keep temporary status in backlog/checkpoints.\n",
         "DESIGN.md": "# Program invariants\n\nCanonical backlog.json is the only runtime status store. Source/plan task sets match exactly; source sections remain lossless. Hard dependencies are acyclic; claims require fresh source/evidence and serialize scopes/conflict groups. Requirements are not silently waived. The tool records facts, does not execute tests, native apps, agents or GitHub automation. Derived views can be recovered through render without resetting history.\n",
         "DELIVERY.md": "# Reviewed delivery and branch cleanup\n\nThe final director checks the complete reviewed source, actual latest-revision PR/CI and current human merge authority before integration. Record reviewed completion, caller-recorded CI, verified remote observations, push, merge and cleanup as separate facts. Unexpected skipped, missing, failed or canceled required checks prevent verified delivery. No Git action is performed by this registry or dashboard.\n\nAfter confirmed merge and target inclusion, inspect whether the work branch is unchanged, has no active checkout/worktree and no dependent PR. Only then use authorized normal local/remote branch deletion and record done/deferred evidence. Never delete an unmerged/default/protected/target/advanced branch, never force deletion, and preserve PR/commit/CI/evidence history. Deferred cleanup does not erase completed work.\n",
@@ -3483,6 +3561,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         with program.lock():
             state = program.initialize(args) if args.command == "init" else program.load()
+            if args.command == "verification-record":
+                prepared = verification.prepare_record(
+                    program, state, args.input, observed_head=program.current_head()
+                )
+                program.save(prepared.state, before_publish=prepared.before_publish)
+                print("verification-record: OK; recorded claims only, no check was executed")
+                return 0
             if args.command == "presentation-record":
                 prepared = presentation.prepare_record(program, state, args.input)
                 program.save(prepared.state, before_publish=prepared.before_publish)
@@ -3569,6 +3654,7 @@ def main(argv: list[str] | None = None) -> int:
         phases.PhaseError,
         planning.PlanningError,
         questions.QuestionError,
+        provider_delivery.DeliveryError,
         OSError,
     ) as exc:
         print(f"feature-program: {exc}", file=sys.stderr)
