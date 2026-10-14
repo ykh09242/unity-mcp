@@ -33,7 +33,7 @@ describe('supplied Overview context', () => {
         'Inspect the objective-completion prerequisites',
         '목표 완료 조건을 확인하세요.',
       ],
-      ['integrity', 'Inspect original records and artifacts', '원문과 근거를 확인하세요'],
+      ['integrity', 'Inspect original records and artifacts', '보고된 문제를 검토하세요.'],
       [
         'acceptance',
         'Inspect the exact submission/review binding',
@@ -83,7 +83,15 @@ describe('supplied Overview context', () => {
           <ProgramAttention snapshot={raw} />
         </LanguageProvider>,
       );
-      expect(screen.getByText(locale === 'ko' ? translated! : action!)).toBeTruthy();
+      expect(
+        screen.getByText(
+          locale === 'ko'
+            ? translated!
+            : kind === 'integrity'
+              ? 'Review the reported issues'
+              : action!,
+        ),
+      ).toBeTruthy();
       expect(record(record(raw.brief).attention).items).toEqual([
         expect.objectContaining({ next_action: action }),
       ]);
@@ -404,12 +412,11 @@ describe('supplied Overview context', () => {
     );
     expect(screen.getByText('Remaining explicit gap')).toBeTruthy();
     expect(screen.getByText('Declared links do not establish criterion acceptance.')).toBeTruthy();
-    await userEvent.click(screen.getByText('Review evidence'));
-    expect(screen.getByText('tools/test.py')).toBeTruthy();
+    await userEvent.click(screen.getByText('Recorded review findings'));
+    expect(screen.queryByText('tools/test.py')).toBeNull();
     expect(screen.getByText('Native failure')).toBeTruthy();
     expect(screen.getByText('failed')).toBeTruthy();
-    await userEvent.click(screen.getByText('Coverage source history'));
-    expect(screen.getByText('Exact source drift')).toBeTruthy();
-    expect(screen.getByText(/Head freshness: not assessed/i)).toBeTruthy();
+    expect(screen.queryByText('Coverage source history')).toBeNull();
+    expect(screen.queryByText('Exact source drift')).toBeNull();
   });
 });

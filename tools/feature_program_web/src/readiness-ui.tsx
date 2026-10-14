@@ -1,11 +1,10 @@
-import { usePresentation } from './presentation-ui';
 import { useState } from 'react';
-import { originalValue } from './presentation';
+import { ContentValue } from './history-ui';
+import { usePresentation } from './presentation-ui';
 import { useI18n } from './i18n';
-import { items, record, records, string } from './model';
+import { items, record, string } from './model';
 import type { Json, Snapshot, Task } from './model';
 import {
-  authoredText,
   boundedCollection,
   currentCollection,
   currentReference,
@@ -14,25 +13,6 @@ import {
 import { workloadHref } from './relate';
 import { snapshotIndex } from './selectors';
 import { goalTaskIds } from './navigation';
-
-export function OriginalRecord({
-  value,
-  label = 'Original record',
-}: {
-  readonly value: Json | undefined;
-  readonly label?: string;
-}) {
-  const i18n = useI18n();
-  const [open, setOpen] = useState(false);
-  return (
-    <details className="original-record" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>{i18n.t(label)}</summary>
-      {open && (
-        <pre className="source">{JSON.stringify(originalValue(value) ?? null, null, 2)}</pre>
-      )}
-    </details>
-  );
-}
 
 function Omitted({ collection }: { readonly collection: ReturnType<typeof boundedCollection> }) {
   const i18n = useI18n();
@@ -55,23 +35,21 @@ function NoteText({
   readonly system?: boolean;
 }) {
   const i18n = useI18n();
-  const text = authoredText(system && value ? i18n.warning(value) : value);
-  return (
+  return typeof value === 'string' ? (
     <p className="prose">
-      {text.text || i18n.t('Not recorded')}
-      {text.truncated && (
-        <span className="muted"> … {i18n.t('Read the original record for full text.')}</span>
-      )}
+      {value ? (system ? i18n.warning(value) : value) : i18n.t('Not recorded')}
     </p>
+  ) : (
+    <div className="prose">
+      <ContentValue value={value} />
+    </div>
   );
 }
 
 function ShortenedSummary({ value }: { readonly value: Json | undefined }) {
   const i18n = useI18n();
   return items(record(value).truncated_fields).length > 0 ? (
-    <p className="muted">
-      {i18n.t('Summary text is shortened. Inspect the referenced source for full context.')}
-    </p>
+    <p className="muted">{i18n.t('Summary text is shortened.')}</p>
   ) : null;
 }
 
@@ -79,7 +57,8 @@ export function CoordinationNotes({ task }: { readonly task: Task }) {
   const i18n = useI18n();
   const presentation = usePresentation();
   const notes = Array.isArray(task.notes) ? task.notes : task.notes == null ? [] : [task.notes];
-  const shown = notes.slice(-5).reverse();
+  const [expanded, setExpanded] = useState(false);
+  const shown = (expanded ? notes : notes.slice(-5)).slice().reverse();
   return (
     <details className="coordination-notes">
       <summary>
@@ -108,38 +87,19 @@ export function CoordinationNotes({ task }: { readonly task: Task }) {
                   <NoteText value={entry.reason} />
                   <p className="muted">{i18n.t('Next action')}</p>
                   <NoteText value={entry.next_action} />
-                  <ul className="note-evidence">
-                    {records(entry.evidence)
-                      .slice(0, 5)
-                      .map((ref, ordinal) => (
-                        <li key={ordinal}>
-                          {string(ref.path) && string(ref.sha256) ? (
-                            <a href={`#evidence/${encodeURIComponent(string(ref.path))}`}>
-                              {string(ref.path)}
-                            </a>
-                          ) : (
-                            <span>{i18n.t('Evidence reference unavailable')}</span>
-                          )}
-                          <span className="mono muted">{string(ref.sha256)}</span>
-                        </li>
-                      ))}
-                  </ul>
-                  {items(entry.evidence).length > 5 && (
-                    <p className="muted">
-                      {i18n.t('More evidence is available in the original record.')}
-                    </p>
-                  )}
                 </>
               ) : (
-                <p className="muted">
-                  {i18n.t('Unrecognized note format. Inspect the original record.')}
-                </p>
+                <p className="muted">{i18n.t('This note cannot be displayed.')}</p>
               )}
-              <OriginalRecord value={note} label="Original note record" />
             </li>
           );
         })}
       </ol>
+      {notes.length > 5 && (
+        <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+          {i18n.t(expanded ? 'Show fewer notes' : 'Show all notes')}
+        </button>
+      )}
       {notes.length > shown.length && (
         <p className="muted">
           {i18n.t('{shown} / {total} shown · {omitted} omitted', {
@@ -149,7 +109,6 @@ export function CoordinationNotes({ task }: { readonly task: Task }) {
           })}
         </p>
       )}
-      <OriginalRecord value={task.notes} label="All original notes" />
     </details>
   );
 }
@@ -278,11 +237,6 @@ export function ReadinessContext({
                         <p>{i18n.t('Unknown')}</p>
                       )}
                       <Omitted collection={reasons} />
-                      <OriginalRecord value={row.scope_reference} label="Scope reference" />
-                      <OriginalRecord
-                        value={row.selected_scope_reference}
-                        label="This task scope reference"
-                      />
                       <a href={`#task/${encodeURIComponent(id)}`}>
                         {i18n.t('Scope and history for {id}', { id })}
                       </a>
@@ -299,7 +253,6 @@ export function ReadinessContext({
           <Omitted collection={collisions} />
         </>
       )}
-      <OriginalRecord value={task.readiness} label="Original readiness context" />
     </details>
   );
 }

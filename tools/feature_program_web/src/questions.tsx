@@ -1,11 +1,10 @@
-import { ContentOriginals, usePresentation } from './presentation-ui';
+import { usePresentation } from './presentation-ui';
 import { useI18n } from './i18n';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuestionDraft, questionDraftKey, useQuestionDrafts } from './question-drafts';
 import { questionStage, questionStageLabel } from './question-state';
 import { navigationHash, defaultContext } from './navigation';
 import type { WorkContext } from './navigation';
-import { OriginalRecord } from './readiness-ui';
 import { items, record, string } from './model';
 import type { JsonRecord } from './model';
 
@@ -445,10 +444,6 @@ export function QuestionForm({
                     <dt>{i18n.t('Scope')}</dt>
                     <dd>{items(entry.scope).map(string).join(', ') || i18n.t('Not recorded')}</dd>
                   </div>
-                  <div>
-                    <dt>{i18n.t('Source revision')}</dt>
-                    <dd className="mono">{i18n.display(entry.source_head)}</dd>
-                  </div>
                 </dl>
               </div>
             );
@@ -468,8 +463,6 @@ export function QuestionForm({
           )}
         </p>
       </details>
-      <ContentOriginals entity="question" id={string(question.id)} />
-      <OriginalRecord label="Question scope and response history" value={question} />
     </section>
   );
 }

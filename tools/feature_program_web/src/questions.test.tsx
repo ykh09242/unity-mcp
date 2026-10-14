@@ -191,7 +191,7 @@ describe('director question responses', () => {
     await user.click(screen.getByText('Decision scope and actors'));
     expect(screen.getByText('decision-director')).toBeDefined();
     expect(screen.getByText('src/exact.ts')).toBeDefined();
-    expect(screen.getByText('exact-revision')).toBeDefined();
+    expect(screen.queryByText('exact-revision')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save answer' })).toBeNull();
     expect(document.querySelector('pre')).toBeNull();
   });

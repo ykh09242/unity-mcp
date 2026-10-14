@@ -74,7 +74,7 @@ describe('validated navigation context', () => {
           await screen.findByRole('heading', { name: 'Task 111' });
           await hash('#evidence/evidence%2Fone.md');
         }
-        await screen.findByRole('heading', { name: 'Evidence record' });
+        await screen.findByRole('heading', { name: 'Record unavailable' });
       } finally {
         observer.disconnect();
       }
@@ -106,27 +106,11 @@ describe('validated navigation context', () => {
     const original = JSON.stringify(snapshot);
     await hash('#evidence/evidence%2Fone.md');
     render(<App loader={async () => snapshot} />);
-    await screen.findByRole('heading', { name: 'Evidence record' });
+    await screen.findByRole('heading', { name: 'Record unavailable' });
     expect(document.querySelectorAll('pre.source')).toHaveLength(0);
-    expect(screen.getAllByText('evidence/one.md')).toHaveLength(1);
-    expect(screen.getByText('independent reviewer')).toBeDefined();
-    expect(screen.getByText('new-digest')).toBeDefined();
-    const originals = screen.getAllByText('Original evidence reference');
-    expect(originals).toHaveLength(3);
-    for (const summary of originals) {
-      const details = summary.closest('details');
-      if (!details) throw new Error('Missing original disclosure');
-      details.open = true;
-      fireEvent(details, new Event('toggle'));
-    }
-    await waitFor(() => expect(document.querySelectorAll('pre.source')).toHaveLength(3));
-    const records = [...document.querySelectorAll('pre.source')].map((node) =>
-      JSON.parse(node.textContent || 'null'),
-    );
-    expect(records).toHaveLength(3);
-    expect(records).toContainEqual(reference);
-    expect(records).toContainEqual({ ...reference, origin: 'independent reviewer' });
-    expect(records).toContainEqual({ ...reference, sha256: 'new-digest' });
+    expect(screen.queryByText('evidence/one.md')).toBeNull();
+    expect(screen.queryByText('new-digest')).toBeNull();
+    expect(screen.queryByText('Original evidence reference')).toBeNull();
     expect(JSON.stringify(snapshot)).toBe(original);
   });
   it('round-trips scope/filters/order/page/size/selection and encoded record identity', () => {
@@ -214,9 +198,7 @@ describe('validated navigation context', () => {
     expect(found.results).toHaveLength(12);
     expect(found.total).toBe(123);
     expect(navigationSearch(fixture(), 'Reviewer').results[0]?.kind).toBe('actor');
-    expect(navigationSearch(fixture(), 'Verification source').results[0]?.route.evidencePath).toBe(
-      'evidence/one.md',
-    );
+    expect(navigationSearch(fixture(), 'Verification source').total).toBe(0);
     expect(navigationSearch(fixture(), 'Recorded decision').results[0]?.route.questionId).toBe('Q');
     expect(navigationSearch(fixture(), '').total).toBe(0);
   });
@@ -501,15 +483,15 @@ describe('researched navigation outcomes', () => {
     await user.keyboard('{Control>}k{/Control}');
     const input = screen.getByLabelText(/Find task, person/);
     await waitFor(() => expect(document.activeElement).toBe(input));
-    await user.type(input, 'Verification source');
+    await user.type(input, 'Task 111');
     await user.keyboard('{ArrowDown}');
-    expect(document.activeElement?.textContent).toContain('Verification source');
+    expect(document.activeElement?.textContent).toContain('Task 111');
     await user.keyboard('{Escape}');
     await waitFor(() => expect(document.activeElement).toBe(input));
-    await user.type(input, 'Verification source');
+    await user.type(input, 'Task 111');
     await user.keyboard('{ArrowDown}{Enter}');
-    await screen.findByRole('heading', { name: 'Evidence record' });
-    expect(screen.getByText(/Files are not opened or verified/)).toBeDefined();
+    await screen.findByRole('heading', { name: 'Task 111' });
+    expect(document.querySelector('a[href^="#evidence/"]')).toBeNull();
   });
 });
 
@@ -529,16 +511,9 @@ describe('compact navigation accessibility', () => {
     const input = screen.getByLabelText(/Find task, person/);
     await waitFor(() => expect(document.activeElement).toBe(input));
     await user.type(input, 'evidence');
-    const equal = screen.getByRole('link', { name: /Evidence\s*evidence\/equal\.md/ });
-    expect(equal.textContent?.match(/evidence\/equal\.md/g)).toHaveLength(1);
-    expect(equal.getAttribute('href')).toContain('#evidence/evidence%2Fequal.md');
-    const distinct = screen.getByRole('link', {
-      name: /Evidence\s*Distinct evidence label\s*evidence\/distinct\.md/,
-    });
-    expect(distinct.getAttribute('href')).toContain('#evidence/evidence%2Fdistinct.md');
-    await user.click(equal);
-    await screen.findByRole('heading', { name: 'Evidence record' });
-    expect(window.location.hash).toContain('#evidence/evidence%2Fequal.md');
+    expect(screen.queryByRole('link', { name: /evidence\/equal\.md/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Distinct evidence label/ })).toBeNull();
+    expect(document.querySelector('a[href^="#evidence/"]')).toBeNull();
   });
   it('opens collapsed mobile search from the keyboard and exposes it after a wide resize', async () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 });
@@ -551,7 +526,7 @@ describe('compact navigation accessibility', () => {
     const input = screen.getByLabelText(/Find task, person/);
     await waitFor(() => expect(document.activeElement).toBe(input));
     expect(disclosure?.hasAttribute('open')).toBe(true);
-    await user.type(input, 'Verification source');
+    await user.type(input, 'Task 111');
     await user.keyboard('{ArrowDown}{Escape}');
     expect(document.activeElement).toBe(input);
     await user.click(

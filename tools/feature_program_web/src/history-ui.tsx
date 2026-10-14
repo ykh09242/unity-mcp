@@ -1,39 +1,20 @@
-import { useState } from 'react';
-import { isPersonnelField, useI18n } from './i18n';
+import { useI18n } from './i18n';
 import { usePresentation } from './presentation-ui';
 import { items, record, records, safeUrl, string } from './model';
 import type { Json, JsonRecord, Snapshot, Task } from './model';
-import { OriginalRecord } from './readiness-ui';
-import {
-  attemptFacts,
-  deliveryHistory,
-  historyComparison,
-  latestReview,
-  priorParticipants,
-  revisionMismatch,
-  taskCoverage,
-} from './history';
+import { deliveryHistory, latestReview, priorParticipants, revisionMismatch } from './history';
 
 const fieldLabels: Readonly<Record<string, string>> = {
   scope: 'Scope',
-  claimed_head: 'Claimed revision',
-  submitted_head: 'Submitted revision',
-  source_head: 'Head revision',
-  source_digest: 'Source identity',
   checks: 'Checks',
   unresolved_findings: 'Findings',
   review: 'Review',
   model_id: 'Model',
   reasoning_effort: 'Reasoning',
-  provenance: 'Provenance',
   role: 'Role',
   questions: 'Questions',
   dependencies: 'Dependencies',
-  objective_digest: 'Objective identity',
-  planning_digest: 'Planning identity',
-  task_definition_digest: 'Task definition identity',
   task_ids: 'Tasks',
-  candidate_paths: 'Candidate paths',
   acceptance: 'Acceptance criteria',
   status: 'Status',
   id: 'ID',
@@ -41,9 +22,6 @@ const fieldLabels: Readonly<Record<string, string>> = {
   reason: 'Reason',
   command: 'Command',
   execution_kind: 'Execution',
-  evidence: 'Evidence',
-  path: 'Path',
-  sha256: 'SHA-256',
   severity: 'Severity',
   message: 'Message',
   criterion: 'Criterion',
@@ -57,17 +35,53 @@ const enumFields = new Set([
   'Reviewer role',
   'Role',
   'Execution',
-  'Provenance',
 ]);
 
-function Text({ value }: { readonly value: Json | undefined }) {
+const semanticFields = new Set([
+  'criterion',
+  'description',
+  'purpose',
+  'method',
+  'goal',
+  'title',
+  'note',
+  'constraints',
+  'decisions',
+  'details',
+  'expected',
+  'actual',
+  'status',
+  'result',
+  'reason',
+  'summary',
+  'message',
+  'name',
+  'severity',
+  'conclusion',
+  'expected_result',
+  'acceptance_criteria',
+  'findings',
+  'unresolved_findings',
+  'unresolved_acceptance',
+  'unresolved_blockers',
+  'limitations',
+  'next_action',
+  'text',
+  'checks',
+]);
+
+export function ContentValue({ value }: { readonly value: Json | undefined }) {
   const i18n = useI18n();
+  const fields =
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? Object.entries(value).filter(([key]) => semanticFields.has(key))
+      : [];
   return Array.isArray(value) ? (
     value.length ? (
       <ul className="history-prose">
         {value.map((item, index) => (
           <li key={index}>
-            <Text value={item} />
+            <ContentValue value={item} />
           </li>
         ))}
       </ul>
@@ -75,16 +89,20 @@ function Text({ value }: { readonly value: Json | undefined }) {
       <span className="muted">{i18n.t('None')}</span>
     )
   ) : value !== null && typeof value === 'object' ? (
-    <dl className="history-object">
-      {Object.entries(value).map(([key, item]) => (
-        <div key={key}>
-          <dt>{i18n.t(fieldLabels[key] || key)}</dt>
-          <dd>
-            <Text value={item} />
-          </dd>
-        </div>
-      ))}
-    </dl>
+    fields.length ? (
+      <dl className="history-object">
+        {fields.map(([key, item]) => (
+          <div key={key}>
+            <dt>{i18n.t(fieldLabels[key] || key)}</dt>
+            <dd>
+              <ContentValue value={item} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+    ) : (
+      <span className="muted">{i18n.t('This content cannot be displayed.')}</span>
+    )
   ) : (
     <span className="history-text">{i18n.display(value)}</span>
   );
@@ -102,158 +120,12 @@ function Facts({ values }: { readonly values: readonly (readonly [string, Json |
             {enumFields.has(label) ? (
               i18n.human(value)
             ) : (
-              <Text value={presentation.field(label, value)} />
+              <ContentValue value={presentation.field(label, value)} />
             )}
           </dd>
         </div>
       ))}
     </dl>
-  );
-}
-
-export function EvidenceReferences({
-  references,
-  path,
-}: {
-  readonly references: readonly JsonRecord[];
-  readonly path: string;
-}) {
-  const i18n = useI18n();
-  const labels: Readonly<Record<string, string>> = {
-    sha256: 'SHA-256',
-    revision: 'Revision',
-    pointer: 'Record location',
-    scope: 'Scope',
-    source_digest: 'Source identity',
-    source_head: 'Head revision',
-    task_id: 'Task',
-    attempt: 'Attempt',
-    status: 'Status',
-    origin: 'Origin',
-    recorded_at: 'Recorded at',
-    reviewed_source_digest: 'Reviewed source',
-  };
-  return (
-    <div className="evidence-records">
-      <details>
-        <summary>{i18n.t('About these records')}</summary>
-        <p className="muted">
-          {i18n.t('Supplied evidence references. Files are not opened or verified by this view.')}
-        </p>
-      </details>
-      {references.map((reference, index) => (
-        <article className="history-round" key={index}>
-          {reference.label && reference.label !== path && <h3>{i18n.display(reference.label)}</h3>}
-          {references.length > 1 && (
-            <p className="history-meta">{i18n.t('Reference {number}', { number: index + 1 })}</p>
-          )}
-          <Facts
-            values={Object.entries(reference)
-              .filter(([key]) => key !== 'path' && key !== 'label')
-              .map(([key, value]) => [labels[key] || fieldLabels[key] || key, value] as const)}
-          />
-          <OriginalRecord value={reference} label="Original evidence reference" />
-        </article>
-      ))}
-    </div>
-  );
-}
-
-export function HistoryReferences({ value }: { readonly value: Json | undefined }) {
-  const i18n = useI18n();
-  const [expanded, setExpanded] = useState(false);
-  const references = Array.isArray(value) ? value : value ? [value] : [];
-  return references.length ? (
-    <>
-      <ul className="history-references">
-        {(expanded ? references : references.slice(0, 5)).map((original, index) => {
-          const ref = record(original);
-          const path = typeof original === 'string' ? original : string(ref.path);
-          return (
-            <li key={index}>
-              {path.startsWith('evidence/') ? (
-                <a href={'#evidence/' + encodeURIComponent(path)}>{string(ref.label) || path}</a>
-              ) : (
-                <span>{path || i18n.t('Unknown')}</span>
-              )}
-              {ref.sha256 && <code>{string(ref.sha256)}</code>}
-              {ref.pointer && <code>{string(ref.pointer)}</code>}
-              {ref.revision && <code>{string(ref.revision)}</code>}
-              {typeof original === 'object' && (
-                <OriginalRecord value={original} label="Reference details" />
-              )}
-            </li>
-          );
-        })}
-      </ul>
-      {references.length > 5 && (
-        <button
-          type="button"
-          className="secondary"
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {i18n.t(expanded ? 'Show fewer references' : 'Show all {count} references', {
-            count: references.length,
-          })}
-        </button>
-      )}
-    </>
-  ) : (
-    <p className="muted">{i18n.t('No evidence recorded')}</p>
-  );
-}
-
-function Compare({
-  before,
-  after,
-  fields,
-  labels = ['Previous', 'Current'],
-}: {
-  readonly before: JsonRecord;
-  readonly after: JsonRecord;
-  readonly fields: readonly string[];
-  readonly labels?: readonly [string, string];
-}) {
-  const i18n = useI18n();
-  return (
-    <div className="history-comparison">
-      {historyComparison(before, after, fields).map((row) => (
-        <section key={row.field}>
-          <h5>
-            {i18n.t(fieldLabels[row.field] || row.field)}{' '}
-            <span className="muted">
-              {i18n.t(
-                row.status === 'same'
-                  ? 'Unchanged'
-                  : row.status === 'different'
-                    ? 'Different'
-                    : isPersonnelField(row.field)
-                      ? 'Comparison unavailable'
-                      : 'Unknown',
-              )}
-            </span>
-          </h5>
-          <div>
-            {(
-              [
-                ['before', row.before],
-                ['after', row.after],
-              ] as const
-            ).map(([key, value], index) => (
-              <div key={key}>
-                <h6>{i18n.t(labels[index] || '')}</h6>
-                {isPersonnelField(row.field) ? (
-                  <span className="history-text">{i18n.personnel(row.field, value)}</span>
-                ) : (
-                  <Text value={value} />
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
   );
 }
 
@@ -280,8 +152,6 @@ function CheckRows({ value }: { readonly value: Json | undefined }) {
                   ['Reason', check.reason],
                 ]}
               />
-              <HistoryReferences value={check.evidence} />
-              <OriginalRecord value={original} />
             </details>
           </li>
         );
@@ -300,7 +170,6 @@ export function CoverageObservations({ value }: { readonly value: Json | undefin
         const facts = record(entry.facts);
         const values: readonly (readonly [string, Json | undefined])[] = [
           ['Task', entry.task_id],
-          ['Record kind', entry.kind],
           ['Verdict', facts.verdict],
           ['Status', facts.status],
           ['Findings', facts.findings],
@@ -320,8 +189,6 @@ export function CoverageObservations({ value }: { readonly value: Json | undefin
                 <CheckRows value={facts.checks} />
               </>
             )}
-            <HistoryReferences value={entry.receipt} />
-            <OriginalRecord value={entry} />
           </article>
         );
       })}
@@ -355,19 +222,7 @@ function ReviewRound({
           ['Next action', review.next_action || receipt.next_action],
         ]}
       />
-      <details>
-        <summary>{i18n.t('Submitted revision and scope')}</summary>
-        <Facts
-          values={[
-            ['Submitted revision', round.submitted_head],
-            ['Source identity', round.source_digest],
-            ['Scope', attempt.scope],
-            ['Changed paths', receipt.changed_paths],
-            ['Reviewed source', review.source_digest],
-            ['Reviewed receipt', review.receipt_sha256],
-          ]}
-        />
-      </details>
+
       <details>
         <summary>{i18n.t('Checks')}</summary>
         <CheckRows value={receipt.checks} />
@@ -387,23 +242,13 @@ function ReviewRound({
             const criterion = record(original);
             return (
               <li key={index}>
-                <Text value={criterion.criterion} />
+                <ContentValue value={criterion.criterion} />
                 <p className="muted">{i18n.human(criterion.status)}</p>
-                <HistoryReferences value={criterion.evidence} />
-                <OriginalRecord value={original} />
               </li>
             );
           })}
         </ul>
       </details>
-      <details>
-        <summary>{i18n.t('Evidence')}</summary>
-        <HistoryReferences
-          value={[round.receipt ?? null, round.review ?? null].filter((value) => value !== null)}
-        />
-        <HistoryReferences value={round.evidence} />
-      </details>
-      <OriginalRecord value={round} label="Original round" />
     </article>
   );
 }
@@ -445,8 +290,6 @@ export function ReviewSummary({
             ['Reviewer role', review.reviewer_role],
             ['Director', record(snapshot.director).actor_id],
             ['Recorded participants', priorParticipants(task)],
-            ['Submitted revision', round.submitted_head],
-            ['Scope', attempt.scope],
             ['Findings', review.unresolved_findings],
           ]}
         />
@@ -458,27 +301,15 @@ export function ReviewSummary({
             ['Limitations', integrated.limitations],
           ]}
         />
-        <OriginalRecord value={integrated} label="Original integrated review" />
       </details>
     </section>
   );
 }
 
-export function TaskHistory({
-  snapshot,
-  task,
-}: {
-  readonly snapshot: Snapshot;
-  readonly task: Task;
-}) {
+export function TaskHistory({ task }: { readonly snapshot: Snapshot; readonly task: Task }) {
   const i18n = useI18n();
   const presentation = usePresentation();
   const attempts = records(task.attempts);
-  const [previous, setPrevious] = useState('');
-  const current = attempts.at(-1) || {};
-  const previousAttempt =
-    attempts.find((attempt) => String(attempt.number) === previous) || attempts.at(-2) || {};
-  const coverage = taskCoverage(snapshot, task.id);
   return (
     <section className="history-section">
       <details>
@@ -486,37 +317,7 @@ export function TaskHistory({
           {i18n.t('Attempt and review history')}{' '}
           <span className="muted">{i18n.number(attempts.length)}</span>
         </summary>
-        {attempts.length > 1 && (
-          <details>
-            <summary>{i18n.t('Compare attempts')}</summary>
-            <label>
-              {i18n.t('Previous attempt')}
-              <select
-                value={String(previousAttempt.number)}
-                onChange={(event) => setPrevious(event.target.value)}
-              >
-                {attempts.slice(0, -1).map((attempt, index) => (
-                  <option key={index} value={String(attempt.number)}>
-                    {i18n.t('Attempt')} {i18n.display(attempt.number)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <Compare
-              before={attemptFacts(previousAttempt)}
-              after={attemptFacts(current)}
-              fields={[
-                'scope',
-                'claimed_head',
-                'submitted_head',
-                'source_digest',
-                'checks',
-                'unresolved_findings',
-                'review',
-              ]}
-            />
-          </details>
-        )}
+
         {attempts.length ? (
           <ol className="history-events">
             {attempts.map((attempt, index) => (
@@ -537,64 +338,12 @@ export function TaskHistory({
                   {!records(attempt.rounds).length && (
                     <p className="muted">{i18n.t('No review rounds recorded')}</p>
                   )}
-                  <OriginalRecord value={attempt} label="Original attempt" />
                 </details>
               </li>
             ))}
           </ol>
         ) : (
           <p className="muted">{i18n.t('No attempts recorded.')}</p>
-        )}
-      </details>
-      <details>
-        <summary>{i18n.t('Criterion links')}</summary>
-        <details>
-          <summary>{i18n.t('Coverage source history')}</summary>
-          {records(record(snapshot.coverage).history).map((entry, index) => (
-            <article key={index}>
-              <Facts
-                values={[
-                  ['ID', entry.id],
-                  ['Freshness', entry.freshness],
-                  ['Recorded at', entry.recorded_at],
-                  ['Reasons', entry.reasons],
-                ]}
-              />
-              <HistoryReferences value={entry.receipt} />
-              <OriginalRecord value={entry} />
-            </article>
-          ))}
-          <OriginalRecord value={snapshot.coverage} label="Original coverage" />
-        </details>
-        {coverage.length ? (
-          coverage.map(({ criterion, links }, index) => (
-            <article key={index}>
-              <Text value={criterion.text} />
-              <Facts
-                values={[
-                  ['Linkage', criterion.linkage],
-                  ['Knowledge', criterion.knowledge],
-                ]}
-              />
-              {links.map((link, linkIndex) => (
-                <div key={linkIndex}>
-                  <Facts
-                    values={[
-                      ['Task', link.task_id],
-                      ['Paths', link.paths],
-                      ['Scope kind', link.scope_kind],
-                      ['Criterion', link.criterion],
-                      ['Coverage observation', record(snapshot.coverage).status],
-                    ]}
-                  />
-                  <HistoryReferences value={link.evidence} />
-                  <OriginalRecord value={link} />
-                </div>
-              ))}
-            </article>
-          ))
-        ) : (
-          <p className="muted">{i18n.t('No explicit criterion links recorded')}</p>
         )}
       </details>
     </section>
@@ -647,22 +396,7 @@ function DeliveryRecord({
           {i18n.t('This delivery belongs to a different attempt or reviewed source')}
         </p>
       )}
-      <details>
-        <summary>{i18n.t('Revisions')}</summary>
-        <Facts
-          values={[
-            ['Attempt', meta.attempt],
-            ['Reviewed source', meta.reviewed_source_digest],
-            ['Tested commit', meta.tested_commit],
-            ['Head revision', meta.head_sha],
-            ['Base revision', meta.base_sha],
-            ['Test merge revision', meta.test_merge_sha],
-            ['Merge commit', meta.merge_commit],
-            ['Branch', meta.branch],
-            ['Base', meta.base],
-          ]}
-        />
-      </details>
+
       <details>
         <summary>
           {i18n.t('CI checks')} <span className="muted">{i18n.number(items(meta.ci).length)}</span>
@@ -688,18 +422,13 @@ function DeliveryRecord({
                     <summary>{i18n.t('Check details')}</summary>
                     <Facts
                       values={[
-                        ['Commit', check.commit],
                         ['Run', check.run_id],
                         ['Job', check.job_id],
-                        ['Head revision', check.head_sha],
-                        ['Base revision', check.base_sha],
-                        ['Test merge revision', check.test_merge_sha],
                         ['Observed at', check.observed_at],
                         ['Started', check.started_at],
                         ['Completed', check.completed_at],
                       ]}
                     />
-                    <OriginalRecord value={original} />
                   </details>
                 </li>
               );
@@ -715,15 +444,11 @@ function DeliveryRecord({
           values={[
             ['Status', cleanup.status],
             ['Reason', cleanup.reason],
-            ['Merge identity', cleanup.merge_identity],
             ['Actor', cleanup.actor_id],
             ['Recorded at', cleanup.recorded_at],
           ]}
         />
-        <HistoryReferences value={cleanup.evidence} />
       </details>
-      <HistoryReferences value={delivery.receipt} />
-      <OriginalRecord value={value} label="Original delivery" />
     </div>
   );
 }
@@ -768,9 +493,6 @@ export function DeliveryHistory({ task }: { readonly task: Task }) {
                   </summary>
                   <p className="muted">{i18n.t('Local record time')}</p>
                   <DeliveryRecord value={entry.record} task={task} />
-                  <HistoryReferences value={entry.reference} />
-                  <HistoryReferences value={entry.event_reference} />
-                  <OriginalRecord value={entry.original} label="Original history entry" />
                 </details>
               </li>
             ))}
@@ -801,14 +523,7 @@ export function StaffingHistory({
   return (
     <details className="history-section">
       <summary>{i18n.t('Staffing and assignment history')}</summary>
-      {assignment && (
-        <Compare
-          before={assignment}
-          after={actor}
-          labels={['At claim', 'Current settings']}
-          fields={['model_id', 'reasoning_effort', 'provenance', 'role']}
-        />
-      )}
+
       <ol className="history-events">
         {items(actor.history).map((original, index) => {
           const event = record(original);
@@ -826,12 +541,10 @@ export function StaffingHistory({
                     'Reasoning',
                     i18n.personnel('reasoning_effort', record(event.metadata).reasoning_effort),
                   ],
-                  ['Provenance', i18n.personnel('provenance', record(event.metadata).provenance)],
                   ['Previous actor', event.predecessor_id],
                   ['Next actor', event.successor_id],
                 ]}
               />
-              <OriginalRecord value={original} />
             </li>
           );
         })}
@@ -846,18 +559,18 @@ export function StaffingHistory({
               {i18n.display(presentation.taskReference(entry.task_id))} · {i18n.t('Attempt')}{' '}
               {i18n.display(entry.attempt)} · {i18n.statusLabel(entry.status)}
             </summary>
-            <Compare
-              before={record(entry.metadata)}
-              after={actor}
-              labels={['At claim', 'Current settings']}
-              fields={['model_id', 'reasoning_effort', 'provenance', 'role']}
+            <Facts
+              values={[
+                ['Model', i18n.personnel('model_id', record(entry.metadata).model_id)],
+                [
+                  'Reasoning',
+                  i18n.personnel('reasoning_effort', record(entry.metadata).reasoning_effort),
+                ],
+                ['Role', record(entry.metadata).role],
+              ]}
             />
-            <OriginalRecord value={entry} />
           </details>
         ))}
-      <OriginalRecord
-        value={{ history: actor.history ?? [], assignments: actor.assignments ?? [] }}
-      />
     </details>
   );
 }
@@ -888,7 +601,7 @@ export function TransferHistory({ handoff }: { readonly handoff: JsonRecord }) {
       </p>
       <Facts values={[['Successor', handoff.to_actor ?? record(handoff.outgoing).to_actor]]} />
       <ol className="history-events">
-        {stages.map(([label, value, reference, time], index) => {
+        {stages.map(([label, value, _reference, time], index) => {
           const event = record(value);
           return (
             <li key={index}>
@@ -910,195 +623,12 @@ export function TransferHistory({ handoff }: { readonly handoff: JsonRecord }) {
                       ['Summary', event.summary || event.goal],
                     ]}
                   />
-                  <HistoryReferences value={reference} />
-                  <OriginalRecord value={value} />
                 </>
               )}
             </li>
           );
         })}
       </ol>
-      <details>
-        <summary>{i18n.t('Compare transfer records')}</summary>
-        <Compare
-          before={record(handoff.outgoing)}
-          after={record(handoff.acceptance || handoff.acknowledgement)}
-          fields={['scope', 'source_head', 'source_digest', 'checks', 'questions', 'dependencies']}
-        />
-      </details>
-      <OriginalRecord value={handoff} label="Original transfer" />
-    </details>
-  );
-}
-
-function TaskLinks({ value }: { readonly value: Json | undefined }) {
-  const presentation = usePresentation();
-  return (
-    <ul className="history-task-links">
-      {items(value).map((id, index) => (
-        <li key={index}>
-          <a href={'#task/' + encodeURIComponent(string(id))}>{presentation.taskReference(id)}</a>
-        </li>
-      ))}
-    </ul>
-  );
-}
-function BindingChanges({ entry }: { readonly entry: JsonRecord }) {
-  const i18n = useI18n();
-  return (
-    <details>
-      <summary>{i18n.t('Recorded binding changes')}</summary>
-      <Compare
-        before={record(entry.before_binding)}
-        after={record(entry.after_binding)}
-        fields={['objective_digest', 'planning_digest', 'task_definition_digest', 'task_ids']}
-      />
-      <OriginalRecord
-        value={{ before: entry.before_binding ?? null, after: entry.after_binding ?? null }}
-      />
-    </details>
-  );
-}
-
-export function MembershipHistory({ snapshot }: { readonly snapshot: Snapshot }) {
-  const i18n = useI18n();
-  const presentation = usePresentation();
-  const objective = record(snapshot.objective);
-  return (
-    <details className="history-section membership-history">
-      <summary>{i18n.t('Objective and source history')}</summary>
-      <p className="muted">
-        {i18n.t('Membership revision')} {i18n.display(objective.membership_revision)}
-      </p>
-      <ol className="history-events">
-        {items(objective.membership_history).map((original, index) => {
-          const entry = record(original);
-          return (
-            <li key={index}>
-              <div className="history-event-heading">
-                <strong>
-                  {i18n.t('Revision')} {i18n.display(entry.revision)}
-                </strong>
-                <span>{i18n.date(entry.recorded_at)}</span>
-              </div>
-              <Facts values={[['Reason', entry.reason]]} />
-              {Array.isArray(entry.added) && (
-                <>
-                  <h4>{i18n.t('Added tasks')}</h4>
-                  <TaskLinks value={entry.added} />
-                </>
-              )}
-              {Array.isArray(entry.removed) && (
-                <>
-                  <h4>{i18n.t('Removed tasks')}</h4>
-                  <TaskLinks value={entry.removed} />
-                </>
-              )}
-              {records(entry.changes).map((change, changeIndex) => (
-                <details key={changeIndex}>
-                  <summary>
-                    <a href={'#task/' + encodeURIComponent(string(change.id))}>
-                      {i18n.display(presentation.taskReference(change.id))}
-                    </a>{' '}
-                    · {i18n.t('Changes')}
-                  </summary>
-                  <Compare
-                    before={record(change.before)}
-                    after={record(change.after)}
-                    fields={[
-                      ...new Set([
-                        ...Object.keys(record(change.before)),
-                        ...Object.keys(record(change.after)),
-                      ]),
-                    ]}
-                  />
-                  <OriginalRecord value={change} />
-                </details>
-              ))}
-              <BindingChanges entry={entry} />
-              <HistoryReferences value={entry.receipt} />
-              <HistoryReferences value={entry.evidence} />
-              <OriginalRecord value={original} />
-            </li>
-          );
-        })}
-      </ol>
-      <details>
-        <summary>{i18n.t('Source changes')}</summary>
-        {items(snapshot.amendments).map((original, index) => {
-          const entry = record(original);
-          return (
-            <article className="history-round" key={index}>
-              <h4>{i18n.display(entry.id)}</h4>
-              <Facts
-                values={[
-                  ['Operation', entry.operation],
-                  ['Actor', entry.actor_id],
-                  ['Reason', entry.reason],
-                  ['Affected criteria', entry.affected_criteria],
-                  ['Dependencies', entry.dependencies],
-                ]}
-              />
-              {Array.isArray(entry.added) && (
-                <>
-                  <h4>{i18n.t('Added tasks')}</h4>
-                  <TaskLinks value={entry.added} />
-                </>
-              )}
-              {Array.isArray(entry.removed) && (
-                <>
-                  <h4>{i18n.t('Removed tasks')}</h4>
-                  <TaskLinks value={entry.removed} />
-                </>
-              )}
-              {records(entry.changes).map((change, changeIndex) => (
-                <details key={changeIndex}>
-                  <summary>
-                    <a href={'#task/' + encodeURIComponent(string(change.id))}>
-                      {i18n.display(presentation.taskReference(change.id))}
-                    </a>{' '}
-                    · {i18n.t('Changes')}
-                  </summary>
-                  <Compare
-                    before={record(change.before)}
-                    after={record(change.after)}
-                    fields={[
-                      ...new Set([
-                        ...Object.keys(record(change.before)),
-                        ...Object.keys(record(change.after)),
-                      ]),
-                    ]}
-                  />
-                  <OriginalRecord value={change} />
-                </details>
-              ))}
-              <BindingChanges entry={entry} />
-              <HistoryReferences value={entry.receipt} />
-              <HistoryReferences value={entry.evidence} />
-              <OriginalRecord value={original} />
-            </article>
-          );
-        })}
-        {records(snapshot.source_intakes).map((intake, index) => (
-          <details key={index}>
-            <summary>
-              {i18n.display(intake.id)} · {i18n.date(intake.recorded_at)}
-            </summary>
-            <Facts
-              values={[
-                ['Actor', intake.recorded_by],
-                ['Objective', intake.objective_id],
-                ['Review baseline', record(intake.source).review_baseline],
-              ]}
-            />
-            <TaskLinks value={record(intake.source).task_ids} />
-            <HistoryReferences value={[intake.source ?? null, intake.planning ?? null]} />
-            <OriginalRecord value={intake} />
-          </details>
-        ))}
-        <OriginalRecord value={snapshot.source_intakes} label="Original source intakes" />
-      </details>
-      <OriginalRecord value={objective} label="Original objective" />
     </details>
   );
 }

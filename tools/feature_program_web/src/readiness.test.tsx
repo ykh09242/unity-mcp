@@ -100,11 +100,7 @@ describe('canonical readiness and authored coordination context', () => {
     render(<GoalCoordination snapshot={supplied} />);
     await userEvent.click(screen.getByText('Current goal coordination'));
     expect(screen.getByText('Exact canonical current-goal question')).toBeDefined();
-    expect(
-      screen.getByText(
-        'Summary text is shortened. Inspect the referenced source for full context.',
-      ),
-    ).toBeDefined();
+    expect(screen.getByText('Summary text is shortened.')).toBeDefined();
     expect(screen.getByRole('link', { name: 'Open question' }).getAttribute('href')).toBe(
       '#question/Q-goal',
     );
@@ -174,8 +170,7 @@ describe('canonical readiness and authored coordination context', () => {
     expect(screen.getByText('Claim authorization').nextElementSibling?.textContent).toBe(
       'Not assessed',
     );
-    await userEvent.click(screen.getByText('This task scope reference'));
-    expect(screen.getByText(/\/tasks\/1\/candidate_paths/)).toBeDefined();
+    expect(screen.queryByText('This task scope reference')).toBeNull();
   });
   it('shows actual current-goal collision and responsible director without interpreting other prose', async () => {
     const snapshot = parseSnapshot(readinessFixture.blocked_owner_collision);
@@ -242,19 +237,16 @@ describe('canonical readiness and authored coordination context', () => {
         within(notes).getByText(new RegExp(`^${stage}: Synthetic authored contract:`)),
       ).toBeDefined();
       expect(
-        within(notes)
-          .getByRole('link', { name: `evidence/S01/attempt-1/peer-${stage}.json` })
-          .getAttribute('href'),
-      ).toContain(encodeURIComponent(`evidence/S01/attempt-1/peer-${stage}.json`));
+        within(notes).queryByRole('link', { name: `evidence/S01/attempt-1/peer-${stage}.json` }),
+      ).toBeNull();
     }
     expect(notes.querySelector('.badge')).toBeNull();
     expect(
       screen.getByText('Notes preserve authored claims. Peer agreement is not assessed.'),
     ).toBeDefined();
-    await userEvent.click(screen.getByText('All original notes'));
-    expect(document.querySelector('pre')?.textContent).toBe(JSON.stringify(task.notes, null, 2));
+    expect(document.querySelector('pre')).toBeNull();
   });
-  it('bounds visible notes and retains all original records behind explicit disclosure', async () => {
+  it('bounds visible notes and reveals all retained semantic notes without raw records', async () => {
     const snapshot = parseSnapshot(fixture.absent_snapshot);
     const task = {
       ...snapshot.tasks[0]!,
@@ -268,8 +260,9 @@ describe('canonical readiness and authored coordination context', () => {
     await userEvent.click(screen.getByText('Authored coordination notes'));
     expect(screen.getByText('5 / 8 shown · 3 omitted')).toBeDefined();
     expect(screen.queryByText('Note 0')).toBeNull();
-    await userEvent.click(screen.getByText('All original notes'));
-    expect(screen.getByText(/"reason": "Note 0"/)).toBeDefined();
+    await userEvent.click(screen.getByText('Show all notes'));
+    expect(screen.getByText('Note 0')).toBeDefined();
+    expect(document.querySelector('pre')).toBeNull();
   });
   it('keeps absent coordination unknown and does not reinterpret note prose as unresolved attention', async () => {
     const snapshot = parseSnapshot(fixture.snapshot);

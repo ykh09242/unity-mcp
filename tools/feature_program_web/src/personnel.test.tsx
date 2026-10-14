@@ -128,15 +128,13 @@ describe('truthful personnel metadata', () => {
       expect(within(actor).getByText(labels.reasoning).nextElementSibling?.textContent).toBe(
         labels.absent,
       );
-      expect(within(actor).getByText(labels.provenance).nextElementSibling?.textContent).toContain(
-        labels.unverified,
-      );
+      expect(within(actor).queryByText(labels.provenance)).toBeNull();
       const observation = within(actor).getByText(labels.observed).nextElementSibling?.textContent;
       expect(observation).toContain(labels.status);
       expect(observation).toContain('2026');
       const settings = document.querySelector('.allocation-settings');
       expect(settings?.textContent).toContain(labels.absent);
-      expect(settings?.textContent).toContain(labels.unverified);
+      expect(settings?.textContent).not.toContain(labels.unverified);
     },
   );
   it.each(locales)(
@@ -158,17 +156,9 @@ describe('truthful personnel metadata', () => {
         within(panel).getByText(labels.reasoning, { selector: 'dt' }).nextElementSibling
           ?.textContent,
       ).toBe(labels.absent);
-      expect(
-        within(panel).getByText(labels.provenance, { selector: 'dt' }).nextElementSibling
-          ?.textContent,
-      ).toBe(labels.unverified);
+      expect(within(panel).queryByText(labels.provenance)).toBeNull();
       expect(within(panel).queryByText('current-model')).toBeNull();
-      const comparison = panel.querySelector<HTMLElement>('.history-comparison section');
-      if (!comparison) throw new Error('Comparison missing');
-      expect(comparison.textContent).toContain(labels.comparison);
-      expect(within(comparison).getByText(labels.current).parentElement?.textContent).toContain(
-        labels.absent,
-      );
+      expect(panel.querySelector('.history-comparison')).toBeNull();
     },
   );
   it.each(locales)(
@@ -200,9 +190,7 @@ describe('truthful personnel metadata', () => {
       expect(within(event).getByText(labels.reasoning).nextElementSibling?.textContent).toBe(
         labels.absent,
       );
-      expect(within(event).getByText(labels.provenance).nextElementSibling?.textContent).toBe(
-        labels.unverified,
-      );
+      expect(within(event).queryByText(labels.provenance)).toBeNull();
       expect(actor.history[0]?.metadata).toEqual({
         model_id: 'archived-model',
         reasoning_effort: null,

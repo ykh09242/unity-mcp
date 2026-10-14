@@ -104,8 +104,7 @@ export function Workload({
                           {i18n.personnel(
                             'reasoning_effort',
                             index.actors.get(row.owner)?.reasoning_effort,
-                          )}{' '}
-                          · {i18n.personnel('provenance', index.actors.get(row.owner)?.provenance)}
+                          )}
                         </span>
                         <StaffingHistory actor={index.actors.get(row.owner) || {}} />
                       </div>
