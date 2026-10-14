@@ -440,7 +440,11 @@ def test_complete_family_enumeration_and_protected_leaf_exclusions(gate):
         }
     ]
     catalog = p.catalog(gate.program, state, fp.ReadBudget(), fp.digest(state))
-    assert {row["family"] for row in catalog.targets.values()} == set(p.FAMILIES) - {"F21", "F22"}
+    assert {row["family"] for row in catalog.targets.values()} == set(p.FAMILIES) - {
+        "F21",
+        "F22",
+        "F23",
+    }
     assert not any(
         row["original"]
         in {"Private answer", "private command", "https://example.invalid/pull/1", "a" * 40}

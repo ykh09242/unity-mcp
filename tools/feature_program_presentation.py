@@ -53,6 +53,8 @@ NARRATIVE: Final = frozenset(
         "team_state",
         "criterion",
         "planning_note",
+        "next_trigger",
+        "statement",
     }
 )
 # These containers carry human narrative, but their machine-valued leaves do not.
@@ -83,6 +85,8 @@ CONTAINERS: Final = frozenset(
         "acknowledgements",
         "acceptance_evidence",
         "changes",
+        "blocker",
+        "finding",
     }
 )
 FAMILIES: Final = {
@@ -108,6 +112,7 @@ FAMILIES: Final = {
     "F20": "checkpoint",
     "F21": "system_copy",
     "F22": "original_only",
+    "F23": "verification",
 }
 
 
@@ -524,6 +529,24 @@ def catalog(program: Program, state: Record, budget: ReadBudget, revision: str) 
                     result.prose(family, identifier, item, f"/{name}/{index}")
         else:
             result.prose(family, name, values, "/" + name)
+    extension = state.get("verification")
+    if extension is not None:
+        for index, entry in enumerate(
+            core.sequence(core.record(extension, "verification")["records"], "verification records")
+        ):
+            recorded = core.record(entry, "verification record")
+            authored = core.record(recorded["input"], "verification input")
+            result.prose(
+                "F23",
+                str(authored["id"]),
+                authored,
+                f"/verification/records/{index}/input",
+                context={
+                    "task_id": authored["task_id"],
+                    "input_sha256": core.digest(authored),
+                    "verification_context": recorded["context"],
+                },
+            )
     for index, event in enumerate(state.get("events", [])):
         # The transaction input/review already preserves this technical audit trail.
         # Translating its own publication reason would create an endless new target.

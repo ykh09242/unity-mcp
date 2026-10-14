@@ -10,7 +10,7 @@ from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Callable, Final
 
 if __package__:
     from tools import feature_program_coordination as coordination
@@ -19,6 +19,8 @@ if __package__:
     from tools import feature_program_planning as planning
     from tools import feature_program_presentation as presentation
     from tools import feature_program_questions as questions
+    from tools import feature_program_verification as verification
+    from tools import feature_program_delivery as provider_delivery
 else:
     import feature_program_coordination as coordination
     import feature_program_coverage as coverage
@@ -26,6 +28,8 @@ else:
     import feature_program_planning as planning
     import feature_program_presentation as presentation
     import feature_program_questions as questions
+    import feature_program_verification as verification
+    import feature_program_delivery as provider_delivery
 
 if TYPE_CHECKING:
     from tools.feature_program import PreparedChange, Program, ReadBudget
@@ -33,7 +37,17 @@ if TYPE_CHECKING:
 Json = coordination.Json
 Record = coordination.Record
 READ_COMMANDS: Final = frozenset(
-    {"authoring-support", "scaffold", "preview", "recovery-readiness", "delivery-inputs"}
+    {
+        "authoring-support",
+        "scaffold",
+        "preview",
+        "recovery-readiness",
+        "delivery-inputs",
+        "verification-packet",
+        "submission-inputs",
+        "premerge-inputs",
+        "cleanup-inputs",
+    }
 )
 PUBLICATION_COMMANDS: Final = frozenset(
     {
@@ -66,6 +80,7 @@ COMMANDS: Final = (
         "checkpoint",
         "coverage-record",
         "presentation-record",
+        "verification-record",
     }
 )
 TEMPLATES: Final = ("revalidation", "execution", "review", "delivery", "resume")
@@ -82,6 +97,7 @@ HEAD_COMMANDS: Final = (
             "transfer-ack",
             "transfer-accept",
             "objective-complete",
+            "verification-record",
         }
     )
     | questions.COMMANDS
@@ -114,6 +130,7 @@ def _errors() -> tuple[type[Exception], ...]:
         questions.QuestionError,
         phases.PhaseError,
         planning.PlanningError,
+        provider_delivery.DeliveryError,
         OSError,
     )
 
@@ -134,6 +151,15 @@ def add_commands(commands) -> None:
     delivery.add_argument(
         "--input", required=True, help="Program-relative frozen-observation request"
     )
+    command = commands.add_parser("verification-record", help="Record immutable verification facts")
+    command.add_argument("--input", required=True, help="Program-relative verification record JSON")
+    command = commands.add_parser(
+        "verification-packet", help="Print exact verification context JSON"
+    )
+    command.add_argument("id")
+    for name in ("submission-inputs", "premerge-inputs", "cleanup-inputs"):
+        command = commands.add_parser(name, help="Prepare ordinary input from frozen observations")
+        command.add_argument("--input", required=True, help="Program-relative preparation JSON")
 
 
 def _parsers() -> dict[str, argparse.ArgumentParser]:
@@ -176,6 +202,10 @@ def support() -> Record:
         "read_operations": {
             "recovery-readiness": "bounded current registry, refs, pending decisions, collisions, lock observations",
             "delivery-inputs": "explicit provider path/hash and individual task/attempt/submission/check bindings",
+            "verification-packet": "exact task/attempt/submission/source context and obligations",
+            "submission-inputs": "ordinary nonpassing execution draft until actual complete evidence exists",
+            "premerge-inputs": "advisory frozen provider execution/context preparation",
+            "cleanup-inputs": "advisory frozen provider execution/context preparation",
         },
         "request_format": {"argv": ["COMMAND", "actual command arguments and options"]},
         "advisory": True,
@@ -231,6 +261,8 @@ def prepare(
         return coverage.prepare_record(program, state, args.input)
     elif command == "presentation-record":
         return presentation.prepare_record(program, state, args.input)
+    elif command == "verification-record":
+        return verification.prepare_record(program, state, args.input, observed_head=observed_head)
     elif command == "claim":
         proposal = program.prepare_claim(state, args, observed_head=observed_head)
     elif command == "submit":
@@ -319,11 +351,17 @@ def _publication(program: Program, state: Record, args: argparse.Namespace) -> R
 
 def _preflight(program: Program, prepared: PreparedChange) -> None:
     guard = coverage.publication_guard(program, prepared.state)
+    verification_guard = verification.publication_guard(program, prepared.state)
+    provider_guard = delivery_publication_guard(program, prepared.state)
     program.prepare_save(prepared.state)
     if prepared.before_publish is not None:
         prepared.before_publish()
     if guard is not None:
         guard()
+    if verification_guard is not None:
+        verification_guard()
+    if provider_guard is not None:
+        provider_guard()
 
 
 def _delta(before: Record, after: Record) -> list[Json]:
@@ -495,6 +533,23 @@ def preview(program: Program, state: Record, args: argparse.Namespace) -> Record
 def _shape(command: str) -> Record:
     """Editable inputs, not a second validation schema. Canonical preparation validates them."""
     shapes: dict[str, Record] = {
+        "verification-record": {
+            "schema_version": 1,
+            "operation": "verification-record",
+            "id": None,
+            "kind": "request",
+            "task_id": None,
+            "actor_id": None,
+            "expected_revision": None,
+            "reason": None,
+            "lane": None,
+            "verifier_id": None,
+            "check_ids": [],
+            "input_scope": [],
+            "input_complete": False,
+            "evidence_destination": None,
+            "next_trigger": None,
+        },
         "presentation-record": {
             "schema_version": 1,
             "operation": "presentation-record",
@@ -951,6 +1006,214 @@ def delivery_evidence_references(state: Record) -> list[Json]:
     return refs
 
 
+def delivery_publication_guard(program: Program, future: Record) -> Callable[[], None] | None:
+    """Recheck newly supplied provider reliance after the ordinary publication preflight."""
+    core = _core()
+    path = program.path("backlog.json")
+    if not path.is_file():
+        return None
+    original, captured = core.read_json_frozen(path, limit=LIMIT)
+    existing = {
+        core.canonical(core.record(item, "delivery").get("receipt"))
+        for task in core.sequence(original["tasks"], "tasks")
+        for item in core.sequence(core.record(task, "task").get("deliveries", []), "deliveries")
+    }
+    refs: list[Json] = []
+    for task in core.sequence(future["tasks"], "tasks"):
+        task_record = core.record(task, "task")
+        for item in core.sequence(task_record.get("deliveries", []), "deliveries"):
+            delivery = core.record(item, "delivery")
+            metadata = core.record(delivery["metadata"], "delivery metadata")
+            if (
+                core.canonical(delivery.get("receipt")) not in existing
+                and metadata.get("provider_observation") is not None
+            ):
+                refs.extend(
+                    [
+                        coverage.reference(delivery["receipt"]),
+                        coverage.reference(metadata["provider_observation"]),
+                    ]
+                )
+                context = metadata.get("provider_context")
+                if context is not None:
+                    policies = set(provider_policy_paths(core.record(context, "provider context")))
+                    refs.extend(
+                        ref
+                        for ref in core.sequence(
+                            program.current_attempt(task_record)["evidence"], "attempt evidence"
+                        )
+                        if core.record(ref, "evidence reference").get("path") in policies
+                    )
+    if not refs:
+        return None
+
+    def recheck() -> None:
+        program.require_current_location()
+        core.require(
+            core.sha(core.bounded_bytes(path, LIMIT)) == captured,
+            "Registry changed before provider reliance publication",
+        )
+        program.verify_refs(refs)
+
+    return recheck
+
+
+def provider_execution(
+    program: Program, receipt: Record, budget: ReadBudget | None = None
+) -> Record:
+    """Assess explicit frozen provider execution without remote access or inferred policy."""
+    core = _core()
+    reader = budget if budget is not None else core.ReadBudget(64 * 1024 * 1024)
+    ref = receipt.get("provider_observation")
+    expected = receipt.get("provider_context")
+    if ref is None:
+        core.require(
+            "provider_context" not in receipt, "Provider context requires a frozen observation"
+        )
+        return {"status": "not_assessed", "adopted": False, "remote_verified_by_tool": False}
+    provider = provider_observation(program, ref, reader)
+    execution = provider.get("execution")
+    if execution is None and "execution" not in provider and "provider_context" not in receipt:
+        return {"status": "not_assessed", "adopted": False, "remote_verified_by_tool": False}
+    core.require(expected is not None, "Provider execution requires explicit current context")
+    context = core.record(expected, "provider context")
+    pr = core.record(context.get("pr"), "provider PR context")
+    core.require(
+        pr.get("url") == receipt.get("pr_url")
+        and pr.get("base_ref") == receipt.get("base")
+        and pr.get("tested_sha") == receipt.get("tested_commit")
+        and pr.get("head_sha") in core.strings(receipt.get("commits"), "delivery commits"),
+        "Provider context differs from ordinary delivery identity",
+    )
+    captured_execution = core.record(execution, "provider execution")
+    policy_paths = provider_policy_paths(context)
+    core.require(
+        set(policy_paths) <= set(core.strings(receipt.get("evidence"), "delivery evidence")),
+        "Provider exclusion policy must be ordinary frozen delivery evidence",
+    )
+    for name in policy_paths:
+        core.require(
+            name.startswith(f"evidence/{receipt['task_id']}/attempt-{receipt['attempt']}/"),
+            "Provider policy evidence must bind the individual task attempt",
+        )
+        reader.read(program.path(name), LIMIT)
+    if captured_execution.get("merge") is not None:
+        core.require(
+            core.record(captured_execution["merge"], "provider merge").get("squash_sha")
+            == receipt.get("merge_commit"),
+            "Provider squash differs from ordinary delivery merge identity",
+        )
+    return {**provider_delivery.assess_execution(execution, expected), "adopted": True}
+
+
+def provider_policy_paths(context: Record) -> list[str]:
+    """Resolve explicitly declared policy paths; a missing job cannot create policy."""
+    core = _core()
+    paths: set[str] = set()
+    for stage in core.sequence(context.get("stages"), "provider stages"):
+        for check in core.sequence(
+            core.record(stage, "provider stage").get("checks"), "provider checks"
+        ):
+            selection = core.record(check, "provider check")
+            if selection.get("mode") in {"policy_skip", "not_applicable"}:
+                paths.update(
+                    core.strings(selection.get("policy_evidence"), "provider policy evidence")
+                )
+    return sorted(paths)
+
+
+def early_provider_execution(value: Json, reference: Record) -> Record:
+    """Project already assessed current lanes without a delivery or provider read."""
+    core = _core()
+    if value is None:
+        return {"status": "not_assessed", "remote_verified_by_tool": False}
+    task = core.record(value, "verification task")
+    lanes = core.record(task["lanes"], "verification lanes")
+    executions: list[Record] = []
+    stages: list[Json] = []
+    total = 0
+    for item in core.sequence(lanes["items"], "verification lanes"):
+        lane = core.record(item, "verification lane")
+        provider = lane.get("provider_execution")
+        if provider is None:
+            continue
+        execution = core.record(provider, "lane provider execution")
+        if execution.get("adopted") is not True:
+            continue
+        executions.append(execution)
+        rows = core.sequence(execution.get("stages", []), "provider stages")
+        total += int(execution.get("total", len(rows)))
+        for row in rows:
+            stages.append(
+                {
+                    **deepcopy(core.record(row, "provider stage")),
+                    "request_id": lane["request_id"],
+                    "lane": lane["lane"],
+                    "reference": deepcopy(
+                        execution.get(
+                            "reference",
+                            lane.get("observation_reference") or lane["request_reference"],
+                        )
+                    ),
+                    "provider_reference": deepcopy(execution.get("provider_reference")),
+                }
+            )
+    if not executions:
+        return {"status": "not_assessed", "remote_verified_by_tool": False}
+    statuses = {str(item.get("status", "not_assessed")) for item in executions}
+    applicability = {str(item.get("applicability", "unknown")) for item in executions}
+    status = next(
+        (
+            candidate
+            for candidate in ("failed", "pending", "unavailable", "not_assessed")
+            if candidate in statuses
+        ),
+        "passed" if statuses == {"passed"} else "not_assessed",
+    )
+    if lanes["omitted"] and status == "passed":
+        status = "not_assessed"
+    return {
+        "adopted": True,
+        "basis": "recorded_verification_lanes",
+        "status": status,
+        "applicability": next(
+            (
+                candidate
+                for candidate in ("unavailable", "stale", "unknown")
+                if candidate in applicability
+            ),
+            "current",
+        ),
+        "remote_verified_by_tool": False,
+        "reference": deepcopy(reference),
+        "stages": stages[:32],
+        "total": total,
+        "shown": min(32, len(stages)),
+        "omitted": total - min(32, len(stages)),
+        "omitted_lanes": lanes["omitted"],
+    }
+
+
+def provider_preparation(program: Program, request: Record, command: str) -> Record:
+    """Prepare a provider decision from exact caller-captured bytes; never authorize it."""
+    ref = coverage.reference(request.get("provider"))
+    provider = provider_observation(program, ref)
+    core = _core()
+    context = core.record(request.get("provider_context"), "provider context")
+    policy_refs = [
+        {"path": name, "sha256": core.sha(core.bounded_bytes(program.path(name), LIMIT))}
+        for name in provider_policy_paths(context)
+    ]
+    assessor = (
+        provider_delivery.assess_premerge
+        if command == "premerge-inputs"
+        else provider_delivery.assess_cleanup
+    )
+    result = assessor(provider.get("execution"), context)
+    program.verify_refs([ref, *policy_refs])
+    return {**result, "provider": ref, "policy_evidence": policy_refs}
+
+
 def validate_delivery_history(
     program: Program, state: Record, *, verify_artifacts: bool, budget: ReadBudget | None = None
 ) -> None:
@@ -962,7 +1225,11 @@ def validate_delivery_history(
         for value in core.sequence(task.get("deliveries", []), "deliveries"):
             delivery = core.record(value, "delivery")
             metadata = core.record(delivery.get("metadata"), "delivery metadata")
-            if metadata.get("provider_observation") is None and metadata.get("cleanup") is None:
+            if (
+                metadata.get("provider_observation") is None
+                and "provider_context" not in metadata
+                and metadata.get("cleanup") is None
+            ):
                 continue
             number = metadata.get("attempt")
             core.require(
@@ -990,7 +1257,8 @@ def delivery_inputs(program: Program, state: Record, request: Record) -> Record:
     core = _core()
     program.validate(state)
     ref = coverage.reference(request.get("provider"))
-    provider = provider_observation(program, ref)
+    provider_budget = core.ReadBudget(64 * 1024 * 1024)
+    provider = provider_observation(program, ref, provider_budget)
     outputs: list[Json] = []
     bindings = core.sequence(request.get("tasks"), "individual task bindings")
     core.require(bool(bindings), "Delivery authoring requires explicit task bindings")
@@ -1022,9 +1290,11 @@ def delivery_inputs(program: Program, state: Record, request: Record) -> Record:
                 "provider_observation": deepcopy(ref),
             }
         )
+        if "provider_context" in binding:
+            receipt["provider_context"] = deepcopy(binding["provider_context"])
         if "cleanup" in binding:
             receipt["cleanup"] = deepcopy(binding["cleanup"])
-        status = program.validate_delivery_metadata(task, attempt, receipt)
+        status = program.validate_delivery_metadata(task, attempt, receipt, budget=provider_budget)
         program.verify_refs(core.sequence(attempt["evidence"], "attempt evidence"))
         program.evidence(
             task_id, int(attempt["number"]), core.strings(receipt["evidence"], "delivery evidence")
@@ -1038,6 +1308,7 @@ def delivery_inputs(program: Program, state: Record, request: Record) -> Record:
                 "delivery_accepted": False,
                 "remote_verified_by_tool": False,
                 "cleanup": deepcopy(receipt.get("cleanup", {"status": "unknown"})),
+                "provider_execution": provider_execution(program, receipt, provider_budget),
             }
         )
     program.verify_refs([ref])
@@ -1164,6 +1435,7 @@ def read_command(program: Program, args: argparse.Namespace) -> Record:
         budget=core.ReadBudget(cached={program.path("backlog.json"): initial}),
     )
     refs: list[Json] = []
+    observed_head: str | None = None
     if args.command == "preview":
         command, ref = _request(program, args.request)
         refs.append(ref)
@@ -1175,10 +1447,21 @@ def read_command(program: Program, args: argparse.Namespace) -> Record:
         program.require_current_location()
         if args.command == "scaffold":
             result = scaffold(program, state, args)
+        elif args.command == "verification-packet":
+            program.validate(state)
+            observed_head = program.current_head()
+            result = verification.packet(program, state, args.id, observed_head=observed_head)
         else:
             request, captured = core.read_json_frozen(program.path(args.input), limit=LIMIT)
             refs.append({"path": args.input, "sha256": captured})
-            result = delivery_inputs(program, state, request)
+            if args.command == "submission-inputs":
+                program.validate(state)
+                result = verification.submission_inputs(program, state, request)
+            elif args.command in {"premerge-inputs", "cleanup-inputs"}:
+                program.validate(state)
+                result = provider_preparation(program, request, args.command)
+            else:
+                result = delivery_inputs(program, state, request)
     core.require(len(core.canonical(result)) <= LIMIT, "Authoring output exceeds 8 MiB")
     if args.command == "scaffold":
         core.require(
@@ -1186,6 +1469,10 @@ def read_command(program: Program, args: argparse.Namespace) -> Record:
             "Scaffold inputs changed during observation; refresh",
         )
     program.verify_refs(refs)
+    if observed_head is not None:
+        core.require(
+            program.current_head() == observed_head, "HEAD changed during packet preparation"
+        )
     core.require(
         core.bounded_bytes(program.path("backlog.json"), LIMIT) == initial,
         "Registry changed during authoring observation; refresh",

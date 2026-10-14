@@ -73,6 +73,64 @@ def _acceptance(value: dict, reference: dict) -> dict:
     }
 
 
+def _provider_execution(value: dict | None, reference: dict) -> dict:
+    """Retain outcomes through collections that obey the existing brief byte bound."""
+    value = value or {"status": "not_assessed", "remote_verified_by_tool": False}
+    stages = []
+    for stage in value.get("stages", []):
+        stages.append(
+            {
+                **{
+                    key: deepcopy(stage.get(key))
+                    for key in (
+                        "id",
+                        "kind",
+                        "status",
+                        "current",
+                        "reported_outcome",
+                        "source",
+                        "timing",
+                    )
+                },
+                "checks": collection(
+                    [
+                        {
+                            key: deepcopy(check.get(key))
+                            for key in (
+                                "id",
+                                "status",
+                                "applicability",
+                                "mode",
+                                "reported_outcome",
+                                "run_id",
+                                "run_attempt",
+                                "job_id",
+                            )
+                        }
+                        for check in stage.get("checks", [])
+                    ],
+                    reference,
+                ),
+                "history_total": stage.get("history_total", 0),
+                "reference": deepcopy(reference),
+            }
+        )
+    return {
+        **{
+            key: deepcopy(value.get(key))
+            for key in (
+                "status",
+                "adopted",
+                "remote_verified_by_tool",
+                "task_id",
+                "provider_reference",
+            )
+        },
+        "stages": collection(stages, reference),
+        "reference": deepcopy(reference),
+    }
+
+
 def _collections(value):
     if isinstance(value, dict):
         if {"total", "shown", "omitted", "items", "reference"} <= value.keys():
@@ -404,6 +462,11 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
                     criterion_links, ref("/coverage_annotations", task_id=identifier)
                 ),
                 "recorded_acceptance": _acceptance(acceptance, original),
+                "verification": deepcopy(snapshot_tasks[identifier].get("verification")),
+                "provider_execution": _provider_execution(
+                    snapshot_tasks[identifier].get("provider_execution"),
+                    ref(pointer + "/deliveries", task_id=identifier),
+                ),
                 "delivery": {
                     key: delivery.get(key)
                     for key in ("status", "remote_verified_by_tool", "receipt")
@@ -765,6 +828,11 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
             "integrated_review_not_assessed": 1,
         },
         "coverage_history": collection(coverage_history, ref("/coverage_annotations")),
+        "verification": {
+            "status": snapshot.get("verification", {}).get("status", "absent"),
+            "history": deepcopy(snapshot.get("verification", {}).get("history")),
+            "reference": ref("/verification"),
+        },
         "questions": collection(questions, ref("/questions")),
         "succession": collection(transfers, ref("/handoffs")),
         "checkpoint": {
