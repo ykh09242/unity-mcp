@@ -488,8 +488,8 @@ function TaskList({
               ? 'All statuses'
               : title === 'Owner' || title === 'Responsible actor'
                 ? 'All owners'
-                : title === 'Coordination'
-                  ? 'All coordination'
+                : title === 'View'
+                  ? 'All views'
                   : 'All workstreams',
           )}
         </option>
@@ -559,7 +559,7 @@ function TaskList({
             )}
             {select(
               'coordination',
-              'Coordination',
+              'View',
               coordinationViews.map((view) => [view, i18n.t(coordinationLabels[view]!)]),
             )}
             {select(
@@ -622,7 +622,7 @@ function TaskList({
                   : key === 'owner'
                     ? 'Owner'
                     : key === 'coordination'
-                      ? 'Coordination'
+                      ? 'View'
                       : key === 'category'
                         ? 'Category'
                         : key === 'status'

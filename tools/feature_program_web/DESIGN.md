@@ -207,9 +207,18 @@ lead time. Open waits are qualified by their explicit observation time. No secon
 live ticking duration or repeated assistive announcement is introduced.
 
 Optional verification projections use current revision/task references and honest collection
-counts. Legacy absence remains a short missing-record message rather than fabricated passing
-lanes. Request/observation identity keeps row keys stable. The same native control and
+counts. Never-recorded legacy/planned optional verification and provider sections remain
+absent. Adopted requests with genuinely missing, stale or unavailable facts retain concise
+actionable diagnostics. Unfinished unknown outcomes and never-assessed recheck labels do not
+duplicate the visible phase. Known assigned checks use localized labels; custom IDs remain
+original. Request/observation identity keeps row keys stable. The same native control and
 neutral-separator grammar is retained, with no broad redesign, nested tables or lane cards.
 New human narratives preserve typed source-bound session-language presentation; system
 copy follows the selected interface language. Root-owned actual built CLI/dashboard QA and
 fresh independent review remain necessary before claiming visual or integration acceptance.
+Provider stages may be recorded before reviewed task completion through bound verification
+requests; ordinary delivery still requires reviewed completion. Aggregate stage keys include
+request identity and stage ID. Lane-bound provider details remain visible when not represented
+by the current task aggregate/delivery, and newer absent/failed/stale observations never revive
+an older capture. Retry history displays execution phase and actual reported outcome separately,
+so a completed failed attempt cannot look successful after a later passing retry.

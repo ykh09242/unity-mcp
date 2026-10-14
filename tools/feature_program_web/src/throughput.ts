@@ -16,6 +16,11 @@ export const coordinationLabels: Readonly<Record<string, string>> = {
   waiting: 'Observed waiting',
   unknown: 'Coordination unavailable',
 };
+export const checkLabels: Readonly<Record<string, string>> = {
+  acceptance: 'Acceptance criteria',
+  scoped_tests: 'Scoped tests',
+  format_lint: 'Formatting and lint',
+};
 export function readinessFactors(snapshot: Snapshot, task: Task) {
   const readiness = recordedReadiness(snapshot, task);
   const dependencies = currentCollection(snapshot, readiness?.unmet_dependencies, task.id);
@@ -66,12 +71,16 @@ export function verificationContext(snapshot: Snapshot, task: Task) {
   return { value, lanes: { ...lanes, items: rows }, findings };
 }
 export function laneNeedsAction(lane: JsonRecord) {
+  const provider = record(lane.provider_execution);
   return (
     lane.applicability !== 'current' ||
     lane.result === 'failed' ||
     lane.phase === 'blocked' ||
     ['requested', 'running'].includes(string(lane.phase)) ||
-    (lane.phase === 'finished' && ['unknown', 'pending', 'not_run'].includes(string(lane.result)))
+    (lane.phase === 'finished' &&
+      ['unknown', 'pending', 'not_run'].includes(string(lane.result))) ||
+    (hasProviderRecord(lane.provider_execution) &&
+      (provider.status !== 'passed' || provider.applicability !== 'current'))
   );
 }
 export function observedWait(value: Json | undefined) {
@@ -156,14 +165,16 @@ export function providerContext(snapshot: Snapshot, task: Task) {
   if (
     provider.task_id !== task.id ||
     !currentReference(snapshot, provider.reference, task.id) ||
-    !['passed', 'failed', 'pending', 'not_assessed'].includes(string(provider.status)) ||
+    !['passed', 'failed', 'pending', 'not_assessed', 'unavailable'].includes(
+      string(provider.status),
+    ) ||
     !Array.isArray(provider.stages) ||
     !validCounts(provider, '', provider.stages)
   )
     return null;
   const stages = provider.stages.map(record);
   if (
-    new Set(stages.map((stage) => stage.id)).size !== stages.length ||
+    new Set(stages.map(providerStageKey)).size !== stages.length ||
     stages.some(
       (stage) =>
         !string(stage.id) ||
@@ -178,4 +189,16 @@ export function providerContext(snapshot: Snapshot, task: Task) {
   )
     return null;
   return { provider, stages };
+}
+export function providerStageKey(stage: JsonRecord) {
+  return JSON.stringify([string(stage.request_id), string(stage.id)]);
+}
+export function hasProviderRecord(value: Json | undefined) {
+  const provider = record(value);
+  return (
+    provider.adopted === true ||
+    Number(provider.total) > 0 ||
+    items(provider.stages).length > 0 ||
+    Object.keys(record(provider.provider_reference)).length > 0
+  );
 }

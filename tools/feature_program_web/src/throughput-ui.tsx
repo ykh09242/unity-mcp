@@ -8,12 +8,15 @@ import { snapshotIndex } from './selectors';
 import {
   coordinationLabels,
   coordinationViews,
+  checkLabels,
   executionPriority,
   findingsText,
   laneNeedsAction,
   matchesCoordination,
   observedWait,
   providerContext,
+  providerStageKey,
+  hasProviderRecord,
   readinessFactors,
   verificationAssignments,
   verificationContext,
@@ -156,6 +159,7 @@ function Waiting({ value }: { readonly value: Json | undefined }) {
   const i18n = useI18n();
   const wait = observedWait(value);
   const raw = record(value);
+  if (!string(raw.started_at) && raw.status !== 'observed') return null;
   if (!wait)
     return (
       <span className="muted">
@@ -180,17 +184,32 @@ function Waiting({ value }: { readonly value: Json | undefined }) {
     </span>
   );
 }
-function Lane({ lane }: { readonly lane: JsonRecord }) {
+function Lane({
+  lane,
+  snapshot,
+  task,
+  represented,
+}: {
+  readonly lane: JsonRecord;
+  readonly snapshot: Snapshot;
+  readonly task: Task;
+  readonly represented: ReadonlySet<string>;
+}) {
   const i18n = useI18n();
   const blocker = record(lane.blocker);
   const recheck = record(lane.recheck);
+  const showResult =
+    lane.phase === 'finished' || !['unknown', 'pending', ''].includes(string(lane.result));
+  const showRecheck = string(recheck.status) && recheck.status !== 'not_assessed';
+  const hasWait =
+    string(record(lane.waiting).started_at) || record(lane.waiting).status === 'observed';
   const details = [...findingsText(lane.reasons), ...findingsText(recheck.reasons)];
   return (
     <li className="verification-lane">
       <div className="lane-heading">
         <strong>{i18n.t(laneLabels[string(lane.lane)] || string(lane.lane))}</strong>
         <span className="badge">{i18n.human(lane.phase)}</span>
-        <span className="badge">{i18n.human(lane.result)}</span>
+        {showResult && <span className="badge">{i18n.human(lane.result)}</span>}
         {lane.applicability !== 'current' && (
           <span className="badge lane-warning">{i18n.human(lane.applicability)}</span>
         )}
@@ -216,7 +235,9 @@ function Lane({ lane }: { readonly lane: JsonRecord }) {
             <>
               {i18n.t('{count} assigned checks', { count: items(lane.check_ids).length })}:{' '}
               {items(lane.check_ids)
-                .map((id) => i18n.display(id))
+                .map((id) =>
+                  checkLabels[string(id)] ? i18n.t(checkLabels[string(id)]!) : i18n.display(id),
+                )
                 .join(', ')}
             </>
           )}
@@ -225,14 +246,16 @@ function Lane({ lane }: { readonly lane: JsonRecord }) {
           )}
         </p>
       )}
-      <div className="lane-foot">
-        <Waiting value={lane.waiting} />
-        {string(recheck.status) && (
-          <span>
-            {i18n.t('Recheck')}: {i18n.human(recheck.status)}
-          </span>
-        )}
-      </div>
+      {(hasWait || showRecheck) && (
+        <div className="lane-foot">
+          <Waiting value={lane.waiting} />
+          {showRecheck && (
+            <span>
+              {i18n.t('Recheck')}: {i18n.human(recheck.status)}
+            </span>
+          )}
+        </div>
+      )}
       {details.length > 0 && (
         <details className="lane-details">
           <summary>{i18n.t('Assessment details')}</summary>
@@ -242,6 +265,14 @@ function Lane({ lane }: { readonly lane: JsonRecord }) {
             ))}
           </ul>
         </details>
+      )}
+      {lane.provider_execution && (
+        <ProviderStages
+          snapshot={snapshot}
+          task={task}
+          value={lane.provider_execution}
+          represented={represented}
+        />
       )}
     </li>
   );
@@ -256,93 +287,137 @@ export function VerificationLanes({
 }) {
   const i18n = useI18n();
   const context = verificationContext(snapshot, task);
+  const projected = record(task.verification);
+  const hasVerification =
+    Number(record(projected.lanes).total) > 0 ||
+    items(record(projected.lanes).items).length > 0 ||
+    Number(record(projected.findings).total) > 0 ||
+    items(record(projected.findings).items).length > 0;
+  const hasProvider = hasProviderRecord(task.provider_execution);
+  const hasDelivery =
+    task.status === 'done' &&
+    Boolean(string(record(task.delivery).status)) &&
+    record(task.delivery).status !== 'unrecorded';
+  if (!hasVerification && !hasProvider && !hasDelivery) return null;
+  const represented = new Set(providerContext(snapshot, task)?.stages.map(providerStageKey) || []);
   return (
     <section className="verification-context" aria-label={i18n.t('Verification lanes')}>
-      <h3>{i18n.t('Verification lanes')}</h3>
-      {!context ? (
-        <p className="muted">
-          {i18n.t('No current verification record. Task and review records remain available.')}
-        </p>
-      ) : (
-        <>
-          <p className="muted lane-explanation">
-            {i18n.t('Recorded progress and outcomes; applicability is assessed separately.')}
+      {hasVerification && <h3>{i18n.t('Verification lanes')}</h3>}
+      {hasVerification &&
+        (!context ? (
+          <p className="muted">
+            {i18n.t('No current verification record. Task and review records remain available.')}
           </p>
-          {context.lanes.total ? (
-            <ul className="verification-lanes">
-              {context.lanes.items.map((lane) => (
-                <Lane
-                  key={`${string(lane.request_id)}:${String(lane.request_version)}`}
-                  lane={lane}
-                />
-              ))}
-            </ul>
-          ) : (
-            <p className="muted">{i18n.t('No verification requests recorded')}</p>
-          )}
-          {context.lanes.omitted > 0 && (
-            <p className="muted">
-              {i18n.t('{shown} / {total} shown · {omitted} omitted', {
-                shown: context.lanes.shown,
-                total: context.lanes.total,
-                omitted: context.lanes.omitted,
-              })}
-            </p>
-          )}
-          {context.findings.total > 0 && (
-            <section className="current-findings">
-              <h4>{i18n.t('Recorded findings')}</h4>
-              <ul>
-                {context.findings.items.map((value, index) => {
-                  const finding = record(value);
-                  return (
-                    <li key={string(finding.id) || index}>
-                      <p>{i18n.display(finding.statement)}</p>
-                      {items(finding.resolutions).length > 0 && (
-                        <span className="muted">
-                          {i18n.t('Resolution recorded; acceptance remains separate.')}
-                        </span>
-                      )}
-                    </li>
-                  );
-                })}
+        ) : (
+          <>
+            {context.lanes.total ? (
+              <ul className="verification-lanes">
+                {context.lanes.items.map((lane) => (
+                  <Lane
+                    key={`${string(lane.request_id)}:${String(lane.request_version)}`}
+                    lane={lane}
+                    snapshot={snapshot}
+                    task={task}
+                    represented={represented}
+                  />
+                ))}
               </ul>
-              {context.findings.omitted > 0 && (
-                <p className="muted">
-                  {i18n.t('{shown} / {total} shown · {omitted} omitted', {
-                    shown: context.findings.shown,
-                    total: context.findings.total,
-                    omitted: context.findings.omitted,
+            ) : (
+              <p className="muted">{i18n.t('No verification requests recorded')}</p>
+            )}
+            {context.lanes.omitted > 0 && (
+              <p className="muted">
+                {i18n.t('{shown} / {total} shown · {omitted} omitted', {
+                  shown: context.lanes.shown,
+                  total: context.lanes.total,
+                  omitted: context.lanes.omitted,
+                })}
+              </p>
+            )}
+            {context.findings.total > 0 && (
+              <section className="current-findings">
+                <h4>{i18n.t('Recorded findings')}</h4>
+                <ul>
+                  {context.findings.items.map((value, index) => {
+                    const finding = record(value);
+                    return (
+                      <li key={string(finding.id) || index}>
+                        <p>{i18n.display(finding.statement)}</p>
+                        {items(finding.resolutions).length > 0 && (
+                          <span className="muted">
+                            {i18n.t('Resolution recorded; acceptance remains separate.')}
+                          </span>
+                        )}
+                      </li>
+                    );
                   })}
-                </p>
-              )}
-            </section>
-          )}
-        </>
-      )}
+                </ul>
+                {context.findings.omitted > 0 && (
+                  <p className="muted">
+                    {i18n.t('{shown} / {total} shown · {omitted} omitted', {
+                      shown: context.findings.shown,
+                      total: context.findings.total,
+                      omitted: context.findings.omitted,
+                    })}
+                  </p>
+                )}
+              </section>
+            )}
+          </>
+        ))}
       <ProviderStages snapshot={snapshot} task={task} />
-      {task.status === 'done' && <CurrentDelivery task={task} />}
+      {hasDelivery && <CurrentDelivery task={task} />}
     </section>
   );
 }
 
-function ProviderStages({ snapshot, task }: { readonly snapshot: Snapshot; readonly task: Task }) {
+function ProviderStages({
+  snapshot,
+  task,
+  value = task.provider_execution,
+  represented,
+}: {
+  readonly snapshot: Snapshot;
+  readonly task: Task;
+  readonly value?: Json;
+  readonly represented?: ReadonlySet<string>;
+}) {
   const i18n = useI18n();
-  const provider = record(task.provider_execution);
-  if (!Object.hasOwn(task, 'provider_execution')) return null;
-  const context = providerContext(snapshot, task);
+  const presentation = usePresentation();
+  const provider = record(value);
+  if (!hasProviderRecord(value)) return null;
+  const context = providerContext(snapshot, { ...task, provider_execution: value || null });
+  const stages =
+    context?.stages.filter((stage) => !represented?.has(providerStageKey(stage))) || [];
+  if (
+    context &&
+    represented &&
+    context.stages.length > 0 &&
+    !stages.length &&
+    !Number(provider.omitted)
+  )
+    return null;
   return (
     <section className="provider-stages">
       <h4>{i18n.t('PR and beta execution')}</h4>
+      {provider.applicability && provider.applicability !== 'current' && (
+        <p className="lane-warning">{i18n.human(provider.applicability)}</p>
+      )}
       {!context ? (
         <p className="muted">{i18n.t('Provider execution context is unavailable.')}</p>
       ) : (
         <>
           <ul className="verification-lanes">
-            {context.stages.map((stage, index) => (
-              <li className="verification-lane" key={string(stage.id) || index}>
+            {stages.map((stage) => (
+              <li className="verification-lane" key={providerStageKey(stage)}>
                 <div className="lane-heading">
                   <strong>{i18n.t(laneLabels[string(stage.kind)] || string(stage.kind))}</strong>
+                  {stage.request_id && (
+                    <span className="muted">
+                      {presentation.actor(stage.verifier_id) ||
+                        i18n.t(laneLabels[string(stage.lane)] || string(stage.lane) || 'CI')}
+                    </span>
+                  )}
                   <span className="badge">{i18n.human(stage.status)}</span>
                   {stage.current === false && (
                     <span className="lane-warning">{i18n.t('Earlier context')}</span>
@@ -380,9 +455,10 @@ function ProviderStages({ snapshot, task }: { readonly snapshot: Snapshot; reado
                       {records(stage.history).map((run, runIndex) => (
                         <li key={`${String(run.run_id)}:${String(run.run_attempt)}:${runIndex}`}>
                           {i18n.t('Attempt')} {i18n.display(run.run_attempt)} ·{' '}
-                          {i18n.human(
-                            run.status || run.conclusion || run.reported_outcome || 'unknown',
-                          )}
+                          {i18n.human(run.status || 'unknown')} ·{' '}
+                          <span className="badge">
+                            {i18n.human(run.reported_outcome || 'unknown')}
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -398,9 +474,19 @@ function ProviderStages({ snapshot, task }: { readonly snapshot: Snapshot; reado
               </li>
             ))}
           </ul>
+          {!stages.length && provider.adopted === true && (
+            <p className="muted">{i18n.t('Awaiting a current provider observation')}</p>
+          )}
           {Number(provider.omitted) > 0 && (
             <p className="muted">
               {i18n.t('{count} stages omitted', { count: Number(provider.omitted) })}
+            </p>
+          )}
+          {Number(provider.omitted_lanes) > 0 && (
+            <p className="lane-warning">
+              {i18n.t('{count} provider lanes omitted; execution assessment is incomplete.', {
+                count: Number(provider.omitted_lanes),
+              })}
             </p>
           )}
         </>
