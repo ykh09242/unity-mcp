@@ -108,12 +108,27 @@ export function ContentValue({ value }: { readonly value: Json | undefined }) {
   );
 }
 
-function Facts({ values }: { readonly values: readonly (readonly [string, Json | undefined])[] }) {
-  const i18n = useI18n();
-  const presentation = usePresentation();
-  return (
+function hasValue(value: Json | undefined): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+function Facts({
+  values,
+  optional = false,
+}: {
+  readonly values: readonly (readonly [string, Json | undefined])[];
+  readonly optional?: boolean;
+}) {
+  const i18n = useI18n(),
+    presentation = usePresentation();
+  const rows = optional ? values.filter(([, value]) => hasValue(value)) : values;
+  return rows.length ? (
     <dl className="history-facts">
-      {values.map(([label, value]) => (
+      {rows.map(([label, value]) => (
         <div key={label}>
           <dt>{i18n.t(label)}</dt>
           <dd>
@@ -126,7 +141,7 @@ function Facts({ values }: { readonly values: readonly (readonly [string, Json |
         </div>
       ))}
     </dl>
-  );
+  ) : null;
 }
 
 function CheckRows({ value }: { readonly value: Json | undefined }) {
@@ -142,17 +157,15 @@ function CheckRows({ value }: { readonly value: Json | undefined }) {
               <strong>{i18n.display(check.id || check.name)}</strong>
               <span className="badge">{i18n.human(check.status)}</span>
             </div>
-            <details>
-              <summary>{i18n.t('Check details')}</summary>
-              <Facts
-                values={[
-                  ['Execution', check.execution_kind],
-                  ['Command', check.command],
-                  ['Result', check.result],
-                  ['Reason', check.reason],
-                ]}
-              />
-            </details>
+            <Facts
+              optional
+              values={[
+                ['Execution', check.execution_kind],
+                ['Command', check.command],
+                ['Result', check.result],
+                ['Reason', check.reason],
+              ]}
+            />
           </li>
         );
       })}
@@ -209,9 +222,9 @@ function ReviewRound({
   return (
     <article className="history-round">
       <div className="history-event-heading">
-        <h4>
+        <h5>
           {i18n.t('Round')} {i18n.display(round.round)}
-        </h4>
+        </h5>
         <span className="badge">{i18n.human(review.verdict)}</span>
       </div>
       <Facts
@@ -223,32 +236,39 @@ function ReviewRound({
         ]}
       />
 
-      <details>
-        <summary>{i18n.t('Checks')}</summary>
+      <section className="history-block">
+        <h5>{i18n.t('Checks')}</h5>
         <CheckRows value={receipt.checks} />
-      </details>
-      <details>
-        <summary>{i18n.t('Findings and acceptance')}</summary>
-        <Facts
-          values={[
-            ['Findings', review.unresolved_findings],
-            ['Reason', review.reason],
-            ['Unresolved acceptance', receipt.unresolved_acceptance],
-            ['Limitations', receipt.limitations],
-          ]}
-        />
-        <ul className="history-events">
-          {items(receipt.acceptance_evidence).map((original, index) => {
-            const criterion = record(original);
-            return (
-              <li key={index}>
-                <ContentValue value={criterion.criterion} />
-                <p className="muted">{i18n.human(criterion.status)}</p>
-              </li>
-            );
-          })}
-        </ul>
-      </details>
+      </section>
+      {(hasValue(review.unresolved_findings) ||
+        hasValue(review.reason) ||
+        hasValue(receipt.unresolved_acceptance) ||
+        hasValue(receipt.limitations) ||
+        items(receipt.acceptance_evidence).length > 0) && (
+        <section className="history-block">
+          <h5>{i18n.t('Findings and acceptance')}</h5>
+          <Facts
+            optional
+            values={[
+              ['Findings', review.unresolved_findings],
+              ['Reason', review.reason],
+              ['Unresolved acceptance', receipt.unresolved_acceptance],
+              ['Limitations', receipt.limitations],
+            ]}
+          />
+          <ul className="history-events">
+            {items(receipt.acceptance_evidence).map((original, index) => {
+              const criterion = record(original);
+              return (
+                <li key={index}>
+                  <ContentValue value={criterion.criterion} />
+                  <p className="muted">{i18n.human(criterion.status)}</p>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
     </article>
   );
 }
@@ -322,12 +342,14 @@ export function TaskHistory({ task }: { readonly snapshot: Snapshot; readonly ta
           <ol className="history-events">
             {attempts.map((attempt, index) => (
               <li key={string(attempt.number) || index}>
-                <details open={index === attempts.length - 1 ? true : undefined}>
-                  <summary>
-                    {i18n.t('Attempt')} {i18n.display(attempt.number)} ·{' '}
-                    {i18n.display(presentation.actor(attempt.owner))} ·{' '}
-                    {i18n.human(attempt.status || attempt.outcome)}
-                  </summary>
+                <article className="history-attempt">
+                  <div className="history-event-heading">
+                    <h4>
+                      {i18n.t('Attempt')} {i18n.display(attempt.number)} ·{' '}
+                      {i18n.display(presentation.actor(attempt.owner))}
+                    </h4>
+                    <span className="badge">{i18n.human(attempt.status || attempt.outcome)}</span>
+                  </div>
                   {records(attempt.rounds).map((round, roundIndex) => (
                     <ReviewRound
                       key={string(round.round) || roundIndex}
@@ -338,7 +360,7 @@ export function TaskHistory({ task }: { readonly snapshot: Snapshot; readonly ta
                   {!records(attempt.rounds).length && (
                     <p className="muted">{i18n.t('No review rounds recorded')}</p>
                   )}
-                </details>
+                </article>
               </li>
             ))}
           </ol>
@@ -369,9 +391,9 @@ function DeliveryRecord({
   readonly task: Task;
 }) {
   const i18n = useI18n();
-  const delivery = record(value);
-  const meta = record(delivery.metadata);
-  const cleanup = record(meta.cleanup);
+  const delivery = record(value),
+    meta = record(delivery.metadata),
+    cleanup = record(meta.cleanup);
   const { attempt, round } = latestReview(task);
   const ci = records(meta.ci);
   const missingChecks = items(meta.required_ci).filter(
@@ -382,7 +404,6 @@ function DeliveryRecord({
       <Facts
         values={[
           ['Delivery', delivery.status],
-          ['PR', meta.pr_url],
           ['Merge', meta.merge_status],
           ['Cleanup', cleanup.status],
         ]}
@@ -396,116 +417,115 @@ function DeliveryRecord({
           {i18n.t('This delivery belongs to a different attempt or reviewed source')}
         </p>
       )}
-
-      <details>
-        <summary>
-          {i18n.t('CI checks')} <span className="muted">{i18n.number(items(meta.ci).length)}</span>
-        </summary>
-        <Facts values={[['Required CI', meta.required_ci]]} />
+      <section className="history-block">
+        <h5>
+          {i18n.t('CI checks')} <span className="muted">{i18n.number(ci.length)}</span>
+        </h5>
+        <Facts optional values={[['Required CI', meta.required_ci]]} />
         {missingChecks.length > 0 && (
           <Facts values={[['Required checks without observations', missingChecks]]} />
         )}
-        {items(meta.ci).length ? (
+        {ci.length ? (
           <ul className="history-events">
-            {items(meta.ci).map((original, index) => {
-              const check = record(original);
-              return (
-                <li key={index}>
-                  <div className="history-event-heading">
-                    <External value={check.url} label={i18n.display(check.name)} />
-                    <span className="badge">{i18n.human(check.conclusion)}</span>
-                  </div>
-                  {revisionMismatch(check.commit, meta.tested_commit) && (
-                    <p className="error">{i18n.t('Check revision differs from tested commit')}</p>
-                  )}
-                  <details>
-                    <summary>{i18n.t('Check details')}</summary>
-                    <Facts
-                      values={[
-                        ['Run', check.run_id],
-                        ['Job', check.job_id],
-                        ['Observed at', check.observed_at],
-                        ['Started', check.started_at],
-                        ['Completed', check.completed_at],
-                      ]}
-                    />
-                  </details>
-                </li>
-              );
-            })}
+            {ci.map((check, index) => (
+              <li key={index}>
+                <div className="history-event-heading">
+                  <External value={check.url} label={i18n.display(check.name)} />
+                  <span className="badge">{i18n.human(check.conclusion)}</span>
+                </div>
+                {revisionMismatch(check.commit, meta.tested_commit) && (
+                  <p className="error">{i18n.t('Check revision differs from tested commit')}</p>
+                )}
+                <Facts
+                  optional
+                  values={[
+                    ['Run', check.run_id],
+                    ['Job', check.job_id],
+                    ['Observed at', check.observed_at],
+                    ['Started', check.started_at],
+                    ['Completed', check.completed_at],
+                  ]}
+                />
+              </li>
+            ))}
           </ul>
         ) : (
           <p className="muted">{i18n.t('No CI observations recorded')}</p>
         )}
-      </details>
-      <details>
-        <summary>{i18n.t('Cleanup details')}</summary>
-        <Facts
-          values={[
-            ['Status', cleanup.status],
-            ['Reason', cleanup.reason],
-            ['Actor', cleanup.actor_id],
-            ['Recorded at', cleanup.recorded_at],
-          ]}
-        />
-      </details>
+      </section>
+      {Object.keys(cleanup).length > 0 && (
+        <section className="history-block">
+          <h5>{i18n.t('Cleanup details')}</h5>
+          <Facts values={[['Status', cleanup.status]]} />
+          <Facts
+            optional
+            values={[
+              ['Reason', cleanup.reason],
+              ['Actor', cleanup.actor_id],
+              ['Recorded at', cleanup.recorded_at],
+            ]}
+          />
+        </section>
+      )}
     </div>
   );
 }
 
 export function DeliveryHistory({ task }: { readonly task: Task }) {
-  const i18n = useI18n();
-  const history = deliveryHistory(task);
+  const i18n = useI18n(),
+    history = deliveryHistory(task);
   return (
     <section className="history-section">
-      <h3>{i18n.t('Recorded PR / CI')}</h3>
       <details>
-        <summary>{i18n.t('About these records')}</summary>
+        <summary>{i18n.t('Recorded PR / CI')}</summary>
         <p className="muted">
           {i18n.t(
             'These are saved observations, not live provider checks. A success conclusion does not establish that every test executed.',
           )}
         </p>
-      </details>
-      <details>
-        <summary>
-          {i18n.t('Current delivery')} · {i18n.human(record(task.delivery).status)}
-        </summary>
-        <DeliveryRecord value={task.delivery} task={task} />
-      </details>
-      <details>
-        <summary>
-          {i18n.t('Delivery history')}{' '}
-          <span className="muted">
-            {history.supplied ? i18n.number(history.entries.length) : i18n.t('Unavailable')}
-          </span>
-        </summary>
-        {history.entries.length ? (
-          <ol className="history-events">
-            {history.entries.map((entry) => (
-              <li key={entry.index}>
-                <details>
-                  <summary>
-                    {i18n.number(entry.index + 1)} · {i18n.human(record(entry.record).status)} ·{' '}
-                    {entry.time_status === 'recorded'
-                      ? i18n.date(entry.recorded_at)
-                      : i18n.t('Time unknown')}
-                  </summary>
-                  <p className="muted">{i18n.t('Local record time')}</p>
-                  <DeliveryRecord value={entry.record} task={task} />
-                </details>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="muted">
-            {i18n.t(
-              history.supplied && history.status === 'unrecorded'
-                ? 'No delivery history recorded'
-                : 'Delivery history unavailable',
-            )}
-          </p>
-        )}
+        <section className="history-block">
+          <h4>
+            {i18n.t('Current delivery')} · {i18n.human(record(task.delivery).status)}
+          </h4>
+          <DeliveryRecord value={task.delivery} task={task} />
+        </section>
+        <section className="history-block">
+          <h4>
+            {i18n.t('Delivery history')}{' '}
+            <span className="muted">
+              {history.supplied ? i18n.number(history.entries.length) : i18n.t('Unavailable')}
+            </span>
+          </h4>
+          {history.entries.length ? (
+            <ol className="history-events">
+              {history.entries.map((entry) => (
+                <li key={entry.index}>
+                  <article>
+                    <div className="history-event-heading">
+                      <h5>
+                        {i18n.number(entry.index + 1)} · {i18n.human(record(entry.record).status)}
+                      </h5>
+                      <span className="muted">
+                        {entry.time_status === 'recorded'
+                          ? i18n.date(entry.recorded_at)
+                          : i18n.t('Time unknown')}
+                      </span>
+                    </div>
+                    <DeliveryRecord value={entry.record} task={task} />
+                  </article>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="muted">
+              {i18n.t(
+                history.supplied && history.status === 'unrecorded'
+                  ? 'No delivery history recorded'
+                  : 'Delivery history unavailable',
+              )}
+            </p>
+          )}
+        </section>
       </details>
     </section>
   );
@@ -514,15 +534,22 @@ export function DeliveryHistory({ task }: { readonly task: Task }) {
 export function StaffingHistory({
   actor,
   assignment,
+  disclosure = true,
 }: {
   readonly actor: JsonRecord;
   readonly assignment?: JsonRecord;
+  readonly disclosure?: boolean;
 }) {
   const i18n = useI18n();
   const presentation = usePresentation();
+  const Container = disclosure ? 'details' : 'section';
   return (
-    <details className="history-section">
-      <summary>{i18n.t('Staffing and assignment history')}</summary>
+    <Container className="history-section">
+      {disclosure ? (
+        <summary>{i18n.t('Staffing and assignment history')}</summary>
+      ) : (
+        <h4>{i18n.t('Staffing and assignment history')}</h4>
+      )}
 
       <ol className="history-events">
         {items(actor.history).map((original, index) => {
@@ -554,11 +581,11 @@ export function StaffingHistory({
       )}
       {!assignment &&
         records(actor.assignments).map((entry, index) => (
-          <details key={index}>
-            <summary>
+          <section className="history-block" key={index}>
+            <h4>
               {i18n.display(presentation.taskReference(entry.task_id))} · {i18n.t('Attempt')}{' '}
               {i18n.display(entry.attempt)} · {i18n.statusLabel(entry.status)}
-            </summary>
+            </h4>
             <Facts
               values={[
                 ['Model', i18n.personnel('model_id', record(entry.metadata).model_id)],
@@ -569,9 +596,9 @@ export function StaffingHistory({
                 ['Role', record(entry.metadata).role],
               ]}
             />
-          </details>
+          </section>
         ))}
-    </details>
+    </Container>
   );
 }
 

@@ -130,6 +130,7 @@ describe('complete question navigation', () => {
     await user.type(screen.getByLabelText('Your answer'), 'Keep across work context');
     await user.click(screen.getByRole('link', { name: 'Affected work · A' }));
     await screen.findByRole('heading', { name: 'Affected work' });
+    await user.click(screen.getByRole('tab', { name: 'Related work' }));
     expect(parseNavigation(window.location.hash).filters.status).toBe('active');
     expect(screen.queryByRole('link', { name: /Choose the second scope/ })).toBeNull();
     await user.click(screen.getByRole('link', { name: /Choose the first scope/ }));

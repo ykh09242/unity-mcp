@@ -9,12 +9,14 @@ import { selectTasks, snapshotIndex } from './selectors';
 import type { TaskFilters } from './selectors';
 
 export type View = 'overview' | 'work' | 'team' | 'task' | 'question' | 'questions' | 'evidence';
+export type TaskSection = 'information' | 'related' | 'history';
 export type Route = {
   readonly view: View;
   readonly taskId?: string;
   readonly questionId?: string;
   readonly evidencePath?: string;
   readonly full?: boolean;
+  readonly section?: Exclude<TaskSection, 'information'>;
 };
 export type WorkContext = {
   readonly scope: 'all' | 'current';
@@ -57,6 +59,7 @@ const keys = [
   'size',
   'task',
   'full',
+  'section',
 ] as const;
 export function parseNavigation(
   hash: string,
@@ -94,6 +97,10 @@ export function parseNavigation(
           view: 'task',
           taskId: decodeURIComponent(path.slice(5)),
           full: parameters.get('full') === '1',
+          ...(parameters.getAll('section').length === 1 &&
+          ['related', 'history'].includes(parameters.get('section') || '')
+            ? { section: parameters.get('section') as 'related' | 'history' }
+            : {}),
         };
       else if (path.startsWith('question/'))
         route = { view: 'question', questionId: decodeURIComponent(path.slice(9)) };
@@ -105,6 +112,11 @@ export function parseNavigation(
       else throw error;
     }
   }
+  if (
+    parameters.has('section') &&
+    (route.view !== 'task' || !['related', 'history'].includes(parameters.get('section') || ''))
+  )
+    issues.push('section');
   const explicit = [...parameters.keys()].some((key) => keys.some((value) => value === key));
   const base = explicit ? defaultContext : fallback;
   const value = (key: string, previous: string) =>
@@ -226,6 +238,7 @@ export function navigationHash(route: Route, context: WorkContext): string {
   params.set('size', String(context.paging.size));
   if (context.selected) params.set('task', context.selected);
   if (route.full) params.set('full', '1');
+  if (route.view === 'task' && route.section) params.set('section', route.section);
   if (context.questions) {
     const q = context.questions;
     params.set('qview', q.view);
