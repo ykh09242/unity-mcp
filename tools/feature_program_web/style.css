@@ -2824,6 +2824,12 @@ select {
   gap: var(--s2) var(--s3);
   align-items: baseline;
 }
+.queue-row .queue-action,
+.queue-row .queue-trigger,
+.queue-row .queue-reason {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
 .queue-trigger,
 .queue-reason {
   margin-block-start: var(--s2);
