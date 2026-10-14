@@ -1012,7 +1012,7 @@ def delivery_publication_guard(program: Program, future: Record) -> Callable[[],
     path = program.path("backlog.json")
     if not path.is_file():
         return None
-    original, captured = core.read_json_frozen(path)
+    original, captured = core.read_json_frozen(path, limit=LIMIT)
     existing = {
         core.canonical(core.record(item, "delivery").get("receipt"))
         for task in core.sequence(original["tasks"], "tasks")

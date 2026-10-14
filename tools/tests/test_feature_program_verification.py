@@ -1055,3 +1055,33 @@ def test_publication_guard_allows_new_planned_task_without_existing_identity(fix
     # Then newly planned identity is not looked up as an existing completion transition.
     assert guard is None
     assert fixture.program.path("backlog.json").read_bytes() == fp.canonical(state)
+
+
+def test_inherited_registry_capacity_survives_actual_submission_publication(fixture):
+    # Given valid registry bytes above receipt-oriented one-MiB bounds but below eight MiB.
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    state["runtime_observation"] = "x" * (1024 * 1024 + 4096)
+    fixture.program.save(state)
+    receipt = fixture.receipt()
+    state = fixture.program.load()
+    fixture.program.submit(state, fp.argparse.Namespace(id="S01", owner="worker", receipt=receipt))
+    # When the actual host publishes the prepared ordinary submission through all guards.
+    fixture.program.save(state)
+    # Then the existing bounded registry capacity and ordinary review transition remain intact.
+    current = fixture.program.load()
+    assert current["runtime_observation"] == state["runtime_observation"]
+    assert fixture.program.task(current, "S01")["status"] == "review"
+
+
+def test_registry_publication_guards_reject_one_byte_over_inherited_limit(fixture):
+    # Given a syntactically valid registry one byte over the inherited eight-MiB capacity.
+    state = fixture.program.load()
+    encoded = fp.canonical(state)
+    oversized = encoded + b" " * (8 * 1024 * 1024 + 1 - len(encoded))
+    fixture.program.path("backlog.json").write_bytes(oversized)
+    # When the actual provider publication guard reads the original registry.
+    with pytest.raises(fp.ProgramError, match="bounded read"):
+        fp.authoring.delivery_publication_guard(fixture.program, state)
+    # Then bounded rejection leaves the original bytes unchanged rather than bypassing the read.
+    assert fixture.program.path("backlog.json").read_bytes() == oversized
