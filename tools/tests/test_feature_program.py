@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
+from io import BytesIO
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -1369,6 +1371,130 @@ def test_evidence_growth_after_stat_is_still_bounded(
     monkeypatch.setattr(Path, "open", grow_then_open)
     with pytest.raises(fp.ProgramError, match="bounded read"):
         small_program.program.evidence("compile-api", 1, [name])
+
+
+@pytest.mark.parametrize("limit", [0, 7, 65536, 65537])
+def test_bounded_reader_preserves_short_reads_and_exact_limit(tmp_path, monkeypatch, limit):
+    # Given a stream that may return fewer bytes than requested without reaching EOF.
+    payload = b"x" * limit
+
+    class ShortReader(BytesIO):
+        def read(self, size=-1):
+            assert 0 < size <= 65536
+            return super().read(min(size, 3))
+
+    monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: ShortReader(payload))
+    # When the file is captured with its exact byte limit.
+    content = fp.bounded_bytes(tmp_path / "short.bin", limit)
+    # Then all bytes survive, including after short reads.
+    assert content == payload
+
+
+@pytest.mark.parametrize("limit", [0, 7, 65536, 65537])
+def test_bounded_reader_detects_growth_after_a_short_read(tmp_path, monkeypatch, limit):
+    # Given a stream that exposes an additional byte after the original bounded contents.
+    payload = b"x" * limit
+
+    class GrowingReader(BytesIO):
+        grown = False
+
+        def read(self, size=-1):
+            assert 0 < size <= 65536
+            if not self.grown and self.tell() >= min(limit, 3):
+                position = self.tell()
+                self.seek(0, 2)
+                self.write(b"x")
+                self.seek(position)
+                self.grown = True
+            return super().read(min(size, 3))
+
+    monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: GrowingReader(payload))
+    # When the capture reaches its byte limit and probes the overflow sentinel.
+    # Then it rejects growth rather than returning an incomplete successful capture.
+    with pytest.raises(fp.ProgramError, match="bounded read"):
+        fp.bounded_bytes(tmp_path / "growing.bin", limit)
+
+
+def test_read_budget_tracks_actual_bytes_and_rejects_aggregate_overflow(tmp_path):
+    # Given two individually valid files whose combined contents exceed the ledger.
+    first = tmp_path / "first.bin"
+    second = tmp_path / "second.bin"
+    first.write_bytes(b"abc")
+    second.write_bytes(b"def")
+    budget = fp.ReadBudget(remaining=5)
+    # When the first capture is reused and the second file is read.
+    assert budget.read(first, 3) == budget.read(first, 3) == b"abc"
+    # Then cached reads do not consume the ledger twice and excess bytes are rejected.
+    assert budget.remaining == 2
+    with pytest.raises(fp.ProgramError, match="bounded read"):
+        budget.read(second, 3)
+
+
+@pytest.mark.parametrize("owned_status", ["active", "blocked", "review"])
+def test_request_local_conflicts_match_original_directional_semantics(owned_status):
+    # Given exact, ancestor, near-prefix, Unicode, and unnormalized lexical scope variants.
+    paths = [
+        "src",
+        "SRC/a",
+        "src/a/",
+        "src//a",
+        "src/ab",
+        "src/a.py",
+        "other",
+        "Straße/a",
+        "STRASSE",
+        "src/",
+        "src///a",
+    ]
+    tasks = []
+    for position, path in enumerate(paths):
+        for status in ("planned", owned_status, "done"):
+            tasks.append(
+                {
+                    "id": f"task-{len(tasks)}",
+                    "status": status,
+                    "conflict_groups": ["shared" if position % 2 else "SHARED"],
+                    "candidate_paths": [path, "planned-only"],
+                    "attempts": [{"scope": [path]}],
+                }
+            )
+    original = deepcopy(tasks)
+    # When one request-local index projects all owned conflicts.
+    index = fp._TaskIndex.capture(tasks)
+    actual = {task["id"]: index.conflicts(task["id"]) for task in tasks}
+    # Then it preserves original case/group/path semantics, orientation and task order.
+    for task in tasks:
+        expected = []
+        for other in tasks:
+            if other["status"] in fp.OWNED_STATES and other["id"] != task["id"]:
+                reasons = fp.Program.collisions(task, other)
+                if reasons:
+                    expected.append({"id": other["id"], "reasons": reasons})
+        assert actual[task["id"]] == expected
+    assert tasks == original
+
+
+def test_status_rebuilds_scopes_and_membership_for_each_captured_state(small_program):
+    # Given an owned task and a planned task with a case-insensitive scope collision.
+    assert small_program.claim("compile-api") == 0
+    state = small_program.program.load()
+    planned = small_program.program.task(state, "docs.2")
+    planned["candidate_paths"] = ["SRC/COMPILE-API.py"]
+    status = small_program.program.status(state)
+    row = next(item for item in status["candidates"] if item["id"] == "docs.2")
+    assert row["scope_conflicts"][0]["id"] == "compile-api"
+    # When the next call sees a different scope and then different objective membership.
+    planned["candidate_paths"] = ["src/docs.2.py"]
+    refreshed = small_program.program.status(state)
+    state["objective"] = {"membership_revision": 1, "task_ids": ["test_9"]}
+    selected = small_program.program.status(state)
+    # Then no index survives across calls and the existing public task error is preserved.
+    assert not next(item for item in refreshed["candidates"] if item["id"] == "docs.2")[
+        "scope_conflicts"
+    ]
+    assert [item["id"] for item in selected["candidates"]] == ["test_9"]
+    with pytest.raises(fp.ProgramError, match="Unknown task: absent"):
+        small_program.program.task(state, "absent")
 
 
 def test_oversized_canonical_save_preserves_previous_registry(small_program: Fixture) -> None:

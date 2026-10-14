@@ -294,6 +294,26 @@ def test_full_records_and_detached_projection_are_preserved(gate):
     assert snapshot["tasks"][0]["next_action"] == before["tasks"][0]["next_action"]
 
 
+def test_brief_readiness_matches_original_collisions_and_refreshes_scopes(request):
+    # Given captured ownership plus a planned collision spelled with a different case.
+    captured_gate = request.getfixturevalue("gate")
+    assert captured_gate.fixture.claim() == 0
+    snapshot = fp.read_snapshot(captured_gate.program.repo, captured_gate.program.directory)
+    state = captured_gate.program.load()
+    state["tasks"][1]["candidate_paths"] = ["SRC/S01.py"]
+    original = deepcopy(state)
+    # When a brief projects this state, and a later projection sees a changed scope.
+    first = fp.brief.project(captured_gate.program, state, snapshot, {})
+    state["tasks"][1]["candidate_paths"] = ["src/separate.py"]
+    second = fp.brief.project(captured_gate.program, state, snapshot, {})
+    # Then original directional reasons survive and neither result is a cached prior read.
+    expected = fp.Program.collisions(original["tasks"][1], original["tasks"][0])
+    rows = first["tasks"]["S02"]["readiness"]["collisions"]["items"]
+    assert [item["reason"] for item in rows[0]["reasons"]["items"]] == expected
+    assert second["tasks"]["S02"]["readiness"]["collisions"]["total"] == 0
+    assert state["tasks"][0] == original["tasks"][0]
+
+
 def test_excluded_planned_members_do_not_get_a_revalidation_next_step(gate):
     from tools.tests.test_feature_program_planning import membership, reviewed_input
 

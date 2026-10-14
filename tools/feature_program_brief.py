@@ -119,9 +119,12 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
         return {"path": "backlog.json", "pointer": pointer, "revision": revision, **identity}
 
     tasks = state["tasks"]
-    by_id = {task["id"]: task for task in tasks}
-    indexes = {task["id"]: index for index, task in enumerate(tasks)}
-    candidates = {item["id"]: item for item in program.status(state)["candidates"]}
+    task_index = core._TaskIndex.capture(tasks)
+    by_id = task_index.tasks
+    indexes = task_index.positions
+    candidates = {
+        item["id"]: item for item in program.status(state, _index=task_index)["candidates"]
+    }
     coverage_tasks = {item["task_id"]: item for item in snapshot["coverage"]["tasks"]}
     snapshot_tasks = {item["id"]: item for item in snapshot["tasks"]}
     attention = []
@@ -182,14 +185,9 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
         conflicts = (
             candidate["scope_conflicts"]
             if candidate
-            else [
-                {"id": other["id"], "reasons": reasons}
-                for other in tasks
-                if task["status"] in core.OWNED_STATES
-                and other["id"] != identifier
-                and other["status"] in core.OWNED_STATES
-                and (reasons := program.collisions(task, other))
-            ]
+            else task_index.conflicts(identifier)
+            if task["status"] in core.OWNED_STATES
+            else []
         )
         conflict_rows = [
             {
