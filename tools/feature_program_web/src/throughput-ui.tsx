@@ -430,16 +430,28 @@ function ProviderStages({
                 </div>
                 {records(stage.checks).length > 0 && (
                   <ul className="provider-checks">
-                    {records(stage.checks).map((check, checkIndex) => (
-                      <li key={string(check.id) || checkIndex}>
-                        <span>{i18n.display(check.id)}</span>{' '}
-                        <span className="badge">{i18n.human(check.status)}</span>
-                        {check.mode && <span className="muted">{i18n.human(check.mode)}</span>}
-                        {check.applicability && check.applicability !== 'current' && (
-                          <span className="lane-warning">{i18n.human(check.applicability)}</span>
-                        )}
-                      </li>
-                    ))}
+                    {records(stage.checks).map((check, checkIndex) => {
+                      const status = i18n.human(check.status);
+                      const mode = check.mode ? i18n.human(check.mode) : null;
+                      const applicability =
+                        check.applicability && check.applicability !== 'current'
+                          ? i18n.human(check.applicability)
+                          : null;
+                      return (
+                        <li key={string(check.id) || checkIndex}>
+                          <span>{i18n.display(check.id)}</span>{' '}
+                          <span className="badge">{status}</span>
+                          {mode &&
+                            mode !== status &&
+                            !(
+                              check.status === 'policy_skipped' && check.mode === 'policy_skip'
+                            ) && <span className="muted">{mode}</span>}
+                          {applicability && applicability !== status && applicability !== mode && (
+                            <span className="lane-warning">{applicability}</span>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
                 {Number(stage.checks_omitted) > 0 && (

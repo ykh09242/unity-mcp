@@ -309,6 +309,88 @@ describe('recorded throughput context', () => {
     await screen.findByRole('heading', { name: 'PR and beta execution' });
     expect(screen.getByText('Awaiting a current provider observation')).toBeTruthy();
   });
+  it.each(['en', 'ko'])(
+    'deduplicates repeated provider check meaning in %s while retaining distinct semantics',
+    async (locale) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      window.history.replaceState(null, '', '#task/A');
+      const snapshot = fixture(),
+        task = snapshot.tasks[0]!;
+      const checks = [
+        {
+          id: 'optional-docs',
+          status: 'policy_skipped',
+          mode: 'policy_skip',
+          applicability: 'policy_skipped',
+        },
+        { id: 'required-check', status: 'pending', mode: 'required', applicability: 'stale' },
+        { id: 'advisory-check', status: 'failed', mode: 'advisory', applicability: 'unavailable' },
+        {
+          id: 'inapplicable-check',
+          status: 'not_applicable',
+          mode: 'not_applicable',
+          applicability: 'not_applicable',
+        },
+      ];
+      const provider = {
+        task_id: 'A',
+        reference: reference(),
+        status: 'pending',
+        stages: [
+          {
+            id: 'pr-web',
+            kind: 'pr_ci',
+            status: 'pending',
+            current: true,
+            checks,
+            checks_total: checks.length,
+            checks_shown: checks.length,
+            checks_omitted: 0,
+            history: [],
+            history_total: 0,
+            history_shown: 0,
+            history_omitted: 0,
+          },
+        ],
+        total: 1,
+        shown: 1,
+        omitted: 0,
+      };
+      const view = render(
+        <App
+          loader={async () => ({
+            ...snapshot,
+            tasks: [{ ...task, provider_execution: provider }, snapshot.tasks[1]!],
+          })}
+        />,
+      );
+      await screen.findByRole('heading', {
+        name: locale === 'ko' ? 'PR 및 베타 실행' : 'PR and beta execution',
+      });
+      const rows = Array.from(view.container.querySelectorAll('.provider-checks > li'));
+      expect(rows).toHaveLength(4);
+      const labels = rows.map((row) =>
+        Array.from(row.querySelectorAll('span'))
+          .slice(1)
+          .map((span) => span.textContent),
+      );
+      expect(labels).toEqual(
+        locale === 'ko'
+          ? [
+              ['정책에 따른 생략'],
+              ['대기 중', '필수', '현재 적용 대상 변경'],
+              ['실패', '참고 항목', '사용 불가'],
+              ['해당 없음'],
+            ]
+          : [
+              ['policy skipped'],
+              ['pending', 'required', 'stale'],
+              ['failed', 'advisory', 'unavailable'],
+              ['not applicable'],
+            ],
+      );
+    },
+  );
   it('uses natural localized view and readiness copy without translating authored fixture titles', async () => {
     localStorage.setItem(PREFERENCE_KEY, 'ko');
     window.history.replaceState(null, '', '#work?coordination=available');
