@@ -220,7 +220,7 @@ describe('reviewed content and answer state', () => {
     fireEvent.select(input);
     snapshot = fixture('새로 검토한 선택지');
     await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     });
     expect(await screen.findByRole('button', { name: '새로 검토한 선택지' })).toBeDefined();
     expect(input.value).toBe('Private unsent answer');
