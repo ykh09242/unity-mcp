@@ -549,8 +549,8 @@ class _Reads:
 def _reads(budget: ReadBudget | None = None) -> _Reads:
     core = _core()
     return _Reads(
-        budget if budget is not None else core.ReadBudget(64 * 1024 * 1024),
-        core.ReadBudget(128 * 1024 * 1024),
+        budget if budget is not None else core._initial_read_budget(64 * 1024 * 1024),
+        core._initial_read_budget(128 * 1024 * 1024),
     )
 
 
@@ -947,6 +947,11 @@ def _retained_refs(
 
 
 def _compatible(original: Record, current: Record, *, submitted: bool = False) -> bool:
+    return not _context_changes(original, current, submitted=submitted)
+
+
+def _context_changes(original: Record, current: Record, *, submitted: bool = False) -> list[str]:
+    """Name actual mismatch dimensions without changing ordinary applicability rules."""
     keys = {
         "program_id",
         "task_id",
@@ -960,7 +965,7 @@ def _compatible(original: Record, current: Record, *, submitted: bool = False) -
     }
     if not submitted:
         keys |= {"round_count", "submission"}
-    return all(original.get(key) == current.get(key) for key in keys)
+    return sorted(key for key in keys if original.get(key) != current.get(key))
 
 
 def _carried_by_submission(
@@ -2154,6 +2159,16 @@ def projection(
             ) as exc:
                 applicability, reasons = "unavailable", [str(exc)]
             blocker = deepcopy(value.get("blocker")) if value["kind"] == "blocked" else None
+            changes: list[str] = []
+            if applicability != "unavailable":
+                current = _context(program, state, task_id, reads)
+                changes = _context_changes(
+                    latest["context"],
+                    current,
+                    submitted=_carried_by_submission(program, latest, current, reads),
+                )
+                if any("input" in reason.lower() for reason in reasons):
+                    changes.append("input_digest")
             lanes.append(
                 {
                     "request_id": request["request_id"],
@@ -2178,6 +2193,14 @@ def projection(
                     "result": value.get("result", "pending" if phase == "requested" else "unknown"),
                     "applicability": applicability,
                     "reasons": reasons,
+                    "currentness_changes": sorted(set(changes)),
+                    "selection_identity": _core().digest(
+                        {
+                            "request": request["receipt"],
+                            "observation": latest["receipt"],
+                            "context": request["context"],
+                        }
+                    ),
                     "context": deepcopy(request["context"]),
                     "request_ref": deepcopy(request["receipt"]),
                     "observation_ref": deepcopy(latest["receipt"])
@@ -2338,10 +2361,34 @@ def projection(
         for item in findings_by_task.get(task_id, []):
             value = item["input"]
             if value["task_id"] == task_id and value["kind"] == "finding":
-                resolutions = [
-                    {"id": event["input"]["id"], "observation_ref": deepcopy(event["receipt"])}
-                    for event in resolutions_by_finding.get(str(value["id"]), [])
-                ]
+                resolutions = []
+                for event in resolutions_by_finding.get(str(value["id"]), []):
+                    resolved = reads.record_index[str(event["input"]["observation_id"])]
+                    resolved_request = reads.record_index[str(resolved["request_id"])]
+                    resolution_status = "requires_recheck"
+                    try:
+                        applicable, _reasons = _applicable(program, state, resolved, reads)
+                        intact = not any(
+                            str(entry["input"]["id"]) in integrity
+                            for entry in (item, event, resolved, resolved_request)
+                        )
+                        if (
+                            applicable
+                            and intact
+                            and not _observation_problems(resolved, resolved_request)
+                        ):
+                            resolution_status = "resolved"
+                        if not intact:
+                            resolution_status = "unavailable"
+                    except (OSError, _core().ProgramError, _core().planning.PlanningError):
+                        resolution_status = "unavailable"
+                    resolutions.append(
+                        {
+                            "id": event["input"]["id"],
+                            "observation_ref": deepcopy(event["receipt"]),
+                            "status": resolution_status,
+                        }
+                    )
                 findings.append(
                     {
                         "id": value["id"],
@@ -2424,6 +2471,98 @@ def projection(
         len(_core().canonical(result)) <= OUTPUT_LIMIT, "Verification projection exceeds 8 MiB"
     )
     return result
+
+
+def _require_full_projection(state: Record, facts: Record) -> None:
+    """Reject truncated or mixed-state facts before any effective completion choice."""
+    core = _core()
+    history = _record(facts.get("history"), "full verification history")
+    _require(
+        history["total"] == history["shown"] == len(history["items"])
+        and history["omitted"] == 0
+        and history["reference"]["revision"] == core.phases.revision(state),
+        "Integrated obligations require full same-state verification facts",
+    )
+    _require(len(history["items"]) == len(_records(state)), "Incomplete verification history")
+    for task in _record(facts.get("tasks"), "verification tasks").values():
+        for field_name in ("lanes", "findings"):
+            collection = _record(task.get(field_name), "full verification collection")
+            _require(
+                collection["total"] == collection["shown"] == len(collection["items"])
+                and collection["omitted"] == 0,
+                "Integrated obligations require full same-state verification facts",
+            )
+
+
+def integrated_adverse_obligations(state: Record, facts: Record) -> list[Json]:
+    """Select explicit relevant adverse facts, including terminal members, before bounds."""
+    _require_full_projection(state, facts)
+    goal = state.get("objective")
+    members = _texts(goal["task_ids"], "objective members") if goal else []
+    tasks = {task["id"]: task for task in state["tasks"]}
+    rows: list[Json] = []
+    for task_id in members:
+        required = set(tasks[task_id]["required_checks"])
+        task_facts = facts["tasks"].get(task_id, {})
+        for lane in task_facts.get("lanes", {}).get("items", []):
+            if not required.intersection(lane["check_ids"]) and not lane.get("criteria"):
+                continue
+            code = None
+            if lane["applicability"] == "unavailable":
+                code = "verification_unavailable"
+            elif lane["phase"] in {"requested", "running", "blocked"}:
+                code = "verification_pending"
+            elif lane["phase"] == "canceled":
+                code = "verification_canceled"
+            elif lane["result"] != "passed":
+                code = "verification_nonpassing"
+            elif lane.get("observation_problems"):
+                code = "execution_inputs_incomplete"
+            provider = lane.get("provider_execution")
+            if (
+                provider is not None
+                and code is None
+                and lane["applicability"] != "unavailable"
+                and provider.get("adopted") is True
+                and provider.get("status") == "pending"
+            ):
+                code = "provider_execution_pending"
+            elif (
+                provider is not None
+                and lane["applicability"] != "unavailable"
+                and provider.get("status") in {"failed", "unavailable"}
+            ):
+                code = "provider_execution_adverse"
+            if code is not None:
+                rows.append(
+                    {
+                        "task_id": task_id,
+                        "request_id": lane["request_id"],
+                        "observation_id": lane["observation_id"],
+                        "reason_code": code,
+                        "check_ids": deepcopy(lane["check_ids"]),
+                        "criteria": deepcopy(lane.get("criteria", [])),
+                        "next_actor_id": lane.get("resolver_id") or lane["verifier_id"],
+                        "next_trigger": lane.get("next_trigger"),
+                    }
+                )
+        for finding in task_facts.get("findings", {}).get("items", []):
+            if not any(
+                resolution.get("status") == "resolved" for resolution in finding["resolutions"]
+            ):
+                rows.append(
+                    {
+                        "task_id": task_id,
+                        "request_id": finding["request_id"],
+                        "observation_id": finding["id"],
+                        "reason_code": "unresolved_finding",
+                        "check_ids": deepcopy(finding["check_ids"]),
+                        "criteria": deepcopy(finding["criteria"]),
+                        "next_actor_id": tasks[task_id].get("owner"),
+                        "next_trigger": "validated_finding_resolution",
+                    }
+                )
+    return rows
 
 
 def validate_receipt_refs(

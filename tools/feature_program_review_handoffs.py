@@ -18,6 +18,7 @@ LIMIT: Final = 8 * 1024 * 1024
 KINDS: Final = frozenset(
     {
         "submitted",
+        "dispatch_claimed",
         "dispatch_sent",
         "dispatch_failed",
         "dispatch_unknown",
@@ -183,6 +184,15 @@ def _payload(record: Record) -> Record:
 
 
 def _milestone(details: Record, kind: str) -> None:
+    _require(
+        details.get("recording_mode", "current") in {"current", "historical"},
+        "Invalid retained recording mode",
+    )
+    _require(
+        details.get("recording_mode") != "historical"
+        or kind not in {"submitted", "dispatch_claimed"},
+        "Historical activity cannot authorize a new dispatch",
+    )
     observed = details.get("observed_at")
     if observed is not None:
         try:
@@ -198,7 +208,7 @@ def _milestone(details: Record, kind: str) -> None:
         _text(details.get("boundary"), "actual boundary")
     if kind != "submitted":
         _require(bool(details.get("evidence_refs")), "Actual native observation requires evidence")
-    if kind in {"dispatch_sent", "dispatch_failed", "dispatch_unknown"}:
+    if kind in {"dispatch_claimed", "dispatch_sent", "dispatch_failed", "dispatch_unknown"}:
         _text(details.get("dispatch_attempt_id"), "dispatch attempt")
         _text(details.get("contact"), "actual native contact")
         status = details.get("recipient_status")
@@ -236,6 +246,7 @@ def _milestone(details: Record, kind: str) -> None:
 class _Chronology:
     """Accumulate only validated prior rows for one exact assignment."""
 
+    claims: dict[str, int] = field(default_factory=dict)
     dispatches: dict[str, Record] = field(default_factory=dict)
     reconciled: set[str] = field(default_factory=set)
     unknown: dict[str, int] = field(default_factory=dict)
@@ -255,8 +266,11 @@ class _Chronology:
             case str():
                 kind = str(item["kind"])
                 self.milestones.add((kind, dispatch_id))
+                if kind == "dispatch_claimed":
+                    self.claims[dispatch_id] = position
                 if kind in {"dispatch_sent", "dispatch_failed", "dispatch_unknown"}:
                     self.dispatches[dispatch_id] = item
+                    self.claims.pop(dispatch_id, None)
                 if kind == "dispatch_unknown" and item["id"] not in self.reconciled:
                     self.unknown[str(item["id"])] = position
                 if kind == "dispatch_sent" and dispatch_id not in self.terminal:
@@ -265,11 +279,16 @@ class _Chronology:
                     self.terminal.add(dispatch_id)
                     self.sent.pop(dispatch_id, None)
 
-    def require_clear(self) -> None:
+    def require_clear(self, own_claim: str | None = None) -> None:
         """Report the same earliest retained unresolved delivery/process boundary."""
         blockers = [(position, "unknown") for position in self.unknown.values()]
+        blockers.extend(
+            (position, "claim") for key, position in self.claims.items() if key != own_claim
+        )
         blockers.extend((position, "sent") for position in self.sent.values())
         match min(blockers, default=None):
+            case (_, "claim"):
+                _require(False, "Retained dispatch claim must be reconciled")
             case (_, "unknown"):
                 _require(False, "Retained unknown delivery was replayed")
             case (_, "sent"):
@@ -296,7 +315,13 @@ def _validate_retained_observation(
     reporter = item.get("reporter_id")
     dispatch_id = details.get("dispatch_attempt_id")
     dispatch = prior.dispatches.get(str(dispatch_id))
-    if kind in {"dispatch_sent", "dispatch_failed", "dispatch_unknown", "submitted"}:
+    if kind in {
+        "dispatch_claimed",
+        "dispatch_sent",
+        "dispatch_failed",
+        "dispatch_unknown",
+        "submitted",
+    }:
         _require(actor == director, "Retained dispatch/submission lacks director attribution")
     else:
         _require(
@@ -304,6 +329,19 @@ def _validate_retained_observation(
         )
         if actor == director and kind != "terminal":
             _require(reporter == reviewer, "Retained activity lacks actual reviewer reporter")
+    if kind == "dispatch_claimed":
+        _require(
+            details.get("action_id") == "ha-" + _core().digest(_review_action_identity(intent)),
+            "Retained claim action correlation changed",
+        )
+        _require(
+            _record(intent["eligibility"])["status"] == "eligible",
+            "Claim lacks eligible assignment",
+        )
+        _require(
+            str(dispatch_id) not in prior.dispatches, "Dispatch claim reuses an actual attempt"
+        )
+        prior.require_clear()
     if kind in {"dispatch_sent", "dispatch_failed", "dispatch_unknown"}:
         _require(
             _record(intent["eligibility"])["status"] == "eligible",
@@ -317,7 +355,7 @@ def _validate_retained_observation(
                 "Retained dispatch attempt lacks exact reconciliation",
             )
         else:
-            prior.require_clear()
+            prior.require_clear(str(dispatch_id))
     process_terminal = (
         kind == "terminal" and details["terminal_kind"] != "canonical_verdict_observed"
     )
@@ -737,12 +775,21 @@ def prepare_observation(state: Record, actual_input: Record) -> Record:
         "terminal_kind",
         "terminal_ref",
         "outcome",
+        "recording_mode",
+        "action_id",
     }
     _require(set(actual_input) <= allowed, "Unknown actual handoff observation fields")
     identifier = _text(actual_input.get("id"), "observation ID")
     handoff_id = _text(actual_input.get("handoff_id"), "handoff ID")
     generation = actual_input.get("assignment_generation")
     kind = _text(actual_input.get("kind"), "actual handoff kind")
+    mode = actual_input.get("recording_mode", "current")
+    _require(mode in {"current", "historical"}, "Invalid handoff recording mode")
+    historical = mode == "historical"
+    _require(
+        not historical or kind not in {"submitted", "dispatch_claimed"},
+        "Historical activity cannot authorize a new dispatch",
+    )
     _require(kind in KINDS, "Unknown actual handoff observation")
     intents = [
         item
@@ -762,7 +809,13 @@ def prepare_observation(state: Record, actual_input: Record) -> Record:
     director = _director(state)
     reporter = actual_input.get("reporter_id")
     match kind:
-        case "dispatch_sent" | "dispatch_failed" | "dispatch_unknown" | "submitted":
+        case (
+            "dispatch_claimed"
+            | "dispatch_sent"
+            | "dispatch_failed"
+            | "dispatch_unknown"
+            | "submitted"
+        ):
             _require(actor == director, "Only current director records native dispatch/submission")
         case "reviewer_acknowledged" | "review_started" | "terminal":
             _require(
@@ -843,7 +896,7 @@ def prepare_observation(state: Record, actual_input: Record) -> Record:
         == core.phases.revision(state),
         "Stale handoff record revision",
     )
-    if kind != "terminal":
+    if kind != "terminal" and not historical:
         _require(generation == intents[-1]["assignment_generation"], "Reviewer assignment changed")
         task_id = str(intent["subject"]["task_id"])
         context = _record(actual_input.get("context"), "current authoritative context")
@@ -876,6 +929,42 @@ def prepare_observation(state: Record, actual_input: Record) -> Record:
         if record["kind"] in {"dispatch_sent", "dispatch_failed", "dispatch_unknown"}
         and _record(record["details"]).get("dispatch_attempt_id") == dispatch_id
     ]
+    if kind == "dispatch_claimed":
+        _require(
+            details.get("action_id") == "ha-" + core.digest(_review_action_identity(intent)),
+            "Claim current action correlation changed",
+        )
+        core.coordination.require_task_authority(state, actor)
+        _require(
+            _eligibility(
+                state,
+                _task(state, str(intent["subject"]["task_id"])),
+                intent["reviewer_id"],
+                intent["eligibility"],
+            )["status"]
+            == "eligible",
+            "Reviewer eligibility no longer current",
+        )
+        processes = dispatch_processes(state)
+        _require(
+            not any(row["handoff_id"] == handoff_id and row["occupied"] for row in processes),
+            "Prior dispatch unresolved across assignments",
+        )
+        policy = _actor(state, intent["reviewer_id"]).get("review_wip_limit")
+        if policy is not None:
+            _require(type(policy) is int and policy >= 0, "Invalid recorded review WIP policy")
+            occupied = sum(
+                row["reviewer_id"] == intent["reviewer_id"] and row["occupied"] for row in processes
+            )
+            if __package__:
+                from tools import feature_program_queue as queue
+            else:
+                import feature_program_queue as queue
+            occupied += sum(
+                use["verifier_id"] == intent["reviewer_id"]
+                for use in queue._recorded_use(queue._capture_context(state))
+            )
+            _require(occupied < policy, "Recorded review WIP limit reached")
     if kind in {"dispatch_sent", "dispatch_failed", "dispatch_unknown"}:
         core.coordination.require_task_authority(state, actor)
         current_eligibility = _eligibility(
@@ -885,8 +974,18 @@ def prepare_observation(state: Record, actual_input: Record) -> Record:
             intent["eligibility"],
         )
         _require(
-            current_eligibility["status"] == "eligible", "Reviewer eligibility no longer current"
+            historical or current_eligibility["status"] == "eligible",
+            "Reviewer eligibility no longer current",
         )
+        if historical:
+            _require(
+                any(
+                    record["kind"] == "dispatch_claimed"
+                    and _record(record["details"]).get("dispatch_attempt_id") == dispatch_id
+                    for record in history
+                ),
+                "Historical outcome requires exact prior claim",
+            )
         unresolved = [
             record
             for record in history
@@ -937,7 +1036,7 @@ def prepare_observation(state: Record, actual_input: Record) -> Record:
             "Use stable ID for repeated ACK/start observation",
         )
         _require(
-            _actor(state, intent["reviewer_id"]).get("staffing_status") != "retired",
+            historical or _actor(state, intent["reviewer_id"]).get("staffing_status") != "retired",
             "Retired designated reviewer",
         )
         current_eligibility = _eligibility(
@@ -947,7 +1046,8 @@ def prepare_observation(state: Record, actual_input: Record) -> Record:
             intent["eligibility"],
         )
         _require(
-            current_eligibility["status"] == "eligible", "Reviewer eligibility no longer current"
+            historical or current_eligibility["status"] == "eligible",
+            "Reviewer eligibility no longer current",
         )
         _require(
             bool(dispatches) and dispatches[-1]["kind"] == "dispatch_sent",
@@ -1103,6 +1203,8 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
             match item["kind"]:
                 case "submitted":
                     pass
+                case "dispatch_claimed":
+                    phase = "claimed"
                 case "dispatch_sent":
                     phase = "sent"
                 case "dispatch_failed":
@@ -1123,6 +1225,7 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
             next_actor = intent["reviewer_id"]
         action = {
             "ready": "Dispatch exact packet through actual native transport",
+            "claimed": "Reconcile retained dispatch claim with actual native outcome",
             "unassigned": "Resolve explicit reviewer eligibility before dispatch",
             "sent": "Wait for actual reviewer acknowledgement/start",
             "delivery_failed": "Resolve actual transport failure before explicit retry",
@@ -1164,12 +1267,11 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
                 "observations_total": len(observations),
                 "runtime_capacity": "unknown",
                 "native_liveness": "unknown",
+                "dispatches": _dispatch_rows(related, positions, task_id, revision),
                 "superseded_running_uncertainty": currentness != "current"
-                and any(item["kind"] == "review_started" for item in related)
-                and not any(
-                    item["kind"] == "terminal"
-                    and _record(item["details"]).get("terminal_kind") in {"finished", "canceled"}
-                    for item in related
+                and any(
+                    item["occupied"]
+                    for item in _dispatch_rows(related, positions, task_id, revision)
                 ),
             }
         )
@@ -1231,3 +1333,242 @@ def bound_projection(full: Record, limit: int = 50) -> Record:
     )
     _require(len(_core().canonical(result)) <= LIMIT, "Handoff projection exceeds output budget")
     return result
+
+
+def _dispatch_rows(
+    related: list[Record], positions: dict[str, int], task_id: str, revision: str
+) -> list[Record]:
+    """Reduce each actual process independently; another terminal never clears it."""
+    result: dict[str, Record] = {}
+    statuses = {
+        "dispatch_claimed": "claimed",
+        "dispatch_sent": "sent",
+        "dispatch_failed": "failed",
+        "dispatch_unknown": "unknown",
+        "reviewer_acknowledged": "acknowledged",
+        "review_started": "started",
+    }
+    for item in related:
+        details = _record(item["details"])
+        identifier = details.get("dispatch_attempt_id")
+        kind = str(item["kind"])
+        status = statuses.get(kind)
+        if kind == "terminal" and details.get("terminal_kind") in {"finished", "canceled"}:
+            status = str(details["terminal_kind"])
+        if not isinstance(identifier, str) or status is None:
+            continue
+        result[identifier] = {
+            "dispatch_attempt_id": identifier,
+            "status": status,
+            "occupied": status not in {"failed", "finished", "canceled"},
+            "ambiguous": status in {"claimed", "unknown"},
+            "reference": _locator(positions[str(item["id"])], task_id, revision, item["digest"]),
+        }
+    return [result[key] for key in sorted(result)]
+
+
+def dispatch_processes(state: Record) -> list[Record]:
+    """Full validated recorded workload, including superseded nonterminal processes."""
+    history = _validated_history(state)
+    positions = {str(item["id"]): index for index, item in enumerate(history.records)}
+    revision = _core().phases.revision(state)
+    result = []
+    for (identifier, generation), related in history.groups.items():
+        intent = next(
+            item
+            for item in history.records
+            if item["kind"] == "intent"
+            and item["handoff_id"] == identifier
+            and item["assignment_generation"] == generation
+        )
+        for row in _dispatch_rows(related, positions, str(intent["subject"]["task_id"]), revision):
+            result.append(
+                {
+                    **row,
+                    "handoff_id": identifier,
+                    "assignment_generation": generation,
+                    "reviewer_id": intent["reviewer_id"],
+                    "task_id": intent["subject"]["task_id"],
+                    "superseded": generation != history.latest_generation[identifier],
+                }
+            )
+    return result
+
+
+def prepare_dispatch_claim(state: Record, actual_input: Record) -> Record:
+    """Retain one guarded intent to call native transport; this never sends."""
+    _require(actual_input.get("kind") == "dispatch_claimed", "Exact dispatch claim kind required")
+    return prepare_observation(state, actual_input)
+
+
+def prepare_report_records(state: Record, exact_action: Record, actual_report: Record) -> Record:
+    """Convert explicitly attributed actual milestones into inert normal record templates."""
+    core = _core()
+    _require(
+        actual_report.get("action_id") == exact_action.get("action_id"),
+        "Report action correlation changed",
+    )
+    if exact_action.get("assignment_kind") != "independent_review":
+        return {
+            "schema_version": 1,
+            "kind": "handoff_report_preparation",
+            "status": "incomplete",
+            "inputs": [],
+            "missing_fields": ["worker_assignment_report_requires_ordinary_note"],
+        }
+    intent = next(
+        (
+            item
+            for item in _validated_history(state).records
+            if item["kind"] == "intent"
+            and item["handoff_id"] == exact_action.get("handoff_id")
+            and item["assignment_generation"] == exact_action.get("assignment_generation")
+        ),
+        None,
+    )
+    _require(
+        intent is not None
+        and exact_action.get("action_id") == "ha-" + core.digest(_review_action_identity(intent))
+        and intent["subject"] == exact_action.get("subject")
+        and intent["packet_ref"] == exact_action.get("packet_ref"),
+        "Report exact assignment changed",
+    )
+    _require(
+        actual_report.get("reporter_id") == intent["reviewer_id"],
+        "Report lacks designated reviewer",
+    )
+    refs = _refs(actual_report.get("evidence_refs", []))
+    _require(bool(refs), "Actual report evidence required")
+    dispatch = _text(actual_report.get("dispatch_attempt_id"), "reported dispatch")
+    _require(
+        any(
+            item["handoff_id"] == intent["handoff_id"]
+            and item["assignment_generation"] == intent["assignment_generation"]
+            and item["dispatch_attempt_id"] == dispatch
+            and item["status"] in {"sent", "acknowledged", "started", "finished", "canceled"}
+            for item in dispatch_processes(state)
+        ),
+        "Report requires exact actually sent process",
+    )
+    templates = []
+    already_recorded = []
+    seen = set()
+    allowed = {
+        "kind",
+        "reason",
+        "observed_at",
+        "clock_id",
+        "timestamp_source",
+        "boundary",
+        "terminal_kind",
+        "outcome",
+        "terminal_ref",
+        "next_trigger",
+    }
+    for milestone in _rows(actual_report.get("milestones", [])):
+        _require(set(milestone) <= allowed, "Unknown report milestone fields")
+        kind = _text(milestone.get("kind"), "reported milestone")
+        _require(
+            kind in {"reviewer_acknowledged", "review_started", "terminal"} and kind not in seen,
+            "Invalid or duplicate reported milestone",
+        )
+        seen.add(kind)
+        details = {**deepcopy(milestone), "dispatch_attempt_id": dispatch, "evidence_refs": refs}
+        _text(details.get("reason"), "actual report reason")
+        _milestone(details, kind)
+        template = {
+            "schema_version": 1,
+            "operation": "review-handoff-record",
+            "id": "report-"
+            + core.digest(
+                {
+                    "action": exact_action["action_id"],
+                    "dispatch": dispatch,
+                    "milestone": milestone,
+                    "refs": refs,
+                }
+            ),
+            "handoff_id": intent["handoff_id"],
+            "assignment_generation": intent["assignment_generation"],
+            "subject": deepcopy(intent["subject"]),
+            "packet_ref": deepcopy(intent["packet_ref"]),
+            "actor_id": _director(state),
+            "reporter_id": intent["reviewer_id"],
+            **details,
+        }
+        if actual_report.get("recording_mode") is not None:
+            _require(
+                actual_report["recording_mode"] == "historical", "Invalid report recording mode"
+            )
+            template["recording_mode"] = "historical"
+        existing = next((item for item in _records(state) if item["id"] == template["id"]), None)
+        if existing is not None:
+            mechanical = {
+                "schema_version",
+                "operation",
+                "id",
+                "kind",
+                "handoff_id",
+                "assignment_generation",
+                "subject",
+                "packet_ref",
+                "actor_id",
+                "reporter_id",
+            }
+            expected_details = {
+                key: value for key, value in template.items() if key not in mechanical
+            }
+            _require(
+                all(
+                    existing[key] == template[key]
+                    for key in (
+                        "kind",
+                        "handoff_id",
+                        "assignment_generation",
+                        "subject",
+                        "packet_ref",
+                        "reporter_id",
+                    )
+                )
+                and existing["details"] == expected_details,
+                "Conflicting retained report milestone",
+            )
+            position = next(
+                index for index, item in enumerate(_records(state)) if item["id"] == existing["id"]
+            )
+            already_recorded.append(
+                {
+                    "id": existing["id"],
+                    "reference": deepcopy(existing.get("receipt_ref"))
+                    or _locator(
+                        position,
+                        str(intent["subject"]["task_id"]),
+                        core.phases.revision(state),
+                        existing["digest"],
+                    ),
+                }
+            )
+        else:
+            templates.append(template)
+    _require(bool(seen), "Actual report has no milestones")
+    return {
+        "schema_version": 1,
+        "kind": "handoff_report_preparation",
+        "status": "prepared" if templates else "already_recorded",
+        "inputs": templates,
+        "already_recorded": already_recorded,
+        "missing_fields": ["per_record_current_binding"] if templates else [],
+        "acceptance_complete": False,
+    }
+
+
+def _review_action_identity(intent: Record) -> Record:
+    return {
+        "assignment_kind": "independent_review",
+        "task_id": intent["subject"]["task_id"],
+        "subject": deepcopy(intent["subject"]),
+        "packet_ref": deepcopy(intent["packet_ref"]),
+        "recipient_actor_id": intent["reviewer_id"],
+        "handoff_id": intent["handoff_id"],
+        "assignment_generation": intent["assignment_generation"],
+    }

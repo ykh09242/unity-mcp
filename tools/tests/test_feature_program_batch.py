@@ -759,3 +759,83 @@ def test_selected_preparation_failure_preserves_unavailable_or_unassessed_reques
     fixture.program.path(name).write_text("{}")
     with pytest.raises(batch.BatchError):
         batch.project_selection(fixture.program, fixture.program.load(), wrapper, host)
+
+
+def actual_record_request(fixture):
+    from tools.tests.test_feature_program_verification import (
+        request as verification_request,
+        observation,
+    )
+
+    supplied = request(fixture, count=1, identifier="actual-records")
+    supplied["records"] = supplied.pop("operations")
+    controls = [verification_request(fixture), observation(fixture)]
+    supplied["records"] = []
+    for index, value in enumerate(controls):
+        value.pop("expected_revision")
+        path = f"evidence/_verification/attempt-1/prepared-{index}.json"
+        supplied["records"].append(
+            {
+                "id": f"actual-{index}",
+                "operation": "verification-record",
+                "payload": {"input": path},
+                "observed_at": f"2026-10-15T00:00:0{index}+00:00",
+                "control": {"path": path, "value": value},
+            }
+        )
+    return supplied
+
+
+def test_actual_records_bind_real_projected_predecessors_and_publish_once(fixture, monkeypatch):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    before = fixture.program.read_registry_observation().raw_bytes
+    supplied = actual_record_request(fixture)
+    host = fp.authoring.BatchHost(fixture.program, publication_base=state)
+    plan = batch.prepare_records(fixture.program, state, supplied, host)
+    assert fixture.program.read_registry_observation().raw_bytes == before
+    assert plan["stages"][1]["before_revision"] == plan["stages"][0]["after_revision"]
+    for stage in plan["stages"]:
+        control = fp.read_json(fixture.program.path(stage["payload"]["input"]))
+        assert control["expected_revision"] == stage["before_revision"]
+    saves = []
+    original = fp.Program._publish
+
+    def publish(program, *args, **kwargs):
+        saves.append(True)
+        return original(program, *args, **kwargs)
+
+    monkeypatch.setattr(fp.Program, "_publish", publish)
+    result = batch.publish_batch(fixture.program, plan, host, "worker", plan["base_revision"])
+    assert result["status"] == "committed"
+    assert len(saves) == 1
+    assert fixture.program.load()["verification"]["records"][-1]["input"]["result"] == "passed"
+
+
+def test_actual_records_wrong_explicit_revision_and_future_claim_fail_without_publication(fixture):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    before = fixture.program.read_registry_observation().raw_bytes
+    supplied = actual_record_request(fixture)
+    supplied["records"][1]["control"]["value"]["expected_revision"] = fp.phases.revision(state)
+    with pytest.raises(fp.ProgramError, match="predecessor"):
+        batch.prepare_records(
+            fixture.program,
+            state,
+            supplied,
+            fp.authoring.BatchHost(fixture.program, publication_base=state),
+        )
+    assert fixture.program.read_registry_observation().raw_bytes == before
+    # An unfinished/missing request never acquires an observation merely by template order.
+    supplied = actual_record_request(fixture)
+    supplied["records"] = [supplied["records"][1]]
+    supplied["records"][0]["control"]["path"] = "evidence/_verification/attempt-1/orphan.json"
+    supplied["records"][0]["payload"]["input"] = "evidence/_verification/attempt-1/orphan.json"
+    with pytest.raises(fp.ProgramError, match="Unknown verification request"):
+        batch.prepare_records(
+            fixture.program,
+            state,
+            supplied,
+            fp.authoring.BatchHost(fixture.program, publication_base=state),
+        )
+    assert fixture.program.read_registry_observation().raw_bytes == before

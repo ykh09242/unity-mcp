@@ -52,6 +52,11 @@ def observation(fixture, state, kind="dispatch_sent", identifier="sent-1", **cha
     item = [item for item in state["review_handoffs"]["records"] if item["kind"] == "intent"][-1]
     artifact = fixture.evidence("S01", label=identifier)
     return {
+        **(
+            {"action_id": "ha-" + fp.digest(handoffs._review_action_identity(item))}
+            if kind == "dispatch_claimed"
+            else {}
+        ),
         "schema_version": 1,
         "operation": "review-handoff-record",
         "id": identifier,
@@ -710,3 +715,166 @@ def test_later_history_cannot_legitimize_an_earlier_native_resend(submitted, bar
     with pytest.raises(fp.ProgramError):
         handoffs.project_handoffs(state, {}, limit=0)
     # Then a later terminal or reconciliation never supplies authority for an earlier row.
+
+
+def test_dispatch_claim_is_durable_and_competing_claim_cannot_send(submitted):
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    claim = observation(fixture, state, kind="dispatch_claimed", identifier="claim-1")
+    first = handoffs.prepare_dispatch_claim(state, claim)
+    assert project(fixture, first["state"])["rows"]["items"][0]["phase"] == "claimed"
+    assert handoffs.prepare_dispatch_claim(first["state"], claim)["status"] == "already_recorded"
+    with pytest.raises(fp.ProgramError, match="Prior dispatch unresolved"):
+        handoffs.prepare_dispatch_claim(
+            first["state"], {**claim, "id": "competitor", "dispatch_attempt_id": "other"}
+        )
+    sent = handoffs.prepare_observation(first["state"], observation(fixture, first["state"]))
+    assert project(fixture, sent["state"])["rows"]["items"][0]["phase"] == "sent"
+
+
+def test_claim_respects_recorded_policy_without_inventing_runtime_capacity(submitted):
+    fixture, state = submitted
+    state["actors"][0]["review_wip_limit"] = 0
+    state = intent(fixture, state)["state"]
+    with pytest.raises(fp.ProgramError, match="WIP limit"):
+        handoffs.prepare_dispatch_claim(state, observation(fixture, state, kind="dispatch_claimed"))
+
+
+def test_delayed_actual_ack_is_historical_and_never_current_permission(submitted):
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    state = handoffs.prepare_observation(state, observation(fixture, state))["state"]
+    old = observation(
+        fixture, state, kind="reviewer_acknowledged", identifier="late-ack", reporter_id="reviewer"
+    )
+    changed = intent(fixture, state, reviewer_id="replacement")["state"]
+    with pytest.raises(fp.ProgramError, match="assignment changed"):
+        handoffs.prepare_observation(changed, old)
+    recorded = handoffs.prepare_observation(changed, {**old, "recording_mode": "historical"})[
+        "state"
+    ]
+    rows = project(fixture, recorded)["rows"]["items"]
+    assert rows[0]["currentness"] == "stale"
+    assert rows[0]["dispatches"][0]["status"] == "acknowledged"
+    assert rows[1]["phase"] == "ready"
+    with pytest.raises(fp.ProgramError, match="Prior dispatch unresolved"):
+        handoffs.prepare_dispatch_claim(
+            recorded,
+            observation(fixture, recorded, kind="dispatch_claimed", identifier="new-claim"),
+        )
+
+
+def test_each_dispatch_terminal_only_closes_its_exact_process(submitted):
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    state = handoffs.prepare_observation(state, observation(fixture, state))["state"]
+    terminal = observation(
+        fixture,
+        state,
+        kind="terminal",
+        identifier="done-1",
+        terminal_kind="finished",
+        reporter_id="reviewer",
+    )
+    state = handoffs.prepare_observation(state, terminal)["state"]
+    state = handoffs.prepare_observation(
+        state, observation(fixture, state, identifier="sent-2", dispatch_attempt_id="dispatch-2")
+    )["state"]
+    changed = intent(fixture, state, reviewer_id="replacement")["state"]
+    old = project(fixture, changed)["rows"]["items"][0]
+    assert old["superseded_running_uncertainty"] is True
+    assert [(item["status"], item["occupied"]) for item in old["dispatches"]] == [
+        ("finished", False),
+        ("sent", True),
+    ]
+
+
+def test_actual_report_converter_correlates_and_never_fabricates_later_revision(
+    submitted, monkeypatch
+):
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    state = handoffs.prepare_observation(state, observation(fixture, state))["state"]
+    intent_row = state["review_handoffs"]["records"][0]
+    action = {
+        "assignment_kind": "independent_review",
+        "action_id": "actual-action",
+        **{
+            key: intent_row[key]
+            for key in ("handoff_id", "assignment_generation", "subject", "packet_ref")
+        },
+    }
+    action["action_id"] = "ha-" + fp.digest(handoffs._review_action_identity(intent_row))
+    report = {
+        "action_id": action["action_id"],
+        "dispatch_attempt_id": "dispatch-1",
+        "reporter_id": "reviewer",
+        "evidence_refs": state["review_handoffs"]["records"][1]["evidence_refs"],
+        "milestones": [
+            {"kind": "reviewer_acknowledged", "reason": "Synthetic exact actual-report shape"}
+        ],
+    }
+    first = handoffs.prepare_report_records(state, action, report)
+    assert first == handoffs.prepare_report_records(state, action, report)
+    assert first["missing_fields"] == ["per_record_current_binding"]
+    assert "expected_revision" not in first["inputs"][0]
+    assert "recorded_at" not in first["inputs"][0]
+    template = first["inputs"][0]
+    control = observation(fixture, state, identifier="retained-control")["evidence_refs"][0]
+    recorded = handoffs.prepare_observation(
+        state,
+        {
+            **template,
+            "context": context(fixture, state),
+            "recorded_at": "2026-10-16T02:00:00Z",
+            "receipt_ref": control,
+        },
+    )["state"]
+    replay = handoffs.prepare_report_records(recorded, action, report)
+    assert replay["status"] == "already_recorded" and replay["inputs"] == []
+    assert replay["already_recorded"] == [{"id": template["id"], "reference": control}]
+    assert replay["missing_fields"] == []
+    monkeypatch.setattr(handoffs, "_director", lambda _state: "new-current-director")
+    assert handoffs.prepare_report_records(recorded, action, report) == replay
+    with pytest.raises(fp.ProgramError, match="correlation"):
+        handoffs.prepare_report_records(state, action, {**report, "action_id": "other"})
+
+
+def test_unknown_after_claim_never_becomes_expired_retry_permission(submitted):
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    state = handoffs.prepare_dispatch_claim(
+        state, observation(fixture, state, kind="dispatch_claimed", identifier="claim")
+    )["state"]
+    state = handoffs.prepare_observation(
+        state, observation(fixture, state, kind="dispatch_unknown")
+    )["state"]
+    with pytest.raises(fp.ProgramError, match="Prior dispatch unresolved"):
+        handoffs.prepare_dispatch_claim(
+            state,
+            observation(
+                fixture,
+                state,
+                kind="dispatch_claimed",
+                identifier="retry",
+                dispatch_attempt_id="later",
+            ),
+        )
+
+
+def test_claim_cannot_relabel_another_exact_action(submitted):
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    claim = observation(fixture, state, kind="dispatch_claimed", action_id="ha-wrong")
+    with pytest.raises(fp.ProgramError, match="action correlation"):
+        handoffs.prepare_dispatch_claim(state, claim)
+
+
+def test_historical_mode_never_authorizes_new_claim_or_submission(submitted):
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    for kind in ("dispatch_claimed", "submitted"):
+        with pytest.raises(fp.ProgramError, match="Historical activity"):
+            handoffs.prepare_observation(
+                state, observation(fixture, state, kind=kind, recording_mode="historical")
+            )

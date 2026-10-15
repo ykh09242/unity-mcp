@@ -572,6 +572,426 @@ def integrated_input(gate: GateFixture) -> str:
     return fixture.write("evidence/_coordination/attempt-1/completion.json", completion)
 
 
+def test_recorded_integrated_acceptance_is_current_without_invented_check_mapping(gate):
+    # Given actual ordinary terminal/delivery records and a recorded independent aggregate.
+    gate.ready()
+    name = integrated_input(gate)
+    assert gate.fixture.run("objective-complete", "--input", name) == 0
+    before = gate.program.path("backlog.json").read_bytes()
+    # When the recorded proof is assessed through the same ordinary guards.
+    result = fp.coverage.assess_integrated_completion(
+        gate.program, gate.program.load(), observed_head=gate.program.current_head()
+    )
+    # Then member acceptance is current, while absent check mappings remain unassessed.
+    assert result["status"] == "accepted" and result["currentness"] == "current"
+    assert result["counts"]["accepted_members"] == 2
+    assert all(row["status"] == "unmapped" for row in result["obligations"])
+    assert result["counts"]["fulfilled"] == 0
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_unfinished_work_without_aggregate_does_not_create_missing_lane_actions(gate):
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    result = fp.coverage.assess_integrated_completion(gate.program, gate.program.load())
+    assert result["status"] == "not_assessed"
+    assert result["reason_codes"] == ["completion_absent"]
+    assert result["counts"]["members"] == 2
+    assert result["counts"]["obligations"] == 6
+    assert result["counts"]["actionable"] == 0
+    assert all(
+        row["status"] == "unmapped" and not row["actionable"] for row in result["obligations"]
+    )
+
+
+def recorded_checks(gate, **request_fields):
+    """Record synthetic facts using normal requests/observations on terminal fixture members."""
+    from tools.tests.test_feature_program_verification import request, observation, record
+
+    result = []
+    for identifier in ("S01", "S02"):
+        scope = [f"src/{identifier}.py"]
+        request_id = f"request-{identifier}"
+        record(
+            gate.fixture,
+            request(
+                gate.fixture,
+                request_id,
+                task_id=identifier,
+                actor_id="director",
+                input_scope=scope,
+                evidence_destination=f"evidence/{identifier}/attempt-1/",
+                **request_fields,
+            ),
+        )
+        digest = fp.digest(gate.program.source_snapshot(scope))
+        result.append(
+            record(
+                gate.fixture,
+                observation(
+                    gate.fixture,
+                    f"finished-{identifier}",
+                    task_id=identifier,
+                    request_id=request_id,
+                    input_before=digest,
+                    input_after=digest,
+                    artifacts=[gate.fixture.evidence(identifier)],
+                ),
+            )
+        )
+    return result
+
+
+def mapped_review(gate, name, observation):
+    state = gate.program.load()
+    completion = fp.read_json(gate.program.path(name))
+    review_name = completion["integrated_review"]
+    review = fp.read_json(gate.program.path(review_name))
+    request = next(
+        item
+        for item in state["verification"]["records"]
+        if item["input"]["id"] == observation["request_id"]
+    )
+    submission = gate.program.current_attempt(gate.program.task(state, "S01"))["submission"]
+    review["obligation_coverage"] = {
+        "schema_version": 1,
+        "items": [
+            {
+                "criterion": {
+                    "ordinal": 0,
+                    "text_sha256": fp.sha(state["objective"]["criteria"][0].encode()),
+                },
+                "task_id": "S01",
+                "attempt": 1,
+                "check_id": "acceptance",
+                "submission": {
+                    key: submission[key] for key in ("round", "receipt", "source_digest")
+                },
+                "request_ref": request["receipt"],
+                "observation_ref": observation["receipt"],
+                "context_digest": fp.digest(request["context"]),
+            }
+        ],
+    }
+    gate.fixture.write(review_name, review)
+    return review_name, review
+
+
+def test_integrated_mapping_fulfills_only_named_obligation_and_retains_exact_refs(gate):
+    gate.ready()
+    name = integrated_input(gate)
+    observations = recorded_checks(gate)
+    mapped_review(gate, name, observations[0])
+    assert gate.fixture.run("objective-complete", "--input", name) == 0
+    state = gate.program.load()
+    result = fp.coverage.assess_integrated_completion(
+        gate.program, state, observed_head=gate.program.current_head()
+    )
+    fulfilled = [row for row in result["obligations"] if row["status"] == "fulfilled"]
+    assert [(row["task_id"], row["check_id"]) for row in fulfilled] == [("S01", "acceptance")]
+    assert observations[0]["receipt"] in state["objective"]["evidence"]
+    assert all(
+        row["basis"] != "integrated_mapping"
+        for row in result["obligations"]
+        if row["task_id"] == "S02"
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "criterion",
+        "attempt",
+        "check",
+        "submission",
+        "context",
+        "environment",
+        "undeclared_environment",
+        "incomplete_inputs",
+    ],
+)
+def test_invalid_integrated_mapping_cannot_authorize_completion(gate, fault):
+    gate.ready()
+    name = integrated_input(gate)
+    request_fields = (
+        {"environment": None}
+        if fault == "undeclared_environment"
+        else {"input_complete": False}
+        if fault == "incomplete_inputs"
+        else {}
+    )
+    observations = recorded_checks(gate, **request_fields)
+    review_name, review = mapped_review(gate, name, observations[0])
+    mapping = review["obligation_coverage"]["items"][0]
+    match fault:
+        case "criterion":
+            mapping["criterion"]["text_sha256"] = "0" * 64
+        case "attempt":
+            mapping["attempt"] = 2
+        case "check":
+            mapping["check_id"] = "native_editor"
+        case "submission":
+            mapping["submission"]["source_digest"] = "0" * 64
+        case "context":
+            mapping["context_digest"] = "0" * 64
+        case "environment":
+            from tools.tests.test_feature_program_verification import observation, record
+
+            record(
+                gate.fixture,
+                observation(
+                    gate.fixture,
+                    "incompatible-environment",
+                    request_id="request-S01",
+                    environment="different-runtime",
+                ),
+            )
+        case "undeclared_environment" | "incomplete_inputs":
+            pass
+        case _:
+            pytest.fail("Unknown fault")
+    gate.fixture.write(review_name, review)
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.run("objective-complete", "--input", name) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_historical_execution_is_contextualized_but_later_request_stays_actionable(gate):
+    from tools.tests.test_feature_program_verification import request, record
+
+    gate.ready()
+    name = integrated_input(gate)
+    recorded_checks(gate)
+    # The aggregate actually reviews changed source, while the old executed records stay immutable.
+    (gate.program.repo / "src/S01.py").write_text("updated = True\n", encoding="utf-8")
+    receipt = fp.read_json(gate.program.path(name))
+    receipt["source_digest"] = gate.program.source_digest(receipt["scope"])
+    gate.fixture.write(name, receipt)
+    review = fp.read_json(gate.program.path(receipt["integrated_review"]))
+    review["source_digest"] = receipt["source_digest"]
+    gate.fixture.write(receipt["integrated_review"], review)
+    assert gate.fixture.run("objective-complete", "--input", name) == 0
+    state = gate.program.load()
+    facts = fp.verification.projection(gate.program, state, limit=None)
+    result = fp.coverage.assess_integrated_completion(gate.program, state, verification_facts=facts)
+    assert result["status"] == "accepted"
+    assert result["counts"]["historical"] == 6
+    assert facts["tasks"]["S01"]["lanes"]["items"][0]["applicability"] == "stale"
+    assert facts["tasks"]["S01"]["lanes"]["items"][0]["result"] == "passed"
+    identity = dict(fp.record(result["basis"], "actual basis"))["identity"]
+    # Unrelated canonical bookkeeping does not change semantic acceptance identity.
+    state["tasks"][0]["next_action"] = "A later note"
+    result = fp.coverage.assess_integrated_completion(gate.program, state)
+    assert dict(fp.record(result["basis"], "actual basis"))["identity"] == identity
+    record(
+        gate.fixture,
+        request(gate.fixture, "fresh-request", actor_id="director", supersedes="request-S01"),
+    )
+    result = fp.coverage.assess_integrated_completion(gate.program, gate.program.load())
+    assert result["status"] != "accepted"
+    assert any(row["status"] == "pending" and row["actionable"] for row in result["obligations"])
+    assert result["next_actor_id"] == "qa"
+    assert next(row for row in result["members"] if row["task_id"] == "S02")["status"] == "accepted"
+
+
+@pytest.mark.parametrize(
+    "fault", ["source", "head", "membership", "criteria", "attempt", "review", "evidence"]
+)
+def test_recorded_aggregate_never_covers_changed_subject_or_corrupt_proof(gate, fault):
+    gate.ready()
+    name = integrated_input(gate)
+    assert gate.fixture.run("objective-complete", "--input", name) == 0
+    state = gate.program.load()
+    head = gate.program.current_head()
+    match fault:
+        case "source":
+            (gate.program.repo / "src/S01.py").write_text("source = 2\n", encoding="utf-8")
+        case "head":
+            head = "b" * 40
+        case "membership":
+            state["objective"]["membership_revision"] = 1
+        case "criteria":
+            state["objective"]["criteria"].append("A new actual obligation")
+        case "attempt":
+            state["tasks"][0]["attempts"][-1]["number"] = 2
+        case "review":
+            gate.program.path(state["objective"]["integrated_review_ref"]["path"]).write_text(
+                "{}", encoding="utf-8"
+            )
+        case "evidence":
+            proof = state["objective"]["completion"]["evidence"][0]
+            gate.program.path(proof).write_text("changed proof", encoding="utf-8")
+        case _:
+            pytest.fail("Unknown fault")
+    result = fp.coverage.assess_integrated_completion(gate.program, state, observed_head=head)
+    assert result["status"] != "accepted"
+    assert result["counts"]["actionable"] > 0
+    assert result["counts"]["fulfilled"] == 0
+
+
+@pytest.mark.parametrize("fault", ["source", "nested_evidence", "head"])
+def test_integrated_assessment_closes_source_and_evidence_observation(gate, monkeypatch, fault):
+    gate.ready()
+    name = integrated_input(gate)
+    assert gate.fixture.run("objective-complete", "--input", name) == 0
+    state = gate.program.load()
+    original = fp.coordination.assess_objective_completion
+
+    def mutate_after_actual_proof(*args, **kwargs):
+        proof = original(*args, **kwargs)
+        if fault == "head":
+            monkeypatch.setattr(fp.Program, "current_head", lambda self: "b" * 40)
+            return proof
+        target = (
+            gate.program.repo / "src/S01.py"
+            if fault == "source"
+            else gate.program.path(state["objective"]["completion"]["evidence"][0])
+        )
+        target.write_bytes(b"changed during observation\n")
+        return proof
+
+    monkeypatch.setattr(fp.coordination, "assess_objective_completion", mutate_after_actual_proof)
+    with pytest.raises((fp.ProgramError, fp.coverage.CoverageError)):
+        fp.coverage.assess_integrated_completion(gate.program, state)
+
+
+@pytest.mark.parametrize("kind", ["failed", "blocked", "canceled", "unavailable"])
+def test_later_terminal_member_obligation_is_actionable_despite_accepted_aggregate(gate, kind):
+    from tools.tests.test_feature_program_verification import request, observation, record
+
+    gate.ready()
+    name = integrated_input(gate)
+    assert gate.fixture.run("objective-complete", "--input", name) == 0
+    record(gate.fixture, request(gate.fixture, actor_id="director"))
+    fields = {"result": "failed"} if kind == "failed" else {}
+    if kind in {"blocked", "canceled"}:
+        fields.update(kind=kind)
+        if kind == "blocked":
+            fields["blocker"] = {
+                "reason": "Actual synthetic resource block",
+                "resolver_id": "qa",
+                "next_trigger": "Resource available",
+            }
+        else:
+            fields["next_trigger"] = "Explicit new check"
+    value = observation(gate.fixture, **fields)
+    if kind in {"blocked", "canceled"}:
+        for key in ("result", "method", "environment", "input_before", "input_after"):
+            value.pop(key)
+    event = record(gate.fixture, value)
+    state = gate.program.load()
+    if kind == "unavailable":
+        gate.program.path(event["input"]["artifacts"][0]).write_bytes(b"changed artifact")
+        with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+            gate.program.load()
+    result = fp.coverage.assess_integrated_completion(gate.program, state)
+    assert result["status"] != "accepted"
+    assert any(row["task_id"] == "S01" and row["actionable"] for row in result["obligations"])
+    assert result["next_actor_id"] == "qa"
+    assert result["counts"]["accepted_members"] == 1
+
+
+@pytest.mark.parametrize("legacy_recorded", [False, True])
+def test_required_provider_pending_blocks_completion_and_historical_coverage(gate, legacy_recorded):
+    from tools.tests.test_feature_program_verification import (
+        request,
+        observation,
+        record,
+        provider_pair,
+    )
+
+    gate.ready()
+    name = integrated_input(gate)
+    context_path, _provider_ref, _expected = provider_pair(gate.fixture)
+    record(
+        gate.fixture,
+        request(
+            gate.fixture, actor_id="director", lane="pr_ci", provider_context_path=context_path
+        ),
+    )
+    record(gate.fixture, observation(gate.fixture))
+    before = gate.program.path("backlog.json").read_bytes()
+    state = gate.program.load()
+    if not legacy_recorded:
+        assert gate.fixture.run("objective-complete", "--input", name) == 1
+        assert gate.program.path("backlog.json").read_bytes() == before
+        return
+    # Model the previously permitted persisted shape on detached fixture state only.
+    # The current ordinary publisher must not create this legacy acceptance.
+    receipt = fp.read_json(gate.program.path(name))
+    proof = fp.coordination.assess_objective_completion(
+        gate.program,
+        state,
+        receipt,
+        name,
+        fp.sha(gate.program.path(name).read_bytes()),
+        observed_head=gate.program.current_head(),
+    )
+    state["objective"].update(
+        status="awaiting_next_goal",
+        completion=deepcopy(receipt),
+        completed_at=fp.utc(),
+        next_action_owner="user",
+        evidence=proof["evidence_refs"] + proof["integrated_review_refs"],
+        integrated_review_ref=proof["integrated_review_refs"][0],
+    )
+    gate.program.event(state, "objective-complete", {"receipt": deepcopy(receipt)})
+    result = fp.coverage.assess_integrated_completion(gate.program, state)
+    assert result["status"] == "not_accepted" and result["currentness"] == "current"
+    rows = [row for row in result["obligations"] if row["task_id"] == "S01"]
+    assert all(row["status"] == "pending" and row["actionable"] for row in rows)
+    assert all(row["reason_codes"] == ["provider_execution_pending"] for row in rows)
+    assert result["next_actor_id"] == "qa"
+    # Missing capture must not hide a separate later integrity failure either.
+    artifact = state["verification"]["records"][-1]["input"]["artifacts"][0]
+    gate.program.path(artifact).write_bytes(b"changed local evidence")
+    result = fp.coverage.assess_integrated_completion(gate.program, state)
+    rows = [row for row in result["obligations"] if row["task_id"] == "S01"]
+    assert all(row["status"] == "unavailable" for row in rows)
+    assert all(row["reason_codes"] == ["verification_unavailable"] for row in rows)
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_captured_provider_pass_keeps_qualified_historical_member_basis(gate):
+    from tools.tests.test_feature_program_verification import (
+        request,
+        observation,
+        record,
+        provider_pair,
+    )
+
+    gate.ready()
+    name = integrated_input(gate)
+    context_path, provider_ref, _expected = provider_pair(gate.fixture)
+    record(
+        gate.fixture,
+        request(
+            gate.fixture, actor_id="director", lane="pr_ci", provider_context_path=context_path
+        ),
+    )
+    record(gate.fixture, observation(gate.fixture, provider_ref=provider_ref))
+    (gate.program.repo / "src/S01.py").write_text("reviewed_later = True\n", encoding="utf-8")
+    receipt = fp.read_json(gate.program.path(name))
+    receipt["source_digest"] = gate.program.source_digest(receipt["scope"])
+    gate.fixture.write(name, receipt)
+    review = fp.read_json(gate.program.path(receipt["integrated_review"]))
+    review["source_digest"] = receipt["source_digest"]
+    gate.fixture.write(receipt["integrated_review"], review)
+    assert gate.fixture.run("objective-complete", "--input", name) == 0
+    state = gate.program.load()
+    facts = fp.verification.projection(gate.program, state, limit=None)
+    provider = facts["tasks"]["S01"]["lanes"]["items"][0]["provider_execution"]
+    assert provider["status"] == "not_assessed" and provider["recorded_status"] == "passed"
+    assert provider["current"] is False
+    result = fp.coverage.assess_integrated_completion(gate.program, state, verification_facts=facts)
+    assert result["status"] == "accepted"
+    assert all(
+        row["status"] == "historical_only" and not row["actionable"]
+        for row in result["obligations"]
+        if row["task_id"] == "S01"
+    )
+
+
 @pytest.mark.parametrize("fault", [None, "reviewer", "criteria", "source", "coverage", "delivery"])
 def test_integrated_diagnostics_share_current_acceptance_and_independence(
     gate: GateFixture, fault: str | None

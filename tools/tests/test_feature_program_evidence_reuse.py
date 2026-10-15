@@ -1157,15 +1157,15 @@ def test_same_epoch_metadata_reads_preserve_each_hash_and_fresh_later_admission(
     # Given one explicitly captured immutable metadata image and its exact expected reference.
     ref = reference(fixture, "evidence/S01/attempt-1/checked-image.bin", b"original exact bytes")
     reader = fp.ReadBudget()
-    original = fp.safe_path
+    original = fp._checked_safe_path
     admissions = []
 
-    def counted(root, name):
+    def counted(root, name, components=None):
         if root == fixture.program.directory and name == ref["path"]:
             admissions.append(name)
-        return original(root, name)
+        return original(root, name, components)
 
-    monkeypatch.setattr(fp, "safe_path", counted)
+    monkeypatch.setattr(fp, "_checked_safe_path", counted)
     # When several consumers use the same existing ledger and still supply their own hash.
     assert reuse._read(fixture.program, ref, reader) == b"original exact bytes"
     assert reuse._read(fixture.program, ref, reader) == b"original exact bytes"

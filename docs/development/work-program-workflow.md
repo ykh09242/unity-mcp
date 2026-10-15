@@ -15,8 +15,10 @@ result, owned paths, acceptance criteria, required checks and a next action.
 Record the session-start language for human communication. Ask questions, offer choices and
 explain decisions in that language; carry it through recovery and personnel changes. A later
 explicit user preference may change it without rewriting historical questions or answers.
-The dashboard's selectable interface language is independent. Keep repository source and
-public documentation in the language required by its authoring rules.
+The dashboard's selectable interface language is independent. Author newly supported human JSON
+in the recorded session language from the first operation, including Korean summaries, reasons,
+questions and decisions when Korean is recorded. Keep Markdown documentation in English under
+the repository authoring rule, and leave technical IDs, models and paths unchanged.
 
 For existing human content in another language, use the reviewed, source-bound presentation
 catalog rather than changing canonical source or past answers. The dashboard uses only current
@@ -36,10 +38,14 @@ them against newer instructions; it must not request the same permission repeate
 
 Keep one actual canonical program in its designated checkout. Separate implementation/QA/PR
 checkouts supply frozen source and original proof without copying the live registry or inventing
-production submit/review events. After delivery, compare exact scoped bytes and full relevant
-check inputs against the canonical checkout, retain the comparison evidence, and prepare the
-actual current submission. Earlier implementation review remains useful evidence; obtain a real
-acceptance review of the newly submitted packet rather than claiming it approved an unseen receipt.
+production submit/review events. Integrate the coherent changes, obtain actual receiving CI, then
+freeze the final scoped bytes and full relevant input equivalence once before preparing canonical
+submissions. Earlier code review, native checks and CI remain supporting proof; obtain one actual
+independent acceptance review of each newly submitted packet. A commit-label change alone does
+not require another task review. A relevant source/input or obligation change requires the affected
+comparison, check or review; retain unchanged originals and qualify the actual delta. Ordinary
+relocation stays inside the selected repository root; it does not transfer a canonical program
+between linked worktree roots.
 
 ## Read performance and storage handoff
 
@@ -113,7 +119,11 @@ a short visible lane list cannot establish that no obligation remains. Distingui
 verifier, implementation owner and blocker resolver. Explicitly choose the verifier when
 preparing an assignment; a saved actor status is not current availability or capacity.
 A superseded request recorded as running remains resource-use uncertainty until an actual
-terminal observation. Use `review-queue` and `review-assignment` for this read/preparation step.
+terminal observation. Count every occupied or ambiguous dispatch before bounding visible rows;
+a terminal report for another dispatch cannot free that work. A review WIP limit is allocation
+policy, and its headroom is not observed runtime capacity. Without a complete compatible native
+runtime observation, available slots remain unknown. Use `review-queue` and `review-assignment`
+for this read/preparation step.
 A queue row neither starts a worker nor adds a mandatory lane to a
 legacy task. Resolve routine contracts directly with the responsible peer and escalate only
 missing authority, ownership overlap or consequential unresolved decisions.
@@ -271,14 +281,23 @@ Historical backlog hashes describe historical observations; they are not the nex
 revision. Record-only retry must not rerun an unchanged successful check or perform remote
 merge/cleanup. Keep human criterion decisions and independent verdicts explicitly supplied.
 
-When all required facts are already observed, use a supported
-[record batch](feature-program-tool.md#one-guarded-record-batch) for one local canonical
-publication. Each ordered operation still passes its ordinary projected-predecessor and fresh
-publication guards. A late invalid operation publishes none of the batch. Do not place native
+When all required facts are already observed, provide them once to the finite
+[record preparation and batch flow](feature-program-tool.md#one-guarded-record-batch), then use
+its ordinary plan for one local canonical publication. Keep original proof and explicit human
+actor/result/timing facts intact; prepare the normal controls against each projected predecessor.
+An owner decides the exact submission after its verification is adopted; the independent reviewer
+decides after the actual submitted packet exists. Those decision boundaries may require separate
+publications and must not be filled by generated future acceptance. Each ordered operation still
+passes its ordinary projected-predecessor and fresh publication guards. A late invalid operation publishes none of the batch. Do not place native
 messages, tests, provider queries, merge or cleanup inside it. Inspect the exact batch result after
 interruption: an already committed batch needs no repeat publication; committed view failure needs
 `render`. Refresh an uncommitted stale plan without rerunning its unchanged original check. The
 existing sequential closure flow remains available for operations outside the batch allowlist.
+For ordinary mutations, retain the supported
+[actual publication outcome](feature-program-tool.md#observe-an-ordinary-publication-outcome)
+when needed. Inspect its exact publication identity after interruption or wrapper/retention failure;
+a later error cannot turn a known durable commit into an uncommitted command. Recover views or
+publish only the actually missing records, keeping acceptance and external execution separate.
 
 A reviewer returns all actionable findings discovered in the assigned bounded pass, with
 source identity, criterion or check, evidence, correction owner and affected verification.
@@ -309,6 +328,10 @@ No completed samples means unavailable, not zero. Open age is null unless a reta
 as-of observation supports a fixed last-observed age. Refresh time, browser clocks, saved actor
 status and canonical event preparation time do not measure worker activity. Do not sum overlapping
 task or provider spans into lead time, critical path, utilization, ETA or time saved.
+Measure ordinary write latency through the completed user response, including preparation,
+validation, final source/evidence checks, durable publication and derived views. Retain the same
+representative input and environment; report sample count, median and maximum for small samples.
+Fixture setup and standalone model rebuild timings and read timing are separate observations, not ordinary write savings.
 
 Monitor outstanding lanes with a bounded current snapshot and the native tools' supported
 batch waits or provider reads. Wake for a completion, failure, actionable finding or required
@@ -425,15 +448,21 @@ The active director consumes that ready result immediately, without waiting for 
 
 1. Recheck current packet/round/source, reviewer independence, actual native contact and any shared
    resource boundary. Use the produced packet directly instead of rebuilding its proof in a prompt.
-2. For an idle/completed native reviewer, use `followup_task` to trigger a new turn. For an already
-   running reviewer, use `send_message`. Sending a message alone does not wake a completed reviewer.
-3. Record the actual native dispatch attempt, tool/contact and result with immutable evidence.
-   A successful send is transport acceptance; acknowledgement and review start require actual
-   attributable reviewer evidence. They may occur in one explicit response or remain unknown.
-4. Let independent work continue. The reviewer checks that exact packet and returns the complete
+2. In the supported dispatch-claim flow, publish the exact claim before the external native call.
+   Only the successful claimant sends; a losing, missing or ambiguous claim sends nothing. A claim
+   is not delivery, and
+   expiry calls for reconciliation rather than authorizing an automatic resend.
+3. For an actually idle/completed native reviewer, use `followup_task` to trigger a new turn. For an
+   already running reviewer, use `send_message`. A saved idle profile is insufficient, and sending a
+   message alone does not wake a completed reviewer. Keep this external action outside local writes.
+4. Retain the actual dispatch attempt, contact/tool result and attributable reviewer reports.
+   Sent, acknowledged and started are separate facts. An explicit combined report may retain both
+   actual endpoints; never synthesize start from ACK, recorded status or a successful send.
+5. Let independent work continue. The reviewer checks that exact packet and returns the complete
    bounded finding bundle and actual independent verdict through the ordinary review flow.
-5. If delivery failed or its outcome is ambiguous, inspect the real native runtime and reconcile
-   it before a deliberate retry. Retrying a canonical record must never resend the message.
+6. If delivery failed or its outcome is ambiguous, inspect the real native runtime and reconcile
+   it before a deliberate retry. Unknown delivery means no automatic resend. Retrying a local
+   record or recovering a committed view failure must never repeat the external native action.
 
 Consume current ready work again at actual worker completion, source freeze and recovery boundaries.
 No CLI read, import, dashboard refresh, batch or stored prompt launches an agent. A changed source,
@@ -441,6 +470,10 @@ round, definition or reviewer assignment invalidates incompatible current relian
 history; it does not prove an old reviewer stopped. For an existing submitted legacy task, explicit
 adoption attaches a current packet without backdating dispatch or creating a second submit round.
 Ordinary task acceptance and current required verification/provider gates remain unchanged.
+For worker assignments, use the ordinary task claim and exact current task packet before the
+actual native call. Retain attributable worker ACK/start in ordinary note/outcome evidence;
+review dispatch claims and the review-report converter apply only to independent-review intents.
+Do not invent a submitted review packet or another ledger for a worker assignment.
 
 ## Handoffs and recovery
 
@@ -542,7 +575,18 @@ they do not independently prove objective acceptance.
 Final acceptance also requires a fresh independent integrated-review artifact bound to the
 current objective, full criteria, aggregate source scope and digest. Its reviewer must be
 independent of the director and member-task implementers. Historical task reviews remain
-valuable evidence, but they cannot cover later changes to shared code by themselves.
+valuable evidence, but they cannot cover later changes to shared code by themselves. Keep one bounded
+index of original immutable proof refs and current source/input comparisons, adding only actual
+changed-delta evidence. The index neither creates a verdict nor certifies inputs the reviewer did
+not inspect. Do not rebuild a large proof graph or reopen a completed task solely to repackage it.
+
+Keep historical execution and its applicability, accepted integrated member completion, and current
+named-obligation/input coverage distinct. An accepted integrated review does not make old stale
+lanes newly executed or fill an unmapped obligation. Relevant new failed, blocked or pending work,
+missing evidence and changed definitions remain actionable even for done members. Use the shared
+assessed integrated-review basis and its currentness/reasons rather than inferring completion from
+a short queue, task counts or ready prose. The final fresh aggregate still requires actual current
+source, full criteria/membership, independent review, delivery/CI and cleanup.
 
 After acceptance, move to `awaiting_next_goal` and assign the next-goal-setting action to the
 user. The director may propose options but starts no new major objective without the user's

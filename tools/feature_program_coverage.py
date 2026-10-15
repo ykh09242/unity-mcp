@@ -1,4 +1,4 @@
-"""Optional explicit criterion links; annotations never supply acceptance or authorization."""
+"""Explicit criterion links and integrated proof; historical execution remains separate."""
 
 from __future__ import annotations
 
@@ -713,7 +713,522 @@ def prepare_record(program: Program, state: Record, name: str) -> PreparedChange
     return core.PreparedChange(proposal, precommit)
 
 
-def projection(program: Program, state: Record, budget: ReadBudget | None = None) -> Record:
+def validate_integrated_mapping(
+    program: Program,
+    state: Record,
+    review: Record,
+    *,
+    budget: ReadBudget | None = None,
+    verification_facts: Record | None = None,
+) -> list[Json]:
+    """Validate optional reviewed check reliance through ordinary exact observations."""
+    core = _core()
+    mapping = coordination._record(review.get("obligation_coverage"), "obligation coverage")
+    require(
+        set(mapping) == {"schema_version", "items"}
+        and type(mapping.get("schema_version")) is int
+        and mapping["schema_version"] == 1,
+        "Invalid integrated obligation mapping",
+    )
+    entries = coordination._items(mapping["items"], "mapped obligations")
+    require(len(entries) <= 2000, "Too many mapped obligations")
+    facts = (
+        verification_facts
+        if verification_facts is not None
+        else core.verification.projection(program, state, budget=budget, limit=None)
+    )
+    records = core.verification._index(state)
+    binding = objective_binding(state)
+    retained: list[Json] = []
+    seen: set[tuple[str, str, int]] = set()
+    for value in entries:
+        item = coordination._record(value, "mapped obligation")
+        require(
+            set(item)
+            == {
+                "criterion",
+                "task_id",
+                "attempt",
+                "check_id",
+                "submission",
+                "request_ref",
+                "observation_ref",
+                "context_digest",
+            },
+            "Invalid mapped obligation fields",
+        )
+        ordinal = criterion(item["criterion"], binding)
+        task_id = coordination._text(item["task_id"], "mapped task")
+        require(task_id in binding["member_ids"], "Mapped task outside objective")
+        task = program.task(state, task_id)
+        attempt = program.current_attempt(task)
+        check = coordination._text(item["check_id"], "mapped check")
+        require(check in task["required_checks"], "Mapped check is not required")
+        require(
+            type(item["attempt"]) is int and item["attempt"] == attempt["number"],
+            "Mapped task attempt changed",
+        )
+        submission = coordination._record(attempt.get("submission"), "mapped submission")
+        require(
+            item["submission"]
+            == {key: submission[key] for key in ("round", "receipt", "source_digest")},
+            "Mapped submission changed",
+        )
+        request_ref = reference(item["request_ref"])
+        observation_ref = reference(item["observation_ref"])
+        matched = [record for record in records.values() if record["receipt"] == observation_ref]
+        require(len(matched) == 1, "Mapped observation is not exact recorded evidence")
+        observation = matched[0]
+        request = records[str(observation["request_id"])]
+        require(
+            request["receipt"] == request_ref
+            and request["input"]["task_id"] == task_id
+            and check in request["input"]["check_ids"]
+            and item["context_digest"] == core.digest(request["context"]),
+            "Mapped request/context identity changed",
+        )
+        lanes = facts["tasks"][task_id]["lanes"]["items"]
+        matches = [
+            lane
+            for lane in lanes
+            if lane["request_ref"] == request_ref and lane["observation_ref"] == observation_ref
+        ]
+        require(len(matches) == 1, "Mapped result is not the current lane selection")
+        lane = matches[0]
+        require(
+            lane["input_complete"] is True
+            and (lane.get("environment") is not None or "input_capture" in lane["context"]),
+            "Mapped execution requires complete declared inputs and environment",
+        )
+        require(
+            lane["phase"] == "finished"
+            and lane["result"] == "passed"
+            and lane["applicability"] == "current"
+            and not lane["observation_problems"],
+            "Mapped execution lacks current passing complete inputs",
+        )
+        provider = lane.get("provider_execution")
+        require(
+            provider is None
+            or provider.get("status") == "passed"
+            and provider.get("current") is True,
+            "Mapped provider execution is not current and passing",
+        )
+        key = (task_id, check, ordinal)
+        require(key not in seen, "Duplicate mapped obligation")
+        seen.add(key)
+        retained.extend([*request["evidence"], *observation["evidence"]])
+    refs = list({core.canonical(ref): ref for ref in retained}.values())
+    program.verify_refs(refs, budget)
+    return refs
+
+
+def _completion_boundary(state: Record, completion: Record) -> int | None:
+    """Locate the exact canonical acceptance event, never infer ordering from clocks."""
+    matches = [
+        index
+        for index, event in enumerate(state.get("events", []))
+        if event.get("action") == "objective-complete" and event.get("receipt") == completion
+    ]
+    return matches[-1] if matches else None
+
+
+def _scope_covers(scope: list[str], paths: list[str]) -> bool:
+    return all(
+        any(path == root or path.startswith(root.rstrip("/") + "/") for root in scope)
+        for path in paths
+    )
+
+
+def _integrated_obligations(
+    program: Program,
+    state: Record,
+    facts: Record,
+    *,
+    accepted: bool,
+    scope: list[str],
+    boundary: int | None,
+    mapping: list[Json],
+) -> tuple[list[Json], list[Json]]:
+    """Assess the full member set before display bounds; never alter executed lane facts."""
+    core = _core()
+    records = core.verification._index(state)
+    positions = {
+        event.get("verification_id"): index
+        for index, event in enumerate(state.get("events", []))
+        if event.get("action") == "verification-record"
+    }
+    director = coordination.current_director_id(state) or "leader"
+    obligations: list[Json] = []
+    members: list[Json] = []
+    for task_id in objective_binding(state)["member_ids"]:
+        task = program.task(state, task_id)
+        attempts = task.get("attempts", [])
+        attempt = program.current_attempt(task)["number"] if attempts else None
+        task_facts = facts.get("tasks", {}).get(task_id, {})
+        lanes = task_facts.get("lanes", {}).get("items", [])
+        rows: list[Json] = []
+        for check in task["required_checks"]:
+            selected = [lane for lane in lanes if check in lane["check_ids"]]
+            if not selected:
+                selected = [None]
+            for lane in selected:
+                status, basis, codes, actionable = "unmapped", "none", ["mapping_absent"], False
+                actor, action, trigger = (
+                    director,
+                    "assess_obligation_mapping",
+                    "explicit_obligation_evidence",
+                )
+                criterion_ref: Json = None
+                if lane is not None:
+                    event_id = lane["observation_id"] or lane["request_id"]
+                    old = (
+                        boundary is not None
+                        and positions.get(event_id, len(state.get("events", []))) < boundary
+                    )
+                    request = records[lane["request_id"]]
+                    historical = (
+                        accepted
+                        and old
+                        and lane["phase"] == "finished"
+                        and lane["result"] == "passed"
+                        and not lane["observation_problems"]
+                        and set(lane.get("currentness_changes", []))
+                        <= {"source_digest", "input_digest"}
+                        and _scope_covers(scope, request["input"]["input_scope"])
+                    )
+                    provider = lane.get("provider_execution")
+                    provider_bad = provider is not None and (
+                        provider.get("status") != "passed" or not provider.get("current")
+                    )
+                    match lane["phase"]:
+                        case "requested" | "running" | "blocked":
+                            status, codes, actionable = "pending", ["verification_pending"], True
+                        case "canceled":
+                            status, codes, actionable = (
+                                "requires_recheck",
+                                ["verification_canceled"],
+                                True,
+                            )
+                        case "finished":
+                            if lane["result"] != "passed":
+                                status, codes, actionable = (
+                                    "adverse",
+                                    ["verification_nonpassing"],
+                                    True,
+                                )
+                            elif lane["observation_problems"]:
+                                status, codes, actionable = (
+                                    "requires_recheck",
+                                    ["execution_inputs_incomplete"],
+                                    True,
+                                )
+                            elif historical:
+                                status, basis, codes = (
+                                    "historical_only",
+                                    "integrated_member",
+                                    ["historical_execution"],
+                                )
+                            elif lane["applicability"] != "current" or provider_bad:
+                                status, codes, actionable = (
+                                    "requires_recheck",
+                                    ["verification_changed"],
+                                    True,
+                                )
+                        case _:
+                            status, codes, actionable = (
+                                "unavailable",
+                                ["verification_unavailable"],
+                                True,
+                            )
+                    if lane["applicability"] == "unavailable":
+                        status, basis, codes, actionable = (
+                            "unavailable",
+                            "none",
+                            ["verification_unavailable"],
+                            True,
+                        )
+                    if (
+                        provider is not None
+                        and not actionable
+                        and lane["applicability"] != "unavailable"
+                        and provider.get("adopted") is True
+                        and provider.get("status") == "pending"
+                    ):
+                        status, basis, codes, actionable = (
+                            "pending",
+                            "none",
+                            ["provider_execution_pending"],
+                            True,
+                        )
+                    elif (
+                        provider is not None
+                        and lane["applicability"] != "unavailable"
+                        and provider.get("status")
+                        in {
+                            "failed",
+                            "unavailable",
+                        }
+                    ):
+                        status = "unavailable" if provider["status"] == "unavailable" else "adverse"
+                        basis, codes, actionable = "none", ["provider_execution_adverse"], True
+                    matches = [
+                        item
+                        for item in mapping
+                        if item["task_id"] == task_id
+                        and item["check_id"] == check
+                        and item["request_ref"] == lane["request_ref"]
+                        and item["observation_ref"] == lane["observation_ref"]
+                    ]
+                    if accepted and matches and not actionable:
+                        status, basis, codes = "fulfilled", "integrated_mapping", []
+                        criterion_ref = deepcopy(matches[0]["criterion"])
+                    if actionable:
+                        actor = lane.get("resolver_id") or lane["verifier_id"] or director
+                        action, trigger = (
+                            "resolve_verification",
+                            lane.get("next_trigger") or "current_verification_evidence",
+                        )
+                if (
+                    not accepted
+                    and not actionable
+                    and state["objective"].get("completion") is not None
+                ):
+                    status, basis, codes, actionable = (
+                        "requires_recheck",
+                        "none",
+                        ["integrated_acceptance_not_current"],
+                        True,
+                    )
+                    actor, action, trigger = (
+                        director,
+                        "review_integrated_completion",
+                        "current_independent_review",
+                    )
+                rows.append(
+                    {
+                        "task_id": task_id,
+                        "attempt": attempt,
+                        "check_id": check,
+                        "criterion": criterion_ref,
+                        "status": status,
+                        "actionable": actionable,
+                        "basis": basis,
+                        "reason_codes": codes,
+                        "next_actor_id": actor,
+                        "next_action": action,
+                        "next_trigger": trigger,
+                        "request_id": lane["request_id"] if lane else None,
+                        "observation_id": lane["observation_id"] if lane else None,
+                    }
+                )
+                if status == "fulfilled":
+                    for match in matches[1:]:
+                        rows.append(
+                            {**deepcopy(rows[-1]), "criterion": deepcopy(match["criterion"])}
+                        )
+        for finding in task_facts.get("findings", {}).get("items", []):
+            if not any(
+                resolution.get("status") == "resolved" for resolution in finding["resolutions"]
+            ):
+                rows.append(
+                    {
+                        "task_id": task_id,
+                        "attempt": attempt,
+                        "check_id": None,
+                        "criterion": None,
+                        "status": "adverse",
+                        "actionable": True,
+                        "basis": "none",
+                        "reason_codes": ["unresolved_finding"],
+                        "next_actor_id": task.get("owner") or director,
+                        "next_action": "resolve_finding",
+                        "next_trigger": "validated_finding_resolution",
+                        "request_id": finding["request_id"],
+                        "observation_id": finding["id"],
+                    }
+                )
+        obligations.extend(rows)
+        members.append(
+            {
+                "task_id": task_id,
+                "attempt": attempt,
+                "status": "requires_recheck"
+                if any(row["actionable"] for row in rows)
+                else "accepted"
+                if accepted
+                else "not_assessed",
+                "obligations": deepcopy(rows),
+            }
+        )
+    return members, obligations
+
+
+def assess_integrated_completion(
+    program: Program,
+    state: Record,
+    *,
+    verification_facts: Record | None = None,
+    budget: ReadBudget | None = None,
+    observed_head: str | None = None,
+) -> Record:
+    """Assess recorded integrated proof and separate named coverage from historical execution."""
+    core = _core()
+    reader = reads(budget)
+    goal = state.get("objective")
+    director = coordination.current_director_id(state) or "leader"
+    result: Record = {
+        "schema_version": 1,
+        "status": "not_assessed",
+        "currentness": "unknown",
+        "reason_codes": [],
+        "reasons": [],
+        "basis": None,
+        "members": [],
+        "obligations": [],
+        "counts": {
+            "members": 0,
+            "accepted_members": 0,
+            "obligations": 0,
+            "fulfilled": 0,
+            "unmapped": 0,
+            "historical": 0,
+            "actionable": 0,
+        },
+        "next_actor_id": director,
+        "next_action": "review_integrated_completion",
+        "next_trigger": "current_independent_review",
+        "remote_verified_by_tool": False,
+    }
+    if goal is None:
+        result["reason_codes"] = ["objective_absent"]
+        return result
+    facts = (
+        verification_facts
+        if verification_facts is not None
+        else core.verification.projection(program, state, budget=reader.artifacts, limit=None)
+    )
+    core.verification._require_full_projection(state, facts)
+    completion = goal.get("completion")
+    scope: list[str] = []
+    mapping: list[Json] = []
+    boundary = None
+    retained: list[Json] = list(core.verification.evidence_references(state))
+    source: Record | None = None
+    if completion is None:
+        result["reason_codes"] = ["completion_absent"]
+    else:
+        try:
+            refs = coordination._items(goal.get("evidence"), "completion evidence")
+            require(bool(refs), "Completion lacks immutable receipt")
+            retained.extend(refs)
+            program.verify_refs(refs, reader.artifacts)
+            ref = reference(refs[0])
+            loaded = _metadata(program, ref, reader.artifacts)
+            require(loaded == completion, "Recorded completion receipt metadata mismatch")
+            scope = coordination._texts(loaded.get("scope"), "completion scope")
+            source = program.source_snapshot(scope, reader.sources)
+            head = observed_head if observed_head is not None else program.current_head()
+            changed = []
+            if core.digest(source) != loaded.get("source_digest"):
+                changed.append("aggregate_source_changed")
+            if head != loaded.get("source_head"):
+                changed.append("aggregate_head_changed")
+            if changed:
+                result.update(status="not_accepted", currentness="stale", reason_codes=changed)
+            else:
+                proof = coordination.assess_objective_completion(
+                    program, state, loaded, str(ref["path"]), str(ref["sha256"]), observed_head=head
+                )
+                review_ref = reference(proof["integrated_review_refs"][0])
+                review = _metadata(program, review_ref, reader.artifacts)
+                retained.extend(proof["evidence_refs"] + proof["integrated_review_refs"])
+                mapping = review.get("obligation_coverage", {}).get("items", [])
+                boundary = _completion_boundary(state, loaded)
+                require(boundary is not None, "Completion canonical acceptance event unavailable")
+                basis = {
+                    "completion_ref": deepcopy(ref),
+                    "integrated_review_ref": deepcopy(review_ref),
+                    "objective_binding": objective_binding(state),
+                    "source_head": head,
+                    "source_digest": loaded["source_digest"],
+                    "scope": deepcopy(scope),
+                    "reviewer_id": review["reviewer"],
+                    "acceptance_event_index": boundary,
+                }
+                basis["identity"] = core.digest(basis)
+                result.update(status="accepted", currentness="current", basis=basis)
+        except coordination.GovernanceError as exc:
+            result.update(
+                status="not_accepted",
+                currentness="stale",
+                reason_codes=["integrated_proof_not_current"],
+                reasons=[str(exc)],
+            )
+        except (core.ProgramError, planning.PlanningError, OSError) as exc:
+            result.update(
+                status="unavailable",
+                currentness="unavailable",
+                reason_codes=["integrated_proof_unavailable"],
+                reasons=[str(exc)],
+            )
+    members, obligations = _integrated_obligations(
+        program,
+        state,
+        facts,
+        accepted=result["status"] == "accepted",
+        scope=scope,
+        boundary=boundary,
+        mapping=mapping,
+    )
+    actionable = [row for row in obligations if row["actionable"]]
+    result.update(
+        members=members,
+        obligations=obligations,
+        counts={
+            "members": len(members),
+            "accepted_members": sum(row["status"] == "accepted" for row in members),
+            "obligations": len(obligations),
+            "fulfilled": sum(row["status"] == "fulfilled" for row in obligations),
+            "unmapped": sum(row["status"] == "unmapped" for row in obligations),
+            "historical": sum(row["status"] == "historical_only" for row in obligations),
+            "actionable": len(actionable),
+        },
+    )
+    if actionable:
+        priority = {"unavailable": 0, "adverse": 1, "pending": 2, "requires_recheck": 3}
+        first = min(actionable, key=lambda row: priority[row["status"]])
+        result.update({key: first[key] for key in ("next_actor_id", "next_action", "next_trigger")})
+        if result["status"] == "accepted":
+            result.update(status="not_accepted", reason_codes=["current_obligations_actionable"])
+    elif result["status"] == "accepted":
+        result.update(
+            next_actor_id="user", next_action="set_next_goal", next_trigger="next_user_goal"
+        )
+    if source is not None:
+        require(
+            program.source_snapshot(scope) == source,
+            "Integrated source changed during observation; refresh",
+        )
+    if result["basis"] is not None:
+        current_basis = dict(coordination._record(result["basis"], "assessed integrated basis"))
+        require(
+            program.current_head() == current_basis["source_head"],
+            "Integrated HEAD changed during observation; refresh",
+        )
+    if result["status"] == "accepted":
+        program.verify_refs(retained)
+    return result
+
+
+def projection(
+    program: Program,
+    state: Record,
+    budget: ReadBudget | None = None,
+    *,
+    verification_facts: Record | None = None,
+    observed_head: str | None = None,
+) -> Record:
     """Detach authored linkage, freshness and recorded results; no Git, locks or writes."""
     core = _core()
     validate(state)
@@ -897,19 +1412,13 @@ def projection(program: Program, state: Record, budget: ReadBudget | None = None
         "legacy_absence": not annotation_records(state),
         "tasks": task_facts,
         "recorded_objective_acceptance": aggregate,
-        "integrated_review": {
-            "status": "not_assessed",
-            "requires": [
-                "Actual current objective-completion and integrated-review receipts",
-                "Exact criteria evidence and current membership revision",
-                "Terminal member acceptance and separate delivery/CI",
-                "Independent reviewer distinct from director and all member implementers",
-                "Current aggregate source, no unresolved relevant questions/handoffs",
-            ],
-            "limitations": [
-                "Only supplied inputs run authoritative completion validation; frozen local provider observations do not authenticate remote state."
-            ],
-        },
+        "integrated_review": assess_integrated_completion(
+            program,
+            state,
+            verification_facts=verification_facts,
+            budget=reader.artifacts,
+            observed_head=observed_head,
+        ),
         "limitations": [
             "Links never establish acceptance; recorded check facts are not new execution.",
             "HEAD and hypothetical receipt eligibility are not assessed by this snapshot.",

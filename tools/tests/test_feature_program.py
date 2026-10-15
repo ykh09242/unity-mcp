@@ -2226,13 +2226,13 @@ def test_captured_bytes_reuses_only_same_logical_admission(tmp_path, monkeypatch
     path.write_bytes(raw)
     budget = fp.ReadBudget(remaining=100)
     admissions = []
-    original = fp.safe_path
+    original = fp._checked_safe_path
 
-    def admitted(root, name):
+    def admitted(root, name, components=None):
         admissions.append((root, name))
-        return original(root, name)
+        return original(root, name, components)
 
-    monkeypatch.setattr(fp, "safe_path", admitted)
+    monkeypatch.setattr(fp, "_checked_safe_path", admitted)
     # When the same logical read repeats, aliases and distinct roots are admitted separately.
     captured = budget.capture(tmp_path, "records/receipt.json", 100)
     assert budget.capture(tmp_path, "records/receipt.json", 100) is captured
@@ -2386,13 +2386,13 @@ def test_explicit_file_scope_overlap_admits_once_per_reader(tmp_path, monkeypatc
     program = fp.Program(tmp_path, tmp_path / "program")
     reader = fp.ReadBudget()
     admissions = []
-    original = fp.safe_path
+    original = fp._checked_safe_path
 
-    def admit(root, name):
+    def admit(root, name, components=None):
         admissions.append((root, name))
-        return original(root, name)
+        return original(root, name, components)
 
-    monkeypatch.setattr(fp, "safe_path", admit)
+    monkeypatch.setattr(fp, "_checked_safe_path", admit)
     first = program.source_snapshot(["src/first.py", "src/second.py"], reader)
     # When a later overlapping scope observes an already captured exact file.
     second = program.source_snapshot(["src/first.py"], reader)
@@ -3275,3 +3275,814 @@ def test_recheck_path_failure_preserves_snapshot_context_and_guard_cause(
     # Then: original guard detail and exception cause survive the contextual failure.
     assert isinstance(caught.value.__cause__, fp.ProgramError)
     assert str(caught.value.__cause__) in str(caught.value)
+
+
+def test_optional_mutation_outcome_records_commit_without_snapshot(fixture, monkeypatch, capsys):
+    assert fixture.claim() == 0
+    monkeypatch.setattr(
+        fp, "read_snapshot", lambda *args, **kwargs: pytest.fail("Outcome requested a snapshot")
+    )
+    capsys.readouterr()
+    name = "evidence/_coordination/attempt-1/note-outcome.json"
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Actual progress",
+            "--next-action",
+            "Continue",
+            "--outcome-path",
+            name,
+        )
+        == 0
+    )
+    assert capsys.readouterr().out == "note: OK\n"
+    result = fp.read_json(fixture.program.path(name))
+    assert result["publication"]["status"] == "committed"
+    assert result["publication"]["revision"] == fp.phases.revision(fixture.program.load())
+    assert result["changed_task_ids"] == ["S01"]
+    assert result["acceptance_complete"] is False
+
+
+def test_optional_mutation_outcome_retains_committed_render_failure(fixture, monkeypatch):
+    assert fixture.claim() == 0
+    before = fixture.program.load()
+    monkeypatch.setattr(
+        fp.Program, "render", lambda *args: (_ for _ in ()).throw(OSError("actual render failure"))
+    )
+    name = "evidence/_coordination/attempt-1/render-outcome.json"
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Actual progress",
+            "--next-action",
+            "Continue",
+            "--outcome-path",
+            name,
+        )
+        == 1
+    )
+    result = fp.read_json(fixture.program.path(name))
+    assert result["publication"]["status"] == "committed_view_failed"
+    assert result["publication"]["view_recovery_required"] is True
+    assert len(fixture.program.load()["events"]) == len(before["events"]) + 1
+    assert result["next_action"] == "recover_views"
+
+
+def test_optional_outcome_retention_failure_does_not_replay_committed_mutation(
+    fixture, monkeypatch, capsys
+):
+    assert fixture.claim() == 0
+    before = fixture.program.load()
+
+    def fail_retention(*args, **kwargs):
+        raise OSError("Actual outcome destination failure")
+
+    monkeypatch.setattr(fp.authoring, "freeze_document", fail_retention)
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Actual progress",
+            "--next-action",
+            "Continue",
+            "--outcome-path",
+            "evidence/_coordination/attempt-1/failed-outcome.json",
+        )
+        == 1
+    )
+    assert len(fixture.program.load()["events"]) == len(before["events"]) + 1
+    assert "publication=committed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "path,parent",
+    [
+        (fp.PureWindowsPath("C:/Repo/A"), fp.PureWindowsPath("c:/repo")),
+        (fp.PureWindowsPath("C:/Repo2/A"), fp.PureWindowsPath("C:/Repo")),
+        (fp.PureWindowsPath("D:/Repo/A"), fp.PureWindowsPath("C:/Repo")),
+        (fp.PureWindowsPath("//server/share/Repo/A"), fp.PureWindowsPath("//SERVER/share/repo")),
+        (fp.PureWindowsPath("C:/Repo/../outside"), fp.PureWindowsPath("C:/Repo")),
+        (fp.PurePosixPath("/Repo/A"), fp.PurePosixPath("/Repo")),
+        (fp.PurePosixPath("/repo/A"), fp.PurePosixPath("/Repo")),
+        (fp.PurePosixPath("/Repo2/A"), fp.PurePosixPath("/Repo")),
+        (fp.PurePosixPath("relative/A"), fp.PurePosixPath("relative")),
+        (fp.PureWindowsPath("C:relative/A"), fp.PureWindowsPath("C:relative")),
+        (fp.PurePosixPath("/" + "a/" * 65), fp.PurePosixPath("/a")),
+        (fp.PurePosixPath("/" + "a" * 2050), fp.PurePosixPath("/")),
+    ],
+)
+def test_bounded_pure_containment_matches_native_public_parser(path, parent):
+    assert fp._is_path_within(path, parent) == path.is_relative_to(parent)
+
+
+def test_pure_containment_preserves_custom_parser_fallback_and_bounded_cache():
+    calls = []
+
+    class CustomPath(fp.PurePosixPath):
+        def is_relative_to(self, other):
+            calls.append(other)
+            return False
+
+    assert fp._is_path_within(CustomPath("/repo/a"), fp.PurePosixPath("/repo")) is False
+    assert len(calls) == 1
+    for number in range(4100):
+        fp._is_path_within(fp.PurePosixPath(f"/bounded/{number}"), fp.PurePosixPath("/bounded"))
+    # Pylint follows the wrapped parser signature for this lru_cache method.
+    assert fp._absolute_path_components.cache_info().currsize <= 4096  # pylint: disable=no-value-for-parameter
+
+
+@pytest.mark.parametrize("after_replace", [False, True], ids=["precommit", "after-replace"])
+def test_optional_mutation_outcome_distinguishes_atomic_failure_boundary(
+    fixture, monkeypatch, after_replace
+):
+    assert fixture.claim() == 0
+    before = fixture.program.read_registry_observation()
+    normal = fp.atomic_write
+
+    def fail_registry(path, content):
+        if path == fixture.program.path("backlog.json"):
+            if after_replace:
+                normal(path, content)
+            raise OSError("Actual registry replacement boundary failure")
+        return normal(path, content)
+
+    monkeypatch.setattr(fp, "atomic_write", fail_registry)
+    name = "evidence/_coordination/attempt-1/atomic-outcome.json"
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Actual progress",
+            "--next-action",
+            "Inspect publication",
+            "--outcome-path",
+            name,
+        )
+        == 1
+    )
+    result = fp.read_json(fixture.program.path(name))
+    actual = fixture.program.read_registry_observation()
+    assert result["publication"]["status"] == (
+        "committed_view_failed" if after_replace else "not_committed"
+    )
+    assert result["publication"]["view_recovery_required"] is after_replace
+    assert (actual.raw_bytes == before.raw_bytes) is (not after_replace)
+    assert result["publication"]["revision"] == actual.body_sha256
+    assert result["acceptance_complete"] is False
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_byte_observation_memo_preserves_complete_collector_descriptors(
+    small_program, monkeypatch, changed
+):
+    program = small_program.program
+    target = program.repo / "src/compile-api.py"
+    original = bytes(bytearray(b"original exact image"))
+    other = bytes(bytearray(b"different exact image"))
+    baseline, candidate = _path_collector(program), _path_collector(program)
+    events = [(target, original, 100, "reader-one")] * 1000
+    events += [(target, original, 99, "reader-one"), (target, original, 100, "reader-two")]
+    events += [(target.with_name(target.name.upper()), original, 100, "reader-one")]
+    if changed:
+        events += [(target, other, 100, "reader-one"), (target, original, 100, "reader-one")]
+    for path, content, limit, tag in events:
+        baseline.observe_file(
+            program.repo,
+            path.relative_to(program.repo).as_posix(),
+            kind="file",
+            sha256=fp.sha(content),
+            size=len(content),
+            limit=limit,
+            budget_tag=tag,
+        )
+    normal_sha, normal_emit = fp.sha, candidate.observe_file
+    hashes, emissions = [], []
+
+    def counted_sha(content):
+        hashes.append(content)
+        return normal_sha(content)
+
+    def counted_emit(*args, **kwargs):
+        emissions.append((args, kwargs))
+        return normal_emit(*args, **kwargs)
+
+    monkeypatch.setattr(fp, "sha", counted_sha)
+    monkeypatch.setattr(candidate, "observe_file", counted_emit)
+    with fp._collect_dependencies(candidate):
+        for path, content, limit, tag in events:
+            fp._observe_bytes(path, content, limit, tag)
+    assert len(hashes) == (2 if changed else 1)
+    assert len(emissions) == (5 if changed else 4)
+    assert candidate.finish({"actual": "same detached snapshot"}) == baseline.finish(
+        {"actual": "same detached snapshot"}
+    )
+    assert ("conflicting_observation" in candidate._reasons) is changed
+
+
+def test_byte_observation_memo_is_bounded_and_pins_exact_objects(small_program, monkeypatch):
+    program = small_program.program
+    collector = _path_collector(program)
+    monkeypatch.setattr(fp, "_OBSERVED_IMAGE_LIMIT", 2)
+    monkeypatch.setattr(fp, "_OBSERVED_BYTE_LIMIT", 8)
+    images = [bytes(bytearray([number] * 4)) for number in range(6)]
+    with fp._collect_dependencies(collector):
+        for number, image in enumerate(images):
+            fp._observe_bytes(program.repo / f"image-{number}", image, 4, "reader")
+        memo = fp._dependency_names.get().byte_observations
+        assert len(memo.images) == len(memo.descriptors) == 2
+        assert memo.retained_bytes == 8
+        assert all(memo.images[id(image)][0] is image for image in images[:2])
+        assert len(collector._facts["files"]) == 6
+    assert fp._dependency_names.get() is None
+    with fp._collect_dependencies(collector):
+        assert not fp._dependency_names.get().byte_observations.images
+
+
+@pytest.mark.parametrize("limit,tag", [(True, "reader"), (1, True), (0, "reader")])
+def test_byte_observation_memo_keeps_consumer_validation(small_program, limit, tag):
+    program = small_program.program
+    collector = _path_collector(program)
+    target, image = program.repo / "proof", b"x"
+    module = fp.flow_module("read_model")
+    with fp._collect_dependencies(collector):
+        fp._observe_bytes(target, image, 1, "reader")
+        with pytest.raises(module.ModelError):
+            fp._observe_bytes(target, image, limit, tag)
+
+
+def test_byte_observation_memo_keeps_owner_and_fresh_filesystem_epochs(small_program):
+    program = small_program.program
+    first, second = _path_collector(program), _path_collector(program)
+    path = program.repo / "src/compile-api.py"
+    path.write_bytes(b"original")
+    reader = fp.ReadBudget()
+    module = fp.flow_module("read_model")
+    with fp._collect_dependencies(first):
+        captured = reader.capture(program.repo, "src/compile-api.py", 100)
+        with pytest.raises(fp.ProgramError, match="bounded read"):
+            reader.capture(program.repo, "src/compile-api.py", 1)
+        with module.collect(second):
+            fp._observe_bytes(path, captured.content, 100, "other-reader")
+        assert len(second._facts["files"]) == 1
+        path.write_bytes(b"changed!")
+        # A new reader must still read fresh bytes and record the conflicting image.
+        fp.ReadBudget().capture(program.repo, "src/compile-api.py", 100)
+        assert "conflicting_observation" in first._reasons
+        with pytest.raises(fp.ProgramError, match="changed during snapshot"):
+            reader.recheck(program.repo)
+    assert fp._dependency_names.get() is None
+
+
+def test_byte_observation_memo_uses_object_identity_not_equal_bytes(small_program, monkeypatch):
+    program = small_program.program
+    collector = _path_collector(program)
+    first = bytes(bytearray(b"equal byte values"))
+    second = bytes(bytearray(first))
+    assert first == second and first is not second
+    normal = fp.sha
+    calls = []
+
+    def counted(content):
+        calls.append(content)
+        return normal(content)
+
+    monkeypatch.setattr(fp, "sha", counted)
+    with fp._collect_dependencies(collector):
+        for image in (first, first, second, second):
+            fp._observe_bytes(program.repo / "proof", image, 100, "reader")
+        memo = fp._dependency_names.get().byte_observations
+        assert len(memo.images) == 2
+        assert memo.images[id(first)][0] is first
+        assert memo.images[id(second)][0] is second
+    assert len(calls) == 2
+    assert len(collector._facts["files"]) == 1
+
+
+def test_byte_observation_memo_preserves_each_expected_sha_consumer(small_program):
+    program = small_program.program
+    path = program.directory / "evidence/proof.txt"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(b"original exact evidence")
+    collector = _path_collector(program)
+    reader = fp.ReadBudget()
+    with fp._collect_dependencies(collector):
+        program.verify_refs(
+            [{"path": "evidence/proof.txt", "sha256": fp.sha(path.read_bytes())}], reader
+        )
+        with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+            program.verify_refs([{"path": "evidence/proof.txt", "sha256": "0" * 64}], reader)
+
+
+def _held_initial_binding(program):
+    state = program.load()
+    body = fp.registry_body(state)
+    module = fp.flow_module("read_model")
+    collector = module.Collector(
+        program.repo,
+        program.directory,
+        program_id=state["program_id"],
+        body_sha256=fp.sha(body),
+        producer=module.producer_identity(program.repo),
+        query=module.QUERY,
+    )
+    return program.read_registry_observation(), body, collector
+
+
+def test_held_initial_exact_alias_is_repeatable_and_handles_remain_local(
+    small_program, monkeypatch
+):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    path = program.repo / "src/compile-api.py"
+    first_bytes = b'{"value":1}'
+    path.write_bytes(first_bytes)
+    normal, opens = fp.bounded_bytes, []
+
+    def counted(path, limit):
+        opens.append(path)
+        return normal(path, limit)
+
+    monkeypatch.setattr(fp, "bounded_bytes", counted)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        readers = [fp._initial_read_budget(100) for _ in range(40)]
+        first = readers[0].capture(program.repo, "src/compile-api.py", 100)
+        path.write_bytes(b'{"value":2}')
+        for reader in readers[1:]:
+            image = reader.capture(program.repo, "src/compile-api.py", 100)
+            assert image is not first and image.content is first.content
+            assert reader.json(image) == {"value": 1}
+            assert reader.remaining == 100 - len(first_bytes)
+            with pytest.raises(fp.ProgramError, match="Foreign captured"):
+                reader.json(first)
+        # No outside open samples the transient image; this is the explicit held-byte contract.
+        assert opens.count(path) == 1
+        path.write_bytes(first_bytes)
+        readers[0].recheck(program.repo)
+        assert opens.count(path) == 2
+        held = fp._initial_images.get()
+    assert not held.aliases and held.retained_bytes == 0
+    assert fp._initial_images.get() is None
+    assert fp._initial_read_budget()._held_initial is None
+
+
+def test_held_initial_rechecks_defaults_direct_reads_and_expected_sha_stay_fresh(small_program):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    path = program.directory / "evidence/held-proof.txt"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(b"original")
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        first = fp._initial_read_budget(100)
+        first.capture(program.directory, "evidence/held-proof.txt", 100)
+        second = fp._initial_read_budget(100)
+        with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+            program.verify_refs([{"path": "evidence/held-proof.txt", "sha256": "0" * 64}], second)
+        with pytest.raises(fp.ProgramError, match="bounded read"):
+            fp._initial_read_budget(3).capture(program.directory, "evidence/held-proof.txt", 100)
+        with pytest.raises(fp.ProgramError, match="bounded read"):
+            fp._initial_read_budget(100).capture(program.directory, "evidence/held-proof.txt", 3)
+        path.write_bytes(b"changed!")
+        assert (
+            fp._initial_read_budget(100)
+            .capture(program.directory, "evidence/held-proof.txt", 100)
+            .content
+            == b"original"
+        )
+        assert (
+            fp.ReadBudget().capture(program.directory, "evidence/held-proof.txt", 100).content
+            == b"changed!"
+        )
+        assert fp._initial_read_budget().read(path, 100) == b"changed!"
+        with pytest.raises(fp.ProgramError, match="changed during snapshot"):
+            first.recheck(program.repo)
+
+
+@pytest.mark.parametrize("kind", ["is_symlink", "is_junction"])
+def test_held_initial_new_alias_does_not_inherit_parent_admission(small_program, monkeypatch, kind):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    with pytest.raises(fp.ProgramError, match="Initial component"):
+        with (
+            fp._collect_dependencies(collector),
+            fp._hold_initial_images(program, original, collector, proposed_body=body),
+        ):
+            fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+            _mock_link_lstat(monkeypatch, program.repo / "src", kind)
+            # Metadata-only injection does not redirect resolve; strict epoch closure catches it.
+            fp._initial_read_budget().capture(program.repo, "src/docs.2.py", 1000)
+
+
+def test_held_initial_directory_membership_and_negative_types_are_not_shared(small_program):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        before = program.source_snapshot(["src"], fp._initial_read_budget())
+        (program.repo / "src/added.py").write_bytes(b"new member")
+        after = program.source_snapshot(["src"], fp._initial_read_budget())
+        assert "src/added.py" not in before and "src/added.py" in after
+        missing = "src/previously-missing.py"
+        with pytest.raises(fp.ProgramError, match="Missing frozen"):
+            fp._initial_read_budget().capture(program.repo, missing, 100)
+        (program.repo / missing).write_bytes(b"now present")
+        assert (
+            fp._initial_read_budget().capture(program.repo, missing, 100).content == b"now present"
+        )
+        with pytest.raises(fp.ProgramError, match="Missing frozen"):
+            fp._initial_read_budget().capture(program.repo, "src", 100)
+
+
+def test_held_initial_bounds_outputs_nested_activation_and_exception_restore(
+    small_program, monkeypatch
+):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    monkeypatch.setattr(fp, "_HELD_IMAGE_LIMIT", 1)
+    monkeypatch.setattr(fp, "_HELD_BYTE_LIMIT", 4)
+    one, two = program.repo / "one.txt", program.repo / "two.txt"
+    one.write_bytes(b"1234")
+    two.write_bytes(b"5678")
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        outer = fp._initial_images.get()
+        fp._initial_read_budget().capture(program.repo, "one.txt", 100)
+        fp._initial_read_budget().capture(program.repo, "two.txt", 100)
+        assert len(outer.aliases) == 1 and outer.retained_bytes == 4
+        for name in (
+            "backlog.json",
+            ".feature-program.lock",
+            "BOARD.md",
+            "tasks/S01.md",
+            "recovery/state.json",
+        ):
+            assert outer.key(program.directory, name) is None
+        with pytest.raises(RuntimeError, match="inner failure"):
+            with fp._hold_initial_images(program, original, collector, proposed_body=body):
+                assert fp._initial_images.get() is not outer
+                raise RuntimeError("inner failure")
+        assert fp._initial_images.get() is outer
+        assert len(outer.aliases) == 1
+    assert fp._initial_images.get() is None and not outer.aliases
+
+
+def test_held_initial_operation_binding_rejects_wrong_collector_or_body(small_program):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    with fp._collect_dependencies(collector):
+        with pytest.raises(fp.ProgramError, match="operation binding"):
+            with fp._hold_initial_images(program, original, collector, proposed_body=body + b" "):
+                pytest.fail("Changed proposed BODY was accepted")
+    with pytest.raises(fp.ProgramError, match="collector changed"):
+        with fp._hold_initial_images(program, original, collector, proposed_body=body):
+            pytest.fail("Foreign collector was accepted")
+
+
+def test_held_initial_distinct_root_alias_and_direct_image_stay_independent(
+    small_program, monkeypatch
+):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    path = program.repo / "src/compile-api.py"
+    initial = path.read_bytes()
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        captured = fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+        assert captured.content == initial
+        path.write_bytes(b"fresh independent root")
+        narrow = fp._initial_read_budget().capture(program.repo / "src", "compile-api.py", 1000)
+        assert narrow.content == b"fresh independent root"
+        monkeypatch.chdir(program.repo)
+        relative = fp._initial_read_budget().capture(Path("src"), "compile-api.py", 1000)
+        assert relative.content == b"fresh independent root"
+        direct = fp._initial_read_budget()._image(path, 1000)
+        assert direct.content == b"fresh independent root"
+
+
+def test_held_initial_collector_descriptor_image_matches_independent_readers(small_program):
+    program = small_program.program
+    path = program.repo / "src/compile-api.py"
+    path.write_bytes(b'{"exact":true}')
+
+    def capture(shared):
+        original, body, collector = _held_initial_binding(program)
+        with fp._collect_dependencies(collector):
+            context = (
+                fp._hold_initial_images(program, original, collector, proposed_body=body)
+                if shared
+                else fp.nullcontext()
+            )
+            with context:
+                readers = [fp._initial_read_budget(1000), fp._initial_read_budget(1000)]
+                for reader, limit in zip(readers, (100, 200)):
+                    image = reader.capture(program.repo, "src/compile-api.py", limit)
+                    assert reader.json(image) == {"exact": True}
+        result = collector.finish({"same": "snapshot"})
+        # Reader tags label independent ledgers; normalize only their opaque identities.
+        tags = {f"reader-{id(reader)}": f"reader-{index}" for index, reader in enumerate(readers)}
+        for row in result["dependencies"]["files"]:
+            row["budget_tag"] = tags.get(row["budget_tag"], row["budget_tag"])
+        result["dependencies"]["files"].sort(key=fp.canonical)
+        return result
+
+    assert capture(True) == capture(False)
+
+
+def test_initial_components_reduce_parent_metadata_but_resolve_every_distinct_alias(
+    small_program, monkeypatch
+):
+    # Given: twenty real inputs share one parent, with separately charged initial readers.
+    program = small_program.program
+    names = [f"src/component-{index}.py" for index in range(20)]
+    for name in names:
+        (program.repo / name).write_bytes(b"same input")
+    original, body, collector = _held_initial_binding(program)
+    metadata, resolutions = [], []
+    normal_image, normal_resolve = fp._component_image, Path.resolve
+
+    def image(path):
+        metadata.append(path)
+        return normal_image(path)
+
+    def resolve(path, *args, **kwargs):
+        resolutions.append(path)
+        return normal_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(fp, "_component_image", image)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    # When: ordinary readers establish the comparison, then enrolled source readers capture.
+    expected = program.source_snapshot(names, fp.ReadBudget())
+    parent = program.repo / "src"
+    assert metadata.count(parent) == 20
+    metadata.clear()
+    resolutions.clear()
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        actual = program.source_snapshot(names, fp._initial_read_budget())
+        assert metadata.count(parent) == 1
+        assert all(resolutions.count(program.repo / name) == 1 for name in names)
+        held = fp._initial_images.get()
+    # Then: exact fingerprints remain unchanged and the shared parent has a fresh final check.
+    assert actual == expected
+    assert metadata.count(parent) == 2
+    assert not held.components.positive
+
+
+@pytest.mark.parametrize("location", ["parent", "root"])
+@pytest.mark.parametrize("target_kind", ["inward", "outward"])
+def test_initial_components_new_alias_resolves_real_redirect_immediately(
+    small_program, location, target_kind
+):
+    # Given: an enrolled reader has positively classified a shared source parent.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    selected = program.repo / "src" if location == "parent" else program.repo
+    moved = selected.with_name(selected.name + "-before-link")
+    outside = program.repo.parent / "component-outside"
+    outside.mkdir()
+    (outside / "docs.2.py").write_bytes(b"outside")
+    # When: the parent or root redirects before a distinct alias performs fresh resolution.
+    try:
+        with pytest.raises(fp.ProgramError):
+            with (
+                fp._collect_dependencies(collector),
+                fp._hold_initial_images(program, original, collector, proposed_body=body),
+            ):
+                fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+                selected.rename(moved)
+                target = moved if target_kind == "inward" else outside
+                _directory_alias(selected, target)
+                fp._initial_read_budget().capture(program.repo, "src/docs.2.py", 1000)
+    finally:
+        if selected.is_symlink():
+            selected.unlink()
+        elif getattr(selected, "is_junction", lambda: False)():
+            selected.rmdir()
+        if moved.exists():
+            moved.rename(selected)
+    # Then: no redirected alias was retained as a successful initial capture.
+    assert fp._initial_images.get() is None
+
+
+@pytest.mark.parametrize("change", ["missing", "file", "unavailable", "linked"])
+def test_initial_components_strict_exit_rejects_late_positive_change(
+    small_program, monkeypatch, change
+):
+    # Given: the source parent was positively classified before the last initial capture.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    parent = program.repo / "src"
+    normal = fp._component_image
+
+    def changed(path):
+        if path == parent:
+            if change == "unavailable":
+                return False, False, None
+            if change == "linked":
+                return True, True, fp.stat.S_IFDIR
+        return normal(path)
+
+    # When: no further initial file admission occurs before the mandatory closing barrier.
+    with pytest.raises(fp.ProgramError, match="Initial component"):
+        with (
+            fp._collect_dependencies(collector),
+            fp._hold_initial_images(program, original, collector, proposed_body=body),
+        ):
+            fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+            if change in {"missing", "file"}:
+                parent.rename(parent.with_name("previous-source"))
+                if change == "file":
+                    parent.write_bytes(b"not a directory")
+            monkeypatch.setattr(fp, "_component_image", changed)
+            held = fp._initial_images.get()
+    # Then: missing/error/nonlinked type drift cannot masquerade as a stable positive image.
+    assert fp._initial_images.get() is None and not held.components.positive
+
+
+@pytest.mark.parametrize(
+    "reader_kind", ["default", "recheck", "closing", "foreign_root", "collector"]
+)
+def test_initial_components_unenrolled_admissions_stay_fresh_inside_epoch(
+    small_program, monkeypatch, reader_kind
+):
+    # Given: a positive parent is warm only for the current exact initial-reader operation.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    normal = fp._component_image
+    parent = program.repo / "src"
+    calls = []
+
+    def counted(path):
+        calls.append(path)
+        return normal(path)
+
+    monkeypatch.setattr(fp, "_component_image", counted)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        reader = fp._initial_read_budget()
+        reader.capture(program.repo, "src/compile-api.py", 1000)
+        calls.clear()
+        # When: a reader or owner outside this explicit initial ledger admits another path.
+        if reader_kind == "default":
+            fp.ReadBudget().capture(program.repo, "src/docs.2.py", 1000)
+        elif reader_kind == "recheck":
+            reader.recheck(program.repo)
+        elif reader_kind == "closing":
+            fp._ClosingObserver(program).admit(program.repo, "src/docs.2.py")
+        elif reader_kind == "foreign_root":
+            reader.capture(parent, "docs.2.py", 1000)
+            assert parent not in calls  # narrower-root canonical resolution remains independent
+            assert parent / "docs.2.py" in calls
+            return
+        else:
+            with fp.flow_module("read_model").collect(None):
+                fp._initial_read_budget().capture(program.repo, "src/docs.2.py", 1000)
+        # Then: initial positive metadata does not suppress that reader's actual parent check.
+        assert parent in calls
+
+
+def test_initial_components_cap_fallback_and_nested_failure_restore(small_program, monkeypatch):
+    # Given: only one positive component may be retained in each bounded initial ledger.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    monkeypatch.setattr(fp, "_HELD_COMPONENT_LIMIT", 1)
+    normal, calls = fp._component_image, []
+
+    def counted(path):
+        calls.append(path)
+        return normal(path)
+
+    monkeypatch.setattr(fp, "_component_image", counted)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+        outer = fp._initial_images.get()
+        assert len(outer.components.positive) == 1
+        leaf = program.repo / "src/docs.2.py"
+        fp._initial_read_budget()._admit(program.repo, "src/docs.2.py")
+        fp._initial_read_budget()._admit(program.repo, "src/docs.2.py")
+        assert calls.count(leaf) == 2  # unretained positives keep fresh metadata probes
+        with pytest.raises(RuntimeError):
+            with fp._hold_initial_images(program, original, collector, proposed_body=body):
+                inner = fp._initial_images.get()
+                fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+                raise RuntimeError("caller failure")
+        assert not inner.components.positive
+        assert fp._initial_images.get() is outer
+    # Then: capacity never expands, nested failures restore the owner, and no memo survives exit.
+    assert not outer.components.positive and fp._initial_images.get() is None
+
+
+@pytest.mark.parametrize("outcome", ["missing", "unavailable", "linked"])
+def test_initial_components_never_retain_negative_metadata(small_program, monkeypatch, outcome):
+    # Given: a leaf has no positive nonlinked metadata image for this initial epoch.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    leaf = program.repo / "src/no-positive.py"
+    normal, calls = fp._component_image, []
+
+    def image(path):
+        if path == leaf:
+            calls.append(path)
+            if outcome == "linked":
+                return True, True, fp.stat.S_IFLNK
+            if outcome == "unavailable":
+                return False, False, None
+        return normal(path)
+
+    monkeypatch.setattr(fp, "_component_image", image)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        # When: two distinct initial readers admit that same unresolved logical name.
+        for _ in range(2):
+            reader = fp._initial_read_budget()
+            if outcome == "linked":
+                with pytest.raises(fp.ProgramError):
+                    reader._admit(program.repo, "src/no-positive.py")
+            else:
+                assert reader._admit(program.repo, "src/no-positive.py") == leaf
+        # Then: the metadata observation is retried and cannot enter the positive ledger.
+        assert calls == [leaf, leaf]
+        assert str(leaf) not in fp._initial_images.get().components.positive
+
+
+@pytest.mark.parametrize("location", ["root", "ancestor"])
+def test_initial_components_exit_resolves_used_root_after_last_admission(small_program, location):
+    # Given: the last successful initial alias leaves an exact held root requiring closure.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    selected = program.repo if location == "root" else program.repo.parent
+    moved = selected.with_name(selected.name + "-initial-before-link")
+    # When: a root or its ancestor redirects only after the final file capture.
+    try:
+        with pytest.raises(fp.ProgramError, match="Initial root"):
+            with (
+                fp._collect_dependencies(collector),
+                fp._hold_initial_images(program, original, collector, proposed_body=body),
+            ):
+                fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+                selected.rename(moved)
+                _directory_alias(selected, moved)
+    finally:
+        if selected.is_symlink():
+            selected.unlink()
+        elif getattr(selected, "is_junction", lambda: False)():
+            selected.rmdir()
+        if moved.exists():
+            moved.rename(selected)
+    # Then: a byte-identical relocated tree does not prove the original root remained canonical.
+    assert fp._initial_images.get() is None
+
+
+@pytest.mark.parametrize("change", ["missing", "file"])
+def test_initial_components_exit_requires_used_root_directory_even_without_positive_leaf(
+    small_program, change
+):
+    # Given: only missing descendants were admitted, so no positive component can prove root kind.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    # When: the actual root disappears or becomes a regular file before successful epoch exit.
+    with pytest.raises(fp.ProgramError, match="Initial root"):
+        with (
+            fp._collect_dependencies(collector),
+            fp._hold_initial_images(program, original, collector, proposed_body=body),
+        ):
+            fp._initial_read_budget()._admit(program.repo, "not-present/leaf")
+            program.repo.rename(program.repo.with_name("previous-root"))
+            if change == "file":
+                program.repo.write_bytes(b"not a directory")
+    # Then: strict=False resolution equality alone cannot authorize a missing or wrong-kind root.
+    assert fp._initial_images.get() is None
