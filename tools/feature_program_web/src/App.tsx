@@ -1,5 +1,15 @@
-import { ReviewBottleneck, EvidencePreparationSummary, BatchSummary } from './review-throughput-ui';
-import { ClosureSummary, ClosureAttention } from './flow-closure-ui';
+import {
+  ReviewBottleneck,
+  EvidencePreparationSummary,
+  BatchSummary,
+  ReviewerLoadInline,
+} from './review-throughput-ui';
+import {
+  ClosureSummary,
+  ClosureAttention,
+  IntegratedReviewFacts,
+  IntegratedReviewNextAction,
+} from './flow-closure-ui';
 import { ReviewQueueList, QueueAttention } from './flow-queue-ui';
 import { queueActorIds, queueFilters } from './flow-queue';
 import { TaskDescription, taskDescriptionParts } from './task-description';
@@ -34,7 +44,13 @@ import {
 } from './history-ui';
 import { useSnapshot } from './useSnapshot';
 import type { SnapshotLoader } from './useSnapshot';
-import { QuestionForm, MissingQuestionDraft, useSession } from './questions';
+import {
+  QuestionForm,
+  MissingQuestionDraft,
+  useSession,
+  saveAnswer,
+  parseAnswerReceipt,
+} from './questions';
 import { QuestionDraftProvider, questionDraftKey, useQuestionDrafts } from './question-drafts';
 import { QuestionList, QuestionLinks } from './question-list';
 import { questionListIdentity } from './question-state';
@@ -302,6 +318,7 @@ function Objective({ snapshot }: { readonly snapshot: Snapshot }) {
           ],
         ]}
       />
+      <IntegratedReviewFacts snapshot={snapshot} />
       <details>
         <summary>{i18n.t('Success criteria')}</summary>
         <CriterionCoverage snapshot={snapshot} />
@@ -309,12 +326,15 @@ function Objective({ snapshot }: { readonly snapshot: Snapshot }) {
       <p className="next-action">
         <span className="muted">{i18n.t('Next action')}</span>
         <br />
-        {i18n.display(
-          objective.next_action || checkpoint.next_action,
-          awaiting
-            ? i18n.t('User supplies the next objective.')
-            : i18n.t('Director records the next action.'),
-        )}
+        <IntegratedReviewNextAction
+          snapshot={snapshot}
+          fallback={i18n.display(
+            objective.next_action || checkpoint.next_action,
+            awaiting
+              ? i18n.t('User supplies the next objective.')
+              : i18n.t('Director records the next action.'),
+          )}
+        />
       </p>
     </section>
   );
@@ -1313,6 +1333,7 @@ function Team({
               {i18n.t('Current recorded assignments:')}{' '}
               {assignments.map((task) => task.id).join(', ') || i18n.t('None')}
             </p>
+            <ReviewerLoadInline snapshot={snapshot} actorId={id} />
             <StaffingHistory actor={actor} />
           </article>
           <div className="actor-child">{walk(id, new Set([...visited, id]))}</div>
@@ -1389,7 +1410,56 @@ function Dashboard({
   readonly answerSaver?: AnswerSaver;
 }) {
   const i18n = useI18n();
-  const { snapshot: rawSnapshot, observed, error, busy, announce, refresh } = useSnapshot(loader);
+  const {
+    snapshot: rawSnapshot,
+    observed,
+    error,
+    busy,
+    announce,
+    refresh,
+    coordinateWrite,
+    writePhase,
+    holdAutomaticReads,
+  } = useSnapshot(loader);
+  const currentSession = useRef<{
+    readonly nonce: string | null;
+    readonly responsesEnabled: boolean;
+  } | null>(null);
+  const coordinatedSaver = useCallback<AnswerSaver>(
+    async (input, nonce, received) => {
+      let returnedReceipt: ReturnType<typeof parseAnswerReceipt> = null;
+      const settled = await coordinateWrite(
+        () => (answerSaver || saveAnswer)(input, nonce),
+        (result) => {
+          if (currentSession.current?.nonce !== nonce || !currentSession.current.responsesEnabled)
+            return;
+          const receipt = result.ok ? parseAnswerReceipt(result.receipt, input) : null;
+          if (receipt) {
+            returnedReceipt = receipt;
+            received?.(receipt);
+          }
+        },
+      );
+      if (!settled) return { ok: false, conflict: false };
+      const freshQuestion = items(settled.snapshot?.questions)
+        .map(record)
+        .find((row) => row.id === input.question_id);
+      const receipt = record(freshQuestion?.answer);
+      if (
+        settled.refreshed &&
+        freshQuestion?.version === input.version &&
+        receipt.question_id === input.question_id &&
+        receipt.version === input.version &&
+        receipt.answer === input.answer &&
+        receipt.submission_id === input.submission_id
+      )
+        return { ok: true, conflict: false };
+      if (returnedReceipt) return { ok: true, conflict: false, receipt: returnedReceipt };
+      if (settled.outcome.status === 'rejected') throw settled.outcome.reason;
+      return { ok: false, conflict: settled.outcome.value.conflict };
+    },
+    [coordinateWrite, answerSaver],
+  );
   const refreshNotice = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (!error && refreshNotice.current) refreshNotice.current.open = false;
@@ -1403,6 +1473,7 @@ function Dashboard({
     i18n.setProgramLanguage(language(programLanguage));
   }, [programLanguage, i18n.setProgramLanguage]);
   const session = useSession(sessionLoader);
+  currentSession.current = session;
   const drafts = useQuestionDrafts();
   const [questionFiltersOpen, setQuestionFiltersOpen] = useState(false);
   const questionOrigin = useRef<{
@@ -1945,6 +2016,9 @@ function Dashboard({
               context={navigation}
               session={session}
               saver={answerSaver}
+              coordinatedSaver={coordinatedSaver}
+              writePhase={writePhase}
+              holdAutomaticReads={holdAutomaticReads}
               refresh={refresh}
             />
           ) : (
@@ -1983,6 +2057,9 @@ function Dashboard({
     revealTask,
     session,
     answerSaver,
+    coordinatedSaver,
+    writePhase,
+    holdAutomaticReads,
     refresh,
     i18n,
     navigation,

@@ -1,3 +1,4 @@
+import { ClosureSummary } from './flow-closure-ui';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { LanguageProvider, PREFERENCE_KEY } from './i18n';
@@ -15,6 +16,7 @@ import {
   knownLabel,
   recordBatch,
   reviewHandoffs,
+  reviewerLoads,
   reviewTiming,
   taskHandoff,
 } from './review-throughput';
@@ -23,8 +25,10 @@ import {
   EvidencePreparationSummary,
   HandoffInline,
   ReviewBottleneck,
+  ReviewerLoadInline,
   ReviewFlow,
 } from './review-throughput-ui';
+import { integratedReview, integratedReviewProvided } from './flow-closure';
 import { ReviewSummary } from './history-ui';
 import { QueueResponsibilities } from './flow-queue-ui';
 import { defaultContext } from './navigation';
@@ -739,6 +743,8 @@ if (suppliedProducerSnapshot) {
       if (task.review_handoff !== undefined && task.review_handoff !== null)
         expect(taskHandoff(snapshot, task.id)).not.toBeNull();
     if (snapshot.timing !== undefined) expect(reviewTiming(snapshot)).not.toBeNull();
+    if (snapshot.reviewer_load !== undefined) expect(reviewerLoads(snapshot)).not.toBeNull();
+    if (integratedReviewProvided(snapshot)) expect(integratedReview(snapshot)).not.toBeNull();
     if (snapshot.evidence_preparation !== undefined)
       expect(evidencePreparation(snapshot.evidence_preparation)).not.toBeNull();
     if (snapshot.record_batch !== undefined)
@@ -747,10 +753,23 @@ if (suppliedProducerSnapshot) {
       <>
         <ReviewFlow snapshot={snapshot} taskId={snapshot.tasks[0]?.id || ''} />
         <ReviewBottleneck snapshot={snapshot} />
+        <ClosureSummary snapshot={snapshot} taskId={snapshot.tasks[0]?.id || ''} />
         <EvidencePreparationSummary snapshot={snapshot} />
         <BatchSummary snapshot={snapshot} />
       </>,
     );
+    const review = integratedReview(snapshot);
+    if (
+      review?.obligations.some(
+        (row) =>
+          row.taskId === snapshot.tasks[0]?.id &&
+          row.status === 'unmapped' &&
+          row.reasons.includes('mapping_absent'),
+      )
+    ) {
+      expect(screen.getAllByText(/Check mapping not assessed$/).length).toBeGreaterThan(0);
+      expect(screen.queryByText('Explicit check mapping not assessed')).toBeNull();
+    }
   });
 }
 
@@ -1264,5 +1283,311 @@ it.each(partiallyObservedEndpoints)(
     expect(parsed?.intervals[0]?.state).toBe('unknown');
     expect(parsed?.intervals[0]?.start).toBeNull();
     expect(parsed?.intervals[0]?.closedSeconds).toBeNull();
+  },
+);
+
+function workload(extra: JsonRecord = {}): JsonRecord {
+  const counts = {
+    recorded_occupied: 2,
+    pending_dispatch: 0,
+    sent_unstarted: 1,
+    started: 1,
+    ambiguous: 1,
+    superseded_nonterminal: 1,
+  };
+  return {
+    schema_version: 1,
+    status: 'recorded',
+    source_binding: { revision: 'flow-one' },
+    runtime_capacity: 'unknown',
+    authority: 'advisory_only',
+    counts,
+    rows: {
+      ...flowCollection([
+        {
+          actor_id: 'reviewer',
+          policy_limit: 1,
+          policy_headroom: 0,
+          ...counts,
+          available_slots: null,
+          runtime_status: 'idle',
+          next_action_code: 'reconcile_delivery',
+          reason_codes: ['prior_dispatch_unresolved', 'runtime_capacity_unknown'],
+          reference: flowReference(),
+        },
+      ]),
+      reference: flowReference(),
+    },
+    ...extra,
+  };
+}
+it('separates recorded occupied review work and policy headroom from live availability', () => {
+  const snapshot = flowFixture({ reviewer_load: workload() });
+  expect(reviewerLoads(snapshot)?.rows[0]).toMatchObject({
+    occupied: 2,
+    policyLimit: 1,
+    policyHeadroom: 0,
+    ambiguous: 1,
+    supersededNonterminal: 1,
+  });
+  render(<ReviewerLoadInline snapshot={snapshot} actorId="reviewer" />);
+  expect(screen.getByText('Recorded review work: 2 · Policy limit: 1')).toBeTruthy();
+  expect(screen.getByText('Live capacity not observed')).toBeTruthy();
+  expect(screen.getByText('Confirm delivery before resending')).toBeTruthy();
+  expect(screen.queryByText(/available slots/i)).toBeNull();
+});
+it('does not turn clipped reviewer records into a zero-workload or free-capacity claim', () => {
+  const value = workload();
+  const rows = record(value.rows);
+  const snapshot = flowFixture({
+    reviewer_load: { ...value, rows: { ...rows, items: [], total: 1, shown: 0, omitted: 1 } },
+  });
+  render(<ReviewerLoadInline snapshot={snapshot} actorId="reviewer" />);
+  expect(screen.getByText('Reviewer workload is outside the shown records.')).toBeTruthy();
+  expect(screen.queryByText('Recorded review work: 0')).toBeNull();
+});
+const invalidWorkloadEnvelopes: readonly JsonRecord[] = [
+  { source_binding: { revision: 'old' } },
+  { runtime_capacity: 'available' },
+  { authority: 'dispatch_allowed' },
+];
+it.each(invalidWorkloadEnvelopes)(
+  'rejects mismatched reviewer workload authority or freshness %#',
+  (change) => {
+    expect(reviewerLoads(flowFixture({ reviewer_load: workload(change) }))).toBeNull();
+  },
+);
+const invalidWorkloadRows: readonly JsonRecord[] = [
+  { recorded_occupied: true },
+  { available_slots: 1 },
+  { policy_headroom: 1 },
+];
+it.each(invalidWorkloadRows)(
+  'rejects invented reviewer availability and inconsistent count units %#',
+  (change) => {
+    const value = workload(),
+      rows = record(value.rows);
+    const row = record((rows.items as readonly JsonRecord[])[0]);
+    expect(
+      reviewerLoads(
+        flowFixture({
+          reviewer_load: { ...value, rows: { ...rows, items: [{ ...row, ...change }] } },
+        }),
+      ),
+    ).toBeNull();
+  },
+);
+
+const reviewObservation = (kind: string, extra: JsonRecord = {}): JsonRecord => ({
+  id: kind,
+  kind,
+  actor_id: kind === 'dispatch_sent' ? 'director' : 'reviewer',
+  dispatch_attempt_id: 'dispatch-1',
+  observed_at: '2026-10-16T00:00:00Z',
+  clock_id: 'native-observation',
+  reference: flowReference('A'),
+  ...extra,
+});
+it.each(['en', 'ko'])(
+  'keeps actual ACK and review-start milestones distinct with %s controls',
+  (locale) => {
+    localStorage.setItem(PREFERENCE_KEY, locale);
+    const row = handoff({
+      phase: 'acknowledged',
+      observations: [
+        reviewObservation('dispatch_sent', { observed_at: null, clock_id: null }),
+        reviewObservation('reviewer_acknowledged'),
+      ],
+    });
+    const snapshot = flowFixture({ review_handoffs: handoffs([row]) });
+    const view = render(
+      <LanguageProvider>
+        <ReviewFlow snapshot={snapshot} taskId="A" />
+      </LanguageProvider>,
+    );
+    expect(taskHandoff(snapshot, 'A')?.milestones.map((row) => row.kind)).toEqual([
+      'dispatch_sent',
+      'reviewer_acknowledged',
+    ]);
+    expect(view.container.querySelector('[data-milestone-id="dispatch_sent"]')).toBeTruthy();
+    expect(
+      view.container.querySelector('[data-milestone-id="reviewer_acknowledged"]'),
+    ).toBeTruthy();
+    expect(view.container.querySelector('[data-milestone-id="review_started"]')).toBeNull();
+    expect(view.container.textContent).toContain(
+      locale === 'ko' ? '실제 시각 미관찰' : 'Actual time not observed',
+    );
+  },
+);
+it('retains milestone identity and focused disclosure when actual start arrives', () => {
+  const ack = reviewObservation('reviewer_acknowledged');
+  const before = flowFixture({
+    review_handoffs: handoffs([handoff({ phase: 'acknowledged', observations: [ack] })]),
+  });
+  const view = render(<ReviewFlow snapshot={before} taskId="A" />);
+  const details = view.container.querySelector('details')!;
+  details.open = true;
+  const summary = details.querySelector('summary')!;
+  summary.focus();
+  const retained = view.container.querySelector('[data-milestone-id="reviewer_acknowledged"]');
+  const after = flowFixture({
+    review_handoffs: handoffs([
+      handoff({ phase: 'started', observations: [ack, reviewObservation('review_started')] }),
+    ]),
+  });
+  view.rerender(<ReviewFlow snapshot={after} taskId="A" />);
+  expect(view.container.querySelector('[data-milestone-id="reviewer_acknowledged"]')).toBe(
+    retained,
+  );
+  expect(details.open).toBe(true);
+  expect(document.activeElement).toBe(summary);
+});
+it('requires complete same-revision runtime evidence before showing observed review slots', () => {
+  const value = workload(),
+    rows = record(value.rows),
+    row = record((rows.items as readonly JsonRecord[])[0]);
+  const observed = {
+    observed_at: '2026-10-16T00:00:00Z',
+    clock_id: 'native',
+    observed_revision: 'flow-one',
+    complete: true,
+    evidence_refs: [{ path: 'native.json', sha256: 'a'.repeat(64) }],
+  };
+  const wire = {
+    ...value,
+    runtime_capacity: 'observed',
+    rows: {
+      ...rows,
+      items: [
+        { ...row, available_slots: 0, runtime_status: 'running', runtime_observation: observed },
+      ],
+    },
+  };
+  expect(reviewerLoads(flowFixture({ reviewer_load: wire }))?.rows[0]?.availableSlots).toBe(0);
+  expect(
+    reviewerLoads(
+      flowFixture({
+        reviewer_load: {
+          ...wire,
+          rows: {
+            ...rows,
+            items: [
+              {
+                ...row,
+                available_slots: 0,
+                runtime_observation: { ...observed, observed_revision: 'old' },
+              },
+            ],
+          },
+        },
+      }),
+    ),
+  ).toBeNull();
+});
+
+it('assesses all retained milestones before bounding existing Review details', () => {
+  const observations = Array.from({ length: 60 }, (_, index) =>
+    reviewObservation('dispatch_sent', {
+      id: 'send-' + index,
+      dispatch_attempt_id: 'dispatch-' + index,
+    }),
+  );
+  const snapshot = flowFixture({ review_handoffs: handoffs([handoff({ observations })]) });
+  expect(taskHandoff(snapshot, 'A')?.milestones).toHaveLength(60);
+  const view = render(<ReviewFlow snapshot={snapshot} taskId="A" />);
+  expect(view.container.querySelectorAll('[data-milestone-id]')).toHaveLength(50);
+  expect(view.container.querySelector('[data-milestone-id="send-0"]')).toBeNull();
+  expect(view.container.querySelector('[data-milestone-id="send-59"]')).toBeTruthy();
+  expect(
+    screen.getByText('Some review observations are omitted; these details are partial.'),
+  ).toBeTruthy();
+  const invalid = flowFixture({
+    review_handoffs: handoffs([
+      handoff({
+        observations: [{ ...observations[0], observed_at: 'not-a-time' }, ...observations.slice(1)],
+      }),
+    ]),
+  });
+  expect(taskHandoff(invalid, 'A')).toBeNull();
+});
+
+it('accepts retained sparse counts only for an exactly empty recorded reviewer set', () => {
+  const empty = workload({
+    counts: {},
+    rows: { ...flowCollection([]), reference: flowReference() },
+  });
+  expect(reviewerLoads(flowFixture({ reviewer_load: empty }))).toEqual({
+    rows: [],
+    total: 0,
+    omitted: 0,
+  });
+  expect(reviewerLoads(flowFixture({ reviewer_load: workload({ counts: {} }) }))).toBeNull();
+  expect(
+    reviewerLoads(
+      flowFixture({
+        reviewer_load: workload({
+          counts: { recorded_occupied: false },
+          rows: { ...flowCollection([]), reference: flowReference() },
+        }),
+      }),
+    ),
+  ).toBeNull();
+});
+it.each(['en', 'ko'])(
+  'keeps ready handoff milestones while showing authoritative capacity and contact actions in %s',
+  (locale) => {
+    localStorage.setItem(PREFERENCE_KEY, locale);
+    const cases: readonly (readonly [string, string, string, string])[] = [
+      [
+        'Wait for recorded reviewer capacity before preparing dispatch',
+        'Recorded workload or explicit runtime capacity changes',
+        'Wait for review capacity',
+        '검토 여유가 생길 때까지 기다리세요',
+      ],
+      [
+        'Observe actual native contact before preparing the exact handoff action',
+        'Exact recipient contact, status and evidence are observed',
+        'Confirm reviewer contact and availability',
+        '검토 담당자의 연락 경로와 가용 상태를 확인하세요',
+      ],
+    ];
+    for (const [action, trigger, en, ko] of cases) {
+      const snapshot = flowFixture({
+        review_handoffs: handoffs([
+          handoff({
+            phase: 'ready',
+            next_actor_id: 'director',
+            next_action: action,
+            next_trigger: trigger,
+          }),
+        ]),
+      });
+      const view = render(
+        <LanguageProvider>
+          <HandoffInline snapshot={snapshot} taskId="A" />
+        </LanguageProvider>,
+      );
+      expect(taskHandoff(snapshot, 'A')?.phase).toBe('ready');
+      expect(view.container.textContent).toContain(locale === 'ko' ? ko : en);
+      expect(view.container.textContent).not.toContain(
+        locale === 'ko' ? '검토 담당자에게 전달하세요' : 'Send to the reviewer',
+      );
+      expect(view.container.textContent).toContain('director');
+      view.unmount();
+    }
+  },
+);
+
+const malformedEmptyReviewerCounts = [null, [], false] as const;
+it.each(malformedEmptyReviewerCounts)(
+  'rejects malformed counts even for an empty recorded reviewer set %#',
+  (counts) => {
+    const snapshot = flowFixture({
+      reviewer_load: workload({
+        counts,
+        rows: { ...flowCollection([]), reference: flowReference() },
+      }),
+    });
+    expect(reviewerLoads(snapshot)).toBeNull();
   },
 );

@@ -7,6 +7,7 @@ import { navigationHash, defaultContext } from './navigation';
 import type { WorkContext } from './navigation';
 import { items, record, string } from './model';
 import type { JsonRecord } from './model';
+import type { SnapshotWritePhase } from './useSnapshot';
 
 export type Session = { readonly responsesEnabled: boolean; readonly nonce: string | null };
 export type AnswerInput = {
@@ -15,8 +16,78 @@ export type AnswerInput = {
   readonly answer: string;
   readonly submission_id: string;
 };
-export type AnswerResult = { readonly ok: boolean; readonly conflict: boolean };
-export type AnswerSaver = (input: AnswerInput, nonce: string) => Promise<AnswerResult>;
+export type AnswerReceipt = AnswerInput & {
+  readonly saved_at: string;
+  readonly channel: 'local_web';
+  readonly provenance: 'unverified_local_human';
+  readonly status: 'answered';
+};
+export type AnswerResult = {
+  readonly ok: boolean;
+  readonly conflict: boolean;
+  readonly receipt?: AnswerReceipt;
+};
+export type AnswerSaver = (
+  input: AnswerInput,
+  nonce: string,
+  received?: (receipt: AnswerReceipt) => void,
+) => Promise<AnswerResult>;
+function validSavedAt(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 64) return false;
+  const parts =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.exec(value);
+  if (!parts) return false;
+  const year = Number(parts[1]),
+    month = Number(parts[2]),
+    day = Number(parts[3]);
+  return (
+    year >= 1 &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= new Date(Date.UTC(year, month, 0)).getUTCDate() &&
+    Number(parts[4]) < 24 &&
+    Number(parts[5]) < 60 &&
+    Number(parts[6]) < 60 &&
+    !Number.isNaN(new Date(value).valueOf())
+  );
+}
+export function parseAnswerReceipt(value: unknown, input: AnswerInput): AnswerReceipt | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const receipt = value as Record<string, unknown>;
+  const fields = [
+    'question_id',
+    'version',
+    'answer',
+    'submission_id',
+    'saved_at',
+    'channel',
+    'provenance',
+    'status',
+  ];
+  if (
+    Object.keys(receipt).length !== fields.length ||
+    !fields.every((key) => Object.hasOwn(receipt, key)) ||
+    receipt.question_id !== input.question_id ||
+    receipt.version !== input.version ||
+    receipt.answer !== input.answer ||
+    receipt.submission_id !== input.submission_id ||
+    !Number.isSafeInteger(receipt.version) ||
+    Number(receipt.version) < 1 ||
+    !input.question_id.trim() ||
+    input.question_id.length > 128 ||
+    !input.submission_id.trim() ||
+    input.submission_id.length > 128 ||
+    !input.answer.trim() ||
+    input.answer.length > 4000 ||
+    !validSavedAt(receipt.saved_at) ||
+    receipt.channel !== 'local_web' ||
+    receipt.provenance !== 'unverified_local_human' ||
+    receipt.status !== 'answered'
+  )
+    return null;
+  return receipt as AnswerReceipt;
+}
 export type SessionLoader = (signal?: AbortSignal) => Promise<Session>;
 export const loadSession: SessionLoader = async (signal) => {
   const response = await fetch('/api/session', {
@@ -41,7 +112,13 @@ export const saveAnswer: AnswerSaver = async (input, nonce) => {
     body: JSON.stringify(input),
     signal: AbortSignal.timeout(12000),
   });
-  return { ok: response.ok, conflict: response.status === 409 };
+  if (response.status !== 200) return { ok: false, conflict: response.status === 409 };
+  // Normal 200 follows the locked durable save, final model closure and synchronous render.
+  // Validate its actual receipt; never accept a transport acknowledgement as saved evidence.
+  const body = await response.text();
+  if (body.length > 64 * 1024) return { ok: false, conflict: false };
+  const receipt = parseAnswerReceipt(JSON.parse(body), input);
+  return receipt ? { ok: true, conflict: false, receipt } : { ok: false, conflict: false };
 };
 export function useSession(loader: SessionLoader = loadSession) {
   const [session, setSession] = useState<Session | null>(null);
@@ -93,6 +170,9 @@ export function QuestionForm({
   question,
   session,
   saver = saveAnswer,
+  coordinatedSaver,
+  writePhase,
+  holdAutomaticReads,
   refresh,
   programId = 'standalone-question',
   context = defaultContext,
@@ -102,6 +182,9 @@ export function QuestionForm({
   readonly question: JsonRecord;
   readonly session: Session | null;
   readonly saver?: AnswerSaver;
+  readonly coordinatedSaver?: AnswerSaver;
+  readonly writePhase?: SnapshotWritePhase | null;
+  readonly holdAutomaticReads?: () => () => void;
   readonly refresh: (manual?: boolean, afterWrite?: boolean) => Promise<void>;
 }) {
   const i18n = useI18n();
@@ -117,21 +200,34 @@ export function QuestionForm({
   const { draft, store } = useQuestionDraft(key, Number(question.version));
   const { answer, version } = draft;
   const busy = draft.phase === 'saving';
+  const saveBlocked = busy || Boolean(writePhase);
   const setAnswer = (value: string) => store.update(key, { answer: value, phase: 'editing' });
   const status = string(question.status);
   const recordedAnswer = record(question.answer);
   const confirmed = Boolean(
     draft.submission &&
+    Number(question.version) === draft.submission.version &&
     recordedAnswer.submission_id === draft.submission.submission_id &&
     recordedAnswer.question_id === draft.submission.question_id &&
     recordedAnswer.version === draft.submission.version &&
     recordedAnswer.answer === draft.submission.answer,
   );
-  const saved = draft.phase === 'saved' || confirmed;
-  const failure =
-    !confirmed && (draft.phase === 'conflict' || draft.phase === 'unavailable')
-      ? draft.phase
+  const localReceipt =
+    draft.receipt &&
+    draft.submission &&
+    Number(question.version) === draft.receipt.version &&
+    parseAnswerReceipt(draft.receipt, draft.submission) &&
+    draft.answer === draft.receipt.answer &&
+    draft.version === draft.receipt.version
+      ? draft.receipt
       : null;
+  const saved =
+    confirmed ||
+    Boolean(localReceipt) ||
+    (!coordinatedSaver && draft.phase === 'saved' && draft.version === Number(question.version));
+  const shownAnswer = localReceipt || recordedAnswer;
+  const failure =
+    !saved && (draft.phase === 'conflict' || draft.phase === 'unavailable') ? draft.phase : null;
   const acknowledgement = record(question.acknowledgement);
   const outcome = record(question.outcome);
   const withdrawn = outcome.kind === 'withdrawn';
@@ -141,6 +237,10 @@ export function QuestionForm({
   const changed = validVersion && version !== Number(question.version);
   const canAnswer =
     session?.responsesEnabled && session.nonce && status === 'open' && !saved && validVersion;
+  const editing = Boolean(canAnswer && !changed && draft.phase === 'editing' && answer.trim());
+  useEffect(() => {
+    if (editing) return holdAutomaticReads?.();
+  }, [editing, holdAutomaticReads, key]);
   useEffect(() => {
     // A result belongs to this explicit interaction, never to a later focus or route.
     const moved = (event: Event) => {
@@ -171,12 +271,19 @@ export function QuestionForm({
     else failureMessage.current?.focus();
   }, [saved, failure, draft]);
   const save = async () => {
-    if (!session?.responsesEnabled || !session.nonce || busy) return;
+    if (!session?.responsesEnabled || !session.nonce || saveBlocked) return;
     const active = document.activeElement;
     submitFocus.current =
       active instanceof HTMLElement && formRoot.current?.contains(active) ? active : null;
-    if (await store.submit(key, { questionId: string(question.id), nonce: session.nonce, saver }))
-      await refresh(false, true);
+    if (
+      await store.submit(key, {
+        questionId: string(question.id),
+        nonce: session.nonce,
+        saver: coordinatedSaver || saver,
+      })
+    ) {
+      if (!coordinatedSaver) await refresh(false, true);
+    }
   };
   const submit = async () => {
     if (!canAnswer || changed) return;
@@ -345,8 +452,12 @@ export function QuestionForm({
               </button>
             </div>
           )}
-          <button type="submit" disabled={!canAnswer || busy || !answer.trim() || changed}>
-            {busy ? i18n.t('Saving answer…') : i18n.t('Save answer')}
+          <button type="submit" disabled={!canAnswer || saveBlocked || !answer.trim() || changed}>
+            {busy && writePhase === 'waiting-read'
+              ? i18n.t('Waiting for the current refresh before saving…')
+              : busy
+                ? i18n.t('Saving answer…')
+                : i18n.t('Save answer')}
           </button>
         </form>
       ) : (
@@ -360,10 +471,14 @@ export function QuestionForm({
                 {i18n.t('Your saved answer')}
               </h3>
               <p className="prose">
-                {i18n.display(recordedAnswer.answer, saved ? answer : i18n.t('Not recorded'))}
+                {i18n.display(shownAnswer.answer, saved ? answer : i18n.t('Not recorded'))}
               </p>
               <p className="muted">
-                {i18n.t('Saved')} {i18n.date(recordedAnswer.saved_at)}{' '}
+                {Object.keys(shownAnswer).length > 0 && (
+                  <>
+                    {i18n.t('Saved')} {i18n.date(shownAnswer.saved_at)}{' '}
+                  </>
+                )}
                 {i18n.t('· local response, not authenticated identity')}
               </p>
             </>

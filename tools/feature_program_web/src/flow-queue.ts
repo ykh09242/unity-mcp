@@ -1,3 +1,5 @@
+import { originalValue } from './presentation';
+import { textDigest } from './presentation-digest';
 import { record, string, items } from './model';
 import type { Snapshot, JsonRecord } from './model';
 import { currentCollection, currentReference } from './readiness';
@@ -5,7 +7,12 @@ import type { TaskFilters } from './selectors';
 
 export const queueReadiness = ['ready', 'blocked', 'not_assessed', 'terminal'] as const;
 export const queueFilters = ['open', ...queueReadiness] as const;
-export const queueKinds = ['verification_lane', 'task_review', 'required_check_gap'] as const;
+export const queueKinds = [
+  'verification_lane',
+  'task_review',
+  'required_check_gap',
+  'integrated_review_obligation',
+] as const;
 const queueActions = [
   'run',
   'wait',
@@ -21,6 +28,7 @@ export type QueueRow = {
   readonly kind: string;
   readonly taskId: string;
   readonly lane: string;
+  readonly criterionOrdinal: number | null;
   readonly checkIds: readonly string[];
   readonly phase: string;
   readonly result: string;
@@ -90,12 +98,44 @@ function parseQueue(snapshot: Snapshot): ReviewQueue | null {
       !queueActions.some((action) => action === row.action)
     )
       return null;
+    const obligation = record(row.integrated_review_obligation);
+    const criterion = record(obligation.criterion);
+    const criteria = items(record(originalValue(snapshot.objective)).criteria);
+    if (
+      row.kind === 'integrated_review_obligation' &&
+      (obligation.task_id !== taskId ||
+        obligation.actionable !== true ||
+        !['requires_recheck', 'pending', 'adverse', 'unavailable'].includes(
+          string(obligation.status),
+        ) ||
+        !(obligation.check_id === null || typeof obligation.check_id === 'string') ||
+        obligation.next_actor_id !== row.next_actor_id ||
+        obligation.next_action !== row.next_action ||
+        obligation.next_trigger !== row.next_trigger ||
+        ready.status !== 'blocked' ||
+        !(
+          obligation.criterion === null ||
+          (typeof criterion.ordinal === 'number' &&
+            Number.isSafeInteger(criterion.ordinal) &&
+            criterion.ordinal >= 0 &&
+            typeof criteria[criterion.ordinal] === 'string' &&
+            textDigest(string(criteria[criterion.ordinal])) === criterion.text_sha256)
+        ))
+    )
+      return null;
     rows.push({
       id,
       kind: string(row.kind),
       taskId,
       lane: string(row.lane),
-      checkIds: items(row.check_ids).map(string).filter(Boolean),
+      criterionOrdinal:
+        row.kind === 'integrated_review_obligation' && typeof criterion.ordinal === 'number'
+          ? criterion.ordinal
+          : null,
+      checkIds:
+        row.kind === 'integrated_review_obligation' && string(obligation.check_id)
+          ? [string(obligation.check_id)]
+          : items(row.check_ids).map(string).filter(Boolean),
       phase: string(row.phase),
       result: string(row.result),
       applicability: string(row.applicability),
@@ -163,6 +203,7 @@ export const queueKindLabels: Readonly<Record<string, string>> = {
   verification_lane: 'Verification request',
   task_review: 'Submitted review',
   required_check_gap: 'Check coverage gap',
+  integrated_review_obligation: 'Integrated review follow-up',
 };
 export const queueActionLabels: Readonly<Record<string, string>> = {
   run: 'Run the assigned check',

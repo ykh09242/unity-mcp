@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QuestionDraftProvider } from './question-drafts';
 import type { ReactElement } from 'react';
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: QuestionDraftProvider });
-import { QuestionForm, useSession } from './questions';
+import { QuestionForm, useSession, parseAnswerReceipt, saveAnswer } from './questions';
+import { translationTools } from './i18n';
 import type { AnswerResult, AnswerSaver, Session, SessionLoader } from './questions';
 import type { JsonRecord } from './model';
 
@@ -439,4 +440,297 @@ describe('director question responses', () => {
     expect(saver).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Your answer').hasAttribute('disabled')).toBe(true);
   });
+});
+
+it('shows actual producer saved_at after snapshot confirmation without claiming missing time while refresh is pending', async () => {
+  const saver = vi.fn<AnswerSaver>(async () => ({ ok: true, conflict: false }));
+  const refresh = vi.fn(async () => {});
+  const view = render(
+    <QuestionForm question={question} session={session} saver={saver} refresh={refresh} />,
+  );
+  fireEvent.change(screen.getByLabelText('Your answer'), {
+    target: { value: 'Actual saved answer' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+  await screen.findByRole('heading', { name: 'Your saved answer' });
+  expect(refresh).toHaveBeenCalledWith(false, true);
+  expect(screen.queryByText(/Saved Not recorded/)).toBeNull();
+  const submission = saver.mock.calls[0]?.[0];
+  if (!submission) throw new Error('Missing actual interaction submission');
+  const savedAt = '2026-10-16T03:37:46.747043+09:00';
+  view.rerender(
+    <QuestionForm
+      question={{
+        ...question,
+        status: 'answered',
+        answer: { ...submission, saved_at: savedAt, channel: 'local_web' },
+      }}
+      session={session}
+      saver={saver}
+      refresh={refresh}
+    />,
+  );
+  expect(
+    screen.getByText(
+      (text) => text.includes('Saved ') && text.includes(translationTools('en').date(savedAt)),
+    ),
+  ).toBeTruthy();
+  expect(screen.getByText('Actual saved answer')).toBeTruthy();
+  view.rerender(
+    <QuestionForm
+      question={{
+        ...question,
+        status: 'answered',
+        answer: { ...submission, channel: 'local_web' },
+      }}
+      session={session}
+      saver={saver}
+      refresh={refresh}
+    />,
+  );
+  expect(screen.getByText(/Saved Not recorded/)).toBeTruthy();
+});
+
+it('shows the honest waiting-read state for the local pending save without sending through the fallback', async () => {
+  const fallback = vi.fn<AnswerSaver>(async () => ({ ok: true, conflict: false }));
+  let settle!: (value: AnswerResult) => void;
+  const coordinated = vi.fn<AnswerSaver>(
+    () =>
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+  );
+  const refresh = vi.fn(async () => {});
+  const view = render(
+    <QuestionForm
+      question={question}
+      session={session}
+      saver={fallback}
+      coordinatedSaver={coordinated}
+      refresh={refresh}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText('Your answer'), {
+    target: { value: 'Retained during drain' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+  view.rerender(
+    <QuestionForm
+      question={question}
+      session={session}
+      saver={fallback}
+      coordinatedSaver={coordinated}
+      writePhase="waiting-read"
+      refresh={refresh}
+    />,
+  );
+  expect(
+    screen
+      .getByRole('button', { name: 'Waiting for the current refresh before saving…' })
+      .hasAttribute('disabled'),
+  ).toBe(true);
+  expect(fallback).not.toHaveBeenCalled();
+  await act(async () => {
+    settle({ ok: false, conflict: false });
+  });
+  view.rerender(
+    <QuestionForm
+      question={question}
+      session={session}
+      saver={fallback}
+      coordinatedSaver={coordinated}
+      refresh={refresh}
+    />,
+  );
+  expect(screen.getByDisplayValue('Retained during drain')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Save answer' }).hasAttribute('disabled')).toBe(false);
+  expect(refresh).not.toHaveBeenCalled();
+});
+
+const durableInput = {
+  question_id: 'Q1',
+  version: 1,
+  answer: 'Durable answer',
+  submission_id: 'receipt-one',
+};
+const durableReceipt = {
+  ...durableInput,
+  saved_at: '2026-10-16T03:37:46.747043+09:00',
+  channel: 'local_web',
+  provenance: 'unverified_local_human',
+  status: 'answered',
+};
+describe('authoritative normal answer receipt', () => {
+  it('decodes the complete normal200 body and preserves the actual saved timestamp', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(durableReceipt), { status: 200 }),
+    );
+    expect(await saveAnswer(durableInput, 'nonce')).toEqual({
+      ok: true,
+      conflict: false,
+      receipt: durableReceipt,
+    });
+  });
+  it.each(['question_id', 'version', 'answer', 'submission_id'])(
+    'rejects a returned receipt with a different %s',
+    (field) => {
+      expect(
+        parseAnswerReceipt(
+          { ...durableReceipt, [field]: field === 'version' ? 2 : 'different' },
+          durableInput,
+        ),
+      ).toBeNull();
+    },
+  );
+  const malformed: readonly unknown[] = [
+    null,
+    [],
+    {},
+    { ...durableReceipt, extra: true },
+    { ...durableReceipt, saved_at: undefined },
+    { ...durableReceipt, version: true },
+    { ...durableReceipt, channel: 'remote' },
+    { ...durableReceipt, provenance: 'authenticated' },
+    { ...durableReceipt, status: 'pending' },
+    { ...durableReceipt, saved_at: '2026-10-16T03:37:46' },
+    { ...durableReceipt, saved_at: '2026-02-31T03:37:46Z' },
+    { ...durableReceipt, saved_at: '2026-10-16T24:37:46Z' },
+  ];
+  it.each(malformed)('rejects incomplete or malformed normal receipt %#', (receipt) => {
+    expect(parseAnswerReceipt(receipt, durableInput)).toBeNull();
+  });
+  it.each([201, 202, 409, 503])(
+    'does not accept receipt content from HTTP%s as normal durable success',
+    async (status) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify(durableReceipt), { status }),
+      );
+      expect(await saveAnswer(durableInput, 'nonce')).toEqual({
+        ok: false,
+        conflict: status === 409,
+      });
+    },
+  );
+});
+
+it('does not present a prior-version local receipt as the answer to a revised question', async () => {
+  let finish!: (result: AnswerResult) => void;
+  const coordinated = vi.fn<AnswerSaver>((input, _nonce, received) => {
+    received?.({
+      ...input,
+      saved_at: durableReceipt.saved_at,
+      channel: 'local_web',
+      provenance: 'unverified_local_human',
+      status: 'answered',
+    });
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  const view = render(
+    <QuestionForm
+      question={question}
+      session={session}
+      coordinatedSaver={coordinated}
+      refresh={async () => {}}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText('Your answer'), {
+    target: { value: 'Version one answer' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+  await screen.findByRole('heading', { name: 'Your saved answer' });
+  view.rerender(
+    <QuestionForm
+      question={{ ...question, version: 2, prompt: 'Revised current question' }}
+      session={session}
+      coordinatedSaver={coordinated}
+      refresh={async () => {}}
+    />,
+  );
+  expect(screen.queryByRole('heading', { name: 'Your saved answer' })).toBeNull();
+  expect(screen.getByRole('heading', { name: 'Revised current question' })).toBeTruthy();
+  await act(async () => {
+    finish({ ok: true, conflict: false });
+  });
+  expect(screen.queryByRole('heading', { name: 'Your saved answer' })).toBeNull();
+});
+
+describe('visible editable draft lease', () => {
+  it('holds only across the dirty boolean transition, not on every typed character', async () => {
+    const release = vi.fn(),
+      hold = vi.fn(() => release);
+    render(
+      <QuestionForm
+        question={question}
+        session={session}
+        holdAutomaticReads={hold}
+        refresh={async () => {}}
+      />,
+    );
+    expect(hold).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'First' } });
+    expect(hold).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByLabelText('Your answer'), {
+      target: { value: 'First plus more' },
+    });
+    expect(hold).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: ' ' } });
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+  it.each(['closed', 'disabled', 'revised', 'unmount'])(
+    'releases automatic reads when current editability ends through %s',
+    async (change) => {
+      const release = vi.fn(),
+        hold = vi.fn(() => release);
+      const props = { question, session, holdAutomaticReads: hold, refresh: async () => {} };
+      const view = render(<QuestionForm {...props} />);
+      fireEvent.change(screen.getByLabelText('Your answer'), {
+        target: { value: 'Retained draft' },
+      });
+      expect(hold).toHaveBeenCalledTimes(1);
+      if (change === 'unmount') view.unmount();
+      else
+        view.rerender(
+          <QuestionForm
+            {...props}
+            question={
+              change === 'closed'
+                ? { ...question, status: 'answered' }
+                : change === 'revised'
+                  ? { ...question, version: 2 }
+                  : question
+            }
+            session={change === 'disabled' ? { responsesEnabled: false, nonce: null } : session}
+          />,
+        );
+      expect(release).toHaveBeenCalledTimes(1);
+    },
+  );
+  it.each([false, true])(
+    'does not retain editing pause after settled save conflict=%s',
+    async (conflict) => {
+      const release = vi.fn(),
+        hold = vi.fn(() => release);
+      const saver = vi.fn<AnswerSaver>(async () => ({ ok: false, conflict }));
+      render(
+        <QuestionForm
+          question={question}
+          session={session}
+          holdAutomaticReads={hold}
+          coordinatedSaver={saver}
+          refresh={async () => {}}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText('Your answer'), {
+        target: { value: 'Keep after failure' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      await screen.findByRole('alert');
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(hold).toHaveBeenCalledTimes(1);
+      expect(screen.getByDisplayValue('Keep after failure')).toBeTruthy();
+    },
+  );
 });

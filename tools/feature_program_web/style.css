@@ -2845,6 +2845,7 @@ select {
   min-height: 40px;
   padding: 0;
   border: 0;
+  word-break: keep-all;
   overflow-wrap: anywhere;
 }
 .queue-identity p,
@@ -2952,4 +2953,20 @@ select {
   display: inline-block;
   max-inline-size: 100%;
   vertical-align: baseline;
+}
+
+.reviewer-load p,
+.integrated-review-facts p,
+.integrated-obligations p,
+.integrated-trigger {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.reviewer-load p,
+.integrated-review-facts p {
+  margin-block: 4px;
+}
+.integrated-trigger {
+  display: block;
+  color: var(--muted);
 }

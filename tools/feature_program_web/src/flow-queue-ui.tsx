@@ -1,4 +1,9 @@
-import { HandoffInline, ReviewTimingLine } from './review-throughput-ui';
+import {
+  HandoffInline,
+  ReviewTimingLine,
+  ReviewerLoadSummary,
+  reviewFlowLabel,
+} from './review-throughput-ui';
 import { taskHandoff } from './review-throughput';
 import { flowReasonLabels } from './flow-copy';
 import { checkLabels } from './throughput';
@@ -66,9 +71,15 @@ function ReviewLabel({ row }: { readonly row: QueueRow }) {
     <>
       {i18n.t(queueKindLabels[row.kind] || row.kind)}
       {row.lane && <> · {i18n.t(laneLabels[row.lane] || row.lane)}</>}
-      {row.kind === 'required_check_gap' && row.checkIds.length > 0 && (
-        <> · {row.checkIds.map((id) => i18n.t(checkLabels[id] || id)).join(', ')}</>
-      )}
+      {['required_check_gap', 'integrated_review_obligation'].includes(row.kind) &&
+        row.checkIds.length > 0 && (
+          <> · {row.checkIds.map((id) => i18n.t(checkLabels[id] || id)).join(', ')}</>
+        )}
+      {row.kind === 'integrated_review_obligation' &&
+        !row.checkIds.length &&
+        row.criterionOrdinal !== null && (
+          <> · {i18n.t('Criterion {count}', { count: row.criterionOrdinal + 1 })}</>
+        )}
     </>
   );
 }
@@ -91,14 +102,18 @@ function QueueFacts({
       {!(row.kind === 'task_review' && taskHandoff(snapshot, row.taskId)) && (
         <div className="queue-action">
           <ActorLink id={row.nextActorId} context={context} />
-          <span>{i18n.t(row.nextAction || queueActionLabels[row.action] || 'Not recorded')}</span>
+          <span>
+            {i18n.t(
+              reviewFlowLabel(row.nextAction || queueActionLabels[row.action] || 'Not recorded'),
+            )}
+          </span>
         </div>
       )}
       {!(row.kind === 'task_review' && taskHandoff(snapshot, row.taskId)) &&
         row.nextTrigger &&
         row.nextTrigger !== row.nextAction && (
           <p className="muted queue-trigger">
-            {i18n.t('Next trigger')}: {i18n.t(row.nextTrigger)}
+            {i18n.t('Next trigger')}: {i18n.t(reviewFlowLabel(row.nextTrigger))}
           </p>
         )}
       {row.kind === 'task_review' && !taskHandoff(snapshot, row.taskId) && (
@@ -388,6 +403,7 @@ export function QueueResponsibilities({
   return (
     <section className="verification-responsibilities">
       <h3>{i18n.t('Next review responsibility')}</h3>
+      <ReviewerLoadSummary snapshot={snapshot} />
       {requests.length > 0 && (
         <ul>
           {requests.slice(0, 5).map((row) => (
@@ -404,7 +420,11 @@ export function QueueResponsibilities({
                   </span>
                   <ActorLink id={row.nextActorId} context={context} />
                   <span>
-                    {i18n.t(row.nextAction || queueActionLabels[row.action] || 'Not recorded')}
+                    {i18n.t(
+                      reviewFlowLabel(
+                        row.nextAction || queueActionLabels[row.action] || 'Not recorded',
+                      ),
+                    )}
                   </span>
                 </div>
               )}
@@ -461,7 +481,7 @@ export function QueueResponsibilities({
                         ))}
                         {row.nextTrigger && row.nextTrigger !== row.nextAction && (
                           <p className="muted">
-                            {i18n.t('Next trigger')}: {i18n.t(row.nextTrigger)}
+                            {i18n.t('Next trigger')}: {i18n.t(reviewFlowLabel(row.nextTrigger))}
                           </p>
                         )}
                       </li>

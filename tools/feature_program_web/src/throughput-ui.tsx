@@ -1,3 +1,4 @@
+import { IntegratedMemberContext } from './flow-closure-ui';
 import { CheckInputs } from './flow-inputs-ui';
 import { RunHistory } from './flow-run-history-ui';
 import { LocalExecution } from './flow-execution-ui';
@@ -345,6 +346,7 @@ export function VerificationLanes({
   return (
     <section className="verification-context" aria-label={i18n.t('Verification lanes')}>
       {hasVerification && <h3>{i18n.t('Verification lanes')}</h3>}
+      <IntegratedMemberContext snapshot={snapshot} taskId={task.id} />
       {hasVerification &&
         (!context ? (
           <p className="muted">

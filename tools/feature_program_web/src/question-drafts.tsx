@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
-import type { AnswerInput, AnswerSaver } from './questions';
+import type { AnswerInput, AnswerSaver, AnswerReceipt } from './questions';
 
 type DraftPhase = 'editing' | 'saving' | 'saved' | 'conflict' | 'unavailable';
 export type QuestionDraft = {
@@ -8,6 +8,7 @@ export type QuestionDraft = {
   readonly version: number;
   readonly phase: DraftPhase;
   readonly submission: AnswerInput | null;
+  readonly receipt?: AnswerReceipt;
   readonly selection: { readonly start: number; readonly end: number } | null;
 };
 export const questionDraftKey = (program: string, question: string) =>
@@ -74,12 +75,38 @@ export function createQuestionDrafts() {
             };
       update(key, { phase: 'saving', submission });
       try {
-        const result = await request.saver(submission, request.nonce);
+        const matchesCurrent = () => {
+          const current = drafts.get(key);
+          return (
+            current?.submission === submission &&
+            current.answer === submission.answer &&
+            current.version === submission.version
+          );
+        };
+        const received = (receipt: AnswerReceipt) => {
+          if (
+            matchesCurrent() &&
+            receipt.question_id === submission.question_id &&
+            receipt.version === submission.version &&
+            receipt.answer === submission.answer &&
+            receipt.submission_id === submission.submission_id
+          )
+            update(key, { receipt });
+        };
+        const result = await request.saver(submission, request.nonce, received);
+        if (!matchesCurrent()) return false;
+        if (result.receipt) received(result.receipt);
         update(key, { phase: result.ok ? 'saved' : result.conflict ? 'conflict' : 'unavailable' });
         return result.ok;
       } catch {
         // no-excuse-ok: catch -- transport confirmation boundary; retain immutable retry payload.
-        update(key, { phase: 'unavailable' });
+        const current = drafts.get(key);
+        if (
+          current?.submission === submission &&
+          current.answer === submission.answer &&
+          current.version === submission.version
+        )
+          update(key, { phase: 'unavailable' });
         return false;
       }
     },

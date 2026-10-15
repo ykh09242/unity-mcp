@@ -53,6 +53,13 @@ describe('flow review queue', () => {
       );
       expect(screen.getByText(outcome)).toBeTruthy();
       expect(screen.getByText(inputs)).toBeTruthy();
+      expect(view.container.querySelector('.queue-details')?.textContent).toContain(
+        language === 'ko' ? '검사 적용 여부' : 'Applicability',
+      );
+      if (language === 'ko')
+        expect(view.container.querySelector('.queue-details')?.textContent).not.toContain(
+          'Applicability',
+        );
       expect(view.container.querySelector('.queue-row')?.textContent).not.toContain(
         language === 'ko' ? '알 수 없음' : 'unknown',
       );
@@ -346,4 +353,67 @@ describe('flow review queue', () => {
     expect(screen.getByRole('button', { name: '검토 대기열' })).toBeTruthy();
     expect(screen.getByRole('link', { name: /A First flow task/ })).toBeTruthy();
   });
+});
+
+it('keeps a current adverse integrated obligation visible for an already done task', () => {
+  const obligation = {
+    task_id: 'A',
+    attempt: 1,
+    check_id: 'scoped_tests',
+    criterion: null,
+    status: 'adverse',
+    actionable: true,
+    basis: 'none',
+    reason_codes: ['verification_nonpassing'],
+    next_actor_id: 'resolver',
+    next_action: 'resolve_verification',
+    next_trigger: 'current_verification_evidence',
+    request_id: 'new-request',
+    observation_id: 'new-failure',
+  };
+  const row = flowQueueRow('integrated-A', 'A', {
+    kind: 'integrated_review_obligation',
+    readiness: { status: 'blocked', reasons: ['verification_nonpassing'] },
+    action: 'resolve_blocker',
+    next_actor_id: 'resolver',
+    next_action: 'resolve_verification',
+    next_trigger: 'current_verification_evidence',
+    integrated_review_obligation: obligation,
+  });
+  const snapshot = flowFixture({
+    tasks: [{ id: 'A', title: 'Done member', status: 'done' }],
+    review_queue: flowQueue([row]),
+  });
+  expect(reviewQueue(snapshot)?.rows[0]).toMatchObject({
+    kind: 'integrated_review_obligation',
+    readiness: 'blocked',
+    nextActorId: 'resolver',
+    checkIds: ['scoped_tests'],
+  });
+  const malformed = flowFixture({
+    review_queue: flowQueue([
+      { ...row, integrated_review_obligation: { ...obligation, actionable: false } },
+    ]),
+  });
+  expect(reviewQueue(malformed)).toBeNull();
+});
+
+it('refuses an integrated queue obligation with a criterion outside the exact current goal', () => {
+  const row = flowQueueRow('bad-criterion', 'A', {
+    kind: 'integrated_review_obligation',
+    readiness: { status: 'blocked', reasons: [] },
+    action: 'recheck',
+    integrated_review_obligation: {
+      task_id: 'A',
+      attempt: 1,
+      check_id: null,
+      criterion: { ordinal: 4, text_sha256: 'a'.repeat(64) },
+      status: 'requires_recheck',
+      actionable: true,
+      next_actor_id: 'reviewer',
+      next_action: 'Run the assigned check',
+      next_trigger: 'Wait for the recorded result',
+    },
+  });
+  expect(reviewQueue(flowFixture({ review_queue: flowQueue([row]) }))).toBeNull();
 });

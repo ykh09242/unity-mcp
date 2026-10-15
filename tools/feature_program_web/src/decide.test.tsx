@@ -269,7 +269,7 @@ describe('complete question navigation', () => {
     ]) {
       response = next;
       await act(async () => {
-        document.dispatchEvent(new Event('visibilitychange'));
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
       });
       expect(document.activeElement).toBe(input);
       expect(input.value).toBe('Private draft during outage');
@@ -278,19 +278,19 @@ describe('complete question navigation', () => {
     }
     failure = true;
     await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     });
     expect(document.activeElement).toBe(input);
     expect(input.value).toBe('Private draft during outage');
     failure = false;
     response = snapshot();
     await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     });
     expect(document.activeElement).toBe(input);
     response = { ...snapshot(), questions: [] };
     await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     });
     expect(screen.getByRole('heading', { name: 'Question not available' })).toBeDefined();
     expect(document.activeElement).toBe(
@@ -324,14 +324,14 @@ describe('complete question navigation', () => {
               ),
       });
       await act(async () => {
-        document.dispatchEvent(new Event('visibilitychange'));
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
       });
       expect(document.activeElement).toBe(language);
       expect(screen.getByDisplayValue('Keep this private draft')).toBeTruthy();
       expect(screen.queryByRole('button', { name: 'Save answer' })).toBeNull();
     },
   );
-  it('continues at the question heading when a background answer removes the focused editor', async () => {
+  it('continues at the question heading when an explicit refresh observes an answer removing the focused editor', async () => {
     initial();
     const user = userEvent.setup();
     let model = snapshot();
@@ -347,7 +347,7 @@ describe('complete question navigation', () => {
       ),
     });
     await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     });
     expect(document.activeElement).toBe(
       screen.getByRole('heading', { name: 'Choose the first scope' }),
@@ -428,6 +428,7 @@ describe('complete question navigation', () => {
   it('retains a pending save and exact uncertain retry across route unmounts', async () => {
     initial();
     const user = userEvent.setup();
+    let model = snapshot();
     let settle: ((value: AnswerResult) => void) | undefined;
     const saver = vi.fn<AnswerSaver>(
       () =>
@@ -435,9 +436,7 @@ describe('complete question navigation', () => {
           settle = resolve;
         }),
     );
-    render(
-      <App loader={async () => snapshot()} sessionLoader={sessionLoader} answerSaver={saver} />,
-    );
+    render(<App loader={async () => model} sessionLoader={sessionLoader} answerSaver={saver} />);
     await user.click(await screen.findByRole('link', { name: /Choose the first scope/ }));
     await user.type(screen.getByLabelText('Your answer'), 'A frozen retry');
     await user.click(screen.getByRole('button', { name: 'Save answer' }));
@@ -454,6 +453,25 @@ describe('complete question navigation', () => {
     await user.click(screen.getByRole('link', { name: /Choose the first scope/ }));
     await user.click(screen.getByRole('button', { name: 'Save answer' }));
     expect(saver.mock.calls[1]?.[0]).toEqual(saver.mock.calls[0]?.[0]);
+    const submitted = saver.mock.calls[1]?.[0];
+    if (!submitted) throw new Error('Missing exact retry submission');
+    model = parseSnapshot({
+      ...model,
+      revision: 'actual-retry-saved',
+      questions: records(model.questions).map((q) =>
+        q.id === 'Q1'
+          ? {
+              ...q,
+              status: 'answered',
+              answer: {
+                ...submitted,
+                saved_at: '2026-10-16T03:37:46.747043+09:00',
+                channel: 'local_web',
+              },
+            }
+          : q,
+      ),
+    });
     await act(async () => {
       settle?.({ ok: true, conflict: false });
     });
@@ -551,7 +569,7 @@ describe('draft identity and truthful state boundaries', () => {
       answer: 'Exact private answer',
       submission_id: 'stable-id',
     };
-    expect(await saveAnswer(input, 'private-nonce')).toEqual({ ok: true, conflict: false });
+    expect(await saveAnswer(input, 'private-nonce')).toEqual({ ok: false, conflict: false });
     expect(fetcher).toHaveBeenCalledWith(
       '/api/questions/answer',
       expect.objectContaining({
@@ -561,5 +579,295 @@ describe('draft identity and truthful state boundaries', () => {
         headers: { 'Content-Type': 'application/json', 'X-Work-Program-Nonce': 'private-nonce' },
       }),
     );
+  });
+});
+
+describe('coordinated answer receipt confirmation', () => {
+  it.each(['ok', 'unknown'])(
+    'confirms only the exact fresh stored receipt after %s transport and makes no extra refresh',
+    async (transport) => {
+      window.history.replaceState(null, '', '#question/Q1');
+      let model = snapshot();
+      let finishPost!: () => void;
+      const saver = vi.fn<AnswerSaver>(async (input) => {
+        await new Promise<void>((resolve) => {
+          finishPost = resolve;
+        });
+        model = parseSnapshot({
+          ...model,
+          revision: 'saved',
+          questions: records(model.questions).map((q) =>
+            q.id === 'Q1'
+              ? {
+                  ...q,
+                  status: 'answered',
+                  answer: {
+                    ...input,
+                    saved_at: '2026-10-16T03:37:46.747043+09:00',
+                    channel: 'local_web',
+                  },
+                }
+              : q,
+          ),
+        });
+        if (transport === 'unknown') throw new Error('response aborted');
+        return { ok: true, conflict: false };
+      });
+      const loader = vi.fn(async () => model);
+      render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+      const answer = await screen.findByLabelText('Your answer');
+      fireEvent.change(answer, { target: { value: 'Exact receipt confirmation' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      expect(screen.queryByText('Answer saved. Waiting for director acknowledgement.')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Saving answer…' }).hasAttribute('disabled')).toBe(
+        true,
+      );
+      await act(async () => {
+        finishPost();
+      });
+      await screen.findByRole('heading', { name: 'Your saved answer' });
+      expect(saver).toHaveBeenCalledTimes(1);
+      expect(loader).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole('alert')).toBeNull();
+    },
+  );
+  it.each(['question_id', 'version', 'answer', 'submission_id'])(
+    'keeps uncertainty and exact retry when fresh stored %s does not match',
+    async (field) => {
+      window.history.replaceState(null, '', '#question/Q1');
+      let model = snapshot();
+      const saver = vi.fn<AnswerSaver>(async (input) => {
+        model = parseSnapshot({
+          ...model,
+          revision: 'different',
+          questions: records(model.questions).map((q) =>
+            q.id === 'Q1'
+              ? {
+                  ...q,
+                  answer: {
+                    ...input,
+                    [field]: field === 'version' ? 99 : 'different',
+                    saved_at: '2026-10-16T03:37:46.747043+09:00',
+                  },
+                }
+              : q,
+          ),
+        });
+        return { ok: true, conflict: false };
+      });
+      const loader = vi.fn(async () => model);
+      render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+      fireEvent.change(await screen.findByLabelText('Your answer'), {
+        target: { value: 'Retained exact tuple' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      await screen.findByRole('alert');
+      expect(screen.getByDisplayValue('Retained exact tuple')).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'Your saved answer' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      await waitFor(() => expect(saver).toHaveBeenCalledTimes(2));
+      expect(saver.mock.calls[1]?.[0]).toEqual(saver.mock.calls[0]?.[0]);
+    },
+  );
+});
+
+function completeReceipt(input: Parameters<AnswerSaver>[0]) {
+  return {
+    ...input,
+    saved_at: '2026-10-16T03:37:46.747043+09:00',
+    channel: 'local_web' as const,
+    provenance: 'unverified_local_human' as const,
+    status: 'answered' as const,
+  };
+}
+describe('durable receipt before mandatory full refresh', () => {
+  it.each(['success', 'failure'])(
+    'shows actual200 receipt before delayed GET and retains it after GET %s',
+    async (outcome) => {
+      window.history.replaceState(null, '', '#question/Q1');
+      let settleRead!: (value: unknown) => void, failRead!: (reason: Error) => void;
+      const loader = vi
+        .fn()
+        .mockResolvedValueOnce(snapshot())
+        .mockImplementationOnce(
+          () =>
+            new Promise((yes, no) => {
+              settleRead = yes;
+              failRead = no;
+            }),
+        );
+      const saver = vi.fn<AnswerSaver>(async (input) => ({
+        ok: true,
+        conflict: false,
+        receipt: completeReceipt(input),
+      }));
+      render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+      fireEvent.change(await screen.findByLabelText('Your answer'), {
+        target: { value: 'Receipt-backed saved answer' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      await screen.findByRole('heading', { name: 'Your saved answer' });
+      expect(screen.getByText('Receipt-backed saved answer')).toBeTruthy();
+      expect(screen.getByText(/Saved .*local response/)).toBeTruthy();
+      expect(loader).toHaveBeenCalledTimes(2);
+      expect(saver).toHaveBeenCalledTimes(1);
+      // The global model remains the last actual snapshot while mandatory GET is unresolved.
+      expect(screen.getByText('Refreshing…')).toBeTruthy();
+      await act(async () => {
+        if (outcome === 'failure') failRead(new Error('refresh unavailable'));
+        else {
+          const model = snapshot();
+          const input = saver.mock.calls[0]?.[0];
+          if (!input) throw new Error('Missing input');
+          settleRead({
+            ...model,
+            revision: 'saved',
+            questions: records(model.questions).map((q) =>
+              q.id === 'Q1' ? { ...q, status: 'answered', answer: completeReceipt(input) } : q,
+            ),
+          });
+        }
+      });
+      expect(screen.getByRole('heading', { name: 'Your saved answer' })).toBeTruthy();
+      expect(screen.queryByRole('alert')).toBeNull();
+      if (outcome === 'failure') expect(screen.getByText('Unavailable')).toBeTruthy();
+      expect(loader).toHaveBeenCalledTimes(2);
+    },
+  );
+  it('ignores a stale-session200 callback until the exact fresh receipt is observed', async () => {
+    window.history.replaceState(null, '', '#question/Q1');
+    let finishPost!: () => void, finishRead!: (value: unknown) => void;
+    let model = snapshot();
+    const loader = vi
+      .fn()
+      .mockResolvedValueOnce(model)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRead = resolve;
+          }),
+      );
+    const saver = vi.fn<AnswerSaver>(async (input) => {
+      await new Promise<void>((resolve) => {
+        finishPost = resolve;
+      });
+      return { ok: true, conflict: false, receipt: completeReceipt(input) };
+    });
+    const view = render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+    fireEvent.change(await screen.findByLabelText('Your answer'), {
+      target: { value: 'Session bound answer' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+    const renewed = vi.fn(async () => ({ responsesEnabled: true, nonce: 'replacement-session' }));
+    view.rerender(<App loader={loader} sessionLoader={renewed} answerSaver={saver} />);
+    await waitFor(() => expect(renewed).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      finishPost();
+    });
+    expect(screen.queryByRole('heading', { name: 'Your saved answer' })).toBeNull();
+    await act(async () => {
+      const input = saver.mock.calls[0]?.[0];
+      if (!input) throw new Error('Missing input');
+      model = parseSnapshot({
+        ...model,
+        revision: 'saved',
+        questions: records(model.questions).map((q) =>
+          q.id === 'Q1' ? { ...q, status: 'answered', answer: completeReceipt(input) } : q,
+        ),
+      });
+      finishRead(model);
+    });
+    expect(screen.getByRole('heading', { name: 'Your saved answer' })).toBeTruthy();
+  });
+  it('does not overwrite a changed draft with a late valid callback or result', async () => {
+    const store = createQuestionDrafts(),
+      key = questionDraftKey('program', 'Q1');
+    store.read(key, 1);
+    store.update(key, { answer: 'Original' });
+    let notify!: NonNullable<Parameters<AnswerSaver>[2]>, finish!: (result: AnswerResult) => void;
+    const saver = vi.fn<AnswerSaver>((_input, _nonce, received) => {
+      if (!received) throw new Error('Missing callback');
+      notify = received;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+    const pending = store.submit(key, { questionId: 'Q1', nonce: 'nonce', saver });
+    const input = saver.mock.calls[0]?.[0];
+    if (!input) throw new Error('Missing input');
+    store.update(key, { answer: 'Changed', phase: 'editing' });
+    notify(completeReceipt(input));
+    finish({ ok: true, conflict: false, receipt: completeReceipt(input) });
+    expect(await pending).toBe(false);
+    expect(store.read(key, 1)).toMatchObject({ answer: 'Changed', phase: 'editing' });
+    expect(store.read(key, 1).receipt).toBeUndefined();
+  });
+});
+
+describe('editing deferral wiring', () => {
+  it('pauses dirty-form automatic reads but keeps manual refresh and one Save reconciliation', async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, '', '#question/Q1');
+      let model = snapshot();
+      const loader = vi.fn(async () => model);
+      const saver = vi.fn<AnswerSaver>(async (input) => {
+        model = parseSnapshot({
+          ...model,
+          revision: 'saved',
+          questions: records(model.questions).map((q) =>
+            q.id === 'Q1' ? { ...q, status: 'answered', answer: completeReceipt(input) } : q,
+          ),
+        });
+        return { ok: true, conflict: false, receipt: completeReceipt(input) };
+      });
+      render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+      await act(async () => {});
+      fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Dirty first' } });
+      fireEvent.change(screen.getByLabelText('Your answer'), {
+        target: { value: 'Dirty first plus more' },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(loader).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      });
+      expect(loader).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+        fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      });
+      expect(saver).toHaveBeenCalledTimes(1);
+      expect(loader).toHaveBeenCalledTimes(3);
+      expect(screen.getByRole('heading', { name: 'Your saved answer' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('resumes one missed automatic read when navigating away from a dirty visible form', async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, '', '#question/Q1');
+      const loader = vi.fn(async () => snapshot());
+      render(<App loader={loader} sessionLoader={sessionLoader} />);
+      await act(async () => {});
+      fireEvent.change(screen.getByLabelText('Your answer'), {
+        target: { value: 'Retain on navigation' },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+      expect(loader).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('link', { name: 'Back to questions' }));
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(loader).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
