@@ -358,6 +358,8 @@ def create_server(
     *,
     closure_plan: str | None = None,
     execution_capture: str | None = None,
+    evidence_preparation: str | None = None,
+    batch_plan: str | None = None,
 ):
     """Create a server without reading or modifying the configured program."""
     repository = repo.resolve()
@@ -368,12 +370,17 @@ def create_server(
         port,
         lambda: (
             feature_program.read_snapshot(repository, directory)
-            if closure_plan is None and execution_capture is None
+            if closure_plan is None
+            and execution_capture is None
+            and evidence_preparation is None
+            and batch_plan is None
             else feature_program.read_snapshot(
                 repository,
                 directory,
                 closure_plan=closure_plan,
                 execution_capture=execution_capture,
+                evidence_preparation=evidence_preparation,
+                batch_plan=batch_plan,
             )
         ),
         (
@@ -404,6 +411,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--execution-capture", help="Explicit program-relative sealed actual execution capture JSON"
     )
+    parser.add_argument(
+        "--evidence-preparation",
+        help="Explicit immutable program-relative evidence preparation result JSON",
+    )
+    parser.add_argument(
+        "--batch-plan", help="Explicit immutable program-relative batch plan/result/failure JSON"
+    )
     args = parser.parse_args(argv)
     try:
         with create_server(
@@ -414,6 +428,8 @@ def main(argv: list[str] | None = None) -> int:
             not args.read_only,
             closure_plan=args.closure_plan,
             execution_capture=args.execution_capture,
+            evidence_preparation=args.evidence_preparation,
+            batch_plan=args.batch_plan,
         ) as server:
             print(f"Local work-program dashboard: {server.url}", flush=True)
             print(

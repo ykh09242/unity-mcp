@@ -88,7 +88,7 @@ def normalized(value):
 
 def test_support_lists_every_mutation_and_exact_parser_arguments():
     result = author.support()
-    assert len(result["commands"]) == 43
+    assert len(result["commands"]) == 44
     assert len(result["templates"]) == 5
     assert {row["command"] for row in result["commands"]} == author.COMMANDS
     assert (

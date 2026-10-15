@@ -557,6 +557,75 @@ Use a reasoned `reopen` for follow-up work after completion; a new claim needs r
 An independent reviewer should challenge acceptance and execution evidence. If a director
 performs self-review, identify that honestly and record the reason.
 
+### Review handoff at submission
+
+The optional review handoff retains one immutable packet for the exact task/attempt/submission
+round, receipt hash, source digest, acceptance definition, objective membership and obligations.
+Transaction revisions protect publication; unrelated notes or staffing observations do not change
+the packet identity. Explicit reviewer selection includes independence/eligibility evidence,
+responsible director and next trigger. Saved contact/status never proves live capacity.
+
+Use the actual named reviewer and ordinary execution receipt:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example submit EXAMPLE-1 --owner worker-example --receipt evidence/EXAMPLE-1/attempt-1/execution.json --handoff evidence/EXAMPLE-1/attempt-1/handoff-request.json
+python tools/feature_program.py --program-dir .work/programs/example review-handoff-prepare --input evidence/EXAMPLE-1/attempt-1/adopt-handoff.json
+python tools/feature_program.py --program-dir .work/programs/example review-handoff-record --input evidence/EXAMPLE-1/attempt-1/adopt-handoff.json
+```
+
+The submit `--handoff` file accepts only `reviewer_id`, optional `review_inputs` and
+`evidence_refs`. The standalone adoption input uses `schema_version: 1`,
+`operation: review-handoff-record`, `kind: intent`, `task_id`, actual `actor_id`, chosen
+`reviewer_id`, current `expected_revision`, and optional `review_inputs`/`evidence_refs`.
+The host resolves actual context, current eligibility, packet path/hash and record time.
+Preparation returns `handoff_id`, `subject`, `packet_ref`, `packet_document` and
+`missing_fields`; consume those exact bindings rather than copying source/round numbers by hand.
+Only the current director deliberately replaces an existing reviewer assignment.
+
+Adopted submit returns JSON with `status: submitted`, exact task/attempt/round, `handoff_id`,
+`assignment_generation`, `subject`, `packet_ref`, reviewer/eligibility, director `next_actor_id`,
+`next_action: dispatch_exact_packet` and `native_dispatched: false`. Its `submitted_observation`
+is the actual live post-save result boundary, not an atomic-write timestamp or reviewer start.
+Retain that exact milestone with the next actual native observation; no timing-only record is
+required. Legacy submit without `--handoff` retains its ordinary behavior.
+
+After the real native action, use the same schema/operation fields and record its unique `id`,
+`handoff_id`, `assignment_generation`, `subject`, `packet_ref`, actual `actor_id`, reason,
+`evidence_refs` and current `expected_revision`. Kinds are `submitted`, `dispatch_sent`,
+`dispatch_failed`, `dispatch_unknown`, `reviewer_acknowledged`, `review_started` and `terminal`.
+Dispatch includes `dispatch_attempt_id`, actual `contact`, observed `recipient_status` and
+`transport` (`followup_task` for idle/completed; `send_message` for running). ACK/start binds
+that dispatch attempt; a director preserves the actual `reporter_id`. Supplied actual timing
+also needs aware `observed_at`, `clock_id`, `timestamp_source` and `boundary`. Retain frozen
+native/reviewer evidence; do not fabricate these observations from task status or local clocks.
+Accepted timestamp sources are `live_postcondition_observation`, `native_tool_observation`,
+`reviewer_observation` and `recovery_postcondition_observation`. Record `submitted` only after
+actual successful publication; preparation/record timestamps are not actual native endpoints.
+A `terminal` observation identifies `terminal_kind: finished`, `canceled`, or
+`canonical_verdict_observed` with the exact ordinary `terminal_ref` where applicable. Preserve
+the actual observation boundary; an ordinary saved verdict alone does not invent reviewer timing.
+
+Standalone `review-handoff-prepare` is inert by default. Its explicit `--materialize` option
+freezes only the exact packet, without publishing a submission or intent. Successful adopted
+submission publishes the ordinary round and one
+packet-ready intent together; failed publication publishes neither. Explicit adoption can attach
+a handoff to an already current submitted task without another round or backdated observations.
+The packet-ready result is actionable only after canonical submission succeeds. Root consumes it
+through the [active-director procedure](work-program-workflow.md#start-review-at-submission).
+
+Intent, actual native dispatch, actual authored acknowledgement, actual review start, actual
+terminal observation and the ordinary independent review verdict are separate facts. Each actual
+dispatch has its own identity and immutable contact/tool/outcome evidence. A sent message does not
+prove acknowledgement/start. Failed or unknown delivery requires live reconciliation before a
+new deliberate dispatch; record retry alone performs no transport. Changed source, round,
+acceptance or reviewer assignment preserves history and makes incompatible reliance stale.
+
+After interruption, distinguish an inert orphan packet, committed ready intent, actual send with
+unpublished outcome, and committed observation with a view failure. Inspect exact canonical records
+and immutable bytes before publishing the remainder. Reuse an identical packet, recover a committed
+view error with `render`, and never manufacture another round, acknowledgement or resend from a
+missing CLI result. Existing ordinary review/verification authority and completion guards apply.
+
 ### Resolving a blocked attempt
 
 Use `resume` after recording an actual blocker resolution. It keeps the current owner,
@@ -831,6 +900,62 @@ does not change canonical lane phase/result or accept required checks. A capture
 represented by a canonical record remains recorded rather than becoming a second pending
 execution. Use the ordinary record flow to publish actual evidence after inspecting it.
 
+### Original-proof receipt preparation
+
+Retain one original immutable proof and prepare each compatible target's ordinary receipt from
+its exact references. Original executor, method, input identity, timestamp, result and limitations
+remain original facts. Mechanical preparation resolves current task/attempt/source bindings and
+missing fields; the responsible actor supplies criterion decisions and independent verdicts.
+Neither a copied log, successful exit nor a prepared receipt is acceptance.
+
+`evidence-prepare --input JSON [--result-path PATH]` uses these exact outer requests:
+
+| `kind` | Required inner value | Result |
+| --- | --- | --- |
+| `plan` | `selection` | Exact selected origins, target bindings and intended attachments; no copies |
+| `materialize` | `plan`, the complete prepared plan | Exact inert copies and task-local provenance manifests |
+| `receipt` | `operation` and `explicit_inputs` | An ordinary draft, subject `binding`, missing facts and normal assessment |
+
+A selection has `schema_version: 1`, `origins` and `targets`. Each origin supplies a unique
+`key`, `origin_ref: {path, sha256}` and explicit `role`; each target supplies `task_id`, current
+`attempt`, task-local `prefix`, selected `keys` and explicit `mappings`. Receipt operations are
+`submission`, `review`, `integrated_review`, `completion`, `delivery` and `observation`.
+`explicit_inputs` selects actual task/scope/owner, materialization, decisions and the applicable
+observation/provider/capture bindings; it never supplies an invented passing result.
+
+For provider-backed `completion` preparation, supply explicit `provider_context` and the original
+`provider_ref` with typed execution. The existing provider assessment must establish current
+receiving-beta push/head/checkout identity and the exact required actually executed jobs. Raw legacy
+CI rows, matching hashes, PR-only observations, missing jobs or skipped native work cannot make
+completion ready. Keep policy skips and advisory outcomes separate from required execution.
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example evidence-prepare --input evidence/EXAMPLE-1/attempt-1/prepare-request.json --result-path evidence/EXAMPLE-1/attempt-1/preparation.json
+```
+
+First request an incomplete ordinary draft to obtain its exact `binding` and missing fields.
+An actual decision file supplies `schema_version: 1`, `kind: evidence_decision`, that exact
+`subject_binding`, actual `actor_id` and explicit outcome/criterion/verdict `facts`. Select and
+attach this real evidence, then pass its exact `decision_refs` and materialization to receipt
+preparation. Missing facts remain incomplete; `ready` means the ordinary detached validator
+succeeded, not accepted/published work. Keep the returned receipt and original decisions intact
+for ordinary preview/submit/review. No check is repeated just to package these records.
+
+An explicit attachment plan names original `{path, sha256}`, target task/attempt, exact destination,
+role and byte count. Materialization delegates to the existing exact-byte attachment path. Copies
+stay task-local with `targets[].manifest_ref`, pointing to `<prefix>/evidence-provenance.json`.
+The consuming control receipt retains `evidence_provenance_ref`; this nonempty typed provenance
+graph retains and revalidates transitive origin/copy references. Do not put a foreign attempt's evidence path directly into the target's
+ordinary evidence list. Equal bytes at a destination may be reused; changed existing bytes reject.
+
+Treat ordinary attachments as opaque bytes, including JSON and zero-byte raw artifacts. Parse only
+actual typed submission/review/control receipts and declared control-reference positions. Structural
+preparation can precede copying, but ordinary filesystem-backed detached validation follows exact
+inert materialization. Missing/tampered originals, incomplete inputs, incompatible obligations or
+missing explicit decisions remain unresolved; no future-file success or log-text PASS is inferred.
+Retain failed and newer adverse observations. Reuse never waives affected rechecks, fresh review of
+changed submitted bytes, current PR/beta CI or final independent aggregate review.
+
 ### Preflight and resume records
 
 `closure-prepare` input selects `kind: plan`, `attachments`, `delivery`, `completion`,
@@ -906,6 +1031,60 @@ a match. Resume never executes the original captured command, a remote merge or 
 See the [lean workflow](work-program-workflow.md#lean-execution-and-record-only-recovery)
 and [read-only authoring](#read-only-authoring) for the existing acceptance and preview
 boundaries. Actual review, current PR/beta CI and the director's final acceptance still apply.
+
+### One guarded record batch
+
+A record batch prepares an ordered finite set of supported ordinary records against each projected
+predecessor, then publishes under one original canonical revision and one normal lock/save/render.
+Every operation retains its normal authority, source, evidence, predecessor and acceptance checks;
+the final locked recheck also covers the original state and all frozen references. A precommit
+failure publishes no canonical registry, events or views. Inert prepared evidence may remain.
+
+A request has exactly `schema_version: 1`, unique `id`, actual `owner_id`, current
+`expected_revision`, nonempty source `scope`, immutable `refs` and ordered `operations`.
+Each operation has exactly a unique `id`, supported `operation`, ordinary `payload` and actual
+aware `observed_at`. Prepare payloads through their ordinary schema; do not wrap arbitrary argv,
+commands or repository/program location overrides. Save the returned strict plan unchanged:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example batch-prepare --input evidence/_coordination/attempt-1/batch-request.json --result-path evidence/_coordination/attempt-1/batch-plan.json
+python tools/feature_program.py --program-dir .work/programs/example batch-inspect --plan evidence/_coordination/attempt-1/batch-plan.json
+python tools/feature_program.py --program-dir .work/programs/example batch-publish --plan evidence/_coordination/attempt-1/batch-plan.json --owner director-example --expected-revision BASE_REVISION --result-path evidence/_coordination/attempt-1/batch-result.json
+```
+
+Replace `BASE_REVISION` with the exact plan's original revision. Proceed to publication only for
+a valid strict plan. Optional `--result-path` retains that plan on successful preparation or an
+actual `batch_preparation_failure` on failure; saving a failure does not make it publishable.
+Publication result retention uses `batch_publication_result` with exact `plan_ref` and actual
+`outcome`. A retained `batch_preparation_failure` still exits nonzero and cannot be published.
+`batch-publish` exits zero only for `committed` or `already_committed`. Failed, noncommitted,
+unknown or conflicting publication and `committed_view_failed` remain nonzero even when the result was
+retained. Ordinary incomplete advisory evidence preparation and read-only inspection may exit zero;
+inspect their status. A result file by itself never establishes successful publication.
+
+Supported operations are deliberately closed: verification-record, submit, complete, rework, note,
+checkpoint and review-handoff-record. External calls, check execution, native dispatch, delivery,
+cleanup, governance, coverage renewal and objective completion retain their separate ordinary paths.
+The existing sequential `closure-resume` remains useful outside this one-publication record batch.
+
+Canonical history retains each ordinary operation event plus one compact batch marker binding the
+stable plan hash, original revision, exact operation IDs/refs and ordinary event span. Its final
+marker-inclusive revision is returned as a publication result rather than stored inside its own
+hashed state. Exact matching committed identity remains recognizable after later progress;
+changed same-ID input, partial markers or mismatched event spans reject. No rollback or silent
+repair is a recovery strategy.
+
+Result fields separate `preparation.status`, `publication.status`, `applicability`,
+`requested_operation_count`, `validated_operation_count` and `committed_operation_count`.
+Publication statuses are `not_started`, `not_committed`, `committed`, `committed_view_failed`,
+`already_committed`, `conflict` and `unknown`; inspect `reason_code`, `next_actor_id`, `next_action`
+and `view_recovery_required`. A normal snapshot's latest historical marker records publication;
+its unknown applicability is not a fresh source preflight. Select the exact plan for inspection.
+
+Preparation/validation and publication are distinct. A not-committed/conflict/unknown result must
+not be shown as recorded. After a committed view failure, inspect the exact recorded batch and use
+`render`; never repeat stages, resend a message or replay original checks. Actual write/render
+observations may be absent; unknown timing is not zero or a claim of saved time.
 
 ## Explicit criterion coverage and acceptance diagnostics
 
@@ -1136,6 +1315,52 @@ delivery remain distinct. Selecting a closure plan on the service supplies the r
 producer assessment, not new approval. No additional rail page, board or browser execution,
 assignment or arbitrary write control is introduced. Existing question responses retain
 their separate authorized surface.
+
+For an explicit saved preparation or batch selection, use the standard entry points:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example snapshot --evidence-preparation evidence/EXAMPLE-1/attempt-1/preparation.json --batch-plan evidence/_coordination/attempt-1/batch-plan.json
+python tools/feature_program_web.py --program-dir .work/programs/example --read-only --evidence-preparation evidence/EXAMPLE-1/attempt-1/preparation.json --batch-plan evidence/_coordination/attempt-1/batch-plan.json
+```
+
+Each selector names the actual program-relative JSON file, not a reference wrapper or a directory.
+`--batch-plan` accepts the strict plan or its actual retained preparation-failure/publication-result
+wrapper. The producer distinguishes preparation, applicability and actual publication/recovery;
+selected missing decisions or failed preparation cannot become an empty success. Optional absence
+keeps legacy views quiet; explicit malformed/unavailable selections fail visibly. These reads do
+not copy proof, publish records, replay checks or contact a reviewer. The dashboard shows concise
+original-proof preparation and batch outcome summaries before one-level details; original run
+results, current applicability, task review and provider delivery remain separate.
+
+### Observed timing
+
+Optional `snapshot.timing` and `review_handoffs` describe already retained assessed observations.
+Program/task briefs and the existing queue use the same current subject, next actor/action,
+wait reason and trigger. Full cohorts and valid/eligible coverage are computed before display
+limits; total/shown/omitted counts still include hidden unknown or severe rows. Frontend filtering
+and clipping do not redefine the cohort or its denominator.
+
+Completed submission-to-start and start-to-terminal spans require exact subject bindings, aware
+ordered endpoints and the same nonempty declared clock. Every endpoint retains its observed
+boundary and immutable reference. Missing, mixed-clock, inverted, future or unavailable endpoints
+keep duration null with a reason. Canonical completion without an observed terminal boundary means
+terminal timing unknown, not continued running. Repeated rounds, retries and block episodes stay
+separate; gross review spans include blocks and never imply hands-on effort.
+
+Open age is null by default. Only an explicit retained compatible as-of observation supports a fixed
+last-observed age. Reads do not sample a new clock, use generated_at/browser time, tick, age-sort or
+write timing-only observations. Identical retained facts produce identical semantic timing and
+stable interval/row identities; a real new retained observation changes them legitimately. Read-only
+refresh is no dispatch, acknowledgement or measurement. Check and attachment counts are not passed
+criteria, executions, utilization, ETA, critical path or time saved.
+
+Useful definitions remain explicit: [GitLab value stream analytics](https://docs.gitlab.com/user/group/value_stream_analytics/)
+models stages as event pairs and limits completed stage samples to reached end events;
+[Linear Insights](https://linear.app/docs/insights) qualifies issue cohorts and defines cycle time
+from issue start to completion. GitLab's default value-stream Review stage uses MR creation to
+merge, while [GitLab code review analytics](https://docs.gitlab.com/user/analytics/code_review_analytics/)
+uses the first non-author comment as its review-time start. Those boundaries differ from this tool's
+actual observed reviewer start/terminal boundaries and must not be substituted for missing facts.
 
 ## Director questions and answers
 

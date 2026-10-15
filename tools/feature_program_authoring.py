@@ -59,6 +59,10 @@ READ_COMMANDS: Final = frozenset(
         "verification-environment",
         "closure-readiness",
         "closure-prepare",
+        "review-handoff-prepare",
+        "evidence-prepare",
+        "batch-prepare",
+        "batch-inspect",
     }
 )
 PUBLICATION_COMMANDS: Final = frozenset(
@@ -93,6 +97,7 @@ COMMANDS: Final = (
         "coverage-record",
         "presentation-record",
         "verification-record",
+        "review-handoff-record",
     }
 )
 TEMPLATES: Final = ("revalidation", "execution", "review", "delivery", "resume")
@@ -163,6 +168,33 @@ def add_commands(commands) -> None:
     delivery.add_argument(
         "--input", required=True, help="Program-relative frozen-observation request"
     )
+    for name in (
+        "review-handoff-prepare",
+        "review-handoff-record",
+        "evidence-prepare",
+        "batch-prepare",
+    ):
+        command = commands.add_parser(
+            name, help="Prepare or record finite source-bound workflow facts"
+        )
+        command.add_argument("--input", required=True, help="Program-relative immutable JSON")
+        if name == "review-handoff-prepare":
+            command.add_argument(
+                "--materialize", action="store_true", help="Freeze exact inert packet only"
+            )
+        if name in {"evidence-prepare", "batch-prepare"}:
+            command.add_argument(
+                "--result-path", help="Retain an actual immutable preparation result"
+            )
+    command = commands.add_parser(
+        "batch-inspect", help="Inspect an exact batch without publication"
+    )
+    command.add_argument("--plan", required=True)
+    command = commands.add_parser("batch-publish", help="Publish one guarded local record batch")
+    command.add_argument("--plan", required=True)
+    command.add_argument("--owner", required=True)
+    command.add_argument("--expected-revision", required=True)
+    command.add_argument("--result-path", help="Retain the actual publication result")
     command = commands.add_parser("verification-record", help="Record immutable verification facts")
     command.add_argument("--input", required=True, help="Program-relative verification record JSON")
     command = commands.add_parser(
@@ -324,6 +356,8 @@ def prepare(
     *,
     observed_head: str | None = None,
     observed_dirty: str = "",
+    publication_base: Record | None = None,
+    materialize_handoff: bool = False,
 ) -> PreparedChange:
     """Dispatch only to authoritative, detached preparation; no effects are intercepted."""
     core = _core()
@@ -342,11 +376,25 @@ def prepare(
     elif command == "presentation-record":
         return presentation.prepare_record(program, state, args.input)
     elif command == "verification-record":
-        return verification.prepare_record(program, state, args.input, observed_head=observed_head)
+        return verification.prepare_record(
+            program,
+            state,
+            args.input,
+            observed_head=observed_head,
+            publication_base=publication_base,
+        )
     elif command == "claim":
         proposal = program.prepare_claim(state, args, observed_head=observed_head)
     elif command == "submit":
         proposal = program.prepare_submit(state, args, observed_head=observed_head)
+        if getattr(args, "handoff", None) is not None:
+            proposal = prepare_submission_handoff(
+                program, proposal, args, materialize=materialize_handoff
+            )["state"]
+    elif command == "review-handoff-record":
+        proposal = prepare_handoff_record(
+            program, state, args.input, materialize=materialize_handoff
+        )
     elif command in {"complete", "rework"}:
         proposal = program.prepare_review(state, args, observed_head=observed_head)
     elif command == "resume":
@@ -1628,6 +1676,7 @@ class ClosureHost:
     source_binding: Record | None = None
     frozen_refs: list[Json] = field(default_factory=list)
     identity_budget: ReadBudget | None = None
+    publication_base: Record | None = None
 
     def revision(self, state: Record) -> str:
         return phases.revision(state)
@@ -1650,6 +1699,10 @@ class ClosureHost:
             "feature_program_phases.py",
             "feature_program_planning.py",
             "feature_program_delivery.py",
+            "feature_program_review_handoffs.py",
+            "feature_program_evidence_reuse.py",
+            "feature_program_batch.py",
+            "feature_program_timing.py",
         )
         return {
             "schema_version": 1,
@@ -1687,7 +1740,10 @@ class ClosureHost:
         core = _core()
         core.require(
             operation in COMMANDS - PUBLICATION_COMMANDS
-            and operation in core.flow_module("closure").OPERATIONS,
+            and (
+                operation in core.flow_module("closure").OPERATIONS
+                or operation == "review-handoff-record"
+            ),
             "Unsupported closure stage operation",
         )
         parser = deepcopy(_parsers()[operation])
@@ -1732,7 +1788,14 @@ class ClosureHost:
             else ""
         )
         with coordination.preparation_clock(observed_at):
-            return prepare(self.program, state, args, observed_head=head, observed_dirty=dirty)
+            return prepare(
+                self.program,
+                state,
+                args,
+                observed_head=head,
+                observed_dirty=dirty,
+                publication_base=self.publication_base,
+            )
 
     def preflight(self, prepared: PreparedChange) -> None:
         # Detached predecessor states cannot satisfy a real-registry mutation guard.
@@ -1815,6 +1878,659 @@ class ClosureHost:
                     "reason": str(exc),
                 }
             return {"status": "committed", "revision": phases.revision(prepared.state)}
+
+
+@dataclass(frozen=True, slots=True)
+class BatchHost(ClosureHost):
+    """Collect mandatory projected checks; mutation is limited to the guard accumulator."""
+
+    stage_specs: list[Record] = field(default_factory=list)
+    _publishing: bool = False
+
+    def prepare(
+        self,
+        state: Record,
+        operation: str,
+        payload: Record,
+        observed_at: str,
+        *,
+        owner: str | None = None,
+    ) -> PreparedChange:
+        core = _core()
+        core.require(
+            self.publication_base is not None, "Batch requires the captured original state"
+        )
+        if owner is not None and operation in {"verification-record", "review-handoff-record"}:
+            control = core.read_json(self.program.path(str(payload["input"])))
+            task_id = control.get("task_id") or core.record(
+                control.get("subject", {}), "subject"
+            ).get("task_id")
+            task_owner = self.program.task(state, str(task_id)).get("owner")
+            verification._task_authority(state, owner, task_owner)
+            prepared = super(BatchHost, self).prepare(state, operation, payload, observed_at)
+        else:
+            prepared = super(BatchHost, self).prepare(
+                state, operation, payload, observed_at, owner=owner
+            )
+        guard = verification.publication_guard(
+            self.program,
+            prepared.state,
+            predecessor=state,
+            publication_base=self.publication_base,
+        )
+        self.stage_specs.append(
+            {
+                "operation": operation,
+                "payload": deepcopy(payload),
+                "observed_at": observed_at,
+                "owner": owner,
+                "after_revision": phases.revision(prepared.state),
+            }
+        )
+        checks = tuple(item for item in (prepared.before_publish, guard) if item is not None)
+
+        def recheck() -> None:
+            for check in checks:
+                check()
+
+        return core.PreparedChange(prepared.state, recheck)
+
+    def preflight_batch(
+        self, original: Record, final: Record, stages: list[Record]
+    ) -> PreparedChange:
+        core = _core()
+        core.require(
+            self.publication_base is not None
+            and phases.revision(original) == phases.revision(self.publication_base),
+            "Batch original state mismatch",
+        )
+        core.require(bool(stages), "Batch has no stages")
+        if not self._publishing:
+            self.program.prepare_save(final)
+        # Locked publication always performs this same final save preflight in _publish.
+        expected = phases.revision(original)
+        specs = tuple(deepcopy(self.stage_specs))
+
+        def recheck() -> None:
+            self.program.require_current_location()
+            current = core.read_json(self.program.path("backlog.json"))
+            core.require(phases.revision(current) == expected, "Batch original revision changed")
+            self.program.verify_refs(self.frozen_refs)
+            if self.source_binding is not None:
+                core.require(
+                    self.program.current_head() == self.source_binding.get("source_head")
+                    and self.program.source_digest(
+                        core.strings(self.source_binding.get("scope"), "batch scope")
+                    )
+                    == self.source_binding.get("source_digest"),
+                    "Batch source or HEAD changed before publication",
+                )
+            # Reconstruct one predecessor at a time instead of retaining callbacks
+            # that close over N complete intermediate registries.
+            proposal = original
+            self.stage_specs.clear()
+            observations = core._SourceObservations()
+            token = core._source_observations.set(observations)
+            try:
+                for spec in specs:
+                    prepared = self.prepare(
+                        proposal,
+                        str(spec["operation"]),
+                        core.record(spec["payload"], "stage payload"),
+                        str(spec["observed_at"]),
+                        owner=spec["owner"],
+                    )
+                    core.require(
+                        phases.revision(prepared.state) == spec["after_revision"],
+                        "Projected callback predecessor changed",
+                    )
+                    if prepared.before_publish is not None:
+                        prepared.before_publish()
+                    proposal = prepared.state
+                observations.verify()
+            finally:
+                core._source_observations.reset(token)
+            reader = core.ReadBudget(64 * 1024 * 1024)
+            refs = list(coordination.evidence_references(final)) + verification.evidence_references(
+                final
+            )
+            for task in core.sequence(final["tasks"], "tasks"):
+                for attempt in core.sequence(core.record(task, "task")["attempts"], "attempts"):
+                    refs += core.sequence(core.record(attempt, "attempt")["evidence"], "evidence")
+            if "review_handoffs" in final:
+                refs += core.flow_module("review_handoffs").evidence_references(final)
+            refs += core.flow_module("batch").evidence_references(final)
+            self.program.verify_refs(refs, reader)
+            core.verify_provenance(self.program, final, reader)
+            core.require(
+                phases.revision(core.read_json(self.program.path("backlog.json"))) == expected,
+                "Batch original revision changed during final checks",
+            )
+
+        return core.PreparedChange(final, recheck)
+
+    def inspect_views(self, state: Record) -> bool:
+        core = _core()
+        return all(
+            self.program.path(name).is_file()
+            and core.bounded_bytes(self.program.path(name), LIMIT) == value.encode("utf-8")
+            for name, value in self.program.views(state).items()
+        )
+
+    def publish_batch(self, plan: Record, owner: str, expected_revision: str) -> Record:
+        core = _core()
+        producer = core.flow_module("batch")
+        with self.program.lock():
+            current = self.program.load()
+            inspection = producer.inspect_batch(self.program, current, plan, self)
+            if inspection["status"] in {"already_committed", "conflict"}:
+                return inspection
+            core.require(
+                phases.revision(current) == expected_revision == plan["base_revision"],
+                "Batch original revision changed; reprepare",
+            )
+            host = BatchHost(
+                self.program,
+                source_binding=core.record(plan["source_binding"], "batch source"),
+                frozen_refs=core.sequence(plan["refs"], "batch refs"),
+                publication_base=current,
+                _publishing=True,
+            )
+            prepared = producer.reconstruct(self.program, current, plan, host)
+            core.require(
+                phases.revision(prepared.state) == plan["final_revision"],
+                "Batch reconstruction changed",
+            )
+            try:
+                self.program._publish(prepared.state, prepared.before_publish)
+            except core.ProgramError as exc:
+                actual = core.read_json(self.program.path("backlog.json"))
+                if phases.revision(actual) != plan["final_revision"]:
+                    raise
+                return producer.result_for(
+                    plan,
+                    "committed_view_failed",
+                    phases.revision(actual),
+                    view_recovery_required=True,
+                    reason_code="render_required",
+                )
+            return producer.result_for(plan, "committed", phases.revision(prepared.state))
+
+
+def freeze_document(program: Program, name: str, document: Record) -> Record:
+    """Materialize inert exact immutable bytes; this never publishes canonical state."""
+    core = _core()
+    name = core.safe_relative(name)
+    core.require(name.startswith("evidence/"), "Frozen document must be evidence")
+    encoded = core.canonical(document)
+    core.require(0 < len(encoded) <= LIMIT, "Frozen document exceeds budget")
+    path = program.path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        core.require(
+            path.is_file() and core.bounded_bytes(path, LIMIT) == encoded,
+            "Immutable document already exists with different bytes",
+        )
+    else:
+        with path.open("xb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+    return {"path": name, "sha256": core.sha(encoded)}
+
+
+def assess_review_inputs(
+    program: Program,
+    value: Json,
+    *,
+    source_budget: ReadBudget | None = None,
+    evidence_budget: ReadBudget | None = None,
+) -> Record:
+    """Bind explicitly declared broader source bytes and frozen refs through existing readers."""
+    core = _core()
+    inputs = deepcopy(core.record(value, "review inputs"))
+    scope = sorted(set(core.strings(inputs.get("scope", []), "review input scope")))
+    refs = core.sequence(inputs.get("evidence_refs", []), "review input evidence refs")
+    for value in refs:
+        verification._ref(core.record(value, "review input reference"))
+    program.verify_refs(refs, evidence_budget)
+    inputs.pop("source_binding", None)
+    if scope:
+        inputs["source_binding"] = {
+            "scope": scope,
+            "source_digest": core.digest(program.source_snapshot(scope, source_budget)),
+        }
+    return inputs
+
+
+def verify_review_input_refs(program: Program, state: Record, budget: ReadBudget) -> None:
+    """Retain only explicit typed packet evidence references, never sniff arbitrary JSON."""
+    core = _core()
+    records = core.sequence(
+        core.record(state.get("review_handoffs", {}), "handoffs").get("records", []), "records"
+    )
+    checked: set[str] = set()
+    for value in records:
+        item = core.record(value, "handoff")
+        if item["kind"] != "intent":
+            continue
+        ref = core.record(item["packet_ref"], "packet reference")
+        key = core.digest(ref)
+        if key in checked:
+            continue
+        program.verify_refs([ref], budget)
+        packet = core.read_json(program.path(str(ref["path"])), budget=budget)
+        refs = core.sequence(
+            core.record(packet["review_inputs"], "review inputs").get("evidence_refs", []),
+            "review input refs",
+        )
+        for frozen in refs:
+            verification._ref(core.record(frozen, "review input ref"))
+        program.verify_refs(refs, budget)
+        checked.add(key)
+
+
+def recheck_new_handoff_inputs(program: Program, original: Record | None, state: Record) -> None:
+    """Keep new current handoffs bound to their immutable packet through final publication."""
+    core = _core()
+    prior = core.sequence(
+        core.record((original or {}).get("review_handoffs", {}), "handoffs").get("records", []),
+        "records",
+    )
+    records = core.sequence(
+        core.record(state.get("review_handoffs", {}), "handoffs").get("records", []), "records"
+    )
+    changed = [
+        core.record(value, "handoff")
+        for value in records[len(prior) :]
+        if core.record(value, "handoff")["kind"] != "terminal"
+    ]
+    if not changed:
+        return
+    reader = core.ReadBudget(64 * 1024 * 1024)
+    sources = core.ReadBudget(128 * 1024 * 1024)
+    observations = core._SourceObservations()
+    token = core._source_observations.set(observations)
+    try:
+        checked: set[str] = set()
+        for item in changed:
+            ref = core.record(item["packet_ref"], "packet reference")
+            key = core.digest(ref)
+            if key in checked:
+                continue
+            program.verify_refs([ref], reader)
+            packet = core.read_json(program.path(str(ref["path"])), budget=reader)
+            core.require(
+                assess_review_inputs(
+                    program, packet["review_inputs"], source_budget=sources, evidence_budget=reader
+                )
+                == packet["review_inputs"],
+                "Broader review inputs changed before publication",
+            )
+            checked.add(key)
+        observations.verify()
+    finally:
+        core._source_observations.reset(token)
+
+
+def handoff_inputs(program: Program, state: Record, request: Record) -> Record:
+    """Assess current native-handoff subject; recorded staffing never proves capacity."""
+    core = _core()
+    task_id = core.string(request.get("task_id"), "handoff task")
+    context = verification.packet(program, state, task_id)["context"]
+    task = program.task(state, task_id)
+    actor = request.get("actor_id", task.get("owner"))
+    coordination.require_task_authority(
+        state, core.string(actor, "handoff actor"), task.get("owner")
+    )
+    reviewer = request.get("reviewer_id")
+    # The domain crosschecks actual actor records and independence. Host never promotes a role label.
+    registered = any(
+        core.record(value, "actor").get("id") == reviewer
+        and core.record(value, "actor").get("staffing_status") != "retired"
+        for value in core.sequence(state.get("actors", []), "actors")
+    )
+    eligible = (
+        registered
+        and reviewer is not None
+        and reviewer
+        not in {
+            coordination.current_director_id(state),
+            *[attempt.get("owner") for attempt in core.sequence(task["attempts"], "attempts")],
+        }
+    )
+    return {
+        **deepcopy(request),
+        "task_id": task_id,
+        "actor_id": actor,
+        "context": context,
+        "review_inputs": assess_review_inputs(program, request.get("review_inputs", {})),
+        "eligibility": {
+            "status": "eligible" if eligible else "not_assessed",
+            "reasons": [] if eligible else ["independent_reviewer_not_assessed"],
+        },
+        "recorded_at": core.utc(),
+        "evidence_refs": deepcopy(request.get("evidence_refs", [])),
+    }
+
+
+def prepare_submission_handoff(
+    program: Program,
+    state: Record,
+    args: argparse.Namespace,
+    *,
+    materialize: bool = False,
+) -> Record:
+    core = _core()
+    request, captured = core.read_json_frozen(program.path(args.handoff), limit=LIMIT)
+    core.require(
+        set(request) <= {"reviewer_id", "review_inputs", "evidence_refs"},
+        "Unknown submission handoff fields",
+    )
+    request.update(
+        {
+            "task_id": args.id,
+            "actor_id": args.owner,
+            "receipt_ref": {"path": args.handoff, "sha256": captured},
+        }
+    )
+    result = core.flow_module("review_handoffs").prepare_handoff(
+        state,
+        handoff_inputs(program, state, request),
+    )
+    if materialize:
+        ref = freeze_document(program, str(result["packet_ref"]["path"]), result["packet_document"])
+        core.require(ref == result["packet_ref"], "Handoff packet digest mismatch")
+    return result
+
+
+def assess_evidence_receipt(
+    program: Program,
+    state: Record,
+    operation: str,
+    receipt: Record,
+    *,
+    owner: str | None,
+) -> Record:
+    """Freeze inert bytes, then ask the existing authoritative ordinary validator."""
+    core = _core()
+    task_id = receipt.get("task_id")
+    prefix = (
+        f"evidence/{task_id}/attempt-{receipt.get('attempt')}/"
+        if task_id is not None
+        else "evidence/_coordination/attempt-1/"
+    )
+    path = prefix + "reuse-" + core.digest(receipt) + ".json"
+    freeze_document(program, path, receipt)
+    try:
+        match operation:
+            case "submission":
+                payload = {"id": task_id, "owner": owner, "receipt": path}
+                command = "submit"
+            case "review":
+                payload = {"id": task_id, "review": path}
+                command = "complete" if receipt.get("verdict") == "accepted" else "rework"
+            case "completion":
+                payload, command = {"input": path}, "objective-complete"
+            case "delivery":
+                payload, command = {"id": task_id, "receipt": path}, "delivery"
+            case "observation":
+                path = "evidence/_verification/attempt-1/reuse-" + core.digest(receipt) + ".json"
+                freeze_document(program, path, receipt)
+                payload, command = {"input": path}, "verification-record"
+            case "integrated_review":
+                goal = core.record(state.get("objective"), "objective")
+                scaffolded = scaffold(
+                    program,
+                    state,
+                    argparse.Namespace(
+                        operation="objective-complete",
+                        kind=None,
+                        task=None,
+                        scope=receipt["scope"],
+                    ),
+                )
+                completion = core.record(scaffolded["receipt"], "completion")
+                completion.update(
+                    {"actor_id": coordination.current_director_id(state), "integrated_review": path}
+                )
+                implementers = {
+                    str(core.record(attempt, "attempt")["owner"])
+                    for task in core.sequence(state["tasks"], "tasks")
+                    for attempt in core.sequence(core.record(task, "task")["attempts"], "attempts")
+                }
+                coordination._integrated_review(
+                    program, state, goal, completion, implementers, program.current_head()
+                )
+                return {"status": "ready", "missing_fields": [], "reasons": []}
+            case _:
+                raise core.ProgramError("Unsupported evidence receipt operation")
+        prepared = ClosureHost(program).prepare(state, command, payload, core.utc())
+        _preflight(program, prepared)
+    except _errors() as exc:
+        return {"status": "incomplete", "missing_fields": [], "reasons": [str(exc)]}
+    return {"status": "ready", "missing_fields": [], "reasons": []}
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceReceiptAdapter:
+    """Expose the existing receipt assessor through the domain's narrow protocol."""
+
+    def assess(
+        self, program: Program, state: Record, operation: str, receipt: Record, *, owner: str | None
+    ) -> Record:
+        return assess_evidence_receipt(program, state, operation, receipt, owner=owner)
+
+
+def throughput_read(
+    program: Program, state: Record, args: argparse.Namespace, refs: list[Json]
+) -> Record:
+    """Finite inert preparations and actual retained results, never captured-command execution."""
+    core = _core()
+    program.require_current_location()
+    program.validate(state)
+    name = args.plan if args.command == "batch-inspect" else args.input
+    request, captured = core.read_json_frozen(program.path(name), limit=LIMIT)
+    request_ref = {"path": name, "sha256": captured}
+    refs.append(request_ref)
+    match args.command:
+        case "review-handoff-prepare":
+            result = core.flow_module("review_handoffs").prepare_handoff(
+                state,
+                handoff_inputs(program, state, request),
+            )
+            if args.materialize:
+                freeze_document(
+                    program, str(result["packet_ref"]["path"]), result["packet_document"]
+                )
+            result = {key: value for key, value in result.items() if key != "state"}
+        case "evidence-prepare":
+            producer = core.flow_module("evidence_reuse")
+            match request.get("kind"):
+                case "plan":
+                    result = producer.plan_evidence(
+                        program, state, core.record(request.get("selection"), "selection")
+                    )
+                case "materialize":
+                    result = producer.materialize_evidence(
+                        program, state, core.record(request.get("plan"), "plan")
+                    )
+                case "receipt":
+                    result = producer.prepare_receipt(
+                        program,
+                        state,
+                        core.string(request.get("operation"), "receipt operation"),
+                        core.record(request.get("explicit_inputs"), "explicit inputs"),
+                        adapter=EvidenceReceiptAdapter(),
+                    )
+                case _:
+                    raise core.ProgramError("Unsupported evidence preparation kind")
+        case "batch-prepare":
+            try:
+                result = core.flow_module("batch").prepare_batch(
+                    program,
+                    state,
+                    request,
+                    BatchHost(program, publication_base=state),
+                )
+            except _errors() as exc:
+                if args.result_path is None:
+                    raise
+                actual = core.read_json(program.path("backlog.json"))
+                result = {
+                    "schema_version": 1,
+                    "kind": "batch_preparation_failure",
+                    "request_ref": request_ref,
+                    "program_id": state["program_id"],
+                    "base_revision": phases.revision(state),
+                    "failure": {"reason": str(exc), "failure_type": type(exc).__name__},
+                    "preparation": {"status": "failed"},
+                    "publication": {
+                        "status": "not_committed"
+                        if phases.revision(actual) == phases.revision(state)
+                        else "unknown"
+                    },
+                    "accepted": False,
+                }
+        case "batch-inspect":
+            result = core.flow_module("batch").project_selection(
+                program, state, request, BatchHost(program)
+            )
+        case _:
+            raise core.ProgramError("Unsupported throughput read")
+    if getattr(args, "result_path", None) is not None:
+        core.require(
+            phases.revision(program.load()) == phases.revision(state),
+            "Registry changed during result retention",
+        )
+        freeze_document(program, args.result_path, result)
+    return result
+
+
+def publish_batch_command(program: Program, args: argparse.Namespace) -> Record:
+    """Publish an exact plan and optionally retain the actual outcome without replay."""
+    core = _core()
+    plan, captured = core.read_json_frozen(program.path(args.plan), limit=LIMIT)
+    ref = {"path": args.plan, "sha256": captured}
+    try:
+        outcome = core.flow_module("batch").publish_batch(
+            program,
+            plan,
+            BatchHost(program),
+            args.owner,
+            args.expected_revision,
+        )
+    except _errors() as exc:
+        if args.result_path is None:
+            raise
+        actual = core.read_json(program.path("backlog.json"))
+        try:
+            inspection = core.flow_module("batch").inspect_batch(
+                program, actual, plan, BatchHost(program)
+            )
+            if inspection["status"] == "already_committed":
+                status = (
+                    "committed_view_failed"
+                    if inspection.get("view_recovery_required")
+                    else "already_committed"
+                )
+            else:
+                status = "not_committed" if inspection["status"] == "not_started" else "unknown"
+        except _errors():
+            inspection = {}
+            status = "unknown"
+        outcome = core.flow_module("batch").result_for(
+            plan,
+            status,
+            phases.revision(actual),
+            view_recovery_required=bool(inspection.get("view_recovery_required")),
+            reason_code="publication_failed",
+        )
+        outcome["failure"] = {"reason": str(exc), "failure_type": type(exc).__name__}
+    program.verify_refs([ref])
+    if args.result_path is not None:
+        result = {
+            "schema_version": 1,
+            "kind": "batch_publication_result",
+            "plan_ref": ref,
+            "outcome": outcome,
+        }
+        freeze_document(program, args.result_path, result)
+        return result
+    return outcome
+
+
+def prepare_handoff_record(
+    program: Program,
+    state: Record,
+    name: str,
+    *,
+    materialize: bool = False,
+) -> Record:
+    core = _core()
+    request, captured = core.read_json_frozen(program.path(name), limit=LIMIT)
+    request["receipt_ref"] = {"path": name, "sha256": captured}
+    request["recorded_at"] = core.utc()
+    if request.get("kind") == "intent":
+        core.require(
+            request.get("schema_version") == 1
+            and request.get("operation") == "review-handoff-record",
+            "Invalid intent operation",
+        )
+        result = core.flow_module("review_handoffs").prepare_handoff(
+            state, handoff_inputs(program, state, request)
+        )
+        proposal = core.record(result["state"], "proposed intent state")
+        if result["status"] == "prepared":
+            core.require(
+                request.get("expected_revision") == phases.revision(state),
+                "Stale handoff registry revision",
+            )
+            if materialize:
+                freeze_document(
+                    program, str(result["packet_ref"]["path"]), result["packet_document"]
+                )
+            program.event(
+                proposal,
+                "review-handoff-record",
+                {
+                    "id": request["task_id"],
+                    "actor": request["actor_id"],
+                    "receipt": request["receipt_ref"],
+                    "handoff_id": result["handoff_id"],
+                },
+            )
+        return proposal
+    subject = core.record(request.get("subject"), "handoff subject")
+    task_id = core.string(subject.get("task_id"), "handoff task")
+    request["context"] = verification.packet(program, state, task_id)["context"]
+    packet_ref = core.record(request.get("packet_ref"), "packet reference")
+    program.verify_refs([packet_ref])
+    packet = core.read_json(program.path(str(packet_ref["path"])))
+    if "review_inputs" in request:
+        core.require(
+            request["review_inputs"] == packet["review_inputs"],
+            "Handoff broader review inputs changed",
+        )
+    request["review_inputs"] = assess_review_inputs(program, packet["review_inputs"])
+    result = core.flow_module("review_handoffs").prepare_observation(state, request)
+    proposal = core.record(result["state"], "proposed handoff state")
+    if result["status"] == "prepared":
+        core.require(
+            request.get("expected_revision") == phases.revision(state),
+            "Stale handoff registry revision",
+        )
+        program.event(
+            proposal,
+            "review-handoff-record",
+            {
+                "id": task_id,
+                "actor": request["actor_id"],
+                "receipt": request["receipt_ref"],
+                "handoff_id": request["handoff_id"],
+            },
+        )
+    return proposal
 
 
 def resume_closure(program: Program, args: argparse.Namespace) -> Record:
@@ -1904,6 +2620,13 @@ def read_command(program: Program, args: argparse.Namespace) -> Record:
     refs: list[Json] = []
     observed_head: str | None = None
     if args.command in {
+        "review-handoff-prepare",
+        "evidence-prepare",
+        "batch-prepare",
+        "batch-inspect",
+    }:
+        result = throughput_read(program, state, args, refs)
+    elif args.command in {
         "inputs-prepare",
         "inputs-capture",
         "inputs-compare",
