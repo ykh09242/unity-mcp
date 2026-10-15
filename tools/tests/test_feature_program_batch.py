@@ -1,6 +1,7 @@
 """Atomic record batches preserve normal decisions, publication and recovery."""
 
 from copy import deepcopy
+from dataclasses import FrozenInstanceError
 import ast
 import json
 from time import perf_counter
@@ -16,22 +17,27 @@ batch = fp.flow_module("batch")
 class Host(fp.authoring.ClosureHost):
     """Use real detached note validators and the real canonical save/render boundary."""
 
+    saves: int
+    preflights: int
+    callbacks: int
+
     def __init__(self, program):
         super().__init__(program)
-        self.saves = 0
-        self.preflights = 0
-        self.callbacks = 0
+        # Older runtimes cannot assign subclass instrumentation through a frozen/slotted base.
+        object.__setattr__(self, "saves", 0)
+        object.__setattr__(self, "preflights", 0)
+        object.__setattr__(self, "callbacks", 0)
 
     def identity(self):
         return {"schema_version": 1, "producer": "batch-real-note-host"}
 
     def preflight_batch(self, original, final, stages):
-        self.preflights += 1
+        object.__setattr__(self, "preflights", self.preflights + 1)
         self.program.prepare_save(final)
         original_revision = self.revision(original)
 
         def fresh():
-            self.callbacks += 1
+            object.__setattr__(self, "callbacks", self.callbacks + 1)
             fp.require(
                 fp.phases.revision(fp.read_json(self.program.path("backlog.json")))
                 == original_revision,
@@ -56,7 +62,7 @@ class Host(fp.authoring.ClosureHost):
                 return result
             fp.require(owner == plan["owner_id"], "Publisher differs")
             prepared = batch.reconstruct(self.program, state, plan, self)
-            self.saves += 1
+            object.__setattr__(self, "saves", self.saves + 1)
             try:
                 self.program.save(prepared.state, before_publish=prepared.before_publish)
             except fp.ProgramError:
@@ -69,6 +75,17 @@ class Host(fp.authoring.ClosureHost):
                     "view_recovery_required": True,
                 }
             return {"status": "committed", "revision": self.revision(prepared.state)}
+
+
+def test_test_host_instrumentation_does_not_thaw_actual_host_fields():
+    # Given mutable test-only counters around the actual immutable publication host.
+    host = Host(None)
+    assert (host.saves, host.preflights, host.callbacks) == (0, 0, 0)
+    # When ordinary code tries to change an actual inherited host binding.
+    with pytest.raises(FrozenInstanceError):
+        host.program = "different program"
+    # Then the compatibility workaround has not relaxed production host immutability.
+    assert host.program is None
 
 
 def request(fixture, *, count=3, owner="worker", identifier="batch-1"):
@@ -231,7 +248,7 @@ def test_prepublication_drift_never_records_earlier_valid_operations(fixture, mo
     elif drift == "ref":
         fixture.program.path(proof).write_text("Changed immutable proof\n")
     elif drift == "producer":
-        monkeypatch.setattr(host, "identity", lambda: {"producer": "different"})
+        monkeypatch.setattr(Host, "identity", lambda _host: {"producer": "different"})
     else:
         assert (
             fixture.run(
