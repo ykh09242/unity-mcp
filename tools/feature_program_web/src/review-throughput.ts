@@ -47,10 +47,17 @@ function endpoint(input: Json | undefined): ObservedEndpoint | null {
 }
 // The producer retains an unknown interval's endpoint reference even when no time was observed.
 // Only explicitly missing metadata is unmeasured; malformed supplied metadata stays unavailable.
-function retainedUnmeasuredEndpoint(input: Json | undefined, reasons: readonly string[]): boolean {
+function retainedUnmeasuredEndpoint(
+  input: Json | undefined,
+  reasons: readonly string[],
+  oppositeEndpointMissing: boolean,
+): boolean {
   const value = record(input);
   const missingTime = value.observed_at === null && reasons.includes('missing_observed_at');
-  const missingClock = value.clock_id === null && reasons.includes('missing_clock');
+  const missingClock =
+    value.clock_id === null &&
+    (reasons.includes('missing_clock') ||
+      (oppositeEndpointMissing && reasons.includes('missing_endpoint')));
   return Boolean(
     (missingTime || missingClock) &&
     (awareTime(value.observed_at) || missingTime) &&
@@ -178,8 +185,10 @@ function interval(snapshot: Snapshot, input: Json): TimingInterval | null {
     ) ||
     (value.start !== null &&
       !start &&
-      !(unknown && retainedUnmeasuredEndpoint(value.start, reasons))) ||
-    (value.end !== null && !end && !(unknown && retainedUnmeasuredEndpoint(value.end, reasons)))
+      !(unknown && retainedUnmeasuredEndpoint(value.start, reasons, value.end === null))) ||
+    (value.end !== null &&
+      !end &&
+      !(unknown && retainedUnmeasuredEndpoint(value.end, reasons, value.start === null)))
   )
     return null;
   if (value.state === 'closed') {
@@ -584,7 +593,7 @@ export function evidencePreparation(input: Json | undefined): EvidencePreparatio
     !['selected', 'retained', 'attachments_planned', 'attachments_ready', 'unresolved'].every(
       (key) => finiteCount(counts[key]),
     ) ||
-    Number(counts.retained) > Number(counts.selected) ||
+    Number(counts.retained) > Number(counts.attachments_planned) ||
     Number(counts.attachments_ready) > Number(counts.attachments_planned)
   )
     return null;

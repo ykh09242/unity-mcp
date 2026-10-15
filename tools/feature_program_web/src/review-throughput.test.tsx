@@ -392,7 +392,7 @@ describe('review throughput boundary and existing-surface summaries', () => {
     const snapshot = flowFixture({ evidence_preparation: preparation() });
     render(<EvidencePreparationSummary snapshot={snapshot} taskId="A" />);
     expect(screen.getByText('Supply the responsible review decision')).toBeTruthy();
-    expect(screen.getByText(/2 \/ 3 selected evidence retained/)).toBeTruthy();
+    expect(screen.getByText(/Selected evidence: 3 · Retained attachments: 2/)).toBeTruthy();
     expect(screen.queryByText('passed')).toBeNull();
     expect(
       evidencePreparation(
@@ -1063,6 +1063,154 @@ it.each(['en', 'ko'])(
 );
 
 const retainedMissingEndpoint = { ...start, observed_at: null, clock_id: null };
+it.each(['start', 'end'])(
+  'retains an unknown %s endpoint when the opposite endpoint is absent without missing_clock',
+  (side) => {
+    // Given the producer's missing-opposite shape beside measured review spans.
+    const rows = [
+      interval({
+        interval_id: 'measured-wait',
+        end: endpoint('2026-10-15T01:00:32.278097Z'),
+        closed_seconds: 32.278097,
+      }),
+      interval({
+        interval_id: 'measured-start',
+        kind: 'ack_to_start',
+        end: endpoint('2026-10-15T01:00:09Z'),
+        closed_seconds: 9,
+      }),
+      interval({
+        interval_id: 'unmeasured-terminal',
+        kind: 'start_to_terminal',
+        start: side === 'start' ? retainedMissingEndpoint : null,
+        end: side === 'end' ? retainedMissingEndpoint : null,
+        state: 'unknown',
+        closed_seconds: null,
+        reasons: ['missing_endpoint', 'missing_observed_at'],
+      }),
+    ];
+    // When decoding the coherent timing projection.
+    const parsed = reviewTiming(
+      flowFixture({ timing: timing({ intervals: flowCollection(rows) }) }),
+    );
+    // Then measured spans survive and absent measurements remain unknown.
+    expect(parsed?.intervals.map((row) => row.closedSeconds)).toEqual([32.278097, 9, null]);
+    expect(parsed?.intervals[2]?.start).toBeNull();
+    expect(parsed?.intervals[2]?.end).toBeNull();
+    expect(parsed?.intervals[2]?.state).toBe('unknown');
+  },
+);
+const invalidMissingOppositeIntervals: readonly JsonRecord[] = [
+  { start },
+  { start: {} },
+  { reasons: ['missing_observed_at'] },
+  { reasons: ['missing_endpoint'] },
+  { end: { ...retainedMissingEndpoint, observed_at: 'invalid-time' } },
+  { end: { ...retainedMissingEndpoint, clock_id: 7 } },
+  { end: { ...retainedMissingEndpoint, reference: {} } },
+  { end: { ...retainedMissingEndpoint, timestamp_source: '' } },
+  { end: { ...retainedMissingEndpoint, boundary: '' } },
+  { state: 'closed' },
+  { state: 'open' },
+  { closed_seconds: 0 },
+  { age: { as_of: '2026-10-15T01:00:05Z', clock_id: 'retained-clock', seconds: 5 } },
+];
+it.each(invalidMissingOppositeIntervals)(
+  'rejects malformed missing-opposite interval %j',
+  (change) => {
+    // Given an unknown interval whose missing clock has no separate reason.
+    const candidate = interval({
+      start: null,
+      end: retainedMissingEndpoint,
+      state: 'unknown',
+      closed_seconds: null,
+      reasons: ['missing_endpoint', 'missing_observed_at'],
+      ...change,
+    });
+    // When decoding supplied malformed metadata or an incompatible state.
+    const parsed = reviewTiming(
+      flowFixture({ timing: timing({ intervals: flowCollection([candidate]) }) }),
+    );
+    // Then the projection remains unavailable.
+    expect(parsed).toBeNull();
+  },
+);
+it('rejects an omitted opposite endpoint rather than interpreting it as explicit null', () => {
+  // Given an omitted opposite endpoint with the producer reasons.
+  const { start: _start, ...candidate } = interval({
+    end: retainedMissingEndpoint,
+    state: 'unknown',
+    closed_seconds: null,
+    reasons: ['missing_endpoint', 'missing_observed_at'],
+  });
+  // When decoding the incomplete shape.
+  const parsed = reviewTiming(
+    flowFixture({ timing: timing({ intervals: flowCollection([candidate]) }) }),
+  );
+  // Then missing properties do not acquire null semantics.
+  expect(parsed).toBeNull();
+});
+it.each(['en', 'ko'])('separates selected origins from retained copies in %s', (locale) => {
+  // Given one origin retained as two copies, with stale applicability preserved.
+  localStorage.setItem(PREFERENCE_KEY, locale);
+  const evidence = preparation({
+    kind: 'retained_evidence',
+    status: 'stale',
+    counts: {
+      selected: 1,
+      retained: 2,
+      attachments_planned: 2,
+      attachments_ready: 2,
+      unresolved: 0,
+    },
+  });
+  // When rendering the evidence summary.
+  const view = render(
+    <LanguageProvider>
+      <EvidencePreparationSummary snapshot={flowFixture({ evidence_preparation: evidence })} />
+    </LanguageProvider>,
+  );
+  // Then both units are independent and currentness is not promoted.
+  expect(evidencePreparation(evidence)?.status).toBe('stale');
+  expect(
+    screen.getByText(
+      locale === 'ko'
+        ? '선택한 근거 1개 · 보관한 파일 2개'
+        : 'Selected evidence: 1 · Retained attachments: 2',
+    ),
+  ).toBeTruthy();
+  expect(view.container.textContent).not.toContain('2 / 1');
+  expect(
+    screen.getByText(
+      locale === 'ko' ? '보존된 근거 확인 필요' : 'Retained evidence needs attention',
+    ),
+  ).toBeTruthy();
+});
+const invalidEvidenceCounts: readonly JsonRecord[] = [
+  { retained: 3 },
+  { attachments_ready: 3 },
+  ...['selected', 'retained', 'attachments_planned', 'attachments_ready', 'unresolved'].flatMap(
+    (key) =>
+      [-1, 0.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1].map((value) => ({ [key]: value })),
+  ),
+];
+it.each(invalidEvidenceCounts)('rejects invalid evidence copy counts %j', (change) => {
+  // Given counts outside finite nonnegative integers or the planned copy bound.
+  const evidence = preparation({
+    counts: {
+      selected: 1,
+      retained: 2,
+      attachments_planned: 2,
+      attachments_ready: 2,
+      unresolved: 0,
+      ...change,
+    },
+  });
+  // When decoding evidence preparation.
+  const parsed = evidencePreparation(evidence);
+  // Then invalid counts remain unavailable.
+  expect(parsed).toBeNull();
+});
 const invalidUnmeasuredIntervals: readonly JsonRecord[] = [
   { start: { ...retainedMissingEndpoint, observed_at: 'not-a-time' } },
   { start: { ...retainedMissingEndpoint, clock_id: 7 } },
