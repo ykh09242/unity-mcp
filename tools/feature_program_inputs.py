@@ -300,7 +300,11 @@ def _exclusions(program: InputAccess, manifest: Record) -> list[Json]:
                             else relative
                         )
                         entries.append({"group": group, "path": boundary, "kind": "excluded_path"})
-    return _parse_exclusions(entries)
+    result = _parse_exclusions(entries)
+    collector = core._active_collector()
+    if collector is not None:
+        collector.observe_exclusions(program.repo, manifest["groups"], result, entry_limit=10000)
+    return result
 
 
 def _assemble(
@@ -485,6 +489,19 @@ def compare_inputs(before: Json, after: Json) -> Record:
     differences = []
     affected: set[str] = set()
     all_checks = sorted(set(old["checks"]) | set(new["checks"]))
+    selector_indexes: dict[str, list[dict[str, set[str]]]] = {}
+    for group in GROUPS:
+        indexes = []
+        for capture in (old, new):
+            index: dict[str, set[str]] = {}
+            for selector in capture["manifest"]["groups"][group]:
+                path = str(selector["path"])
+                checks = set(selector["check_ids"])
+                index.setdefault(path, set()).update(checks)
+                if selector["kind"] == "directory":
+                    index.setdefault(path + "/", set()).update(checks)
+            indexes.append(index)
+        selector_indexes[group] = indexes
     for group in GROUPS:
         left, right = old["snapshots"][group], new["snapshots"][group]
         for path in sorted(set(left) | set(right)):
@@ -494,15 +511,11 @@ def compare_inputs(before: Json, after: Json) -> Record:
             if left.get(path) == "missing" or right.get(path) == "missing":
                 kind = "missing"
             differences.append({"group": group, "path": path, "kind": kind})
-            for capture in (old, new):
-                for selector in capture["manifest"]["groups"][group]:
-                    root = str(selector["path"])
-                    if (
-                        path.rstrip("/") == root
-                        or selector["kind"] == "directory"
-                        and path.startswith(root + "/")
-                    ):
-                        affected.update(selector["check_ids"])
+            for index in selector_indexes[group]:
+                normalized = path.rstrip("/")
+                affected.update(index.get(normalized, ()))
+                for parent in PurePosixPath(path).parents:
+                    affected.update(index.get(parent.as_posix() + "/", ()))
     for key, group in (
         ("manifest_digest", "check"),
         ("artifact_refs", "artifact"),

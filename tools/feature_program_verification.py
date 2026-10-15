@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Callable, Final, Protocol, TypeAlias
 
 if TYPE_CHECKING:
     from feature_program import PreparedChange, ReadBudget
+    from feature_program_delivery import ExecutionAssessmentContext
+    from feature_program_storage import RegistryObservation
 
 Json: TypeAlias = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
 Record: TypeAlias = dict[str, Json]
@@ -36,6 +38,9 @@ class ProgramAccess(Protocol):
     directory: Path
 
     def path(self, relative: str) -> Path: ...
+    def read_registry_observation(
+        self, *, budget: ReadBudget | None = None
+    ) -> RegistryObservation: ...
     def require_current_location(self) -> None: ...
     def validate(self, state: Record) -> None: ...
     def task(self, state: Record, identifier: str) -> Record: ...
@@ -484,6 +489,13 @@ class _Reads:
     record_index: dict[str, Record] = field(default_factory=dict)
     latest_lane: dict[tuple[str, str], Record] = field(default_factory=dict)
     latest_event: dict[str, Record] = field(default_factory=dict)
+    events_by_lane: dict[tuple[str, str], list[Record]] = field(default_factory=dict)
+    receipt_members: dict[tuple[str, str], set[bytes]] = field(default_factory=dict)
+    input_comparisons: dict[str, tuple[Record, Record, Record]] = field(default_factory=dict)
+    attachment_facts: dict[tuple[str, str, str, str, str, str], list[Json]] = field(
+        default_factory=dict
+    )
+    provider_assessments: ExecutionAssessmentContext | None = None
     indexed: bool = False
 
     def index(self, state: Record) -> None:
@@ -496,7 +508,16 @@ class _Reads:
                 self.latest_lane[(str(value["task_id"]), str(value["lane"]))] = item
             if value["kind"] in {"request", "started", "blocked", "finished", "canceled"}:
                 self.latest_event[str(item["request_id"])] = item
+            request = self.record_index[str(item["request_id"])]
+            key = (str(value["task_id"]), str(request["input"]["lane"]))
+            self.events_by_lane.setdefault(key, []).append(item)
         self.indexed = True
+
+    def json(self, program: ProgramAccess, ref: Record) -> Record:
+        """Decode one checked image, retaining each consumer's exact hash requirement."""
+        captured = self.artifacts.capture(program.directory, str(ref["path"]), LIMIT)
+        _require(captured.sha256 == ref["sha256"], f"Frozen evidence changed: {ref['path']}")
+        return self.artifacts.json(captured)
 
     def snapshot(self, program: ProgramAccess, scope: list[str]) -> Record:
         key = tuple(sorted(scope))
@@ -510,6 +531,18 @@ class _Reads:
             _require(
                 program.source_snapshot(list(scope), budget) == snapshot,
                 "Verification source changed during observation; refresh",
+            )
+        for request, previous, _comparison in self.input_comparisons.values():
+            captured = request["context"]["input_capture"]
+            current = _inputs().capture_inputs(
+                program,
+                captured["manifest"],
+                environment=captured["environment"],
+                method=captured["method"],
+            )
+            _require(
+                current["input_digest"] == previous["input_digest"],
+                "Categorized verification inputs changed during observation; refresh",
             )
 
 
@@ -588,7 +621,7 @@ def _attachment_manifest_refs(
         str(manifest_ref["path"]).startswith(prefix), "Attachment manifest escaped target scope"
     )
     program.verify_refs([manifest_ref, origin_ref], reads.artifacts)
-    manifest = _core().read_json(program.path(str(manifest_ref["path"])), budget=reads.artifacts)
+    manifest = reads.json(program, manifest_ref)
     _require(
         set(manifest) == {"schema_version", "task_id", "attempt", "origin_ref", "attachments"}
         and type(manifest.get("schema_version")) is int
@@ -602,6 +635,18 @@ def _attachment_manifest_refs(
         and _ref(manifest["origin_ref"]) == origin_ref,
         "Attachment manifest target or origin mismatch",
     )
+    key = (
+        str(manifest_ref["path"]),
+        str(manifest_ref["sha256"]),
+        str(origin_ref["path"]),
+        str(origin_ref["sha256"]),
+        str(value["task_id"]),
+        str(context["attempt"]),
+    )
+    if key in reads.attachment_facts:
+        refs = reads.attachment_facts[key]
+        program.verify_refs(refs, reads.artifacts)
+        return deepcopy(refs)
     run = _execution()._read_capture(program, origin_ref, reads.artifacts)
     allowed = [origin_ref, _ref(run["start_ref"])]
     for name in ("input_capture_before", "input_capture_after"):
@@ -645,6 +690,7 @@ def _attachment_manifest_refs(
             "Attachment bytes or size differ from execution origin",
         )
         refs.extend([source, target])
+    reads.attachment_facts[key] = deepcopy(refs)
     return refs
 
 
@@ -845,11 +891,12 @@ def verify_history(program: ProgramAccess, state: Record, budget: ReadBudget | N
     reader = budget if budget is not None else _core().ReadBudget(64 * 1024 * 1024)
     program.verify_refs(evidence_references(state), reader)
     reads = _reads(reader)
+    reads.index(state)
     for item in _records(state):
         _verify_attachment_evidence(program, item, reads)
     for item in _records(state):
         ref = _ref(item["receipt"])
-        raw = _core().read_json(program.path(str(ref["path"])), budget=reader)
+        raw = reads.json(program, ref)
         _require(raw == item["input"], "Frozen verification input metadata changed")
     for task_value in _items(state.get("tasks", []), "tasks"):
         task = _record(task_value, "task")
@@ -863,13 +910,14 @@ def verify_history(program: ProgramAccess, state: Record, budget: ReadBudget | N
                     historical.append(round_record["review"])
             for ref_value in historical:
                 ref = _record(ref_value, "attempt evidence ref")
-                name = str(ref["path"])
-                receipt = _core().read_json(program.path(name), budget=reader)
-                _retained_refs(state, receipt, str(task["id"]))
+                receipt = reads.json(program, ref)
+                _retained_refs(state, receipt, str(task["id"]), index=reads.record_index)
 
 
-def _retained_refs(state: Record, receipt: Record, task_id: str) -> list[Record]:
-    index = _index(state)
+def _retained_refs(
+    state: Record, receipt: Record, task_id: str, *, index: dict[str, Record] | None = None
+) -> list[Record]:
+    index = _index(state) if index is None else index
     result: list[Record] = []
     seen: set[str] = set()
     for value in _items(receipt.get("verification_refs", []), "verification reliance"):
@@ -923,9 +971,18 @@ def _carried_by_submission(
         return False
     ref = _record(submission, "current submission")["receipt"]
     program.verify_refs([ref], reads.artifacts)
-    receipt = _core().read_json(program.path(str(ref["path"])), budget=reads.artifacts)
-    return {"id": item["input"]["id"], "receipt": item["receipt"]} in _items(
-        receipt.get("verification_refs", []), "submission verification reliance"
+    receipt = reads.json(program, ref)
+    key = (str(ref["path"]), str(ref["sha256"]))
+    if key not in reads.receipt_members:
+        reads.receipt_members[key] = {
+            _core().canonical(value)
+            for value in _items(
+                receipt.get("verification_refs", []), "submission verification reliance"
+            )
+        }
+    return (
+        _core().canonical({"id": item["input"]["id"], "receipt": item["receipt"]})
+        in reads.receipt_members[key]
     )
 
 
@@ -945,7 +1002,7 @@ def _applicable(
     scope = _texts(value["input_scope"], "input scope")
     if "input_capture" in request["context"]:
         reads.snapshot(program, scope)
-        comparison = _input_comparison(program, request)
+        comparison = _input_comparison(program, request, reads)
         if comparison["status"] != "unchanged":
             reasons.extend(comparison["reasons"] or ["Verification input completeness unknown"])
     elif core.digest(reads.snapshot(program, scope)) != request["context"].get("input_digest"):
@@ -1023,6 +1080,7 @@ def prepare_record(
     """Resolve and freeze one detached event with the real pre-publication guard."""
     core = _core()
     program.require_current_location()
+    observed = program.read_registry_observation()
     program.validate(state)
     validate(state)
     _require(bool(re.fullmatch(r"[a-f0-9]{40}", observed_head)), "Invalid observed source HEAD")
@@ -1036,14 +1094,15 @@ def prepare_record(
         value["expected_revision"] == core.phases.revision(state),
         "Stale verification registry revision",
     )
-    index = _index(state)
+    reads = _reads()
+    reads.index(state)
+    index = reads.record_index
     _require(
         all(identifier.casefold() != str(value["id"]).casefold() for identifier in index),
         "Duplicate verification ID",
     )
     _require(len(index) < MAX_RECORDS, "Verification history exceeds 2000 records")
     task = program.task(state, str(value["task_id"]))
-    reads = _reads()
     request = None if value["kind"] == "request" else index.get(str(value["request_id"]))
     if value["kind"] != "request":
         _require(
@@ -1415,9 +1474,11 @@ def prepare_record(
     authority_state = state
 
     def before_publish() -> None:
-        current = core.read_json(program.path("backlog.json"))
+        current_observation = program.read_registry_observation()
+        current = core.parse_registry_state(current_observation, path=program.path("backlog.json"))
         _require(
-            core.phases.revision(current) == original_revision,
+            core.phases.revision(current) == original_revision
+            and current_observation.storage_sha256 == observed.storage_sha256,
             "Verification registry changed before publication",
         )
         _authority(
@@ -1431,10 +1492,12 @@ def prepare_record(
     return core.PreparedChange(proposal, before_publish)
 
 
-def _reference(state: Record, pointer: str, task_id: str | None = None) -> Record:
+def _reference(
+    state: Record, pointer: str, task_id: str | None = None, *, revision: str | None = None
+) -> Record:
     result: Record = {
         "path": "backlog.json",
-        "revision": _core().phases.revision(state),
+        "revision": revision if revision is not None else _core().phases.revision(state),
         "pointer": pointer,
     }
     if task_id is not None:
@@ -1449,13 +1512,14 @@ def _collection(
     task_id: str | None = None,
     *,
     limit: int | None = MAX_ROWS,
+    revision: str | None = None,
 ) -> Record:
     return {
         "total": len(rows),
         "shown": len(rows) if limit is None else min(len(rows), limit),
         "omitted": 0 if limit is None else max(0, len(rows) - limit),
         "items": rows[:] if limit is None else rows[:limit],
-        "reference": _reference(state, pointer, task_id),
+        "reference": _reference(state, pointer, task_id, revision=revision),
     }
 
 
@@ -1496,7 +1560,8 @@ def packet(
 def assess_reuse(program: ProgramAccess, state: Record, origin: Record, target: Record) -> Record:
     """Conservatively compare complete explicit check inputs; never waive fresh CI/review."""
     reads = _reads()
-    index = _index(state)
+    reads.index(state)
+    index = reads.record_index
     old_request = index.get(str(origin.get("request_id")))
     new_request = index.get(str(target.get("request_id")))
     reasons: list[str] = []
@@ -1516,7 +1581,6 @@ def assess_reuse(program: ProgramAccess, state: Record, origin: Record, target: 
             "advisory": True,
         }
     before, after = origin["input"], target["input"]
-    reads.index(state)
     latest_origin = reads.latest_event.get(str(origin["request_id"]))
     if latest_origin is not None and latest_origin["input"]["id"] != before["id"]:
         reasons.append("Newer origin event prevents reuse of old success")
@@ -1606,7 +1670,7 @@ def _provider_assessment(
         return {"adopted": False, "status": "not_assessed"}
     _require(expected_ref is not None, "Provider observation lacks explicit expected context")
     program.verify_refs([_ref(expected_ref)], reads.artifacts)
-    expected = _core().read_json(program.path(str(expected_ref["path"])), budget=reads.artifacts)
+    expected = reads.json(program, expected_ref)
     try:
         _provider().validate_context(expected)
         if captured_ref is None:
@@ -1622,10 +1686,12 @@ def _provider_assessment(
                 "provider_reference": None,
             }
         program.verify_refs([_ref(captured_ref)], reads.artifacts)
-        captured = _core().read_json(
-            program.path(str(captured_ref["path"])), budget=reads.artifacts
+        captured = reads.json(program, captured_ref)
+        if reads.provider_assessments is None:
+            reads.provider_assessments = _provider().ExecutionAssessmentContext(reads.artifacts)
+        result = reads.provider_assessments.assess(
+            captured.get("execution"), expected, reader=reads.artifacts
         )
-        result = _provider().assess_execution(captured.get("execution"), expected)
     except _provider().DeliveryError as exc:
         raise _core().ProgramError(str(exc)) from exc
     result.update(
@@ -1897,19 +1963,31 @@ def attachment_bindings(
     }
 
 
-def _input_comparison(program: ProgramAccess, request: Record) -> Record:
+def _input_comparison(
+    program: ProgramAccess, request: Record, reads: _Reads | None = None
+) -> Record:
     captured = request["context"]["input_capture"]
+    identifier = str(request["request_id"])
+    if reads is not None and identifier in reads.input_comparisons:
+        original, _current, comparison = reads.input_comparisons[identifier]
+        _require(original == request, "Categorized request changed during observation")
+        return deepcopy(comparison)
     current = _inputs().capture_inputs(
         program,
         captured["manifest"],
         environment=captured["environment"],
         method=captured["method"],
     )
-    return _inputs().compare_inputs(captured, current)
+    comparison = _inputs().compare_inputs(captured, current)
+    if reads is not None:
+        reads.input_comparisons[identifier] = (deepcopy(request), current, deepcopy(comparison))
+    return comparison
 
 
-def _input_summary(program: ProgramAccess, request: Record, applicability: str) -> Record:
-    comparison = _input_comparison(program, request)
+def _input_summary(
+    program: ProgramAccess, request: Record, applicability: str, reads: _Reads | None = None
+) -> Record:
+    comparison = _input_comparison(program, request, reads)
     captured = request["context"]["input_capture"]
     groups = []
     for group in ("source", "test", "config", "artifact", "environment", "method", "check"):
@@ -2004,6 +2082,7 @@ def projection(
 ) -> Record:
     """Project recorded outcomes and an explicitly selected immutable execution separately."""
     validate(state)
+    revision = _core().phases.revision(state)
     reads = _reads(budget)
     records = _records(state)
     selected = (
@@ -2108,9 +2187,13 @@ def projection(
                         state,
                         f"/verification/records/{positions[str(request['input']['id'])]}",
                         task_id,
+                        revision=revision,
                     ),
                     "observation_reference": _reference(
-                        state, f"/verification/records/{positions[str(value['id'])]}", task_id
+                        state,
+                        f"/verification/records/{positions[str(value['id'])]}",
+                        task_id,
+                        revision=revision,
                     )
                     if latest is not request
                     else None,
@@ -2126,7 +2209,9 @@ def projection(
             )
             if "input_capture" in request["context"]:
                 try:
-                    lanes[-1]["input_summary"] = _input_summary(program, request, applicability)
+                    lanes[-1]["input_summary"] = _input_summary(
+                        program, request, applicability, reads
+                    )
                 except (OSError, _core().ProgramError):
                     lanes[-1]["input_summary"] = {
                         "schema_version": 1,
@@ -2140,12 +2225,7 @@ def projection(
                     }
             executions = []
             execution_refs = []
-            execution_events = [
-                event
-                for event in records
-                if event["input"]["task_id"] == task_id
-                and reads.record_index[str(event["request_id"])]["input"]["lane"] == lane
-            ]
+            execution_events = reads.events_by_lane.get((task_id, lane), [])
             for event in execution_events:
                 origin = event["input"].get("run_capture_ref")
                 if origin is None:
@@ -2153,9 +2233,7 @@ def projection(
                 execution_refs.append(origin)
                 try:
                     program.verify_refs([origin], reads.artifacts)
-                    run = _core().read_json(
-                        program.path(str(origin["path"])), budget=reads.artifacts
-                    )
+                    run = reads.json(program, origin)
                     summary = _execution().summarize_capture(run)
                     summary["publication"] = {
                         "status": "recorded",
@@ -2247,7 +2325,10 @@ def projection(
                         "task_id": task_id,
                         "request_id": request["request_id"],
                         "reference": _reference(
-                            state, f"/verification/records/{positions[str(value['id'])]}", task_id
+                            state,
+                            f"/verification/records/{positions[str(value['id'])]}",
+                            task_id,
+                            revision=revision,
                         ),
                     }
                 )
@@ -2272,16 +2353,23 @@ def projection(
                         "resolutions": resolutions,
                         "status": "recorded",
                         "reference": _reference(
-                            state, f"/verification/records/{positions[str(value['id'])]}", task_id
+                            state,
+                            f"/verification/records/{positions[str(value['id'])]}",
+                            task_id,
+                            revision=revision,
                         ),
                         "receipt_ref": deepcopy(item["receipt"]),
                     }
                 )
         tasks[task_id] = {
             "task_id": task_id,
-            "lanes": _collection(state, lanes, "/verification/records", task_id, limit=None),
-            "findings": _collection(state, findings, "/verification/records", task_id, limit=None),
-            "reference": _reference(state, "/verification/records", task_id),
+            "lanes": _collection(
+                state, lanes, "/verification/records", task_id, limit=None, revision=revision
+            ),
+            "findings": _collection(
+                state, findings, "/verification/records", task_id, limit=None, revision=revision
+            ),
+            "reference": _reference(state, "/verification/records", task_id, revision=revision),
         }
     history = [
         {
@@ -2296,7 +2384,9 @@ def projection(
         "schema_version": 1,
         "status": "recorded" if "verification" in state else "absent",
         "tasks": tasks,
-        "history": _collection(state, history, "/verification/records", limit=None),
+        "history": _collection(
+            state, history, "/verification/records", limit=None, revision=revision
+        ),
         "integrity": {
             "unavailable_total": len(integrity),
             "records": _collection(
@@ -2304,6 +2394,7 @@ def projection(
                 [{"id": identifier, "reason": reason} for identifier, reason in integrity.items()],
                 "/verification/records",
                 limit=None,
+                revision=revision,
             ),
         },
     }
@@ -2339,10 +2430,11 @@ def validate_receipt_refs(
     program: ProgramAccess, state: Record, receipt: Record, task_id: str
 ) -> None:
     """Validate newly declared reliance against actual pre-transition source, not a guessed round."""
-    items = _retained_refs(state, receipt, task_id)
+    reads = _reads()
+    reads.index(state)
+    items = _retained_refs(state, receipt, task_id, index=reads.record_index)
     if not items:
         return
-    reads = _reads()
     task = program.task(state, task_id)
     attempt = program.current_attempt(task)
     submitted = False
@@ -2354,7 +2446,7 @@ def validate_receipt_refs(
         program.verify_refs(_items(item["evidence"], "verification evidence"), reads.artifacts)
         applicable, reasons = _applicable(program, state, item, reads, submitted=submitted)
         _require(applicable, "Stale verification reliance: " + "; ".join(reasons))
-        request_item = _index(state)[str(item["request_id"])]
+        request_item = reads.record_index[str(item["request_id"])]
         problems = _observation_problems(item, request_item)
         _require(not problems, "Invalid verification reliance: " + "; ".join(problems))
         provider_assessment = _provider_assessment(program, request_item, item, reads, "current")
@@ -2393,7 +2485,8 @@ def submission_inputs(program: ProgramAccess, state: Record, request: Record) ->
     )
     attempt = program.current_attempt(task)
     reads = _reads()
-    index = _index(state)
+    reads.index(state)
+    index = reads.record_index
     selected = _texts(request.get("observation_ids", []), "observation IDs")
     matching: dict[str, Record] = {}
     missing: list[Json] = []
@@ -2582,9 +2675,13 @@ def publication_guard(
 ) -> Callable[[], None] | None:
     """Recheck newly declared frozen reliance against the original registry before publication."""
     core = _core()
-    if not program.path("backlog.json").exists():
+    path = program.path("backlog.json")
+    if not core.observed_exists(path):
         return None
-    original = core.read_json(program.path("backlog.json")) if predecessor is None else predecessor
+    observed = program.read_registry_observation()
+    original = (
+        core.parse_registry_state(observed, path=path) if predecessor is None else predecessor
+    )
     base = original if publication_base is None else publication_base
     old_records, future_records = _records(original), _records(future)
     _require(
@@ -2636,9 +2733,11 @@ def publication_guard(
     revision = core.phases.revision(base)
 
     def recheck() -> None:
-        current = core.read_json(program.path("backlog.json"))
+        current_observation = program.read_registry_observation()
+        current = core.parse_registry_state(current_observation, path=path)
         _require(
-            core.phases.revision(current) == revision,
+            core.phases.revision(current) == revision
+            and current_observation.storage_sha256 == observed.storage_sha256,
             "Verification reliance registry changed before publication",
         )
         program.verify_refs(appended_refs)

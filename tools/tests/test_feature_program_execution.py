@@ -556,3 +556,68 @@ def test_blocked_native_launch_returns_unknown_and_never_resumes_late_child(fixt
     assert returned.wait(5)
     created[0].wait(timeout=5)
     assert not (fixture.program.repo / "late-command").exists()
+
+
+def test_selected_capture_loads_original_once_and_retains_prepared_authority(fixture, monkeypatch):
+    # Given one actual sealed process and a current adopted request.
+    prepared = prepare(fixture)
+    result = execution.execute_run(prepared)
+    state = fixture.program.load()
+    original = execution._load_capture
+    loaded = []
+
+    def observe(*args, **kwargs):
+        loaded.append(args[1])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(execution, "_load_capture", observe)
+    # When selected projection checks the original and its observation draft.
+    projected = execution.project_capture(fixture.program, state, result["capture_ref"])
+    # Then one original load serves both consumers without skipping current authority.
+    assert loaded == [result["capture_ref"]]
+    assert projected["current"] is True
+    assert projected["observation_draft"]["status"] == "prepared"
+    assert projected["summary"]["reported_check_result"] == "passed"
+
+
+def test_standalone_capture_does_not_charge_sealed_json_to_transitive_budget(fixture, monkeypatch):
+    # Given an actual producer capture whose transitive bytes exactly fill their own allowance.
+    prepared = prepare(
+        fixture,
+        "from pathlib import Path; Path('artifact.bin').write_bytes(b'x' * 16384)",
+        artifacts=["artifact.bin"],
+    )
+    result = execution.execute_run(prepared)
+    state = fixture.program.load()
+    capture = result["capture"]
+    refs = [capture["start_ref"], capture["input_capture_before"], capture["input_capture_after"]]
+    refs.extend(
+        {"path": stream["path"], "sha256": stream["sha256"]}
+        for stream in capture["outputs"].values()
+        if stream.get("path") is not None
+    )
+    refs.extend(capture["artifacts"]["captured"])
+    allowance = sum(
+        len(fixture.program.path(name).read_bytes()) for name in {ref["path"] for ref in refs}
+    )
+    assert len(fixture.program.path(result["capture_ref"]["path"]).read_bytes()) < allowance
+    original = execution.core.ReadBudget
+    ledgers = []
+
+    def bounded(*args, **kwargs):
+        if args == (64 * 1024 * 1024,) and not kwargs:
+            ledger = original(allowance)
+            ledgers.append(ledger)
+            return ledger
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(execution.core, "ReadBudget", bounded)
+    # When standalone observation uses the original separate capture/transitive policy.
+    observed = execution.prepare_observation(
+        fixture.program, state, result["capture_ref"], prepared.binding
+    )
+    # Then the sealed JSON cannot consume the transitive allowance or narrow valid admission.
+    assert observed["result"] == "passed"
+    assert observed["run_capture_ref"] == result["capture_ref"]
+    assert len(ledgers) == 2
+    assert ledgers[1].remaining == 0

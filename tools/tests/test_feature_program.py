@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -1243,9 +1244,11 @@ def test_generic_custom_verification_catalog_is_explicit_and_frozen(
 
 def test_snapshot_budget_rejects_oversized_state_without_truncation(small_program: Fixture) -> None:
     path = small_program.program.path("backlog.json")
-    path.write_bytes(b" " * (8 * 1024 * 1024 + 1))
-    with pytest.raises(fp.ProgramError, match="8 MiB"):
+    oversized = b" " * (8 * 1024 * 1024 + 1)
+    path.write_bytes(oversized)
+    with pytest.raises(fp.ProgramError, match="registry_size"):
         fp.read_snapshot(small_program.program.repo, small_program.program.directory)
+    assert path.read_bytes() == oversized
 
 
 def test_assignment_settings_are_frozen_at_claim_and_legacy_is_unknown(
@@ -2002,7 +2005,7 @@ def test_private_work_fingerprints_skip_before_read(
     original_reader = fp.bounded_bytes
 
     def reject_private(path: Path, limit: int) -> bytes:
-        assert not any(part.casefold() == ".work" for part in path.parts)
+        assert not any(part.casefold() == ".work" for part in path.relative_to(tmp_path).parts)
         return original_reader(path, limit)
 
     monkeypatch.setattr(fp, "bounded_bytes", reject_private)
@@ -2212,3 +2215,1063 @@ def test_relocation_reservation_rejects_competing_starter_without_overwrite(
     assert fp.read_json(destination / "planning.json")["program_id"] == "competing"
     assert not (destination / "RELOCATION_INCOMPLETE.json").exists()
     assert small_program.program.load()["tasks"]
+
+
+def test_captured_bytes_reuses_only_same_logical_admission(tmp_path, monkeypatch):
+    # Given one byte image addressable through different logical roots and aliases.
+    folder = tmp_path / "records"
+    folder.mkdir()
+    path = folder / "receipt.json"
+    raw = b'{"items":[1]}'
+    path.write_bytes(raw)
+    budget = fp.ReadBudget(remaining=100)
+    admissions = []
+    original = fp.safe_path
+
+    def admitted(root, name):
+        admissions.append((root, name))
+        return original(root, name)
+
+    monkeypatch.setattr(fp, "safe_path", admitted)
+    # When the same logical read repeats, aliases and distinct roots are admitted separately.
+    captured = budget.capture(tmp_path, "records/receipt.json", 100)
+    assert budget.capture(tmp_path, "records/receipt.json", 100) is captured
+    budget.capture(tmp_path, "records//receipt.json", 100)
+    budget.capture(folder, "receipt.json", 100)
+    # Then I/O is shared only inside the byte ledger, never logical admission authority.
+    assert len(admissions) == 3
+    assert budget.remaining == 100 - len(raw)
+    assert captured.content == raw and captured.sha256 == fp.sha(raw)
+    with pytest.raises(fp.ProgramError, match="bounded read"):
+        budget.capture(tmp_path, "records/receipt.json", len(raw) - 1)
+
+
+def test_captured_json_is_strict_and_consumer_values_are_isolated(tmp_path):
+    # Given one checked object and malformed strict JSON in the same observation.
+    path = tmp_path / "receipt.json"
+    path.write_bytes(b'{"nested":{"values":[1]}}')
+    budget = fp.ReadBudget()
+    captured = budget.capture(tmp_path, "receipt.json", 100)
+    first = budget.json(captured)
+    first["nested"]["values"].append(2)
+    # When another consumer decodes the same immutable byte image.
+    assert budget.json(captured) == {"nested": {"values": [1]}}
+    # Then each malformed image is rejected without contaminating the successful object.
+    for number, raw in enumerate((b'{"x":1,"x":2}', b'{"x":NaN}', b'{"x":1e999}', b"[]", b"\xff")):
+        name = f"bad-{number}.json"
+        (tmp_path / name).write_bytes(raw)
+        bad = budget.capture(tmp_path, name, 100)
+        with pytest.raises(fp.ProgramError):
+            budget.json(bad)
+    assert budget.json(captured) == {"nested": {"values": [1]}}
+
+
+def test_reference_consumers_recheck_expected_hash_on_capture_hit(tmp_path):
+    # Given correct captured bytes already admitted by a prior reference consumer.
+    program = fp.Program(tmp_path, tmp_path)
+    raw = b'{"value":1}'
+    (tmp_path / "receipt.json").write_bytes(raw)
+    budget = fp.ReadBudget()
+    good = {"path": "receipt.json", "sha256": fp.sha(raw)}
+    program.verify_refs([good], budget)
+    # When a second consumer supplies a conflicting expected hash.
+    with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+        program.verify_refs([{**good, "sha256": "0" * 64}], budget)
+    # Then the valid reference remains valid in the same observation.
+    program.verify_refs([good], budget)
+
+
+@pytest.mark.parametrize("kind", ["bytes", "is_symlink", "is_junction", "root"])
+def test_capture_final_recheck_rejects_midcapture_change(tmp_path, monkeypatch, kind):
+    # Given one successful captured observation, including a reused consumer hit.
+    path = tmp_path / "receipt.json"
+    path.write_bytes(b'{"ok":true}')
+    budget = fp.ReadBudget()
+    captured = budget.capture(tmp_path, path.name, 100)
+    assert budget.capture(tmp_path, path.name, 100) is captured
+    if kind == "bytes":
+        path.write_bytes(b'{"ok":false}')
+    elif kind == "root":
+        resolve = Path.resolve
+        monkeypatch.setattr(
+            Path,
+            "resolve",
+            lambda p, *a, **kw: (
+                tmp_path.parent / p.relative_to(tmp_path)
+                if p.is_relative_to(tmp_path)
+                else resolve(p, *a, **kw)
+            ),
+        )
+    else:
+        _mock_link_lstat(monkeypatch, path, kind)
+    # When final independent observation re-admits the path and reads current bytes.
+    with pytest.raises(fp.ProgramError):
+        budget.recheck(tmp_path)
+
+
+def test_source_overlap_reuses_admitted_bytes_but_discovers_each_scope(tmp_path, monkeypatch):
+    # Given overlapping directory scopes inside one explicit source observation.
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "first.py").write_bytes(b"first")
+    program = fp.Program(tmp_path, tmp_path / "program")
+    budget = fp.ReadBudget()
+    reads = []
+    original = fp.bounded_bytes
+
+    def read(path, limit):
+        reads.append(path)
+        return original(path, limit)
+
+    monkeypatch.setattr(fp, "bounded_bytes", read)
+    first = program.source_snapshot(["src"], budget)
+    (source / "second.py").write_bytes(b"second")
+    # When the directory is discovered again in that same reader.
+    second = program.source_snapshot(["src"], budget)
+    # Then existing bytes are shared, while new directory membership remains visible.
+    assert reads == [source / "first.py", source / "second.py"]
+    assert set(second) == set(first) | {"src/second.py"}
+    assert second["src/first.py"] == first["src/first.py"]
+
+
+def test_source_final_epoch_rejects_mutation_after_cached_source(tmp_path):
+    # Given two overlapping captures in a retained source observation.
+    (tmp_path / "src").mkdir()
+    path = tmp_path / "src/file.py"
+    path.write_bytes(b"before")
+    program = fp.Program(tmp_path, tmp_path / "program")
+    observations = fp._SourceObservations()
+    token = fp._source_observations.set(observations)
+    try:
+        reader = fp.ReadBudget()
+        program.source_snapshot(["src"], reader)
+        program.source_snapshot(["src/file.py"], reader)
+    finally:
+        fp._source_observations.reset(token)
+    path.write_bytes(b"after")
+    # When the independent final source epoch captures the actual current tree.
+    with pytest.raises(fp.ProgramError, match="changed during"):
+        observations.verify()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows root spelling aliases")
+def test_capture_admits_case_aliased_root_independently(tmp_path, monkeypatch):
+    # Given two Windows spellings of the same existing logical root.
+    root = tmp_path / "CaseRoot"
+    root.mkdir()
+    (root / "proof.json").write_bytes(b"{}")
+    alias = Path(str(root).swapcase())
+    budget = fp.ReadBudget()
+    admissions = []
+    original = fp.safe_path
+
+    def admit(root, name):
+        admissions.append(str(root))
+        return original(root, name)
+
+    monkeypatch.setattr(fp, "safe_path", admit)
+    # When both root spellings capture the same underlying bytes.
+    budget.capture(root, "proof.json", 100)
+    budget.capture(alias, "proof.json", 100)
+    # Then path equality on Windows cannot silently share admission authority.
+    assert admissions == [str(root), str(alias)]
+
+
+def test_explicit_file_scope_overlap_admits_once_per_reader(tmp_path, monkeypatch):
+    # Given overlapping exact file scopes inside one existing observation reader.
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "first.py").write_bytes(b"first")
+    (source / "second.py").write_bytes(b"second")
+    program = fp.Program(tmp_path, tmp_path / "program")
+    reader = fp.ReadBudget()
+    admissions = []
+    original = fp.safe_path
+
+    def admit(root, name):
+        admissions.append((root, name))
+        return original(root, name)
+
+    monkeypatch.setattr(fp, "safe_path", admit)
+    first = program.source_snapshot(["src/first.py", "src/second.py"], reader)
+    # When a later overlapping scope observes an already captured exact file.
+    second = program.source_snapshot(["src/first.py"], reader)
+    # Then it shares byte-image admission without another filesystem traversal.
+    assert second == {"src/first.py": first["src/first.py"]}
+    assert admissions == [(tmp_path, "src/first.py"), (tmp_path, "src/second.py")]
+    assert reader.remaining == 72 * 1024 * 1024 - len(b"firstsecond")
+
+
+@pytest.mark.parametrize("change", ["bytes", "link"])
+def test_explicit_file_scope_new_epoch_checks_mutation(tmp_path, monkeypatch, change):
+    # Given one immutable file image already shared within an observation epoch.
+    (tmp_path / "src").mkdir()
+    path = tmp_path / "src/file.py"
+    path.write_bytes(b"before")
+    program = fp.Program(tmp_path, tmp_path / "program")
+    reader = fp.ReadBudget()
+    first = program.source_snapshot(["src/file.py"], reader)
+    if change == "bytes":
+        path.write_bytes(b"after")
+    else:
+        _mock_link_lstat(monkeypatch, path, "is_symlink")
+    assert program.source_snapshot(["src/file.py"], reader) == first
+    # When a separate reader admits the same exact scope again.
+    if change == "bytes":
+        assert program.source_snapshot(["src/file.py"], fp.ReadBudget()) != first
+    else:
+        with pytest.raises(fp.ProgramError, match="Linked path rejected"):
+            program.source_snapshot(["src/file.py"], fp.ReadBudget())
+
+
+def test_storage_registry_budget_keeps_raw_container_and_detached_body(tmp_path: Path) -> None:
+    # Given: a registry is explicitly encoded, while an artifact contains identical bytes.
+    repo = tmp_path / "repo"
+    program = fp.Program(repo, repo / "program")
+    program.directory.mkdir(parents=True)
+    body = b'{ "program_id": "synthetic", "values": [1] }\n'
+    raw = fp.flow_module("storage").encode_registry(body, "a" * 64)
+    program.path("backlog.json").write_bytes(raw)
+    reader = fp.ReadBudget()
+    # When: the typed registry boundary and strict logical parser read through a budget.
+    observation = program.read_registry_observation(budget=reader)
+    state = fp.parse_registry_state(observation, path=program.path("backlog.json"))
+    state["values"].append(2)
+    # Then: raw storage never masquerades as BODY in the ordinary byte ledger.
+    assert reader.cached[program.path("backlog.json")] == raw
+    assert program.read_state_bytes(budget=reader) == body
+    assert fp.parse_registry_state(observation, path=program.path("backlog.json"))["values"] == [1]
+    with pytest.raises(fp.ProgramError):
+        fp.read_json(program.path("backlog.json"))
+
+
+@pytest.mark.parametrize("body", [b'{"a":1,"a":2}', b'{"a":NaN}', b"[]"])
+def test_storage_explicit_body_parser_retains_strict_json_boundary(
+    tmp_path: Path, body: bytes
+) -> None:
+    # Given: framing is correct but logical JSON is invalid.
+    repo = tmp_path / "repo"
+    program = fp.Program(repo, repo / "program")
+    program.directory.mkdir(parents=True)
+    program.path("backlog.json").write_bytes(
+        fp.flow_module("storage").encode_registry(body, "b" * 64)
+    )
+    # When/Then: the explicit strict BODY parser rejects the malformed state.
+    with pytest.raises(fp.ProgramError):
+        fp.parse_registry_state(
+            program.read_registry_observation(), path=program.path("backlog.json")
+        )
+
+
+def test_storage_closing_image_retains_each_alias_but_reuses_one_file_image(
+    small_program: Fixture, monkeypatch
+) -> None:
+    # Given: two independently admitted root/name pairs identify one bounded file.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    normal = fp._checked_safe_path
+    admissions = []
+
+    def counted(root, name, components=None):
+        admissions.append((root, name))
+        return normal(root, name, components)
+
+    monkeypatch.setattr(fp, "_checked_safe_path", counted)
+    # When: repeated consumers use different limits and logical roots.
+    first = observer.file(program.repo, "src/compile-api.py", limit=100, budget_tag="first")
+    second = observer.file(program.repo / "src", "compile-api.py", limit=100, budget_tag="second")
+    observer.admit(program.repo, "src/compile-api.py")
+    # Then: alias admission remains fresh but bytes are shared only in this closing epoch.
+    assert first is second
+    assert admissions.count((program.repo, "src/compile-api.py")) == 1
+    assert (program.repo / "src", "compile-api.py") in admissions
+    with pytest.raises(fp.ProgramError):
+        observer.file(program.repo, "src/compile-api.py", limit=0, budget_tag="small")
+
+
+def test_storage_source_scope_replays_excluded_boundaries_without_reading_them(
+    small_program: Fixture,
+) -> None:
+    # Given: an ordinary source directory contains a skipped private boundary.
+    program = small_program.program
+    skipped = program.repo / "src" / ".git"
+    skipped.mkdir()
+    (skipped / "private").write_text("Never read", encoding="utf-8")
+    boundaries = []
+    expected = program.source_snapshot(["src"], _boundaries=boundaries)
+    # When: the closing source observer independently discovers the same scope.
+    actual, excluded = fp._ClosingObserver(program).scope(
+        program.repo, ["src"], byte_budget=128 * 1024 * 1024, entry_limit=10000
+    )
+    # Then: regular membership is unchanged, and skipped-boundary identity is explicit.
+    assert actual == expected
+    assert excluded == boundaries == [{"path": "src/.git", "kind": "excluded_directory"}]
+    assert "src/.git/private" not in actual
+
+
+def test_storage_new_closing_epoch_rejects_changed_source_image(small_program: Fixture) -> None:
+    # Given: one completed closing image captured an exact regular file.
+    program = small_program.program
+    path = program.repo / "src" / "compile-api.py"
+    old = fp._ClosingObserver(program).file(
+        program.repo, "src/compile-api.py", limit=100, budget_tag=None
+    )
+    # When: actual bytes change before a new independent closing epoch.
+    path.write_bytes(b"same_length = 1\n")
+    new = fp._ClosingObserver(program).file(
+        program.repo, "src/compile-api.py", limit=100, budget_tag=None
+    )
+    # Then: no prior observer image crosses the fresh boundary.
+    assert new.sha256 != old.sha256
+
+
+def test_storage_recheck_preserves_actual_typed_archive_bound(tmp_path: Path) -> None:
+    # Given: a typed archive has the maximum logical BODY plus its fixed frame.
+    root = tmp_path / "repo"
+    root.mkdir()
+    body = b'{"program_id":"p","padding":"' + b"x" * (8 * 1024 * 1024 - 31) + b'"}'
+    # Keep BODY exactly at the existing limit without relying on JSON whitespace normalization.
+    body = body + b" " * (8 * 1024 * 1024 - len(body))
+    raw = fp.flow_module("storage").encode_registry(body, "c" * 64)
+    path = root / "original-backlog.json"
+    path.write_bytes(raw)
+    reader = fp.ReadBudget()
+    reader.capture(root, path.name, 8 * 1024 * 1024 + 80)
+    # When: final raw closure uses the original successful path bound.
+    reader.recheck(root)
+    # Then: the valid frame is retained, while an explicit narrower limit still rejects.
+    with pytest.raises(fp.ProgramError):
+        reader.recheck(root, limit=8 * 1024 * 1024)
+
+
+def test_closing_observer_admits_narrow_root_once_and_every_logical_name(
+    small_program: Fixture, monkeypatch
+) -> None:
+    # Given: several original names share one explicitly narrower source root.
+    program = small_program.program
+    root = program.repo / "src"
+    observer = fp._ClosingObserver(program)
+    normal = fp._checked_safe_path
+    admissions = []
+
+    def counted(base, name, components=None):
+        admissions.append((base, name))
+        return normal(base, name, components)
+
+    monkeypatch.setattr(fp, "_checked_safe_path", counted)
+    # When: the complete image sees each name and repeats its admission/probe.
+    names = ("compile-api.py", "docs.2.py", "test_9.py")
+    for name in names:
+        observer.file(root, name, limit=100, budget_tag="fixture")
+        assert observer.probe(root, name, operation="kind") == "file"
+        observer.admit(root, name)
+    # Then: each logical name is admitted independently and root ancestry is observed once.
+    assert admissions.count((program.repo, "src")) == 1
+    assert all(admissions.count((root, name)) == 1 for name in names)
+
+
+def test_closing_observer_new_name_rechecks_root_after_normalization(
+    small_program: Fixture, monkeypatch
+) -> None:
+    # Given: a root's first logical name was safely admitted in this fresh image.
+    program = small_program.program
+    root = program.repo / "src"
+    observer = fp._ClosingObserver(program)
+    observer.admit(root, "compile-api.py")
+    normal = Path.resolve
+
+    def linked(path, *args, **kwargs):
+        if path.is_relative_to(root):
+            return program.repo / "outside" / path.relative_to(root)
+        return normal(path, *args, **kwargs)
+
+    # When: the root resolves elsewhere before another original name is admitted.
+    monkeypatch.setattr(Path, "resolve", linked)
+    # Then: pure root normalization never authorizes a later linked path.
+    with pytest.raises(fp.ProgramError):
+        observer.admit(root, "docs.2.py")
+
+
+def test_closing_observer_exact_allowed_root_needs_no_repeated_ancestor_prefix(
+    small_program: Fixture, monkeypatch
+) -> None:
+    # Given: the program root is already a host-bound root and an alias of repo-relative names.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    normal = fp._checked_safe_path
+    admissions = []
+
+    def counted(root, name, components=None):
+        admissions.append((root, name))
+        return normal(root, name, components)
+
+    monkeypatch.setattr(fp, "_checked_safe_path", counted)
+    # When: the canonical source is accessed through both original logical aliases.
+    relative = program.directory.relative_to(program.repo).as_posix()
+    first = observer.file(program.directory, "planning.json", limit=100000, budget_tag="one")
+    second = observer.file(
+        program.repo, relative + "/planning.json", limit=100000, budget_tag="two"
+    )
+    # Then: both aliases receive fresh admission without an extra synthetic prefix admission.
+    assert first is second
+    assert (program.directory, "planning.json") in admissions
+    assert (program.repo, relative + "/planning.json") in admissions
+    assert (program.repo, relative) not in admissions
+
+
+def _path_collector(program: fp.Program):
+    module = fp.flow_module("read_model")
+    return module.Collector(
+        program.repo,
+        program.directory,
+        program_id="synthetic",
+        body_sha256="a" * 64,
+        producer=module.producer_identity(program.repo),
+        query=module.QUERY,
+    )
+
+
+def test_collector_dependency_mapping_memo_preserves_exact_lexical_aliases(
+    small_program: Fixture, monkeypatch
+) -> None:
+    # Given: real absolute file paths and a count of pure absolute normalization.
+    program = small_program.program
+    collector = _path_collector(program)
+    target = program.repo / "src/compile-api.py"
+    normal = Path.absolute
+    calls = []
+
+    def counted(path):
+        calls.append(str(path))
+        return normal(path)
+
+    monkeypatch.setattr(Path, "absolute", counted)
+    # When: the same exact spelling is repeatedly mapped in one activation.
+    with fp._collect_dependencies(collector):
+        first = fp._dependency_name(target)
+        for _ in range(5):
+            assert fp._dependency_name(target) == first
+        alias = target.with_name(target.name.upper())
+        other = fp._dependency_name(alias)
+    # Then: normalization occurs once per original spelling and neither alias is erased.
+    assert calls.count(str(target)) == 1
+    assert first == (program.repo, "src/compile-api.py")
+    assert other == (program.repo, "src/COMPILE-API.PY")
+
+
+def test_collector_dependency_mapping_is_scoped_to_owner_activation_and_relative_cwd(
+    small_program: Fixture, monkeypatch
+) -> None:
+    # Given: the same file may be a task-program path or a repository path for two owners.
+    program = small_program.program
+    first = _path_collector(program)
+    other_program = fp.Program(program.repo, program.repo / "other-program")
+    other_program.directory.mkdir()
+    second = _path_collector(other_program)
+    module = fp.flow_module("read_model")
+    target = program.path("planning.json")
+    # When: nested collection suspends or switches owner, and relative paths change cwd.
+    with fp._collect_dependencies(first):
+        assert fp._dependency_name(target) == (program.directory, "planning.json")
+        with module.collect(None):
+            assert fp._dependency_name(target) is None
+        with module.collect(second):
+            assert fp._dependency_name(target) == (program.repo, "small-program/planning.json")
+        assert fp._dependency_name(target) == (program.directory, "planning.json")
+        monkeypatch.chdir(program.repo)
+        before = fp._dependency_name(Path("relative.txt"))
+        monkeypatch.chdir(program.directory)
+        after = fp._dependency_name(Path("relative.txt"))
+    # Then: no owner/relative-cwd mapping crosses an activation boundary.
+    assert before == (program.repo, "relative.txt")
+    assert after == (program.directory, "relative.txt")
+    assert fp._dependency_name(target) is None
+
+
+def test_closing_source_scope_reuses_same_repo_normalized_root_file(
+    small_program: Fixture, monkeypatch
+) -> None:
+    # Given: a stored model uses the platform-normalized spelling of the exact repository root.
+    import os
+
+    program = small_program.program
+    root = Path(os.path.normcase(str(program.repo)))
+    observer = fp._ClosingObserver(program)
+    observer.file(root, "src/compile-api.py", limit=100, budget_tag="model")
+    normal = fp.safe_path
+    admissions = []
+
+    def counted(base, name):
+        admissions.append((base, name))
+        return normal(base, name)
+
+    monkeypatch.setattr(fp, "safe_path", counted)
+    # When: two declared source scopes replay using the actual host Program.repo spelling.
+    first, _ = observer.scope(
+        program.repo, ["src/compile-api.py"], byte_budget=128 * 1024 * 1024, entry_limit=10000
+    )
+    second, _ = observer.scope(
+        program.repo, ["src/compile-api.py"], byte_budget=128 * 1024 * 1024, entry_limit=10000
+    )
+    # Then: the already fresh same-root file admission is reused and limits still apply.
+    assert first == second
+    assert (program.repo, "src/compile-api.py") not in admissions
+    assert (str(program.repo.absolute()), "src/compile-api.py") in observer.reader._admissions
+
+
+def test_closing_source_scope_keeps_different_roots_and_directory_discovery(
+    small_program: Fixture,
+) -> None:
+    # Given: an independently admitted narrower root points to one file under a directory scope.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    observer.file(program.repo / "src", "compile-api.py", limit=100, budget_tag="narrow")
+    assert (str(program.repo.absolute()), "src/compile-api.py") not in observer.reader._admissions
+    # When: complete directory membership is replayed before and after a new source appears.
+    before, _ = observer.scope(
+        program.repo, ["src"], byte_budget=128 * 1024 * 1024, entry_limit=10000
+    )
+    (program.repo / "src/new.py").write_bytes(b"new source")
+    after, _ = observer.scope(
+        program.repo, ["src"], byte_budget=128 * 1024 * 1024, entry_limit=10000
+    )
+    # Then: a different logical root is not silently preadmitted and new membership remains visible.
+    assert "src/new.py" not in before and "src/new.py" in after
+    assert (str(program.repo.absolute()), "src/compile-api.py") in observer.reader._admissions
+
+
+def test_collector_mapping_negative_cache_never_crosses_nested_activation(
+    small_program: Fixture,
+) -> None:
+    # Given: one path is outside the first owner's roots and inside a second owner.
+    program = small_program.program
+    first = _path_collector(program)
+    outer_program = fp.Program(program.repo.parent, program.repo)
+    second = _path_collector(outer_program)
+    path = program.repo.parent / "outside.txt"
+    # When: collection is nested and then unwinds through an actual exception.
+    with pytest.raises(RuntimeError):
+        with fp._collect_dependencies(first):
+            assert fp._dependency_name(path) is None
+            with fp._collect_dependencies(second):
+                assert fp._dependency_name(path) == (outer_program.repo, "outside.txt")
+            assert fp._dependency_name(path) is None
+            raise RuntimeError("Synthetic caller failure")
+    # Then: neither an admitted mapping nor a negative result survives that activation.
+    assert fp._dependency_names.get() is None
+    with fp._collect_dependencies(second):
+        assert fp._dependency_name(path) == (outer_program.repo, "outside.txt")
+
+
+def _directory_alias(link: Path, target: Path) -> None:
+    """Exercise real aliases, using an unprivileged junction if Windows denies symlinks."""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        if sys.platform != "win32":
+            raise
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+
+
+@pytest.mark.parametrize("relative_root", [False, True])
+@pytest.mark.parametrize("name", ["existing.txt", "absent.txt", "missing/child.txt"])
+def test_safe_path_single_resolution_preserves_regular_and_absent_paths(
+    tmp_path, monkeypatch, relative_root, name
+):
+    # Given: an ordinary absolute or relative root and present/absent canonical candidates.
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "existing.txt").write_bytes(b"original")
+    monkeypatch.chdir(tmp_path)
+    selected = Path("root") if relative_root else root
+    normal = Path.resolve
+    calls = []
+
+    def resolve(path, *args, **kwargs):
+        calls.append(path)
+        return normal(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    # When: normal admission checks that exact candidate's canonical filesystem image.
+    admitted = fp.safe_path(selected, name)
+    # Then: the original path is preserved with one current resolution, without an FS cache.
+    assert admitted == selected / name
+    assert calls == [selected / name]
+
+
+@pytest.mark.parametrize("location", ["root", "ancestor", "inward", "outward"])
+def test_safe_path_single_resolution_rejects_real_directory_alias(tmp_path, location):
+    # Given: real directory links redirect the root, an ancestor, or a scoped component.
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "child").mkdir()
+    selected = root
+    name = "proof.txt"
+    if location == "root":
+        selected = tmp_path / "root-alias"
+        _directory_alias(selected, root)
+    elif location == "ancestor":
+        alias = tmp_path / "ancestor-alias"
+        _directory_alias(alias, outside)
+        selected = alias / "child"
+    else:
+        inside = root / "inside"
+        inside.mkdir()
+        _directory_alias(root / "entry", inside if location == "inward" else outside)
+        name = "entry/proof.txt"
+    # When: admission observes the real redirected candidate, including absent leaf paths.
+    # Then: neither inward/outward links nor linked roots/ancestors authorize access.
+    with pytest.raises(fp.ProgramError):
+        fp.safe_path(selected, name)
+
+
+@pytest.mark.parametrize("kind", ["is_symlink", "is_junction"])
+def test_safe_path_single_resolution_retains_each_component_link_probe(tmp_path, monkeypatch, kind):
+    # Given: a linked intermediate component is detected before candidate resolution.
+    root = tmp_path / "root"
+    root.mkdir()
+    linked = root / "nested"
+    linked.mkdir()
+    normal = Path.lstat
+    probes = []
+    _mount_metadata_support(monkeypatch)
+
+    def probe(path):
+        probes.append(path)
+        metadata = normal(path)
+        return _link_metadata(metadata, kind) if path == linked else metadata
+
+    monkeypatch.setattr(Path, "lstat", probe)
+    # When: admission checks a descendant of that component.
+    # Then: both symlink/junction guards remain live and reject before following it.
+    with pytest.raises(fp.ProgramError, match="Linked path rejected"):
+        fp.safe_path(root, "nested/absent.txt")
+    assert linked in probes
+
+
+def test_safe_path_single_resolution_rejects_late_inward_directory_redirect(tmp_path, monkeypatch):
+    # Given: all component probes saw an ordinary directory before final resolution.
+    root = tmp_path / "root"
+    root.mkdir()
+    candidate = root / "entry"
+    candidate.mkdir()
+    target = root / "inside"
+    target.mkdir()
+    normal = Path.resolve
+    redirected = []
+
+    def resolve(path, *args, **kwargs):
+        if path == candidate and not redirected:
+            candidate.rmdir()
+            _directory_alias(candidate, target)
+            redirected.append(path)
+        return normal(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    # When: a real link appears after component probes and redirects within the same root.
+    # Then: final canonical equality rejects this window instead of accepting mere containment.
+    with pytest.raises(fp.ProgramError):
+        fp.safe_path(root, "entry")
+    assert redirected == [candidate]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows path casing contract")
+def test_safe_path_single_resolution_preserves_windows_case_alias(tmp_path):
+    # Given: Windows treats an alternate-case root as the same directory.
+    root = tmp_path / "MixedCase"
+    root.mkdir()
+    (root / "Proof.txt").write_bytes(b"original")
+    alias = Path(str(root).swapcase())
+    # When: the exact original alias is admitted with normal Windows case semantics.
+    # Then: canonical equality retains the platform's case behavior and original spelling.
+    assert str(fp.safe_path(alias, "pROOF.TXT")) == str(alias / "pROOF.TXT")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junction filesystem contract")
+@pytest.mark.parametrize("location", ["root", "ancestor", "component"])
+def test_safe_path_single_resolution_rejects_real_windows_junction(tmp_path, location):
+    # Given: a real Windows junction redirects an admitted root/ancestor/component.
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "child").mkdir()
+    junction = tmp_path / "junction"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    root, name = (
+        (junction, "absent.txt")
+        if location == "root"
+        else (junction / "child", "absent.txt")
+        if location == "ancestor"
+        else (tmp_path, "junction/absent.txt")
+    )
+    # When: final resolution observes the actual junction, including an absent descendant.
+    # Then: alias handling cannot authorize a linked root/ancestor/component.
+    with pytest.raises(fp.ProgramError):
+        fp.safe_path(root, name)
+
+
+def test_safe_path_single_resolution_rejects_noncanonical_relative_root(tmp_path, monkeypatch):
+    # Given: an existing root is expressed through a parent traversal from another directory.
+    (tmp_path / "root").mkdir()
+    working = tmp_path / "working"
+    working.mkdir()
+    monkeypatch.chdir(working)
+    # When: a relative root's lexical absolute spelling differs from its canonical path.
+    # Then: the previous noncanonical-root rejection remains, even for an absent leaf.
+    with pytest.raises(fp.ProgramError):
+        fp.safe_path(Path("../root"), "absent.txt")
+
+
+def _mount_metadata_support(monkeypatch):
+    # Expose Windows metadata/API for deterministic portable junction fault images.
+    monkeypatch.setattr(fp.stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400, raising=False)
+    monkeypatch.setattr(fp.stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003, raising=False)
+    if not hasattr(Path, "is_junction"):
+        monkeypatch.setattr(Path, "is_junction", lambda _path: False, raising=False)
+
+
+def _link_metadata(metadata, kind):
+    return SimpleNamespace(
+        st_mode=fp.stat.S_IFLNK if kind == "is_symlink" else metadata.st_mode,
+        st_file_attributes=getattr(metadata, "st_file_attributes", 0) | 0x400,
+        st_reparse_tag=0xA0000003 if kind == "is_junction" else 0xA000000C,
+    )
+
+
+def _mock_link_lstat(monkeypatch, target, kind):
+    normal = Path.lstat
+    _mount_metadata_support(monkeypatch)
+
+    def linked(path):
+        metadata = normal(path)
+        return _link_metadata(metadata, kind) if path == target else metadata
+
+    monkeypatch.setattr(Path, "lstat", linked)
+
+
+def test_component_metadata_rejects_mount_reparse_directory(tmp_path, monkeypatch):
+    # Given: one fresh directory metadata image identifies a Windows mount-point junction.
+    directory = tmp_path / "linked"
+    directory.mkdir()
+    _mock_link_lstat(monkeypatch, directory, "is_junction")
+    # When: public admission evaluates the path component without following it.
+    # Then: directory mode cannot hide its junction reparse tag.
+    with pytest.raises(fp.ProgramError, match="Linked path rejected"):
+        fp.safe_path(tmp_path, "linked")
+
+
+def test_lexical_cache_retains_actual_graph_name_population_without_filesystem_facts():
+    # Given: the measured current graph contains more distinct names than the old2048bound.
+    names = [f"evidence/task-{index}/attempt-1/frozen.json" for index in range(2597)]
+    fp._cached_safe_relative.cache_clear()
+    first = [fp.safe_relative(name) for name in names]
+    misses = fp._cached_safe_relative.cache_info().misses
+    # When: another consumer validates the same graph's names.
+    second = [fp.safe_relative(name) for name in names]
+    # Then: pure results remain exact without repeating lexical parsing or storing OS facts.
+    assert second == first == names
+    assert fp._cached_safe_relative.cache_info().misses == misses
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError(), PermissionError(), ValueError("invalid")])
+@pytest.mark.parametrize("legacy", [False, True, "raises"])
+def test_component_metadata_error_delegates_original_version_semantics(
+    tmp_path, monkeypatch, error, legacy
+):
+    # Given: lstat fails, and the runtime's original predicates define its error behavior.
+    path = tmp_path / "proof"
+
+    def failed(_path):
+        raise error
+
+    def old_symlink(_path):
+        if legacy == "raises":
+            raise PermissionError("Original predicate error")
+        return legacy
+
+    monkeypatch.setattr(Path, "lstat", failed)
+    monkeypatch.setattr(Path, "is_symlink", old_symlink)
+    monkeypatch.setattr(Path, "is_junction", lambda _path: False, raising=False)
+    # When: the combined component check cannot obtain a valid metadata image.
+    # Then: missing/error suppression and propagated errors match the original runtime path.
+    if legacy == "raises":
+        with pytest.raises(PermissionError):
+            fp._component_linked(path)
+    else:
+        assert fp._component_linked(path) is legacy
+
+
+@pytest.mark.parametrize("attributes,tag", [(0, 0xA0000003), (0x400, 0), (0x400, 0x80000000)])
+def test_component_metadata_does_not_invent_junctions_from_other_metadata(
+    tmp_path, monkeypatch, attributes, tag
+):
+    # Given: normal directory mode has no mount-point reparse identity.
+    _mount_metadata_support(monkeypatch)
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        lambda _path: SimpleNamespace(
+            st_mode=fp.stat.S_IFDIR, st_file_attributes=attributes, st_reparse_tag=tag
+        ),
+    )
+    # When: the combined component guard interprets this exact image.
+    # Then: unrelated tags or absent reparse attributes are not relabeled as junctions.
+    assert fp._component_linked(tmp_path / "ordinary") is False
+
+
+def test_component_metadata_keeps_junction_api_absence_compatible(tmp_path, monkeypatch):
+    # Given: a Python3.11-style runtime exposes no Path.is_junction predicate.
+    class LegacyPath(type(tmp_path)):
+        @property
+        def is_junction(self):
+            raise AttributeError("is_junction")
+
+    _mount_metadata_support(monkeypatch)
+    legacy_path = LegacyPath(tmp_path / "ordinary")
+    assert not hasattr(legacy_path, "is_junction")
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        lambda _path: SimpleNamespace(
+            st_mode=fp.stat.S_IFDIR, st_file_attributes=0x400, st_reparse_tag=0xA0000003
+        ),
+    )
+    # When: the component check runs on that runtime capability surface.
+    # Then: it preserves the previous missing-API semantics; final canonical resolution stays separate.
+    assert fp._component_linked(legacy_path) is False
+
+
+def test_closing_components_model_read_finishes_after_all_dependencies(small_program, monkeypatch):
+    from tools.tests.test_feature_program_review_throughput_integration import _enable_storage
+
+    # Given: the complete model's actual source parent changes after all dependencies were read.
+    program = small_program.program
+    _enable_storage(small_program)
+    module = fp.flow_module("read_model")
+    normal = module.validate
+    source = program.directory / "source"
+    moved = program.directory / "previous-source"
+    changed = []
+
+    def late(*args, **kwargs):
+        value = normal(*args, **kwargs)
+        if value is not None:
+            source.rename(moved)
+            _directory_alias(source, moved)
+            changed.append(source)
+        return value
+
+    monkeypatch.setattr(module, "validate", late)
+    # When: the ordinary cached reader reaches its final component barrier.
+    result = fp._read_materialized_projection(program.repo, program.directory)
+    # Then: a late real ancestor alias cannot become a served successful representation.
+    assert changed == [source]
+    assert result is None
+
+
+def test_closing_components_publication_finishes_before_registry_swap(small_program, monkeypatch):
+    from tools.tests.test_feature_program_review_throughput_integration import _enable_storage
+
+    # Given: exact proposed model inputs pass before an ancestor becomes linked.
+    program = small_program.program
+    _enable_storage(small_program)
+    original = program.read_registry_observation()
+    state = program.load()
+    state["communication_language"] = "ko"
+    module = fp.flow_module("read_model")
+    normal = module.validate
+    source = program.directory / "source"
+    moved = program.directory / "previous-source"
+
+    def late(*args, **kwargs):
+        value = normal(*args, **kwargs)
+        if value is not None:
+            source.rename(moved)
+            _directory_alias(source, moved)
+        return value
+
+    monkeypatch.setattr(module, "validate", late)
+    # When: the actual proposed writer closes dependencies immediately before publication.
+    with program.lock(), pytest.raises(fp.ProgramError):
+        program.save(state)
+    # Then: mandatory fresh component closure rejects the swap without changing canonical bytes.
+    assert program.read_registry_observation().raw_bytes == original.raw_bytes
+
+
+def test_closing_components_share_classification_but_resolve_every_alias(
+    small_program, monkeypatch
+):
+    # Given: distinct logical aliases share one ancestor within one closing image.
+    program = small_program.program
+    source = program.repo / "src"
+    observer = fp._ClosingObserver(program)
+    normal_stat, normal_resolve = Path.lstat, Path.resolve
+    stats, resolves = [], []
+
+    def metadata(path):
+        stats.append(str(path))
+        return normal_stat(path)
+
+    def resolve(path, *args, **kwargs):
+        resolves.append(str(path))
+        return normal_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    # When: original aliases are admitted and then every seen component closes freshly.
+    observer.admit(program.repo, "src/compile-api.py")
+    observer.admit(program.repo, "src/docs.2.py")
+    observer.admit(source, "compile-api.py")
+    observer.finish()
+    # Then: shared metadata is read initially+finally while every alias still resolves itself.
+    assert stats.count(str(source)) == 2
+    assert resolves.count(str(source / "compile-api.py")) == 2
+    assert resolves.count(str(source / "docs.2.py")) == 1
+
+
+@pytest.mark.parametrize("kind", ["is_symlink", "is_junction"])
+def test_closing_components_finish_rejects_late_seen_missing_path(small_program, monkeypatch, kind):
+    # Given: an admitted missing leaf has no successful metadata classification to cache.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    missing = program.repo / "src" / "absent.py"
+    observer.admit(program.repo, "src/absent.py")
+    normal = Path.lstat
+    _mount_metadata_support(monkeypatch)
+
+    def changed(path):
+        if path == missing:
+            return _link_metadata(SimpleNamespace(st_mode=fp.stat.S_IFDIR), kind)
+        return normal(path)
+
+    monkeypatch.setattr(Path, "lstat", changed)
+    # When: a previously missing pathname is now a linked component at final closure.
+    # Then: all seen names close, including paths whose first metadata read failed.
+    with pytest.raises(fp.ProgramError):
+        observer.finish()
+
+
+@pytest.mark.parametrize("legacy_lstat_fallback", [False, True], ids=["native", "legacy-lstat"])
+def test_closing_components_do_not_cache_failed_metadata_or_cross_observers(
+    small_program, monkeypatch, legacy_lstat_fallback
+):
+    # Given: runtime fallback predicates may perform extra lstat calls for missing paths.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    normal = fp._component_check
+    missing = program.repo / "src" / "missing"
+    calls = []
+
+    def metadata(path):
+        calls.append(str(path))
+        return normal(path)
+
+    monkeypatch.setattr(fp, "_component_check", metadata)
+    if legacy_lstat_fallback:
+
+        def legacy_symlink(path):
+            try:
+                return fp.stat.S_ISLNK(path.lstat().st_mode)
+            except FileNotFoundError:
+                return False
+
+        monkeypatch.setattr(Path, "is_symlink", legacy_symlink)
+    # When: distinct admissions revisit missing ancestors and then a new observer starts.
+    observer.admit(program.repo, "src/missing/one")
+    observer.admit(program.repo, "src/missing/two")
+    observer.finish()
+    fp._ClosingObserver(program).admit(program.repo, "src/missing/three")
+    # Then: four fresh classifications retry the failure independently of fallback internals.
+    assert calls.count(str(missing)) == 4
+    # The successful ancestor is checked first+finish, then freshly in the new observer.
+    assert calls.count(str(program.repo / "src")) == 3
+
+
+def test_closing_components_new_alias_still_rejects_immediate_resolution_drift(
+    small_program, monkeypatch
+):
+    # Given: one successful alias warmed the common ancestor classification.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    observer.admit(program.repo, "src/compile-api.py")
+    new = program.repo / "src/docs.2.py"
+    normal = Path.resolve
+    monkeypatch.setattr(
+        Path,
+        "resolve",
+        lambda path, *args, **kwargs: (
+            program.repo.parent / "outside.py" if path == new else normal(path, *args, **kwargs)
+        ),
+    )
+    # When: the next alias resolves outside the original lexical namespace.
+    # Then: cached ancestor metadata cannot bypass that candidate's fresh resolution.
+    with pytest.raises(fp.ProgramError):
+        observer.admit(program.repo, "src/docs.2.py")
+
+
+def test_closing_components_do_not_change_generic_source_or_path_checks(small_program, monkeypatch):
+    # Given: an observer has memoized an ordinary source ancestor.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    observer.admit(program.repo, "src/compile-api.py")
+    _mock_link_lstat(monkeypatch, program.repo / "src", "is_symlink")
+    # When: unrelated generic admission and a fresh source observation run normally.
+    # Then: neither sees the observer-only memo as permission to skip fresh component checks.
+    with pytest.raises(fp.ProgramError):
+        fp.safe_path(program.repo, "src/docs.2.py")
+    with pytest.raises(fp.ProgramError):
+        program.source_snapshot(["src/docs.2.py"], fp.ReadBudget())
+
+
+@pytest.mark.parametrize("admitted", [False, True])
+def test_recheck_growth_preserves_snapshot_context_and_original_bound(tmp_path, admitted):
+    # Given: an exact bounded observation later grows beyond its original closing budget.
+    path = tmp_path / "proof.txt"
+    path.write_bytes(b"original")
+    budget = fp.ReadBudget()
+    if admitted:
+        budget.capture(tmp_path, path.name, 100)
+    else:
+        budget.read(path, 100)
+    changed = b"original with more bytes"
+    path.write_bytes(changed)
+    # When: the independent final capture cannot fit the original aggregate bound.
+    with pytest.raises(fp.ProgramError, match="changed during snapshot") as caught:
+        budget.recheck(tmp_path)
+    # Then: contextual diagnostics preserve the original bound failure and actual bytes.
+    assert isinstance(caught.value.__cause__, fp.ProgramError)
+    assert "bounded read" in str(caught.value.__cause__)
+    assert str(caught.value.__cause__) in str(caught.value)
+    assert path.read_bytes() == changed
+
+
+@pytest.mark.parametrize("kind", ["is_symlink", "is_junction", "missing"])
+def test_recheck_path_failure_preserves_snapshot_context_and_guard_cause(
+    tmp_path, monkeypatch, kind
+):
+    # Given: one successful logical admission later becomes linked or unavailable.
+    path = tmp_path / "proof.txt"
+    path.write_bytes(b"original")
+    budget = fp.ReadBudget()
+    budget.capture(tmp_path, path.name, 100)
+    if kind == "missing":
+        path.unlink()
+    else:
+        _mock_link_lstat(monkeypatch, path, kind)
+    # When: independent path admission enforces its original safety and regular-file rules.
+    with pytest.raises(fp.ProgramError, match="changed during snapshot") as caught:
+        budget.recheck(tmp_path)
+    # Then: original guard detail and exception cause survive the contextual failure.
+    assert isinstance(caught.value.__cause__, fp.ProgramError)
+    assert str(caught.value.__cause__) in str(caught.value)

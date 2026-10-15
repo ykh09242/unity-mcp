@@ -35,7 +35,9 @@ else:
     import feature_program_delivery as provider_delivery
 
 if TYPE_CHECKING:
-    from tools.feature_program import PreparedChange, Program, ReadBudget
+    from tools.feature_program import PreparedChange, Program, ReadBudget, _ValidatedState
+    from tools.feature_program_batch import _CheckedPlan
+    from tools.feature_program_closure import _StageInspection
 
 Json = coordination.Json
 Record = coordination.Record
@@ -1113,11 +1115,10 @@ def provider_observation(program: Program, value: Json, budget: ReadBudget | Non
     """The one bounded provider-observation reader used by authoring and real delivery."""
     core = _core()
     ref = coverage.reference(value)
-    provider, captured = core.read_json_frozen(
-        program.path(str(ref["path"])), limit=LIMIT, budget=budget
-    )
-    core.require(captured == ref["sha256"], "Frozen provider observation changed")
-    return provider
+    reader = budget if budget is not None else core.ReadBudget(LIMIT)
+    captured = reader.capture(program.directory, str(ref["path"]), LIMIT)
+    core.require(captured.sha256 == ref["sha256"], "Frozen provider observation changed")
+    return reader.json(captured)
 
 
 def delivery_evidence_references(state: Record) -> list[Json]:
@@ -1138,9 +1139,11 @@ def delivery_publication_guard(program: Program, future: Record) -> Callable[[],
     """Recheck newly supplied provider reliance after the ordinary publication preflight."""
     core = _core()
     path = program.path("backlog.json")
-    if not path.is_file():
+    if not _core().observed_is_file(path):
         return None
-    original, captured = core.read_json_frozen(path, limit=LIMIT)
+    initial = program.read_registry_observation()
+    original = core.parse_registry_state(initial, path=path)
+    captured = initial.storage_sha256
     existing = {
         core.canonical(core.record(item, "delivery").get("receipt"))
         for task in core.sequence(original["tasks"], "tasks")
@@ -1178,7 +1181,7 @@ def delivery_publication_guard(program: Program, future: Record) -> Callable[[],
     def recheck() -> None:
         program.require_current_location()
         core.require(
-            core.sha(core.bounded_bytes(path, LIMIT)) == captured,
+            program.read_registry_observation().storage_sha256 == captured,
             "Registry changed before provider reliance publication",
         )
         program.verify_refs(refs)
@@ -1383,7 +1386,15 @@ def validate_delivery_history(
 
 def delivery_inputs(program: Program, state: Record, request: Record) -> Record:
     core = _core()
-    program.validate(state)
+    return _delivery_inputs_from_checked(program, state, request, program.validate(state))
+
+
+def _delivery_inputs_from_checked(
+    program: Program, state: Record, request: Record, checked: _ValidatedState
+) -> Record:
+    """Assemble receipts from one strict initial-state assessment; later guards stay fresh."""
+    core = _core()
+    core.require(checked.state is state, "Delivery initial-state observation differs")
     ref = coverage.reference(request.get("provider"))
     provider_budget = core.ReadBudget(64 * 1024 * 1024)
     provider = provider_observation(program, ref, provider_budget)
@@ -1422,7 +1433,9 @@ def delivery_inputs(program: Program, state: Record, request: Record) -> Record:
             receipt["provider_context"] = deepcopy(binding["provider_context"])
         if "cleanup" in binding:
             receipt["cleanup"] = deepcopy(binding["cleanup"])
-        status = program.validate_delivery_metadata(task, attempt, receipt, budget=provider_budget)
+        status, provider_assessment = program._assess_delivery_metadata(
+            task, attempt, receipt, budget=provider_budget
+        )
         program.verify_refs(core.sequence(attempt["evidence"], "attempt evidence"))
         program.evidence(
             task_id, int(attempt["number"]), core.strings(receipt["evidence"], "delivery evidence")
@@ -1436,7 +1449,9 @@ def delivery_inputs(program: Program, state: Record, request: Record) -> Record:
                 "delivery_accepted": False,
                 "remote_verified_by_tool": False,
                 "cleanup": deepcopy(receipt.get("cleanup", {"status": "unknown"})),
-                "provider_execution": provider_execution(program, receipt, provider_budget),
+                "provider_execution": provider_assessment
+                if provider_assessment is not None
+                else {"status": "not_assessed", "adopted": False, "remote_verified_by_tool": False},
             }
         )
     program.verify_refs([ref])
@@ -1471,7 +1486,7 @@ def recovery_readiness(program: Program, state: Record) -> Record:
     def observe(name: str, limit: int) -> Json:
         try:
             path = program.path(name)
-            if not path.exists():
+            if not _core().observed_exists(path):
                 absent.append(name)
                 return None
             raw = core.bounded_bytes(path, limit)
@@ -1547,7 +1562,7 @@ def recovery_readiness(program: Program, state: Record) -> Record:
     core.require(len(core.canonical(result)) <= LIMIT, "Authoring output exceeds 8 MiB")
     program.verify_refs(observed_refs)
     core.require(
-        all(not program.path(name).exists() for name in absent),
+        all(not _core().observed_exists(program.path(name)) for name in absent),
         "Recovery metadata changed during observation; refresh",
     )
     return result
@@ -1565,7 +1580,9 @@ def flow_read(
         return value
 
     program.require_current_location()
-    program.validate(state)
+    if args.command == "review-queue":
+        return core.read_snapshot(program.repo, program.directory)["review_queue"]
+    checked_initial = program.validate(state)
     match args.command:
         case "inputs-prepare":
             return core.flow_module("inputs").prepare_manifest(
@@ -1612,10 +1629,12 @@ def flow_read(
                 program, state, frozen(args.capture), frozen(args.request)
             )
         case "closure-readiness":
-            return core.flow_module("closure").readiness(program, state)
+            return core.flow_module("closure")._readiness_from_checked(
+                program, state, checked_initial
+            )
         case "closure-prepare":
             request = frozen(args.input)
-            host = ClosureHost(program)
+            host = ClosureHost(program, _checked_initial=checked_initial)
             try:
                 result = core.flow_module("closure").prepare_inputs(program, state, request, host)
             except _errors() as exc:
@@ -1653,9 +1672,10 @@ def flow_read(
                 core.require(len(encoded) <= LIMIT, "Closure result exceeds 8 MiB")
                 path = program.path(name)
                 path.parent.mkdir(parents=True, exist_ok=True)
-                if path.exists():
+                if _core().observed_exists(path):
                     core.require(
-                        path.is_file() and core.bounded_bytes(path, LIMIT) == encoded,
+                        _core().observed_is_file(path)
+                        and core.bounded_bytes(path, LIMIT) == encoded,
                         "Immutable closure result already exists with different bytes",
                     )
                 else:
@@ -1668,6 +1688,54 @@ def flow_read(
             raise core.ProgramError("Unsupported flow read operation")
 
 
+@dataclass(slots=True)
+class _ClosureInspection:
+    """Mutable IO observations for one immutable closure inspection, followed by fresh checks."""
+
+    program: Program
+    state: Record
+    _refs: ReadBudget = field(default_factory=lambda: _core().ReadBudget(64 * 1024 * 1024))
+    _views: ReadBudget | None = None
+    _absent: set[str] = field(default_factory=set)
+    _drift: bool | None = None
+    _revision: str | None = None
+
+    def inspect_stage(self, checked: _StageInspection) -> Record:
+        core = _core()
+        stage = checked.stage
+        if checked.status == "committed":
+            self.program.verify_refs(
+                core.sequence(stage.get("refs", []), "closure stage refs"), self._refs
+            )
+            if self._drift is None:
+                views = self.program.views(self.state)
+                self._views = core.ReadBudget(LIMIT * len(views))
+                self._drift = False
+                for name, text in views.items():
+                    path = self.program.path(name)
+                    if not _core().observed_is_file(path):
+                        self._absent.add(name)
+                        self._drift = True
+                    else:
+                        captured = self._views.capture(self.program.directory, name, LIMIT)
+                        self._drift = self._drift or captured.content != text.encode("utf-8")
+            return {"status": "committed", "view_recovery_required": self._drift}
+        if self._revision is None:
+            self._revision = phases.revision(self.state)
+        if self._revision == stage.get("before_revision"):
+            return {"status": "not_started"}
+        return {"status": "conflict", "reason": "Canonical record is not an exact planned stage"}
+
+    def recheck(self) -> None:
+        self._refs.recheck(self.program.directory)
+        if self._views is not None:
+            self._views.recheck(self.program.directory)
+        _core().require(
+            not any(_core().observed_is_file(self.program.path(name)) for name in self._absent),
+            "Unavailable closure view appeared during inspection; refresh",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ClosureHost:
     """Use the normal guarded publisher for detached closure stages and exact recovery."""
@@ -1677,6 +1745,23 @@ class ClosureHost:
     frozen_refs: list[Json] = field(default_factory=list)
     identity_budget: ReadBudget | None = None
     publication_base: Record | None = None
+    _parser_catalog: dict[str, argparse.ArgumentParser] = field(default_factory=dict, compare=False)
+    _checked_initial: _ValidatedState | None = None
+
+    def _validate_initial(self, state: Record) -> _ValidatedState:
+        if self._checked_initial is not None and self._checked_initial.state is state:
+            return self._checked_initial
+        return self.program.validate(state)
+
+    def _inspection_context(self, state: Record, refs: list[Json]) -> _ClosureInspection:
+        context = _ClosureInspection(self.program, state)
+        self.program.verify_refs(refs, context._refs)
+        return context
+
+    def _operation_parser(self, operation: str) -> argparse.ArgumentParser:
+        if not self._parser_catalog:
+            self._parser_catalog.update(_parsers())
+        return deepcopy(self._parser_catalog[operation])
 
     def revision(self, state: Record) -> str:
         return phases.revision(state)
@@ -1703,16 +1788,18 @@ class ClosureHost:
             "feature_program_evidence_reuse.py",
             "feature_program_batch.py",
             "feature_program_timing.py",
+            "feature_program_storage.py",
+            "feature_program_read_model.py",
         )
         return {
             "schema_version": 1,
             "producer": "feature_program_flow",
             "protocol_version": 1,
             "source_hashes": {
-                name: core.sha(
-                    self.identity_budget.read(Path(__file__).with_name(name), LIMIT)
+                name: (
+                    self.identity_budget.capture(Path(__file__).parent, name, LIMIT).sha256
                     if self.identity_budget is not None
-                    else core.bounded_bytes(Path(__file__).with_name(name), LIMIT)
+                    else core.sha(core.bounded_bytes(Path(__file__).with_name(name), LIMIT))
                 )
                 for name in names
             },
@@ -1746,7 +1833,7 @@ class ClosureHost:
             ),
             "Unsupported closure stage operation",
         )
-        parser = deepcopy(_parsers()[operation])
+        parser = self._operation_parser(operation)
         parser.exit_on_error = False
         parser.error = lambda message: (_ for _ in ()).throw(core.ProgramError(message))
         actions = {action.dest: action for action in parser._actions if action.dest != "help"}
@@ -1820,7 +1907,7 @@ class ClosureHost:
             self.program.verify_refs(core.sequence(stage.get("refs", []), "closure stage refs"))
             views = self.program.views(state)
             drift = any(
-                not self.program.path(name).is_file()
+                not _core().observed_is_file(self.program.path(name))
                 or core.bounded_bytes(self.program.path(name), LIMIT) != text.encode("utf-8")
                 for name, text in views.items()
             )
@@ -1869,7 +1956,9 @@ class ClosureHost:
             try:
                 self.program.save(prepared.state, before_publish=prepared.before_publish)
             except core.ProgramError as exc:
-                committed = core.read_json(self.program.path("backlog.json"))
+                committed = core.parse_registry_state(
+                    self.program.read_registry_observation(), path=self.program.path("backlog.json")
+                )
                 if phases.revision(committed) != stage.get("after_revision"):
                     raise
                 return {
@@ -1953,7 +2042,9 @@ class BatchHost(ClosureHost):
 
         def recheck() -> None:
             self.program.require_current_location()
-            current = core.read_json(self.program.path("backlog.json"))
+            current = core.parse_registry_state(
+                self.program.read_registry_observation(), path=self.program.path("backlog.json")
+            )
             core.require(phases.revision(current) == expected, "Batch original revision changed")
             self.program.verify_refs(self.frozen_refs)
             if self.source_binding is not None:
@@ -2003,26 +2094,53 @@ class BatchHost(ClosureHost):
             self.program.verify_refs(refs, reader)
             core.verify_provenance(self.program, final, reader)
             core.require(
-                phases.revision(core.read_json(self.program.path("backlog.json"))) == expected,
+                phases.revision(
+                    core.parse_registry_state(
+                        self.program.read_registry_observation(),
+                        path=self.program.path("backlog.json"),
+                    )
+                )
+                == expected,
                 "Batch original revision changed during final checks",
             )
 
         return core.PreparedChange(final, recheck)
 
+    def prepare_stage(
+        self,
+        state: Record,
+        operation: str,
+        payload: Record,
+        observed_at: str,
+        *,
+        owner: str | None = None,
+    ) -> tuple[PreparedChange, str]:
+        prepared = self.prepare(state, operation, payload, observed_at, owner=owner)
+        return prepared, str(self.stage_specs[-1]["after_revision"])
+
     def inspect_views(self, state: Record) -> bool:
         core = _core()
         return all(
-            self.program.path(name).is_file()
+            _core().observed_is_file(self.program.path(name))
             and core.bounded_bytes(self.program.path(name), LIMIT) == value.encode("utf-8")
             for name, value in self.program.views(state).items()
         )
 
     def publish_batch(self, plan: Record, owner: str, expected_revision: str) -> Record:
         core = _core()
+        return self._publish_checked_batch(
+            core.flow_module("batch")._check_plan(plan), owner, expected_revision
+        )
+
+    def _publish_checked_batch(
+        self, checked: _CheckedPlan, owner: str, expected_revision: str
+    ) -> Record:
+        core = _core()
         producer = core.flow_module("batch")
+        plan = checked.value
         with self.program.lock():
             current = self.program.load()
-            inspection = producer.inspect_batch(self.program, current, plan, self)
+            inspection = producer._inspect_checked(self.program, current, checked, self)
             if inspection["status"] in {"already_committed", "conflict"}:
                 return inspection
             core.require(
@@ -2036,7 +2154,7 @@ class BatchHost(ClosureHost):
                 publication_base=current,
                 _publishing=True,
             )
-            prepared = producer.reconstruct(self.program, current, plan, host)
+            prepared = producer._reconstruct_checked(self.program, current, checked, host)
             core.require(
                 phases.revision(prepared.state) == plan["final_revision"],
                 "Batch reconstruction changed",
@@ -2044,7 +2162,9 @@ class BatchHost(ClosureHost):
             try:
                 self.program._publish(prepared.state, prepared.before_publish)
             except core.ProgramError as exc:
-                actual = core.read_json(self.program.path("backlog.json"))
+                actual = core.parse_registry_state(
+                    self.program.read_registry_observation(), path=self.program.path("backlog.json")
+                )
                 if phases.revision(actual) != plan["final_revision"]:
                     raise
                 return producer.result_for(
@@ -2066,9 +2186,9 @@ def freeze_document(program: Program, name: str, document: Record) -> Record:
     core.require(0 < len(encoded) <= LIMIT, "Frozen document exceeds budget")
     path = program.path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
+    if _core().observed_exists(path):
         core.require(
-            path.is_file() and core.bounded_bytes(path, LIMIT) == encoded,
+            _core().observed_is_file(path) and core.bounded_bytes(path, LIMIT) == encoded,
             "Immutable document already exists with different bytes",
         )
     else:
@@ -2376,7 +2496,9 @@ def throughput_read(
             except _errors() as exc:
                 if args.result_path is None:
                     raise
-                actual = core.read_json(program.path("backlog.json"))
+                actual = core.parse_registry_state(
+                    program.read_registry_observation(), path=program.path("backlog.json")
+                )
                 result = {
                     "schema_version": 1,
                     "kind": "batch_preparation_failure",
@@ -2423,7 +2545,9 @@ def publish_batch_command(program: Program, args: argparse.Namespace) -> Record:
     except _errors() as exc:
         if args.result_path is None:
             raise
-        actual = core.read_json(program.path("backlog.json"))
+        actual = core.parse_registry_state(
+            program.read_registry_observation(), path=program.path("backlog.json")
+        )
         try:
             inspection = core.flow_module("batch").inspect_batch(
                 program, actual, plan, BatchHost(program)
@@ -2612,11 +2736,10 @@ def read_command(program: Program, args: argparse.Namespace) -> Record:
     core = _core()
     if args.command == "authoring-support":
         return support()
-    initial = core.bounded_bytes(program.path("backlog.json"), LIMIT)
-    state = core.read_json(
-        program.path("backlog.json"),
-        budget=core.ReadBudget(cached={program.path("backlog.json"): initial}),
-    )
+    if args.command == "review-queue":
+        return core.read_snapshot(program.repo, program.directory)["review_queue"]
+    initial = program.read_registry_observation()
+    state = core.parse_registry_state(initial, path=program.path("backlog.json"))
     refs: list[Json] = []
     observed_head: str | None = None
     if args.command in {
@@ -2676,7 +2799,7 @@ def read_command(program: Program, args: argparse.Namespace) -> Record:
             program.current_head() == observed_head, "HEAD changed during packet preparation"
         )
     core.require(
-        core.bounded_bytes(program.path("backlog.json"), LIMIT) == initial,
+        program.read_registry_observation().raw_bytes == initial.raw_bytes,
         "Registry changed during authoring observation; refresh",
     )
     return result

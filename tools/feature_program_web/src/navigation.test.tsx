@@ -13,6 +13,7 @@ import {
   parsePreferences,
   readPreferences,
   selectWorkTasks,
+  scopedTasks,
   viewPreferenceKey,
   writePreferences,
 } from './navigation';
@@ -55,6 +56,22 @@ async function hash(value: string) {
   });
 }
 describe('validated navigation context', () => {
+  it('does not share cached goal membership or search text across same-revision snapshots', () => {
+    const first = fixture();
+    expect(scopedTasks(first, 'current')).toHaveLength(2);
+    expect(navigationSearch(first, '  ')).toEqual({ results: [], total: 0 });
+    expect(navigationSearch(first, 'Recorded decision').total).toBe(1);
+    const second = parseSnapshot({
+      ...first,
+      objective: { task_ids: [] },
+      questions: [{ id: 'Q', prompt: 'Updated question', status: 'open', version: 1 }],
+    });
+    expect(second.revision).toBe(first.revision);
+    expect(scopedTasks(second, 'current')).toHaveLength(0);
+    expect(navigationSearch(second, 'Recorded decision').total).toBe(0);
+    expect(navigationSearch(second, 'Updated question').total).toBe(1);
+    expect(scopedTasks(first, 'current')).toHaveLength(2);
+  });
   it.each(['settled', 'first snapshot commit'] as const)(
     'returns from readable evidence to the selected task with its explicit work context: %s',
     async (timing) => {

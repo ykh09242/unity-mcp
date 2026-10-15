@@ -7,6 +7,7 @@ from copy import deepcopy
 from hashlib import sha256
 from http.client import HTTPConnection
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -138,17 +139,21 @@ def test_presentation_evidence_interleave_rejects_snapshot(tmp_path, monkeypatch
     fixture = gate_fixture.__wrapped__(tmp_path, monkeypatch)
     language(fixture)
     value = record(fixture)
-    project = fp.presentation.projection
+    project = fp.presentation._projection_from_checked
+    mutated = False
 
     def changed_after_projection(*args, **kwargs):
+        nonlocal mutated
         result = project(*args, **kwargs)
         path = fixture.program.path(value["review"]["path"])
         path.write_bytes(path.read_bytes() + b" ")
+        mutated = True
         return result
 
-    monkeypatch.setattr(fp.presentation, "projection", changed_after_projection)
+    monkeypatch.setattr(fp.presentation, "_projection_from_checked", changed_after_projection)
     with pytest.raises(fp.ProgramError, match="Observed source/evidence changed"):
         fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    assert mutated
 
 
 def delivery_fixture(repo, monkeypatch):
@@ -999,3 +1004,188 @@ def test_valid_long_question_ids_reach_the_scoped_provider():
         code, _headers, _body = post_answer(server, payload=payload)
     assert code == 200
     assert calls[0][0] == "Q" * 128
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_snapshot_semantic_descendants_encode_once_per_fresh_request(monkeypatch, method):
+    # Given: each fresh callback has the same semantic descendants and a new observation time.
+    calls = []
+    encodings = []
+    normal = json.dumps
+
+    def snapshot():
+        value = {"generated_at": str(len(calls)), "future": {"value": ["한글", 1]}}
+        calls.append(value)
+        return value
+
+    def dumps(value, *args, **kwargs):
+        if isinstance(value, dict) and "future" in value:
+            encodings.append(value)
+        return normal(value, *args, **kwargs)
+
+    monkeypatch.setattr(web.json, "dumps", dumps)
+    with running(web.DashboardServer("127.0.0.1", 0, snapshot)) as server:
+        first, headers, body = request(server)
+        status, _headers, conditional = request(
+            server, method=method, headers={"If-None-Match": headers["ETag"]}
+        )
+    # Then: a fresh200 and304 each encode semantic data once; neither reuses old success.
+    assert first == 200 and json.loads(body) == calls[0]
+    assert status == 304 and conditional == b"" and len(calls) == 2
+    assert len(encodings) == 2
+    assert [value["generated_at"] for value in calls] == ["0", "1"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"generated_at": '관찰"\\', "future": {"z": [1, None], "a": "한글"}},
+        {"generated_at": None},
+        {"generated_at": {"nested": ["관찰", None]}, "future": []},
+        {"tasks": [], "future": {"generated_at": "semantic"}},
+        [],
+        ["한글", {"generated_at": "semantic"}],
+        "한글",
+        7,
+        None,
+    ],
+)
+def test_snapshot_encoding_preserves_exact_values_ascii_policy_and_head_length(value):
+    # Given: JSON callbacks include unknown/nested fields, excluded-time values and nonobjects.
+    semantic = (
+        {key: item for key, item in value.items() if key != "generated_at"}
+        if isinstance(value, dict)
+        else value
+    )
+    expected_tag = (
+        'W/"'
+        + web.sha256(
+            json.dumps(semantic, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        + '"'
+    )
+    expected_size = len(
+        json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
+    )
+    before = json.loads(json.dumps(value))
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: value)) as server:
+        status, headers, body = request(server)
+        head_status, head_headers, head_body = request(server, method="HEAD")
+    # Then: representation order/spacing may canonicalize; values and escaping cannot change.
+    assert status == head_status == 200 and head_body == b""
+    assert json.loads(body) == value == before
+    assert body.isascii() and len(body) == expected_size
+    assert headers["ETag"] == head_headers["ETag"] == expected_tag
+    assert int(headers["Content-Length"]) == int(head_headers["Content-Length"]) == len(body)
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("validator", ["*", "malformed", "x" * 9000])
+def test_excluded_observation_encoding_failure_precedes_conditional_response(method, validator):
+    # Given: semantic data still matches but the actual excluded observation cannot encode.
+    current = {"generated_at": "valid", "tasks": []}
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: current)) as server:
+        assert request(server)[0] == 200
+        current["generated_at"] = object()
+        status, headers, body = request(server, method=method, headers={"If-None-Match": validator})
+    # Then: current-payload failure precedes matching or invalid validators, includingHEAD.
+    assert status == 503 and "ETag" not in headers
+    if method == "HEAD":
+        assert body == b""
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_snapshot_actual_compact_payload_bound_precedes_conditional_response(monkeypatch, method):
+    value = {"generated_at": "관찰" * 6, "tasks": [1, 2, 3]}
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: value)) as server:
+        _status, headers, body = request(server)
+        monkeypatch.setattr(web, "MAX_RESPONSE_BYTES", len(body))
+        assert request(server, method=method)[0] == 200
+        assert request(server, method=method, headers={"If-None-Match": headers["ETag"]})[0] == 304
+        monkeypatch.setattr(web, "MAX_RESPONSE_BYTES", len(body) - 1)
+        for validator in (headers["ETag"], "malformed"):
+            status, failed_headers, _body = request(
+                server, method=method, headers={"If-None-Match": validator}
+            )
+            assert status == 503 and "ETag" not in failed_headers
+
+
+def enable_prepared_reads(repo):
+    assert (
+        fp.main(
+            [
+                "--repo",
+                str(repo),
+                "--program-dir",
+                "program",
+                "storage-enable",
+                "--owner",
+                "leader",
+                "--reason",
+                "Prepare the isolated HTTP fixture",
+            ]
+        )
+        == 0
+    )
+
+
+def test_prepared_snapshot_cold_http_and_304_use_current_model_without_writes(program, monkeypatch):
+    original = fp.read_snapshot(program, Path("program"))
+    enable_prepared_reads(program)
+    before = fingerprints(program)
+    full_reads = []
+    capture = fp._capture_projection
+
+    def observed_capture(*args, **kwargs):
+        full_reads.append(True)
+        return capture(*args, **kwargs)
+
+    monkeypatch.setattr(fp, "_capture_projection", observed_capture)
+    with running(web.create_server(program, Path("program"), port=0)) as server:
+        status, headers, body = request(server)
+        assert status == 200
+        assert headers["ETag"] == web.snapshot_etag(original)
+        assert json.loads(body)["revision"] == original["revision"]
+        assert request(server, headers={"If-None-Match": headers["ETag"]})[0] == 304
+    assert full_reads == []
+    assert fingerprints(program) == before
+
+
+@pytest.mark.parametrize("relative", ["source.md", "program/CHECKPOINT.md"])
+def test_prepared_conditional_http_rechecks_same_size_same_mtime_bytes(program, relative):
+    enable_prepared_reads(program)
+    path = program / relative
+    original = path.read_bytes()
+    stat = path.stat()
+    offset = next(i for i, value in enumerate(original) if 65 <= value <= 90)
+    changed = original[:offset] + bytes([original[offset] + 32]) + original[offset + 1 :]
+    assert changed != original and len(changed) == len(original)
+    with running(web.create_server(program, Path("program"), port=0)) as server:
+        initial = request(server)
+        assert initial[0] == 200
+        path.write_bytes(changed)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        try:
+            status, headers, body = request(server, headers={"If-None-Match": initial[1]["ETag"]})
+            assert status == 200 and headers["ETag"] != initial[1]["ETag"]
+            assert json.loads(body)["integrity"]["status"] == "stale"
+        finally:
+            path.write_bytes(original)
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        assert request(server, headers={"If-None-Match": initial[1]["ETag"]})[0] == 304
+
+
+def test_prepared_conditional_http_rejects_corrupt_registry_instead_of_304(program):
+    enable_prepared_reads(program)
+    path = program / "program" / "backlog.json"
+    original = path.read_bytes()
+    with running(web.create_server(program, Path("program"), port=0)) as server:
+        initial = request(server)
+        assert initial[0] == 200
+        path.write_bytes(original[:20])
+        try:
+            status, _headers, _body = request(server, headers={"If-None-Match": initial[1]["ETag"]})
+            assert status == 503
+        finally:
+            path.write_bytes(original)
+        assert request(server, headers={"If-None-Match": initial[1]["ETag"]})[0] == 304

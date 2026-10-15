@@ -16,7 +16,6 @@ import {
   executionPriority,
   findingsText,
   laneNeedsAction,
-  matchesCoordination,
   observedWait,
   providerContext,
   providerStageKey,
@@ -104,16 +103,36 @@ export function CoordinationSummary({
 }) {
   const i18n = useI18n();
   const tasks = scopedTasks(snapshot, context.scope);
-  const incomplete = tasks.some((task) => {
-    const value = verificationContext(snapshot, task);
-    return !value || value.lanes.omitted > 0;
-  });
+  const counts = { available: 0, blocked: 0, verification: 0, waiting: 0, unknown: 0 };
+  let incomplete = false;
+  for (const task of tasks) {
+    const factors = readinessFactors(snapshot, task);
+    const verification = verificationContext(snapshot, task);
+    const partial = !verification || verification.lanes.omitted > 0;
+    incomplete ||= partial;
+    if (factors.available) counts.available++;
+    if (
+      task.status === 'blocked' ||
+      factors.stale ||
+      Number(factors.blockers) > 0 ||
+      verification?.lanes.items.some((lane) => lane.phase === 'blocked')
+    )
+      counts.blocked++;
+    if (
+      verification &&
+      (verification.lanes.omitted > 0 || verification.lanes.items.some(laneNeedsAction))
+    )
+      counts.verification++;
+    if (verification?.lanes.items.some((lane) => observedWait(lane.waiting)?.open))
+      counts.waiting++;
+    if (!factors.known || partial) counts.unknown++;
+  }
   return (
     <nav className="coordination-summary" aria-label={i18n.t('Work coordination')}>
       {coordinationViews
         .filter((view) => view !== 'review_queue')
         .map((view) => {
-          const count = tasks.filter((task) => matchesCoordination(snapshot, task, view)).length;
+          const count = counts[view];
           const partial = incomplete && ['verification', 'waiting'].includes(view);
           return (
             <a
@@ -316,9 +335,8 @@ export function VerificationLanes({
     Boolean(string(record(task.delivery).status)) &&
     record(task.delivery).status !== 'unrecorded';
   if (!hasVerification && !hasProvider && !hasDelivery) return null;
-  const provider = record(task.provider_execution);
   const represented = new Set(
-    (provider.applicability === 'current' || (task.status === 'done' && !provider.applicability)
+    (context?.lanes.items.length
       ? providerContext(snapshot, task)
           ?.stages.map(providerStageIdentity)
           .filter((identity): identity is string => identity !== null)
@@ -413,8 +431,9 @@ function ProviderStages({
   const context = providerContext(snapshot, { ...task, provider_execution: value || null });
   const stages =
     context?.stages.filter((stage) => {
+      if (provider.applicability !== 'current' || !represented?.size) return true;
       const identity = providerStageIdentity(stage);
-      return provider.applicability !== 'current' || !identity || !represented?.has(identity);
+      return !identity || !represented.has(identity);
     }) || [];
   if (
     context &&

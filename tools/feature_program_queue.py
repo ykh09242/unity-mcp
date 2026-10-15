@@ -61,6 +61,10 @@ class _Context:
     state: Record
     revision: str
     positions: dict[str, int]
+    tasks: list[Record]
+    actors: dict[str, Record]
+    attempts: dict[str, Record]
+    director: str | None
 
 
 def _reference(context: _Context, pointer: str, task_id: str | None = None) -> Record:
@@ -96,11 +100,10 @@ def _attempt(task: Record) -> Record:
 
 
 def _row(context: _Context, task: Record, kind: str, identity: list[Json]) -> Record:
-    state = context.state
-    attempt = _attempt(task)
+    attempt = context.attempts[str(task["id"])]
     owner = task.get("owner")
-    director = _core().coordination.current_director_id(state)
-    actor = _actor(state, owner)
+    director = context.director
+    actor = context.actors.get(str(owner), {})
     identifier = json.dumps(identity, ensure_ascii=True, separators=(",", ":"))
     return {
         "id": identifier,
@@ -136,7 +139,6 @@ def _row(context: _Context, task: Record, kind: str, identity: list[Json]) -> Re
 
 
 def _lane_row(context: _Context, task: Record, lane: Record) -> Record:
-    state = context.state
     row = _row(
         context,
         task,
@@ -206,7 +208,7 @@ def _lane_row(context: _Context, task: Record, lane: Record) -> Record:
                         raise _core().ProgramError(f"Unknown queue result: {invalid}")
             case invalid:
                 raise _core().ProgramError(f"Unknown queue phase: {invalid}")
-    if actor is not None and _actor(state, actor).get("staffing_status") == "retired":
+    if actor is not None and context.actors.get(str(actor), {}).get("staffing_status") == "retired":
         actor, action, readiness = row["supervisor_id"], "assign", "blocked"
         reasons.append("participant_retired")
     if action != "none" and actor is None:
@@ -259,7 +261,8 @@ def _remaining_rows(context: _Context, projection: Record) -> list[Record]:
     objective = _record(state.get("objective") or {})
     members = set(_items(objective["task_ids"])) if objective else None
     task_facts = _record(projection.get("task_facts", {}))
-    for task in _records(state["tasks"]):
+    for task in context.tasks:
+        attempt = context.attempts[str(task["id"])]
         if (
             task.get("disposition") in {"split", "retired"}
             or task["status"] == "done"
@@ -279,11 +282,11 @@ def _remaining_rows(context: _Context, projection: Record) -> list[Record]:
                 [
                     "task_review",
                     task["id"],
-                    _attempt(task).get("number"),
-                    _record(_attempt(task).get("submission") or {}).get("round"),
+                    attempt.get("number"),
+                    _record(attempt.get("submission") or {}).get("round"),
                 ],
             )
-            row["context"] = deepcopy(_attempt(task).get("submission"))
+            row["context"] = deepcopy(attempt.get("submission"))
             row["action"] = "review"
             row["next_actor_id"] = row["supervisor_id"]
             row["next_trigger"] = "Independent review of the exact current submission"
@@ -311,7 +314,7 @@ def _remaining_rows(context: _Context, projection: Record) -> list[Record]:
                 context,
                 task,
                 "required_check_gap",
-                ["required_check_gap", task["id"], _attempt(task).get("number"), check],
+                ["required_check_gap", task["id"], attempt.get("number"), check],
             )
             row.update(
                 {
@@ -332,25 +335,25 @@ def _recorded_use(context: _Context) -> list[Record]:
     state = context.state
     extension = _record(state.get("verification") or {})
     records = _records(extension.get("records", []))
-    latest: dict[str, Record] = {}
+    latest: dict[str, tuple[int, Record]] = {}
     requests: dict[str, Record] = {}
     newest: dict[tuple[str, str], str] = {}
-    for item in records:
+    for position, item in enumerate(records):
         value = _record(item["input"])
         request_id = str(item["request_id"])
         match value["kind"]:
             case "request":
                 requests[request_id] = item
                 newest[(str(value["task_id"]), str(value["lane"]))] = request_id
-                latest[request_id] = item
+                latest[request_id] = (position, item)
             case "started" | "blocked" | "finished" | "canceled":
-                latest[request_id] = item
+                latest[request_id] = (position, item)
             case "finding" | "resolution":
                 continue
             case invalid:
                 raise _core().ProgramError(f"Unknown queue event: {invalid}")
     uses = []
-    for identifier, event in latest.items():
+    for identifier, (position, event) in latest.items():
         if _record(event["input"])["kind"] != "started":
             continue
         request = _record(requests[identifier]["input"])
@@ -366,7 +369,7 @@ def _recorded_use(context: _Context) -> list[Record]:
                 "request_ref": deepcopy(requests[identifier]["receipt"]),
                 "reference": _reference(
                     context,
-                    "/verification/records/" + str(records.index(event)),
+                    "/verification/records/" + str(position),
                     str(request["task_id"]),
                 ),
                 "actual_occupancy": "unknown",
@@ -435,27 +438,66 @@ def _workload(context: _Context, rows: list[Record], limit: int) -> Record:
     }
 
 
-def allocation_packet(state: Record, task_id: str, context: Record | None = None) -> Record:
-    """Assemble recorded allocation context; authored wording never becomes peer approval."""
+class _TaskLookup(Protocol):
+    """The existing task index capability used by detached allocation packets."""
+
+    def task(self, identifier: str) -> Record: ...
+    def conflicts(self, identifier: str) -> list[Record]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _AllocationContext:
+    """Indexes captured once for packets from the exact same immutable state object."""
+
+    state: Record
+    tasks: _TaskLookup
+    actors: dict[str, Record]
+    requests: dict[str, dict[str, Record]]
+    events: dict[str, Record]
+    director: str | None
+
+
+def _allocation_context(state: Record) -> _AllocationContext:
+    """Classify complete request history and task/actor responsibility once per capture."""
     task_index = _core()._TaskIndex.capture(_records(state["tasks"]))
-    task = task_index.task(task_id)
-    attempt = _attempt(task)
-    actor = _actor(state, task.get("owner"))
-    latest_requests: dict[str, Record] = {}
+    actors = {str(actor["id"]): actor for actor in reversed(_records(state.get("actors", [])))}
+    latest_requests: dict[str, dict[str, Record]] = {}
     latest_events: dict[str, Record] = {}
     extension = _record(state.get("verification") or {})
     for item in _records(extension.get("records", [])):
         value = _record(item["input"])
-        if value["task_id"] != task_id:
-            continue
         if value["kind"] == "request":
-            latest_requests[str(value["lane"])] = item
+            latest_requests.setdefault(str(value["task_id"]), {})[str(value["lane"])] = item
         if value["kind"] in {"request", "started", "blocked", "finished", "canceled"}:
             latest_events[str(item["request_id"])] = item
+    return _AllocationContext(
+        state,
+        task_index,
+        actors,
+        latest_requests,
+        latest_events,
+        _core().coordination.current_director_id(state),
+    )
+
+
+def allocation_packet(state: Record, task_id: str, context: Record | None = None) -> Record:
+    """Assemble recorded allocation context; authored wording never becomes peer approval."""
+    return _allocation_packet_from_context(state, task_id, context, _allocation_context(state))
+
+
+def _allocation_packet_from_context(
+    state: Record, task_id: str, context: Record | None, captured: _AllocationContext
+) -> Record:
+    """Reuse only the host's exact state-local capture, never a later registry image."""
+    _core().require(captured.state is state, "Allocation context belongs to another state image")
+    task_index = captured.tasks
+    task = task_index.task(task_id)
+    attempt = _attempt(task)
+    actor = captured.actors.get(str(task.get("owner")), {})
     responsibilities: list[Json] = []
-    for lane_name, item in sorted(latest_requests.items()):
+    for lane_name, item in sorted(captured.requests.get(task_id, {}).items()):
         value = _record(item["input"])
-        event = _record(latest_events[str(item["request_id"])]["input"])
+        event = _record(captured.events[str(item["request_id"])]["input"])
         blocker = _record(event.get("blocker") or {})
         responsibilities.append(
             {
@@ -478,7 +520,7 @@ def allocation_packet(state: Record, task_id: str, context: Record | None = None
         "expected_result": task.get("expected_result") or _record(task["source"])["text"],
         "original_acceptance": deepcopy(task["source"]),
         "worker_id": task.get("owner"),
-        "supervisor_id": actor.get("parent_id") or _core().coordination.current_director_id(state),
+        "supervisor_id": actor.get("parent_id") or captured.director,
         "owned_write_scope": deepcopy(attempt.get("scope", task["candidate_paths"])),
         "required_checks": deepcopy(task["required_checks"]),
         "depends_on": deepcopy(task["depends_on"]),
@@ -504,7 +546,7 @@ def allocation_packet(state: Record, task_id: str, context: Record | None = None
         "peer_agreement": {"status": "unknown", "basis": "authored_evidence_only"},
         "source_context": deepcopy(context),
         "next_trigger": task["next_action"],
-        "final_acceptance_owner": _core().coordination.current_director_id(state),
+        "final_acceptance_owner": captured.director,
     }
 
 
@@ -517,10 +559,15 @@ def project(
 ) -> Record:
     """Count the complete obligation set, then bound one stable shared queue projection."""
     _core().require(type(limit) is int and 0 <= limit <= MAX_ROWS, "Invalid queue row limit")
+    tasks = _records(state["tasks"])
     context = _Context(
         state,
         _core().phases.revision(state),
-        {str(task["id"]): index for index, task in enumerate(_records(state["tasks"]))},
+        {str(task["id"]): index for index, task in enumerate(tasks)},
+        tasks,
+        {str(actor["id"]): actor for actor in reversed(_records(state.get("actors", [])))},
+        {str(task["id"]): _attempt(task) for task in tasks},
+        _core().coordination.current_director_id(state),
     )
     rows = _remaining_rows(context, full_verification_projection)
     if handoff_facts is not None:

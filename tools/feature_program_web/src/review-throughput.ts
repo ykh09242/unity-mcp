@@ -502,7 +502,7 @@ export function reviewHandoffs(snapshot: Snapshot): ReviewHandoffs | null {
   handoffCache.set(snapshot, parsed);
   return parsed;
 }
-export function taskHandoff(snapshot: Snapshot, taskId: string): ReviewHandoff | null {
+function parseTaskHandoff(snapshot: Snapshot, taskId: string): ReviewHandoff | null {
   const task = snapshot.tasks.find((task) => task.id === taskId);
   if (
     !task ||
@@ -534,6 +534,18 @@ export function taskHandoff(snapshot: Snapshot, taskId: string): ReviewHandoff |
   )
     return null;
   return row;
+}
+const taskHandoffCache = new WeakMap<Snapshot, Map<string, ReviewHandoff | null>>();
+export function taskHandoff(snapshot: Snapshot, taskId: string): ReviewHandoff | null {
+  let tasks = taskHandoffCache.get(snapshot);
+  if (!tasks) {
+    tasks = new Map();
+    taskHandoffCache.set(snapshot, tasks);
+  }
+  if (tasks.has(taskId)) return tasks.get(taskId) ?? null;
+  const parsed = parseTaskHandoff(snapshot, taskId);
+  tasks.set(taskId, parsed);
+  return parsed;
 }
 export function taskHandoffUnavailable(snapshot: Snapshot, taskId: string): boolean {
   const task = snapshot.tasks.find((task) => task.id === taskId);

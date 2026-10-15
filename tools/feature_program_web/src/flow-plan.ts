@@ -24,7 +24,7 @@ export type ClosurePlan = {
   readonly total: number;
   readonly omitted: number;
 };
-export function selectedPlan(snapshot: Snapshot, input: Json | undefined): ClosurePlan | null {
+function parseSelectedPlan(snapshot: Snapshot, input: Json | undefined): ClosurePlan | null {
   const value = record(input),
     preparation = record(value.preparation),
     preflight = record(value.preflight);
@@ -82,4 +82,15 @@ export function selectedPlan(snapshot: Snapshot, input: Json | undefined): Closu
     total: stages.total,
     omitted: stages.omitted,
   };
+}
+
+const planCache = new WeakMap<Snapshot, Map<Json | undefined, ClosurePlan | null>>();
+export function selectedPlan(snapshot: Snapshot, input: Json | undefined): ClosurePlan | null {
+  let plans = planCache.get(snapshot);
+  if (!plans) {
+    plans = new Map();
+    planCache.set(snapshot, plans);
+  }
+  if (!plans.has(input)) plans.set(input, parseSelectedPlan(snapshot, input));
+  return plans.get(input) ?? null;
 }

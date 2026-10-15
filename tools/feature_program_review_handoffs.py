@@ -6,6 +6,7 @@ No function here samples clocks or executes native, provider or stored commands.
 
 from collections import Counter
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime
 from types import ModuleType
 from typing import Final, TypeAlias
@@ -101,9 +102,11 @@ def _director(state: Record) -> str:
     return _core().coordination.current_director_id(state) or "leader"
 
 
-def _subject(state: Record, task_id: str, context: Record, review_inputs: Json) -> Record:
+def _subject(
+    state: Record, task_id: str, context: Record, review_inputs: Json, *, task: Record | None = None
+) -> Record:
     core = _core()
-    task = _task(state, task_id)
+    task = _task(state, task_id) if task is None else task
     attempt = core.Program.current_attempt(task)
     submission = _record(attempt.get("submission"), "actual submitted review")
     objective = core.coverage.objective_binding(state) if state.get("objective") else None
@@ -229,8 +232,62 @@ def _milestone(details: Record, kind: str) -> None:
         _milestone(value, "submitted")
 
 
+@dataclass(frozen=True, slots=True)
+class _Chronology:
+    """Accumulate only validated prior rows for one exact assignment."""
+
+    dispatches: dict[str, Record] = field(default_factory=dict)
+    reconciled: set[str] = field(default_factory=set)
+    unknown: dict[str, int] = field(default_factory=dict)
+    sent: dict[str, int] = field(default_factory=dict)
+    terminal: set[str] = field(default_factory=set)
+    milestones: set[tuple[str, str]] = field(default_factory=set)
+
+    def observe(self, item: Record, position: int) -> None:
+        """Advance after validation, never pre-index future authorizing observations."""
+        details = _record(item["details"])
+        match details.get("reconciles"):
+            case str() as identifier:
+                self.reconciled.add(identifier)
+                self.unknown.pop(identifier, None)
+        dispatch_id = details.get("dispatch_attempt_id")
+        match dispatch_id:
+            case str():
+                kind = str(item["kind"])
+                self.milestones.add((kind, dispatch_id))
+                if kind in {"dispatch_sent", "dispatch_failed", "dispatch_unknown"}:
+                    self.dispatches[dispatch_id] = item
+                if kind == "dispatch_unknown" and item["id"] not in self.reconciled:
+                    self.unknown[str(item["id"])] = position
+                if kind == "dispatch_sent" and dispatch_id not in self.terminal:
+                    self.sent[dispatch_id] = position
+                if kind == "terminal" and details.get("terminal_kind") in {"finished", "canceled"}:
+                    self.terminal.add(dispatch_id)
+                    self.sent.pop(dispatch_id, None)
+
+    def require_clear(self) -> None:
+        """Report the same earliest retained unresolved delivery/process boundary."""
+        blockers = [(position, "unknown") for position in self.unknown.values()]
+        blockers.extend((position, "sent") for position in self.sent.values())
+        match min(blockers, default=None):
+            case (_, "unknown"):
+                _require(False, "Retained unknown delivery was replayed")
+            case (_, "sent"):
+                _require(False, "Retained sent process was replayed")
+
+
+@dataclass(frozen=True, slots=True)
+class _History:
+    """One complete validated image and its chronological assignment groups."""
+
+    records: list[Record]
+    tasks: dict[str, Record]
+    groups: dict[tuple[str, int], list[Record]]
+    latest_generation: dict[str, int]
+
+
 def _validate_retained_observation(
-    item: Record, intent: Record, prior: list[Record], review: Json
+    item: Record, intent: Record, prior: _Chronology, review: Json
 ) -> None:
     """Check event relationships from retained facts, without today's actor availability."""
     kind = item["kind"]
@@ -238,12 +295,7 @@ def _validate_retained_observation(
     actor, director, reviewer = item["actor_id"], item["director_id"], intent["reviewer_id"]
     reporter = item.get("reporter_id")
     dispatch_id = details.get("dispatch_attempt_id")
-    dispatches = [
-        record
-        for record in prior
-        if record["kind"] in {"dispatch_sent", "dispatch_failed", "dispatch_unknown"}
-        and _record(record["details"]).get("dispatch_attempt_id") == dispatch_id
-    ]
+    dispatch = prior.dispatches.get(str(dispatch_id))
     if kind in {"dispatch_sent", "dispatch_failed", "dispatch_unknown", "submitted"}:
         _require(actor == director, "Retained dispatch/submission lacks director attribution")
     else:
@@ -257,59 +309,29 @@ def _validate_retained_observation(
             _record(intent["eligibility"])["status"] == "eligible",
             "Retained native dispatch lacks eligible assignment",
         )
-        if dispatches:
-            latest = dispatches[-1]
+        if dispatch is not None:
             _require(
-                latest["kind"] == "dispatch_unknown"
-                and details.get("reconciles") == latest["id"]
+                dispatch["kind"] == "dispatch_unknown"
+                and details.get("reconciles") == dispatch["id"]
                 and kind in {"dispatch_sent", "dispatch_failed"},
                 "Retained dispatch attempt lacks exact reconciliation",
             )
         else:
-            for record in prior:
-                if record["kind"] == "dispatch_unknown":
-                    _require(
-                        any(
-                            _record(later["details"]).get("reconciles") == record["id"]
-                            for later in prior
-                        ),
-                        "Retained unknown delivery was replayed",
-                    )
-                if record["kind"] == "dispatch_sent":
-                    sent_id = _record(record["details"])["dispatch_attempt_id"]
-                    _require(
-                        any(
-                            later["kind"] == "terminal"
-                            and _record(later["details"]).get("terminal_kind")
-                            in {"finished", "canceled"}
-                            and _record(later["details"]).get("dispatch_attempt_id") == sent_id
-                            for later in prior
-                        ),
-                        "Retained sent process was replayed",
-                    )
+            prior.require_clear()
     process_terminal = (
         kind == "terminal" and details["terminal_kind"] != "canonical_verdict_observed"
     )
     if kind in {"reviewer_acknowledged", "review_started"} or process_terminal:
         _require(
-            bool(dispatches) and dispatches[-1]["kind"] == "dispatch_sent",
+            dispatch is not None and dispatch["kind"] == "dispatch_sent",
             "Retained activity lacks exact sent attempt",
         )
         _require(
-            not any(
-                record["kind"] == "terminal"
-                and _record(record["details"]).get("terminal_kind") in {"finished", "canceled"}
-                and _record(record["details"]).get("dispatch_attempt_id") == dispatch_id
-                for record in prior
-            ),
+            dispatch_id not in prior.terminal,
             "Retained actual process already terminal",
         )
         _require(
-            not any(
-                record["kind"] == kind
-                and _record(record["details"]).get("dispatch_attempt_id") == dispatch_id
-                for record in prior
-            ),
+            (str(kind), str(dispatch_id)) not in prior.milestones,
             "Retained actual milestone duplicates its process",
         )
     if kind == "terminal":
@@ -331,12 +353,16 @@ def _validate_retained_observation(
         )
 
 
-def validate(state: Record) -> None:
-    """Inspect all retained history before any presentation reduction."""
+def _validated_history(state: Record) -> _History:
+    """Inspect every row chronologically once before exposing any grouped facts."""
     seen: set[str] = set()
     intents: dict[tuple[str, int], Record] = {}
     previous = None
     records = _records(state)
+    tasks = {str(task["id"]): task for task in reversed(_rows(state["tasks"]))}
+    groups: dict[tuple[str, int], list[Record]] = {}
+    chronology: dict[tuple[str, int], _Chronology] = {}
+    latest_generation: dict[str, int] = {}
     for position, item in enumerate(records):
         identifier = _text(item.get("id"), "handoff record ID")
         _text(item.get("kind"), "handoff record kind")
@@ -418,7 +444,9 @@ def validate(state: Record) -> None:
         if item.get("reviewer_id") is not None:
             _text(item["reviewer_id"], "designated reviewer")
         _require(subject.get("program_id") == state["program_id"], "Handoff program mismatch")
-        task = _task(state, _text(subject.get("task_id"), "handoff task"))
+        task_id = _text(subject.get("task_id"), "handoff task")
+        _require(task_id in tasks, "Unknown handoff task")
+        task = tasks[task_id]
         attempts = _rows(task["attempts"])
         number = subject.get("attempt")
         _require(type(number) is int and 0 < number <= len(attempts), "Invalid handoff attempt")
@@ -452,9 +480,14 @@ def validate(state: Record) -> None:
                     "Invalid handoff intent identity/details",
                 )
                 _require(key not in intents, "Duplicate reviewer assignment generation")
-                prior = [key_value[1] for key_value in intents if key_value[0] == key[0]]
-                _require(generation == max(prior, default=0) + 1, "Reviewer generation skipped")
+                _require(
+                    generation == latest_generation.get(key[0], 0) + 1,
+                    "Reviewer generation skipped",
+                )
+                latest_generation[key[0]] = generation
                 intents[key] = item
+                groups[key] = []
+                chronology[key] = _Chronology()
             case kind if kind in KINDS:
                 _require(key in intents, "Observation lacks exact handoff intent")
                 intent = intents[key]
@@ -470,20 +503,24 @@ def validate(state: Record) -> None:
                     "Observation evidence differs from retained record",
                 )
                 _milestone(details, str(kind))
-                prior = [
-                    record
-                    for record in records[:position]
-                    if record["kind"] != "intent"
-                    and record["handoff_id"] == key[0]
-                    and record["assignment_generation"] == generation
-                ]
-                _validate_retained_observation(item, intent, prior, original.get("review"))
+                _validate_retained_observation(
+                    item, intent, chronology[key], original.get("review")
+                )
+                chronology[key].observe(item, position)
+                groups[key].append(item)
             case invalid:
                 raise _core().ProgramError(f"Unknown handoff kind: {invalid}")
     _require(
         len(_core().canonical(state.get("review_handoffs", {}))) <= LIMIT,
         "Handoff extension exceeds document budget",
     )
+
+    return _History(records, tasks, groups, latest_generation)
+
+
+def validate(state: Record) -> None:
+    """Inspect all retained history before any presentation reduction."""
+    _validated_history(state)
 
 
 def validate_append(original: Record, future: Record) -> None:
@@ -528,19 +565,27 @@ def _append(state: Record, item: Record) -> Record:
     return proposed
 
 
-def _eligibility(state: Record, task: Record, reviewer: Json, declaration: Json) -> Record:
+def _eligibility(
+    state: Record,
+    task: Record,
+    reviewer: Json,
+    declaration: Json,
+    *,
+    actors: dict[str, Record] | None = None,
+    director: str | None = None,
+) -> Record:
     reasons = []
     if reviewer is None:
         reasons.append("reviewer_unassigned")
     else:
-        actor = _actor(state, reviewer)
+        actor = _actor(state, reviewer) if actors is None else actors.get(str(reviewer), {})
         if not actor:
             reasons.append("reviewer_unregistered")
         if actor.get("staffing_status") == "retired":
             reasons.append("reviewer_retired")
         if reviewer in {attempt["owner"] for attempt in _rows(task["attempts"])}:
             reasons.append("reviewer_implemented_task")
-        if reviewer == _director(state):
+        if reviewer == (director if director is not None else _director(state)):
             reasons.append("reviewer_is_director")
     if _record(declaration or {}).get("status") != "eligible":
         reasons.append("reviewer_eligibility_unassessed")
@@ -955,13 +1000,15 @@ def _locator(position: int, task_id: str, revision: str, record_digest: Json) ->
 
 def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None = None) -> Record:
     """Project all retained facts before consumer bounds; never sample a read-time clock."""
-    validate(state)
+    history = _validated_history(state)
     _require(limit is None or type(limit) is int and 0 <= limit <= 50, "Invalid row bound")
     revision = _core().phases.revision(state)
-    records = _records(state)
+    records = history.records
+    actors = {str(actor["id"]): actor for actor in reversed(_rows(state.get("actors", [])))}
+    director = _director(state)
     positions = {str(item["id"]): index for index, item in enumerate(records)}
     intents = [item for item in records if item["kind"] == "intent"]
-    latest = {str(item["handoff_id"]): item["assignment_generation"] for item in intents}
+    latest = history.latest_generation
     rows: list[Json] = []
     for intent in intents:
         handoff_id = str(intent["handoff_id"])
@@ -969,6 +1016,7 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
         task_id = str(subject["task_id"])
         generation = intent["assignment_generation"]
         reference = _locator(positions[str(intent["id"])], task_id, revision, intent["digest"])
+        task = history.tasks[task_id]
         assessment = _record(assessed_bindings.get(handoff_id, assessed_bindings.get(task_id, {})))
         currentness, reasons = "unavailable", ["current_handoff_context_unavailable"]
         if assessment.get("context") is not None:
@@ -978,6 +1026,7 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
                     task_id,
                     _record(assessment["context"]),
                     assessment.get("review_inputs", {}),
+                    task=task,
                 )
                 currentness = "current" if current == subject else "stale"
                 reasons = [] if currentness == "current" else ["handoff_subject_changed"]
@@ -987,7 +1036,6 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
             currentness, reasons = "stale", [*reasons, "reviewer_assignment_changed"]
         if assessment.get("evidence_status") == "unavailable":
             currentness, reasons = "unavailable", [*reasons, "handoff_evidence_unavailable"]
-        task = _task(state, task_id)
         current_submission = _record(_core().Program.current_attempt(task).get("submission") or {})
         if current_submission.get("handoff_id") not in {None, handoff_id}:
             currentness, reasons = "stale", [*reasons, "handoff_subject_changed"]
@@ -996,13 +1044,7 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
         ]
         terminal_ref = original.get("review")
         canonical_terminal = terminal_ref is not None
-        related = [
-            item
-            for item in records
-            if item["handoff_id"] == handoff_id
-            and item["assignment_generation"] == generation
-            and item["kind"] != "intent"
-        ]
+        related = history.groups[(handoff_id, int(generation))]
         observations: list[Json] = [
             {
                 "id": intent["id"],
@@ -1045,11 +1087,18 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
                     submitted.add(key)
         eligibility = deepcopy(_record(intent["eligibility"]))
         if eligibility["status"] == "eligible":
-            eligibility = _eligibility(state, task, intent["reviewer_id"], {"status": "eligible"})
+            eligibility = _eligibility(
+                state,
+                task,
+                intent["reviewer_id"],
+                {"status": "eligible"},
+                actors=actors,
+                director=director,
+            )
             if eligibility["status"] != "eligible":
                 currentness, reasons = "stale", [*reasons, "reviewer_eligibility_changed"]
         phase = "ready" if eligibility["status"] == "eligible" else "unassigned"
-        next_actor = _director(state)
+        next_actor = director
         for item in related:
             match item["kind"]:
                 case "submitted":
@@ -1083,9 +1132,9 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
             "terminal": "Inspect ordinary review acceptance and director obligations",
         }[phase]
         if currentness != "current" and phase != "terminal":
-            next_actor, action = _director(state), "Revalidate stale or unavailable inputs"
+            next_actor, action = director, "Revalidate stale or unavailable inputs"
         if phase == "terminal":
-            next_actor = _director(state)
+            next_actor = director
         rows.append(
             {
                 "id": f"{handoff_id}:{generation}",
@@ -1154,5 +1203,31 @@ def project_handoffs(state: Record, assessed_bindings: Record, limit: int | None
         "source_binding": {"revision": revision},
         "acceptance_complete": False,
     }
+    _require(len(_core().canonical(result)) <= LIMIT, "Handoff projection exceeds output budget")
+    return result
+
+
+def bound_projection(full: Record, limit: int = 50) -> Record:
+    """Detach a bounded view of complete assessed facts without replaying the producer."""
+    _require(type(limit) is int and 0 <= limit <= 50, "Invalid row bound")
+    collection = _record(full["rows"])
+    rows = _rows(collection["items"])
+    _require(
+        collection.get("omitted") == 0
+        and collection.get("total") == len(rows)
+        and collection.get("shown") == len(rows),
+        "Handoff bounding requires complete assessed facts",
+    )
+    result = deepcopy(
+        {
+            **full,
+            "rows": {
+                **collection,
+                "items": rows[:limit],
+                "shown": min(len(rows), limit),
+                "omitted": max(0, len(rows) - limit),
+            },
+        }
+    )
     _require(len(_core().canonical(result)) <= LIMIT, "Handoff projection exceeds output budget")
     return result

@@ -138,9 +138,15 @@ def target_key(target: Record) -> str:
 
 def _budget_room(path: Path, budget: ReadBudget) -> None:
     """An aggregate-budget rejection must not turn into missing translation coverage."""
+    core = _core()
     try:
-        size = path.stat().st_size if path not in (budget.cached or {}) and path.is_file() else 0
+        size = (
+            core.observed_size(path)
+            if path not in (budget.cached or {}) and core.observed_is_file(path)
+            else 0
+        )
     except OSError:
+        core.observe_path_error(path, "presentation_budget_probe")
         return  # The bounded reader reports this artifact's availability separately.
     require(
         min(size, DOCUMENT_LIMIT) <= budget.remaining, "Aggregate evidence read budget exceeded"
@@ -179,6 +185,14 @@ class Catalog:
     revision: str
     targets: dict[str, Record] = field(default_factory=dict)
     unavailable: list[Record] = field(default_factory=list)
+    _record_digests: dict[int, tuple[Record, str]] = field(default_factory=dict)
+
+    def record_digest(self, value: Record) -> str:
+        """Hash each unchanged captured record once, retaining its exact object."""
+        identity = id(value)
+        if identity not in self._record_digests:
+            self._record_digests[identity] = (value, _core().digest(value))
+        return self._record_digests[identity][1]
 
     def add(
         self,
@@ -252,7 +266,7 @@ class Catalog:
                     origin=origin,
                 )
         elif isinstance(value, dict):
-            record_context = {**(context or {}), "record_sha256": _core().digest(value)}
+            record_context = {**(context or {}), "record_sha256": self.record_digest(value)}
             for name, item in value.items():
                 child = pointer + _pointer(name)
                 if name in NARRATIVE:
@@ -320,6 +334,7 @@ def catalog(program: Program, state: Record, budget: ReadBudget, revision: str) 
                 "F01", identifier, name, goal.get(name), path + "/" + name, historical=historical
             )
         criteria = goal.get("criteria", [])
+        criteria_digest = core.digest(criteria)
         for index, text in enumerate(criteria):
             if isinstance(text, str):
                 result.add(
@@ -331,7 +346,7 @@ def catalog(program: Program, state: Record, budget: ReadBudget, revision: str) 
                     ordinal=index,
                     historical=historical,
                     context={
-                        "criteria_sha256": core.digest(criteria),
+                        "criteria_sha256": criteria_digest,
                         "text_sha256": core.sha(text.encode("utf-8")),
                     },
                 )
@@ -386,7 +401,7 @@ def catalog(program: Program, state: Record, budget: ReadBudget, revision: str) 
             captured_sources[source_identity] = deepcopy(source)
         context = {
             "source": captured_sources[source_identity],
-            "section_sha256": section.get("sha256", core.digest(section)),
+            "section_sha256": section["sha256"] if "sha256" in section else core.digest(section),
         }
         result.add(
             "F06",
@@ -493,6 +508,7 @@ def catalog(program: Program, state: Record, budget: ReadBudget, revision: str) 
                 historical=question.get("status") in {"resolved", "withdrawn"},
             )
         options = issued.get("options", [])
+        options_digest = core.digest(options)
         for index, text in enumerate(options):
             result.add(
                 "F12",
@@ -501,7 +517,7 @@ def catalog(program: Program, state: Record, budget: ReadBudget, revision: str) 
                 text,
                 prefix + f"/options/{index}",
                 ordinal=index,
-                context={**qc, "options_sha256": core.digest(options)},
+                context={**qc, "options_sha256": options_digest},
                 historical=question.get("status") in {"resolved", "withdrawn"},
             )
         for name in ("acknowledgement", "outcome"):
@@ -543,7 +559,7 @@ def catalog(program: Program, state: Record, budget: ReadBudget, revision: str) 
                 f"/verification/records/{index}/input",
                 context={
                     "task_id": authored["task_id"],
-                    "input_sha256": core.digest(authored),
+                    "input_sha256": result.record_digest(authored),
                     "verification_context": recorded["context"],
                 },
             )
@@ -625,6 +641,12 @@ def _source_receipts(state: Record) -> list[Record]:
 
 
 def _input(value: Json) -> Record:
+    """Validate a standalone transaction with its ordinary normalized size limit."""
+    return _input_keys(value)[0]
+
+
+def _input_keys(value: Json) -> tuple[Record, tuple[str, ...]]:
+    """Return checked input and the exact typed keys from this validation pass."""
     core = _core()
     receipt = core.record(value, "presentation input")
     require(
@@ -663,6 +685,7 @@ def _input(value: Json) -> Record:
     operations = core.sequence(receipt["operations"], "presentation operations")
     require(0 < len(operations) <= 256, "Transactions require 1..256 operations")
     seen: set[str] = set()
+    keys: list[str] = []
     for value in operations:
         op = core.record(value, "presentation operation")
         target = core.record(op.get("target"), "target")
@@ -735,18 +758,27 @@ def _input(value: Json) -> Record:
         key = target_key(target)
         require(key not in seen, "Duplicate target in transaction")
         seen.add(key)
+        keys.append(key)
         require(
             op["supersedes"] is None or isinstance(op["supersedes"], str), "Invalid supersedes ID"
         )
     require(len(core.canonical(receipt)) <= DOCUMENT_LIMIT, "Input exceeds 1 MiB")
-    return receipt
+    return receipt, tuple(keys)
 
 
-def validate(state: Record) -> None:
+@dataclass(frozen=True, slots=True)
+class _CheckedLedger:
+    """Private typed keys for one strongly retained, immutable captured state."""
+
+    state: Record = field(repr=False)
+    operations: tuple[tuple[str, str, int, int], ...] = ()
+
+
+def validate(state: Record) -> _CheckedLedger:
     """Validate durable structure without imposing live-source freshness on old records."""
     ledger = state.get("presentation")
     if ledger is None:
-        return
+        return _CheckedLedger(state)
     core = _core()
     require(
         isinstance(ledger, dict)
@@ -757,13 +789,14 @@ def validate(state: Record) -> None:
     )
     identifiers: set[str] = set()
     latest: dict[tuple[str, str], str] = {}
-    for value in _records(state):
+    checked: list[tuple[str, str, int, int]] = []
+    for index, value in enumerate(_records(state)):
         entry = core.record(value, "presentation record")
         require(
             set(entry) == {"input", "receipt", "recorded_at", "recorded_by"},
             "Invalid ledger record",
         )
-        receipt = _input(entry["input"])
+        receipt, operation_keys = _input_keys(entry["input"])
         identifier = str(receipt["id"])
         require(identifier.casefold() not in identifiers, "Duplicate recorded ID")
         identifiers.add(identifier.casefold())
@@ -775,10 +808,12 @@ def validate(state: Record) -> None:
                 str(_reference(ref)["path"]).startswith(PREFIX),
                 "Receipt/review outside presentation namespace",
             )
-        for op in receipt["operations"]:
-            key = (str(receipt["locale"]), target_key(op["target"]))
+        for position, (op, target) in enumerate(zip(receipt["operations"], operation_keys)):
+            key = (str(receipt["locale"]), target)
             require(op["supersedes"] == latest.get(key), "Broken presentation supersession chain")
             latest[key] = identifier
+            checked.append((key[0], target, index, position))
+    return _CheckedLedger(state, tuple(checked))
 
 
 def _latest(state: Record, locale: str | None) -> dict[str, tuple[int, Record, Record]]:
@@ -873,7 +908,8 @@ def bind_input(
         locale is not None and locale == state.get("communication_language"),
         "Locale must match recorded session language",
     )
-    observed = catalog(program, state, budget, phases.revision(state))
+    revision = phases.revision(state)
+    observed = catalog(program, state, budget, revision)
     latest = _latest(state, locale)
     operations = core.sequence(draft.get("operations"), "presentation operations")
     require(0 < len(operations) <= 256, "Transactions require 1..256 operations")
@@ -899,7 +935,7 @@ def bind_input(
                 "Protected code/link spans changed",
             )
         resolved.append(operation)
-    bound = {**deepcopy(draft), "expected_revision": phases.revision(state), "operations": resolved}
+    bound = {**deepcopy(draft), "expected_revision": revision, "operations": resolved}
     _input(bound)
     require(bound["program_id"] == state["program_id"], "Program mismatch")
     return {
@@ -916,9 +952,10 @@ def prepare_record(program: Program, state: Record, name: str) -> PreparedChange
     require(core.safe_relative(name).startswith(PREFIX), "Input outside presentation namespace")
     receipt, parsed = core.read_json_frozen(program.path(name), limit=DOCUMENT_LIMIT)
     _input(receipt)
-    initial = core.bounded_bytes(program.path("backlog.json"), OUTPUT_LIMIT)
+    registry_path = program.path("backlog.json")
+    initial = program.read_registry_observation()
     require(
-        core.read_json(program.path("backlog.json")) == state,
+        core.parse_registry_state(initial, path=registry_path) == state,
         "Original registry differs from supplied state",
     )
 
@@ -970,16 +1007,17 @@ def prepare_record(program: Program, state: Record, name: str) -> PreparedChange
     )
 
     def before_publish() -> None:
+        current_observation = program.read_registry_observation()
         require(
-            core.bounded_bytes(program.path("backlog.json"), OUTPUT_LIMIT) == initial,
+            current_observation.raw_bytes == initial.raw_bytes,
             "Registry changed before presentation publication",
         )
-        current = core.read_json(program.path("backlog.json"))
+        current = core.parse_registry_state(current_observation, path=registry_path)
         program.validate(current)
         preconditions(current)
         verify_history(program, proposal)
         require(
-            core.bounded_bytes(program.path("backlog.json"), OUTPUT_LIMIT) == initial,
+            program.read_registry_observation().raw_bytes == initial.raw_bytes,
             "Registry changed before presentation publication",
         )
 
@@ -996,15 +1034,45 @@ def projection(
     inventory: bool = False,
 ) -> Record:
     """Project only current verified text, with complete counts and compact missing coverage."""
+    return _projection_from_checked(
+        program,
+        state,
+        validate(state),
+        budget=budget,
+        revision=revision,
+        locale=locale,
+        inventory=inventory,
+    )
+
+
+def _projection_from_checked(
+    program: Program,
+    state: Record,
+    checked: _CheckedLedger,
+    *,
+    budget: ReadBudget | None = None,
+    revision: str | None = None,
+    locale: str | None = None,
+    inventory: bool = False,
+) -> Record:
+    """Reuse only the first validation of the same immutable capture; detach outputs."""
     core = _core()
-    validate(state)
+    require(checked.state is state, "Checked ledger belongs to another state")
     budget = budget if budget is not None else core.ReadBudget(64 * 1024 * 1024)
     revision = revision or phases.revision(state)
     selected = locale if locale is not None else state.get("communication_language")
     if selected is not None:
         core.communication_language(selected)
     observed = catalog(program, state, budget, revision)
-    latest = _latest(state, selected)
+    ledger = _records(state)
+    latest: dict[str, tuple[int, Record, Record]] = {}
+    for language, key, index, position in checked.operations:
+        if language == selected:
+            entry = core.record(ledger[index], "presentation record")
+            operation = core.record(
+                entry["input"]["operations"][position], "presentation operation"
+            )
+            latest[key] = (index, entry, operation)
     entries: Record = {}
     counts: Counter[str] = Counter()
     by_kind: dict[str, Counter[str]] = {}
@@ -1023,10 +1091,15 @@ def projection(
                     "Frozen input differs from recorded presentation",
                 )
                 _review(program, receipt, budget)
+                checked_refs: set[tuple[str, str]] = set()
                 for value in receipt["operations"]:
                     ref = value["binding"]["context"].get("receipt")
                     if ref is not None:
-                        program.verify_refs([ref], budget)
+                        reference = core.record(ref, "evidence reference")
+                        identity = (str(reference.get("path")), str(reference.get("sha256")))
+                        if identity not in checked_refs:
+                            program.verify_refs([ref], budget)
+                            checked_refs.add(identity)
                 availability[index] = None
             except (core.ProgramError, OSError) as exc:
                 availability[index] = str(exc)
@@ -1170,32 +1243,49 @@ def read_command(program: Program, args: argparse.Namespace) -> Record:
     core = _core()
     program.require_current_location()
     path = program.path("backlog.json")
-    initial = core.bounded_bytes(path, OUTPUT_LIMIT)
-    budget = core.ReadBudget(64 * 1024 * 1024, cached={path: initial})
-    state = core.read_json(path, budget=budget)
-    program.validate(state, verify_artifacts=False)
+    budget = core.ReadBudget(64 * 1024 * 1024)
+    initial = program.read_registry_observation(budget=budget)
+    state = core.parse_registry_state(initial, path=path)
+    checked = program.validate(state, verify_artifacts=False)
     require(len(state["tasks"]) <= 2000, "Inventory exceeds 2000 tasks")
-    absent = {
-        program.path(ref["path"])
-        for ref in [*evidence_references(state), *_source_receipts(state)]
-        if not program.path(ref["path"]).is_file()
-    }
+    absent: set[Path] = set()
+    observed_paths: set[str] = set()
+    for ref in [*evidence_references(state), *_source_receipts(state)]:
+        name = str(ref["path"])
+        if name not in observed_paths:
+            artifact_path = program.path(name)
+            if not core.observed_is_file(artifact_path):
+                absent.add(artifact_path)
+            observed_paths.add(name)
     if args.command == "presentation-inventory":
-        result = projection(
-            program, state, budget, revision=core.sha(initial), locale=args.locale, inventory=True
+        result = _projection_from_checked(
+            program,
+            state,
+            checked.presentation,
+            budget=budget,
+            revision=initial.body_sha256,
+            locale=args.locale,
+            inventory=True,
         )
     else:
         draft = core.read_json(program.path(args.input), limit=DOCUMENT_LIMIT, budget=budget)
         result = bind_input(program, state, draft, budget)
-        result["observed_registry_sha256"] = core.sha(initial)
+        result["observed_registry_sha256"] = initial.storage_sha256
     require(len(core.canonical(result)) <= OUTPUT_LIMIT, "Output exceeds 8 MiB")
     for captured_path, captured in (budget.cached or {}).items():
+        if captured_path == path:
+            continue  # The independent full-storage closing observation below owns this barrier.
         require(
-            captured_path.is_file() and core.bounded_bytes(captured_path, OUTPUT_LIMIT) == captured,
+            core.observed_is_file(captured_path)
+            and core.bounded_bytes(captured_path, OUTPUT_LIMIT) == captured,
             "Observed registry/evidence changed during presentation read; refresh",
         )
     require(
-        not any(item.is_file() for item in absent),
+        program.read_registry_observation().raw_bytes == initial.raw_bytes,
+        "Observed registry changed during presentation read; refresh",
+    )
+    require(
+        not any(core.observed_is_file(item) for item in absent),
         "Missing presentation evidence appeared during read; refresh",
     )
     program.require_current_location()

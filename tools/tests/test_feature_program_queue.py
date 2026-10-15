@@ -425,3 +425,82 @@ def test_allocation_packet_uses_canonical_dependency_and_exact_write_conflicts(f
     assert packet["readiness"]["unmet_dependencies"] == ["S01"]
     assert [row["id"] for row in packet["readiness"]["scope_conflicts"]] == ["S01"]
     assert packet["readiness"]["claim"] == "not_assessed"
+
+
+def test_captured_allocation_packets_reuse_one_index_and_match_standalone(fixture, monkeypatch):
+    # Given two tasks with complete recorded allocation context.
+    state = fixture.program.load()
+    state["verification"] = {
+        "records": [use_event("request-a", "request"), use_event("start-a", "started", "request-a")]
+    }
+    state["verification"]["records"][0]["input"].update(
+        {
+            "check_ids": ["acceptance"],
+            "input_scope": ["src/S01.py"],
+            "evidence_destination": "evidence/S01/attempt-1",
+            "next_trigger": "Actual observation",
+        }
+    )
+    expected = {task: queue.allocation_packet(state, task) for task in ("S01", "S02")}
+    original = fp._TaskIndex.capture
+    captures = []
+
+    def capture(cls, tasks):
+        captures.append(len(tasks))
+        return original(tasks)
+
+    monkeypatch.setattr(fp._TaskIndex, "capture", classmethod(capture))
+    # When the host constructs multiple packets from its one immutable state image.
+    captured = queue._allocation_context(state)
+    actual = {
+        task: queue._allocation_packet_from_context(state, task, None, captured)
+        for task in ("S01", "S02")
+    }
+    # Then dependency/ownership/history/uncertainty agree, and the shared task index is built once.
+    assert actual == expected
+    assert captures == [2]
+    assert all(packet["runtime_capacity"] == "unknown" for packet in actual.values())
+
+
+def test_allocation_capture_cannot_cross_state_images_and_next_call_is_fresh(fixture):
+    # Given an allocation context captured before participant supervision changes.
+    state = fixture.program.load()
+    captured = queue._allocation_context(state)
+    changed = deepcopy(state)
+    changed["tasks"][0]["owner"] = "new-worker"
+    changed["actors"] = [{"id": "new-worker", "parent_id": "new-supervisor"}]
+    # When a foreign image attempts to reuse it, or a new standalone packet is requested.
+    with pytest.raises(fp.ProgramError):
+        queue._allocation_packet_from_context(changed, "S01", None, captured)
+    fresh = queue.allocation_packet(changed, "S01")
+    # Then the old capture is rejected and fresh recorded responsibility remains visible.
+    assert fresh["supervisor_id"] == "new-supervisor"
+    assert fresh["runtime_capacity"] == "unknown"
+
+
+def test_running_history_references_keep_original_positions_amid_unrelated_events(fixture):
+    # Given superseded and current running requests interleaved with another lane.
+    state = fixture.program.load()
+    other = use_event("request-other", "request")
+    other["input"]["lane"] = "other"
+    state["verification"] = {
+        "records": [
+            use_event("request-a", "request"),
+            use_event("start-a", "started", "request-a"),
+            other,
+            use_event("request-b", "request"),
+            use_event("start-b", "started", "request-b"),
+        ]
+    }
+    # When all retained running observations are projected, before any display reduction.
+    result = queue.project(state, projection(state))
+    overlap = next(
+        item for item in result["recorded_workload"]["items"] if item["kind"] == "actor_overlap"
+    )
+    uses = {item["request_id"]: item for item in overlap["requests"]}
+    # Then exact original pointers and superseded uncertainty survive the single history pass.
+    assert uses["request-a"]["reference"]["pointer"] == "/verification/records/1"
+    assert uses["request-b"]["reference"]["pointer"] == "/verification/records/4"
+    assert uses["request-a"]["superseded"] is True
+    assert uses["request-b"]["superseded"] is False
+    assert all(item["actual_occupancy"] == "unknown" for item in uses.values())

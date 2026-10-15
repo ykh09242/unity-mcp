@@ -1695,3 +1695,50 @@ def test_accepted_director_handoff_allows_current_director_objective_acceptance(
     assert state["objective"]["status"] == "awaiting_next_goal"
     assert state["handoffs"][0]["acceptance"] is not None
     program.verify_refs(governance.evidence_references(state))
+
+
+def test_checked_governance_reuses_categories_and_detaches_nested_projection(state, monkeypatch):
+    # Given validated nested categories and legacy unknown assignment metadata.
+    state["categories"] = [
+        {
+            "id": "leaf",
+            "title": "Leaf",
+            "parent_id": "engineering",
+            "task_ids": ["TASK-A"],
+        }
+    ]
+    expected = governance.snapshot_metadata(state)
+    checked = governance.validate_governance(state)
+
+    def repeated_categories(*args, **kwargs):
+        raise AssertionError("Category graph was already checked")
+
+    # When a private snapshot consumes only the checked exact-state facts.
+    with monkeypatch.context() as patch:
+        patch.setattr(governance, "_categories_for_tasks", repeated_categories)
+        actual = governance._snapshot_from_checked(state, checked)
+    # Then original categories/unknown actors are preserved and no output alias is retained.
+    assert actual == expected
+    actual["categories"][0]["task_ids"].clear()
+    actual["actors"][0]["assignments"][0]["scope"].append("consumer-only")
+    assert governance._snapshot_from_checked(state, checked) == expected
+
+
+def test_checked_governance_rejects_a_different_state(state):
+    # Given one first-pass checked governance result.
+    checked = governance.validate_governance(state)
+    # When a detached later state is supplied with that old result.
+    with pytest.raises(governance.GovernanceError, match="another state"):
+        governance._snapshot_from_checked(deepcopy(state), checked)
+
+
+def test_public_governance_rechecks_changed_category_membership(state):
+    # Given previously valid governance, then a conflicting new category membership.
+    governance.validate_governance(state)
+    state["categories"] = [
+        {"id": "one", "title": "One", "parent_id": "engineering", "task_ids": ["TASK-A"]},
+        {"id": "two", "title": "Two", "parent_id": "engineering", "task_ids": ["TASK-A"]},
+    ]
+    # When an independent public snapshot reads that changed graph.
+    with pytest.raises(governance.GovernanceError, match="multiple categories"):
+        governance.snapshot_metadata(state)

@@ -38,13 +38,17 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
   const [announce, setAnnounce] = useState(true);
   const pending = useRef<AbortController | null>(null);
   const alive = useRef(true);
+  const queuedAfterWrite = useRef(false);
   const current = useRef<{
     readonly snapshot: Snapshot;
     readonly etag: string | null;
   } | null>(null);
   const refresh = useCallback(
-    async (manual = false) => {
-      if (pending.current) return;
+    async function readSnapshot(manual = false, afterWrite = false): Promise<void> {
+      if (pending.current) {
+        if (afterWrite) queuedAfterWrite.current = true;
+        return;
+      }
       const controller = new AbortController();
       pending.current = controller;
       let aborted: (() => void) | undefined;
@@ -90,6 +94,10 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
         if (pending.current === controller) {
           pending.current = null;
           if (alive.current) setBusy(false);
+          if (alive.current && queuedAfterWrite.current) {
+            queuedAfterWrite.current = false;
+            void readSnapshot(false, true);
+          }
         }
       }
     },
@@ -107,6 +115,7 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
     document.addEventListener('visibilitychange', visible);
     return () => {
       alive.current = false;
+      queuedAfterWrite.current = false;
       pending.current?.abort();
       pending.current = null;
       clearInterval(interval);

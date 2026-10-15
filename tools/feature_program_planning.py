@@ -129,7 +129,7 @@ def coverage_source_identity(
     result = deepcopy(source)
     if not _same_json(source, state["source"]):
         return result  # Delivered relocation does not rewrite supplemental source locators.
-    relocated = program.path("RELOCATED_FROM.json").exists()
+    relocated = core.observed_exists(program.path("RELOCATED_FROM.json"))
     matched = False
     destinations: set[str] = set()
     for value in reversed(coordination._items(state.get("events", []), "events")):
@@ -154,11 +154,15 @@ def coverage_source_identity(
                 event.get("original_registry_sha256"), "relocation original registry hash"
             )
             base = f"recovery/relocations/{original_hash}"
-            archived = budget.read(program.path(base + "/original-backlog.json"), 8 * 1024 * 1024)
+            archive_path = program.path(base + "/original-backlog.json")
+            archived = budget.read(archive_path, 8 * 1024 * 1024 + 80)
             require(core.sha(archived) == original_hash, "Coverage relocation archive changed")
-            archived_state = core.read_json(
-                program.path(base + "/original-backlog.json"), budget=budget
-            )
+            storage = core.flow_module("storage")
+            try:
+                observation = storage.decode_registry(archived)
+            except storage.RegistryFormatError as exc:
+                raise PlanningError("Invalid coverage relocation registry archive") from exc
+            archived_state = core.parse_registry_state(observation, path=archive_path)
             require(
                 _same_json(archived_state.get("source"), previous)
                 and archived_state.get("program_id") == state["program_id"],
@@ -268,6 +272,13 @@ def _priority(value: Json) -> None:
 def _same_json(left: Json, right: Json) -> bool:
     """Compare canonical JSON values without Python's bool/int/float coercion."""
     return _core().canonical(left) == _core().canonical(right)
+
+
+def _registry_state(program: Program, budget: ReadBudget | None = None) -> Record:
+    """Read the explicit live registry BODY, never implicitly decode ordinary JSON artifacts."""
+    return _core().parse_registry_state(
+        program.read_registry_observation(budget=budget), path=program.path("backlog.json")
+    )
 
 
 def task_order(state: Record) -> list[Record]:
@@ -908,7 +919,7 @@ def observe_sources(program: Program, state: Record) -> list[str]:
     for index, source in enumerate(descriptors(state)):
         label = "Original source" if index == 0 else f"Supplemental source {index}"
         path = core.safe_path(program.repo, coordination._relative(source["path"]))
-        if not path.is_file():
+        if not core.observed_is_file(path):
             warnings.append(f"{label} is unavailable; displaying frozen recorded prose.")
             continue
         raw = budget.read(path, 8 * 1024 * 1024)
@@ -927,7 +938,7 @@ def observe_sources(program: Program, state: Record) -> list[str]:
         plans.insert(0, {"path": original, "sha256": state["planning_sha256"]})
     for plan in plans:
         path = core.safe_path(program.repo, coordination._relative(plan["path"]))
-        if not path.is_file():
+        if not core.observed_is_file(path):
             warnings.append(f"Frozen planning input unavailable: {plan['path']}")
         elif core.sha(budget.read(path, 8 * 1024 * 1024)) != plan["sha256"]:
             warnings.append(f"Frozen planning input drifted: {plan['path']}")
@@ -939,7 +950,12 @@ def _present(path: Path) -> bool:
     try:
         path.stat()
     except FileNotFoundError:
+        _core().observe_path_probe(path, "exists", "false")
         return False
+    except OSError:
+        _core().observe_path_error(path, "publication_probe_unavailable")
+        raise
+    _core().observe_path_probe(path, "exists", "true")
     return True
 
 
@@ -1447,7 +1463,7 @@ def _completed_proof(
             == core.read_json(target.path("PREDECESSOR.json"), budget=budget),
             "Completed succession receipts conflict",
         )
-        current = core.read_json(target.path("backlog.json"), budget=budget)
+        current = _registry_state(target, budget)
         require(
             current["program_id"] == item["program_ids"][1]
             and (
@@ -1480,7 +1496,7 @@ def _completed_proof(
         and archive.get("registry_sha256") == manifest.get("registry_sha256"),
         "Completed relocation manifest/archive conflict",
     )
-    current = core.read_json(target.path("backlog.json"), budget=budget)
+    current = _registry_state(target, budget)
     require(
         current["program_id"] == item["program_ids"][1]
         and any(
@@ -1942,8 +1958,7 @@ def publication_adopt(program: Program, state: Record, name: str) -> None:
         )
         require(
             inspect_publication_inventory(program, state, list(inventory)) == inventory
-            and phases.revision(core.read_json(program.path("backlog.json")))
-            == receipt["expected_revision"],
+            and phases.revision(_registry_state(program)) == receipt["expected_revision"],
             "Adoption inputs changed before publication",
         )
         program.verify_refs(refs)
@@ -1975,9 +1990,8 @@ def publication_adopt(program: Program, state: Record, name: str) -> None:
                 ):
                     continue
                 seen.add(identifier)
-                source_state = core.read_json(
-                    core.safe_path(core.safe_path(program.repo, paths[0]), "backlog.json"),
-                    budget=reader,
+                source_state = _registry_state(
+                    core.Program(program.repo, core.safe_path(program.repo, paths[0])), reader
                 )
                 ids = (
                     [
@@ -2143,8 +2157,7 @@ def prepare_publication_reconciliation(
         )
     program.verify_refs(refs)
     require(
-        phases.revision(core.read_json(program.path("backlog.json")))
-        == receipt["expected_revision"],
+        phases.revision(_registry_state(program)) == receipt["expected_revision"],
         "Registry changed before reconciliation",
     )
     result_name = f"transactions/{item['id']}/reconciled-{phases.revision(receipt)}.json"
@@ -2495,8 +2508,7 @@ def prepare_transition(program: Program, state: Record, args: argparse.Namespace
     def precommit() -> None:
         require_completed_publication(program, state)
         require(
-            phases.revision(core.read_json(program.path("backlog.json")))
-            == receipt["expected_revision"],
+            phases.revision(_registry_state(program)) == receipt["expected_revision"],
             "Registry changed before amendment publication",
         )
         program.verify_refs([*refs, *phases.evidence_references(future.state)])

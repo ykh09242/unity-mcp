@@ -19,8 +19,10 @@ from typing import Final, Literal, Protocol, TypedDict
 
 if __package__:
     from tools import feature_program_coordination as coordination
+    from tools import feature_program_storage as storage
 else:
     import feature_program_coordination as coordination
+    import feature_program_storage as storage
 
 Json = None | bool | int | float | str | list["Json"] | dict[str, "Json"]
 Record = dict[str, Json]
@@ -655,8 +657,15 @@ def record_answer(
         )
         with program.lock():
             backlog = program.path("backlog.json")
-            _require(backlog.stat().st_size <= 8 * 1024 * 1024, "Question registry exceeds 8 MiB")
-            state = program.load()
+            _require(
+                backlog.stat().st_size <= storage.RAW_MAX_BYTES,
+                "Question registry exceeds 8 MiB plus bounded storage header",
+            )
+            # Only this append-only answer route defers artifact reads to strict save.
+            # Retry has no save, so it must run the same full validation before returning.
+            program.require_current_location()
+            state = core.parse_registry_state(program.read_registry_observation(), path=backlog)
+            program.validate(state, verify_artifacts=False)
             proposal = deepcopy(state)
             result, changed = _stage_answer(proposal, request)
             if changed:
@@ -675,6 +684,8 @@ def record_answer(
                     },
                 )
                 program.save(proposal)
+            else:
+                program.validate(state)
             return result
     except QuestionError as exc:
         error = core.ProgramError(str(exc))

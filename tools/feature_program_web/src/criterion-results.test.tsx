@@ -101,6 +101,16 @@ function withObjective(snapshot: Snapshot, patch: JsonRecord) {
 }
 
 describe('source-bound recorded criterion results', () => {
+  it('rechecks a same-revision snapshot after its completion evidence changes', () => {
+    const valid = fixture();
+    const missing = withObjective(valid, { evidence: [] });
+    expect(missing.revision).toBe(valid.revision);
+    expect(recordedCriterionResult(valid, identity)?.result.status).toBe('passed');
+    expect(recordedCriterionResult(missing, identity)).toBeNull();
+    const refreshed = fixture();
+    expect(recordedCriterionResult(refreshed, identity)?.result.status).toBe('passed');
+    expect(recordedCriterionResult(missing, identity)).toBeNull();
+  });
   it('uses exact UTF-8 text identity and retains supplied historical freshness and evidence', () => {
     expect(textDigest('abc')).toBe(criterionSha);
     const snapshot = fixture();

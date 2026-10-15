@@ -644,3 +644,245 @@ def test_director_receipt_growth_after_stat_is_bounded(
     # Then actual read allocation stays capped and no durable response is applied.
     assert state == before
     assert fixture.program.path("backlog.json").read_bytes() == backlog
+
+
+def _padded_question_body(state: inbox.Record, size: int) -> bytes:
+    """Build exact logical JSON bytes without changing any question semantics."""
+    padded = deepcopy(state)
+    padded["question_test_padding"] = ""
+    base = core.canonical(padded)
+    padded["question_test_padding"] = "x" * (size - len(base))
+    body = core.canonical(padded)
+    assert len(body) == size
+    return body
+
+
+def test_answer_retry_accepts_maximum_body_with_bounded_envelope_header(fixture: Fixture) -> None:
+    # Given an existing saved answer whose exact logical BODY reaches its 8 MiB limit.
+    from tools import feature_program_storage as storage
+
+    save_issue(fixture)
+    answer = fixture.answer()
+    path = fixture.program.path("backlog.json")
+    body = _padded_question_body(fixture.program.load(), storage.BODY_MAX_BYTES)
+    raw = storage.encode_registry(body, "1" * 64)
+    path.write_bytes(raw)
+    # When the identical answer is retried through the actual local answer transaction.
+    observed = fixture.answer()
+    # Then the allowed 80-byte physical header does not consume the logical BODY allowance.
+    assert observed == answer
+    assert len(raw) == storage.RAW_MAX_BYTES
+    assert path.read_bytes() == raw
+
+
+def test_answer_rejects_oversized_legacy_body_despite_raw_header_allowance(
+    fixture: Fixture,
+) -> None:
+    # Given legacy JSON one byte larger than BODY capacity but smaller than RAW capacity.
+    from tools import feature_program_storage as storage
+
+    save_issue(fixture)
+    fixture.answer()
+    path = fixture.program.path("backlog.json")
+    body = _padded_question_body(fixture.program.load(), storage.BODY_MAX_BYTES + 1)
+    path.write_bytes(body)
+    # When the local answer path reaches the strict explicit registry BODY reader.
+    with pytest.raises(core.ProgramError):
+        fixture.answer()
+    # Then no response or repair can be published from that oversized logical state.
+    assert path.read_bytes() == body
+
+
+def test_answer_rejects_physical_registry_beyond_header_bound(fixture: Fixture) -> None:
+    # Given physical bytes larger than the maximum BODY plus fixed header.
+    from tools import feature_program_storage as storage
+
+    save_issue(fixture)
+    path = fixture.program.path("backlog.json")
+    raw = b"x" * (storage.RAW_MAX_BYTES + 1)
+    path.write_bytes(raw)
+    # When the local answer preflight checks the known registry container.
+    with pytest.raises(core.ProgramError, match="Question registry exceeds"):
+        fixture.answer()
+    # Then oversized physical storage is rejected without mutation.
+    assert path.read_bytes() == raw
+
+
+def test_fresh_answer_publishes_matching_selected_model(fixture: Fixture) -> None:
+    # Given an open question in enabled envelope storage before any answer is saved.
+    from tools import feature_program_storage as storage
+
+    save_issue(fixture)
+    path = fixture.program.path("backlog.json")
+    original = fixture.program.read_registry_observation()
+    initial_model_id = "1" * 64
+    path.write_bytes(storage.encode_registry(original.body_bytes, initial_model_id))
+    # When a new answer follows the ordinary locked answer/save transaction.
+    receipt = fixture.answer()
+    observation = fixture.program.read_registry_observation()
+    state = fixture.program.load()
+    # Then the committed answer and exact selected model describe the same new BODY.
+    assert observation.format == "envelope-v1"
+    assert observation.model_id is not None and observation.model_id != initial_model_id
+    assert observation.body_bytes != original.body_bytes
+    assert receipt["submission_id"] == "response-one"
+    assert question(state)["answer"]["submission_id"] == receipt["submission_id"]
+    model = storage.load_model(
+        fixture.program.repo, fixture.program.directory, observation.model_id
+    )
+    assert model["binding"]["body_sha256"] == observation.body_sha256
+    assert model["program_id"] == state["program_id"]
+    if model["eligible"]:
+        assert model["snapshot"]["questions"] == inbox.snapshot_questions(state)
+    else:
+        assert model["reasons"] and "snapshot" not in model
+
+
+@pytest.mark.parametrize("retry", [False, True], ids=["new-answer", "retry"])
+@pytest.mark.parametrize("damage", ["changed", "deleted"])
+def test_answer_rejects_invalid_original_report(fixture: Fixture, retry: bool, damage: str) -> None:
+    # Given an unrelated original source report damaged after question issuance.
+    save_issue(fixture)
+    if retry:
+        fixture.answer()
+    report = fixture.program.repo / "report.md"
+    if damage == "deleted":
+        report.unlink()
+    else:
+        report.write_bytes(report.read_bytes() + b"changed source\n")
+    before = _answer_durable_bytes(fixture.program)
+    # When either success branch is requested, full original obligations still apply.
+    with pytest.raises((core.ProgramError, OSError)):
+        fixture.answer()
+    assert _answer_durable_bytes(fixture.program) == before
+
+
+def _answer_durable_bytes(program: core.Program) -> dict[str, bytes]:
+    return {
+        path.relative_to(program.directory).as_posix(): path.read_bytes()
+        for path in program.directory.rglob("*")
+        if path.is_file() and path.suffix in {".md", ".json"}
+    }
+
+
+@pytest.mark.parametrize("retry", [False, True], ids=["new-answer", "retry"])
+def test_answer_cannot_repair_corrupt_issued_question(fixture: Fixture, retry: bool) -> None:
+    # Given an otherwise valid original whose immutable issued wording was tampered with.
+    save_issue(fixture)
+    if retry:
+        fixture.answer()
+    state = fixture.program.load()
+    question(state)["issued"]["prompt"] = "Unreviewed replacement"
+    fixture.program.path("backlog.json").write_bytes(core.canonical(state))
+    before = _answer_durable_bytes(fixture.program)
+    # When answer staging could otherwise alter status/history, structural validation rejects first.
+    with pytest.raises((core.ProgramError, inbox.QuestionError), match="Issued question changed"):
+        fixture.answer()
+    assert _answer_durable_bytes(fixture.program) == before
+
+
+@pytest.mark.parametrize("retry", [False, True], ids=["new-answer", "retry"])
+@pytest.mark.parametrize("marker", ["RELOCATED.json", "RELOCATION_INCOMPLETE.json"])
+def test_answer_keeps_current_location_gate(fixture: Fixture, retry: bool, marker: str) -> None:
+    # Given a relocation guard appearing after the question/optional answer was recorded.
+    save_issue(fixture)
+    if retry:
+        fixture.answer()
+    fixture.program.path(marker).write_bytes(core.canonical({"destination": "elsewhere"}))
+    before = _answer_durable_bytes(fixture.program)
+    # When the answer endpoint is called, it cannot write or report success from the old endpoint.
+    with pytest.raises(core.ProgramError):
+        fixture.answer()
+    assert _answer_durable_bytes(fixture.program) == before
+
+
+def _unrelated_answer_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provenance: bool):
+    from tools.tests.test_feature_program import fp as history_core, make_small_program
+    from tools.tests.test_feature_program_review_throughput_integration import (
+        _shared_provenance_rounds,
+    )
+
+    for module in (core, history_core):
+        monkeypatch.setattr(module, "git", lambda _repo, args: "" if args[0] == "status" else HEAD)
+    sample = make_small_program(tmp_path / "history", "answer-history", ("S01", "S02"))
+    if provenance:
+        target = _shared_provenance_rounds(sample)
+        damaged = sample.program.path(target["attachments"][0]["attachment_ref"]["path"])
+    else:
+        assert sample.claim() == 0
+        sample.submit()
+        assert sample.run("complete", "S01", "--review", sample.review()) == 0
+        attempt = sample.program.current_attempt(sample.program.task(sample.program.load(), "S01"))
+        damaged = sample.program.path(attempt["evidence"][0]["path"])
+    # The open question affects S02; completed S01 and its retained graph are unrelated.
+    receipt = sample.write(
+        "question-input.json",
+        {
+            "id": "choice-one",
+            "version": 1,
+            "actor_id": "leader",
+            "prompt": "Choose S02 scope",
+            "options": ["Small scope"],
+            "why": "Synthetic unrelated history regression",
+            "requested_decision": "Select scope",
+            "affected_task_ids": ["S02"],
+            "objective_id": None,
+            "source_head": HEAD,
+            "scope": ["src/S02.py"],
+            "source_digest": sample.program.source_digest(["src/S02.py"]),
+        },
+    )
+    assert sample.run("question-issue", "--input", receipt) == 0
+    return Fixture(sample.program), damaged
+
+
+@pytest.mark.parametrize("retry", [False, True], ids=["new-answer", "retry"])
+@pytest.mark.parametrize("provenance", [False, True], ids=["terminal-ref", "transitive-copy"])
+def test_answer_rejects_invalid_unrelated_retained_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retry: bool, provenance: bool
+) -> None:
+    # Given genuine normal terminal records and, when selected, a transitive reuse manifest.
+    fixture, damaged = _unrelated_answer_history(tmp_path, monkeypatch, provenance)
+    if retry:
+        fixture.answer()
+    damaged.write_bytes(damaged.read_bytes() + b"tampered")
+    before = _answer_durable_bytes(fixture.program)
+    # When either answer branch is requested, no question edit hides that unrelated corruption.
+    with pytest.raises(core.ProgramError):
+        fixture.answer()
+    assert _answer_durable_bytes(fixture.program) == before
+
+
+def test_answer_save_rechecks_evidence_changed_after_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given unrelated terminal evidence valid during the initial canonical structural read.
+    fixture, damaged = _unrelated_answer_history(tmp_path, monkeypatch, False)
+    original_stage = inbox._stage_answer
+    before = _answer_durable_bytes(fixture.program)
+
+    def stage_then_damage(state, request):
+        result = original_stage(state, request)
+        damaged.write_bytes(damaged.read_bytes() + b"late change")
+        return result
+
+    monkeypatch.setattr(inbox, "_stage_answer", stage_then_damage)
+    # When an artifact changes only after the answer has been staged in memory.
+    with pytest.raises(core.ProgramError):
+        fixture.answer()
+    after = _answer_durable_bytes(fixture.program)
+    assert after["backlog.json"] == before["backlog.json"]
+    assert all(after[name] == content for name, content in before.items() if name.endswith(".md"))
+
+
+def test_answer_registry_duplicate_keys_reject_before_staging(fixture: Fixture) -> None:
+    # Given duplicate canonical keys at the explicit BODY parser boundary.
+    save_issue(fixture)
+    path = fixture.program.path("backlog.json")
+    raw = path.read_bytes()
+    path.write_bytes(b'{"schema_version":1,' + raw[1:])
+    before = _answer_durable_bytes(fixture.program)
+    # When a new answer arrives, the structural preflight remains strict JSON.
+    with pytest.raises(core.ProgramError, match="Duplicate JSON key"):
+        fixture.answer()
+    assert _answer_durable_bytes(fixture.program) == before

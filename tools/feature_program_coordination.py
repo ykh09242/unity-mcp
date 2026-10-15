@@ -10,6 +10,7 @@ import argparse
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 import re
@@ -206,7 +207,11 @@ def _parents(items: dict[str, Record], name: str) -> None:
 
 def _categories(state: Record) -> list[Json]:
     """Existing workstreams remain roots; uncovered tasks keep their root membership."""
-    tasks = _indexed(state.get("tasks"), "task")
+    return _categories_for_tasks(state, _indexed(state.get("tasks"), "task"))
+
+
+def _categories_for_tasks(state: Record, tasks: dict[str, Record]) -> list[Json]:
+    """Build detached category facts using this validation's exact task index."""
     streams = _indexed(state.get("workstreams", []), "workstream")
     categories = deepcopy(_indexed(state.get("categories", []), "category"))
     for identifier, stream in streams.items():
@@ -297,12 +302,23 @@ def _authority(value: Json) -> Record:
     return authority
 
 
-def validate_governance(state: Record) -> None:
+@dataclass(frozen=True, slots=True)
+class _CheckedGovernance:
+    """Private structural facts owned by one immutable captured state."""
+
+    state: Record = field(repr=False)
+    categories: tuple[Json, ...]
+    actors: tuple[Record, ...]
+    tasks: tuple[Record, ...]
+
+
+def validate_governance(state: Record) -> _CheckedGovernance:
     """Validate optional metadata without loading files or altering legacy state."""
-    _categories(state)
+    tasks = _indexed(state["tasks"], "task")
+    categories = _categories_for_tasks(state, tasks)
     actors = _indexed(state.get("actors", []), "actor")
     _parents(actors, "Actor")
-    for task in _indexed(state["tasks"], "task").values():
+    for task in tasks.values():
         for value in _items(task.get("attempts", []), "attempts"):
             attempt = _record(value, "attempt")
             assignment = attempt.get("assignment")
@@ -375,7 +391,6 @@ def validate_governance(state: Record) -> None:
             "Outgoing receipt lacks frozen evidence",
         )
         if role == "worker":
-            tasks = _indexed(state["tasks"], "task")
             task_id = _text(handoff.get("task_id"), "handoff task")
             attempt = handoff.get("attempt")
             _require(task_id in tasks, "Unknown handoff task")
@@ -445,8 +460,11 @@ def validate_governance(state: Record) -> None:
                 handoff.get("accept_ref") in _items(handoff["evidence"], "handoff evidence"),
                 "Acceptance lacks frozen evidence",
             )
-    _validate_objective(state.get("objective"), set(_indexed(state["tasks"], "task")))
+    _validate_objective(state.get("objective"), set(tasks))
     evidence_references(state)
+    return _CheckedGovernance(
+        state, tuple(categories), tuple(actors.values()), tuple(tasks.values())
+    )
 
 
 def evidence_references(state: Record) -> list[Json]:
@@ -481,8 +499,13 @@ def evidence_references(state: Record) -> list[Json]:
 
 def snapshot_metadata(state: Record) -> Metadata:
     """Detach metadata; saved assignments never imply verified runtime liveness."""
-    validate_governance(state)
-    actors = deepcopy(_indexed(state.get("actors", []), "actor"))
+    return _snapshot_from_checked(state, validate_governance(state))
+
+
+def _snapshot_from_checked(state: Record, checked: _CheckedGovernance) -> Metadata:
+    """Project first-pass facts only within the same immutable capture."""
+    _require(checked.state is state, "Checked governance belongs to another state")
+    actors = {_text(actor["id"], "actor ID"): deepcopy(actor) for actor in checked.actors}
     for actor in actors.values():
         actor.setdefault("parent_id", None)
         actor.setdefault("model_id", None)
@@ -492,8 +515,7 @@ def snapshot_metadata(state: Record) -> Metadata:
         actor.setdefault("observed_at", None)
         actor.setdefault("staffing_status", "active")
         actor["assignments"] = []
-    for value in _items(state.get("tasks"), "tasks"):
-        task = _record(value, "task")
+    for task in checked.tasks:
         for attempt_value in _items(task.get("attempts", []), "attempts"):
             attempt = _record(attempt_value, "attempt")
             owner = _text(attempt.get("owner"), "attempt owner")
@@ -536,7 +558,7 @@ def snapshot_metadata(state: Record) -> Metadata:
                 }
             )
     return {
-        "categories": _categories(state),
+        "categories": deepcopy(list(checked.categories)),
         "actors": list(actors.values()),
         "handoffs": deepcopy(_items(state.get("handoffs", []), "handoffs")),
         "director": deepcopy(state.get("director")),

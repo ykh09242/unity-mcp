@@ -56,6 +56,57 @@ the same program directory; substitute your own consistently. Use `--repo` for a
 repository root. Tests create their own isolated
 synthetic reports; they do not depend on a user's private backlog.
 
+## Optional prepared dashboard reads
+
+Large programs can prepare the ordinary dashboard result when saving state, so each read
+checks its current inputs instead of rebuilding every historical projection. Enable this
+explicitly with the accepted director identity, or `leader` before director appointment:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example storage-enable --owner director-example --reason "Prepare verified dashboard reads"
+python tools/feature_program.py --program-dir .work/programs/example storage-export
+```
+
+Stop an older server before enabling the new format, then run the server from the same code
+version used for preparation. `storage-enable` also explicitly rebuilds an already enabled
+program after producer changes. It requires a usable model, checks the current physical
+registry before publication, and leaves the previous selection intact on preparation failure.
+Its result identifies the actual stored object and preparation duration. Rebuilding does not
+replay task history or change the logical state. `storage-export` emits the exact logical JSON
+body to standard output without modifying storage.
+
+The logical registry remains named `backlog.json`. Enabled programs store that exact JSON
+body in a bounded, versioned binary envelope with a separately selected model digest. Existing
+logical revisions, receipts and audit identities remain unchanged. Use the explicit export
+or program APIs for JSON access; generic JSON readers and older tool versions cannot read the
+envelope. Initial enable preserves the original bytes at
+`recovery/storage/<original-storage-sha256>/original-backlog.json` inside the program.
+
+Derived models use the Python standard library SQLite implementation under
+`.work/read-models/<program-location-identity>/read-model.sqlite3`. This store is outside the
+program relocation tree and is not the task authority. A writer commits an immutable model
+before atomically selecting it in the registry; an interrupted, unselected object cannot
+replace current state. A committed operation is never repeated because later rendering or
+store maintenance failed. Keep the existing committed-state recovery procedure.
+
+A prepared read still freshly checks file bytes, missing paths, directory membership,
+excluded boundaries, producer/runtime identity, generated views and the final registry
+selection. It does not treat file timestamps as proof of unchanged contents. The model is
+used only for the ordinary unselected dashboard projection. Selected diagnostics and command
+preparation retain their existing validation. Read-only requests never create, migrate or
+repair the store, and conditional HTTP responses still require current input checks.
+
+Missing, changed, corrupt or incompatible derived data takes the full validation path; this
+is a latency miss, not a successful fast read. A valid normal mutation may record an explicitly
+unusable derived model for an identified eligibility limitation, without a servable snapshot.
+Integrity, authority and publication failures still reject the mutation. Explicit enable or
+rebuild requires a usable model. Verify cold reads, completed refreshes and a normal new
+revision against the actual accumulated program; preparation time is a separate measurement.
+
+Relocation keeps raw archive hashes and original backups intact. The destination publishes
+logical JSON without carrying the old location's model selection. Enable prepared reads there
+explicitly after verifying the moved program.
+
 ## Relocating a private program
 
 Stop services and coordinate with writers before moving an existing program. Choose an

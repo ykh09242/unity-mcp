@@ -7,6 +7,7 @@ Plans and attachments are inert immutable evidence, never commands or an approva
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 import re
 from types import ModuleType
@@ -42,6 +43,14 @@ OPERATIONS: Final = frozenset(
 
 class ClosureError(coordination.GovernanceError):
     """A closure input, immutable binding or publication outcome is unusable."""
+
+
+@dataclass(frozen=True, slots=True)
+class _StageInspection:
+    """Exact event facts already checked within one immutable plan/state inspection."""
+
+    stage: Record
+    status: str
 
 
 class ClosureHost(Protocol):
@@ -241,6 +250,30 @@ def readiness(
     verification_facts: Record | None = None,
 ) -> Record:
     """Bound ordinary closure obligations once, without Git/provider calls or writes."""
+    return _readiness(
+        program, state, limit, prevalidated=prevalidated, verification_facts=verification_facts
+    )
+
+
+def _readiness_from_checked(
+    program: Program, state: Record, checked: object, limit: int = 50
+) -> Record:
+    """Reuse initial validation only; current terminal and verification guards still run."""
+    _require(
+        getattr(checked, "state", None) is state, "Readiness initial-state observation differs"
+    )
+    return _readiness(program, state, limit, checked=checked)
+
+
+def _readiness(
+    program: Program,
+    state: Record,
+    limit: int,
+    *,
+    prevalidated: bool = False,
+    verification_facts: Record | None = None,
+    checked: object | None = None,
+) -> Record:
     _require(type(limit) is int and 0 < limit <= REFERENCE_LIMIT, "Invalid closure row limit")
     core = _core()
     rows: list[Json] = []
@@ -262,7 +295,8 @@ def readiness(
     try:
         if not prevalidated:
             program.require_current_location()
-            program.validate(state)
+            if checked is None:
+                program.validate(state)
         director = coordination.current_director_id(state)
         goal = _record(state.get("objective"), "current objective")
         members = core.strings(goal.get("task_ids"), "objective members")
@@ -411,10 +445,19 @@ def readiness(
 
 def prepare_delivery_inputs(program: Program, state: Record, request: Record) -> Record:
     """Fill mechanical current individual bindings; required provider facts stay explicit."""
+    return _prepare_delivery_inputs_from_checked(program, state, request, program.validate(state))
+
+
+def _prepare_delivery_inputs_from_checked(
+    program: Program, state: Record, request: Record, checked: object
+) -> Record:
     core = _core()
+    _require(getattr(checked, "state", None) is state, "Delivery initial-state observation differs")
     proposal = deepcopy(request)
     shared = _items(proposal.pop("shared_evidence", []), "shared delivery evidence")
     frozen_provider = _reference(proposal.get("provider"))
+    original_provider: Record | None = None
+    provider_reader = core.ReadBudget(64 * 1024 * 1024)
     rows: list[Json] = []
     task_ids: set[str] = set()
     for value in _items(request.get("tasks"), "delivery tasks"):
@@ -479,7 +522,11 @@ def prepare_delivery_inputs(program: Program, state: Record, request: Record) ->
                 for item in attached_rows
                 if _record(item["origin_ref"], "origin")["path"] in policies
             }
-            provider = core.authoring.provider_observation(program, frozen_provider)
+            if original_provider is None:
+                original_provider = core.authoring.provider_observation(
+                    program, frozen_provider, provider_reader
+                )
+            provider = original_provider
             derived_provider = rebind_policy_paths(provider, mapping)
             derived_context = rebind_policy_paths(context, mapping)
             reverse = {destination: origin for origin, destination in mapping.items()}
@@ -523,13 +570,13 @@ def prepare_delivery_inputs(program: Program, state: Record, request: Record) ->
                 provenance_path,
             ]
             # Each derived capture has distinct task policy paths, so assess individually.
-            assembled = core.authoring.delivery_inputs(
-                program, state, {"provider": derived_ref, "tasks": [binding]}
+            assembled = core.authoring._delivery_inputs_from_checked(
+                program, state, {"provider": derived_ref, "tasks": [binding]}, checked
             )
             rows.extend(_items(assembled["inputs"], "prepared delivery inputs"))
             continue
-        ordinary = core.authoring.delivery_inputs(
-            program, state, {"provider": frozen_provider, "tasks": [binding]}
+        ordinary = core.authoring._delivery_inputs_from_checked(
+            program, state, {"provider": frozen_provider, "tasks": [binding]}, checked
         )
         rows.extend(_items(ordinary["inputs"], "prepared delivery inputs"))
     _require(bool(rows), "Delivery preparation requires individual tasks")
@@ -788,7 +835,10 @@ def prepare_inputs(program: Program, state: Record, request: Record, host: Closu
                 program, supplied, materialize=request.get("materialize") is True
             )
         case "delivery":
-            result = prepare_delivery_inputs(program, state, supplied)
+            validate_initial = getattr(host, "_validate_initial", program.validate)
+            result = _prepare_delivery_inputs_from_checked(
+                program, state, supplied, validate_initial(state)
+            )
             if "receipt_destinations" in request:
                 _materialize_receipts(
                     program,
@@ -898,7 +948,8 @@ def prepare_plan(program: Program, state: Record, request: Record, host: Closure
     """Materialize inert inputs then preflight every projected predecessor before commit."""
     core = _core()
     program.require_current_location()
-    program.validate(state)
+    validate_initial = getattr(host, "_validate_initial", program.validate)
+    validate_initial(state)
     producer = deepcopy(host.identity())
     owner = _text(request.get("owner_id"), "plan owner")
     stages = _items(request.get("stages"), "plan stages")
@@ -1194,6 +1245,8 @@ def inspect_plan(program: Program, plan: Record, state: Record, host: ClosureHos
     results: list[Json] = []
     seen_pending = False
     previous_revision = plan.get("initial_revision")
+    context_factory = getattr(host, "_inspection_context", None)
+    context = context_factory(state, refs) if context_factory is not None else None
     for value in _items(plan.get("stages"), "plan stages"):
         stage = _record(value, "stage")
         _require(stage.get("operation") in OPERATIONS, "Unsupported closure operation")
@@ -1219,11 +1272,14 @@ def inspect_plan(program: Program, plan: Record, state: Record, host: ClosureHos
             _require(not seen_pending, "Closure commit order differs")
         else:
             seen_pending = True
-        host_result = (
-            host.inspect_stage(state, stage)
-            if exact or not was_pending
-            else {"status": "not_started"}
-        )
+        if exact or not was_pending:
+            host_result = (
+                context.inspect_stage(_StageInspection(stage, status))
+                if context is not None
+                else host.inspect_stage(state, stage)
+            )
+        else:
+            host_result = {"status": "not_started"}
         _require(
             host_result.get("status") == status,
             "Canonical closure stage conflicts with host assessment",
@@ -1235,6 +1291,8 @@ def inspect_plan(program: Program, plan: Record, state: Record, host: ClosureHos
                 "view_recovery_required": host_result.get("view_recovery_required", False),
             }
         )
+    if context is not None:
+        context.recheck()
     committed = sum(_record(row, "stage")["status"] == "committed" for row in results)
     return _bounded(
         {

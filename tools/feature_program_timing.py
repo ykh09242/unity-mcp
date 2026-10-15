@@ -6,7 +6,7 @@ no readiness, execution or review authority and never mutate the supplied record
 
 from collections import defaultdict
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -126,9 +126,35 @@ def _instant(value: Record | None) -> tuple[datetime | None, str | None]:
         return None, "invalid_timestamp"
 
 
-def _delta(start: Record | None, end: Record | None) -> tuple[float | None, list[Json]]:
-    first, first_problem = _instant(start)
-    last, last_problem = _instant(end)
+@dataclass(frozen=True, slots=True)
+class _EndpointFacts:
+    point: Record | None
+    instant: datetime | None
+    problem: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectionFacts:
+    """Derived facts owned by one pure projection; entries retain their input objects."""
+
+    tasks: dict[str, Record]
+    endpoints: dict[int, tuple[Record, _EndpointFacts]] = field(default_factory=dict)
+
+    def endpoint(self, value: Record | None) -> _EndpointFacts:
+        if value is None:
+            return _EndpointFacts(None, None, "missing_endpoint")
+        key = id(value)
+        if key not in self.endpoints:
+            point = _endpoint(value)
+            instant, problem = _instant(point)
+            self.endpoints[key] = (value, _EndpointFacts(point, instant, problem))
+        return self.endpoints[key][1]
+
+
+def _delta(start: _EndpointFacts, end: _EndpointFacts) -> tuple[float | None, list[Json]]:
+    first, first_problem = start.instant, start.problem
+    last, last_problem = end.instant, end.problem
+    start, end = start.point, end.point
     problems: list[Json] = [item for item in (first_problem, last_problem) if item]
     if start is not None and end is not None:
         clock = start.get("clock_id")
@@ -167,6 +193,7 @@ def _outcome(value: Json) -> str:
 
 
 def _interval(
+    facts: _ProjectionFacts,
     base: Record,
     kind: str,
     start_value: Record | None,
@@ -177,12 +204,14 @@ def _interval(
     terminal: bool = False,
     as_of: Record | None = None,
 ) -> Record:
-    start, end = _endpoint(start_value), _endpoint(end_value)
-    seconds, reasons = _delta(start, end)
+    first, last = facts.endpoint(start_value), facts.endpoint(end_value)
+    observed = facts.endpoint(as_of)
+    start, end = first.point, last.point
+    seconds, reasons = _delta(first, last)
     state = "closed" if seconds is not None else "unknown"
     age = None
     if end is None and start is not None:
-        instant, problem = _instant(start)
+        instant, problem = first.instant, first.problem
         if (
             instant is not None
             and problem is None
@@ -192,7 +221,7 @@ def _interval(
             state = "canonical_terminal_timing_unknown" if terminal else "open"
             reasons = ["terminal_time_unobserved"] if terminal else []
             if not terminal and as_of is not None:
-                elapsed, age_problems = _delta(start, as_of)
+                elapsed, age_problems = _delta(first, observed)
                 if elapsed is not None:
                     age = {
                         "as_of": as_of["observed_at"],
@@ -208,12 +237,12 @@ def _interval(
             if terminal:
                 state = "canonical_terminal_timing_unknown"
     if as_of is not None:
-        for point in (start, end):
+        for endpoint in (first, last):
+            point = endpoint.point
             if point is None or point.get("clock_id") != as_of.get("clock_id"):
                 continue
-            instant, _ = _instant(point)
-            observed, _ = _instant(as_of)
-            if instant is not None and observed is not None and instant > observed:
+            instant = endpoint.instant
+            if instant is not None and observed.instant is not None and instant > observed.instant:
                 seconds, age, state = None, None, "unknown"
                 reasons.append("future_endpoint")
     identity = [base.get("subject_id"), kind, segment]
@@ -268,10 +297,15 @@ def _single(values: list[Record], kind: str) -> Record | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _indexed_single(values: dict[str, list[Record]], kind: str) -> Record | None:
+    matches = values.get(kind, [])
+    return matches[0] if len(matches) == 1 else None
+
+
 def _review_rows(
-    state: Record, handoffs: list[Record]
+    state: Record, handoffs: list[Record], facts: _ProjectionFacts
 ) -> tuple[list[Record], list[Record], set[tuple]]:
-    tasks = _task_map(state)
+    tasks = facts.tasks
     intervals: list[Record] = []
     current: list[Record] = []
     covered: set[tuple] = set()
@@ -334,7 +368,16 @@ def _review_rows(
                 }.get(str(row.get("phase")), "unobserved"),
             }
         )
-        submitted = _single(observations, "submitted")
+        by_kind: dict[str, list[Record]] = defaultdict(list)
+        by_dispatch: dict[str | None, dict[str, list[Record]]] = {}
+        for value in observations:
+            kind = str(value.get("kind"))
+            by_kind[kind].append(value)
+            dispatch = value.get("dispatch_attempt_id")
+            by_dispatch.setdefault(dispatch, defaultdict(list))[kind].append(value)
+
+        submitted = _indexed_single(by_kind, "submitted")
+        as_of = _as_of(row)
         dispatch_ids = list(
             dict.fromkeys(
                 str(value["dispatch_attempt_id"])
@@ -345,23 +388,21 @@ def _review_rows(
         row_intervals: list[Record] = []
         active_intervals: list[Record] = []
         for dispatch_id in dispatch_ids:
-            selected = [
-                value for value in observations if value.get("dispatch_attempt_id") == dispatch_id
-            ]
+            selected = by_dispatch.get(dispatch_id, {})
             # Reconciliation can replace an explicitly referenced unknown outcome, not a sent start.
-            sent = _single(selected, "dispatch_sent")
+            sent = _indexed_single(selected, "dispatch_sent")
             dispatch = (
                 sent
-                or _single(selected, "dispatch_failed")
-                or _single(selected, "dispatch_unknown")
+                or _indexed_single(selected, "dispatch_failed")
+                or _indexed_single(selected, "dispatch_unknown")
             )
-            acknowledged = _single(selected, "reviewer_acknowledged")
-            started = _single(selected, "review_started")
-            finished = _single(selected, "terminal")
+            acknowledged = _indexed_single(selected, "reviewer_acknowledged")
+            started = _indexed_single(selected, "review_started")
+            finished = _indexed_single(selected, "terminal")
             if (
                 finished is None
                 and started is not None
-                and _single(observations, "review_started") is started
+                and _indexed_single(by_kind, "review_started") is started
             ):
                 finished = _single(
                     [
@@ -396,6 +437,7 @@ def _review_rows(
                     start_value = None
                 active_intervals.append(
                     _interval(
+                        facts,
                         outcome_base,
                         kind,
                         start_value,
@@ -403,12 +445,12 @@ def _review_rows(
                         segment=[dispatch_id, (start_value or {}).get("id") or first],
                         label=label,
                         terminal=row.get("canonical_terminal") is True or finished is not None,
-                        as_of=_as_of(row),
+                        as_of=as_of,
                     )
                 )
             row_intervals.extend(active_intervals)
-        direct_start = _single(observations, "review_started")
-        direct_terminal = _single(observations, "terminal")
+        direct_start = _indexed_single(by_kind, "review_started")
+        direct_terminal = _indexed_single(by_kind, "terminal")
         # These direct spans belong to the submission, not each failed dispatch trial.
         direct_base = {**base, "outcome": _outcome((direct_terminal or {}).get("outcome"))}
         direct_rows = []
@@ -418,6 +460,7 @@ def _review_rows(
         ):
             direct_rows.append(
                 _interval(
+                    facts,
                     direct_base,
                     kind,
                     submitted,
@@ -425,7 +468,7 @@ def _review_rows(
                     segment="submission",
                     label=label,
                     terminal=row.get("canonical_terminal") is True,
-                    as_of=_as_of(row),
+                    as_of=as_of,
                 )
             )
         row_intervals.extend(direct_rows)
@@ -492,9 +535,23 @@ def _review_rows(
     return intervals, current, covered
 
 
-def _legacy_rows(state: Record, covered: set[tuple]) -> tuple[list[Record], list[Record]]:
+def _legacy_rows(
+    state: Record, covered: set[tuple], facts: _ProjectionFacts
+) -> tuple[list[Record], list[Record]]:
     intervals, current = [], []
     events = _records(state.get("events", []))
+    submissions: dict[tuple, list[Record]] = defaultdict(list)
+    verdicts: dict[tuple, list[Record]] = defaultdict(list)
+    for event in events:
+        match event.get("action"):
+            case "submit":
+                submissions[
+                    (event.get("id"), _digest(event.get("receipt")), event.get("source_digest"))
+                ].append(event)
+            case "complete" | "rework":
+                verdicts[
+                    (event.get("id"), _digest(event.get("review")), event.get("source_digest"))
+                ].append(event)
     for task in _records(state.get("tasks", [])):
         attempts = _records(task.get("attempts", []))
         for attempt in attempts:
@@ -522,27 +579,32 @@ def _legacy_rows(state: Record, covered: set[tuple]) -> tuple[list[Record], list
                 )
                 terminal = round_item.get("review") is not None or task.get("status") == "done"
                 rows = [
-                    _interval(base, kind, None, None, segment=first, label=label, terminal=terminal)
+                    _interval(
+                        facts, base, kind, None, None, segment=first, label=label, terminal=terminal
+                    )
                     for kind, first, _, label in REVIEW_METRICS
                 ]
                 intervals.extend(rows)
-                starts = [
-                    event
-                    for event in events
-                    if event.get("action") == "submit"
-                    and event.get("id") == task["id"]
-                    and event.get("receipt") == round_item.get("receipt")
-                    and event.get("source_digest") == round_item.get("source_digest")
-                ]
-                ends = [
-                    event
-                    for event in events
-                    if event.get("action") in {"complete", "rework"}
-                    and event.get("id") == task["id"]
-                    and round_item.get("review") is not None
-                    and event.get("review") == round_item["review"]
-                    and event.get("source_digest") == round_item.get("source_digest")
-                ]
+                starts = submissions.get(
+                    (
+                        task["id"],
+                        _digest(round_item.get("receipt")),
+                        round_item.get("source_digest"),
+                    ),
+                    [],
+                )
+                ends = (
+                    verdicts.get(
+                        (
+                            task["id"],
+                            _digest(round_item.get("review")),
+                            round_item.get("source_digest"),
+                        ),
+                        [],
+                    )
+                    if round_item.get("review") is not None
+                    else []
+                )
                 if len(starts) == len(ends) == 1:
 
                     def recorded(event: Record) -> Record:
@@ -558,6 +620,7 @@ def _legacy_rows(state: Record, covered: set[tuple]) -> tuple[list[Record], list
 
                     intervals.append(
                         _interval(
+                            facts,
                             {**base, "outcome": _outcome(ends[0]["action"])},
                             "recorded_history_span",
                             recorded(starts[0]),
@@ -598,7 +661,7 @@ def _legacy_rows(state: Record, covered: set[tuple]) -> tuple[list[Record], list
     return intervals, current
 
 
-def _recorded_block_rows(state: Record) -> list[Record]:
+def _recorded_block_rows(state: Record, facts: _ProjectionFacts) -> list[Record]:
     """Retain uniquely bound canonical block history without calling it actual wait."""
     result = []
     events = _records(state.get("events", []))
@@ -606,19 +669,19 @@ def _recorded_block_rows(state: Record) -> list[Record]:
         for attempt in _records(task.get("attempts", [])):
             blocks = _records(attempt.get("blocks", []))
             resolutions = _records(attempt.get("resolutions", []))
-            origins = sorted({int(item["origin_event_index"]) for item in blocks})
-            for origin in origins:
+            grouped: dict[int, set[int]] = defaultdict(set)
+            for item in blocks:
+                grouped[int(item["origin_event_index"])].add(item["event_index"])
+            resolved: dict[int, list[Record]] = defaultdict(list)
+            for item in resolutions:
+                index = _record(_record(item.get("binding", {})).get("block", {})).get(
+                    "event_index"
+                )
+                resolved[index].append(item)
+            for origin in sorted(grouped):
                 _require(0 <= origin < len(events), "Unavailable recorded block identity")
                 first = events[origin]
-                members = {
-                    item["event_index"] for item in blocks if item["origin_event_index"] == origin
-                }
-                endings = [
-                    item
-                    for item in resolutions
-                    if _record(_record(item.get("binding", {})).get("block", {})).get("event_index")
-                    in members
-                ]
+                endings = [item for index in grouped[origin] for item in resolved.get(index, [])]
                 end = endings[0] if len(endings) == 1 else None
                 base = _base(
                     task,
@@ -651,6 +714,7 @@ def _recorded_block_rows(state: Record) -> list[Record]:
 
                 result.append(
                     _interval(
+                        facts,
                         base,
                         "recorded_history_span",
                         point(first, "timestamp", "recorded_block"),
@@ -662,13 +726,15 @@ def _recorded_block_rows(state: Record) -> list[Record]:
     return result
 
 
-def _missing_capture_rows(state: Record, facts: Record, captures: list[Record]) -> list[Record]:
+def _missing_capture_rows(
+    state: Record, verification: Record, captures: list[Record], facts: _ProjectionFacts
+) -> list[Record]:
     """Keep known referenced-but-unavailable captures in the coverage denominator."""
     available = {_record(item["reference"]).get("sha256") for item in captures}
     seen = set()
     result = []
-    tasks = _task_map(state)
-    for item in _records(facts.get("records", [])):
+    tasks = facts.tasks
+    for item in _records(verification.get("records", [])):
         value = _record(item["input"])
         if value.get("run_capture_ref") is None:
             continue
@@ -688,6 +754,7 @@ def _missing_capture_rows(state: Record, facts: Record, captures: list[Record]) 
             request_id=item.get("request_id"),
         )
         measured = _interval(
+            facts,
             base,
             "command_process",
             None,
@@ -700,9 +767,11 @@ def _missing_capture_rows(state: Record, facts: Record, captures: list[Record]) 
     return result
 
 
-def _verification_rows(state: Record, facts: Record) -> list[Record]:
-    records = _records(facts.get("records", []))
-    tasks = _task_map(state)
+def _verification_rows(
+    state: Record, verification: Record, facts: _ProjectionFacts
+) -> list[Record]:
+    records = _records(verification.get("records", []))
+    tasks = facts.tasks
     grouped: dict[str, list[Record]] = defaultdict(list)
     newest = {}
     for item in records:
@@ -727,7 +796,7 @@ def _verification_rows(state: Record, facts: Record) -> list[Record]:
             subject_id=["verification", request_id, request.get("request_version")],
             request_id=request_id,
         )
-        assessed = _record(facts.get("applicability", {})).get(request_id, "unavailable")
+        assessed = _record(verification.get("applicability", {})).get(request_id, "unavailable")
         _require(
             assessed in {"current", "stale", "unavailable"}, "Invalid assessed timing applicability"
         )
@@ -764,6 +833,7 @@ def _verification_rows(state: Record, facts: Record) -> list[Record]:
                     if waiting is not None and kind != "resolution":
                         result.append(
                             _interval(
+                                facts,
                                 {
                                     **base,
                                     "observation_phase": kind,
@@ -781,6 +851,7 @@ def _verification_rows(state: Record, facts: Record) -> list[Record]:
                     if blocked is not None:
                         result.append(
                             _interval(
+                                facts,
                                 {
                                     **base,
                                     "observation_phase": kind,
@@ -807,6 +878,7 @@ def _verification_rows(state: Record, facts: Record) -> list[Record]:
                     if terminal:
                         for started in running:
                             measured = _interval(
+                                facts,
                                 {
                                     **base,
                                     "observation_phase": kind,
@@ -841,6 +913,7 @@ def _verification_rows(state: Record, facts: Record) -> list[Record]:
             if opened is not None:
                 result.append(
                     _interval(
+                        facts,
                         {**base, "observation_phase": phase, "cause": cause},
                         kind,
                         opened,
@@ -853,6 +926,7 @@ def _verification_rows(state: Record, facts: Record) -> list[Record]:
         for started in running:
             result.append(
                 _interval(
+                    facts,
                     {**base, "observation_phase": phase, "cause": "verification_running"},
                     "verification_observed_span",
                     started,
@@ -864,11 +938,11 @@ def _verification_rows(state: Record, facts: Record) -> list[Record]:
     return result
 
 
-def _capture_rows(state: Record, facts: list[Record]) -> list[Record]:
+def _capture_rows(state: Record, captures: list[Record], facts: _ProjectionFacts) -> list[Record]:
     result: list[Record] = []
     seen: dict[str, str] = {}
-    tasks = _task_map(state)
-    for item in facts:
+    tasks = facts.tasks
+    for item in captures:
         capture = _record(item.get("capture"))
         reference = _record(item.get("reference"))
         identity = _digest(["original_capture", reference["sha256"]])
@@ -908,6 +982,7 @@ def _capture_rows(state: Record, facts: list[Record]) -> list[Record]:
             }
         )
         measured = _interval(
+            facts,
             base,
             "command_process",
             start,
@@ -921,8 +996,6 @@ def _capture_rows(state: Record, facts: list[Record]) -> list[Record]:
             type(elapsed) in {int, float}
             and math.isfinite(elapsed)
             and elapsed >= 0
-            and _instant(start)[0] is not None
-            and _instant(end)[0] is not None
             and process.get("clock_id")
             and measured["closed_seconds"] is not None
         ):
@@ -1005,21 +1078,22 @@ def project(
         and collection.get("shown", len(handoffs)) == len(handoffs),
         "Timing requires complete handoff facts before bounding",
     )
-    intervals, current, covered = _review_rows(state, handoffs)
-    legacy, legacy_current = _legacy_rows(state, covered)
+    facts = _ProjectionFacts(_task_map(state))
+    intervals, current, covered = _review_rows(state, handoffs, facts)
+    legacy, legacy_current = _legacy_rows(state, covered, facts)
     intervals.extend(legacy)
     current.extend(legacy_current)
-    intervals.extend(_recorded_block_rows(state))
-    intervals.extend(_verification_rows(state, verification_facts))
-    intervals.extend(_capture_rows(state, capture_facts))
-    intervals.extend(_missing_capture_rows(state, verification_facts, capture_facts))
+    intervals.extend(_recorded_block_rows(state, facts))
+    intervals.extend(_verification_rows(state, verification_facts, facts))
+    intervals.extend(_capture_rows(state, capture_facts, facts))
+    intervals.extend(_missing_capture_rows(state, verification_facts, capture_facts, facts))
     intervals.sort(key=lambda row: str(row["interval_id"]))
     current.sort(key=lambda row: str(row["id"]))
     _require(
         len({row["interval_id"] for row in intervals}) == len(intervals),
         "Duplicate logical timing interval",
     )
-    tasks = _task_map(state)
+    tasks = facts.tasks
     objective = _record(state.get("objective") or {})
     members = set(objective.get("task_ids", []))
     _require(members <= tasks.keys(), "Timing objective contains unknown member")
@@ -1052,7 +1126,9 @@ def project(
                 "membership_revision": objective.get("membership_revision"),
                 "task_total": len(members),
                 "interval_total": len(selected),
-                "summaries": _summaries(selected),
+                "summaries": deepcopy(cohorts[0]["summaries"])
+                if len(selected) == len(intervals)
+                else _summaries(selected),
             }
         )
     binding = {

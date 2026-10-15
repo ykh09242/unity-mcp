@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol
 import re
 
@@ -79,6 +80,24 @@ MARKER_FIELDS: Final = frozenset(
 
 class BatchError(coordination.GovernanceError):
     """An invalid plan or conflicted batch; never a signal to replay operations."""
+
+
+@dataclass(frozen=True, slots=True)
+class _CheckedPlan:
+    """A detached plan admitted once; private consumers must not mutate its value."""
+
+    value: Record
+
+
+@dataclass(frozen=True, slots=True)
+class _CheckedHistory:
+    """Complete validated event facts for one immutable state observation only."""
+
+    events: tuple[Json, ...]
+
+
+def _check_plan(value: Record) -> _CheckedPlan:
+    return _CheckedPlan(_validate_plan(value))
 
 
 class BatchHost(Protocol):
@@ -345,18 +364,24 @@ def _compose(
     proposal = deepcopy(state)
     reader = budget if budget is not None else _core().ReadBudget(READ_LIMIT)
     stages: list[Json] = []
+    before = host.revision(proposal)
     for value in _items(plan["operations"], "operations"):
         row = _record(value, "operation")
         refs = _operation_refs(program, row, reader)
-        before = host.revision(proposal)
         events = deepcopy(_items(proposal.get("events"), "predecessor events"))
-        prepared = host.prepare(
+        prepare_stage = getattr(host, "prepare_stage", None)
+        arguments = (
             proposal,
             str(row["operation"]),
             deepcopy(_record(row["payload"], "payload")),
             str(row["observed_at"]),
-            owner=str(plan["owner_id"]),
         )
+        if prepare_stage is not None:
+            prepared, after_revision = prepare_stage(*arguments, owner=str(plan["owner_id"]))
+            _hash(after_revision, "prepared stage revision")
+        else:
+            prepared = host.prepare(*arguments, owner=str(plan["owner_id"]))
+            after_revision = host.revision(prepared.state)
         after = _items(prepared.state.get("events"), "projected events")
         _require(
             after[: len(events)] == events and len(after) > len(events),
@@ -367,7 +392,7 @@ def _compose(
             {
                 **deepcopy(row),
                 "before_revision": before,
-                "after_revision": host.revision(prepared.state),
+                "after_revision": after_revision,
                 "event_start": len(events),
                 "event_count": len(appended),
                 "event_span_sha256": _core().digest(appended),
@@ -375,6 +400,7 @@ def _compose(
             }
         )
         proposal = prepared.state
+        before = after_revision
     return proposal, stages
 
 
@@ -464,7 +490,14 @@ def _current(program: Program, plan: Record, host: BatchHost) -> None:
 
 def reconstruct(program: Program, state: Record, value: Record, host: BatchHost) -> PreparedChange:
     """Reprepare exact records under the host lock and retain its final freshness callback."""
-    plan = _validate_plan(value)
+    return _reconstruct_checked(program, state, _check_plan(value), host)
+
+
+def _reconstruct_checked(
+    program: Program, state: Record, checked: _CheckedPlan, host: BatchHost
+) -> PreparedChange:
+    """Reuse only plan parsing; all live predecessor/source/ref/callback guards remain."""
+    plan = checked.value
     _require(plan["program_id"] == state.get("program_id"), "Batch program differs")
     _require(host.revision(state) == plan["base_revision"], "Original batch predecessor changed")
     program.require_current_location()
@@ -486,7 +519,7 @@ def reconstruct(program: Program, state: Record, value: Record, host: BatchHost)
     return prepared
 
 
-def validate_history(state: Record) -> None:
+def _validate_history(state: Record) -> None:
     """Validate all canonical marker identities/spans before selecting any historical result."""
     events = _items(state.get("events", []), "events")
     seen: set[str] = set()
@@ -545,15 +578,32 @@ def validate_history(state: Record) -> None:
         previous_marker = index
 
 
+def _check_history(state: Record) -> _CheckedHistory:
+    _validate_history(state)
+    return _CheckedHistory(tuple(deepcopy(_items(state.get("events", []), "events"))))
+
+
+def validate_history(state: Record) -> None:
+    _check_history(state)
+
+
 def evidence_references(state: Record) -> list[Json]:
     """Expose exact marker control refs for the core's existing shared-budget byte verification."""
-    validate_history(state)
+    return _history_references(_check_history(state))
+
+
+def _history_references(checked: _CheckedHistory) -> list[Json]:
+    """Reuse full-history parsing, retaining differing hashes for ordinary ref rejection."""
     refs: list[Json] = []
-    for value in _items(state.get("events", []), "events"):
+    seen: set[tuple[str, str]] = set()
+    for value in checked.events:
         row = _record(value, "event")
         if row.get("action") == "record_batch":
             for ref in _items(row["evidence_refs"], "retained batch evidence"):
-                if ref not in refs:
+                item = _record(ref, "batch reference")
+                key = (str(item["path"]), str(item["sha256"]))
+                if key not in seen:
+                    seen.add(key)
                     refs.append(deepcopy(ref))
     return refs
 
@@ -649,10 +699,27 @@ def inspect_batch(
     program: Program, state: Record, value: Record, host: BatchHost, *, limit: int = 50
 ) -> Record:
     """Recognize exact commitment, including later history, without replay or source rebinding."""
-    plan = _validate_plan(value)
+    return _inspect_checked(program, state, _check_plan(value), host, limit=limit)
+
+
+def _inspect_checked(
+    program: Program,
+    state: Record,
+    checked: _CheckedPlan,
+    host: BatchHost,
+    *,
+    limit: int = 50,
+    history: _CheckedHistory | None = None,
+) -> Record:
+    """Inspect sealed plan facts while freshly checking canonical/source/evidence state."""
+    plan = checked.value
     _require(plan["program_id"] == state.get("program_id"), "Batch program differs")
     program.require_current_location()
-    validate_history(state)
+    history = history if history is not None else _check_history(state)
+    _require(
+        history.events == tuple(_items(state.get("events", []), "events")),
+        "Batch history observation differs",
+    )
     _refs(program, _items(plan["refs"], "batch refs"))
     events = _items(state.get("events"), "events")
     markers = [
@@ -713,21 +780,27 @@ def publish_batch(
     program: Program, plan: Record, host: BatchHost, owner: str, expected_revision: str
 ) -> Record:
     """Delegate one locked publication; never loop over individual canonical mutations."""
-    checked = _validate_plan(plan)
-    _require(owner == checked["owner_id"], "Batch publisher differs")
+    checked = _check_plan(plan)
+    _require(owner == checked.value["owner_id"], "Batch publisher differs")
     _hash(expected_revision, "current transaction revision")
-    raw = host.publish_batch(checked, owner, expected_revision)
+    publish_checked = getattr(host, "_publish_checked_batch", None)
+    raw = (
+        publish_checked(checked, owner, expected_revision)
+        if publish_checked is not None
+        else host.publish_batch(checked.value, owner, expected_revision)
+    )
     status = _text(raw.get("status"), "batch publication outcome")
     revision = raw.get("actual_revision", raw.get("revision"))
     _require(revision is None or isinstance(revision, str), "Invalid actual publication revision")
     if status in {"committed", "committed_view_failed"}:
         _require(
-            revision == checked["final_revision"], "Host did not confirm exact canonical batch"
+            revision == checked.value["final_revision"],
+            "Host did not confirm exact canonical batch",
         )
     recovery = raw.get("view_recovery_required", status == "committed_view_failed")
     _require(type(recovery) is bool, "Invalid view recovery outcome")
     return result_for(
-        checked,
+        checked.value,
         status,
         revision,
         view_recovery_required=recovery,
@@ -740,8 +813,11 @@ def publish_batch(
 
 def project_latest_batch(state: Record, *, limit: int = 50) -> Record | None:
     """Project actual latest canonical marker only; source/current preflight and IO remain unknown."""
-    validate_history(state)
-    events = _items(state.get("events", []), "events")
+    return _project_latest_checked(_check_history(state), limit=limit)
+
+
+def _project_latest_checked(checked: _CheckedHistory, *, limit: int = 50) -> Record | None:
+    events = checked.events
     markers = [
         _record(e, "event") for e in events if _record(e, "event").get("action") == "record_batch"
     ]

@@ -1,6 +1,6 @@
 import { reviewQueue } from './flow-queue';
 import { display, items, ownerOf, record, records, string } from './model';
-import type { Json, JsonRecord, Snapshot, Task } from './model';
+import type { JsonRecord, Snapshot, Task } from './model';
 import { actorLabel, originalValue } from './presentation';
 import { executionPriority, matchesCoordination, verificationContext } from './throughput';
 
@@ -16,8 +16,6 @@ export type SnapshotIndex = {
   readonly reverseDependencies: ReadonlyMap<string, readonly Task[]>;
   readonly questionsByTask: ReadonlyMap<string, readonly JsonRecord[]>;
   readonly questionsByStatus: ReadonlyMap<string, readonly JsonRecord[]>;
-  readonly evidenceLabels: ReadonlyMap<string, string>;
-  readonly evidenceByPath: ReadonlyMap<string, readonly JsonRecord[]>;
   readonly searchText: ReadonlyMap<string, string>;
   readonly categoryTasks: (id: string) => ReadonlySet<string>;
 };
@@ -52,8 +50,6 @@ export function snapshotIndex(snapshot: Snapshot): SnapshotIndex {
   const reverseDependencies = new Map<string, Task[]>();
   const questionsByTask = new Map<string, JsonRecord[]>();
   const questionsByStatus = new Map<string, JsonRecord[]>();
-  const evidenceLabels = new Map<string, string>();
-  const evidenceByPath = new Map<string, JsonRecord[]>();
   const searchText = new Map<string, string>();
   const addCategory = (category: string, taskId: string) => {
     if (!category || !tasks.has(taskId)) return;
@@ -98,21 +94,6 @@ export function snapshotIndex(snapshot: Snapshot): SnapshotIndex {
     for (const id of new Set(items(question.affected_task_ids).map(string).filter(Boolean)))
       append(questionsByTask, id, question);
   }
-  // Index authored frozen references, preserving their records rather than inferring acceptance.
-  const pending: Json[] = [snapshot];
-  while (pending.length) {
-    const value = pending.pop();
-    if (Array.isArray(value)) pending.push(...value);
-    else if (value && typeof value === 'object') {
-      const entry = record(value);
-      const path = string(entry.path);
-      if (path && string(entry.sha256)) {
-        append(evidenceByPath, path, entry);
-        if (!evidenceLabels.has(path)) evidenceLabels.set(path, string(entry.label) || path);
-      }
-      pending.push(...Object.values(entry));
-    }
-  }
   const descendants = new Map<string, ReadonlySet<string>>();
   const categoryTasks = (id: string): ReadonlySet<string> => {
     const cached = descendants.get(id);
@@ -142,8 +123,6 @@ export function snapshotIndex(snapshot: Snapshot): SnapshotIndex {
     reverseDependencies,
     questionsByTask,
     questionsByStatus,
-    evidenceLabels,
-    evidenceByPath,
     searchText,
     categoryTasks,
   };

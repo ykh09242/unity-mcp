@@ -17,9 +17,13 @@ export type AnswerInput = {
 };
 export type AnswerResult = { readonly ok: boolean; readonly conflict: boolean };
 export type AnswerSaver = (input: AnswerInput, nonce: string) => Promise<AnswerResult>;
-export type SessionLoader = () => Promise<Session>;
-export const loadSession: SessionLoader = async () => {
-  const response = await fetch('/api/session', { cache: 'no-store', credentials: 'same-origin' });
+export type SessionLoader = (signal?: AbortSignal) => Promise<Session>;
+export const loadSession: SessionLoader = async (signal) => {
+  const response = await fetch('/api/session', {
+    cache: 'no-store',
+    credentials: 'same-origin',
+    signal,
+  });
   if (!response.ok) throw new Error('Session unavailable');
   const input: unknown = await response.json();
   if (!input || typeof input !== 'object' || !('responses_enabled' in input) || !('nonce' in input))
@@ -43,27 +47,43 @@ export function useSession(loader: SessionLoader = loadSession) {
   const [session, setSession] = useState<Session | null>(null);
   useEffect(() => {
     let active = true;
-    const read = () =>
-      loader()
-        .then((value) => {
-          if (active)
-            setSession((previous) =>
-              previous?.nonce === value.nonce &&
-              previous.responsesEnabled === value.responsesEnabled
-                ? previous
-                : value,
-            );
-        })
-        .catch(() => {
-          if (active)
-            setSession((previous) => previous || { responsesEnabled: false, nonce: null });
-        });
+    let pending: AbortController | null = null;
+    const read = async () => {
+      if (pending) return;
+      const controller = new AbortController();
+      pending = controller;
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      let aborted: (() => void) | undefined;
+      const cancellation = new Promise<never>((_, reject) => {
+        aborted = () => reject(new Error('Session read aborted'));
+        controller.signal.addEventListener('abort', aborted, { once: true });
+      });
+      try {
+        const value = await Promise.race([loader(controller.signal), cancellation]);
+        if (active && !controller.signal.aborted && pending === controller)
+          setSession((previous) =>
+            previous?.nonce === value.nonce && previous.responsesEnabled === value.responsesEnabled
+              ? previous
+              : value,
+          );
+      } catch {
+        // no-excuse-ok: catch -- this hook is the session read boundary.
+        if (active && pending === controller)
+          setSession((previous) => previous || { responsesEnabled: false, nonce: null });
+      } finally {
+        clearTimeout(timeout);
+        if (aborted) controller.signal.removeEventListener('abort', aborted);
+        if (pending === controller) pending = null;
+      }
+    };
     void read();
     const interval = setInterval(() => {
       if (!document.hidden) void read();
     }, 5000);
     return () => {
       active = false;
+      pending?.abort();
+      pending = null;
       clearInterval(interval);
     };
   }, [loader]);
@@ -82,7 +102,7 @@ export function QuestionForm({
   readonly question: JsonRecord;
   readonly session: Session | null;
   readonly saver?: AnswerSaver;
-  readonly refresh: () => Promise<void>;
+  readonly refresh: (manual?: boolean, afterWrite?: boolean) => Promise<void>;
 }) {
   const i18n = useI18n();
   const presentation = usePresentation();
@@ -156,7 +176,7 @@ export function QuestionForm({
     submitFocus.current =
       active instanceof HTMLElement && formRoot.current?.contains(active) ? active : null;
     if (await store.submit(key, { questionId: string(question.id), nonce: session.nonce, saver }))
-      await refresh();
+      await refresh(false, true);
   };
   const submit = async () => {
     if (!canAnswer || changed) return;

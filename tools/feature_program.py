@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, deque
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -21,10 +21,12 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
+from time import perf_counter
 import subprocess
 import sys
 import tempfile
-from typing import Callable, Final, Iterator, TypeAlias
+from typing import TYPE_CHECKING, Callable, Final, Iterator, TypeAlias
 
 # Extensions lazily import core helpers. Reuse this entrypoint module so rejected
 # input has the same ProgramError identity under script, module and imported runs.
@@ -54,6 +56,12 @@ else:
     import feature_program_questions as questions
     import feature_program_verification as verification
     import feature_program_delivery as provider_delivery
+
+
+if TYPE_CHECKING:
+    from tools.feature_program_batch import _CheckedHistory
+    from tools.feature_program_storage import RegistryObservation
+    from tools.feature_program_read_model import Collector
 
 
 Json: TypeAlias = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
@@ -116,6 +124,154 @@ def flow_module(name: str):
     return importlib.import_module(prefix + "feature_program_" + name)
 
 
+def _active_collector():
+    """Return only an explicitly activated collector; ordinary reads import nothing new."""
+    name = ("tools." if __package__ else "") + "feature_program_read_model"
+    module = sys.modules.get(name)
+    return module.active_collector() if module is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class _DependencyNames:
+    """Pure lexical results retained only by one explicit collector activation."""
+
+    owner: Collector
+    paths: dict[str, tuple[Path, str] | None] = field(default_factory=dict)
+
+
+_dependency_names: ContextVar[_DependencyNames | None] = ContextVar(
+    "dependency_names", default=None
+)
+
+
+@contextmanager
+def _collect_dependencies(collector: Collector) -> Iterator[None]:
+    token = _dependency_names.set(_DependencyNames(collector))
+    try:
+        with flow_module("read_model").collect(collector):
+            yield
+    finally:
+        _dependency_names.reset(token)
+
+
+def _dependency_name(path: Path) -> tuple[Path, str] | None:
+    collector = _active_collector()
+    if collector is None:
+        return None
+    memo = _dependency_names.get()
+    # Exact spelling preserves case-distinct original logical aliases. Relative
+    # inputs remain dynamic because their absolute meaning depends on the cwd.
+    key = str(path) if path.is_absolute() else None
+    if memo is not None and memo.owner is collector and key is not None and key in memo.paths:
+        return memo.paths[key]
+    absolute = path.absolute()
+    result = None
+    for root in (collector.program_dir, collector.repo, ROOT):
+        if absolute != root and absolute.is_relative_to(root):
+            result = (root, absolute.relative_to(root).as_posix())
+            break
+    if result is None:
+        collector.ineligible("dependency_outside_bound_root")
+    if (
+        memo is not None
+        and memo.owner is collector
+        and key is not None
+        and len(memo.paths) < 100000
+    ):
+        memo.paths[key] = result
+    return result
+
+
+def observe_path_error(path: Path, reason: str) -> None:
+    """Opaque filesystem failures are not stable missing-file observations."""
+    collector = _active_collector()
+    if collector is not None:
+        collector.ineligible(reason)
+
+
+def observe_path_probe(path: Path, operation: str, outcome: str) -> None:
+    """Record the result of an explicit unchanged filesystem branch."""
+    collector = _active_collector()
+    named = _dependency_name(path)
+    if (
+        collector is not None
+        and named is not None
+        and not (named[0] == collector.program_dir and os.path.normcase(named[1]) == "backlog.json")
+    ):
+        collector.observe_probe(*named, operation=operation, outcome=outcome)
+
+
+def _observe_kind(path: Path) -> None:
+    try:
+        mode = path.stat().st_mode
+    except FileNotFoundError:
+        kind = "missing"
+    except OSError:
+        observe_path_error(path, "path_kind_unavailable")
+        return
+    else:
+        kind = "file" if stat.S_ISREG(mode) else "directory" if stat.S_ISDIR(mode) else "other"
+    observe_path_probe(path, "kind", kind)
+
+
+def observed_exists(path: Path) -> bool:
+    outcome = path.exists()
+    observe_path_probe(path, "exists", "true" if outcome else "false")
+    if _active_collector() is not None:
+        _observe_kind(path)
+    return outcome
+
+
+def observed_is_file(path: Path) -> bool:
+    outcome = path.is_file()
+    observe_path_probe(path, "is_file", "true" if outcome else "false")
+    if _active_collector() is not None:
+        _observe_kind(path)
+    return outcome
+
+
+def observed_is_dir(path: Path) -> bool:
+    outcome = path.is_dir()
+    observe_path_probe(path, "is_dir", "true" if outcome else "false")
+    if _active_collector() is not None:
+        _observe_kind(path)
+    return outcome
+
+
+def observed_size(path: Path) -> int:
+    outcome = path.stat().st_size
+    observe_path_probe(path, "size", str(outcome))
+    return outcome
+
+
+def _observe_bytes(path: Path, content: bytes, limit: int, budget_tag: str | None = None) -> None:
+    collector = _active_collector()
+    named = _dependency_name(path)
+    if (
+        collector is not None
+        and named is not None
+        and not (named[0] == collector.program_dir and os.path.normcase(named[1]) == "backlog.json")
+    ):
+        collector.observe_file(
+            *named,
+            kind="file",
+            sha256=sha(content),
+            size=len(content),
+            limit=limit,
+            budget_tag=budget_tag,
+        )
+
+
+def parse_registry_state(observation: RegistryObservation, *, path: Path) -> Record:
+    """Strictly parse BODY only at this explicitly typed registry boundary."""
+    return _parse_json(observation.body_bytes, path)
+
+
+_owned_program_locks: ContextVar[dict[str, str] | None] = ContextVar(
+    "owned_program_locks", default=None
+)
+
+
 def control_receipt_refs(state: Record) -> list[tuple[Record, str | None]]:
     """Enumerate semantic controls; an attachment's suffix never grants authority."""
     refs = list(coverage._acceptance_refs(state))
@@ -169,32 +325,33 @@ def verify_provenance(
             record(state.get("verification", {}), "verification").get("records", []), "records"
         )
     }
+    first_controls: dict[bytes, Record] = {}
+    for value in sequence(
+        record(state.get("verification", {}), "verification").get("records", []), "records"
+    ):
+        control = record(value, "verification record")
+        first_controls.setdefault(canonical(control["receipt"]), control)
+    round_indexes: dict[str, dict[bytes, Record]] = {}
     for ref, identifier in control_receipt_refs(state):
-        receipt, captured = read_json_frozen(
-            program.path(str(ref["path"])), limit=8 * 1024 * 1024, budget=reader
+        captured = reader.capture(program.directory, str(ref["path"]), 8 * 1024 * 1024)
+        require(
+            captured.sha256 == ref["sha256"], "Control receipt changed during provenance validation"
         )
-        require(captured == ref["sha256"], "Control receipt changed during provenance validation")
+        receipt = reader.json(captured)
         if "evidence_provenance_ref" not in receipt:
             continue
         manifest_ref = record(receipt["evidence_provenance_ref"], "provenance reference")
         require(set(manifest_ref) == {"path", "sha256"}, "Invalid provenance reference")
         program.verify_refs([manifest_ref], reader)
-        manifest = read_json(program.path(str(manifest_ref["path"])), budget=reader)
+        manifest = reader.json(
+            reader.capture(program.directory, str(manifest_ref["path"]), 8 * 1024 * 1024)
+        )
         expected_task = identifier or "_coordination"
         expected_attempt = receipt.get("attempt", 1 if identifier is None else None)
         if expected_attempt is None and identifier is not None:
-            matching = [
-                item
-                for item in sequence(
-                    record(state.get("verification", {}), "verification").get("records", []),
-                    "records",
-                )
-                if record(item, "record").get("receipt") == ref
-            ]
-            if matching:
-                expected_attempt = record(record(matching[0], "record")["context"], "context").get(
-                    "attempt"
-                )
+            matching = first_controls.get(canonical(ref))
+            if matching is not None:
+                expected_attempt = record(matching["context"], "context").get("attempt")
         require(
             manifest.get("program_id") == state["program_id"]
             and manifest.get("task_id") == expected_task
@@ -218,16 +375,17 @@ def verify_provenance(
             current = latest["number"] == expected_attempt
             source = digest(verification_reads.snapshot(program, strings(latest["scope"], "scope")))
             rounds = sequence(latest["rounds"], "rounds")
-            matches = [
-                record(value, "round")
-                for value in rounds
-                if record(value, "round").get("receipt") == ref
-                or record(value, "round").get("review") == ref
-            ]
-            if matches:
-                current = (
-                    current and source == matches[-1]["source_digest"] and matches[-1] == rounds[-1]
-                )
+            if identifier not in round_indexes:
+                indexed: dict[bytes, Record] = {}
+                for value in rounds:
+                    entry = record(value, "round")
+                    for kind in ("receipt", "review"):
+                        if kind in entry:
+                            indexed[canonical(entry[kind])] = entry
+                round_indexes[identifier] = indexed
+            matched = round_indexes[identifier].get(canonical(ref))
+            if matched is not None:
+                current = current and source == matched["source_digest"] and matched == rounds[-1]
             verification_control = verification_controls.get(digest(ref))
             if verification_control is not None:
                 try:
@@ -370,7 +528,7 @@ def _safe_relative(name: str) -> str:
     return path.as_posix()
 
 
-@lru_cache(maxsize=2048)
+@lru_cache(maxsize=4096)
 def _cached_safe_relative(name: str) -> str:
     return _safe_relative(name)
 
@@ -383,55 +541,284 @@ def safe_relative(name: str) -> str:
 
 
 def safe_path(root: Path, name: str) -> Path:
+    return _checked_safe_path(root, name)
+
+
+def _checked_safe_path(root: Path, name: str, components: _ClosingComponents | None = None) -> Path:
+    # Lexically excluded names are represented by explicit scope exclusions.
+    safe_relative(name)
+    try:
+        return _admit_safe_path(root, name, components)
+    except (ProgramError, OSError):
+        observe_path_error(root, "path_admission_unavailable")
+        raise
+
+
+def _component_check(path: Path) -> tuple[bool, bool]:
+    """Return the link result and whether a fresh metadata image was available."""
+    try:
+        metadata = path.lstat()
+    except (OSError, ValueError):
+        return path.is_symlink() or getattr(path, "is_junction", lambda: False)(), False
+    linked = stat.S_ISLNK(metadata.st_mode) or (
+        getattr(path, "is_junction", None) is not None
+        and (
+            getattr(metadata, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        )
+        != 0
+        and getattr(metadata, "st_reparse_tag", None)
+        == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
+    )
+    return linked, True
+
+
+def _component_linked(path: Path) -> bool:
+    """Inspect fresh metadata, retaining the runtime predicates' error semantics."""
+    return _component_check(path)[0]
+
+
+def _admit_safe_path(root: Path, name: str, components: _ClosingComponents | None = None) -> Path:
     relative = safe_relative(name)
     path = root / relative
     cursor = root
-    resolved_root = root.resolve()
-    require(resolved_root == root.absolute(), "Repository/program root must not contain links")
     for part in PurePosixPath(relative).parts:
         cursor /= part
         require(
-            not cursor.is_symlink() and not getattr(cursor, "is_junction", lambda: False)(),
+            not (
+                components.linked(cursor) if components is not None else _component_linked(cursor)
+            ),
             f"Linked path rejected: {name}",
         )
-    require(path.resolve().is_relative_to(resolved_root), f"Path outside root: {name}")
+    resolved = path.resolve()
+    require(resolved.is_relative_to(root.absolute()), f"Path outside root: {name}")
+    # Canonical candidate equality also proves its root/ancestors are unredirected.
+    # Reject late inward links too; mere containment could accept that race window.
+    require(resolved == path.absolute(), f"Linked or noncanonical path rejected: {name}")
+    collector = _active_collector()
+    if collector is not None:
+        collector.observe_admission(root, name)
     return path
 
 
 def bounded_bytes(path: Path, limit: int) -> bytes:
     """Bound allocations even if a regular file grows between metadata and reading."""
-    chunks: list[bytes] = []
-    remaining = limit + 1
-    with path.open("rb") as stream:
-        while remaining > 0:
-            chunk = stream.read(min(64 * 1024, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-    content = b"".join(chunks)
-    require(len(content) <= limit, f"File exceeds bounded read: {path.name}")
+    try:
+        chunks: list[bytes] = []
+        remaining = limit + 1
+        with path.open("rb") as stream:
+            while remaining > 0:
+                chunk = stream.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        content = b"".join(chunks)
+        if len(content) > limit:
+            observe_path_error(path, "bounded_read_unavailable")
+        require(len(content) <= limit, f"File exceeds bounded read: {path.name}")
+    except OSError:
+        observe_path_error(path, "bounded_read_unavailable")
+        raise
+    _observe_bytes(path, content, limit)
     return content
+
+
+@dataclass(frozen=True, slots=True)
+class CapturedBytes:
+    """Immutable byte image; it is not authority to read its pathname in a later epoch."""
+
+    path: Path
+    content: bytes
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ProvenanceRead:
+    path: Path
+    content: bytes
+    limit: int
 
 
 @dataclass(slots=True)
 class ReadBudget:
-    """One validation read ledger; mutation tracks actual bytes and avoids repeated I/O."""
+    """One observation ledger; mutable admission and pure-result indexes die with this epoch."""
 
     remaining: int = 72 * 1024 * 1024
     cached: dict[Path, bytes] | None = None
+    _images: dict[Path, CapturedBytes] = field(default_factory=dict, init=False)
+    _limits: dict[Path, int] = field(default_factory=dict, init=False)
+    _admissions: dict[tuple[str, str], CapturedBytes] = field(default_factory=dict, init=False)
+    _documents: dict[Path, tuple[CapturedBytes, Record]] = field(default_factory=dict, init=False)
+    _provenance_reads: dict[Path, _ProvenanceRead] | None = field(default=None, init=False)
+
+    def _remember_provenance(self, path: Path, content: bytes, limit: int) -> None:
+        if self._provenance_reads is not None:
+            previous = self._provenance_reads.get(path)
+            if previous is None or limit < previous.limit:
+                self._provenance_reads[path] = _ProvenanceRead(path, content, limit)
+
+    def _charge_provenance(self, reads: tuple[_ProvenanceRead, ...]) -> None:
+        """Replay only exact checked provenance bytes into this consumer's own ledger."""
+        if self.cached is None:
+            self.cached = {}
+        for checked in reads:
+            path, content, limit = checked.path, checked.content, checked.limit
+            if path in self.cached:
+                require(self.cached[path] == content, "Prepared provenance observation changed")
+                bound = limit
+            else:
+                bound = min(limit, self.remaining)
+            if len(content) > bound:
+                observe_path_error(path, "bounded_read_unavailable")
+            require(len(content) <= bound, f"File exceeds bounded read: {path.name}")
+            if path not in self.cached:
+                _observe_bytes(path, content, bound)
+                self.remaining -= len(content)
+                self.cached[path] = content
+            self._limits[path] = min(limit, self._limits.get(path, limit))
+            _observe_bytes(path, content, limit, f"reader-{id(self)}")
 
     def read(self, path: Path, limit: int) -> bytes:
         if self.cached is None:
             self.cached = {}
         if path in self.cached:
             content = self.cached[path]
+            if len(content) > limit:
+                observe_path_error(path, "bounded_read_unavailable")
             require(len(content) <= limit, f"File exceeds bounded read: {path.name}")
+            self._limits[path] = min(limit, self._limits.get(path, limit))
+            _observe_bytes(path, content, limit, f"reader-{id(self)}")
+            self._remember_provenance(path, content, limit)
             return content
         content = bounded_bytes(path, min(limit, self.remaining))
         self.remaining -= len(content)
         self.cached[path] = content
+        self._limits[path] = min(limit, self._limits.get(path, limit))
+        _observe_bytes(path, content, limit, f"reader-{id(self)}")
+        self._remember_provenance(path, content, limit)
         return content
+
+    def _image(self, path: Path, limit: int) -> CapturedBytes:
+        content = self.read(path, limit)
+        image = self._images.get(path)
+        if image is None or image.content is not content:
+            image = CapturedBytes(path, content, sha(content))
+            self._images[path] = image
+        return image
+
+    def capture(self, root: Path, name: str, limit: int) -> CapturedBytes:
+        """Admit one exact logical path; every consumer still checks its expected hash/subject."""
+        key = (str(root.absolute()), name)
+        image = self._admissions.get(key)
+        if image is not None:
+            if len(image.content) > limit:
+                observe_path_error(image.path, "bounded_read_unavailable")
+            require(len(image.content) <= limit, f"File exceeds bounded read: {image.path.name}")
+            self._limits[image.path] = min(limit, self._limits.get(image.path, limit))
+            _observe_bytes(image.path, image.content, limit, f"reader-{id(self)}")
+            self._remember_provenance(image.path, image.content, limit)
+            return image
+        return self._capture_admitted(root, name, safe_path(root, name), limit)
+
+    def _capture_admitted(self, root: Path, name: str, path: Path, limit: int) -> CapturedBytes:
+        """Finish a core source walk's existing safe_path admission without traversing it twice."""
+        key = (str(root.absolute()), name)
+        image = self._admissions.get(key)
+        if image is not None:
+            if len(image.content) > limit:
+                observe_path_error(image.path, "bounded_read_unavailable")
+            require(len(image.content) <= limit, f"File exceeds bounded read: {path.name}")
+            self._limits[path] = min(limit, self._limits.get(path, limit))
+            _observe_bytes(path, image.content, limit, f"reader-{id(self)}")
+            self._remember_provenance(path, image.content, limit)
+            return image
+        require(path == root / safe_relative(name), "Captured path differs from logical admission")
+        require(observed_is_file(path), f"Missing frozen evidence: {name}")
+        image = self._image(path, limit)
+        self._admissions[key] = image
+        return image
+
+    def json(self, captured: CapturedBytes) -> Record:
+        """Strictly decode checked bytes once and isolate each mutable consumer value."""
+        require(self._images.get(captured.path) is captured, "Foreign captured-byte observation")
+        prior = self._documents.get(captured.path)
+        if prior is None or prior[0] is not captured:
+            prior = (captured, _parse_json(captured.content, captured.path))
+            self._documents[captured.path] = prior
+        return deepcopy(prior[1])
+
+    def recheck(self, root: Path, limit: int | None = None) -> None:
+        """Independently re-admit every observed path and compare freshly captured final bytes."""
+        fresh = ReadBudget(sum(len(raw) for raw in (self.cached or {}).values()))
+        admitted: set[Path] = set()
+
+        def bound(path: Path) -> int:
+            original = self._limits.get(path, 8 * 1024 * 1024)
+            return original if limit is None else min(original, limit)
+
+        def recapture(base: Path, name: str, path: Path) -> CapturedBytes:
+            try:
+                return fresh.capture(base, name, bound(path))
+            except ProgramError as exc:
+                raise ProgramError(
+                    f"Observed source/evidence changed during snapshot; refresh. Recheck failed: {exc}"
+                ) from exc
+
+        for (logical_root, name), captured in self._admissions.items():
+            current = recapture(Path(logical_root), name, captured.path)
+            require(
+                current.content == captured.content,
+                "Observed source/evidence changed during snapshot; refresh",
+            )
+            admitted.add(captured.path)
+        for path, raw in (self.cached or {}).items():
+            if path not in admitted:
+                require(path.is_relative_to(root), "Observed input outside recheck root")
+                current = recapture(root, path.relative_to(root).as_posix(), path)
+                require(
+                    current.content == raw,
+                    "Observed source/evidence changed during snapshot; refresh",
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedState:
+    """Strict first-pass facts for the identical state retained by one read-only host."""
+
+    state: Record
+    governance: coordination._CheckedGovernance
+    presentation: presentation._CheckedLedger
+    batch_history: _CheckedHistory | None
+    retained_provenance: tuple[Record, ...] | None = None
+    provenance_reads: tuple[_ProvenanceRead, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedState:
+    state: Record
+    checked: _ValidatedState
+    body: bytes
+    views: dict[str, str]
+    normalized_body: bytes
+
+
+_prepared_save_facts: ContextVar[list[_PreparedState] | None] = ContextVar(
+    "prepared_save_facts", default=None
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _ProposedCapture:
+    prepared: _PreparedState
+    original: RegistryObservation
+
+
+@dataclass(frozen=True, slots=True)
+class _StagedModel:
+    model_id: str
+    model: Record
+    prepared: _PreparedState
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,7 +929,7 @@ _source_observations: ContextVar[_SourceObservations | None] = ContextVar(
 )
 
 
-def read_json(path: Path, limit: int = 8 * 1024 * 1024, budget: ReadBudget | None = None) -> Record:
+def _parse_json(content: bytes, path: Path) -> Record:
     def finite_json(value: str) -> None:
         raise ProgramError(f"Nonfinite JSON constant rejected: {value}")
 
@@ -560,9 +947,7 @@ def read_json(path: Path, limit: int = 8 * 1024 * 1024, budget: ReadBudget | Non
 
     try:
         value = json.loads(
-            (budget.read(path, limit) if budget is not None else bounded_bytes(path, limit)).decode(
-                "utf-8"
-            ),
+            content.decode("utf-8"),
             object_pairs_hook=unique,
             parse_constant=finite_json,
             parse_float=finite_float,
@@ -572,13 +957,19 @@ def read_json(path: Path, limit: int = 8 * 1024 * 1024, budget: ReadBudget | Non
     return record(value, path.name)
 
 
+def read_json(path: Path, limit: int = 8 * 1024 * 1024, budget: ReadBudget | None = None) -> Record:
+    if budget is None:
+        return _parse_json(bounded_bytes(path, limit), path)
+    return budget.json(budget._image(path, limit))
+
+
 def read_json_frozen(
     path: Path, limit: int = 1024 * 1024, budget: ReadBudget | None = None
 ) -> tuple[Record, str]:
-    """Return parsed metadata and the digest of exactly the same bounded bytes."""
+    """Return strict metadata and the digest of exactly the same bounded byte image."""
     budget = budget if budget is not None else ReadBudget(limit)
-    content = budget.read(path, limit)
-    return read_json(path, limit=limit, budget=budget), sha(content)
+    captured = budget._image(path, limit)
+    return read_json(path, limit=limit, budget=budget), captured.sha256
 
 
 def atomic_write(path: Path, data: bytes) -> None:
@@ -596,7 +987,7 @@ def atomic_write(path: Path, data: bytes) -> None:
             os.fsync(stream.fileno())
         os.replace(temporary, path)
     finally:
-        if temporary is not None and temporary.exists():
+        if temporary is not None and observed_exists(temporary):
             temporary.unlink()
 
 
@@ -666,14 +1057,14 @@ class Program:
             pass  # Explicit ledger recovery still verifies exact endpoints under this lock.
         elif succession_recovery:
             require(
-                not self.path("RELOCATED.json").exists()
-                and not self.path("RELOCATION_INCOMPLETE.json").exists(),
+                not observed_exists(self.path("RELOCATED.json"))
+                and not observed_exists(self.path("RELOCATION_INCOMPLETE.json")),
                 "Succession recovery cannot bypass relocation guards",
             )
         elif relocation_recovery:
             require(
-                self.path("RELOCATION_INCOMPLETE.json").is_file()
-                and not self.path("RELOCATED.json").exists(),
+                observed_is_file(self.path("RELOCATION_INCOMPLETE.json"))
+                and not observed_exists(self.path("RELOCATED.json")),
                 "Recovery requires an incomplete destination",
             )
         else:
@@ -691,7 +1082,14 @@ class Program:
                 json.dump({"pid": os.getpid(), "created_at": utc()}, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
-            yield
+            lock_digest = sha(bounded_bytes(path, 64 * 1024))
+            owned = dict(_owned_program_locks.get() or {})
+            owned[str(self.directory.absolute())] = lock_digest
+            token = _owned_program_locks.set(owned)
+            try:
+                yield
+            finally:
+                _owned_program_locks.reset(token)
         finally:
             path.unlink()
 
@@ -706,11 +1104,11 @@ class Program:
             raise ProgramError(str(exc)) from exc
         phases.succession_guard(self)
         marker = self.path("RELOCATED.json")
-        if marker.exists():
+        if observed_exists(marker):
             destination = read_json(marker, limit=64 * 1024).get("destination")
             raise ProgramError(f"Program archived after relocation; explicitly use {destination}")
         require(
-            not self.path("RELOCATION_INCOMPLETE.json").exists(),
+            not observed_exists(self.path("RELOCATION_INCOMPLETE.json")),
             "Relocation publication incomplete; inspect its recovery receipt",
         )
 
@@ -725,52 +1123,120 @@ class Program:
     ) -> list[Record]:
         return questions.pending_questions(state, objective_id, task_ids)
 
-    def source_snapshot(self, scopes: list[str], budget: ReadBudget | None = None) -> Record:
+    def source_snapshot(
+        self,
+        scopes: list[str],
+        budget: ReadBudget | None = None,
+        *,
+        _boundaries: list[Json] | None = None,
+    ) -> Record:
+        """Retain failure evidence when an ordinary advisory caller catches a partial scope."""
+        try:
+            return self._source_snapshot(scopes, budget, _boundaries=_boundaries)
+        except (ProgramError, OSError):
+            observe_path_error(self.repo, "source_scope_unavailable")
+            raise
+
+    def _source_snapshot(
+        self,
+        scopes: list[str],
+        budget: ReadBudget | None = None,
+        *,
+        _boundaries: list[Json] | None = None,
+    ) -> Record:
         require(bool(scopes), "At least one explicit scope is required")
         snapshot: Record = {}
+        boundaries: list[Json] = []
         total_bytes = 0
         reader = budget if budget is not None else ReadBudget(128 * 1024 * 1024)
 
         def fingerprint_file(path: Path) -> str:
             nonlocal total_bytes
             require(len(snapshot) < 10000, "Explicit source scope exceeds fingerprint budget")
-            content = reader.read(path, 128 * 1024 * 1024 - total_bytes)
-            total_bytes += len(content)
-            return sha(content)
+            captured = reader._capture_admitted(
+                self.repo,
+                path.relative_to(self.repo).as_posix(),
+                path,
+                128 * 1024 * 1024 - total_bytes,
+            )
+            total_bytes += len(captured.content)
+            return captured.sha256
 
         for scope in sorted(scopes):
             require(
                 not any(part.casefold() == ".work" for part in PurePosixPath(scope).parts),
                 "Private .work paths cannot be source scopes",
             )
-            path = safe_path(self.repo, scope)
+            safe_relative(scope)
+            observed = reader._admissions.get((str(self.repo.absolute()), scope))
+            path = observed.path if observed is not None else safe_path(self.repo, scope)
             require(
                 path != self.repo and not self.directory.is_relative_to(path),
                 "Root/program-wide claims are invalid",
             )
-            if not path.exists():
+            if observed is not None:
+                snapshot[scope] = fingerprint_file(path)
+            elif not observed_exists(path):
                 snapshot[scope] = "missing"
-            elif path.is_file():
+            elif observed_is_file(path):
                 snapshot[scope] = fingerprint_file(path)
             else:
                 snapshot[scope + "/"] = "directory"
                 for folder, dirs, files in os.walk(path, followlinks=False):
                     folder_path = Path(folder)
+                    for name in sorted(dirs):
+                        if name.casefold() in SKIP_DIRS:
+                            relative = (folder_path / name).relative_to(self.repo).as_posix()
+                            boundaries.append({"path": relative, "kind": "excluded_directory"})
                     dirs[:] = sorted(name for name in dirs if name.casefold() not in SKIP_DIRS)
                     for name in list(dirs):
                         relative = (folder_path / name).relative_to(self.repo).as_posix()
                         try:
                             safe_path(self.repo, relative)
                         except ProgramError:
+                            boundaries.append({"path": relative, "kind": "excluded_path"})
                             dirs.remove(name)
                     for name in sorted(files):
                         relative = (folder_path / name).relative_to(self.repo).as_posix()
-                        try:
-                            candidate = safe_path(self.repo, relative)
-                        except ProgramError:
-                            continue
-                        require(candidate.is_file(), f"Not a regular scoped file: {relative}")
+                        observed = reader._admissions.get((str(self.repo.absolute()), relative))
+                        if observed is None:
+                            try:
+                                candidate = safe_path(self.repo, relative)
+                            except ProgramError:
+                                boundary = (
+                                    str(PurePosixPath(relative).parent / ".env*")
+                                    if name.casefold().startswith(".env")
+                                    else relative
+                                )
+                                boundaries.append({"path": boundary, "kind": "excluded_path"})
+                                continue
+                            require(
+                                observed_is_file(candidate),
+                                f"Not a regular scoped file: {relative}",
+                            )
+                        else:
+                            candidate = observed.path
                         snapshot[relative] = fingerprint_file(candidate)
+        boundaries.sort(
+            key=lambda item: (
+                str(record(item, "scope boundary")["path"]),
+                str(record(item, "scope boundary")["kind"]),
+            )
+        )
+        if _boundaries is not None:
+            _boundaries.extend(boundaries)
+        collector = _active_collector()
+        if collector is not None:
+            if len(boundaries) > 10000:
+                collector.ineligible("scope_boundary_bound")
+            collector.observe_scope(
+                self.repo,
+                scopes,
+                snapshot,
+                boundaries,
+                byte_budget=128 * 1024 * 1024,
+                entry_limit=10000,
+            )
         observer = _source_observations.get()
         if observer is not None:
             observer.observe(self, scopes, snapshot)
@@ -783,8 +1249,11 @@ class Program:
         for name in names:
             require(name.startswith(prefix), f"Evidence must be attempt-specific under {prefix}")
             path = self.path(name)
-            require(path.is_file() and path.stat().st_size > 0, f"Missing/empty evidence: {name}")
-            require(path.stat().st_size <= 8 * 1024 * 1024, f"Evidence exceeds 8 MiB: {name}")
+            require(
+                observed_is_file(path) and observed_size(path) > 0,
+                f"Missing/empty evidence: {name}",
+            )
+            require(observed_size(path) <= 8 * 1024 * 1024, f"Evidence exceeds 8 MiB: {name}")
             result.append({"path": name, "sha256": sha(bounded_bytes(path, 8 * 1024 * 1024))})
         return result
 
@@ -803,22 +1272,42 @@ class Program:
         for value in refs:
             ref = record(value, "evidence reference")
             name = string(ref.get("path"), "evidence path")
-            path = self.path(name)
-            require(path.is_file(), f"Missing frozen evidence: {name}")
+            captured = budget.capture(self.directory, name, 8 * 1024 * 1024)
             require(
-                sha(budget.read(path, 8 * 1024 * 1024)) == ref.get("sha256"),
+                captured.sha256 == ref.get("sha256"),
                 f"Frozen evidence changed: {name}",
             )
 
+    def read_registry_observation(self, *, budget: ReadBudget | None = None) -> RegistryObservation:
+        """Read the physical canonical registry; generic artifact helpers stay raw."""
+        path = self.path("backlog.json")
+        require(observed_is_file(path), "Program registry is unavailable")
+        limit = 8 * 1024 * 1024 + 80
+        raw = (
+            bounded_bytes(path, limit)
+            if budget is None
+            else budget.capture(self.directory, "backlog.json", limit).content
+        )
+        try:
+            return flow_module("storage").decode_registry(raw)
+        except flow_module("storage").RegistryFormatError as exc:
+            raise ProgramError(f"Invalid registry storage: {exc.code}") from exc
+
+    def read_state_bytes(self, *, budget: ReadBudget | None = None) -> bytes:
+        """Export exact logical BODY without rewriting its whitespace or history."""
+        return self.read_registry_observation(budget=budget).body_bytes
+
     def load(self) -> Record:
         self.require_current_location()
-        state = read_json(self.path("backlog.json"))
+        state = parse_registry_state(
+            self.read_registry_observation(), path=self.path("backlog.json")
+        )
         self.validate(state)
         return state
 
     def validate(
         self, state: Record, verify_artifacts: bool = True, *, prospective: bool = False
-    ) -> None:
+    ) -> _ValidatedState:
         budget = ReadBudget() if verify_artifacts else None
         require(state.get("schema_version") == 1, "Unsupported registry")
         string(state.get("program_id"), "program_id")
@@ -973,10 +1462,10 @@ class Program:
         sequence(state.get("events"), "events")
         record(state.get("source"), "report source")
         questions.validate_questions(state)
-        coordination.validate_governance(state)
+        checked_governance = coordination.validate_governance(state)
         phases.validate(state)
         coverage.validate(state)
-        presentation.validate(state)
+        checked_presentation = presentation.validate(state)
         authoring.validate_delivery_history(
             self, state, verify_artifacts=verify_artifacts, budget=budget
         )
@@ -988,23 +1477,41 @@ class Program:
             coverage.verify_history(self, state, budget)
             presentation.verify_history(self, state, budget)
         verification.validate(state)
+        retained_provenance = None
+        provenance_reads = None
         if verify_artifacts:
             verification.verify_history(self, state, budget)
-            verify_provenance(self, state, budget)
+            require(budget is not None, "Missing strict validation byte ledger")
+            previous_reads = budget._provenance_reads
+            budget._provenance_reads = {}
+            try:
+                retained_provenance = tuple(deepcopy(verify_provenance(self, state, budget)))
+                provenance_reads = tuple(budget._provenance_reads.values())
+            finally:
+                budget._provenance_reads = previous_reads
+        checked_history = None
         if any(
             record(value, "event").get("action") == "record_batch"
             for value in sequence(state["events"], "events")
         ):
             batches = flow_module("batch")
-            batches.validate_history(state)
+            checked_history = batches._check_history(state)
             if verify_artifacts:
-                self.verify_refs(batches.evidence_references(state), budget)
+                self.verify_refs(batches._history_references(checked_history), budget)
         if "review_handoffs" in state:
             handoffs = flow_module("review_handoffs")
             handoffs.validate(state)
             if verify_artifacts:
                 self.verify_refs(handoffs.evidence_references(state), budget)
                 authoring.verify_review_input_refs(self, state, budget)
+        return _ValidatedState(
+            state,
+            checked_governance,
+            checked_presentation,
+            checked_history,
+            retained_provenance,
+            provenance_reads,
+        )
 
     def verify_terminal(
         self, task: Record, attempt: Record, budget: ReadBudget | None = None
@@ -1110,7 +1617,7 @@ class Program:
     def initialize(self, args: argparse.Namespace) -> Record:
         self.require_current_location()
         require(
-            not self.path("backlog.json").exists(),
+            not observed_exists(self.path("backlog.json")),
             "Registry already exists; initialization never resets progress",
         )
         source_path = safe_path(self.repo, args.report)
@@ -1214,7 +1721,8 @@ class Program:
         for name, data in self.views(state).items():
             path = self.path(name)
             require(
-                path.is_file() and bounded_bytes(path, 8 * 1024 * 1024) == data.encode("utf-8"),
+                observed_is_file(path)
+                and bounded_bytes(path, 8 * 1024 * 1024) == data.encode("utf-8"),
                 f"Derived view drift: {name}; use render",
             )
 
@@ -2027,6 +2535,13 @@ class Program:
     def validate_delivery_metadata(
         self, task: Record, attempt: Record, receipt: Record, *, budget: ReadBudget | None = None
     ) -> str:
+        return self._assess_delivery_metadata(task, attempt, receipt, budget=budget)[0]
+
+    def _assess_delivery_metadata(
+        self, task: Record, attempt: Record, receipt: Record, *, budget: ReadBudget | None = None
+    ) -> tuple[str, Record | None]:
+        """Retain the actual provider assessment produced by ordinary metadata validation."""
+        assessment: Record | None = None
         require(
             receipt.get("task_id") == task["id"] and receipt.get("attempt") == attempt["number"],
             "Delivery identity mismatch",
@@ -2093,7 +2608,7 @@ class Program:
                 and status == "ci_recorded_success"
             ):
                 status = "ci_failed" if assessment["status"] == "failed" else "ci_pending"
-        return status
+        return status, assessment
 
     def delivery(self, state: Record, args: argparse.Namespace) -> None:
         task = self.task(state, args.id)
@@ -2335,7 +2850,7 @@ class Program:
     def prepare_save(self, state: Record) -> bytes:
         """Share actual publication preflight without creating or changing any files."""
         self.require_current_location()
-        self.validate(state)
+        checked = self.validate(state)
         encoded = canonical(state)
         require(
             len(encoded) <= 8 * 1024 * 1024,
@@ -2346,19 +2861,25 @@ class Program:
             all(len(text.encode("utf-8")) <= 8 * 1024 * 1024 for text in derived.values()),
             "Derived document exceeds 8 MiB; existing state preserved",
         )
-        for name in ("backlog.json", *derived):
-            destination = self.path(name)
-            require(
-                not destination.exists() or destination.is_file(),
-                f"Publication output is not a regular file: {name}",
-            )
-            for parent in destination.parents:
+        observer_module = flow_module("read_model") if _active_collector() is not None else None
+        token = observer_module.collect(None) if observer_module is not None else nullcontext()
+        with token:
+            for name in ("backlog.json", *derived):
+                destination = self.path(name)
                 require(
-                    not parent.exists() or parent.is_dir(),
-                    f"Publication output parent is not a directory: {name}",
+                    not observed_exists(destination) or observed_is_file(destination),
+                    f"Publication output is not a regular file: {name}",
                 )
-                if parent == self.directory:
-                    break
+                for parent in destination.parents:
+                    require(
+                        not observed_exists(parent) or observed_is_dir(parent),
+                        f"Publication output parent is not a directory: {name}",
+                    )
+                    if parent == self.directory:
+                        break
+        sink = _prepared_save_facts.get()
+        if sink is not None:
+            sink.append(_PreparedState(state, checked, encoded, derived, encoded))
         return encoded
 
     def save(self, state: Record, *, before_publish: Callable[[], None] | None = None) -> None:
@@ -2376,12 +2897,23 @@ class Program:
         self.require_current_location()
         reliance_guard = coverage.publication_guard(self, state)
         provider_guard = authoring.delivery_publication_guard(self, state)
+        initial = (
+            self.read_registry_observation()
+            if observed_is_file(self.path("backlog.json"))
+            else None
+        )
         original = (
-            read_json(self.path("backlog.json")) if self.path("backlog.json").is_file() else None
+            parse_registry_state(initial, path=self.path("backlog.json"))
+            if initial is not None
+            else None
         )
         if original is not None and ("review_handoffs" in original or "review_handoffs" in state):
             flow_module("review_handoffs").validate_append(original, state)
-        encoded = self.prepare_save(state)
+        if initial is not None and initial.model_id is not None:
+            encoded, staged_model = _prepare_model_publication(self, state, initial)
+        else:
+            encoded = self.prepare_save(state)
+            staged_model = None
         if before_publish is not None:
             before_publish()
         if reliance_guard is not None:
@@ -2391,12 +2923,21 @@ class Program:
         if provider_guard is not None:
             provider_guard()
         authoring.recheck_new_handoff_inputs(self, original, state)
+        _assert_registry_storage(self, initial)
+        if staged_model is not None:
+            _close_staged_model(self, staged_model)
+            _assert_registry_storage(self, initial)
+            _assert_owned_lock(self)
+            require(
+                flow_module("storage").decode_registry(encoded).body_bytes == canonical(state),
+                "Proposed BODY changed before publication",
+            )
         atomic_write(self.path("backlog.json"), encoded)
         try:
             self.render(state)
         except (OSError, ProgramError) as exc:
             raise ProgramError(
-                f"Registry committed at revision {sha(encoded)}; derived rendering failed. Run render to recover views: {exc}"
+                f"Registry committed at revision {sha(canonical(state))}; derived rendering failed. Run render to recover views: {exc}"
             ) from exc
 
     def render(self, state: Record) -> None:
@@ -2690,6 +3231,17 @@ def _read_projection(
     evidence_preparation: str | None = None,
     batch_plan: str | None = None,
 ) -> Record:
+    if (
+        not brief_only
+        and task_id is None
+        and all(
+            value is None
+            for value in (closure_plan, execution_capture, evidence_preparation, batch_plan)
+        )
+    ):
+        cached = _read_materialized_projection(repo, program_dir)
+        if cached is not None:
+            return cached
     observations = _SourceObservations()
     token = _source_observations.set(observations)
     try:
@@ -2718,6 +3270,8 @@ def _capture_projection(
     execution_capture: str | None = None,
     evidence_preparation: str | None = None,
     batch_plan: str | None = None,
+    *,
+    _proposed: _ProposedCapture | None = None,
 ) -> Record:
     """Return bounded recorded state without locks or writes; selected plans inspect local Git.
 
@@ -2733,21 +3287,33 @@ def _capture_projection(
     program = Program(repo, safe_path(repo, directory.relative_to(repo).as_posix()))
     program.require_current_location()
     backlog = program.path("backlog.json")
-    require(
-        backlog.is_file() and backlog.stat().st_size <= 8 * 1024 * 1024,
-        "Snapshot registry missing or exceeds 8 MiB",
-    )
-    initial = bounded_bytes(backlog, 8 * 1024 * 1024)
-    registry_budget = ReadBudget(cached={backlog: initial})
-    state = read_json(backlog, budget=registry_budget)
-    require(
-        sha(bounded_bytes(backlog, 8 * 1024 * 1024)) == sha(initial),
-        "Registry changed during snapshot; refresh",
-    )
+    initial_observation = program.read_registry_observation()
+    if _proposed is None:
+        state = parse_registry_state(initial_observation, path=backlog)
+        captured_revision = initial_observation.body_sha256
+    else:
+        require(
+            initial_observation.raw_bytes == _proposed.original.raw_bytes,
+            "Registry changed before model preparation",
+        )
+        state = _proposed.prepared.state
+        require(
+            _proposed.prepared.checked.state is state
+            and _proposed.prepared.checked.retained_provenance is not None
+            and _proposed.prepared.checked.provenance_reads is not None
+            and canonical(state) == _proposed.prepared.normalized_body,
+            "Prepared state changed before projection",
+        )
+        captured_revision = sha(_proposed.prepared.body)
+    _assert_registry_storage(program, initial_observation)
     tasks = [record(value, "task") for value in sequence(state.get("tasks"), "tasks")]
     require(len(tasks) <= 2000, "Snapshot exceeds 2000 tasks")
     try:
-        program.validate(state, verify_artifacts=False)
+        checked_state = (
+            program.validate(state, verify_artifacts=False)
+            if _proposed is None
+            else _proposed.prepared.checked
+        )
     except (
         coordination.GovernanceError,
         phases.PhaseError,
@@ -2765,7 +3331,7 @@ def _capture_projection(
     source_names.update(str(item["planning"]["path"]) for item in planning.intakes(state).values())
     for name in sorted(source_names):
         path = safe_path(repo, name)
-        if path.is_file():
+        if observed_is_file(path):
             source_inputs.read(path, 8 * 1024 * 1024)
         else:
             unavailable_sources.add(path)
@@ -2779,7 +3345,7 @@ def _capture_projection(
     absent_publication: set[Path] = set()
     for name in sorted(planning.PUBLICATION_MARKERS | {planning.TRACKING}):
         path = program.path(name)
-        if path.is_file():
+        if observed_is_file(path):
             raw = publication_inputs.read(path, 8 * 1024 * 1024)
             observations["publication"].append(
                 {"path": name, "sha256": sha(raw), "status": "observed"}
@@ -2803,7 +3369,7 @@ def _capture_projection(
         record(value, "event").get("action") == "record_batch"
         for value in sequence(state["events"], "events")
     ):
-        all_refs += flow_module("batch").evidence_references(state)
+        all_refs += flow_module("batch")._history_references(checked_state.batch_history)
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
             all_refs += sequence(record(value, "attempt")["evidence"], "evidence")
@@ -2859,23 +3425,31 @@ def _capture_projection(
     unavailable_evidence: set[Path] = set()
     for name, expected in refs.items():
         path = program.path(name)
-        if not path.is_file():
+        if not observed_is_file(path):
             warnings.append(f"Frozen evidence unavailable: {name}")
             unavailable_evidence.add(path)
             continue
-        content = evidence_budget.read(path, 8 * 1024 * 1024)
-        if sha(content) != expected:
+        captured = evidence_budget.capture(program.directory, name, 8 * 1024 * 1024)
+        if captured.sha256 != expected:
             warnings.append(f"Frozen evidence changed: {name}")
     try:
         for name, text in program.views(state).items():
             path = program.path(name)
-            if (
-                not path.is_file()
-                or path.stat().st_size > 8 * 1024 * 1024
+            if _proposed is not None:
+                collector = _active_collector()
+                require(
+                    collector is not None, "Proposed projection requires its dependency collector"
+                )
+                require(_proposed.prepared.views.get(name) == text, "Proposed derived view changed")
+                collector.expect_view(program.directory, name, text.encode("utf-8"))
+            elif (
+                not observed_is_file(path)
+                or observed_size(path) > 8 * 1024 * 1024
                 or bounded_bytes(path, 8 * 1024 * 1024) != text.encode("utf-8")
             ):
                 warnings.append(f"Derived view drift: {name}; director may run render.")
     except OSError:
+        observe_path_error(program.directory, "derived_views_unavailable")
         warnings.append("Derived views unavailable; recorded registry remains readable.")
     result_tasks: list[Json] = []
     if execution_capture is None:
@@ -2891,7 +3465,7 @@ def _capture_projection(
             selected_capture_ref={"path": capture_name, "sha256": sha(raw_capture)},
         )
     verification_view = verification.bound_projection(full_verification)
-    delivery_histories = _delivery_history_projection(state, sha(initial))
+    delivery_histories = _delivery_history_projection(state, captured_revision)
     for task_index, task in enumerate(tasks):
         section = record(task["source"], "source section")
         source = planning.source_for_task(state, task)
@@ -2955,19 +3529,17 @@ def _capture_projection(
                         continue
                     ref = record(artifact, kind)
                     path = program.path(string(ref["path"], "artifact path"))
-                    if path.is_file() and path.stat().st_size <= 1024 * 1024:
-                        captured = evidence_budget.read(path, 1024 * 1024)
-                        if sha(captured) == ref["sha256"]:
-                            metadata, parsed_sha = read_json_frozen(path, budget=evidence_budget)
-                            require(
-                                parsed_sha == ref["sha256"], "Captured artifact digest mismatch"
-                            )
-                            summary[kind + "_record"] = metadata
+                    if observed_is_file(path) and observed_size(path) <= 1024 * 1024:
+                        captured = evidence_budget.capture(
+                            program.directory, str(ref["path"]), 1024 * 1024
+                        )
+                        if captured.sha256 == ref["sha256"]:
+                            summary[kind + "_record"] = evidence_budget.json(captured)
                 rounds.append(summary)
             history["rounds"] = rounds
             sequence(item["attempts"], "attempts").append(history)
         result_tasks.append(item)
-    governance = coordination.snapshot_metadata(state)
+    governance = coordination._snapshot_from_checked(state, checked_state.governance)
     categories = sequence(governance.get("categories", []), "categories")
     category_by_task: dict[str, Json] = {}
     for category_value in categories:
@@ -2981,7 +3553,7 @@ def _capture_projection(
         )
     result: Record = {
         "snapshot_version": 1,
-        "revision": sha(initial),
+        "revision": captured_revision,
         "generated_at": utc(),
         "program_id": state["program_id"],
         "total_tasks": len(tasks),
@@ -3012,8 +3584,12 @@ def _capture_projection(
         "execution_priorities": state.get("execution_priorities"),
         "verification": verification_view,
         "coverage": coverage.projection(program, state, evidence_budget),
-        "presentation": presentation.projection(
-            program, state, evidence_budget, revision=sha(initial)
+        "presentation": presentation._projection_from_checked(
+            program,
+            state,
+            checked_state.presentation,
+            budget=evidence_budget,
+            revision=captured_revision,
         ),
     }
     for task_index, item in enumerate(result_tasks):
@@ -3061,7 +3637,7 @@ def _capture_projection(
                 "task_id": task_item["id"],
                 "reference": {
                     "path": "backlog.json",
-                    "revision": sha(initial),
+                    "revision": captured_revision,
                     "pointer": f"/tasks/{task_index}/deliveries"
                     if deliveries
                     else "/verification/records",
@@ -3112,9 +3688,7 @@ def _capture_projection(
                 "evidence_status": "unavailable",
             }
     full_handoffs = handoff_producer.project_handoffs(state, assessed_handoffs, limit=None)
-    result["review_handoffs"] = handoff_producer.project_handoffs(
-        state, assessed_handoffs, limit=50
-    )
+    result["review_handoffs"] = handoff_producer.bound_projection(full_handoffs, limit=50)
     latest_handoffs: Record = {}
     for value in full_handoffs["rows"]["items"]:
         item = record(value, "handoff row")
@@ -3175,7 +3749,15 @@ def _capture_projection(
         source_binding=timing_binding,
     )
     try:
-        retained = verify_provenance(program, state, evidence_budget)
+        provenance = checked_state.retained_provenance
+        provenance_reads = checked_state.provenance_reads
+        if _proposed is not None and provenance is not None and provenance_reads is not None:
+            # Reuse semantic facts, while preserving this projection's distinct byte bounds.
+            # The writer still closes the complete model image after normal callbacks.
+            evidence_budget._charge_provenance(provenance_reads)
+            retained = deepcopy(list(provenance))
+        else:
+            retained = verify_provenance(program, state, evidence_budget)
         evidence_view = flow_module("evidence_reuse").project_retained(state, retained)
     except (ProgramError, OSError, planning.PlanningError, coverage.CoverageError):
         # Ordinary snapshots preserve recovery context on damaged retained artifacts.
@@ -3203,7 +3785,12 @@ def _capture_projection(
         )
     if evidence_view is not None:
         result["evidence_preparation"] = evidence_view
-    batch_view = flow_module("batch").project_latest_batch(state)
+    batch_producer = flow_module("batch")
+    batch_view = (
+        batch_producer._project_latest_checked(checked_state.batch_history)
+        if checked_state.batch_history is not None
+        else batch_producer.project_latest_batch(state)
+    )
     if batch_plan is not None:
         selected = read_json(program.path(safe_relative(batch_plan)), budget=evidence_budget)
         batch_view = flow_module("batch").project_selection(
@@ -3261,7 +3848,7 @@ def _capture_projection(
     closure_view = record(result["closure"], "closure projection")
     closure_view["reference"] = {
         "path": "backlog.json",
-        "revision": sha(initial),
+        "revision": captured_revision,
         "pointer": "/objective",
     }
     if closure_plan is not None:
@@ -3275,11 +3862,11 @@ def _capture_projection(
                 authoring.ClosureHost(program, identity_budget=evidence_budget),
             )
             plan_view["reference"] = {"path": plan_name, "sha256": plan_hash}
-            plan_view["observed_revision"] = sha(initial)
+            plan_view["observed_revision"] = captured_revision
             closure_view["plan"] = plan_view
         except (ProgramError, coordination.GovernanceError, OSError) as exc:
             selected_path = program.path(plan_name)
-            if not selected_path.is_file():
+            if not observed_is_file(selected_path):
                 unavailable_evidence.add(selected_path)
             closure_view["plan"] = {
                 "schema_version": 1,
@@ -3293,12 +3880,15 @@ def _capture_projection(
                 "accepted": False,
                 "remote_verified_by_tool": False,
                 "reference": {"path": plan_name},
-                "observed_revision": sha(initial),
+                "observed_revision": captured_revision,
             }
     lock = program.path(".feature-program.lock")
     lock_before: bytes | None = None
     lock_unavailable: str | None = None
-    if lock.exists():
+    if _proposed is not None:
+        observe_path_probe(lock, "exists", "false")
+        observe_path_probe(lock, "kind", "missing")
+    elif observed_exists(lock):
         try:
             lock_before = bounded_bytes(lock, 64 * 1024)
             read_json(lock, limit=64 * 1024, budget=ReadBudget(cached={lock: lock_before}))
@@ -3306,6 +3896,7 @@ def _capture_projection(
         except (ProgramError, OSError) as exc:
             lock_status = "unavailable"
             lock_unavailable = str(exc)
+            observe_path_error(lock, "lock_metadata_unavailable")
         observations["recovery"].append(
             {
                 "path": ".feature-program.lock",
@@ -3332,36 +3923,409 @@ def _capture_projection(
         else result
     )
     for budget in (source_inputs, evidence_budget, publication_inputs):
-        for path, captured in (budget.cached or {}).items():
-            require(
-                path.is_file() and bounded_bytes(path, 8 * 1024 * 1024) == captured,
-                "Observed source/evidence changed during snapshot; refresh",
-            )
+        budget.recheck(repo)
     require(
         not any(
-            path.is_file()
+            observed_is_file(safe_path(repo, path.relative_to(repo).as_posix()))
             for path in unavailable_sources | unavailable_evidence | absent_publication
         ),
         "Unavailable source/evidence appeared during snapshot; refresh",
     )
     require(
-        sha(bounded_bytes(backlog, 8 * 1024 * 1024)) == sha(initial),
+        program.read_registry_observation().storage_sha256 == initial_observation.storage_sha256,
         "Registry changed during snapshot; refresh",
     )
     source_observations.verify()
-    if lock_before is not None:
+    lock = program.path(".feature-program.lock")
+    if _proposed is not None:
+        pass  # Own lock is checked physically outside the virtual capture.
+    elif lock_before is not None:
         require(
-            lock.is_file() and bounded_bytes(lock, 64 * 1024) == lock_before,
+            observed_is_file(lock) and bounded_bytes(lock, 64 * 1024) == lock_before,
             "Lock changed during snapshot; refresh",
         )
     elif lock_unavailable is None:
-        require(not lock.exists(), "Lock appeared during snapshot; refresh")
+        require(not observed_exists(lock), "Lock appeared during snapshot; refresh")
     program.require_current_location()
     require(
-        sha(bounded_bytes(backlog, 8 * 1024 * 1024)) == sha(initial),
+        program.read_registry_observation().storage_sha256 == initial_observation.storage_sha256,
         "Registry changed during snapshot; refresh",
     )
     return output
+
+
+@dataclass(slots=True)
+class _ClosingComponents:
+    """One observer's metadata reuse; every seen name must finish with a fresh check."""
+
+    seen: dict[str, Path] = field(default_factory=dict)
+    nonlinked: set[str] = field(default_factory=set)
+
+    def linked(self, path: Path) -> bool:
+        key = str(path)
+        self.seen.setdefault(key, path)
+        if key in self.nonlinked:
+            return False
+        linked, captured = _component_check(path)
+        if captured and not linked:
+            self.nonlinked.add(key)
+        return linked
+
+    def finish(self) -> None:
+        for path in self.seen.values():
+            try:
+                require(not _component_linked(path), "Closing component changed; refresh")
+            except (ProgramError, OSError):
+                observe_path_error(path, "path_admission_unavailable")
+                raise
+
+
+class _ClosingObserver:
+    """One fresh physical image; all original logical admissions are still replayed."""
+
+    def __init__(self, program: Program):
+        self.program = program
+        self.reader = ReadBudget(1024 * 1024 * 1024)
+        self.allowed = {program.repo.absolute(), program.directory.absolute(), ROOT, ROOT / "tools"}
+        self.admitted: dict[tuple[Path, str], Path] = {}
+        self.normalized_roots: dict[Path, Path] = {}
+        self.probes: dict[tuple[Path, str], str] = {}
+        self.components = _ClosingComponents()
+
+    def _admitted_path(self, root: Path, name: str) -> Path:
+        """Retain one checked Path per original logical admission in this fresh image."""
+        key = (root, name)
+        path = self.admitted.get(key)
+        if path is not None:
+            return path
+        absolute = self.normalized_roots.get(root)
+        if absolute is None:
+            absolute = root.absolute()
+            if absolute not in self.allowed:
+                bases = [base for base in self.allowed if absolute.is_relative_to(base)]
+                require(bool(bases), "Unsupported dependency root")
+                base = max(bases, key=lambda candidate: len(candidate.parts))
+                # A narrower logical root needs one namespace admission. Every
+                # distinct name below still rechecks that root's actual resolution.
+                _checked_safe_path(base, absolute.relative_to(base).as_posix(), self.components)
+            self.normalized_roots[root] = absolute
+        path = _checked_safe_path(absolute, name, self.components)
+        self.admitted[key] = path
+        return path
+
+    def finish(self) -> None:
+        self.components.finish()
+
+    def admit(self, root: Path, name: str) -> None:
+        self._admitted_path(root, name)
+
+    def file(self, root: Path, name: str, *, limit: int, budget_tag: str | None) -> CapturedBytes:
+        path = self._admitted_path(root, name)
+        # Stored roots use normalized case. The ordinary source walker uses the
+        # host repo spelling as its ledger key; equal Path roots must warm that
+        # SAME logical source admission, not create a case-only second epoch.
+        capture_root = (
+            self.program.repo if root == self.program.repo else self.normalized_roots[root]
+        )
+        return self.reader._capture_admitted(capture_root, name, path, limit)
+
+    def probe(self, root: Path, name: str, *, operation: str) -> str:
+        path = self._admitted_path(root, name)
+        key = (path, operation)
+        if key not in self.probes:
+            self.probes[key] = self._probe(path, operation)
+        return self.probes[key]
+
+    def _probe(self, path: Path, operation: str) -> str:
+        if operation == "kind":
+            try:
+                mode = path.stat().st_mode
+            except FileNotFoundError:
+                return "missing"
+            return "file" if stat.S_ISREG(mode) else "directory" if stat.S_ISDIR(mode) else "other"
+        if operation == "size":
+            return str(observed_size(path))
+        require(operation in {"exists", "is_file", "is_dir"}, "Unknown dependency probe")
+        value = getattr(path, operation)()
+        return "true" if value else "false"
+
+    def scope(
+        self, root: Path, selectors: list[str], *, byte_budget: int, entry_limit: int
+    ) -> tuple[Record, Json]:
+        require(root == self.program.repo, "Source scope requires the bound repository")
+        require(
+            byte_budget == 128 * 1024 * 1024 and 0 < entry_limit <= 10000,
+            "Invalid source scope bounds",
+        )
+        boundaries: list[Json] = []
+        snapshot = self.program.source_snapshot(selectors, self.reader, _boundaries=boundaries)
+        require(
+            len(snapshot) <= entry_limit and len(boundaries) <= entry_limit,
+            "Source scope entry limit changed",
+        )
+        return snapshot, boundaries
+
+    def exclusions(self, root: Path, groups: Record, *, entry_limit: int) -> list[Json]:
+        require(root == self.program.repo and 0 < entry_limit <= 10000, "Invalid exclusion scope")
+        return flow_module("inputs")._exclusions(self.program, {"groups": groups})
+
+
+class _ProspectiveObserver(_ClosingObserver):
+    """Close real inputs while admitting only this checked writer's deterministic outputs."""
+
+    def __init__(self, program: Program, prepared: _PreparedState):
+        super().__init__(program)
+        require(
+            prepared.checked.state is prepared.state
+            and canonical(prepared.state) == prepared.normalized_body,
+            "Proposed publication proof changed",
+        )
+        self.views = {
+            program.path(name): text.encode("utf-8") for name, text in prepared.views.items()
+        }
+        self.lock = program.path(".feature-program.lock")
+
+    def file(self, root: Path, name: str, *, limit: int, budget_tag: str | None) -> CapturedBytes:
+        path = self._admitted_path(root, name)
+        if path in self.views:
+            content = self.views[path]
+            require(len(content) <= limit, "Proposed output exceeds consumer bound")
+            return CapturedBytes(path, content, sha(content))
+        return super().file(root, name, limit=limit, budget_tag=budget_tag)
+
+    def _probe(self, path: Path, operation: str) -> str:
+        if path == self.lock:
+            require(
+                operation in {"exists", "is_file", "is_dir", "kind"}, "Invalid future lock probe"
+            )
+            return "missing" if operation == "kind" else "false"
+        if path in self.views:
+            if operation == "kind":
+                return "file"
+            if operation == "size":
+                return str(len(self.views[path]))
+            return "false" if operation == "is_dir" else "true"
+        return super()._probe(path, operation)
+
+
+def _assert_registry_storage(program: Program, original: RegistryObservation | None) -> None:
+    if original is None:
+        require(
+            not observed_exists(program.path("backlog.json")),
+            "Registry appeared before publication",
+        )
+    else:
+        require(
+            program.read_registry_observation().raw_bytes == original.raw_bytes,
+            "Registry storage changed; refresh before publication",
+        )
+
+
+def _assert_owned_lock(program: Program) -> None:
+    expected = (_owned_program_locks.get() or {}).get(str(program.directory.absolute()))
+    require(
+        expected is not None, "Enabled storage publication requires the normal owned program lock"
+    )
+    path = program.path(".feature-program.lock")
+    require(sha(bounded_bytes(path, 64 * 1024)) == expected, "Owned program lock changed")
+
+
+def _prepare_model_publication(
+    program: Program,
+    state: Record,
+    original: RegistryObservation,
+    *,
+    require_eligible: bool = False,
+    preserve_body: bool = False,
+) -> tuple[bytes, _StagedModel]:
+    """Prepare without swapping canonical state or persisting the current writer lock."""
+    _assert_owned_lock(program)
+    module = flow_module("read_model")
+    intended_body = original.body_bytes if preserve_body else canonical(state)
+    collector = module.Collector(
+        program.repo,
+        program.directory,
+        program_id=str(state["program_id"]),
+        body_sha256=sha(intended_body),
+        producer=module.producer_identity(program.repo),
+        query={"kind": "ordinary_snapshot", "version": 1},
+    )
+    facts: list[_PreparedState] = []
+    token = _prepared_save_facts.set(facts)
+    observations = _SourceObservations()
+    source_token = _source_observations.set(observations)
+    try:
+        with _collect_dependencies(collector):
+            body = program.prepare_save(state)
+            require(
+                len(facts) == 1 and facts[0].body == body,
+                "Missing exact publication validation proof",
+            )
+            prepared = facts[0]
+            if preserve_body:
+                require(
+                    canonical(parse_registry_state(original, path=program.path("backlog.json")))
+                    == body,
+                    "Exact preserved BODY differs from proposed state",
+                )
+                prepared = _PreparedState(
+                    state, prepared.checked, intended_body, prepared.views, body
+                )
+                body = intended_body
+            snapshot = _capture_projection(
+                program.repo,
+                program.directory,
+                observations,
+                False,
+                None,
+                _proposed=_ProposedCapture(prepared, original),
+            )
+        model = collector.finish(snapshot)
+    finally:
+        _source_observations.reset(source_token)
+        _prepared_save_facts.reset(token)
+    if require_eligible:
+        require(
+            model.get("eligible") is True, "Storage enable requires a complete eligible read model"
+        )
+    _assert_owned_lock(program)
+    _assert_registry_storage(program, original)
+    storage = flow_module("storage")
+    try:
+        # A missing store needs creation only by store_model, never retention/read.
+        try:
+            storage.retain_models(
+                program.repo,
+                program.directory,
+                current_model_id=original.model_id,
+                expected_program_id=str(state["program_id"]),
+            )
+        except storage.ModelStoreError as exc:
+            if (
+                require_eligible
+                and original.model_id is not None
+                and exc.code in {"object_missing", "object_corrupt"}
+            ):
+                # Only explicit repair may discard already-unservable derived objects.
+                # Store validates exact canonical program identity before any deletion.
+                _assert_owned_lock(program)
+                _assert_registry_storage(program, original)
+                storage.retain_models(
+                    program.repo,
+                    program.directory,
+                    current_model_id=None,
+                    expected_program_id=str(state["program_id"]),
+                )
+            elif exc.code != "store_missing":
+                raise
+        model_id = storage.store_model(program.repo, program.directory, model)
+        return storage.encode_registry(body, model_id), _StagedModel(model_id, model, prepared)
+    except storage.ModelStoreError as exc:
+        raise ProgramError(f"Read-model preparation failed: {exc.code}") from exc
+
+
+def _close_staged_model(program: Program, staged: _StagedModel) -> None:
+    """Run the complete closing image after normal callbacks and before canonical replacement."""
+    _assert_owned_lock(program)
+    require(
+        staged.prepared.checked.state is staged.prepared.state
+        and canonical(staged.prepared.state) == staged.prepared.normalized_body,
+        "Prepared state changed before final model closure",
+    )
+    if staged.model.get("eligible") is True:
+        observation = flow_module("storage").decode_registry(staged.prepared.body)
+        observer = _ProspectiveObserver(program, staged.prepared)
+        closed = flow_module("read_model").validate(
+            staged.model,
+            program,
+            observation=observation,
+            observer=observer,
+        )
+        require(closed is not None, "Read-model inputs changed before publication")
+        observer.finish()
+    program.require_current_location()
+    _assert_owned_lock(program)
+
+
+def _read_materialized_projection(repo: Path, program_dir: Path) -> Record | None:
+    repo = repo.absolute()
+    directory = program_dir.absolute() if program_dir.is_absolute() else repo / program_dir
+    require(
+        directory.is_relative_to(repo) and directory != repo,
+        "Program must be within configured repository",
+    )
+    program = Program(repo, safe_path(repo, directory.relative_to(repo).as_posix()))
+    program.require_current_location()
+    original = program.read_registry_observation()
+    if original.model_id is None:
+        return None
+    storage = flow_module("storage")
+    try:
+        model = storage.load_model(repo, directory, original.model_id)
+    except storage.ModelStoreError:
+        return None
+    # Derived corruption/currentness is a miss. Canonical and authority failures above remain errors.
+    module = flow_module("read_model")
+    try:
+        observer = _ClosingObserver(program)
+        result = module.validate(model, program, observation=original, observer=observer)
+        if result is not None:
+            observer.finish()
+    except (ProgramError, OSError, module.ModelError):
+        return None
+    if result is None:
+        return None
+    _assert_registry_storage(program, original)
+    program.require_current_location()
+    _assert_registry_storage(program, original)
+    result["generated_at"] = utc()
+    require(len(canonical(result)) <= 8 * 1024 * 1024, "Snapshot output exceeds 8 MiB")
+    return result
+
+
+def storage_enable(program: Program, *, owner: str, reason: str) -> Record:
+    """Explicitly enable or repair derived storage without changing logical history."""
+    started = perf_counter()
+    original = program.read_registry_observation()
+    state = parse_registry_state(original, path=program.path("backlog.json"))
+    require(
+        owner == (coordination.current_director_id(state) or "leader"),
+        "Storage enable requires current director",
+    )
+    string(reason, "storage enable reason")
+    encoded, staged = _prepare_model_publication(
+        program, state, original, require_eligible=True, preserve_body=True
+    )
+    backup: Record | None = None
+    if original.model_id is None:
+        name = f"recovery/storage/{original.storage_sha256}/original-backlog.json"
+        path = program.path(name)
+        if observed_exists(path):
+            require(
+                bounded_bytes(path, 8 * 1024 * 1024 + 80) == original.raw_bytes,
+                "Storage backup collision",
+            )
+        else:
+            atomic_write(path, original.raw_bytes)
+        backup = {"path": name, "sha256": original.storage_sha256}
+    _close_staged_model(program, staged)
+    _assert_registry_storage(program, original)
+    atomic_write(program.path("backlog.json"), encoded)
+    try:
+        program.render(state)
+    except (OSError, ProgramError) as exc:
+        raise ProgramError(
+            f"Registry storage committed at BODY {original.body_sha256}; derived rendering failed. Run render or explicit storage-enable to recover views: {exc}"
+        ) from exc
+    return {
+        "status": "enabled" if original.model_id is None else "repaired",
+        "body_sha256": original.body_sha256,
+        "previous_storage_sha256": original.storage_sha256,
+        "storage_sha256": sha(encoded),
+        "model_id": staged.model_id,
+        "backup": backup,
+        "preparation_seconds": perf_counter() - started,
+    }
 
 
 def prepare_relocation(
@@ -3385,8 +4349,8 @@ def prepare_relocation(
         and not program.directory.is_relative_to(destination),
         "Relocation roots must not overlap",
     )
-    require(not destination.exists(), "Relocation destination already exists; no overwrite")
-    original = bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024)
+    require(not observed_exists(destination), "Relocation destination already exists; no overwrite")
+    original = program.read_registry_observation().raw_bytes
     # Preflight before creating a destination or reading any excluded path.
     names: list[str] = []
     for folder, dirs, filenames in os.walk(program.directory):
@@ -3401,10 +4365,10 @@ def prepare_relocation(
                 continue
             if name == "backlog.json" and relative != name:
                 require(
-                    path.with_name("RELOCATED.json").is_file(),
+                    observed_is_file(path.with_name("RELOCATED.json")),
                     "Relocate active nested programs separately first",
                 )
-            require(path.is_file(), "Relocation accepts regular files only")
+            require(observed_is_file(path), "Relocation accepts regular files only")
             names.append(relative)
     require(len(names) <= 10000, "Relocation exceeds 10000 files")
     target = Program(program.repo, destination)
@@ -3447,11 +4411,15 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
         planning.publication_begin(program, operation_id)
         atomic_write(target.path("RELOCATION_INCOMPLETE.json"), canonical(marker))
         for name in names:
-            content = budget.read(program.path(name), 8 * 1024 * 1024)
+            content = budget.read(
+                program.path(name),
+                8 * 1024 * 1024
+                + (80 if name == "backlog.json" or name.endswith("/original-backlog.json") else 0),
+            )
             files[name] = sha(content)
             atomic_write(target.path(name), content)
         require(
-            sha(bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024)) == sha(original),
+            sha(program.read_registry_observation().raw_bytes) == sha(original),
             "Source registry changed during relocation",
         )
         old_root = string(marker["source"], "old root")
@@ -3491,18 +4459,34 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
         derived = target.views(state)
         for name, content in files.items():
             require(
-                sha(bounded_bytes(target.path(name), 8 * 1024 * 1024)) == content,
+                sha(
+                    bounded_bytes(
+                        target.path(name),
+                        8 * 1024 * 1024
+                        + (
+                            80
+                            if name == "backlog.json" or name.endswith("/original-backlog.json")
+                            else 0
+                        ),
+                    )
+                )
+                == content,
                 f"Copied artifact changed: {name}",
             )
         require(
-            not target.path(backup_path).exists() and not target.path(manifest_path).exists(),
+            not observed_exists(target.path(backup_path))
+            and not observed_exists(target.path(manifest_path)),
             "Recovery archive collision",
         )
         atomic_write(target.path(backup_path), original)
         atomic_write(target.path("backlog.json"), encoded)
         for name, content in derived.items():
             atomic_write(target.path(name), content.encode("utf-8"))
-        target.validate(read_json(target.path("backlog.json")))
+        target.validate(
+            parse_registry_state(
+                target.read_registry_observation(), path=target.path("backlog.json")
+            )
+        )
         manifest: Record = {
             **marker,
             "phase": "ready",
@@ -3523,16 +4507,31 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
         fresh_names = sorted(
             path.relative_to(program.directory).as_posix()
             for path in program.directory.rglob("*")
-            if path.is_file() and path.name != ".feature-program.lock"
+            if observed_is_file(path) and path.name != ".feature-program.lock"
         )
         require(fresh_names == sorted(names), "Source inventory changed during relocation")
         fresh_budget = ReadBudget(256 * 1024 * 1024)
         for name, expected in files.items():
             require(
-                sha(fresh_budget.read(program.path(name), 8 * 1024 * 1024)) == expected,
+                sha(
+                    fresh_budget.read(
+                        program.path(name),
+                        8 * 1024 * 1024
+                        + (
+                            80
+                            if name == "backlog.json" or name.endswith("/original-backlog.json")
+                            else 0
+                        ),
+                    )
+                )
+                == expected,
                 f"Source artifact changed during relocation: {name}",
             )
-        target.validate(read_json(target.path("backlog.json")))
+        target.validate(
+            parse_registry_state(
+                target.read_registry_observation(), path=target.path("backlog.json")
+            )
+        )
         copied_budget = ReadBudget(256 * 1024 * 1024)
         for name, expected in record(manifest["files"], "copy manifest").items():
             require(
@@ -3556,7 +4555,7 @@ def prepare_relocation_recovery(
     located = planning.publication_find(
         program, "relocation", getattr(args, "publication_id", None)
     )
-    if not program.path("RELOCATION_INCOMPLETE.json").exists() and located is not None:
+    if not observed_exists(program.path("RELOCATION_INCOMPLETE.json")) and located is not None:
         target_name = string(sequence(located[0]["endpoints"], "endpoints")[1], "destination")
         require(
             target_name.casefold()
@@ -3588,14 +4587,13 @@ def prepare_relocation_recovery(
         program.repo, safe_path(program.repo, string(marker.get("source"), "source directory"))
     )
     require(
-        sha(bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024))
-        == marker.get("registry_sha256"),
+        sha(program.read_registry_observation().raw_bytes) == marker.get("registry_sha256"),
         "Published registry changed",
     )
     require(
         sha(
             bounded_bytes(
-                program.path(string(marker.get("backup_path"), "backup path")), 8 * 1024 * 1024
+                program.path(string(marker.get("backup_path"), "backup path")), 8 * 1024 * 1024 + 80
             )
         )
         == marker.get("original_registry_sha256"),
@@ -3606,7 +4604,9 @@ def prepare_relocation_recovery(
             sha(bounded_bytes(program.path(name), 8 * 1024 * 1024)) == expected,
             f"Recovery artifact changed: {name}",
         )
-    state = read_json(program.path("backlog.json"))
+    state = parse_registry_state(
+        program.read_registry_observation(), path=program.path("backlog.json")
+    )
     program.validate(state)
     require(
         args.owner == (coordination.current_director_id(state) or "leader"),
@@ -3617,7 +4617,7 @@ def prepare_relocation_recovery(
             bounded_bytes(program.path(name), 8 * 1024 * 1024) == content.encode("utf-8"),
             "Recovery views changed",
         )
-    if source.path("RELOCATED.json").exists():
+    if observed_exists(source.path("RELOCATED.json")):
         archive = read_json(source.path("RELOCATED.json"), limit=64 * 1024)
         require(
             archive.get("destination") == marker["destination"]
@@ -3626,7 +4626,7 @@ def prepare_relocation_recovery(
         )
     else:
         require(
-            sha(bounded_bytes(source.path("backlog.json"), 8 * 1024 * 1024))
+            sha(source.read_registry_observation().raw_bytes)
             == marker.get("original_registry_sha256"),
             "Original source changed; recovery cannot archive it",
         )
@@ -3636,7 +4636,7 @@ def prepare_relocation_recovery(
             sorted(
                 path.relative_to(source.directory).as_posix()
                 for path in source.directory.rglob("*")
-                if path.is_file() and path.name != ".feature-program.lock"
+                if observed_is_file(path) and path.name != ".feature-program.lock"
             )
             == sorted(source_files),
             "Original inventory changed; recovery cannot archive it",
@@ -3658,7 +4658,9 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
             planning.publication_complete(program, string(located[0]["id"], "publication ID"))
             return
         if located is None:
-            state = read_json(program.path("backlog.json"))
+            state = parse_registry_state(
+                program.read_registry_observation(), path=program.path("backlog.json")
+            )
             operation_id = planning.publication_register(
                 source,
                 "relocation",
@@ -3668,7 +4670,7 @@ def recover_relocation(program: Program, args: argparse.Namespace) -> None:
             )
             planning.publication_begin(program, operation_id)
             located = planning.publication_find(program, "relocation", operation_id)
-        if not source.path("RELOCATED.json").exists():
+        if not observed_exists(source.path("RELOCATED.json")):
             atomic_write(
                 source.path("RELOCATED.json"),
                 canonical(
@@ -3782,8 +4784,8 @@ def starter(program: Program, args: argparse.Namespace) -> None:
             "\nInspect related_to, dependencies and the current owner/contact registry. Communicate directly with peers for bounded API, data and dependency agreements while preserving owned-file boundaries. Persist consequential agreements/blockers as task notes/evidence before relying on them and record counterpart acknowledgement. Escalate cross-scope or goal conflicts to the sub-director/final director. If the native runtime cannot address a peer, relay through the director; never invent delivery or acknowledgement. This tool does not send messages or launch agents.\n"
         )
     require(
-        not program.path("backlog.json").exists()
-        and all(not program.path(name).exists() for name in files),
+        not observed_exists(program.path("backlog.json"))
+        and all(not observed_exists(program.path(name)) for name in files),
         "Starter refuses to overwrite existing program material",
     )
     for name, text in files.items():
@@ -3828,6 +4830,14 @@ def parser() -> argparse.ArgumentParser:
     )
     snapshot.add_argument(
         "--execution-capture", help="Explicit program-relative sealed actual execution capture JSON"
+    )
+    enable = commands.add_parser(
+        "storage-enable", help="Explicitly enable or repair the derived read model"
+    )
+    enable.add_argument("--owner", required=True)
+    enable.add_argument("--reason", required=True)
+    commands.add_parser(
+        "storage-export", help="Export exact logical JSON BODY bytes without writes"
     )
     init = commands.add_parser("init")
     init.add_argument("--report")
@@ -3997,17 +5007,23 @@ def main(argv: list[str] | None = None) -> int:
                 end="",
             )
             return 0
+        if args.command == "storage-export":
+            program.require_current_location()
+            sys.stdout.buffer.write(program.read_state_bytes())
+            return 0
+        if args.command == "storage-enable":
+            with program.lock():
+                enabled = storage_enable(program, owner=args.owner, reason=args.reason)
+            sys.stdout.buffer.write(canonical(enabled))
+            return 0
         if args.command == "brief":
             # The bound covers emitted bytes, including on Windows: text-mode
             # newline translation would otherwise expand the canonical LF output.
             sys.stdout.buffer.write(canonical(read_brief(repo, program.directory, args.task)))
             return 0
         if args.command in {"coverage", "coverage-binding"}:
-            initial = bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024)
-            state = read_json(
-                program.path("backlog.json"),
-                budget=ReadBudget(cached={program.path("backlog.json"): initial}),
-            )
+            initial = program.read_registry_observation()
+            state = parse_registry_state(initial, path=program.path("backlog.json"))
             program.require_current_location()
             if args.command == "coverage-binding":
                 result = coverage.bind_input(program, state, read_json(program.path(args.input)))
@@ -4048,7 +5064,7 @@ def main(argv: list[str] | None = None) -> int:
                     diagnostic = {**diagnostic, **metadata_error}
                 result["diagnostics"] = diagnostic
             require(
-                bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024) == initial,
+                program.read_registry_observation().raw_bytes == initial.raw_bytes,
                 "Registry changed during coverage observation; refresh",
             )
             require(len(canonical(result)) <= 8 * 1024 * 1024, "Coverage output exceeds 8 MiB")

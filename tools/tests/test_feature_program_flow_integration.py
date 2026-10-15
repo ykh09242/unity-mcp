@@ -640,3 +640,80 @@ def test_nonrunner_delimited_positional_still_uses_normal_parser():
     args = fp.parse_command_args(["packet", "--", "S01"])
     assert args.command == "packet"
     assert args.id == "S01"
+
+
+def test_initial_readiness_validation_is_shared_but_public_readiness_stays_strict(
+    fixture, capsys, monkeypatch
+):
+    # Given the normal read command and a counter at the actual complete validation boundary.
+    validations = []
+    original = fp.Program.validate
+
+    def validate(program, state, *args, **kwargs):
+        validations.append(state)
+        return original(program, state, *args, **kwargs)
+
+    monkeypatch.setattr(fp.Program, "validate", validate)
+    # When CLI dispatch and then an independent public reader assess their own state.
+    output(fixture, capsys, "closure-readiness")
+    assert len(validations) == 1
+    state = fp.read_json(fixture.program.path("backlog.json"))
+    fp.flow_module("closure").readiness(fixture.program, state)
+    # Then only the identical initial command state is shared; standalone validation remains.
+    assert len(validations) == 2
+    assert validations[0] is not validations[1]
+
+
+def test_closure_closing_context_rechecks_global_refs_after_normal_inspection(
+    fixture, capsys, monkeypatch
+):
+    # Given a normal prepared plan whose global proof is not a per-stage control.
+    assert fixture.claim() == 0
+    proof_path = fixture.write("evidence/S01/attempt-1/global-proof.json", {"synthetic": True})
+    proof = {"path": proof_path, "sha256": fp.sha(fixture.program.path(proof_path).read_bytes())}
+    request = fixture.write(
+        "closure-global-request.json",
+        {
+            "owner_id": "worker",
+            "scope": ["src/S01.py"],
+            "refs": [proof],
+            "stages": [stage("first", "First")],
+        },
+    )
+    plan = output(fixture, capsys, "closure-prepare", "--input", request)
+    host_type = fp.authoring.ClosureHost
+    original = host_type._inspection_context
+
+    def mutate_after_capture(host, state, refs):
+        context = original(host, state, refs)
+        fixture.program.path(proof_path).write_bytes(b'{"synthetic":"changed"}')
+        return context
+
+    monkeypatch.setattr(host_type, "_inspection_context", mutate_after_capture)
+    # When the global reference changes after initial checks but before final observation.
+    with pytest.raises(fp.ProgramError, match="changed during snapshot"):
+        fp.flow_module("closure").inspect_plan(
+            fixture.program, plan, fixture.program.load(), host_type(fixture.program)
+        )
+    # Then no closure stage was published by the read-only inspection.
+    assert not any(event.get("reason") == "First" for event in fixture.program.load()["events"])
+
+
+def test_cli_readiness_retains_current_required_lane_guard_after_terminal_history(gate, capsys):
+    from tools.tests.test_feature_program_authoring import complete_tasks
+    from tools.tests.test_feature_program_verification import request
+
+    # Given historical done receipts and a newly adopted current required pending lane.
+    complete_tasks(gate)
+    fixture = gate.fixture
+    control = request(fixture, actor_id="director")
+    name = fixture.write("evidence/_verification/attempt-1/readiness-pending.json", control)
+    assert fixture.run("verification-record", "--input", name) == 0
+    # When normal CLI readiness reuses the initial strict history validation.
+    result = output(fixture, capsys, "closure-readiness")
+    # Then current required completion is still checked independently of historical validity.
+    assert any(
+        row["kind"] == "current_verification" and row["task_id"] == "S01"
+        for row in result["requirements"]["items"]
+    )
+    assert fixture.program.task(fixture.program.load(), "S01")["status"] == "done"

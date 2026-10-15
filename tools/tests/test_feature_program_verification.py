@@ -1081,7 +1081,7 @@ def test_registry_publication_guards_reject_one_byte_over_inherited_limit(fixtur
     oversized = encoded + b" " * (8 * 1024 * 1024 + 1 - len(encoded))
     fixture.program.path("backlog.json").write_bytes(oversized)
     # When the actual provider publication guard reads the original registry.
-    with pytest.raises(fp.ProgramError, match="bounded read"):
+    with pytest.raises(fp.ProgramError, match="^Invalid registry storage: registry_size$"):
         fp.authoring.delivery_publication_guard(fixture.program, state)
     # Then bounded rejection leaves the original bytes unchanged rather than bypassing the read.
     assert fixture.program.path("backlog.json").read_bytes() == oversized
@@ -1827,3 +1827,230 @@ def test_typed_attachment_route_does_not_waive_nonempty_artifact_rule(fixture):
     # When the empty raw copy is wrongly used as the ordinary artifact itself.
     with pytest.raises(fp.ProgramError):
         record(fixture, value)
+
+
+def test_categorized_projection_compares_once_and_closes_with_a_fresh_capture(fixture, monkeypatch):
+    # Given one categorized request whose safe summary consumes the same comparison.
+    import feature_program_inputs as inputs
+
+    assert fixture.claim() == 0
+    value, _ = manifest_request(fixture)
+    record(fixture, value)
+    state = fixture.program.load()
+    capture, compare = inputs.capture_inputs, inputs.compare_inputs
+    captures, comparisons = [], []
+
+    def capture_once(*args, **kwargs):
+        captures.append(True)
+        return capture(*args, **kwargs)
+
+    def compare_once(*args, **kwargs):
+        comparisons.append(True)
+        return compare(*args, **kwargs)
+
+    monkeypatch.setattr(inputs, "capture_inputs", capture_once)
+    monkeypatch.setattr(inputs, "compare_inputs", compare_once)
+    # When applicability and display are built within one reader epoch.
+    result = verification.projection(fixture.program, state)
+    # Then pure comparison is shared, while closing capture independently rereads inputs.
+    assert len(captures) == 2
+    assert len(comparisons) == 1
+    lane = result["tasks"]["S01"]["lanes"]["items"][0]
+    assert lane["applicability"] == "current"
+    assert lane["input_summary"]["status"] == "unchanged"
+
+
+def test_categorized_closing_epoch_rejects_artifact_drift_after_summary(fixture, monkeypatch):
+    # Given a declared immutable dependency outside the task's source selectors.
+    assert fixture.claim() == 0
+    value, _ = manifest_request(fixture)
+    name = fixture.evidence("S01", label="declared-input-proof")
+    value["input_manifest"]["artifact_refs"] = [
+        {"path": name, "sha256": fp.sha(fixture.program.path(name).read_bytes())}
+    ]
+    record(fixture, value)
+    state = fixture.program.load()
+    original = verification._input_summary
+
+    def changed_after_summary(*args, **kwargs):
+        result = original(*args, **kwargs)
+        fixture.program.path(name).write_bytes(b"changed after the shared initial capture")
+        return result
+
+    monkeypatch.setattr(verification, "_input_summary", changed_after_summary)
+    # When the first observation was valid but its dependency changes before closing.
+    with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+        verification.projection(fixture.program, state)
+    # Then the initial cached pass cannot escape the independent closing epoch.
+
+
+def test_receipt_membership_parse_is_shared_but_exact_observation_is_required(fixture, monkeypatch):
+    # Given one actually submitted fixture receipt carrying only its selected observation.
+    assert fixture.claim() == 0
+    record(fixture, request(fixture))
+    event = record(fixture, observation(fixture))
+    prepared = verification.submission_inputs(
+        fixture.program, fixture.program.load(), submission(fixture)
+    )
+    name = fixture.write("evidence/S01/attempt-1/epoch-carried.json", prepared["receipt"])
+    assert fixture.run("submit", "S01", "--owner", "worker", "--receipt", name) == 0
+    state = fixture.program.load()
+    reads = verification._reads()
+    context = verification._context(fixture.program, state, "S01", reads)
+    original = fp.json.loads
+    decoded = []
+
+    def counted(*args, **kwargs):
+        decoded.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(fp.json, "loads", counted)
+    # When several lane decisions inspect the same checked receipt image.
+    assert verification._carried_by_submission(fixture.program, event, context, reads)
+    other = deepcopy(event)
+    other["input"]["id"] = "unselected-observation"
+    assert not verification._carried_by_submission(fixture.program, other, context, reads)
+    assert len(decoded) == 1
+    # Then a warmed membership set never waives a different consumer hash requirement.
+    changed = deepcopy(context)
+    changed["submission"]["receipt"]["sha256"] = "f" * 64
+    with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+        verification._carried_by_submission(fixture.program, event, changed, reads)
+
+
+def test_receipt_reliance_uses_one_reader_index_without_rebuilding_per_item(fixture, monkeypatch):
+    # Given complete actual fixture observations before a normal receipt transition.
+    assert fixture.claim() == 0
+    record(fixture, request(fixture))
+    record(fixture, observation(fixture))
+    receipt = verification.submission_inputs(
+        fixture.program, fixture.program.load(), submission(fixture)
+    )["receipt"]
+    state = fixture.program.load()
+
+    def redundant_index(_state):
+        raise AssertionError("Receipt reliance rebuilt a second full history index")
+
+    monkeypatch.setattr(verification, "_index", redundant_index)
+    # When normal reliance resolves exact request and observation identities.
+    verification.validate_receipt_refs(fixture.program, state, receipt, "S01")
+    # Then the same local reader index covers every helper without a global cache.
+
+
+def test_provider_base_assessment_is_isolated_from_stale_and_failed_overlays(fixture, monkeypatch):
+    # Given a checked provider pair shared by several current lane decisions.
+    assert fixture.claim() == 0
+    context_path, provider_ref, _ = provider_pair(fixture)
+    assigned = record(fixture, request(fixture, provider_context_path=context_path))
+    event = record(fixture, observation(fixture, provider_ref=provider_ref))
+    reads = verification._reads()
+    delivery = verification._provider()
+    original = delivery.assess_execution
+    assessed = []
+
+    def counted(*args, **kwargs):
+        assessed.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(delivery, "assess_execution", counted)
+    # When stale and adverse consumers decorate the same immutable base execution.
+    stale = verification._provider_assessment(fixture.program, assigned, event, reads, "stale")
+    current = verification._provider_assessment(fixture.program, assigned, event, reads, "current")
+    adverse = deepcopy(event)
+    adverse["input"]["result"] = "failed"
+    failed = verification._provider_assessment(fixture.program, assigned, adverse, reads, "current")
+    # Then one pure assessment cannot leak green or stale mutations between consumers.
+    assert len(assessed) == 1
+    assert stale["status"] == "not_assessed"
+    assert current["status"] == "passed"
+    assert failed["status"] == "failed"
+    assert current["reasons"] == []
+
+
+def test_typed_attachment_facts_reuse_still_checks_each_event_and_fresh_epoch(fixture, monkeypatch):
+    # Given exact typed copies, including a legitimate zero-byte target stream.
+    value, _, rows = exact_empty_attachment_fixture(fixture)
+    state = fixture.program.load()
+    assigned = verification._index(state)[value["request_id"]]
+    reads = verification._reads()
+    execution = verification._execution()
+    original = execution._read_capture
+    captures = []
+
+    def counted(*args, **kwargs):
+        captures.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(execution, "_read_capture", counted)
+    required = verification._attachment_manifest_refs(
+        fixture.program, value, assigned["context"], reads
+    )
+    item = {"input": value, "context": assigned["context"], "evidence": required}
+    # When the same sealed graph appears in a second event's integrity check.
+    verification._verify_attachment_evidence(fixture.program, item, reads)
+    assert len(captures) == 1
+    missing = deepcopy(item)
+    missing["evidence"].remove(rows[-1]["attachment_ref"])
+    with pytest.raises(fp.ProgramError, match="transitive references"):
+        verification._verify_attachment_evidence(fixture.program, missing, reads)
+    # Then a later independent reader rejects changed target bytes despite the prior cache.
+    fixture.program.path(rows[-1]["attachment_ref"]["path"]).write_bytes(b"later change")
+    with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+        verification._verify_attachment_evidence(fixture.program, item, verification._reads())
+
+
+@pytest.mark.parametrize("guard_kind", ["record", "reliance", "projected_reliance"])
+@pytest.mark.parametrize("drift", [None, "selector", "body"])
+def test_envelope_verification_guards_use_body_and_recheck_physical_storage(
+    fixture, guard_kind, drift
+):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    name = fixture.write("evidence/_verification/attempt-1/envelope.json", request(fixture))
+    storage = fp.flow_module("storage")
+    body = fixture.program.read_state_bytes()
+    path = fixture.program.path("backlog.json")
+    original = storage.encode_registry(body, "1" * 64)
+    path.write_bytes(original)
+    prepared = verification.prepare_record(fixture.program, state, name, observed_head=HEAD)
+    if guard_kind == "record":
+        guard = prepared.before_publish
+    elif guard_kind == "projected_reliance":
+        predecessor = deepcopy(state)
+        predecessor["runtime_observation"] = "Projected predecessor only"
+        future = deepcopy(prepared.state)
+        future["runtime_observation"] = predecessor["runtime_observation"]
+        guard = verification.publication_guard(
+            fixture.program, future, predecessor=predecessor, publication_base=state
+        )
+    else:
+        guard = verification.publication_guard(fixture.program, prepared.state)
+    assert guard is not None
+    if drift is None:
+        guard()
+        assert path.read_bytes() == original
+    else:
+        changed = deepcopy(state)
+        if drift == "body":
+            changed["runtime_observation"] = "Concurrent logical update"
+        replacement = storage.encode_registry(
+            body if drift == "selector" else fp.canonical(changed), "2" * 64
+        )
+        path.write_bytes(replacement)
+        with pytest.raises(fp.ProgramError, match="[Rr]egistry changed"):
+            guard()
+        assert path.read_bytes() == replacement
+
+
+def test_verification_receipt_remains_raw_even_when_registry_uses_envelope(fixture):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    value = request(fixture)
+    storage = fp.flow_module("storage")
+    fixture.program.path("backlog.json").write_bytes(
+        storage.encode_registry(fp.canonical(state), "1" * 64)
+    )
+    name = fixture.write("evidence/_verification/attempt-1/encoded-artifact.json", value)
+    fixture.program.path(name).write_bytes(storage.encode_registry(fp.canonical(value), "2" * 64))
+    with pytest.raises(fp.ProgramError, match="JSON"):
+        verification.prepare_record(fixture.program, state, name, observed_head=HEAD)

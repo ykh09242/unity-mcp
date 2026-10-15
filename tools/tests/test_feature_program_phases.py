@@ -17,7 +17,7 @@ import pytest
 # Collection must work from Server with CI's tools-only PYTHONPATH, independently of other tests.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.tests.test_feature_program import Fixture, HEAD, fp  # noqa: E402
+from tools.tests.test_feature_program import Fixture, HEAD, _mock_link_lstat, fp  # noqa: E402
 
 phases = fp.phases
 
@@ -397,6 +397,57 @@ def succession_arguments(gate: GateFixture, target: Fixture) -> list[str]:
     ]
 
 
+def test_succession_reads_envelope_bodies_and_preserves_exact_original_containers(gate):
+    target = create_program(gate.program.repo, "execution")
+    storage = fp.flow_module("storage")
+    originals = {}
+    for program in (gate.program, target.program):
+        path = program.path("backlog.json")
+        raw = storage.encode_registry(path.read_bytes(), "1" * 64)
+        path.write_bytes(raw)
+        originals[path] = raw
+    assert gate.fixture.run(*succession_arguments(gate, target)) == 0
+    assert all(path.read_bytes() == raw for path, raw in originals.items())
+    # The completed global publication proof must read the successor BODY too.
+    fp.planning.require_completed_publication(target.program, target.program.load())
+
+
+def test_succession_rejects_selector_only_storage_race_before_publication(gate, monkeypatch):
+    target = create_program(gate.program.repo, "execution")
+    storage = fp.flow_module("storage")
+    for program in (gate.program, target.program):
+        path = program.path("backlog.json")
+        path.write_bytes(storage.encode_registry(path.read_bytes(), "1" * 64))
+    args = argparse.Namespace(
+        owner="director",
+        reason="Actual synthetic succession",
+        successor=target.program.directory.relative_to(gate.program.repo).as_posix(),
+        successor_id=target.program.load()["program_id"],
+        expected_revision=phases.revision(gate.program.load()),
+        successor_revision=phases.revision(target.program.load()),
+    )
+    successor, marker = phases.prepare_succession(gate.program, gate.program.load(), args)
+    ledger_path = fp.safe_path(gate.program.repo, fp.planning.STORE_PATH + "/ledger.json")
+    ledger_before = ledger_path.read_bytes() if ledger_path.exists() else None
+    original = fp.Program.read_registry_observation
+    calls = []
+
+    def observe(program, *, budget=None):
+        if program.directory == gate.program.directory:
+            calls.append(program.directory)
+            if len(calls) == 2:
+                body = original(program).body_bytes
+                program.path("backlog.json").write_bytes(storage.encode_registry(body, "2" * 64))
+        return original(program, budget=budget)
+
+    monkeypatch.setattr(fp.Program, "read_registry_observation", observe)
+    with pytest.raises(phases.PhaseError, match="registry storage changed"):
+        phases._publish(gate.program, successor, phases.Publication(marker))
+    assert not gate.program.path("SUCCEEDED.json").exists()
+    assert not successor.path("PREDECESSOR.json").exists()
+    assert (ledger_path.read_bytes() if ledger_path.exists() else None) == ledger_before
+
+
 def test_succession_preserves_all_original_bytes_and_allows_successor_progress(
     gate: GateFixture,
 ) -> None:
@@ -600,16 +651,34 @@ def test_succession_recovery_refuses_changed_frozen_provenance(
 
 
 def test_succession_rejects_linked_successor_before_publication(
-    gate: GateFixture, monkeypatch: pytest.MonkeyPatch
+    gate: GateFixture, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     target = create_program(gate.program.repo, "execution")
     args = succession_arguments(gate, target)
-    original = Path.is_symlink
-    monkeypatch.setattr(
-        Path, "is_symlink", lambda path: path == target.program.directory or original(path)
-    )
-    assert gate.fixture.run(*args) == 1
+    before = {
+        program.path("backlog.json"): program.path("backlog.json").read_bytes()
+        for program in (gate.program, target.program)
+    }
+    alias = gate.program.repo / "linked-execution"
+    with monkeypatch.context() as linked:
+        try:
+            alias.symlink_to(target.program.directory, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            # Hosts without symlink privileges still exercise the actual metadata guard.
+            _mock_link_lstat(linked, target.program.directory, "is_symlink")
+            surface = "injected-lstat-symlink"
+        else:
+            assert alias.is_symlink()
+            args[args.index("--successor") + 1] = alias.relative_to(gate.program.repo).as_posix()
+            surface = "actual-directory-symlink"
+        assert gate.fixture.run(*args) == 1
+    observed = capsys.readouterr()
+    assert "Linked path rejected" in observed.err or "Linked or noncanonical path" in observed.err
+    print(f"LINKED_SUCCESSOR_SURFACE={surface}")
+    assert all(path.read_bytes() == raw for path, raw in before.items())
     assert not gate.program.path("SUCCESSION_INCOMPLETE.json").exists()
+    assert not gate.program.path("SUCCEEDED.json").exists()
+    assert not target.program.path("PREDECESSOR.json").exists()
 
 
 def test_adopted_program_relocation_keeps_gate_provenance_and_snapshot_reads(

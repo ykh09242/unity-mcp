@@ -998,3 +998,85 @@ def test_conflicting_content_for_same_exact_original_reference_remains_diagnosti
     with pytest.raises(timing.TimingError, match="Conflicting original timing capture"):
         project_original_captures(registry, [original, contradictory])
     # Then no arbitrary first/last value can silently replace the immutable original.
+
+
+def test_shared_observed_milestones_parse_once_without_losing_clock_provenance(monkeypatch):
+    # Given five real milestones and one explicit retained observation boundary.
+    row = timeline(as_of=endpoint("as-of", "observed", 25))
+    original = timing._instant
+    calls = []
+
+    def observe(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(timing, "_instant", observe)
+    # When overlapping metrics reuse the same immutable milestone facts.
+    result = project(row)
+    # Then six endpoint observations are parsed once and independent spans remain exact.
+    assert len(calls) == 6
+    assert interval(result, "submission_to_start")["closed_seconds"] == 8
+    assert interval(result, "start_to_terminal")["closed_seconds"] == 12
+    assert interval(result, "submission_to_terminal")["closed_seconds"] == 20
+
+
+def test_equal_full_objective_population_reuses_detached_summary(monkeypatch):
+    # Given the current objective includes the complete retained population.
+    registry = state()
+    registry["objective"] = {"id": "goal", "task_ids": ["A"]}
+    original = timing._summaries
+    calls = []
+
+    def observe(rows):
+        calls.append(len(rows))
+        return original(rows)
+
+    monkeypatch.setattr(timing, "_summaries", observe)
+    # When full statistics are projected before a zero-row display bound.
+    result = project(timeline(), registry=registry, limit=0)
+    # Then equal populations aggregate once but expose independently detached summaries.
+    first, second = result["cohorts"][0], result["cohorts"][1]
+    assert calls == [6]
+    assert first["summaries"] == second["summaries"]
+    assert result["intervals"]["omitted"] == 6
+    first["summaries"][0]["relevant_total"] = -1
+    assert second["summaries"][0]["relevant_total"] >= 0
+
+
+def test_legacy_event_index_keeps_exact_duplicate_ambiguity_across_larger_history():
+    # Given thirty exact historic rounds and one duplicate recorded submission.
+    registry = state(*(f"T{number}" for number in range(30)))
+    for task in registry["tasks"]:
+        round_item = task["attempts"][0]["rounds"][0]
+        review = {"path": "evidence/" + task["id"] + "-review.json", "sha256": "e" * 64}
+        round_item["review"] = review
+        registry["events"].extend(
+            [
+                {
+                    "action": "submit",
+                    "id": task["id"],
+                    "receipt": round_item["receipt"],
+                    "source_digest": round_item["source_digest"],
+                    "timestamp": "2026-10-15T00:00:00Z",
+                },
+                {
+                    "action": "complete",
+                    "id": task["id"],
+                    "review": review,
+                    "source_digest": round_item["source_digest"],
+                    "timestamp": "2026-10-15T00:00:20Z",
+                },
+            ]
+        )
+    registry["events"].append(deepcopy(registry["events"][0]))
+    # When complete cohorts are assessed before the small returned row bound.
+    result = project(registry=registry, limit=1)
+    # Then only the unambiguous twenty-nine recorded intervals qualify; native history stays unknown.
+    history = [
+        item
+        for item in result["cohorts"][0]["summaries"]
+        if item["kind"] == "recorded_history_span" and item["outcome"] == "all_observed"
+    ]
+    assert history[0]["closed_valid"] == 29
+    assert history[0]["median_seconds"] == 20
+    assert result["coverage"]["unknown_total"] == 180
