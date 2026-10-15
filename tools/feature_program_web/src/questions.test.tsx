@@ -5,6 +5,7 @@ import { QuestionDraftProvider } from './question-drafts';
 import type { ReactElement } from 'react';
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: QuestionDraftProvider });
 import { QuestionForm, useSession } from './questions';
+import { translationTools } from './i18n';
 import type { AnswerResult, AnswerSaver, Session, SessionLoader } from './questions';
 import type { JsonRecord } from './model';
 
@@ -439,4 +440,53 @@ describe('director question responses', () => {
     expect(saver).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Your answer').hasAttribute('disabled')).toBe(true);
   });
+});
+
+it('shows actual producer saved_at after snapshot confirmation without claiming missing time while refresh is pending', async () => {
+  const saver = vi.fn<AnswerSaver>(async () => ({ ok: true, conflict: false }));
+  const refresh = vi.fn(async () => {});
+  const view = render(
+    <QuestionForm question={question} session={session} saver={saver} refresh={refresh} />,
+  );
+  fireEvent.change(screen.getByLabelText('Your answer'), {
+    target: { value: 'Actual saved answer' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+  await screen.findByRole('heading', { name: 'Your saved answer' });
+  expect(refresh).toHaveBeenCalledWith(false, true);
+  expect(screen.queryByText(/Saved Not recorded/)).toBeNull();
+  const submission = saver.mock.calls[0]?.[0];
+  if (!submission) throw new Error('Missing actual interaction submission');
+  const savedAt = '2026-10-16T03:37:46.747043+09:00';
+  view.rerender(
+    <QuestionForm
+      question={{
+        ...question,
+        status: 'answered',
+        answer: { ...submission, saved_at: savedAt, channel: 'local_web' },
+      }}
+      session={session}
+      saver={saver}
+      refresh={refresh}
+    />,
+  );
+  expect(
+    screen.getByText(
+      (text) => text.includes('Saved ') && text.includes(translationTools('en').date(savedAt)),
+    ),
+  ).toBeTruthy();
+  expect(screen.getByText('Actual saved answer')).toBeTruthy();
+  view.rerender(
+    <QuestionForm
+      question={{
+        ...question,
+        status: 'answered',
+        answer: { ...submission, channel: 'local_web' },
+      }}
+      session={session}
+      saver={saver}
+      refresh={refresh}
+    />,
+  );
+  expect(screen.getByText(/Saved Not recorded/)).toBeTruthy();
 });

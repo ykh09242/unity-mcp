@@ -1,5 +1,15 @@
-import { ReviewBottleneck, EvidencePreparationSummary, BatchSummary } from './review-throughput-ui';
-import { ClosureSummary, ClosureAttention } from './flow-closure-ui';
+import {
+  ReviewBottleneck,
+  EvidencePreparationSummary,
+  BatchSummary,
+  ReviewerLoadInline,
+} from './review-throughput-ui';
+import {
+  ClosureSummary,
+  ClosureAttention,
+  IntegratedReviewFacts,
+  IntegratedReviewNextAction,
+} from './flow-closure-ui';
 import { ReviewQueueList, QueueAttention } from './flow-queue-ui';
 import { queueActorIds, queueFilters } from './flow-queue';
 import { TaskDescription, taskDescriptionParts } from './task-description';
@@ -302,6 +312,7 @@ function Objective({ snapshot }: { readonly snapshot: Snapshot }) {
           ],
         ]}
       />
+      <IntegratedReviewFacts snapshot={snapshot} />
       <details>
         <summary>{i18n.t('Success criteria')}</summary>
         <CriterionCoverage snapshot={snapshot} />
@@ -309,12 +320,15 @@ function Objective({ snapshot }: { readonly snapshot: Snapshot }) {
       <p className="next-action">
         <span className="muted">{i18n.t('Next action')}</span>
         <br />
-        {i18n.display(
-          objective.next_action || checkpoint.next_action,
-          awaiting
-            ? i18n.t('User supplies the next objective.')
-            : i18n.t('Director records the next action.'),
-        )}
+        <IntegratedReviewNextAction
+          snapshot={snapshot}
+          fallback={i18n.display(
+            objective.next_action || checkpoint.next_action,
+            awaiting
+              ? i18n.t('User supplies the next objective.')
+              : i18n.t('Director records the next action.'),
+          )}
+        />
       </p>
     </section>
   );
@@ -1313,6 +1327,7 @@ function Team({
               {i18n.t('Current recorded assignments:')}{' '}
               {assignments.map((task) => task.id).join(', ') || i18n.t('None')}
             </p>
+            <ReviewerLoadInline snapshot={snapshot} actorId={id} />
             <StaffingHistory actor={actor} />
           </article>
           <div className="actor-child">{walk(id, new Set([...visited, id]))}</div>

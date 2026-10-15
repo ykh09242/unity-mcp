@@ -1,6 +1,6 @@
 import { record, string } from './model';
 import type { Json, JsonRecord, Snapshot } from './model';
-import { boundedCollection } from './readiness';
+import { boundedCollection, currentReference } from './readiness';
 
 // New projections are consumed only from one coherent snapshot, never merged independently.
 export function finiteCount(value: Json | undefined): value is number {
@@ -238,6 +238,7 @@ function currentRow(snapshot: Snapshot, input: Json): CurrentReviewTiming | null
     ![
       'ready',
       'unassigned',
+      'claimed',
       'sent',
       'delivery_unknown',
       'delivery_failed',
@@ -408,6 +409,7 @@ export function knownLabel(labels: Readonly<Record<string, string>>, value: stri
 export const handoffPhases = [
   'ready',
   'unassigned',
+  'claimed',
   'sent',
   'delivery_unknown',
   'delivery_failed',
@@ -415,6 +417,51 @@ export const handoffPhases = [
   'started',
   'terminal',
 ] as const;
+export type ReviewMilestone = {
+  readonly id: string;
+  readonly kind: string;
+  readonly actorId: string;
+  readonly observedAt: string | null;
+  readonly dispatchId: string;
+};
+const milestoneKinds = [
+  'dispatch_claimed',
+  'dispatch_sent',
+  'dispatch_failed',
+  'dispatch_unknown',
+  'reviewer_acknowledged',
+  'review_started',
+] as const;
+function reviewMilestones(snapshot: Snapshot, row: JsonRecord): readonly ReviewMilestone[] | null {
+  if (row.observations === undefined) return [];
+  if (!Array.isArray(row.observations) || row.observations.length > 4000) return null;
+  const parsed: ReviewMilestone[] = [];
+  for (const input of row.observations) {
+    const value = record(input);
+    if (!string(value.id) || !string(value.kind)) return null;
+    if (!milestoneKinds.some((kind) => kind === value.kind)) continue;
+    const reference = record(value.reference);
+    if (
+      !string(value.actor_id) ||
+      !string(value.dispatch_attempt_id) ||
+      !(value.observed_at === null || awareTime(value.observed_at)) ||
+      !(value.clock_id === null || typeof value.clock_id === 'string') ||
+      !(
+        currentReference(snapshot, reference, string(row.task_id)) ||
+        (string(reference.path) && /^[a-f0-9]{64}$/iu.test(string(reference.sha256)))
+      )
+    )
+      return null;
+    parsed.push({
+      id: string(value.id),
+      kind: string(value.kind),
+      actorId: string(value.actor_id),
+      observedAt: value.observed_at,
+      dispatchId: string(value.dispatch_attempt_id),
+    });
+  }
+  return new Set(parsed.map((row) => row.id)).size === parsed.length ? parsed : null;
+}
 export type ReviewHandoff = {
   readonly id: string;
   readonly taskId: string;
@@ -426,6 +473,7 @@ export type ReviewHandoff = {
   readonly sequence: number;
   readonly reviewerId: string;
   readonly canonicalTerminal: boolean;
+  readonly milestones: readonly ReviewMilestone[];
   readonly phase: string;
   readonly nextActorId: string;
   readonly nextAction: string;
@@ -447,7 +495,8 @@ function currentHandoffEnvelope(snapshot: Snapshot): boolean {
 }
 function parseHandoffRow(snapshot: Snapshot, input: Json | undefined): ReviewHandoff | null {
   const row = record(input),
-    reasons = strings(row.reasons);
+    reasons = strings(row.reasons),
+    milestones = reviewMilestones(snapshot, row);
   if (
     !string(row.id) ||
     !string(row.handoff_id) ||
@@ -462,7 +511,8 @@ function parseHandoffRow(snapshot: Snapshot, input: Json | undefined): ReviewHan
     !['current', 'stale', 'unavailable'].includes(string(row.currentness)) ||
     !handoffPhases.some((phase) => phase === row.phase) ||
     typeof row.canonical_terminal !== 'boolean' ||
-    !reasons
+    !reasons ||
+    !milestones
   )
     return null;
   return {
@@ -476,6 +526,7 @@ function parseHandoffRow(snapshot: Snapshot, input: Json | undefined): ReviewHan
     currentness: string(row.currentness),
     reviewerId: string(row.reviewer_id),
     canonicalTerminal: row.canonical_terminal,
+    milestones,
     phase: string(row.phase),
     nextActorId: string(row.next_actor_id),
     nextAction: string(row.next_action),
@@ -556,6 +607,7 @@ export function taskHandoffUnavailable(snapshot: Snapshot, taskId: string): bool
   );
 }
 export const reviewPhaseLabels: Readonly<Record<string, string>> = {
+  claimed: 'Review dispatch reserved',
   ready: 'Review handoff prepared',
   unassigned: 'Awaiting reviewer assignment',
   sent: 'Review request sent',
@@ -742,4 +794,116 @@ export function recordBatch(input: Json | undefined): RecordBatch | null {
     operations: parsed,
     omitted: operations.omitted,
   };
+}
+
+export type ReviewerLoad = {
+  readonly actorId: string;
+  readonly policyLimit: number | null;
+  readonly policyHeadroom: number | null;
+  readonly occupied: number;
+  readonly pendingDispatch: number;
+  readonly sentUnstarted: number;
+  readonly started: number;
+  readonly ambiguous: number;
+  readonly supersededNonterminal: number;
+  readonly nextAction: string;
+  readonly reasons: readonly string[];
+  readonly availableSlots: number | null;
+  readonly observedAt: string | null;
+};
+export type ReviewerLoads = {
+  readonly rows: readonly ReviewerLoad[];
+  readonly total: number;
+  readonly omitted: number;
+};
+function parseReviewerLoads(snapshot: Snapshot): ReviewerLoads | null {
+  const value = record(snapshot.reviewer_load);
+  const rows = boundedCollection(value.rows, 50);
+  const counts = record(value.counts);
+  const countKeys = [
+    'recorded_occupied',
+    'pending_dispatch',
+    'sent_unstarted',
+    'started',
+    'ambiguous',
+    'superseded_nonterminal',
+  ] as const;
+  if (
+    value.schema_version !== 1 ||
+    value.status !== 'recorded' ||
+    record(value.source_binding).revision !== snapshot.revision ||
+    !['unknown', 'observed'].includes(string(value.runtime_capacity)) ||
+    value.authority !== 'advisory_only' ||
+    !rows ||
+    !currentReference(snapshot, rows.reference) ||
+    !(
+      countKeys.every((key) => finiteCount(counts[key])) ||
+      (rows.total === 0 &&
+        value.counts !== null &&
+        typeof value.counts === 'object' &&
+        !Array.isArray(value.counts) &&
+        Object.keys(counts).length === 0)
+    )
+  )
+    return null;
+  const parsed: ReviewerLoad[] = [];
+  for (const input of rows.items) {
+    const row = record(input),
+      reasons = strings(row.reason_codes);
+    const observed = record(row.runtime_observation);
+    const runtimeValid =
+      value.runtime_capacity === 'unknown'
+        ? row.available_slots === null
+        : finiteCount(row.available_slots) &&
+          awareTime(observed.observed_at) &&
+          string(observed.clock_id).trim() !== '' &&
+          observed.observed_revision === snapshot.revision &&
+          observed.complete === true &&
+          Array.isArray(observed.evidence_refs) &&
+          observed.evidence_refs.length > 0 &&
+          observed.evidence_refs.length <= 2000 &&
+          observed.evidence_refs.every((item) => {
+            const ref = record(item);
+            return string(ref.path) && /^[a-f0-9]{64}$/iu.test(string(ref.sha256));
+          });
+    if (
+      !string(row.actor_id) ||
+      !currentReference(snapshot, row.reference) ||
+      !countKeys.every((key) => finiteCount(row[key])) ||
+      !reasons ||
+      !['unknown', 'running', 'idle', 'completed', 'unavailable'].includes(
+        string(row.runtime_status),
+      ) ||
+      !runtimeValid ||
+      !(row.policy_limit === null || finiteCount(row.policy_limit)) ||
+      !(row.policy_headroom === null || finiteCount(row.policy_headroom)) ||
+      (row.policy_limit === null
+        ? row.policy_headroom !== null
+        : row.policy_headroom !== Math.max(0, row.policy_limit - Number(row.recorded_occupied)))
+    )
+      return null;
+    parsed.push({
+      actorId: string(row.actor_id),
+      policyLimit: row.policy_limit,
+      policyHeadroom: row.policy_headroom,
+      occupied: Number(row.recorded_occupied),
+      pendingDispatch: Number(row.pending_dispatch),
+      sentUnstarted: Number(row.sent_unstarted),
+      started: Number(row.started),
+      ambiguous: Number(row.ambiguous),
+      supersededNonterminal: Number(row.superseded_nonterminal),
+      nextAction: string(row.next_action_code),
+      reasons,
+      availableSlots: typeof row.available_slots === 'number' ? row.available_slots : null,
+      observedAt: value.runtime_capacity === 'observed' ? string(observed.observed_at) : null,
+    });
+  }
+  if (new Set(parsed.map((row) => row.actorId)).size !== parsed.length) return null;
+  return { rows: parsed, total: rows.total, omitted: rows.omitted };
+}
+const reviewerLoadCache = new WeakMap<Snapshot, ReviewerLoads | null>();
+export function reviewerLoads(snapshot: Snapshot): ReviewerLoads | null {
+  if (!reviewerLoadCache.has(snapshot))
+    reviewerLoadCache.set(snapshot, parseReviewerLoads(snapshot));
+  return reviewerLoadCache.get(snapshot) ?? null;
 }

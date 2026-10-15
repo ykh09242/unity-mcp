@@ -1,4 +1,8 @@
 import { useState } from 'react';
+import { integratedReview } from './flow-closure';
+import { taskHandoff } from './review-throughput';
+import { IntegratedObligations } from './flow-closure-ui';
+import { reviewFlowLabel } from './review-throughput-ui';
 import { recordedCriterionResult } from './criterion-results';
 import { useI18n } from './i18n';
 import { items, record, records, string } from './model';
@@ -125,6 +129,18 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
                 row.reason === 'Recorded decision state: ' + string(question.status)
                   ? string(question.status)
                   : '';
+              const integrated = integratedReview(snapshot);
+              const handoff = taskHandoff(snapshot, entityId);
+              const assessedAction = Boolean(
+                (kind === 'objective' &&
+                  entityId === record(snapshot.objective).id &&
+                  integrated &&
+                  row.next_action === integrated.nextAction &&
+                  row.responsible_actor_id === integrated.nextActorId) ||
+                (handoff &&
+                  row.next_action === handoff.nextAction &&
+                  row.responsible_actor_id === handoff.nextActorId),
+              );
               const meaningfulAction =
                 string(row.next_action).trim() &&
                 !(generatedAction && (kind === 'integrity' || kind === 'question')) &&
@@ -151,11 +167,21 @@ export function ProgramAttention({ snapshot }: { readonly snapshot: Snapshot }) 
                     <>
                       {meaningfulAction && (
                         <p className="attention-action">
-                          {generatedAction
-                            ? i18n.t(string(row.next_action))
+                          {generatedAction || assessedAction
+                            ? i18n.t(reviewFlowLabel(string(row.next_action)))
                             : i18n.display(row.next_action)}
                         </p>
                       )}
+                      {typeof row.next_trigger === 'string' &&
+                        row.next_trigger &&
+                        row.next_trigger !== row.next_action && (
+                          <p className="muted queue-trigger">
+                            {i18n.t('Next trigger')}:{' '}
+                            {assessedAction
+                              ? i18n.t(reviewFlowLabel(row.next_trigger))
+                              : i18n.display(row.next_trigger)}
+                          </p>
+                        )}
                       <div className="attention-meta muted">
                         {string(row.responsible_actor_id) && (
                           <span>
@@ -254,6 +280,7 @@ export function CriterionCoverage({ snapshot }: { readonly snapshot: Snapshot })
       ) : (
         <>
           <p className="muted">{i18n.t('Declared links do not establish criterion acceptance.')}</p>
+          <IntegratedObligations snapshot={snapshot} />
           {compatible && record(snapshot.objective).completion != null && (
             <p className="muted">
               {i18n.t('Historical completion record; current acceptance is not inferred.')}

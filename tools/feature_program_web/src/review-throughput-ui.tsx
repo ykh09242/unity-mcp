@@ -1,4 +1,4 @@
-import { recordOperationLabels } from './flow-copy';
+import { recordOperationLabels, closureActionLabels, flowReasonLabels } from './flow-copy';
 import { useI18n } from './i18n';
 import { usePresentation } from './presentation-ui';
 import type { Snapshot } from './model';
@@ -10,6 +10,7 @@ import {
   knownLabel,
   recordBatch,
   reviewHandoffs,
+  reviewerLoads,
   reviewPhaseLabels,
   reviewTiming,
   taskHandoff,
@@ -18,6 +19,17 @@ import {
 import type { ObservedAge, TimingInterval } from './review-throughput';
 
 const reasonLabels: Readonly<Record<string, string>> = {
+  'Wait for recorded reviewer capacity before preparing dispatch': 'Wait for review capacity',
+  'Recorded workload or explicit runtime capacity changes':
+    'Review workload or observed capacity changes',
+  'Observe actual native contact before preparing the exact handoff action':
+    'Confirm reviewer contact and availability',
+  'Exact recipient contact, status and evidence are observed':
+    'Reviewer contact and availability observed',
+  'Exact prior dispatch outcome or process terminal is observed':
+    'Earlier delivery or reviewer execution end observed',
+  'Reconcile retained dispatch claim with actual native outcome':
+    'Confirm the review request status',
   'Dispatch exact packet through actual native transport': 'Send to the reviewer',
   'Resolve explicit reviewer eligibility before dispatch': 'Confirm reviewer eligibility',
   'Wait for actual reviewer acknowledgement/start': 'Wait for acknowledgement or review start',
@@ -106,7 +118,12 @@ const batchLabels: Readonly<Record<string, string>> = {
   unknown: 'Batch publication unavailable',
 };
 export function reviewFlowLabel(value: string): string {
-  return knownLabel(reasonLabels, value);
+  if (Object.hasOwn(closureActionLabels, value)) return knownLabel(closureActionLabels, value);
+  if (Object.hasOwn(flowReasonLabels, value)) return knownLabel(flowReasonLabels, value);
+  if (Object.hasOwn(reasonLabels, value)) return knownLabel(reasonLabels, value);
+  if (Object.hasOwn(reviewerLoadActions, value)) return knownLabel(reviewerLoadActions, value);
+  if (Object.hasOwn(reviewerLoadReasons, value)) return knownLabel(reviewerLoadReasons, value);
+  return value;
 }
 function Duration({ seconds }: { readonly seconds: number }) {
   const i18n = useI18n();
@@ -271,7 +288,8 @@ export function ReviewFlow({
     timing = reviewTiming(snapshot);
   const intervals = timing?.intervals.filter((row) => row.taskId === taskId) || [];
   const history = handoffs?.rows.filter((row) => row.taskId === taskId) || [];
-  const currentHandoffId = taskHandoff(snapshot, taskId)?.id;
+  const current = taskHandoff(snapshot, taskId);
+  const currentHandoffId = current?.id;
   if (
     !history.length &&
     !intervals.length &&
@@ -286,11 +304,22 @@ export function ReviewFlow({
         <p className="lane-warning">{i18n.t('Review handoff is unavailable.')}</p>
       )}
       <HandoffInline snapshot={snapshot} taskId={taskId} />
-      {!history.length && <ReviewTimingLine snapshot={snapshot} taskId={taskId} />}
-      {(history.length > 0 || intervals.length > 0) && (
+      {!history.length && !current && <ReviewTimingLine snapshot={snapshot} taskId={taskId} />}
+      {(history.length > 0 || intervals.length > 0 || (current?.milestones.length || 0) > 0) && (
         <details className="lane-details">
           <summary>{i18n.t('Observed review intervals')}</summary>
           <ol className="flow-details-list">
+            {current?.milestones.slice(-50).map((milestone) => (
+              <li key={milestone.id} data-milestone-id={milestone.id}>
+                <strong>{i18n.t(knownLabel(milestoneLabels, milestone.kind))}</strong> ·{' '}
+                {presentation.actor(milestone.actorId)}
+                <p className="muted">
+                  {milestone.observedAt
+                    ? i18n.date(milestone.observedAt)
+                    : i18n.t('Actual time not observed')}
+                </p>
+              </li>
+            ))}
             {intervals.map((interval) => (
               <li key={interval.id} data-interval-id={interval.id}>
                 <strong>
@@ -364,7 +393,9 @@ export function ReviewFlow({
                 </li>
               ))}
           </ol>
-          {((timing?.intervalOmitted || 0) > 0 || (handoffs?.omitted || 0) > 0) && (
+          {((timing?.intervalOmitted || 0) > 0 ||
+            (handoffs?.omitted || 0) > 0 ||
+            (current?.milestones.length || 0) > 50) && (
             <p className="muted">
               {i18n.t('Some review observations are omitted; these details are partial.')}
             </p>
@@ -622,5 +653,154 @@ export function BatchSummary({
         )}
       </details>
     </section>
+  );
+}
+
+const milestoneLabels: Readonly<Record<string, string>> = {
+  dispatch_claimed: 'Review dispatch reserved',
+  dispatch_sent: 'Review request sent',
+  dispatch_failed: 'Review request could not be sent',
+  dispatch_unknown: 'Review send outcome needs confirmation',
+  reviewer_acknowledged: 'Reviewer acknowledged the request',
+  review_started: 'Review start observed',
+};
+const reviewerLoadActions: Readonly<Record<string, string>> = {
+  dispatch_exact: 'Send to the reviewer',
+  observe_runtime: 'Confirm reviewer availability',
+  choose_reviewer: 'Choose an eligible reviewer',
+  reconcile_delivery: 'Confirm delivery before resending',
+  await_reviewer: 'Wait for the reviewer',
+  await_capacity: 'Wait for review capacity',
+  revalidate_subject: 'Recheck the review inputs',
+};
+const reviewerLoadReasons: Readonly<Record<string, string>> = {
+  policy_missing: 'No review limit recorded',
+  runtime_capacity_unknown: 'Live capacity not observed',
+  runtime_capacity_unavailable: 'Observed review capacity unavailable',
+  contact_unverified: 'Reviewer contact needs confirmation',
+  wip_limit_reached: 'Recorded review limit reached',
+  prior_dispatch_unresolved: 'An earlier send needs confirmation',
+  subject_stale: 'Review inputs changed',
+  reviewer_ineligible: 'Reviewer eligibility needs attention',
+  already_inflight: 'Review work is already in progress',
+};
+export function ReviewerLoadInline({
+  snapshot,
+  actorId,
+}: {
+  readonly snapshot: Snapshot;
+  readonly actorId: string;
+}) {
+  const i18n = useI18n();
+  if (snapshot.reviewer_load === undefined) return null;
+  const projection = reviewerLoads(snapshot);
+  if (!projection)
+    return <p className="lane-warning">{i18n.t('Reviewer workload is unavailable.')}</p>;
+  const row = projection.rows.find((row) => row.actorId === actorId);
+  if (!row)
+    return projection.omitted > 0 ? (
+      <p className="muted">{i18n.t('Reviewer workload is outside the shown records.')}</p>
+    ) : null;
+  return (
+    <div className="reviewer-load">
+      <p>
+        {i18n.t('Recorded review work: {count}', { count: row.occupied })}
+        {row.policyLimit !== null && (
+          <> · {i18n.t('Policy limit: {count}', { count: row.policyLimit })}</>
+        )}
+      </p>
+      {row.nextAction && (
+        <p className="flow-next-action">
+          {i18n.t(
+            Object.hasOwn(reviewerLoadActions, row.nextAction)
+              ? knownLabel(reviewerLoadActions, row.nextAction)
+              : 'Inspect reviewer workload',
+          )}
+        </p>
+      )}
+      <p className="muted">
+        {row.availableSlots === null
+          ? i18n.t('Live capacity not observed')
+          : i18n.t('Observed available review slots: {count}', { count: row.availableSlots })}
+        {row.observedAt && <> · {i18n.date(row.observedAt)}</>}
+      </p>
+      <details className="lane-details">
+        <summary>{i18n.t('Review workload details')}</summary>
+        <p>
+          {i18n.t('Reserved: {reserved} · Sent, not started: {sent} · Started: {started}', {
+            reserved: row.pendingDispatch,
+            sent: row.sentUnstarted,
+            started: row.started,
+          })}
+        </p>
+        <p>
+          {i18n.t('Uncertain sends: {count} · Earlier work still open: {earlier}', {
+            count: row.ambiguous,
+            earlier: row.supersededNonterminal,
+          })}
+        </p>
+        {row.policyHeadroom !== null && (
+          <p>
+            {i18n.t('Policy headroom: {count}; live availability is separate.', {
+              count: row.policyHeadroom,
+            })}
+          </p>
+        )}
+        {row.reasons
+          .filter((reason) => reason !== 'runtime_capacity_unknown')
+          .map((reason) => (
+            <p key={reason}>
+              {i18n.t(
+                Object.hasOwn(reviewerLoadReasons, reason)
+                  ? knownLabel(reviewerLoadReasons, reason)
+                  : 'Inspect reviewer workload',
+              )}
+            </p>
+          ))}
+      </details>
+    </div>
+  );
+}
+
+export function ReviewerLoadSummary({ snapshot }: { readonly snapshot: Snapshot }) {
+  const i18n = useI18n(),
+    presentation = usePresentation();
+  if (snapshot.reviewer_load === undefined) return null;
+  const projection = reviewerLoads(snapshot);
+  if (!projection)
+    return <p className="lane-warning">{i18n.t('Reviewer workload is unavailable.')}</p>;
+  const actionable = projection.rows.filter(
+    (row) =>
+      row.occupied > 0 ||
+      row.reasons.some((reason) =>
+        ['wip_limit_reached', 'subject_stale', 'reviewer_ineligible'].includes(reason),
+      ),
+  );
+  return (
+    <>
+      {actionable.length > 0 && (
+        <ul className="reviewer-load-list">
+          {actionable.slice(0, 5).map((row) => (
+            <li key={row.actorId}>
+              <strong>{presentation.actor(row.actorId)}</strong>
+              <ReviewerLoadInline snapshot={snapshot} actorId={row.actorId} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {projection.omitted > 0 && (
+        <p className="muted">
+          {i18n.t('{count} reviewer workload records omitted.', { count: projection.omitted })}
+        </p>
+      )}
+      {actionable.length > 5 && (
+        <p className="muted">
+          {i18n.t('{shown} / {total} supplied reviewers shown.', {
+            shown: 5,
+            total: actionable.length,
+          })}
+        </p>
+      )}
+    </>
   );
 }

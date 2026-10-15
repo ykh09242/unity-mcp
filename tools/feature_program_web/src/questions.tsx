@@ -363,7 +363,11 @@ export function QuestionForm({
                 {i18n.display(recordedAnswer.answer, saved ? answer : i18n.t('Not recorded'))}
               </p>
               <p className="muted">
-                {i18n.t('Saved')} {i18n.date(recordedAnswer.saved_at)}{' '}
+                {Object.keys(recordedAnswer).length > 0 && (
+                  <>
+                    {i18n.t('Saved')} {i18n.date(recordedAnswer.saved_at)}{' '}
+                  </>
+                )}
                 {i18n.t('· local response, not authenticated identity')}
               </p>
             </>

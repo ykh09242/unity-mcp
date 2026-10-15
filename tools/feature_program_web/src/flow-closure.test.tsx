@@ -6,8 +6,13 @@ import type { JsonRecord } from './model';
 import { selectedPlan } from './flow-plan';
 import { SnapshotResponse } from './useSnapshot';
 import { LanguageProvider, PREFERENCE_KEY, translationTools } from './i18n';
-import { ClosureSummary } from './flow-closure-ui';
-import { closureContext } from './flow-closure';
+import {
+  ClosureSummary,
+  IntegratedReviewFacts,
+  IntegratedReviewNextAction,
+  IntegratedObligations,
+} from './flow-closure-ui';
+import { closureContext, integratedReview } from './flow-closure';
 import { PlanSummary } from './flow-plan-ui';
 
 const closure = (extra: JsonRecord = {}): JsonRecord => ({
@@ -421,3 +426,268 @@ describe('flow closure and overview', () => {
     );
   });
 });
+
+const integratedObligation = (extra: JsonRecord = {}): JsonRecord => ({
+  task_id: 'A',
+  attempt: 1,
+  check_id: 'scoped_tests',
+  criterion: null,
+  status: 'historical_only',
+  actionable: false,
+  basis: 'integrated_member',
+  reason_codes: ['historical_execution'],
+  next_actor_id: null,
+  next_action: null,
+  next_trigger: null,
+  request_id: null,
+  observation_id: null,
+  ...extra,
+});
+function integratedFixture(extra: JsonRecord = {}) {
+  const obligations = [
+    integratedObligation(),
+    integratedObligation({
+      task_id: 'B',
+      status: 'unmapped',
+      reason_codes: ['mapping_absent'],
+      basis: 'none',
+    }),
+  ];
+  return flowFixture({
+    objective: {
+      id: 'goal-flow',
+      title: '검토 근거 확인',
+      criteria: ['원래 기준'],
+      task_ids: ['A', 'B'],
+      completion: {},
+    },
+    coverage: {
+      objective_id: 'goal-flow',
+      integrated_review: {
+        schema_version: 1,
+        status: 'accepted',
+        currentness: 'current',
+        reason_codes: [],
+        reasons: [],
+        basis: {
+          identity: 'a'.repeat(64),
+          source_head: 'b'.repeat(40),
+          source_digest: 'c'.repeat(64),
+          completion_ref: { path: 'completion.json', sha256: 'd'.repeat(64) },
+          integrated_review_ref: { path: 'review.json', sha256: 'e'.repeat(64) },
+          objective_binding: {
+            program_id: 'flow-test',
+            objective_id: 'goal-flow',
+            criteria: ['원래 기준'],
+            criteria_sha256: 'f'.repeat(64),
+            membership_revision: null,
+            member_ids: ['A', 'B'],
+          },
+        },
+        counts: {
+          members: 2,
+          accepted_members: 2,
+          obligations: 2,
+          fulfilled: 0,
+          unmapped: 1,
+          historical: 1,
+          actionable: 0,
+        },
+        members: ['A', 'B'].map((task_id) => ({
+          task_id,
+          attempt: 1,
+          status: 'accepted',
+          obligations: obligations.filter((row) => row.task_id === task_id),
+        })),
+        obligations,
+        next_actor_id: 'user',
+        next_action: 'set_next_goal',
+        next_trigger: 'next_user_goal',
+        remote_verified_by_tool: false,
+        ...extra,
+      },
+    },
+  });
+}
+it.each(['en', 'ko'])(
+  'separates current integrated member acceptance from historical check execution in %s',
+  (locale) => {
+    localStorage.setItem(PREFERENCE_KEY, locale);
+    const snapshot = integratedFixture();
+    expect(integratedReview(snapshot)?.acceptedMemberIds).toEqual(['A', 'B']);
+    const view = render(
+      <LanguageProvider>
+        <IntegratedReviewFacts snapshot={snapshot} taskId="B" />
+        <IntegratedReviewNextAction snapshot={snapshot} fallback="fallback" />
+      </LanguageProvider>,
+    );
+    expect(view.container.textContent).toContain(
+      locale === 'ko'
+        ? '통합 검토로 작업 완료 수락됨'
+        : 'Member completion accepted by integrated review',
+    );
+    expect(view.container.textContent).toContain(
+      locale === 'ko' ? '새 실행을 뜻하지 않습니다' : 'no new execution is implied',
+    );
+    expect(view.container.textContent).not.toContain('fallback');
+  },
+);
+it('retains unaffected member acceptance when another member has a new adverse obligation', () => {
+  const affected = integratedObligation({
+    status: 'adverse',
+    actionable: true,
+    basis: 'none',
+    reason_codes: ['verification_nonpassing'],
+    next_actor_id: 'resolver',
+    next_action: 'resolve_verification',
+    next_trigger: 'current_verification_evidence',
+  });
+  const snapshot = integratedFixture({
+    status: 'not_accepted',
+    reason_codes: ['current_obligations_actionable'],
+    counts: {
+      members: 2,
+      accepted_members: 1,
+      obligations: 1,
+      fulfilled: 0,
+      unmapped: 0,
+      historical: 0,
+      actionable: 1,
+    },
+    members: [
+      { task_id: 'A', attempt: 1, status: 'requires_recheck', obligations: [affected] },
+      { task_id: 'B', attempt: 1, status: 'accepted', obligations: [] },
+    ],
+    obligations: [affected],
+    next_actor_id: 'resolver',
+    next_action: 'resolve_verification',
+  });
+  expect(integratedReview(snapshot)?.acceptedMemberIds).toEqual(['B']);
+  const view = render(<IntegratedReviewFacts snapshot={snapshot} taskId="B" />);
+  expect(view.container.textContent).toContain('Member completion accepted by integrated review');
+  view.rerender(<IntegratedReviewFacts snapshot={snapshot} taskId="A" />);
+  expect(view.container.textContent).toContain('Integrated acceptance needs attention');
+});
+const invalidIntegrated: readonly JsonRecord[] = [
+  { status: 'accepted', basis: null },
+  {
+    counts: {
+      members: 2,
+      accepted_members: true,
+      obligations: 2,
+      fulfilled: 0,
+      unmapped: 1,
+      historical: 1,
+      actionable: 0,
+    },
+  },
+  { basis: { objective_binding: { program_id: 'foreign' } } },
+];
+it.each(invalidIntegrated)(
+  'rejects malformed or foreign integrated acceptance without promoting old results %#',
+  (change) => {
+    expect(integratedReview(integratedFixture(change))).toBeNull();
+  },
+);
+
+it('rejects contradictory member acceptance when the same member has an actionable adverse obligation', () => {
+  const row = integratedObligation({
+    status: 'adverse',
+    actionable: true,
+    basis: 'none',
+    next_actor_id: 'resolver',
+    next_action: 'resolve_verification',
+  });
+  const snapshot = integratedFixture({
+    counts: {
+      members: 2,
+      accepted_members: 2,
+      obligations: 1,
+      fulfilled: 0,
+      unmapped: 0,
+      historical: 0,
+      actionable: 1,
+    },
+    obligations: [row],
+  });
+  expect(integratedReview(snapshot)).toBeNull();
+});
+
+it.each(['en', 'ko'])(
+  'localizes generated closure gates and avoids the redundant unmapped reason in %s',
+  (locale) => {
+    localStorage.setItem(PREFERENCE_KEY, locale);
+    const snapshot = flowFixture({
+      ...integratedFixture(),
+      closure: closure({
+        requirements: flowCollection([
+          {
+            kind: 'task_review',
+            task_id: 'B',
+            status: 'required',
+            reason: 'Keep this authored detail exactly.',
+            next_actor_id: 'worker',
+            next_action: 'task_review',
+          },
+        ]),
+      }),
+    });
+    render(
+      <LanguageProvider>
+        <ClosureSummary snapshot={snapshot} taskId="B" />
+      </LanguageProvider>,
+    );
+    expect(screen.getByText(locale === 'ko' ? '작업 검토' : 'Task review')).toBeTruthy();
+    expect(
+      screen.getByText(locale === 'ko' ? /검사 연결 미평가$/ : /Check mapping not assessed$/),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(
+        locale === 'ko' ? '검사별 명시적인 연결 미평가' : 'Explicit check mapping not assessed',
+      ),
+    ).toBeNull();
+    expect(screen.getByText('Keep this authored detail exactly.')).toBeTruthy();
+  },
+);
+it.each(['en', 'ko'])(
+  'keeps pending external execution distinct from accepted completion in %s',
+  (locale) => {
+    localStorage.setItem(PREFERENCE_KEY, locale);
+    const row = integratedObligation({
+      status: 'pending',
+      actionable: true,
+      basis: 'none',
+      reason_codes: ['provider_execution_pending'],
+      next_actor_id: 'resolver',
+      next_action: 'resolve_verification',
+      next_trigger: 'current_verification_evidence',
+    });
+    const snapshot = integratedFixture({
+      status: 'not_accepted',
+      counts: {
+        members: 2,
+        accepted_members: 1,
+        obligations: 1,
+        fulfilled: 0,
+        unmapped: 0,
+        historical: 0,
+        actionable: 1,
+      },
+      members: [
+        { task_id: 'A', attempt: 1, status: 'requires_recheck', obligations: [row] },
+        { task_id: 'B', attempt: 1, status: 'accepted', obligations: [] },
+      ],
+      obligations: [row],
+    });
+    render(
+      <LanguageProvider>
+        <IntegratedObligations snapshot={snapshot} taskId="A" />
+      </LanguageProvider>,
+    );
+    expect(
+      screen.getByText(
+        locale === 'ko' ? '외부 실행 결과 확인이 필요해요' : 'Provider execution is pending',
+      ),
+    ).toBeTruthy();
+  },
+);
