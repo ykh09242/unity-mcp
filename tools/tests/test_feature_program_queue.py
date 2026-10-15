@@ -504,3 +504,353 @@ def test_running_history_references_keep_original_positions_amid_unrelated_event
     assert uses["request-a"]["superseded"] is True
     assert uses["request-b"]["superseded"] is False
     assert all(item["actual_occupancy"] == "unknown" for item in uses.values())
+
+
+def capacity_facts(state, rows=()):
+    return {
+        "source_binding": {"revision": fp.phases.revision(state)},
+        "rows": {"total": len(rows), "shown": len(rows), "omitted": 0, "items": list(rows)},
+    }
+
+
+def test_capacity_counts_full_history_before_bounding_and_separates_policy(fixture):
+    state = fixture.program.load()
+    state["actors"] = [
+        {"id": f"r{i:02}", "role": "reviewer", "parent_id": None, "review_wip_limit": 2}
+        for i in range(60)
+    ]
+    rows = [
+        {
+            "reviewer_id": f"r{i:02}",
+            "currentness": "stale",
+            "dispatches": [{"status": "started", "occupied": True, "ambiguous": False}],
+        }
+        for i in range(60)
+    ]
+    result = queue.project_capacity(state, capacity_facts(state, rows))
+    assert result["rows"]["total"] == 60 and result["rows"]["omitted"] == 10
+    assert result["counts"]["recorded_occupied"] == 60
+    assert result["counts"]["superseded_nonterminal"] == 60
+    assert result["runtime_capacity"] == "unknown"
+    assert all(
+        row["policy_headroom"] == 1 and row["available_slots"] is None
+        for row in result["rows"]["items"]
+    )
+    with pytest.raises(fp.ProgramError, match="Complete assessed"):
+        queue.project_capacity(
+            state,
+            {
+                **capacity_facts(state),
+                "rows": {"items": [], "total": 60, "shown": 0, "omitted": 60},
+            },
+        )
+
+
+def test_capacity_actual_runtime_requires_complete_compatible_explicit_observation(fixture):
+    state = fixture.program.load()
+    state["actors"] = [{"id": "qa", "role": "reviewer", "parent_id": None}]
+    artifact = fixture.evidence("S01", label="runtime")
+    runtime = {
+        "complete": True,
+        "observed_revision": fp.phases.revision(state),
+        "actors": {
+            "qa": {
+                "complete": True,
+                "status": "idle",
+                "available_slots": 3,
+                "evidence_refs": [
+                    {
+                        "path": artifact,
+                        "sha256": fp.sha(fixture.program.path(artifact).read_bytes()),
+                    }
+                ],
+                "observed_at": "2026-10-16T01:00:00Z",
+                "clock_id": "synthetic-clock",
+            }
+        },
+    }
+    result = queue.project_capacity(state, capacity_facts(state), runtime_facts=runtime)
+    assert result["runtime_capacity"] == "observed"
+    assert result["rows"]["items"][0]["available_slots"] == 3
+    assert result["rows"]["items"][0]["policy_headroom"] is None
+    runtime["observed_revision"] = "a" * 64
+    unknown = queue.project_capacity(state, capacity_facts(state), runtime_facts=runtime)
+    assert unknown["runtime_capacity"] == "unknown"
+    assert unknown["rows"]["items"][0]["available_slots"] is None
+
+
+def test_done_task_actionable_integrated_gap_stays_visible_and_precedes_positive_review(fixture):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    state["tasks"][0]["status"] = "done"
+    obligation = {
+        "task_id": "S01",
+        "attempt": 1,
+        "check_id": "acceptance",
+        "criterion": None,
+        "status": "adverse",
+        "actionable": True,
+        "basis": "none",
+        "reason_codes": ["explicit_current_failure"],
+        "next_actor_id": "leader",
+        "next_action": "Resolve actual failure",
+        "next_trigger": "Actual repaired result",
+        "request_id": "latest",
+        "observation_id": "failed",
+    }
+    result = queue.project(
+        state, projection(state), integrated_review={"obligations": [obligation]}
+    )
+    row = s01_rows(result)[0]
+    assert row["kind"] == "integrated_review_obligation"
+    assert row["action"] == "resolve_blocker" and row["next_actor_id"] == "leader"
+    assert row["integrated_review_obligation"] == obligation
+
+
+def test_exact_action_correlates_packet_recipient_and_native_transport(fixture):
+    from tools.tests.test_feature_program_review_handoffs import intent, context
+
+    assert fixture.claim() == 0
+    fixture.submit()
+    state = fixture.program.load()
+    state["actors"] = [{"id": "reviewer", "role": "reviewer", "parent_id": None}]
+    prepared = intent(fixture, state)
+    state = prepared["state"]
+    packet = {"context": context(fixture, state), "packet_ref": prepared["packet_ref"]}
+    artifact = fixture.evidence("S01", label="contact")
+    contact = {
+        "actor_id": "reviewer",
+        "contact": "/synthetic/reviewer",
+        "recipient_status": "completed",
+        "evidence_refs": [
+            {"path": artifact, "sha256": fp.sha(fixture.program.path(artifact).read_bytes())}
+        ],
+        "observed_at": "2026-10-16T01:00:00Z",
+        "clock_id": "synthetic-clock",
+    }
+    request_value = {"kind": "independent_review", "task_id": "S01"}
+    first = queue.prepare_handoff_action(
+        state, request_value, assessed_packet=packet, runtime_contact=contact
+    )
+    second = queue.prepare_handoff_action(
+        state,
+        request_value,
+        assessed_packet=packet,
+        runtime_contact={
+            **contact,
+            "recipient_status": "running",
+            "observed_at": "2026-10-16T01:00:01Z",
+        },
+    )
+    assert first["status"] == "ready" and first["transport"] == "followup_task"
+    assert second["transport"] == "send_message" and first["action_id"] == second["action_id"]
+    unknown = queue.prepare_handoff_action(
+        state, request_value, assessed_packet=packet, runtime_contact=None
+    )
+    assert unknown["status"] == "incomplete" and unknown["transport"] is None
+    assert unknown["action_code"] == "observe_runtime"
+    with pytest.raises(fp.ProgramError, match="packet"):
+        queue.prepare_handoff_action(
+            state,
+            {**request_value, "packet_ref": {"path": "evidence/other.json", "sha256": "a" * 64}},
+            assessed_packet=packet,
+            runtime_contact=contact,
+        )
+
+
+def test_allocation_uses_complete_reviewer_set_and_is_stable_without_runtime(fixture):
+    from tools.tests.test_feature_program_review_handoffs import intent, context
+    import feature_program_review_handoffs as handoffs
+
+    assert fixture.claim() == 0
+    fixture.submit()
+    state = fixture.program.load()
+    state["actors"] = [{"id": "reviewer", "role": "reviewer", "parent_id": None}] + [
+        {"id": f"r{i:02}", "role": "reviewer", "parent_id": None, "review_wip_limit": 0}
+        for i in range(60)
+    ]
+    state = intent(fixture, state)["state"]
+    full = handoffs.project_handoffs(state, {"S01": {"context": context(fixture, state)}})
+    first = queue.prepare_reviewer_allocation(state, full, projection(state))
+    assert first == queue.prepare_reviewer_allocation(state, full, projection(state))
+    assert first["rows"]["items"][0]["reviewer_id"] == "reviewer"
+    assert first["runtime_capacity"] == "unknown"
+    assert first["rows"]["items"][0]["requires_explicit_assignment"] is True
+
+
+def test_worker_action_uses_claimed_owner_and_existing_task_packet(fixture):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    packet = {
+        "context": fp.verification.packet(fixture.program, state, "S01", observed_head=HEAD)[
+            "context"
+        ],
+        "packet_ref": {"path": "tasks/S01.md", "sha256": "a" * 64},
+    }
+    result = queue.prepare_handoff_action(
+        state,
+        {"kind": "worker_assignment", "task_id": "S01"},
+        assessed_packet=packet,
+        runtime_contact=None,
+    )
+    assert result["recipient_actor_id"] == "worker"
+    assert result["handoff_id"] is None and result["status"] == "incomplete"
+    state["tasks"][0]["owner"] = "other"
+    packet["context"]["definition_digest"] = "b" * 64
+    with pytest.raises(fp.ProgramError, match="definition"):
+        queue.prepare_handoff_action(
+            state,
+            {"kind": "worker_assignment", "task_id": "S01"},
+            assessed_packet=packet,
+            runtime_contact=None,
+        )
+
+
+def test_allocation_keeps_legacy_review_obligations_without_inventing_currentness(fixture):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    state["tasks"][0]["status"] = "review"
+    result = queue.prepare_reviewer_allocation(state, capacity_facts(state), projection(state))
+    assert result["rows"]["total"] == 1
+    assert result["rows"]["items"][0]["action_code"] == "revalidate_subject"
+    assert result["rows"]["items"][0]["reviewer_id"] is None
+
+
+def test_runtime_zero_slots_is_backpressure_not_eligibility(fixture):
+    from tools.tests.test_feature_program_review_handoffs import intent, context
+    import feature_program_review_handoffs as handoffs
+
+    assert fixture.claim() == 0
+    fixture.submit()
+    state = fixture.program.load()
+    state["actors"] = [{"id": "reviewer", "role": "reviewer", "parent_id": None}]
+    state = intent(fixture, state)["state"]
+    full = handoffs.project_handoffs(state, {"S01": {"context": context(fixture, state)}})
+    runtime = {
+        "complete": True,
+        "observed_revision": fp.phases.revision(state),
+        "actors": {
+            "reviewer": {
+                "complete": True,
+                "status": "unavailable",
+                "available_slots": 0,
+                "evidence_refs": [state["review_handoffs"]["records"][0]["packet_ref"]],
+                "observed_at": "2026-10-16T01:00:00Z",
+                "clock_id": "synthetic-clock",
+            }
+        },
+    }
+    capacity = queue.project_capacity(state, full, projection(state), runtime_facts=runtime)
+    assert capacity["rows"]["items"][0]["next_action_code"] == "await_capacity"
+    assert "runtime_capacity_unavailable" in capacity["rows"]["items"][0]["reason_codes"]
+    runtime["actors"]["reviewer"]["status"] = "idle"
+    assert (
+        queue.project_capacity(state, full, runtime_facts=runtime)["rows"]["items"][0][
+            "next_action_code"
+        ]
+        == "await_capacity"
+    )
+    result = queue.prepare_reviewer_allocation(
+        state, full, projection(state), runtime_facts=runtime
+    )
+    assert result["rows"]["items"][0]["action_code"] == "await_capacity"
+    assert result["rows"]["items"][0]["reviewer_id"] is None
+
+
+def test_previous_terminal_handoff_never_hides_new_ordinary_review_round(fixture):
+    from tools.tests.test_feature_program_review_handoffs import intent, context
+    import feature_program_review_handoffs as handoffs
+
+    assert fixture.claim() == 0
+    fixture.submit()
+    state = fixture.program.load()
+    state["actors"] = [{"id": "reviewer", "role": "reviewer", "parent_id": None}]
+    state = intent(fixture, state)["state"]
+    fixture.program.save(state)
+    rejection = fixture.review(accepted=False)
+    assert fixture.run("rework", "S01", "--review", rejection) == 0
+    fixture.submit(round_number=2)
+    state = fixture.program.load()
+    full = handoffs.project_handoffs(state, {"S01": {"context": context(fixture, state)}})
+    assert full["rows"]["items"][0]["canonical_terminal"] is True
+    assert full["rows"]["items"][0]["currentness"] == "stale"
+    result = queue.prepare_reviewer_allocation(state, full, projection(state))
+    assert result["rows"]["total"] == 1
+    row = result["rows"]["items"][0]
+    assert row["task_id"] == "S01" and row["action_code"] == "revalidate_subject"
+    assert row["handoff_id"] is None and row["assignment_generation"] is None
+
+
+@pytest.mark.parametrize("policy_limit", [None, 0])
+def test_full_handoff_guidance_preserves_ready_but_blocks_unknown_contact_or_policy(
+    fixture, policy_limit
+):
+    from tools.tests.test_feature_program_review_handoffs import intent, context
+    import feature_program_review_handoffs as handoffs
+
+    assert fixture.claim() == 0
+    fixture.submit()
+    state = fixture.program.load()
+    state["actors"] = [
+        {"id": "reviewer", "role": "reviewer", "parent_id": None, "review_wip_limit": policy_limit}
+    ]
+    state = intent(fixture, state)["state"]
+    full = handoffs.project_handoffs(state, {"S01": {"context": context(fixture, state)}})
+    before = deepcopy(full)
+    guided = queue.guide_handoffs(state, full, projection(state))
+    row = guided["rows"]["items"][0]
+    assert full == before and row["phase"] == "ready"
+    assert row["observations"] == before["rows"]["items"][0]["observations"]
+    assert row["next_actor_id"] == "leader"
+    if policy_limit == 0:
+        assert row["next_action"] == "Wait for recorded reviewer capacity before preparing dispatch"
+        assert "wip_limit_reached" in row["reasons"]
+    else:
+        assert (
+            row["next_action"]
+            == "Observe actual native contact before preparing the exact handoff action"
+        )
+        assert "runtime_capacity_unknown" in row["reasons"]
+    queued = queue.project(state, projection(state), handoff_facts=guided)
+    current = next(item for item in queued["rows"]["items"] if item["kind"] == "task_review")
+    assert (current["next_actor_id"], current["next_action"], current["next_trigger"]) == (
+        row["next_actor_id"],
+        row["next_action"],
+        row["next_trigger"],
+    )
+
+
+def test_full_handoff_guidance_prioritizes_older_unknown_and_rejects_clipped_capacity(fixture):
+    from tools.tests.test_feature_program_review_handoffs import intent, context, observation
+    import feature_program_review_handoffs as handoffs
+
+    assert fixture.claim() == 0
+    fixture.submit()
+    state = fixture.program.load()
+    state["actors"] = [
+        {"id": "reviewer", "role": "reviewer", "parent_id": None},
+        {"id": "replacement", "role": "reviewer", "parent_id": None, "review_wip_limit": 0},
+    ]
+    state = intent(fixture, state)["state"]
+    state = handoffs.prepare_observation(
+        state, observation(fixture, state, kind="dispatch_unknown")
+    )["state"]
+    state = intent(fixture, state, reviewer_id="replacement")["state"]
+    full = handoffs.project_handoffs(state, {"S01": {"context": context(fixture, state)}})
+    full_capacity = queue.project_capacity(state, full, limit=None)
+    result = queue.guide_handoffs(state, full, projection(state), reviewer_load=full_capacity)
+    latest = result["rows"]["items"][-1]
+    assert latest["phase"] == "ready"
+    assert latest["next_action"] == "Reconcile actual native delivery before any resend"
+    assert "prior_dispatch_unresolved" in latest["reasons"]
+    clipped = queue.project_capacity(state, full, limit=0)
+    with pytest.raises(fp.ProgramError, match="Complete assessed"):
+        queue.guide_handoffs(state, full, projection(state), reviewer_load=clipped)
+
+
+def test_empty_capacity_has_explicit_recorded_zero_counts_and_unknown_runtime(fixture):
+    state = fixture.program.load()
+    result = queue.project_capacity(state, capacity_facts(state))
+    assert result["rows"]["total"] == 0
+    assert result["runtime_capacity"] == "unknown"
+    assert len(result["counts"]) == 8 and set(result["counts"].values()) == {0}

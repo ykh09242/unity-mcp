@@ -275,6 +275,12 @@ def _actor_fields(actor: Record) -> None:
         status == "unknown" or observed is not None, "Runtime observation requires a timestamp"
     )
     _choice(actor.get("staffing_status", "active"), {"active", "retired"}, "staffing status")
+    if "review_wip_limit" in actor:
+        limit = actor["review_wip_limit"]
+        _require(
+            limit is None or (type(limit) is int and limit >= 0),
+            "Review WIP limit must be a nonnegative integer or null",
+        )
 
 
 def _binding_fields(value: Record) -> list[str]:
@@ -676,6 +682,10 @@ def _actor_record(state: Record, receipt: Record) -> None:
             "observed_at",
         )
     }
+    if "review_wip_limit" in receipt:
+        actor["review_wip_limit"] = deepcopy(receipt["review_wip_limit"])
+    elif previous is not None and "review_wip_limit" in previous:
+        actor["review_wip_limit"] = deepcopy(previous["review_wip_limit"])
     actor["staffing_status"] = "retired" if decision == "retire" else "active"
     _actor_fields(actor)
     history = deepcopy(_items(previous.get("history", []), "actor history")) if previous else []
@@ -1248,27 +1258,58 @@ def _objective_record(state: Record, receipt: Record) -> None:
     }
 
 
-def _objective_complete(
+def _recorded_completion_authority(
+    state: Record, goal: Record, receipt: Record, name: str, parsed_hash: str
+) -> bool:
+    """Retain original authority only at an exact already-recorded acceptance boundary."""
+    if (
+        goal.get("status") != "awaiting_next_goal"
+        or goal.get("completion") != receipt
+        or {"path": name, "sha256": parsed_hash}
+        not in _items(goal.get("evidence", []), "objective evidence")
+    ):
+        return False
+    director: Json = None
+    handoffs = _indexed(state.get("handoffs", []), "handoff")
+    for value in _items(state.get("events", []), "canonical events"):
+        event = _record(value, "canonical event")
+        recorded = event.get("receipt")
+        if event.get("action") == "director-appoint":
+            if director is not None:
+                return False
+            director = _record(recorded, "recorded appointment").get("actor_id")
+        elif event.get("action") == "transfer-accept":
+            acceptance = _record(recorded, "recorded transfer acceptance")
+            handoff = handoffs.get(str(acceptance.get("transfer_id")))
+            if handoff is not None and handoff.get("role") == "director":
+                if handoff.get("acceptance") != acceptance or handoff.get("from_actor") != director:
+                    return False
+                director = handoff.get("to_actor")
+        elif event.get("action") == "objective-complete" and recorded == receipt:
+            return director == receipt.get("actor_id") == event.get("actor")
+    return False
+
+
+def assess_objective_completion(
     program: ProgramAccess,
     state: Record,
     receipt: Record,
     name: str,
     parsed_hash: str,
+    *,
     observed_head: str,
-) -> None:
+) -> Record:
+    """Assess the ordinary aggregate proof without changing objective status or time."""
     if __package__:
         from tools import feature_program_coverage as coverage
     else:
         import feature_program_coverage as coverage
     goal = _record(state.get("objective"), "current objective")
-    _require(
-        goal.get("status") in {"active", "director_review"},
-        "Objective already awaiting the user's next goal",
-    )
     director = _record(state.get("director"), "current final director")
     _require(
-        receipt.get("actor_id") == director.get("actor_id"),
-        "Only current final director decides objective completion",
+        receipt.get("actor_id") == director.get("actor_id")
+        or _recorded_completion_authority(state, goal, receipt, name, parsed_hash),
+        "Completion actor lacks current or exact recorded acceptance authority",
     )
     _require(receipt.get("objective_id") == goal.get("id"), "Objective identity mismatch")
     if "membership_revision" in goal:
@@ -1398,13 +1439,56 @@ def _objective_complete(
     refs = _freeze(program, receipt, name, parsed_hash=parsed_hash)
     refs += coverage.validate_receipt_refs(program, state, receipt)
     review_refs = _integrated_review(program, state, goal, receipt, implementers, observed_head)
+    adverse: list[Json] = []
+    if _record(state.get("verification", {}), "verification").get("records"):
+        if __package__:
+            from tools import feature_program_verification as verification
+        else:
+            import feature_program_verification as verification
+        facts = verification.projection(program, state, limit=None)
+        adverse = verification.integrated_adverse_obligations(state, facts)
+    return {
+        "objective_id": goal["id"],
+        "evidence_refs": refs,
+        "integrated_review_refs": review_refs,
+        "member_basis": deepcopy(list(accepted.values())),
+        "adverse_obligations": adverse,
+    }
+
+
+def _objective_complete(
+    program: ProgramAccess,
+    state: Record,
+    receipt: Record,
+    name: str,
+    parsed_hash: str,
+    observed_head: str,
+) -> None:
+    goal = _record(state.get("objective"), "current objective")
+    _require(
+        goal.get("status") in {"active", "director_review"},
+        "Objective already awaiting the user's next goal",
+    )
+    _require(
+        receipt.get("actor_id")
+        == _record(state.get("director"), "current final director").get("actor_id"),
+        "Only current final director decides objective completion",
+    )
+    proof = assess_objective_completion(
+        program, state, receipt, name, parsed_hash, observed_head=observed_head
+    )
+    _require(
+        not _items(proof["adverse_obligations"], "current adverse obligations"),
+        "Objective has current adverse verification obligations",
+    )
+    review_refs = _items(proof["integrated_review_refs"], "integrated review references")
     goal.update(
         {
             "status": "awaiting_next_goal",
             "next_action_owner": "user",
             "completion": deepcopy(receipt),
             "completed_at": _utc(),
-            "evidence": refs + review_refs,
+            "evidence": _items(proof["evidence_refs"], "completion references") + review_refs,
             "integrated_review_ref": review_refs[0],
         }
     )
@@ -1456,8 +1540,15 @@ def _integrated_review(
         from tools import feature_program_coverage as coverage
     else:
         import feature_program_coverage as coverage
-    return _freeze(program, review, name, parsed_hash=parsed_hash) + coverage.validate_receipt_refs(
-        program, state, review
+    mapping_refs = (
+        coverage.validate_integrated_mapping(program, state, review)
+        if "obligation_coverage" in review
+        else []
+    )
+    return (
+        _freeze(program, review, name, parsed_hash=parsed_hash)
+        + coverage.validate_receipt_refs(program, state, review)
+        + mapping_refs
     )
 
 

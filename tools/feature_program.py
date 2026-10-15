@@ -19,14 +19,14 @@ import importlib
 import json
 import math
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PosixPath, PurePath, PurePosixPath, PureWindowsPath, WindowsPath
 import re
 import stat
 from time import perf_counter
 import subprocess
 import sys
 import tempfile
-from typing import TYPE_CHECKING, Callable, Final, Iterator, TypeAlias
+from typing import TYPE_CHECKING, Callable, Final, Iterator, Literal, TypeAlias
 
 # Extensions lazily import core helpers. Reuse this entrypoint module so rejected
 # input has the same ProgramError identity under script, module and imported runs.
@@ -62,6 +62,26 @@ if TYPE_CHECKING:
     from tools.feature_program_batch import _CheckedHistory
     from tools.feature_program_storage import RegistryObservation
     from tools.feature_program_read_model import Collector
+
+
+# One explicit CLI invocation only; this records publication, never authorizes it.
+_MUTATION_OUTCOME: ContextVar[dict | None] = ContextVar(
+    "feature_program_mutation_outcome", default=None
+)
+OUTCOME_COMMANDS: Final = frozenset(
+    {
+        "note",
+        "checkpoint",
+        "verification-record",
+        "review-handoff-record",
+        "submit",
+        "complete",
+        "rework",
+        "delivery",
+        "objective-complete",
+        "presentation-record",
+    }
+)
 
 
 Json: TypeAlias = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
@@ -611,6 +631,48 @@ def _component_linked(path: Path) -> bool:
     return _component_check(path)[0]
 
 
+_ContainmentFlavor = Literal["windows", "posix"]
+_CONTAINMENT_MAX_SPELLING = 2048
+_CONTAINMENT_MAX_COMPONENTS = 64
+_CONTAINMENT_MAX_DESCRIPTORS = 4096
+
+
+def _containment_flavor(value: PurePath) -> _ContainmentFlavor | None:
+    if type(value) in (PureWindowsPath, WindowsPath):
+        return "windows"
+    if type(value) in (PurePosixPath, PosixPath):
+        return "posix"
+    return None
+
+
+@lru_cache(maxsize=_CONTAINMENT_MAX_DESCRIPTORS)
+def _absolute_path_components(flavor: _ContainmentFlavor, spelling: str) -> tuple[str, ...] | None:
+    # The caller bounds spelling; exact public parsers retain anchor/root semantics.
+    value = PureWindowsPath(spelling.lower()) if flavor == "windows" else PurePosixPath(spelling)
+    if not value.is_absolute():
+        return None
+    parts = value.parts
+    return parts if len(parts) <= _CONTAINMENT_MAX_COMPONENTS else None
+
+
+def _is_path_within(path: PurePath, other: PurePath) -> bool:
+    """Use exact lexical components for known absolute builtins; delegate every other case."""
+    kind = _containment_flavor(path)
+    if kind is None or kind != _containment_flavor(other):
+        return path.is_relative_to(other)
+    spelling, parent_spelling = str(path), str(other)
+    if (
+        len(spelling) > _CONTAINMENT_MAX_SPELLING
+        or len(parent_spelling) > _CONTAINMENT_MAX_SPELLING
+    ):
+        return path.is_relative_to(other)
+    parts = _absolute_path_components(kind, spelling)
+    parent = _absolute_path_components(kind, parent_spelling)
+    if parts is None or parent is None:
+        return path.is_relative_to(other)
+    return len(parts) >= len(parent) and parts[: len(parent)] == parent
+
+
 def _admit_safe_path(root: Path, name: str, components: _ClosingComponents | None = None) -> Path:
     relative = safe_relative(name)
     path = root / relative
@@ -624,7 +686,7 @@ def _admit_safe_path(root: Path, name: str, components: _ClosingComponents | Non
             f"Linked path rejected: {name}",
         )
     resolved = path.resolve()
-    require(resolved.is_relative_to(root.absolute()), f"Path outside root: {name}")
+    require(_is_path_within(resolved, root.absolute()), f"Path outside root: {name}")
     # Canonical candidate equality also proves its root/ancestors are unredirected.
     # Reject late inward links too; mere containment could accept that race window.
     require(resolved == path.absolute(), f"Linked or noncanonical path rejected: {name}")
@@ -1146,7 +1208,16 @@ class Program:
         )
 
     def current_head(self) -> str:
-        return git(self.repo, ["rev-parse", "HEAD"])
+        collector = _active_collector()
+        try:
+            head = git(self.repo, ["rev-parse", "HEAD"])
+        except (ProgramError, OSError):
+            if collector is not None:
+                collector.ineligible("git_head_unavailable")
+            raise
+        if collector is not None:
+            collector.observe_head(self.repo, head)
+        return head
 
     def source_digest(self, scope: list[str]) -> str:
         return digest(self.source_snapshot(scope))
@@ -1204,7 +1275,7 @@ class Program:
             observed = reader._admissions.get((str(self.repo.absolute()), scope))
             path = observed.path if observed is not None else safe_path(self.repo, scope)
             require(
-                path != self.repo and not self.directory.is_relative_to(path),
+                path != self.repo and not _is_path_within(self.directory, path),
                 "Root/program-wide claims are invalid",
             )
             if observed is not None:
@@ -2976,10 +3047,35 @@ class Program:
         if _registry_backup is not None:
             _assert_registry_backup(self, *_registry_backup)
             _assert_registry_storage(self, initial)
+        outcome = _MUTATION_OUTCOME.get()
+        if outcome is not None:
+            published_revision = flow_module("storage").decode_registry(encoded).body_sha256
+            original_tasks = (
+                {
+                    str(record(value, "task")["id"]): value
+                    for value in sequence(original["tasks"], "original tasks")
+                }
+                if original is not None
+                else {}
+            )
+            outcome.update(
+                program=self,
+                before_revision=initial.body_sha256 if initial is not None else None,
+                proposed_revision=published_revision,
+                changed_task_ids=[
+                    str(record(value, "task")["id"])
+                    for value in sequence(state["tasks"], "tasks")
+                    if original_tasks.get(str(record(value, "task")["id"])) != value
+                ],
+            )
         atomic_write(self.path("backlog.json"), encoded)
+        if outcome is not None:
+            outcome.update(status="committed", revision=published_revision)
         try:
             self.render(state)
         except (OSError, ProgramError) as exc:
+            if outcome is not None:
+                outcome.update(status="committed_view_failed", view_recovery_required=True)
             raise ProgramError(
                 f"Registry committed at revision {phases.revision(state)}; derived rendering failed. Run render to recover views: {exc}"
             ) from exc
@@ -3473,7 +3569,7 @@ def _capture_projection(
             warnings.append(f"Frozen evidence unavailable: {name}")
             unavailable_evidence.add(path)
             continue
-        captured = evidence_budget.capture(program.directory, name, 8 * 1024 * 1024)
+        captured = evidence_budget._capture_admitted(program.directory, name, path, 8 * 1024 * 1024)
         if captured.sha256 != expected:
             warnings.append(f"Frozen evidence changed: {name}")
     try:
@@ -3627,7 +3723,9 @@ def _capture_projection(
         "amendments": state.get("amendments", []),
         "execution_priorities": state.get("execution_priorities"),
         "verification": verification_view,
-        "coverage": coverage.projection(program, state, evidence_budget),
+        "coverage": coverage.projection(
+            program, state, evidence_budget, verification_facts=full_verification
+        ),
         "presentation": presentation._projection_from_checked(
             program,
             state,
@@ -3700,39 +3798,24 @@ def _capture_projection(
                 "reference": reference,
             }
     handoff_producer = flow_module("review_handoffs")
-    assessed_handoffs: Record = {}
-    context_reads = verification._reads(evidence_budget)
-    for value in sequence(
-        record(state.get("review_handoffs", {}), "review handoffs").get("records", []),
-        "handoff records",
-    ):
-        item = record(value, "handoff record")
-        if item["kind"] != "intent":
-            continue
-        subject = record(item["subject"], "subject")
-        identifier = str(subject["task_id"])
-        try:
-            context = verification._context(program, state, identifier, context_reads)
-            packet_ref = record(item["packet_ref"], "packet ref")
-            program.verify_refs([packet_ref], evidence_budget)
-            packet = read_json(program.path(str(packet_ref["path"])), budget=evidence_budget)
-            assessed_handoffs[str(item["handoff_id"])] = {
-                "context": context,
-                "review_inputs": authoring.assess_review_inputs(
-                    program,
-                    packet.get("review_inputs", {}),
-                    source_budget=source_inputs,
-                    evidence_budget=evidence_budget,
-                ),
-                "evidence_status": "observed",
-            }
-        except (ProgramError, OSError):
-            assessed_handoffs[str(item["handoff_id"])] = {
-                "context": None,
-                "evidence_status": "unavailable",
-            }
-    full_handoffs = handoff_producer.project_handoffs(state, assessed_handoffs, limit=None)
+    full_handoffs = authoring.assess_handoffs(
+        program, state, source_budget=source_inputs, evidence_budget=evidence_budget
+    )
+    queue_producer = flow_module("queue")
+    full_reviewer_load = queue_producer.project_capacity(
+        state, full_handoffs, full_verification, limit=None
+    )
+    full_handoffs = queue_producer.guide_handoffs(
+        state, full_handoffs, full_verification, reviewer_load=full_reviewer_load
+    )
     result["review_handoffs"] = handoff_producer.bound_projection(full_handoffs, limit=50)
+    result["reviewer_load"] = deepcopy(full_reviewer_load)
+    reviewer_rows = result["reviewer_load"]["rows"]
+    reviewer_rows.update(
+        items=reviewer_rows["items"][:50],
+        shown=min(50, reviewer_rows["total"]),
+        omitted=max(0, reviewer_rows["total"] - 50),
+    )
     latest_handoffs: Record = {}
     for value in full_handoffs["rows"]["items"]:
         item = record(value, "handoff row")
@@ -3875,10 +3958,17 @@ def _capture_projection(
             "checks": deepcopy(receipt.get("checks", [])),
         }
     full_verification["task_facts"] = task_facts
+    integrated_review = record(result["coverage"]["integrated_review"], "integrated review")
+    full_verification["integrated_review"] = integrated_review
     # Queue assessment needs full inputs; ordinary detached row display omits only
     # the new raw capture/manifest facts, as the bounded verification view does.
     queue_view = deepcopy(
-        flow_module("queue").project(state, full_verification, handoff_facts=full_handoffs)
+        flow_module("queue").project(
+            state,
+            full_verification,
+            handoff_facts=full_handoffs,
+            integrated_review=integrated_review,
+        )
     )
     for row_value in sequence(record(queue_view["rows"], "queue rows")["items"], "queue items"):
         context = record(row_value, "queue row").get("context")
@@ -3887,7 +3977,11 @@ def _capture_projection(
             context.pop("input_manifest", None)
     result["review_queue"] = queue_view
     result["closure"] = flow_module("closure").readiness(
-        program, state, prevalidated=True, verification_facts=full_verification
+        program,
+        state,
+        prevalidated=True,
+        verification_facts=full_verification,
+        integrated_review=integrated_review,
     )
     closure_view = record(result["closure"], "closure projection")
     closure_view["reference"] = {
@@ -4035,6 +4129,7 @@ class _ClosingObserver:
         self.normalized_roots: dict[Path, Path] = {}
         self.probes: dict[tuple[Path, str], str] = {}
         self.components = _ClosingComponents()
+        self._observed_head: str | None = None
 
     def _admitted_path(self, root: Path, name: str) -> Path:
         """Retain one checked Path per original logical admission in this fresh image."""
@@ -4059,6 +4154,24 @@ class _ClosingObserver:
 
     def finish(self) -> None:
         self.components.finish()
+        if self._observed_head is not None:
+            with flow_module("read_model").collect(None):
+                require(
+                    self.program.current_head() == self._observed_head,
+                    "Git HEAD changed during read-model closing observation",
+                )
+
+    def head(self) -> str:
+        with flow_module("read_model").collect(None):
+            head = self.program.current_head()
+        require(bool(re.fullmatch(r"[0-9a-f]{40}", head)), "Invalid current Git HEAD")
+        if self._observed_head is not None:
+            require(
+                head == self._observed_head,
+                "Git HEAD changed during read-model closing observation",
+            )
+        self._observed_head = head
+        return head
 
     def admit(self, root: Path, name: str) -> None:
         self._admitted_path(root, name)
@@ -5069,6 +5182,10 @@ def parser() -> argparse.ArgumentParser:
     authoring.add_commands(commands)
     brief_command = commands.add_parser("brief", help="Bounded advisory program or task context")
     brief_command.add_argument("--task")
+    for name in OUTCOME_COMMANDS:
+        commands.choices[name].add_argument(
+            "--outcome-path", help="Retain actual mutation publication facts without a snapshot"
+        )
     return result
 
 
@@ -5094,6 +5211,73 @@ def parse_command_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     actual_argv = sys.argv[1:] if argv is None else argv
     args = parse_command_args(actual_argv)
+    destination = getattr(args, "outcome_path", None)
+    if destination is None:
+        return _main(args)
+    capture: dict = {"status": "not_committed", "view_recovery_required": False}
+    token = _MUTATION_OUTCOME.set(capture)
+    try:
+        repo = args.repo.absolute()
+        requested = Path(args.program_dir)
+        directory = requested.absolute() if requested.is_absolute() else repo / requested
+        require(
+            directory.is_relative_to(repo) and directory != repo,
+            "Program must be within configured repository",
+        )
+        program = Program(repo, safe_path(repo, directory.relative_to(repo).as_posix()))
+        name = safe_relative(destination)
+        require(name.startswith("evidence/"), "Mutation outcome must be program evidence")
+        path = program.path(name)
+        require(not observed_exists(path), "Mutation outcome destination already exists")
+        result = _main(args)
+        status = str(capture["status"])
+        # If atomic replacement raised after changing the file, inspect identity;
+        # never interpret a nonzero CLI return as permission to replay a mutation.
+        if "proposed_revision" in capture and status == "not_committed":
+            actual = parse_registry_state(
+                program.read_registry_observation(), path=program.path("backlog.json")
+            )
+            revision = phases.revision(actual)
+            capture["revision"] = revision
+            if revision == capture["proposed_revision"]:
+                status = "committed_view_failed"
+                capture["view_recovery_required"] = True
+            elif revision != capture.get("before_revision"):
+                status = "unknown"
+        outcome: Record = {
+            "schema_version": 1,
+            "kind": "mutation_outcome",
+            "operation": args.command,
+            "publication": {
+                "status": status,
+                "before_revision": capture.get("before_revision"),
+                "revision": capture.get("revision"),
+                "view_recovery_required": capture["view_recovery_required"],
+            },
+            "changed_task_ids": capture.get("changed_task_ids", []),
+            "command_exit_code": result,
+            "acceptance_complete": False,
+            "next_action": "recover_views"
+            if capture["view_recovery_required"]
+            else "inspect_current_state"
+            if status == "unknown"
+            else "continue"
+            if status in {"committed", "already_committed"}
+            else "correct_input",
+        }
+        authoring.freeze_document(program, name, outcome)
+        return result
+    except (ProgramError, OSError) as exc:
+        print(
+            f"feature-program: mutation outcome retention failed; publication={capture['status']}; inspect current state before retry: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        _MUTATION_OUTCOME.reset(token)
+
+
+def _main(args: argparse.Namespace) -> int:
     try:
         repo = args.repo.absolute()
         requested = Path(args.program_dir)
@@ -5267,6 +5451,16 @@ def main(argv: list[str] | None = None) -> int:
                 changed = phases.revision(prepared.state) != phases.revision(state)
                 if changed:
                     program.save(prepared.state, before_publish=prepared.before_publish)
+                else:
+                    outcome = _MUTATION_OUTCOME.get()
+                    if outcome is not None:
+                        revision = phases.revision(state)
+                        outcome.update(
+                            status="already_committed",
+                            revision=revision,
+                            before_revision=revision,
+                            changed_task_ids=[],
+                        )
                 print(
                     canonical(
                         {

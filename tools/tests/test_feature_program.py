@@ -3275,3 +3275,171 @@ def test_recheck_path_failure_preserves_snapshot_context_and_guard_cause(
     # Then: original guard detail and exception cause survive the contextual failure.
     assert isinstance(caught.value.__cause__, fp.ProgramError)
     assert str(caught.value.__cause__) in str(caught.value)
+
+
+def test_optional_mutation_outcome_records_commit_without_snapshot(fixture, monkeypatch, capsys):
+    assert fixture.claim() == 0
+    monkeypatch.setattr(
+        fp, "read_snapshot", lambda *args, **kwargs: pytest.fail("Outcome requested a snapshot")
+    )
+    capsys.readouterr()
+    name = "evidence/_coordination/attempt-1/note-outcome.json"
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Actual progress",
+            "--next-action",
+            "Continue",
+            "--outcome-path",
+            name,
+        )
+        == 0
+    )
+    assert capsys.readouterr().out == "note: OK\n"
+    result = fp.read_json(fixture.program.path(name))
+    assert result["publication"]["status"] == "committed"
+    assert result["publication"]["revision"] == fp.phases.revision(fixture.program.load())
+    assert result["changed_task_ids"] == ["S01"]
+    assert result["acceptance_complete"] is False
+
+
+def test_optional_mutation_outcome_retains_committed_render_failure(fixture, monkeypatch):
+    assert fixture.claim() == 0
+    before = fixture.program.load()
+    monkeypatch.setattr(
+        fp.Program, "render", lambda *args: (_ for _ in ()).throw(OSError("actual render failure"))
+    )
+    name = "evidence/_coordination/attempt-1/render-outcome.json"
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Actual progress",
+            "--next-action",
+            "Continue",
+            "--outcome-path",
+            name,
+        )
+        == 1
+    )
+    result = fp.read_json(fixture.program.path(name))
+    assert result["publication"]["status"] == "committed_view_failed"
+    assert result["publication"]["view_recovery_required"] is True
+    assert len(fixture.program.load()["events"]) == len(before["events"]) + 1
+    assert result["next_action"] == "recover_views"
+
+
+def test_optional_outcome_retention_failure_does_not_replay_committed_mutation(
+    fixture, monkeypatch, capsys
+):
+    assert fixture.claim() == 0
+    before = fixture.program.load()
+
+    def fail_retention(*args, **kwargs):
+        raise OSError("Actual outcome destination failure")
+
+    monkeypatch.setattr(fp.authoring, "freeze_document", fail_retention)
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Actual progress",
+            "--next-action",
+            "Continue",
+            "--outcome-path",
+            "evidence/_coordination/attempt-1/failed-outcome.json",
+        )
+        == 1
+    )
+    assert len(fixture.program.load()["events"]) == len(before["events"]) + 1
+    assert "publication=committed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "path,parent",
+    [
+        (fp.PureWindowsPath("C:/Repo/A"), fp.PureWindowsPath("c:/repo")),
+        (fp.PureWindowsPath("C:/Repo2/A"), fp.PureWindowsPath("C:/Repo")),
+        (fp.PureWindowsPath("D:/Repo/A"), fp.PureWindowsPath("C:/Repo")),
+        (fp.PureWindowsPath("//server/share/Repo/A"), fp.PureWindowsPath("//SERVER/share/repo")),
+        (fp.PureWindowsPath("C:/Repo/../outside"), fp.PureWindowsPath("C:/Repo")),
+        (fp.PurePosixPath("/Repo/A"), fp.PurePosixPath("/Repo")),
+        (fp.PurePosixPath("/repo/A"), fp.PurePosixPath("/Repo")),
+        (fp.PurePosixPath("/Repo2/A"), fp.PurePosixPath("/Repo")),
+        (fp.PurePosixPath("relative/A"), fp.PurePosixPath("relative")),
+        (fp.PureWindowsPath("C:relative/A"), fp.PureWindowsPath("C:relative")),
+        (fp.PurePosixPath("/" + "a/" * 65), fp.PurePosixPath("/a")),
+        (fp.PurePosixPath("/" + "a" * 2050), fp.PurePosixPath("/")),
+    ],
+)
+def test_bounded_pure_containment_matches_native_public_parser(path, parent):
+    assert fp._is_path_within(path, parent) == path.is_relative_to(parent)
+
+
+def test_pure_containment_preserves_custom_parser_fallback_and_bounded_cache():
+    calls = []
+
+    class CustomPath(fp.PurePosixPath):
+        def is_relative_to(self, other):
+            calls.append(other)
+            return False
+
+    assert fp._is_path_within(CustomPath("/repo/a"), fp.PurePosixPath("/repo")) is False
+    assert len(calls) == 1
+    for number in range(4100):
+        fp._is_path_within(fp.PurePosixPath(f"/bounded/{number}"), fp.PurePosixPath("/bounded"))
+    # Pylint follows the wrapped parser signature for this lru_cache method.
+    assert fp._absolute_path_components.cache_info().currsize <= 4096  # pylint: disable=no-value-for-parameter
+
+
+@pytest.mark.parametrize("after_replace", [False, True], ids=["precommit", "after-replace"])
+def test_optional_mutation_outcome_distinguishes_atomic_failure_boundary(
+    fixture, monkeypatch, after_replace
+):
+    assert fixture.claim() == 0
+    before = fixture.program.read_registry_observation()
+    normal = fp.atomic_write
+
+    def fail_registry(path, content):
+        if path == fixture.program.path("backlog.json"):
+            if after_replace:
+                normal(path, content)
+            raise OSError("Actual registry replacement boundary failure")
+        return normal(path, content)
+
+    monkeypatch.setattr(fp, "atomic_write", fail_registry)
+    name = "evidence/_coordination/attempt-1/atomic-outcome.json"
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Actual progress",
+            "--next-action",
+            "Inspect publication",
+            "--outcome-path",
+            name,
+        )
+        == 1
+    )
+    result = fp.read_json(fixture.program.path(name))
+    actual = fixture.program.read_registry_observation()
+    assert result["publication"]["status"] == (
+        "committed_view_failed" if after_replace else "not_committed"
+    )
+    assert result["publication"]["view_recovery_required"] is after_replace
+    assert (actual.raw_bytes == before.raw_bytes) is (not after_replace)
+    assert result["publication"]["revision"] == actual.body_sha256
+    assert result["acceptance_complete"] is False

@@ -64,6 +64,11 @@ READ_COMMANDS: Final = frozenset(
         "review-handoff-prepare",
         "evidence-prepare",
         "batch-prepare",
+        "records-prepare",
+        "handoff-action",
+        "handoff-report-prepare",
+        "review-capacity",
+        "reviewer-allocation",
         "batch-inspect",
     }
 )
@@ -175,6 +180,11 @@ def add_commands(commands) -> None:
         "review-handoff-record",
         "evidence-prepare",
         "batch-prepare",
+        "records-prepare",
+        "handoff-action",
+        "handoff-report-prepare",
+        "review-capacity",
+        "reviewer-allocation",
     ):
         command = commands.add_parser(
             name, help="Prepare or record finite source-bound workflow facts"
@@ -184,7 +194,12 @@ def add_commands(commands) -> None:
             command.add_argument(
                 "--materialize", action="store_true", help="Freeze exact inert packet only"
             )
-        if name in {"evidence-prepare", "batch-prepare"}:
+        if name in {
+            "evidence-prepare",
+            "batch-prepare",
+            "records-prepare",
+            "handoff-report-prepare",
+        }:
             command.add_argument(
                 "--result-path", help="Retain an actual immutable preparation result"
             )
@@ -705,6 +720,7 @@ def _shape(command: str) -> Record:
             "reasoning_effort": None,
             "contact": None,
             "observed_status": "unknown",
+            "review_wip_limit": None,
         },
         "director-appoint": {
             "actor_id": None,
@@ -1838,6 +1854,9 @@ class ClosureHost:
         parser.error = lambda message: (_ for _ in ()).throw(core.ProgramError(message))
         actions = {action.dest: action for action in parser._actions if action.dest != "help"}
         core.require(set(payload) <= set(actions), "Unknown closure stage payload fields")
+        core.require(
+            "outcome_path" not in payload, "Batch/closure publication uses its own result retention"
+        )
         if owner is not None:
             self.publisher_authority(state, payload, owner)
         argv: list[str] = []
@@ -2023,6 +2042,25 @@ class BatchHost(ClosureHost):
                 check()
 
         return core.PreparedChange(prepared.state, recheck)
+
+    def freeze_control(self, state: Record, operation: Record, document: Record) -> None:
+        """Freeze actual supplied facts; derive only their transaction predecessor."""
+        core = _core()
+        name = core.safe_relative(core.string(document["path"], "control path"))
+        prefix = (
+            "evidence/_verification/attempt-1/"
+            if operation["operation"] == "verification-record"
+            else "evidence/"
+        )
+        core.require(name.startswith(prefix), "Control uses the wrong evidence namespace")
+        value = deepcopy(core.record(document["value"], "actual control facts"))
+        revision = phases.revision(state)
+        core.require(
+            value.get("expected_revision") in {None, revision},
+            "Explicit control predecessor differs",
+        )
+        value["expected_revision"] = revision
+        freeze_document(self.program, name, value)
 
     def preflight_batch(
         self, original: Record, final: Record, stages: list[Record]
@@ -2264,6 +2302,10 @@ def recheck_new_handoff_inputs(program: Program, original: Record | None, state:
         core.record(value, "handoff")
         for value in records[len(prior) :]
         if core.record(value, "handoff")["kind"] != "terminal"
+        and core.record(core.record(value, "handoff").get("details", {}), "details").get(
+            "recording_mode"
+        )
+        != "historical"
     ]
     if not changed:
         return
@@ -2442,6 +2484,135 @@ class EvidenceReceiptAdapter:
         return assess_evidence_receipt(program, state, operation, receipt, owner=owner)
 
 
+def assess_handoffs(
+    program: Program, state: Record, *, source_budget: ReadBudget, evidence_budget: ReadBudget
+) -> Record:
+    """Assess complete current handoff inputs within the caller's existing read epochs."""
+    core = _core()
+    assessed: Record = {}
+    context_reads = verification._reads(evidence_budget)
+    for value in core.sequence(
+        core.record(state.get("review_handoffs", {}), "review handoffs").get("records", []),
+        "handoff records",
+    ):
+        item = core.record(value, "handoff record")
+        if item["kind"] != "intent":
+            continue
+        subject = core.record(item["subject"], "subject")
+        try:
+            context = verification._context(program, state, str(subject["task_id"]), context_reads)
+            packet_ref = core.record(item["packet_ref"], "packet ref")
+            program.verify_refs([packet_ref], evidence_budget)
+            packet = core.read_json(program.path(str(packet_ref["path"])), budget=evidence_budget)
+            assessed[str(item["handoff_id"])] = {
+                "context": context,
+                "review_inputs": assess_review_inputs(
+                    program,
+                    packet.get("review_inputs", {}),
+                    source_budget=source_budget,
+                    evidence_budget=evidence_budget,
+                ),
+                "evidence_status": "observed",
+            }
+        except (core.ProgramError, OSError):
+            assessed[str(item["handoff_id"])] = {"context": None, "evidence_status": "unavailable"}
+    return core.flow_module("review_handoffs").project_handoffs(state, assessed, limit=None)
+
+
+def _handoff_read(
+    program: Program, state: Record, command: str, request: Record, refs: list[Json]
+) -> Record:
+    core = _core()
+    queue = core.flow_module("queue")
+    handoffs = core.flow_module("review_handoffs")
+    sources, evidence = core.ReadBudget(64 * LIMIT), core.ReadBudget(64 * LIMIT)
+    head = program.current_head()
+    if command in {"review-capacity", "reviewer-allocation"}:
+        core.require(set(request) <= {"policy", "runtime_facts"}, "Unknown capacity request fields")
+        runtime = request.get("runtime_facts")
+        if runtime is not None:
+            for actor in core.record(
+                core.record(runtime, "runtime facts").get("actors"), "runtime actors"
+            ).values():
+                refs.extend(
+                    core.sequence(
+                        core.record(actor, "runtime actor").get("evidence_refs"), "runtime evidence"
+                    )
+                )
+        full = assess_handoffs(program, state, source_budget=sources, evidence_budget=evidence)
+        verification_facts = verification.projection(program, state, budget=evidence, limit=None)
+        if command == "review-capacity":
+            result = queue.project_capacity(
+                state, full, verification_facts, policy=request.get("policy"), runtime_facts=runtime
+            )
+        else:
+            result = queue.prepare_reviewer_allocation(
+                state, full, verification_facts, policy=request.get("policy"), runtime_facts=runtime
+            )
+    elif command == "handoff-action":
+        core.require(
+            set(request) <= {"request", "runtime_contact"}, "Unknown action preparation fields"
+        )
+        action = core.record(request.get("request"), "handoff action request")
+        task_id = core.string(action.get("task_id"), "handoff action task")
+        packet_ref = core.record(action.get("packet_ref"), "exact task packet reference")
+        program.verify_refs([packet_ref], evidence)
+        refs.append(packet_ref)
+        if action.get("kind") == "worker_assignment":
+            core.require(
+                packet_ref["path"] == f"tasks/{task_id}.md",
+                "Worker action needs its ordinary task packet",
+            )
+            captured = evidence.capture(program.directory, str(packet_ref["path"]), LIMIT)
+            core.require(
+                captured.content == program.packet(state, program.task(state, task_id)).encode(),
+                "Worker task packet is stale; recover derived views",
+            )
+            review_inputs = {}
+        else:
+            packet = core.read_json(program.path(str(packet_ref["path"])), budget=evidence)
+            review_inputs = assess_review_inputs(
+                program,
+                packet.get("review_inputs", {}),
+                source_budget=sources,
+                evidence_budget=evidence,
+            )
+        assessed = {
+            "context": verification.packet(program, state, task_id, observed_head=head)["context"],
+            "packet_ref": packet_ref,
+            "review_inputs": review_inputs,
+        }
+        contact = request.get("runtime_contact")
+        if contact is not None:
+            refs.extend(
+                core.sequence(
+                    core.record(contact, "runtime contact").get("evidence_refs"),
+                    "runtime contact evidence",
+                )
+            )
+        result = queue.prepare_handoff_action(
+            state, action, assessed_packet=assessed, runtime_contact=contact
+        )
+    else:
+        core.require(
+            set(request) == {"action_ref", "report_ref"},
+            "Report preparation needs exact action/report references",
+        )
+        documents = []
+        for field in ("action_ref", "report_ref"):
+            ref = core.record(request[field], field)
+            program.verify_refs([ref], evidence)
+            refs.append(ref)
+            documents.append(core.read_json(program.path(str(ref["path"])), budget=evidence))
+        result = handoffs.prepare_report_records(state, documents[0], documents[1])
+        refs.extend(core.sequence(documents[1].get("evidence_refs"), "actual report evidence"))
+    program.verify_refs(refs, evidence)
+    sources.recheck(program.repo)
+    evidence.recheck(program.directory)
+    core.require(program.current_head() == head, "HEAD changed during handoff preparation")
+    return result
+
+
 def throughput_read(
     program: Program, state: Record, args: argparse.Namespace, refs: list[Json]
 ) -> Record:
@@ -2454,6 +2625,10 @@ def throughput_read(
     request_ref = {"path": name, "sha256": captured}
     refs.append(request_ref)
     match args.command:
+        case (
+            "handoff-action" | "handoff-report-prepare" | "review-capacity" | "reviewer-allocation"
+        ):
+            result = _handoff_read(program, state, args.command, request, refs)
         case "review-handoff-prepare":
             result = core.flow_module("review_handoffs").prepare_handoff(
                 state,
@@ -2485,9 +2660,14 @@ def throughput_read(
                     )
                 case _:
                     raise core.ProgramError("Unsupported evidence preparation kind")
-        case "batch-prepare":
+        case "batch-prepare" | "records-prepare":
             try:
-                result = core.flow_module("batch").prepare_batch(
+                prepare_batch = (
+                    core.flow_module("batch").prepare_records
+                    if args.command == "records-prepare"
+                    else core.flow_module("batch").prepare_batch
+                )
+                result = prepare_batch(
                     program,
                     state,
                     request,
@@ -2627,7 +2807,9 @@ def prepare_handoff_record(
         return proposal
     subject = core.record(request.get("subject"), "handoff subject")
     task_id = core.string(subject.get("task_id"), "handoff task")
-    request["context"] = verification.packet(program, state, task_id)["context"]
+    historical = request.get("recording_mode") == "historical"
+    if not historical:
+        request["context"] = verification.packet(program, state, task_id)["context"]
     packet_ref = core.record(request.get("packet_ref"), "packet reference")
     program.verify_refs([packet_ref])
     packet = core.read_json(program.path(str(packet_ref["path"])))
@@ -2636,8 +2818,21 @@ def prepare_handoff_record(
             request["review_inputs"] == packet["review_inputs"],
             "Handoff broader review inputs changed",
         )
-    request["review_inputs"] = assess_review_inputs(program, packet["review_inputs"])
-    result = core.flow_module("review_handoffs").prepare_observation(state, request)
+    if historical:
+        original_inputs = core.record(packet["review_inputs"], "original review inputs")
+        program.verify_refs(
+            core.sequence(original_inputs.get("evidence_refs", []), "original review evidence")
+        )
+        request["review_inputs"] = deepcopy(original_inputs)
+    else:
+        request["review_inputs"] = assess_review_inputs(program, packet["review_inputs"])
+    producer = core.flow_module("review_handoffs")
+    prepare_observation = (
+        producer.prepare_dispatch_claim
+        if request.get("kind") == "dispatch_claimed"
+        else producer.prepare_observation
+    )
+    result = prepare_observation(state, request)
     proposal = core.record(result["state"], "proposed handoff state")
     if result["status"] == "prepared":
         core.require(
@@ -2747,6 +2942,11 @@ def read_command(program: Program, args: argparse.Namespace) -> Record:
         "evidence-prepare",
         "batch-prepare",
         "batch-inspect",
+        "records-prepare",
+        "handoff-action",
+        "handoff-report-prepare",
+        "review-capacity",
+        "reviewer-allocation",
     }:
         result = throughput_read(program, state, args, refs)
     elif args.command in {

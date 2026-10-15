@@ -111,6 +111,7 @@ class BatchHost(Protocol):
     def preflight_batch(
         self, original_state: Record, final_state: Record, stages: list[Json]
     ) -> PreparedChange: ...
+    def freeze_control(self, state: Record, operation: Record, document: Record) -> None: ...
     def inspect_views(self, state: Record) -> bool: ...
     def publish_batch(self, plan: Record, owner: str, expected_revision: str) -> Record: ...
 
@@ -359,6 +360,8 @@ def _compose(
     plan: Record,
     host: BatchHost,
     budget: ReadBudget | None = None,
+    *,
+    documents: dict[str, Record] | None = None,
 ) -> tuple[Record, list[Json]]:
     """Keep only the current projected predecessor; the host retains required guard facts."""
     proposal = deepcopy(state)
@@ -367,6 +370,8 @@ def _compose(
     before = host.revision(proposal)
     for value in _items(plan["operations"], "operations"):
         row = _record(value, "operation")
+        if documents is not None and str(row["id"]) in documents:
+            host.freeze_control(proposal, row, documents[str(row["id"])])
         refs = _operation_refs(program, row, reader)
         events = deepcopy(_items(proposal.get("events"), "predecessor events"))
         prepare_stage = getattr(host, "prepare_stage", None)
@@ -406,6 +411,51 @@ def _compose(
 
 def prepare_batch(program: Program, state: Record, request: Record, host: BatchHost) -> Record:
     """Validate all projected ordinary operations before any canonical publication."""
+    return _prepare_batch(program, state, request, host)
+
+
+def prepare_records(program: Program, state: Record, request: Record, host: BatchHost) -> Record:
+    """Bind explicit actual control facts at each ordinary projected predecessor."""
+    _bounded(request)
+    _require(
+        set(request) == (REQUEST_FIELDS - {"operations"}) | {"records"},
+        "Invalid actual-record preparation fields",
+    )
+    records = _items(request["records"], "actual records")
+    operations: list[Json] = []
+    documents: dict[str, Record] = {}
+    for value in records:
+        row = deepcopy(_record(value, "actual record"))
+        _require(
+            set(row) <= {"id", "operation", "payload", "observed_at", "control"},
+            "Unknown actual record fields",
+        )
+        identifier = _text(row.get("id"), "record ID")
+        if "control" in row:
+            _require(identifier not in documents, "Duplicate actual record ID")
+            _require(
+                row.get("operation") in {"verification-record", "review-handoff-record"},
+                "Inline control requires a normal record operation",
+            )
+            control = _record(row.pop("control"), "actual control")
+            _require(set(control) == {"path", "value"}, "Invalid actual control fields")
+            payload = _record(row.get("payload"), "record payload")
+            _require(payload == {"input": control["path"]}, "Control and payload path differ")
+            documents[identifier] = deepcopy(control)
+        operations.append(row)
+    ordinary = {key: deepcopy(value) for key, value in request.items() if key != "records"}
+    ordinary["operations"] = operations
+    return _prepare_batch(program, state, ordinary, host, documents=documents)
+
+
+def _prepare_batch(
+    program: Program,
+    state: Record,
+    request: Record,
+    host: BatchHost,
+    *,
+    documents: dict[str, Record] | None = None,
+) -> Record:
     _bounded(request)
     _require(
         set(request) == REQUEST_FIELDS
@@ -432,7 +482,9 @@ def prepare_batch(program: Program, state: Record, request: Record, host: BatchH
     reader = _core().ReadBudget(READ_LIMIT)
     refs = list(_items(request["refs"], "batch refs"))
     for value in operations:
-        refs.extend(_operation_refs(program, _record(value, "operation"), reader))
+        row = _record(value, "operation")
+        if documents is None or str(row["id"]) not in documents:
+            refs.extend(_operation_refs(program, row, reader))
     refs = _refs(program, refs, reader)
     plan: Record = {
         "schema_version": 1,
@@ -449,8 +501,11 @@ def prepare_batch(program: Program, state: Record, request: Record, host: BatchH
         "refs": refs,
         "operations": operations,
     }
+    proposal, stages = _compose(program, state, plan, host, reader, documents=documents)
+    for value in stages:
+        refs.extend(_items(_record(value, "stage")["refs"], "stage refs"))
+    plan["refs"] = _refs(program, refs, reader)
     plan["plan_sha256"] = _core().digest(_semantic(plan))
-    proposal, stages = _compose(program, state, plan, host, reader)
     original_events = _items(state.get("events"), "original events")
     normal = deepcopy(_items(proposal.get("events"), "projected events")[len(original_events) :])
     plan.update(

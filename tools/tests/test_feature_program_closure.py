@@ -349,8 +349,13 @@ def test_readiness_bounds_requirements_without_inferring_acceptance(fixture):
     state = fixture.program.load()
     state["objective"] = {
         "id": "goal",
+        "title": "Explicit bounded fixture objective",
+        "criteria": ["Review all actual fixture tasks"],
         "task_ids": [task["id"] for task in state["tasks"]],
         "status": "active",
+        "supplied_by": "user",
+        "decision_owner": "director",
+        "next_action_owner": "director",
     }
     # When the host's already-validated projection is bounded once.
     result = closure.readiness(fixture.program, state, limit=5, prevalidated=True)

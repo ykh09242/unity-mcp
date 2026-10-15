@@ -58,6 +58,7 @@ class CapturedFile(Protocol):
 class ClosingObserver(Protocol):
     """One fresh physical ledger, retaining all original logical admissions."""
 
+    def head(self) -> str: ...
     def admit(self, root: Path, name: str) -> None: ...
     def file(
         self, root: Path, name: str, *, limit: int, budget_tag: str | None
@@ -205,9 +206,22 @@ class Collector:
         self._physical_names: dict[tuple[str, str], str] = {}
         self._key_bytes: dict[tuple[str, str, str, str | int | None, str | None], bytes] = {}
         self._reasons: set[str] = set()
+        self._git_head: str | None = None
         self._count = 0
         if producer.get("complete") is not True:
             self.ineligible("producer_membership_bound")
+
+    def observe_head(self, repo: Path, value: str) -> None:
+        """Retain only an actually consumed HEAD from the bound canonical repository."""
+        if _root(repo) != _root(self.repo):
+            self.ineligible("git_head_foreign_root")
+            return
+        if type(value) is not str or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+            self.ineligible("git_head_invalid")
+            return
+        if self._git_head is not None and value != self._git_head:
+            self.ineligible("git_head_conflicting")
+        self._git_head = value
 
     def ineligible(self, reason: str) -> None:
         """Record a finite reason, never convert an ordinary integrity exception."""
@@ -415,6 +429,8 @@ class Collector:
             "eligible": not self._reasons,
             "reasons": sorted(self._reasons),
         }
+        if self._git_head is not None:
+            result["binding"]["git_head"] = self._git_head
         if not self._reasons:
             result["snapshot"] = deepcopy(snapshot)
         if len(_bytes(result)) > MODEL_LIMIT:
@@ -454,9 +470,20 @@ def _parse(model: Record, program: ProgramAccess, observation: Observation) -> _
         model["kind"] == "feature_program_read_model" and _bytes(model["query"]) == _bytes(QUERY)
     )
     binding = _record(model["binding"])
-    _require(set(binding) == {"repo", "program_dir", "body_sha256"})
     _require(
-        binding
+        set(binding)
+        in (
+            {"repo", "program_dir", "body_sha256"},
+            {"repo", "program_dir", "body_sha256", "git_head"},
+        )
+    )
+    if "git_head" in binding:
+        _require(
+            type(binding["git_head"]) is str
+            and re.fullmatch(r"[0-9a-f]{40}", binding["git_head"]) is not None
+        )
+    _require(
+        {key: value for key, value in binding.items() if key != "git_head"}
         == {
             "repo": _root(program.repo),
             "program_dir": _root(program.directory),
@@ -646,4 +673,7 @@ def validate(
                 != row["entries"]
             ):
                 return None
+        expected_head = model["binding"].get("git_head")
+        if expected_head is not None and observer.head() != expected_head:
+            return None
         return deepcopy(model["snapshot"])

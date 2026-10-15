@@ -1742,3 +1742,144 @@ def test_public_governance_rechecks_changed_category_membership(state):
     # When an independent public snapshot reads that changed graph.
     with pytest.raises(governance.GovernanceError, match="multiple categories"):
         governance.snapshot_metadata(state)
+
+
+@pytest.mark.parametrize("limit", [0, 1, None])
+def test_review_policy_survives_actor_reuse_and_explicit_clear(program, state, limit):
+    roster(state)
+    receipt = {
+        **actor("worker-old", parent="director-old"),
+        "decision": "reuse",
+        "reason": "Explicit review policy",
+        "review_wip_limit": limit,
+    }
+    governance._actor_record(state, receipt)
+    current = next(item for item in state["actors"] if item["id"] == "worker-old")
+    assert current["review_wip_limit"] == limit
+    receipt.pop("review_wip_limit")
+    governance._actor_record(state, receipt)
+    assert (
+        next(item for item in state["actors"] if item["id"] == "worker-old")["review_wip_limit"]
+        == limit
+    )
+
+
+@pytest.mark.parametrize("limit", [True, -1, "2", 1.0])
+def test_review_policy_rejects_invalid_types_without_mutation(program, state, limit):
+    roster(state)
+    before = deepcopy(state)
+    with pytest.raises(governance.GovernanceError, match="Review WIP"):
+        governance._actor_record(
+            state,
+            {
+                **actor("worker-old", parent="director-old"),
+                "decision": "reuse",
+                "reason": "Invalid review policy",
+                "review_wip_limit": limit,
+            },
+        )
+    assert state == before
+
+
+def test_common_objective_proof_assesses_completed_state_without_replaying_transition(
+    program, state
+):
+    appoint(program, state)
+    goal(state)
+    receipt = completion(program)
+    name = program.receipt("evidence/_coordination/attempt-1/common-completion.json", receipt)
+    raw_hash = hashlib.sha256(program.path(name).read_bytes()).hexdigest()
+    run(program, state, "objective-complete", receipt, name)
+    before = deepcopy(state)
+    proof = governance.assess_objective_completion(
+        program, state, receipt, name, raw_hash, observed_head=program.head
+    )
+    assert state == before
+    assert proof["objective_id"] == "goal-one"
+    assert proof["integrated_review_refs"][0]["path"] == receipt["integrated_review"]
+    assert proof["member_basis"][0]["task_id"] == "TASK-A"
+    (program.repo / "src/tool.py").write_text("VALUE = 2\n", encoding="utf-8")
+    with pytest.raises(governance.GovernanceError):
+        governance.assess_objective_completion(
+            program, state, receipt, name, raw_hash, observed_head=program.head
+        )
+    assert state == before
+
+
+def test_recorded_completion_preserves_original_director_after_normal_handover(program, state):
+    appoint(program, state)
+    goal(state)
+    receipt = completion(program)
+    name = "evidence/_coordination/attempt-1/completed-original.json"
+    run(program, state, "objective-complete", receipt, name)
+    ref_hash = hashlib.sha256(program.path(name).read_bytes()).hexdigest()
+    original_completion = deepcopy(state["objective"])
+    run(
+        program,
+        state,
+        "transfer",
+        outgoing(program, "director"),
+        "evidence/_coordination/attempt-1/completion-transfer.json",
+    )
+    run(
+        program,
+        state,
+        "transfer-ack",
+        ack(program, "director-next"),
+        "evidence/_coordination/attempt-1/completion-transfer-ack.json",
+    )
+    run(
+        program,
+        state,
+        "transfer-accept",
+        {
+            **program.binding(),
+            "transfer_id": "handoff-one",
+            "actor_id": "director-old",
+            "summary": "Accepted actual director succession",
+            "evidence": [],
+        },
+        "evidence/_coordination/attempt-1/completion-transfer-accept.json",
+    )
+    assert state["director"]["actor_id"] == "director-next"
+    before = deepcopy(state)
+    proof = governance.assess_objective_completion(
+        program, state, receipt, name, ref_hash, observed_head=program.head
+    )
+    assert proof["objective_id"] == "goal-one"
+    assert state == before and state["objective"] == original_completion
+    # Original accepted authority is not permission for a former director's new completion.
+    active = deepcopy(state)
+    active["objective"].update(status="active", next_action_owner="director")
+    with pytest.raises(governance.GovernanceError, match="Only current final director"):
+        governance.prepare_objective_completion(
+            program, active, receipt, name, ref_hash, observed_head=program.head
+        )
+
+
+@pytest.mark.parametrize("change", ["event_actor", "receipt", "reference", "appointment"])
+def test_recorded_authority_requires_exact_receipt_reference_and_acceptance_boundary(
+    program, state, change
+):
+    appoint(program, state)
+    goal(state)
+    receipt = completion(program)
+    name = "evidence/_coordination/attempt-1/completed-original.json"
+    run(program, state, "objective-complete", receipt, name)
+    ref_hash = hashlib.sha256(program.path(name).read_bytes()).hexdigest()
+    # Force historical attribution and independently disturb its canonical proof seam.
+    state["director"]["actor_id"] = "director-next"
+    if change == "event_actor":
+        state["events"][-1]["actor"] = "director-next"
+    elif change == "receipt":
+        state["objective"]["completion"] = {**receipt, "summary": "Different completion"}
+    elif change == "reference":
+        state["objective"]["evidence"][0]["sha256"] = "f" * 64
+    else:
+        state["events"] = [
+            event for event in state["events"] if event["action"] != "director-appoint"
+        ]
+    with pytest.raises(governance.GovernanceError, match="authority"):
+        governance.assess_objective_completion(
+            program, state, receipt, name, ref_hash, observed_head=program.head
+        )

@@ -881,7 +881,8 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
             ref("/objective/criteria"),
         )
         objective_view["task_ids"] = collection(objective["task_ids"], ref("/objective/task_ids"))
-        if objective["status"] != "awaiting_next_goal":
+        integrated = snapshot["coverage"]["integrated_review"]
+        if integrated.get("status") != "accepted":
             add(
                 "objective",
                 objective["id"],
@@ -892,6 +893,21 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
                 objective.get("next_action", "Inspect the objective-completion prerequisites"),
                 objective["task_ids"],
             )
+    integrated = snapshot["coverage"]["integrated_review"]
+    for row in attention:
+        if row["kind"] == "objective" and integrated.get("next_action"):
+            row["responsible_actor_id"] = integrated.get("next_actor_id")
+            row["next_action"] = integrated["next_action"]
+            row["next_trigger"] = integrated.get("next_trigger")
+        elif row["kind"] == "review":
+            handoff = next(
+                (item.get("review_handoff") for item in tasks if item["id"] == row["entity_id"]),
+                None,
+            )
+            if handoff and handoff.get("currentness") == "current":
+                row["responsible_actor_id"] = handoff.get("next_actor_id")
+                row["next_action"] = handoff.get("next_action")
+                row["next_trigger"] = handoff.get("next_trigger")
     attention.sort(key=lambda item: (item["priority"], item["kind"], item["entity_id"]))
     for row in attention:
         row["actionability"] = "actionable"
@@ -1041,11 +1057,12 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
         "assessment_totals": {
             "claim_not_assessed": len(tasks),
             "peer_agreement_unknown": len(tasks),
-            "integrated_review_not_assessed": 1,
+            "integrated_review_not_assessed": int(integrated.get("status") == "not_assessed"),
         },
         "coverage_history": collection(coverage_history, ref("/coverage_annotations")),
         "review_queue": queue_view,
         "review_handoffs": _throughput_brief(snapshot.get("review_handoffs"), "rows"),
+        "reviewer_load": _throughput_brief(snapshot.get("reviewer_load"), "rows"),
         "timing": _throughput_brief(snapshot.get("timing"), "current"),
         "evidence_preparation": deepcopy(snapshot.get("evidence_preparation")),
         "record_batch": _throughput_brief(snapshot.get("record_batch"), "operations"),
@@ -1062,10 +1079,34 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
             "reference": ref("/checkpoint"),
         },
         "integrated_review": {
-            "status": "not_assessed",
-            "requirements": collection(
-                snapshot["coverage"]["integrated_review"]["requires"], ref("/objective")
-            ),
+            **{
+                key: deepcopy(integrated.get(key))
+                for key in (
+                    "schema_version",
+                    "status",
+                    "currentness",
+                    "reason_codes",
+                    "counts",
+                    "next_actor_id",
+                    "next_action",
+                    "next_trigger",
+                    "remote_verified_by_tool",
+                )
+            },
+            "basis": {
+                key: deepcopy(integrated["basis"].get(key))
+                for key in (
+                    "identity",
+                    "completion_ref",
+                    "integrated_review_ref",
+                    "source_head",
+                    "source_digest",
+                )
+            }
+            if integrated.get("basis")
+            else None,
+            "projection_scope": "summary",
+            "requirements": collection(integrated.get("requires", []), ref("/objective")),
             "recorded_acceptance": _acceptance(
                 snapshot["coverage"]["recorded_objective_acceptance"], ref("/objective")
             ),

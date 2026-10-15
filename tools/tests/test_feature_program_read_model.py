@@ -671,3 +671,140 @@ def test_collector_pure_memos_are_bounded_independently_of_overflow(image, monke
         <= 1
     )
     assert collector.finish({"unsafe": True})["eligible"] is False
+
+
+def test_head_dependency_closes_same_sha_twice_without_reusing_capture_result(image, monkeypatch):
+    program, observation, collector = image
+    calls = []
+
+    def git(repo, argv):
+        assert repo == program.repo and argv == ["rev-parse", "HEAD"]
+        calls.append(True)
+        return "a" * 40
+
+    monkeypatch.setattr(fp, "git", git)
+    with models.collect(collector):
+        assert program.current_head() == "a" * 40
+    model = collector.finish({"currentness": "current"})
+    assert model["binding"]["git_head"] == "a" * 40
+    observer = fp._ClosingObserver(program)
+    assert models.validate(model, program, observation=observation, observer=observer) == {
+        "currentness": "current"
+    }
+    observer.finish()
+    assert len(calls) == 3  # Original consumption, fresh validate, independent final barrier.
+
+
+def test_head_only_move_invalidates_unchanged_body_and_source(image, monkeypatch):
+    program, _, collector = image
+    head = ["a" * 40]
+    monkeypatch.setattr(fp, "git", lambda *_args: head[0])
+    with models.collect(collector):
+        program.current_head()
+    model = collector.finish({"currentness": "current"})
+    head[0] = "b" * 40
+    assert check(image, model) is None
+
+
+def test_head_move_during_dependency_reads_is_a_miss(image, monkeypatch):
+    program, observation, collector = image
+    head = ["a" * 40]
+    monkeypatch.setattr(fp, "git", lambda *_args: head[0])
+    (program.repo / "proof.txt").write_bytes(b"actual image")
+    with models.collect(collector):
+        program.current_head()
+        fp.ReadBudget(100).capture(program.repo, "proof.txt", 100)
+    model = collector.finish({"currentness": "current"})
+
+    class MovingObserver(fp._ClosingObserver):
+        def file(self, *args, **kwargs):
+            result = super().file(*args, **kwargs)
+            head[0] = "b" * 40
+            return result
+
+    assert (
+        models.validate(model, program, observation=observation, observer=MovingObserver(program))
+        is None
+    )
+
+
+def test_head_move_during_final_components_cannot_escape_final_barrier(image, monkeypatch):
+    program, observation, collector = image
+    head = ["a" * 40]
+    monkeypatch.setattr(fp, "git", lambda *_args: head[0])
+    with models.collect(collector):
+        program.current_head()
+    model = collector.finish({"currentness": "current"})
+    observer = fp._ClosingObserver(program)
+    assert models.validate(model, program, observation=observation, observer=observer) is not None
+    original = fp._ClosingComponents.finish
+
+    def moved(components):
+        original(components)
+        head[0] = "b" * 40
+
+    monkeypatch.setattr(fp._ClosingComponents, "finish", moved)
+    with pytest.raises(fp.ProgramError, match="HEAD changed"):
+        observer.finish()
+
+
+@pytest.mark.parametrize("value", [True, 1, None, "A" * 40, "a" * 39, "a" * 41])
+def test_malformed_optional_head_binding_is_not_servable(image, value):
+    _, _, collector = image
+    model = collector.finish({"currentness": "current"})
+    model["binding"]["git_head"] = value
+    assert check(image, model) is None
+
+
+@pytest.mark.parametrize("case", ["conflict", "foreign", "invalid", "error"])
+def test_unrepresentable_actual_head_consumption_is_nonservable(image, monkeypatch, case):
+    program, _, collector = image
+    if case == "error":
+
+        def unavailable(*args):
+            raise fp.ProgramError("Actual Git unavailable")
+
+        monkeypatch.setattr(fp, "git", unavailable)
+        with models.collect(collector), pytest.raises(fp.ProgramError, match="unavailable"):
+            program.current_head()
+    elif case == "foreign":
+        collector.observe_head(program.repo / "foreign", "a" * 40)
+    elif case == "invalid":
+        collector.observe_head(program.repo, "invalid")
+    else:
+        collector.observe_head(program.repo, "a" * 40)
+        collector.observe_head(program.repo, "b" * 40)
+    model = collector.finish({"currentness": "current"})
+    assert model["eligible"] is False
+    assert "snapshot" not in model
+    assert model["reasons"]
+
+
+def test_model_without_head_dependency_does_not_query_git(image, monkeypatch):
+    _, _, collector = image
+
+    def forbidden(*args):
+        pytest.fail("A model without HEAD consumption queried Git")
+
+    monkeypatch.setattr(fp, "git", forbidden)
+    model = collector.finish({"legacy": "current"})
+    assert "git_head" not in model["binding"]
+    assert check(image, model) == {"legacy": "current"}
+    fp._ClosingObserver(image[0]).finish()
+
+
+@pytest.mark.parametrize("case", ["missing", "foreign"])
+def test_head_binding_cannot_drop_or_replace_its_canonical_repository(image, monkeypatch, case):
+    program, _, collector = image
+    collector.observe_head(program.repo, "a" * 40)
+    model = collector.finish({"currentness": "current"})
+    if case == "missing":
+        del model["binding"]["repo"]
+    else:
+        model["binding"]["repo"] = str(program.repo / "foreign")
+
+    def forbidden(*args):
+        pytest.fail("Malformed foreign binding reached Git observer")
+
+    monkeypatch.setattr(fp, "git", forbidden)
+    assert check(image, model) is None

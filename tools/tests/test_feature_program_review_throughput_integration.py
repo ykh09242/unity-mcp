@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+import sys
 
 import pytest
 
@@ -157,11 +158,18 @@ def test_exact_handoff_replay_after_unrelated_revision_adds_no_event_or_publicat
     before = fixture.program.path("backlog.json").read_bytes()
     capsys.readouterr()
     # When: the same frozen original input is retried despite its historical expected revision.
-    assert fixture.run("review-handoff-record", "--input", name) == 0
+    outcome_name = "evidence/_coordination/attempt-1/exact-replay-outcome.json"
+    assert (
+        fixture.run("review-handoff-record", "--input", name, "--outcome-path", outcome_name) == 0
+    )
     replay = json.loads(capsys.readouterr().out)
     # Then: exact recognition leaves canonical history unchanged.
     assert replay["status"] == "already_recorded"
     assert fixture.program.path("backlog.json").read_bytes() == before
+    outcome = fp.read_json(fixture.program.path(outcome_name))
+    assert outcome["publication"]["status"] == "already_committed"
+    assert outcome["publication"]["before_revision"] == outcome["publication"]["revision"]
+    assert outcome["changed_task_ids"] == []
 
 
 def _note_batch_request(fixture):
@@ -1639,3 +1647,220 @@ def test_storage_prepared_provenance_readset_tracks_warm_hits_without_unrelated_
     conflicting = normal(cached={changed.path: b"different already observed image"})
     with pytest.raises(fp.ProgramError):
         conflicting._charge_provenance(reads)
+
+
+@pytest.mark.parametrize("kind", ["reviewer_acknowledged", "review_started"])
+def test_explicit_historical_activity_retains_real_report_after_broader_source_change(
+    fixture, capsys, kind
+):
+    from tools.tests.test_feature_program_review_handoffs import observation
+
+    result = _submitted_with_handoff(fixture, capsys, review_scope=["src/S02.py"])
+
+    def publish(kind, identifier, **fields):
+        state = fixture.program.load()
+        raw = observation(
+            fixture,
+            state,
+            kind,
+            identifier,
+            actor_id="leader" if kind == "dispatch_sent" else "reviewer",
+            expected_revision=fp.phases.revision(state),
+            **fields,
+        )
+        for key in ("context", "review_inputs", "recorded_at"):
+            raw.pop(key, None)
+        name = fixture.write(f"evidence/S01/attempt-1/{identifier}.json", raw)
+        return fixture.run("review-handoff-record", "--input", name)
+
+    assert publish("dispatch_sent", "historical-sent") == 0
+    if kind == "review_started":
+        assert publish("reviewer_acknowledged", "historical-ack") == 0
+    source = fixture.program.repo / "src/S02.py"
+    source.write_bytes(source.read_bytes() + b"# Actual later change\n")
+    assert publish(kind, "historical-reported", recording_mode="historical") == 0
+    state = fixture.program.load()
+    assert state["review_handoffs"]["records"][-1]["details"]["recording_mode"] == "historical"
+    row = fp.read_snapshot(fixture.program.repo, fixture.program.directory)["review_handoffs"][
+        "rows"
+    ]["items"][0]
+    assert row["currentness"] == "stale"
+    assert row["packet_ref"] == result["packet_ref"]
+
+
+def test_actual_report_import_prepares_current_controls_without_inventing_activity(fixture, capsys):
+    from tools.tests.test_feature_program_review_handoffs import observation
+
+    result = _submitted_with_handoff(fixture, capsys)
+    state = fixture.program.load()
+    sent = observation(
+        fixture,
+        state,
+        "dispatch_sent",
+        "report-import-sent",
+        actor_id="leader",
+        expected_revision=fp.phases.revision(state),
+    )
+    for key in ("context", "review_inputs", "recorded_at"):
+        sent.pop(key, None)
+    name = fixture.write("evidence/S01/attempt-1/report-import-sent.json", sent)
+    assert fixture.run("review-handoff-record", "--input", name) == 0
+    action_request = fixture.write(
+        "action-input.json",
+        {
+            "request": {
+                "kind": "independent_review",
+                "task_id": "S01",
+                "packet_ref": result["packet_ref"],
+            }
+        },
+    )
+    capsys.readouterr()
+    assert fixture.run("handoff-action", "--input", action_request) == 0
+    action = json.loads(capsys.readouterr().out)
+    # Actual report is synthetic fixture evidence; no native action was sent by this test.
+    artifact = fixture.evidence("S01", label="actual-report")
+    report = {
+        "action_id": action["action_id"],
+        "dispatch_attempt_id": "dispatch-1",
+        "reporter_id": "reviewer",
+        "evidence_refs": [
+            {"path": artifact, "sha256": fp.sha(fixture.program.path(artifact).read_bytes())}
+        ],
+        "milestones": [
+            {
+                "kind": "reviewer_acknowledged",
+                "reason": "Actual fixture acknowledgement",
+                "observed_at": "2026-10-15T01:00:03+00:00",
+                "clock_id": "fixture-clock",
+                "timestamp_source": "reviewer_observation",
+                "boundary": "reviewer_acknowledged",
+            }
+        ],
+    }
+    action_path = fixture.write("evidence/S01/attempt-1/action.json", action)
+    report_path = fixture.write("evidence/S01/attempt-1/actual-report.json", report)
+    request_path = fixture.write(
+        "report-request.json",
+        {
+            "action_ref": {
+                "path": action_path,
+                "sha256": fp.sha(fixture.program.path(action_path).read_bytes()),
+            },
+            "report_ref": {
+                "path": report_path,
+                "sha256": fp.sha(fixture.program.path(report_path).read_bytes()),
+            },
+        },
+    )
+    before = fixture.program.read_registry_observation().raw_bytes
+    assert fixture.run("handoff-report-prepare", "--input", request_path) == 0
+    prepared = json.loads(capsys.readouterr().out)
+    assert prepared["missing_fields"] == ["per_record_current_binding"]
+    assert len(prepared["inputs"]) == 1
+    assert prepared["inputs"][0]["kind"] == "reviewer_acknowledged"
+    assert "expected_revision" not in prepared["inputs"][0]
+    assert fixture.program.read_registry_observation().raw_bytes == before
+
+
+def _retained_snapshot_proof(fixture):
+    assert fixture.claim() == 0
+    name = fixture.evidence("S01", label="initial-admitted-proof")
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "Retain fixture proof",
+            "--next-action",
+            "Inspect current inputs",
+            "--evidence",
+            name,
+        )
+        == 0
+    )
+    return name
+
+
+def test_snapshot_positive_evidence_uses_one_initial_admission_and_fresh_rechecks(
+    fixture, monkeypatch
+):
+    name = _retained_snapshot_proof(fixture)
+    admissions, captures = [], []
+    normal_path = fp.Program.path
+    normal_capture = fp.ReadBudget._capture_admitted
+
+    def path(program, relative):
+        if relative == name and sys._getframe(1).f_code.co_name == "_capture_projection":
+            admissions.append(relative)
+        return normal_path(program, relative)
+
+    def capture(reader, root, relative, admitted, limit):
+        if relative == name:
+            captures.append(sys._getframe(1).f_code.co_name)
+        return normal_capture(reader, root, relative, admitted, limit)
+
+    monkeypatch.setattr(fp.Program, "path", path)
+    monkeypatch.setattr(fp.ReadBudget, "_capture_admitted", capture)
+    result = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    assert result["integrity"]["status"] == "fresh"
+    assert admissions == [name]
+    assert captures.count("_capture_projection") == 1
+    assert captures.count("capture") >= 1  # Independent final byte/path admission still runs.
+
+
+@pytest.mark.parametrize("change", ["bytes", "missing", "directory", "is_symlink", "is_junction"])
+def test_initial_admitted_evidence_does_not_survive_changed_closing_image(
+    fixture, monkeypatch, change
+):
+    name = _retained_snapshot_proof(fixture)
+    path = fixture.program.path(name)
+    original = fp.brief.project
+
+    def changed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if change == "bytes":
+            path.write_bytes(path.read_bytes() + b"changed")
+        elif change == "missing":
+            path.unlink()
+        elif change == "directory":
+            path.unlink()
+            path.mkdir()
+        else:
+            _mock_link_lstat(monkeypatch, path, change)
+        return result
+
+    monkeypatch.setattr(fp.brief, "project", changed)
+    with pytest.raises(fp.ProgramError):
+        fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+
+
+def test_snapshot_task_and_brief_use_full_reviewer_policy_guidance(fixture, capsys):
+    # Given: an actual current submitted packet is ready, but its reviewer has policy zero.
+    _submitted_with_handoff(fixture, capsys)
+    name = fixture.write(
+        "evidence/_coordination/attempt-1/reviewer-zero.json",
+        {
+            **fp.read_json(fixture.program.path("evidence/_coordination/attempt-1/reviewer.json")),
+            "decision": "reuse",
+            "reason": "Explicit recorded WIP policy",
+            "review_wip_limit": 0,
+        },
+    )
+    assert fixture.run("actor-record", "--input", name) == 0
+    # When: the ordinary producer captures full facts before any display bounds.
+    snapshot = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    row = snapshot["review_handoffs"]["rows"]["items"][0]
+    task = next(item for item in snapshot["tasks"] if item["id"] == "S01")
+    brief = fp.read_brief(fixture.program.repo, fixture.program.directory, "S01")
+    # Then: every join preserves raw ready milestone and gives the same capacity action.
+    assert row["phase"] == "ready"
+    assert "capacity" in row["next_action"]
+    assert "wip_limit_reached" in row["reasons"]
+    for joined in (task["review_handoff"], brief["task"]["review_handoff"]):
+        assert joined["next_action"] == row["next_action"]
+        assert joined["next_trigger"] == row["next_trigger"]
+        assert joined["next_actor_id"] == row["next_actor_id"]
+    assert snapshot["reviewer_load"]["rows"]["items"][0]["policy_headroom"] == 0
