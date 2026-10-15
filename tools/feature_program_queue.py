@@ -509,7 +509,11 @@ def allocation_packet(state: Record, task_id: str, context: Record | None = None
 
 
 def project(
-    state: Record, full_verification_projection: Record, *, limit: int = MAX_ROWS
+    state: Record,
+    full_verification_projection: Record,
+    *,
+    limit: int = MAX_ROWS,
+    handoff_facts: Record | None = None,
 ) -> Record:
     """Count the complete obligation set, then bound one stable shared queue projection."""
     _core().require(type(limit) is int and 0 <= limit <= MAX_ROWS, "Invalid queue row limit")
@@ -519,6 +523,23 @@ def project(
         {str(task["id"]): index for index, task in enumerate(_records(state["tasks"]))},
     )
     rows = _remaining_rows(context, full_verification_projection)
+    if handoff_facts is not None:
+        latest: dict[str, Record] = {}
+        for item in _records(_record(handoff_facts["rows"])["items"]):
+            identifier = str(item["task_id"])
+            if identifier not in latest or item.get("recorded_sequence", 0) > latest[
+                identifier
+            ].get("recorded_sequence", 0):
+                latest[identifier] = item
+        for row in rows:
+            handoff = latest.get(str(row["task_id"]))
+            if row["kind"] != "task_review" or handoff is None:
+                continue
+            row["review_handoff"] = deepcopy(handoff)
+            if handoff.get("currentness") == "current":
+                row["next_actor_id"] = handoff["next_actor_id"]
+                row["next_action"] = handoff["next_action"]
+                row["next_trigger"] = handoff["next_trigger"]
     workload = _workload(context, rows, limit)
     priorities = _record(state.get("execution_priorities", {}))
     rows.sort(

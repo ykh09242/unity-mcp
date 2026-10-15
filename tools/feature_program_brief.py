@@ -27,6 +27,102 @@ def _core():
     return feature_program
 
 
+def _throughput_brief(value: dict | None, family: str) -> dict | None:
+    """Keep concise recorded facts and full denominators within the recovery byte budget."""
+    if value is None:
+        return None
+    result = {
+        key: deepcopy(value.get(key))
+        for key in (
+            "schema_version",
+            "status",
+            "counts",
+            "coverage",
+            "preparation",
+            "publication",
+            "applicability",
+            "next_actor_id",
+            "next_action",
+            "projection_scope",
+            "program_coverage",
+        )
+        if key in value
+    }
+    rows = value.get(family)
+    if isinstance(rows, dict):
+        items = rows.get("items", [])[:5]
+        result[family] = {
+            "total": rows["total"],
+            "shown": len(items),
+            "omitted": rows["total"] - len(items) if rows["total"] is not None else None,
+            "items": [
+                {
+                    key: deepcopy(item.get(key))
+                    for key in (
+                        "id",
+                        "task_id",
+                        "attempt",
+                        "submission_round",
+                        "phase",
+                        "state",
+                        "currentness",
+                        "kind",
+                        "round",
+                        "canonical_phase",
+                        "observation_phase",
+                        "applicability",
+                        "waiting_since",
+                        "age",
+                        "interval_ids",
+                        "interval_id",
+                        "start",
+                        "end",
+                        "boundary_label",
+                        "closed_seconds",
+                        "reasons",
+                        "references",
+                        "cause",
+                        "resolver_id",
+                        "next_actor_id",
+                        "next_action",
+                        "next_trigger",
+                        "reference",
+                    )
+                    if key in item
+                }
+                for item in items
+            ],
+            "reference": deepcopy(
+                rows.get("reference", {"path": "backlog.json", "pointer": "/" + family})
+            ),
+        }
+    if family == "current" and "intervals" in value:
+        result["intervals"] = _throughput_brief(value, "intervals")["intervals"]
+    return result
+
+
+def _task_timing(value: dict | None, task_id: str) -> dict | None:
+    """Keep task facts from the same bounded observation without inferring a task denominator."""
+    if value is None:
+        return None
+    selected = {
+        "schema_version": value["schema_version"],
+        "projection_scope": "task_subset_of_bounded_program_projection",
+        "program_coverage": deepcopy(value["coverage"]),
+    }
+    for family in ("current", "intervals"):
+        rows = value[family]
+        items = [deepcopy(item) for item in rows["items"] if item.get("task_id") == task_id]
+        total = len(items) if rows["omitted"] == 0 else None
+        selected[family] = {
+            "items": items,
+            "total": total,
+            "shown": len(items),
+            "omitted": 0 if total is not None else None,
+        }
+    return _throughput_brief(selected, "current")
+
+
 def collection(items: list, reference: dict, limit: int = ATTENTION_ROWS) -> dict:
     """Counts describe the complete inspected collection, including zero shown."""
     return {
@@ -463,6 +559,29 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
                 ),
                 "recorded_acceptance": _acceptance(acceptance, original),
                 "verification": deepcopy(snapshot_tasks[identifier].get("verification")),
+                "timing": _task_timing(snapshot.get("timing"), identifier),
+                "review_handoff": (
+                    {
+                        key: deepcopy(value)
+                        for key, value in snapshot_tasks[identifier]["review_handoff"].items()
+                        if key
+                        in {
+                            "handoff_id",
+                            "task_id",
+                            "attempt",
+                            "submission_round",
+                            "phase",
+                            "currentness",
+                            "cause",
+                            "next_actor_id",
+                            "next_action",
+                            "next_trigger",
+                            "reference",
+                        }
+                    }
+                    if snapshot_tasks[identifier].get("review_handoff") is not None
+                    else None
+                ),
                 "provider_execution": _provider_execution(
                     snapshot_tasks[identifier].get("provider_execution"),
                     ref(pointer + "/deliveries", task_id=identifier),
@@ -892,6 +1011,10 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
         },
         "coverage_history": collection(coverage_history, ref("/coverage_annotations")),
         "review_queue": queue_view,
+        "review_handoffs": _throughput_brief(snapshot.get("review_handoffs"), "rows"),
+        "timing": _throughput_brief(snapshot.get("timing"), "current"),
+        "evidence_preparation": deepcopy(snapshot.get("evidence_preparation")),
+        "record_batch": _throughput_brief(snapshot.get("record_batch"), "operations"),
         "closure": closure_view,
         "verification": {
             "status": snapshot.get("verification", {}).get("status", "absent"),

@@ -115,6 +115,135 @@ def flow_module(name: str):
     return importlib.import_module(prefix + "feature_program_" + name)
 
 
+def control_receipt_refs(state: Record) -> list[tuple[Record, str | None]]:
+    """Enumerate semantic controls; an attachment's suffix never grants authority."""
+    refs = list(coverage._acceptance_refs(state))
+    task_ids = {str(task["id"]) for task in sequence(state["tasks"], "tasks")}
+    for value in sequence(state["tasks"], "tasks"):
+        task = record(value, "task")
+        identifier = str(task["id"])
+        for value in sequence(task.get("attempts", []), "attempts"):
+            evidence = sequence(record(value, "attempt").get("evidence", []), "evidence")
+            if evidence:
+                refs.append((record(evidence[0], "revalidation reference"), identifier))
+        for value in sequence(task.get("deliveries", []), "deliveries"):
+            refs.append((record(record(value, "delivery")["receipt"], "receipt"), identifier))
+    for value in sequence(state.get("events", []), "events"):
+        event = record(value, "event")
+        identifier = str(event.get("id")) if event.get("id") in task_ids else None
+        for field in ("receipt", "review"):
+            value = event.get(field)
+            if isinstance(value, dict) and set(value) == {"path", "sha256"}:
+                refs.append((value, identifier))
+    for value in sequence(
+        record(state.get("verification", {}), "verification").get("records", []),
+        "verification records",
+    ):
+        item = record(value, "verification record")
+        refs.append(
+            (
+                record(item["receipt"], "verification receipt"),
+                str(record(item["input"], "input")["task_id"]),
+            )
+        )
+    unique: dict[str, tuple[Record, str | None]] = {}
+    for ref, identifier in refs:
+        unique.setdefault(canonical(ref).decode(), (ref, identifier))
+    return list(unique.values())
+
+
+def verify_provenance(
+    program: Program, state: Record, budget: ReadBudget | None = None
+) -> list[Record]:
+    """Retain exact transitive provenance only through explicitly typed control fields."""
+    reader = budget if budget is not None else ReadBudget(64 * 1024 * 1024)
+    facts: list[Record] = []
+    verification_reads = verification._reads(reader)
+    verification_controls = {
+        digest(record(value, "verification record")["receipt"]): record(
+            value, "verification record"
+        )
+        for value in sequence(
+            record(state.get("verification", {}), "verification").get("records", []), "records"
+        )
+    }
+    for ref, identifier in control_receipt_refs(state):
+        receipt, captured = read_json_frozen(program.path(str(ref["path"])), budget=reader)
+        require(captured == ref["sha256"], "Control receipt changed during provenance validation")
+        if "evidence_provenance_ref" not in receipt:
+            continue
+        manifest_ref = record(receipt["evidence_provenance_ref"], "provenance reference")
+        require(set(manifest_ref) == {"path", "sha256"}, "Invalid provenance reference")
+        program.verify_refs([manifest_ref], reader)
+        manifest = read_json(program.path(str(manifest_ref["path"])), budget=reader)
+        expected_task = identifier or "_coordination"
+        expected_attempt = receipt.get("attempt", 1 if identifier is None else None)
+        if expected_attempt is None and identifier is not None:
+            matching = [
+                item
+                for item in sequence(
+                    record(state.get("verification", {}), "verification").get("records", []),
+                    "records",
+                )
+                if record(item, "record").get("receipt") == ref
+            ]
+            if matching:
+                expected_attempt = record(record(matching[0], "record")["context"], "context").get(
+                    "attempt"
+                )
+        require(
+            manifest.get("program_id") == state["program_id"]
+            and manifest.get("task_id") == expected_task
+            and manifest.get("attempt") == expected_attempt,
+            "Provenance consuming subject mismatch",
+        )
+        require(
+            str(manifest_ref["path"]).startswith(
+                f"evidence/{expected_task}/attempt-{expected_attempt}/"
+            ),
+            "Provenance manifest escaped consuming attempt",
+        )
+        flow_module("evidence_reuse").validate_manifest(program, manifest, budget=reader)
+        current = None
+        if identifier is not None:
+            task = program.task(state, identifier)
+            latest = program.current_attempt(task)
+            current = latest["number"] == expected_attempt
+            source = program.source_digest(strings(latest["scope"], "scope"))
+            rounds = sequence(latest["rounds"], "rounds")
+            matches = [
+                record(value, "round")
+                for value in rounds
+                if record(value, "round").get("receipt") == ref
+                or record(value, "round").get("review") == ref
+            ]
+            if matches:
+                current = (
+                    current and source == matches[-1]["source_digest"] and matches[-1] == rounds[-1]
+                )
+            verification_control = verification_controls.get(digest(ref))
+            if verification_control is not None:
+                try:
+                    applicable, _ = verification._applicable(
+                        program, state, verification_control, verification_reads
+                    )
+                    current = bool(current and applicable)
+                except (ProgramError, OSError, planning.PlanningError, coverage.CoverageError):
+                    current = None
+        facts.append(
+            {
+                "manifest_ref": manifest_ref,
+                "manifest": manifest,
+                "control_ref": ref,
+                "task_id": expected_task,
+                "attempt": expected_attempt,
+                "current": current,
+            }
+        )
+    verification_reads.recheck(program)
+    return facts
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ProgramError(message)
@@ -841,6 +970,21 @@ class Program:
         verification.validate(state)
         if verify_artifacts:
             verification.verify_history(self, state, budget)
+            verify_provenance(self, state, budget)
+        if any(
+            record(value, "event").get("action") == "record_batch"
+            for value in sequence(state["events"], "events")
+        ):
+            batches = flow_module("batch")
+            batches.validate_history(state)
+            if verify_artifacts:
+                self.verify_refs(batches.evidence_references(state), budget)
+        if "review_handoffs" in state:
+            handoffs = flow_module("review_handoffs")
+            handoffs.validate(state)
+            if verify_artifacts:
+                self.verify_refs(handoffs.evidence_references(state), budget)
+                authoring.verify_review_input_refs(self, state, budget)
 
     def verify_terminal(
         self, task: Record, attempt: Record, budget: ReadBudget | None = None
@@ -2198,10 +2342,25 @@ class Program:
         return encoded
 
     def save(self, state: Record, *, before_publish: Callable[[], None] | None = None) -> None:
+        verification_guard = verification.publication_guard(self, state)
+        self._publish(state, verification_guard, before_publish=before_publish)
+
+    def _publish(
+        self,
+        state: Record,
+        verification_guard: Callable[[], None] | None,
+        *,
+        before_publish: Callable[[], None] | None = None,
+    ) -> None:
+        """Shared canonical publication after ordinary or exact projected verification."""
         self.require_current_location()
         reliance_guard = coverage.publication_guard(self, state)
-        verification_guard = verification.publication_guard(self, state)
         provider_guard = authoring.delivery_publication_guard(self, state)
+        original = (
+            read_json(self.path("backlog.json")) if self.path("backlog.json").is_file() else None
+        )
+        if original is not None and ("review_handoffs" in original or "review_handoffs" in state):
+            flow_module("review_handoffs").validate_append(original, state)
         encoded = self.prepare_save(state)
         if before_publish is not None:
             before_publish()
@@ -2211,6 +2370,7 @@ class Program:
             verification_guard()
         if provider_guard is not None:
             provider_guard()
+        authoring.recheck_new_handoff_inputs(self, original, state)
         atomic_write(self.path("backlog.json"), encoded)
         try:
             self.render(state)
@@ -2482,9 +2642,16 @@ def read_snapshot(
     *,
     closure_plan: str | None = None,
     execution_capture: str | None = None,
+    evidence_preparation: str | None = None,
+    batch_plan: str | None = None,
 ) -> Record:
     return _read_projection(
-        repo, program_dir, closure_plan=closure_plan, execution_capture=execution_capture
+        repo,
+        program_dir,
+        closure_plan=closure_plan,
+        execution_capture=execution_capture,
+        evidence_preparation=evidence_preparation,
+        batch_plan=batch_plan,
     )
 
 
@@ -2500,12 +2667,22 @@ def _read_projection(
     task_id: str | None = None,
     closure_plan: str | None = None,
     execution_capture: str | None = None,
+    evidence_preparation: str | None = None,
+    batch_plan: str | None = None,
 ) -> Record:
     observations = _SourceObservations()
     token = _source_observations.set(observations)
     try:
         return _capture_projection(
-            repo, program_dir, observations, brief_only, task_id, closure_plan, execution_capture
+            repo,
+            program_dir,
+            observations,
+            brief_only,
+            task_id,
+            closure_plan,
+            execution_capture,
+            evidence_preparation,
+            batch_plan,
         )
     finally:
         _source_observations.reset(token)
@@ -2519,6 +2696,8 @@ def _capture_projection(
     task_id: str | None,
     closure_plan: str | None = None,
     execution_capture: str | None = None,
+    evidence_preparation: str | None = None,
+    batch_plan: str | None = None,
 ) -> Record:
     """Return bounded recorded state without locks or writes; selected plans inspect local Git.
 
@@ -2598,6 +2777,13 @@ def _capture_projection(
         + presentation.evidence_references(state)
         + verification.evidence_references(state)
     )
+    if "review_handoffs" in state:
+        all_refs += flow_module("review_handoffs").evidence_references(state)
+    if any(
+        record(value, "event").get("action") == "record_batch"
+        for value in sequence(state["events"], "events")
+    ):
+        all_refs += flow_module("batch").evidence_references(state)
     for task in tasks:
         for value in sequence(task["attempts"], "attempts"):
             all_refs += sequence(record(value, "attempt")["evidence"], "evidence")
@@ -2873,6 +3059,152 @@ def _capture_projection(
                 "task_id": task_item["id"],
                 "reference": reference,
             }
+    handoff_producer = flow_module("review_handoffs")
+    assessed_handoffs: Record = {}
+    context_reads = verification._reads(evidence_budget)
+    for value in sequence(
+        record(state.get("review_handoffs", {}), "review handoffs").get("records", []),
+        "handoff records",
+    ):
+        item = record(value, "handoff record")
+        if item["kind"] != "intent":
+            continue
+        subject = record(item["subject"], "subject")
+        identifier = str(subject["task_id"])
+        try:
+            context = verification._context(program, state, identifier, context_reads)
+            packet_ref = record(item["packet_ref"], "packet ref")
+            program.verify_refs([packet_ref], evidence_budget)
+            packet = read_json(program.path(str(packet_ref["path"])), budget=evidence_budget)
+            assessed_handoffs[str(item["handoff_id"])] = {
+                "context": context,
+                "review_inputs": authoring.assess_review_inputs(
+                    program,
+                    packet.get("review_inputs", {}),
+                    source_budget=source_inputs,
+                    evidence_budget=evidence_budget,
+                ),
+                "evidence_status": "observed",
+            }
+        except (ProgramError, OSError):
+            assessed_handoffs[str(item["handoff_id"])] = {
+                "context": None,
+                "evidence_status": "unavailable",
+            }
+    full_handoffs = handoff_producer.project_handoffs(state, assessed_handoffs, limit=None)
+    result["review_handoffs"] = handoff_producer.project_handoffs(
+        state, assessed_handoffs, limit=50
+    )
+    latest_handoffs: Record = {}
+    for value in full_handoffs["rows"]["items"]:
+        item = record(value, "handoff row")
+        identifier = str(item["task_id"])
+        prior = latest_handoffs.get(identifier)
+        if prior is None or item["recorded_sequence"] > prior["recorded_sequence"]:
+            latest_handoffs[identifier] = item
+    for value in result_tasks:
+        item = record(value, "snapshot task")
+        item["review_handoff"] = deepcopy(latest_handoffs.get(str(item["id"])))
+    capture_facts: list[Record] = []
+    capture_refs: Record = {}
+    for value in sequence(
+        record(state.get("verification", {}), "verification").get("records", []),
+        "verification records",
+    ):
+        observed = record(record(value, "verification record")["input"], "verification input")
+        capture_ref = observed.get("run_capture_ref")
+        if capture_ref is not None:
+            frozen_ref = record(capture_ref, "run capture reference")
+            capture_refs[str(frozen_ref["path"])] = frozen_ref
+    for capture_ref in capture_refs.values():
+        try:
+            capture = flow_module("execution")._read_capture(program, capture_ref, evidence_budget)
+            capture_facts.append({"capture": capture, "reference": deepcopy(capture_ref)})
+        except (ProgramError, OSError):
+            warnings.append("Retained execution timing could not be verified")
+    objective_binding = record(state.get("objective", {}), "objective")
+    timing_binding = {"program_id": state["program_id"]}
+    if objective_binding:
+        timing_binding.update(
+            {
+                "objective_id": objective_binding["id"],
+                "membership_revision": objective_binding.get("membership_revision"),
+            }
+        )
+    result["timing"] = flow_module("timing").project(
+        state,
+        handoff_facts=full_handoffs,
+        verification_facts={
+            "schema_version": 1,
+            "records": deepcopy(
+                record(state.get("verification", {}), "verification").get("records", [])
+            ),
+            "applicability": {
+                str(record(lane, "lane")["request_id"]): record(lane, "lane").get(
+                    "applicability", "unavailable"
+                )
+                for value in record(
+                    full_verification.get("tasks", {}), "verification tasks"
+                ).values()
+                for lane in sequence(
+                    record(record(value, "task verification")["lanes"], "lanes")["items"], "lanes"
+                )
+            },
+        },
+        capture_facts=capture_facts,
+        source_binding=timing_binding,
+    )
+    try:
+        retained = verify_provenance(program, state, evidence_budget)
+        evidence_view = flow_module("evidence_reuse").project_retained(state, retained)
+    except (ProgramError, OSError, planning.PlanningError, coverage.CoverageError):
+        # Ordinary snapshots preserve recovery context on damaged retained artifacts.
+        # Explicit selections and canonical publication remain strict; no old-ready fallback.
+        warnings.append("Retained evidence provenance could not be verified")
+        evidence_view = flow_module("evidence_reuse").summarize_preparation(
+            {
+                "schema_version": 1,
+                "kind": "retained_evidence",
+                "operation": "retained_evidence",
+                "status": "unavailable",
+                "reasons": ["unavailable_evidence"],
+            }
+        )
+    if evidence_preparation is not None:
+        selected = read_json(
+            program.path(safe_relative(evidence_preparation)), budget=evidence_budget
+        )
+        assessed_selection = flow_module("evidence_reuse").validate_selection(
+            program, state, selected, budget=evidence_budget
+        )
+        evidence_view = record(assessed_selection["summary"], "selected preparation summary")
+        program.verify_refs(
+            sequence(assessed_selection["refs"], "selected preparation refs"), evidence_budget
+        )
+    if evidence_view is not None:
+        result["evidence_preparation"] = evidence_view
+    batch_view = flow_module("batch").project_latest_batch(state)
+    if batch_plan is not None:
+        selected = read_json(program.path(safe_relative(batch_plan)), budget=evidence_budget)
+        batch_view = flow_module("batch").project_selection(
+            program, state, selected, authoring.BatchHost(program, identity_budget=evidence_budget)
+        )
+        selected_kind = selected.get("kind")
+        if selected_kind is None:
+            program.verify_refs(sequence(selected["refs"], "selected batch refs"), evidence_budget)
+        elif selected_kind == "batch_publication_result":
+            plan_ref = record(selected["plan_ref"], "selected plan reference")
+            program.verify_refs([plan_ref], evidence_budget)
+            plan_value = read_json(program.path(str(plan_ref["path"])), budget=evidence_budget)
+            program.verify_refs(
+                sequence(plan_value["refs"], "selected batch refs"), evidence_budget
+            )
+        else:
+            program.verify_refs(
+                [record(selected["request_ref"], "selected request reference")], evidence_budget
+            )
+    if batch_view is not None:
+        result["record_batch"] = batch_view
     # Complete assessed task facts join complete lanes before the queue orders and bounds once.
     task_facts: Record = {}
     for item in result_tasks:
@@ -2894,7 +3226,9 @@ def _capture_projection(
     full_verification["task_facts"] = task_facts
     # Queue assessment needs full inputs; ordinary detached row display omits only
     # the new raw capture/manifest facts, as the bounded verification view does.
-    queue_view = deepcopy(flow_module("queue").project(state, full_verification))
+    queue_view = deepcopy(
+        flow_module("queue").project(state, full_verification, handoff_facts=full_handoffs)
+    )
     for row_value in sequence(record(queue_view["rows"], "queue rows")["items"], "queue items"):
         context = record(row_value, "queue row").get("context")
         if isinstance(context, dict):
@@ -2961,6 +3295,10 @@ def _capture_projection(
                 else "Lock metadata unavailable: " + str(lock_unavailable),
             }
         )
+    result["integrity"] = {
+        "status": "stale" if warnings else "fresh",
+        "warnings": sorted(set(warnings)),
+    }
     projection = brief.project(program, state, result, observations)
     result["brief"] = projection["program"]
     for item in result_tasks:
@@ -3462,6 +3800,10 @@ def parser() -> argparse.ArgumentParser:
         "snapshot", help="Print bounded read-only dashboard JSON; never creates a lock"
     )
     snapshot.add_argument(
+        "--evidence-preparation", help="Explicit immutable evidence preparation result JSON"
+    )
+    snapshot.add_argument("--batch-plan", help="Explicit immutable batch plan/result/failure JSON")
+    snapshot.add_argument(
         "--closure-plan", help="Explicit program-relative immutable closure plan/result JSON"
     )
     snapshot.add_argument(
@@ -3534,6 +3876,7 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("id")
     submit.add_argument("--owner", required=True)
     submit.add_argument("--receipt", required=True)
+    submit.add_argument("--handoff", help="Optional program-relative named review handoff request")
     resume = commands.add_parser(
         "resume", help="Resolve a blocker on the same guarded owner/attempt"
     )
@@ -3606,7 +3949,10 @@ def main(argv: list[str] | None = None) -> int:
             result = authoring.read_command(program, args)
             sys.stdout.buffer.write(canonical(result))
             return (
-                1 if args.command == "closure-prepare" and result.get("status") == "failed" else 0
+                1
+                if (args.command == "closure-prepare" and result.get("status") == "failed")
+                or result.get("kind") == "batch_preparation_failure"
+                else 0
             )
         if args.command == "verification-run":
             result = authoring.run_verification(program, args)
@@ -3624,6 +3970,8 @@ def main(argv: list[str] | None = None) -> int:
                         program.directory,
                         closure_plan=args.closure_plan,
                         execution_capture=args.execution_capture,
+                        evidence_preparation=args.evidence_preparation,
+                        batch_plan=args.batch_plan,
                     )
                 ).decode(),
                 end="",
@@ -3727,8 +4075,30 @@ def main(argv: list[str] | None = None) -> int:
                 end="",
             )
             return 0
+        if args.command == "batch-publish":
+            result = authoring.publish_batch_command(program, args)
+            print(canonical(result).decode(), end="")
+            outcome = record(result.get("outcome", result), "publication result")
+            return 0 if outcome.get("status") in {"committed", "already_committed"} else 1
         with program.lock():
             state = program.initialize(args) if args.command == "init" else program.load()
+            if args.command == "review-handoff-record":
+                prepared = authoring.prepare(program, state, args, materialize_handoff=True)
+                changed = phases.revision(prepared.state) != phases.revision(state)
+                if changed:
+                    program.save(prepared.state, before_publish=prepared.before_publish)
+                print(
+                    canonical(
+                        {
+                            "schema_version": 1,
+                            "status": "recorded" if changed else "already_recorded",
+                            "revision": phases.revision(prepared.state),
+                            "native_dispatched": False,
+                        }
+                    ).decode(),
+                    end="",
+                )
+                return 0
             if args.command == "verification-record":
                 prepared = verification.prepare_record(
                     program, state, args.input, observed_head=program.current_head()
@@ -3799,8 +4169,60 @@ def main(argv: list[str] | None = None) -> int:
                     program.transition(state, args)
                     program.save(state)
                 case "submit":
-                    program.submit(state, args)
-                    program.save(state)
+                    prepared = authoring.prepare(
+                        program,
+                        state,
+                        args,
+                        observed_head=program.current_head(),
+                        materialize_handoff=True,
+                    )
+                    program.save(prepared.state, before_publish=prepared.before_publish)
+                    if args.handoff is not None:
+                        task = program.task(prepared.state, args.id)
+                        attempt = program.current_attempt(task)
+                        submission = record(attempt["submission"], "submission")
+                        handoff_id = submission["handoff_id"]
+                        intent = next(
+                            record(value, "intent")
+                            for value in reversed(
+                                sequence(
+                                    record(prepared.state["review_handoffs"], "handoffs")[
+                                        "records"
+                                    ],
+                                    "records",
+                                )
+                            )
+                            if record(value, "intent")["kind"] == "intent"
+                            and record(value, "intent")["handoff_id"] == handoff_id
+                        )
+                        print(
+                            canonical(
+                                {
+                                    "schema_version": 1,
+                                    "status": "submitted",
+                                    "task_id": args.id,
+                                    "attempt": attempt["number"],
+                                    "submission_round": submission["round"],
+                                    "handoff_id": handoff_id,
+                                    "assignment_generation": intent["assignment_generation"],
+                                    "subject": intent["subject"],
+                                    "packet_ref": submission["packet_ref"],
+                                    "reviewer_id": intent["reviewer_id"],
+                                    "eligibility": intent["eligibility"],
+                                    "next_actor_id": intent["director_id"],
+                                    "next_action": "dispatch_exact_packet",
+                                    "submitted_observation": {
+                                        "observed_at": datetime.now(timezone.utc).isoformat(),
+                                        "clock_id": "local_system_utc",
+                                        "timestamp_source": "live_postcondition_observation",
+                                        "boundary": "successful_submit_result_observed",
+                                    },
+                                    "native_dispatched": False,
+                                }
+                            ).decode(),
+                            end="",
+                        )
+                        return 0
                 case "resume":
                     program.resume(state, args)
                 case "complete" | "rework":

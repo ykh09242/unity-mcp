@@ -238,7 +238,10 @@ def _input_shape(value: Record) -> None:
         "reporter_id",
         "artifacts",
         "provider_ref",
+        "evidence_provenance_ref",
     }
+    if "evidence_provenance_ref" in value:
+        _ref(value["evidence_provenance_ref"])
     match kind:
         case "request":
             allowed |= {
@@ -1010,7 +1013,12 @@ def _provider_source_mapping(
 
 
 def prepare_record(
-    program: ProgramAccess, state: Record, input_path: str, *, observed_head: str
+    program: ProgramAccess,
+    state: Record,
+    input_path: str,
+    *,
+    observed_head: str,
+    publication_base: Record | None = None,
 ) -> PreparedChange:
     """Resolve and freeze one detached event with the real pre-publication guard."""
     core = _core()
@@ -1401,7 +1409,10 @@ def prepare_record(
     )
     validate(proposal)
     program.verify_refs(refs)
-    original_revision = core.phases.revision(state)
+    original_revision = core.phases.revision(
+        state if publication_base is None else publication_base
+    )
+    authority_state = state
 
     def before_publish() -> None:
         current = core.read_json(program.path("backlog.json"))
@@ -1409,7 +1420,9 @@ def prepare_record(
             core.phases.revision(current) == original_revision,
             "Verification registry changed before publication",
         )
-        _authority(current, program.task(current, str(value["task_id"])), value, request)
+        _authority(
+            authority_state, program.task(authority_state, str(value["task_id"])), value, request
+        )
         program.require_current_location()
         program.verify_refs(refs)
         reads.recheck(program)
@@ -2560,12 +2573,19 @@ def validate_completion(program: ProgramAccess, state: Record, task_id: str) -> 
     reads.recheck(program)
 
 
-def publication_guard(program: ProgramAccess, future: Record) -> Callable[[], None] | None:
+def publication_guard(
+    program: ProgramAccess,
+    future: Record,
+    *,
+    predecessor: Record | None = None,
+    publication_base: Record | None = None,
+) -> Callable[[], None] | None:
     """Recheck newly declared frozen reliance against the original registry before publication."""
     core = _core()
     if not program.path("backlog.json").exists():
         return None
-    original = core.read_json(program.path("backlog.json"))
+    original = core.read_json(program.path("backlog.json")) if predecessor is None else predecessor
+    base = original if publication_base is None else publication_base
     old_records, future_records = _records(original), _records(future)
     _require(
         "verification" not in original or "verification" in future,
@@ -2600,19 +2620,18 @@ def publication_guard(program: ProgramAccess, future: Record) -> Callable[[], No
         ):
             validate_completion(program, original, str(task["id"]))
             completed_tasks.append(str(task["id"]))
-        for attempt_value in _items(task.get("attempts", []), "attempts"):
-            for ref_value in _items(
-                _record(attempt_value, "attempt").get("evidence", []), "evidence"
-            ):
-                ref = _record(ref_value, "receipt")
-                if core.digest(ref) not in old_refs and str(ref["path"]).endswith(".json"):
-                    receipt = core.read_json(program.path(str(ref["path"])))
-                    if receipt.get("verification_refs"):
-                        validate_receipt_refs(program, original, receipt, str(task["id"]))
-                        relied.append((str(task["id"]), receipt, ref))
+    old_controls = {core.digest(ref) for ref, _task in core.control_receipt_refs(original)}
+    for ref, task_id in core.control_receipt_refs(future):
+        if task_id is None or core.digest(ref) in old_controls:
+            continue
+        receipt, captured = core.read_json_frozen(program.path(str(ref["path"])))
+        _require(captured == ref["sha256"], "New control receipt changed before publication")
+        if "verification_refs" in receipt:
+            validate_receipt_refs(program, original, receipt, task_id)
+            relied.append((task_id, receipt, ref))
     if not relied and not appended and not completed_tasks:
         return None
-    revision = core.phases.revision(original)
+    revision = core.phases.revision(base)
 
     def recheck() -> None:
         current = core.read_json(program.path("backlog.json"))
@@ -2622,9 +2641,9 @@ def publication_guard(program: ProgramAccess, future: Record) -> Callable[[], No
         )
         program.verify_refs(appended_refs)
         for task_id in completed_tasks:
-            validate_completion(program, current, task_id)
+            validate_completion(program, original, task_id)
         for task_id, receipt, ref in relied:
             program.verify_refs([ref])
-            validate_receipt_refs(program, current, receipt, task_id)
+            validate_receipt_refs(program, original, receipt, task_id)
 
     return recheck
