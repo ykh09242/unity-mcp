@@ -1844,6 +1844,8 @@ summary {
 }
 .detail-heading h2 {
   font-size: 21px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .detail-heading .eyebrow {
   margin-block-end: 6px;
@@ -2623,8 +2625,8 @@ select {
   margin-block-end: var(--s4);
 }
 .task-detail-tabs [role='tab'] {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: min-content;
   padding: 10px 8px;
   border: 0;
   border-radius: 0;
@@ -2632,6 +2634,8 @@ select {
   background: transparent;
   color: var(--muted);
   white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: normal;
 }
 .task-detail-tabs [aria-selected='true'] {
   border-block-end-color: var(--accent);
