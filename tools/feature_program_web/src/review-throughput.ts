@@ -45,6 +45,21 @@ function endpoint(input: Json | undefined): ObservedEndpoint | null {
       }
     : null;
 }
+// The producer retains an unknown interval's endpoint reference even when no time was observed.
+// Only explicitly missing metadata is unmeasured; malformed supplied metadata stays unavailable.
+function retainedUnmeasuredEndpoint(input: Json | undefined, reasons: readonly string[]): boolean {
+  const value = record(input);
+  const missingTime = value.observed_at === null && reasons.includes('missing_observed_at');
+  const missingClock = value.clock_id === null && reasons.includes('missing_clock');
+  return Boolean(
+    (missingTime || missingClock) &&
+    (awareTime(value.observed_at) || missingTime) &&
+    (string(value.clock_id) || missingClock) &&
+    string(value.timestamp_source) &&
+    string(value.boundary) &&
+    Object.keys(record(value.reference)).length,
+  );
+}
 function observedAge(input: Json | undefined, start: ObservedEndpoint | null): ObservedAge | null {
   const value = record(input);
   if (
@@ -152,6 +167,7 @@ function interval(snapshot: Snapshot, input: Json): TimingInterval | null {
     start = endpoint(value.start),
     end = endpoint(value.end);
   const reasons = strings(value.reasons);
+  const unknown = value.state === 'unknown' && value.closed_seconds === null;
   if (
     !string(value.interval_id) ||
     !timingKinds.some((kind) => kind === value.kind) ||
@@ -160,8 +176,10 @@ function interval(snapshot: Snapshot, input: Json): TimingInterval | null {
     !['closed', 'open', 'unknown', 'canonical_terminal_timing_unknown'].includes(
       string(value.state),
     ) ||
-    (value.start !== null && !start) ||
-    (value.end !== null && !end)
+    (value.start !== null &&
+      !start &&
+      !(unknown && retainedUnmeasuredEndpoint(value.start, reasons))) ||
+    (value.end !== null && !end && !(unknown && retainedUnmeasuredEndpoint(value.end, reasons)))
   )
     return null;
   if (value.state === 'closed') {
