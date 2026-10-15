@@ -1,3 +1,5 @@
+import { HandoffInline, ReviewTimingLine } from './review-throughput-ui';
+import { taskHandoff } from './review-throughput';
 import { flowReasonLabels } from './flow-copy';
 import { checkLabels } from './throughput';
 import { useEffect, useRef } from 'react';
@@ -70,19 +72,37 @@ function ReviewLabel({ row }: { readonly row: QueueRow }) {
     </>
   );
 }
-function QueueFacts({ row, context }: { readonly row: QueueRow; readonly context: WorkContext }) {
+function QueueFacts({
+  row,
+  context,
+  snapshot,
+}: {
+  readonly row: QueueRow;
+  readonly context: WorkContext;
+  readonly snapshot: Snapshot;
+}) {
   const i18n = useI18n(),
     unassignedGap = unassignedCheckGap(row);
   return (
     <>
-      <div className="queue-action">
-        <ActorLink id={row.nextActorId} context={context} />
-        <span>{i18n.t(row.nextAction || queueActionLabels[row.action] || 'Not recorded')}</span>
-      </div>
-      {row.nextTrigger && row.nextTrigger !== row.nextAction && (
-        <p className="muted queue-trigger">
-          {i18n.t('Next trigger')}: {i18n.t(row.nextTrigger)}
-        </p>
+      {row.kind === 'task_review' && taskHandoff(snapshot, row.taskId) && (
+        <HandoffInline snapshot={snapshot} taskId={row.taskId} />
+      )}
+      {!(row.kind === 'task_review' && taskHandoff(snapshot, row.taskId)) && (
+        <div className="queue-action">
+          <ActorLink id={row.nextActorId} context={context} />
+          <span>{i18n.t(row.nextAction || queueActionLabels[row.action] || 'Not recorded')}</span>
+        </div>
+      )}
+      {!(row.kind === 'task_review' && taskHandoff(snapshot, row.taskId)) &&
+        row.nextTrigger &&
+        row.nextTrigger !== row.nextAction && (
+          <p className="muted queue-trigger">
+            {i18n.t('Next trigger')}: {i18n.t(row.nextTrigger)}
+          </p>
+        )}
+      {row.kind === 'task_review' && !taskHandoff(snapshot, row.taskId) && (
+        <ReviewTimingLine snapshot={snapshot} taskId={row.taskId} />
       )}
       {row.reasons[0] && !unassignedGap && (
         <p className="lane-warning queue-reason">
@@ -324,7 +344,7 @@ export function ReviewQueueList({
                 )}
             </div>
             <div className="queue-responsibility">
-              <QueueFacts row={row} context={navigation.context} />
+              <QueueFacts row={row} context={navigation.context} snapshot={snapshot} />
             </div>
           </article>
         ))}
@@ -362,47 +382,107 @@ export function QueueResponsibilities({
     );
   const taskIds = new Set(scopedTasks(snapshot, context.scope).map((task) => task.id));
   const rows = queue.rows.filter((row) => taskIds.has(row.taskId) && row.readiness !== 'terminal');
+  const requests = rows.filter((row) => row.kind !== 'required_check_gap');
+  const gaps = rows.filter((row) => row.kind === 'required_check_gap');
+  const gapTaskIds = [...new Set(gaps.map((row) => row.taskId))];
   return (
     <section className="verification-responsibilities">
       <h3>{i18n.t('Next review responsibility')}</h3>
-      <ul>
-        {rows.slice(0, 5).map((row) => (
-          <li key={row.id}>
-            <a href={navigationHash({ view: 'task', taskId: row.taskId }, context)}>
-              {presentation.taskReference(row.taskId)}
-            </a>
-            <div className="queue-action">
-              <span>
-                <ReviewLabel row={row} />
-              </span>
-              <ActorLink id={row.nextActorId} context={context} />
-              <span>
-                {i18n.t(row.nextAction || queueActionLabels[row.action] || 'Not recorded')}
-              </span>
-            </div>
-            {row.reasons[0] && (
-              <span className="lane-warning">
-                {i18n.warning(flowReasonLabels[row.reasons[0]] || row.reasons[0])}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-      {!rows.length && (
+      {requests.length > 0 && (
+        <ul>
+          {requests.slice(0, 5).map((row) => (
+            <li key={row.id}>
+              <a href={navigationHash({ view: 'task', taskId: row.taskId }, context)}>
+                {presentation.taskReference(row.taskId)}
+              </a>
+              {row.kind === 'task_review' && taskHandoff(snapshot, row.taskId) ? (
+                <HandoffInline snapshot={snapshot} taskId={row.taskId} />
+              ) : (
+                <div className="queue-action">
+                  <span>
+                    <ReviewLabel row={row} />
+                  </span>
+                  <ActorLink id={row.nextActorId} context={context} />
+                  <span>
+                    {i18n.t(row.nextAction || queueActionLabels[row.action] || 'Not recorded')}
+                  </span>
+                </div>
+              )}
+              {row.reasons[0] && (
+                <span className="lane-warning">
+                  {i18n.warning(flowReasonLabels[row.reasons[0]] || row.reasons[0])}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!requests.length && (
         <p className="muted">
           {i18n.t(
             queue.omitted
-              ? 'No supplied obligations match; omitted work remains unknown.'
-              : 'No open review obligations recorded.',
+              ? 'No supplied review requests match; omitted work remains unknown.'
+              : 'No review requests.',
           )}
         </p>
       )}
-      {(rows.length > 5 || queue.omitted > 0) && (
+      {gaps.length > 0 && (
+        <details className="lane-details team-check-gaps">
+          <summary>
+            {i18n.t('Required checks not yet recorded')} · {i18n.number(gaps.length)}
+          </summary>
+          <div>
+            {gapTaskIds.map((taskId) => (
+              <div className="team-gap-task" key={taskId}>
+                <a href={navigationHash({ view: 'task', taskId }, context)}>
+                  {presentation.taskReference(taskId)}
+                </a>
+                <ul>
+                  {gaps
+                    .filter((row) => row.taskId === taskId)
+                    .map((row) => (
+                      <li key={row.id}>
+                        <div className="queue-action">
+                          <span>
+                            {row.checkIds.map((id) => i18n.t(checkLabels[id] || id)).join(', ') ||
+                              i18n.t('Check coverage gap')}
+                          </span>
+                          <ActorLink id={row.nextActorId} context={context} />
+                          <span>
+                            {i18n.t(
+                              row.nextAction || queueActionLabels[row.action] || 'Not recorded',
+                            )}
+                          </span>
+                        </div>
+                        {row.reasons.map((reason, index) => (
+                          <p key={index} className="muted">
+                            {i18n.warning(flowReasonLabels[reason] || reason)}
+                          </p>
+                        ))}
+                        {row.nextTrigger && row.nextTrigger !== row.nextAction && (
+                          <p className="muted">
+                            {i18n.t('Next trigger')}: {i18n.t(row.nextTrigger)}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+      {requests.length > 5 && (
         <p className="muted">
-          {i18n.t(
-            'Showing {shown} of {supplied} supplied obligations · {omitted} omitted from snapshot.',
-            { shown: Math.min(rows.length, 5), supplied: rows.length, omitted: queue.omitted },
-          )}
+          {i18n.t('{shown} / {total} supplied requests shown.', {
+            shown: 5,
+            total: requests.length,
+          })}
+        </p>
+      )}
+      {queue.omitted > 0 && (
+        <p className="muted">
+          {i18n.t('{count} obligations omitted; this view is partial.', { count: queue.omitted })}
         </p>
       )}
       <a

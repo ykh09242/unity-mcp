@@ -2895,3 +2895,24 @@ select {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.review-flow,
+.review-handoff-inline {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.review-flow p,
+.review-handoff-inline p {
+  margin-block: var(--s2);
+  font-size: 12px;
+}
+.review-phase {
+  font-weight: 510;
+}
+
+.review-timing-unit {
+  display: inline-block;
+  max-inline-size: 100%;
+  vertical-align: baseline;
+}

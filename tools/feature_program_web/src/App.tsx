@@ -1,3 +1,4 @@
+import { ReviewBottleneck, EvidencePreparationSummary, BatchSummary } from './review-throughput-ui';
 import { ClosureSummary, ClosureAttention } from './flow-closure-ui';
 import { ReviewQueueList, QueueAttention } from './flow-queue-ui';
 import { queueActorIds, queueFilters } from './flow-queue';
@@ -346,6 +347,12 @@ function Overview({
         snapshot={snapshot}
         context={{ ...context, scope: goalTaskIds(snapshot) ? 'current' : 'all' }}
       />
+      <ReviewBottleneck
+        snapshot={snapshot}
+        context={{ ...context, scope: goalTaskIds(snapshot) ? 'current' : 'all' }}
+      />
+      <EvidencePreparationSummary snapshot={snapshot} />
+      <BatchSummary snapshot={snapshot} />
       <ClosureAttention snapshot={snapshot} context={context} />
       <CoordinationSummary
         snapshot={snapshot}
@@ -1169,6 +1176,8 @@ function TaskDetail({
             </Section>
             <ReviewSummary snapshot={snapshot} task={task} />
             <VerificationLanes snapshot={snapshot} task={task} />
+            <EvidencePreparationSummary snapshot={snapshot} taskId={task.id} />
+            <BatchSummary snapshot={snapshot} taskId={task.id} />
             <ClosureSummary snapshot={snapshot} taskId={task.id} />
             {(description.criteria || distinctCriteria) && (
               <div className="content-section">

@@ -254,4 +254,47 @@ describe('snapshot refresh lifecycle', () => {
     expect(signals[0]?.aborted).toBe(true);
     expect(loader).toHaveBeenCalledTimes(1);
   });
+
+  it('retains the coherent timing object across 304 and replaces it only for a new retained observation', async () => {
+    // Given: nested timing contains retained facts, not a projection-time age.
+    const timing = {
+      schema_version: 1,
+      source_binding: { input_digest: 'retained-one' },
+      current: { items: [{ id: 'stable-review', age: null }], total: 1, shown: 1, omitted: 0 },
+    };
+    const loader = vi
+      .fn()
+      .mockResolvedValue(new SnapshotResponse(200, 'W/"retained-one"', { ...fixture(), timing }));
+    const hook = renderHook(() => useSnapshot(loader));
+    await act(async () => {});
+    const previous = hook.result.current.snapshot;
+    // When: the server confirms identical retained observations.
+    loader.mockResolvedValue(new SnapshotResponse(304, 'W/"retained-one"'));
+    await act(async () => {
+      await hook.result.current.refresh();
+    });
+    // Then: the model and nested timing retain their identity.
+    expect(hook.result.current.snapshot).toBe(previous);
+    expect(hook.result.current.snapshot?.timing).toBe(previous?.timing);
+    // When: a real newly retained observation arrives with another validator.
+    loader.mockResolvedValue(
+      new SnapshotResponse(200, 'W/"retained-two"', {
+        ...fixture('later'),
+        timing: {
+          ...timing,
+          source_binding: { input_digest: 'retained-two' },
+          current: {
+            ...timing.current,
+            items: [{ id: 'stable-review', age: { seconds: 3, as_of: '2026-10-15T01:00:03Z' } }],
+          },
+        },
+      }),
+    );
+    await act(async () => {
+      await hook.result.current.refresh();
+    });
+    // Then: the coherent projection changes, with its stable logical row ID retained.
+    expect(hook.result.current.snapshot).not.toBe(previous);
+    expect(hook.result.current.snapshot?.timing).not.toBe(previous?.timing);
+  });
 });

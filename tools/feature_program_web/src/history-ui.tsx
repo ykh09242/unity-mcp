@@ -1,3 +1,5 @@
+import { ReviewFlow } from './review-throughput-ui';
+import { taskHandoff } from './review-throughput';
 import { useI18n } from './i18n';
 import { usePresentation } from './presentation-ui';
 import { items, record, records, safeUrl, string } from './model';
@@ -285,6 +287,14 @@ export function ReviewSummary({
   const { attempt, round, review, receipt } = latestReview(task);
   const integrated = record(record(snapshot.coverage).integrated_review);
   const submission = record(record(task.readiness).submission);
+  const assignedHandoff = taskHandoff(snapshot, task.id);
+  const pendingAssignedReview =
+    !review.verdict &&
+    submission.status === 'observed' &&
+    typeof round.round === 'number' &&
+    round.round > 0 &&
+    assignedHandoff?.currentness === 'current' &&
+    Boolean(assignedHandoff.reviewerId);
   const notYetReviewed =
     task.status === 'active' &&
     Array.isArray(attempt.rounds) &&
@@ -300,7 +310,9 @@ export function ReviewSummary({
         <span className="badge">
           {notYetReviewed
             ? i18n.t('Not yet reviewed')
-            : i18n.human(review.verdict || submission.status)}
+            : !review.verdict && submission.status === 'observed'
+              ? i18n.t('Submission observed')
+              : i18n.human(review.verdict || submission.status)}
         </span>
       </div>
       <p className="history-meta">
@@ -308,17 +320,21 @@ export function ReviewSummary({
         {!notYetReviewed && (
           <>
             {' '}
-            · {i18n.t('Round')} {i18n.display(round.round)} ·{' '}
-            {i18n.display(presentation.actor(review.reviewer), 'Reviewer not recorded')}
+            · {i18n.t('Round')} {i18n.display(round.round)}
+            {(review.reviewer || review.verdict || !pendingAssignedReview) && (
+              <> · {i18n.display(presentation.actor(review.reviewer), 'Reviewer not recorded')}</>
+            )}
           </>
         )}
       </p>
-      {(review.next_action || receipt.next_action) && (
+      {!taskHandoff(snapshot, task.id) && (review.next_action || receipt.next_action) && (
         <p className="history-text">{i18n.display(review.next_action || receipt.next_action)}</p>
       )}
+      <ReviewFlow snapshot={snapshot} taskId={task.id} />
       <details>
         <summary>{i18n.t('Review context')}</summary>
         <Facts
+          optional
           values={[
             ['Task', task.id],
             ['Implementer', attempt.owner],
