@@ -264,7 +264,9 @@ def _observe_bytes(path: Path, content: bytes, limit: int, budget_tag: str | Non
 
 def parse_registry_state(observation: RegistryObservation, *, path: Path) -> Record:
     """Strictly parse BODY only at this explicitly typed registry boundary."""
-    return _parse_json(observation.body_bytes, path)
+    state = _parse_json(observation.body_bytes, path)
+    _compact_registry(state)
+    return state
 
 
 _owned_program_locks: ContextVar[dict[str, str] | None] = ContextVar(
@@ -450,6 +452,37 @@ def canonical(value: Json) -> bytes:
 
 def digest(value: Json) -> str:
     return sha(canonical(value))
+
+
+def _compact_registry(state: Record) -> bool:
+    """Validate only the explicit registry marker; generic artifacts stay unchanged."""
+    if "registry_format" not in state:
+        return False
+    marker = state["registry_format"]
+    require(
+        isinstance(marker, dict)
+        and set(marker) == {"schema_version", "encoding"}
+        and type(marker["schema_version"]) is int
+        and marker["schema_version"] == 1
+        and marker["encoding"] == "compact-ascii",
+        "Unsupported registry format marker",
+    )
+    return True
+
+
+def registry_body(state: Record) -> bytes:
+    """One versioned registry serializer; never use it for immutable artifacts."""
+    if not _compact_registry(state):
+        return canonical(state)
+    try:
+        return (
+            json.dumps(
+                state, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False
+            )
+            + "\n"
+        ).encode()
+    except (ValueError, RecursionError) as exc:
+        raise ProgramError(f"Invalid registry JSON: {exc}") from exc
 
 
 def utc() -> str:
@@ -1308,6 +1341,7 @@ class Program:
     def validate(
         self, state: Record, verify_artifacts: bool = True, *, prospective: bool = False
     ) -> _ValidatedState:
+        _compact_registry(state)
         budget = ReadBudget() if verify_artifacts else None
         require(state.get("schema_version") == 1, "Unsupported registry")
         string(state.get("program_id"), "program_id")
@@ -2851,7 +2885,7 @@ class Program:
         """Share actual publication preflight without creating or changing any files."""
         self.require_current_location()
         checked = self.validate(state)
-        encoded = canonical(state)
+        encoded = registry_body(state)
         require(
             len(encoded) <= 8 * 1024 * 1024,
             "Canonical registry exceeds 8 MiB; existing state preserved",
@@ -2879,10 +2913,16 @@ class Program:
                         break
         sink = _prepared_save_facts.get()
         if sink is not None:
-            sink.append(_PreparedState(state, checked, encoded, derived, encoded))
+            normalized = canonical(state) if _compact_registry(state) else encoded
+            sink.append(_PreparedState(state, checked, encoded, derived, normalized))
         return encoded
 
-    def save(self, state: Record, *, before_publish: Callable[[], None] | None = None) -> None:
+    def save(
+        self,
+        state: Record,
+        *,
+        before_publish: Callable[[], None] | None = None,
+    ) -> None:
         verification_guard = verification.publication_guard(self, state)
         self._publish(state, verification_guard, before_publish=before_publish)
 
@@ -2892,6 +2932,7 @@ class Program:
         verification_guard: Callable[[], None] | None,
         *,
         before_publish: Callable[[], None] | None = None,
+        _registry_backup: tuple[str, bytes] | None = None,
     ) -> None:
         """Shared canonical publication after ordinary or exact projected verification."""
         self.require_current_location()
@@ -2929,15 +2970,18 @@ class Program:
             _assert_registry_storage(self, initial)
             _assert_owned_lock(self)
             require(
-                flow_module("storage").decode_registry(encoded).body_bytes == canonical(state),
+                flow_module("storage").decode_registry(encoded).body_bytes == registry_body(state),
                 "Proposed BODY changed before publication",
             )
+        if _registry_backup is not None:
+            _assert_registry_backup(self, *_registry_backup)
+            _assert_registry_storage(self, initial)
         atomic_write(self.path("backlog.json"), encoded)
         try:
             self.render(state)
         except (OSError, ProgramError) as exc:
             raise ProgramError(
-                f"Registry committed at revision {sha(canonical(state))}; derived rendering failed. Run render to recover views: {exc}"
+                f"Registry committed at revision {phases.revision(state)}; derived rendering failed. Run render to recover views: {exc}"
             ) from exc
 
     def render(self, state: Record) -> None:
@@ -4141,7 +4185,7 @@ def _prepare_model_publication(
     """Prepare without swapping canonical state or persisting the current writer lock."""
     _assert_owned_lock(program)
     module = flow_module("read_model")
-    intended_body = original.body_bytes if preserve_body else canonical(state)
+    intended_body = original.body_bytes if preserve_body else registry_body(state)
     collector = module.Collector(
         program.repo,
         program.directory,
@@ -4164,12 +4208,12 @@ def _prepare_model_publication(
             prepared = facts[0]
             if preserve_body:
                 require(
-                    canonical(parse_registry_state(original, path=program.path("backlog.json")))
+                    registry_body(parse_registry_state(original, path=program.path("backlog.json")))
                     == body,
                     "Exact preserved BODY differs from proposed state",
                 )
                 prepared = _PreparedState(
-                    state, prepared.checked, intended_body, prepared.views, body
+                    state, prepared.checked, intended_body, prepared.views, prepared.normalized_body
                 )
                 body = intended_body
             snapshot = _capture_projection(
@@ -4328,6 +4372,89 @@ def storage_enable(program: Program, *, owner: str, reason: str) -> Record:
     }
 
 
+def _assert_registry_backup(program: Program, name: str, content: bytes) -> None:
+    # Re-admit every backup observation, including the one after model closure.
+    path = program.path(name)
+    require(observed_is_file(path), "Registry compaction backup is not a regular file")
+    require(
+        bounded_bytes(path, 8 * 1024 * 1024 + 80) == content,
+        "Registry compaction backup changed",
+    )
+
+
+def registry_compact(
+    program: Program, *, owner: str, reason: str, expected_revision: str
+) -> Record:
+    """Explicitly migrate enabled registry JSON without rewriting evidence/history."""
+    _assert_owned_lock(program)
+    program.require_current_location()
+    original = program.read_registry_observation()
+    state = parse_registry_state(original, path=program.path("backlog.json"))
+    require(
+        owner == (coordination.current_director_id(state) or "leader"),
+        "Registry compaction requires current director",
+    )
+    string(reason, "registry compaction reason")
+    require(
+        phases.revision(state) == expected_revision,
+        "Stale registry compaction revision; inspect commitment before retry",
+    )
+    require(original.model_id is not None, "Registry compaction requires enabled storage")
+    require(
+        not _compact_registry(state),
+        "Registry already compact; use render or storage-enable to recover, never replay migration",
+    )
+    program.validate(state)
+    backup_name = f"recovery/storage/compact-ascii/{original.storage_sha256}/original-backlog.json"
+    backup_path = program.path(backup_name)
+    if observed_exists(backup_path):
+        _assert_registry_backup(program, backup_name, original.raw_bytes)
+    else:
+        atomic_write(backup_path, original.raw_bytes)
+    proposal = deepcopy(state)
+    proposal["registry_format"] = {"schema_version": 1, "encoding": "compact-ascii"}
+
+    def unchanged() -> None:
+        _assert_owned_lock(program)
+        _assert_registry_storage(program, original)
+        current = parse_registry_state(
+            program.read_registry_observation(), path=program.path("backlog.json")
+        )
+        require(
+            phases.revision(current) == expected_revision, "Registry compaction revision changed"
+        )
+        require(
+            owner == (coordination.current_director_id(current) or "leader"),
+            "Registry compaction authority changed",
+        )
+        _assert_registry_backup(program, backup_name, original.raw_bytes)
+
+    # The ordinary publication path validates all provenance and builds/closes a NEW model
+    # against the compact proposed BODY; storage-enable's preserve_body path is not used.
+    program._publish(
+        proposal,
+        verification.publication_guard(program, proposal),
+        before_publish=unchanged,
+        _registry_backup=(backup_name, original.raw_bytes),
+    )
+    current = program.read_registry_observation()
+    require(current.body_bytes == registry_body(proposal), "Committed compact registry differs")
+    return {
+        "status": "compacted",
+        "registry_format": proposal["registry_format"],
+        "previous_revision": expected_revision,
+        "revision": phases.revision(proposal),
+        "previous_body_sha256": original.body_sha256,
+        "body_sha256": current.body_sha256,
+        "previous_storage_sha256": original.storage_sha256,
+        "storage_sha256": current.storage_sha256,
+        "backup": {"path": backup_name, "sha256": original.storage_sha256},
+        "before_body_bytes": len(original.body_bytes),
+        "body_bytes": len(current.body_bytes),
+        "history_changed": False,
+    }
+
+
 def prepare_relocation(
     program: Program, state: Record, args: argparse.Namespace
 ) -> tuple[Program, bytes, list[str]]:
@@ -4454,7 +4581,7 @@ def relocate(program: Program, state: Record, args: argparse.Namespace) -> None:
             },
         )
         target.validate(state)
-        encoded = canonical(state)
+        encoded = registry_body(state)
         require(len(encoded) <= 8 * 1024 * 1024, "Canonical registry exceeds 8 MiB")
         derived = target.views(state)
         for name, content in files.items():
@@ -4836,6 +4963,13 @@ def parser() -> argparse.ArgumentParser:
     )
     enable.add_argument("--owner", required=True)
     enable.add_argument("--reason", required=True)
+    compact = commands.add_parser(
+        "registry-compact",
+        help="Explicitly migrate enabled registry to versioned compact ASCII JSON",
+    )
+    compact.add_argument("--owner", required=True)
+    compact.add_argument("--reason", required=True)
+    compact.add_argument("--expected-revision", required=True)
     commands.add_parser(
         "storage-export", help="Export exact logical JSON BODY bytes without writes"
     )
@@ -5015,6 +5149,16 @@ def main(argv: list[str] | None = None) -> int:
             with program.lock():
                 enabled = storage_enable(program, owner=args.owner, reason=args.reason)
             sys.stdout.buffer.write(canonical(enabled))
+            return 0
+        if args.command == "registry-compact":
+            with program.lock():
+                compacted = registry_compact(
+                    program,
+                    owner=args.owner,
+                    reason=args.reason,
+                    expected_revision=args.expected_revision,
+                )
+            sys.stdout.buffer.write(canonical(compacted))
             return 0
         if args.command == "brief":
             # The bound covers emitted bytes, including on Windows: text-mode

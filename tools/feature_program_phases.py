@@ -14,7 +14,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
-import json
 from pathlib import Path
 import re
 from types import ModuleType
@@ -50,10 +49,7 @@ def require(condition: bool, message: str) -> None:
 
 def revision(state: Record) -> str:
     """Return an optimistic concurrency token, never a permanent acceptance binding."""
-    raw = (
-        json.dumps(state, indent=2, ensure_ascii=True, sort_keys=True, allow_nan=False) + "\n"
-    ).encode()
-    return hashlib.sha256(raw).hexdigest()
+    return hashlib.sha256(_core().registry_body(state)).hexdigest()
 
 
 def _core() -> ModuleType:
