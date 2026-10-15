@@ -151,12 +151,26 @@ def _active_collector():
     return module.active_collector() if module is not None else None
 
 
+_OBSERVED_IMAGE_LIMIT: Final = 4096
+_OBSERVED_BYTE_LIMIT: Final = 64 * 1024 * 1024
+
+
+@dataclass(slots=True)
+class _ByteObservations:
+    """Pure bookkeeping for retained immutable objects, never pathname truth."""
+
+    images: dict[int, tuple[bytes, str]] = field(default_factory=dict)
+    descriptors: set[tuple[Path, str, int, int, str | None]] = field(default_factory=set)
+    retained_bytes: int = 0
+
+
 @dataclass(frozen=True, slots=True)
 class _DependencyNames:
-    """Pure lexical results retained only by one explicit collector activation."""
+    """Pure results retained only by one explicit collector activation."""
 
     owner: Collector
     paths: dict[str, tuple[Path, str] | None] = field(default_factory=dict)
+    byte_observations: _ByteObservations = field(default_factory=_ByteObservations)
 
 
 _dependency_names: ContextVar[_DependencyNames | None] = ContextVar(
@@ -272,14 +286,44 @@ def _observe_bytes(path: Path, content: bytes, limit: int, budget_tag: str | Non
         and named is not None
         and not (named[0] == collector.program_dir and os.path.normcase(named[1]) == "backlog.json")
     ):
+        active = _dependency_names.get()
+        memo = (
+            active.byte_observations if active is not None and active.owner is collector else None
+        )
+        reusable = (
+            memo is not None
+            and type(content) is bytes
+            and type(limit) is int
+            and 0 <= limit <= 128 * 1024 * 1024
+            and (budget_tag is None or type(budget_tag) is str)
+        )
+        identity = id(content)
+        previous = memo.images.get(identity) if reusable else None
+        descriptor = (*named, identity, limit, budget_tag)
+        retained = previous is not None and previous[0] is content
+        if retained and descriptor in memo.descriptors:
+            return
+        digest_value = previous[1] if retained else sha(content)
         collector.observe_file(
             *named,
             kind="file",
-            sha256=sha(content),
+            sha256=digest_value,
             size=len(content),
             limit=limit,
             budget_tag=budget_tag,
         )
+        if reusable:
+            if (
+                not retained
+                and len(memo.images) < _OBSERVED_IMAGE_LIMIT
+                and memo.retained_bytes + len(content) <= _OBSERVED_BYTE_LIMIT
+            ):
+                # The strong reference makes integer object-id reuse impossible.
+                memo.images[identity] = (content, digest_value)
+                memo.retained_bytes += len(content)
+                retained = True
+            if retained and len(memo.descriptors) < _OBSERVED_IMAGE_LIMIT:
+                memo.descriptors.add(descriptor)
 
 
 def parse_registry_state(observation: RegistryObservation, *, path: Path) -> Record:

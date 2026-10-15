@@ -3443,3 +3443,145 @@ def test_optional_mutation_outcome_distinguishes_atomic_failure_boundary(
     assert (actual.raw_bytes == before.raw_bytes) is (not after_replace)
     assert result["publication"]["revision"] == actual.body_sha256
     assert result["acceptance_complete"] is False
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_byte_observation_memo_preserves_complete_collector_descriptors(
+    small_program, monkeypatch, changed
+):
+    program = small_program.program
+    target = program.repo / "src/compile-api.py"
+    original = bytes(bytearray(b"original exact image"))
+    other = bytes(bytearray(b"different exact image"))
+    baseline, candidate = _path_collector(program), _path_collector(program)
+    events = [(target, original, 100, "reader-one")] * 1000
+    events += [(target, original, 99, "reader-one"), (target, original, 100, "reader-two")]
+    events += [(target.with_name(target.name.upper()), original, 100, "reader-one")]
+    if changed:
+        events += [(target, other, 100, "reader-one"), (target, original, 100, "reader-one")]
+    for path, content, limit, tag in events:
+        baseline.observe_file(
+            program.repo,
+            path.relative_to(program.repo).as_posix(),
+            kind="file",
+            sha256=fp.sha(content),
+            size=len(content),
+            limit=limit,
+            budget_tag=tag,
+        )
+    normal_sha, normal_emit = fp.sha, candidate.observe_file
+    hashes, emissions = [], []
+
+    def counted_sha(content):
+        hashes.append(content)
+        return normal_sha(content)
+
+    def counted_emit(*args, **kwargs):
+        emissions.append((args, kwargs))
+        return normal_emit(*args, **kwargs)
+
+    monkeypatch.setattr(fp, "sha", counted_sha)
+    monkeypatch.setattr(candidate, "observe_file", counted_emit)
+    with fp._collect_dependencies(candidate):
+        for path, content, limit, tag in events:
+            fp._observe_bytes(path, content, limit, tag)
+    assert len(hashes) == (2 if changed else 1)
+    assert len(emissions) == (5 if changed else 4)
+    assert candidate.finish({"actual": "same detached snapshot"}) == baseline.finish(
+        {"actual": "same detached snapshot"}
+    )
+    assert ("conflicting_observation" in candidate._reasons) is changed
+
+
+def test_byte_observation_memo_is_bounded_and_pins_exact_objects(small_program, monkeypatch):
+    program = small_program.program
+    collector = _path_collector(program)
+    monkeypatch.setattr(fp, "_OBSERVED_IMAGE_LIMIT", 2)
+    monkeypatch.setattr(fp, "_OBSERVED_BYTE_LIMIT", 8)
+    images = [bytes(bytearray([number] * 4)) for number in range(6)]
+    with fp._collect_dependencies(collector):
+        for number, image in enumerate(images):
+            fp._observe_bytes(program.repo / f"image-{number}", image, 4, "reader")
+        memo = fp._dependency_names.get().byte_observations
+        assert len(memo.images) == len(memo.descriptors) == 2
+        assert memo.retained_bytes == 8
+        assert all(memo.images[id(image)][0] is image for image in images[:2])
+        assert len(collector._facts["files"]) == 6
+    assert fp._dependency_names.get() is None
+    with fp._collect_dependencies(collector):
+        assert not fp._dependency_names.get().byte_observations.images
+
+
+@pytest.mark.parametrize("limit,tag", [(True, "reader"), (1, True), (0, "reader")])
+def test_byte_observation_memo_keeps_consumer_validation(small_program, limit, tag):
+    program = small_program.program
+    collector = _path_collector(program)
+    target, image = program.repo / "proof", b"x"
+    module = fp.flow_module("read_model")
+    with fp._collect_dependencies(collector):
+        fp._observe_bytes(target, image, 1, "reader")
+        with pytest.raises(module.ModelError):
+            fp._observe_bytes(target, image, limit, tag)
+
+
+def test_byte_observation_memo_keeps_owner_and_fresh_filesystem_epochs(small_program):
+    program = small_program.program
+    first, second = _path_collector(program), _path_collector(program)
+    path = program.repo / "src/compile-api.py"
+    path.write_bytes(b"original")
+    reader = fp.ReadBudget()
+    module = fp.flow_module("read_model")
+    with fp._collect_dependencies(first):
+        captured = reader.capture(program.repo, "src/compile-api.py", 100)
+        with pytest.raises(fp.ProgramError, match="bounded read"):
+            reader.capture(program.repo, "src/compile-api.py", 1)
+        with module.collect(second):
+            fp._observe_bytes(path, captured.content, 100, "other-reader")
+        assert len(second._facts["files"]) == 1
+        path.write_bytes(b"changed!")
+        # A new reader must still read fresh bytes and record the conflicting image.
+        fp.ReadBudget().capture(program.repo, "src/compile-api.py", 100)
+        assert "conflicting_observation" in first._reasons
+        with pytest.raises(fp.ProgramError, match="changed during snapshot"):
+            reader.recheck(program.repo)
+    assert fp._dependency_names.get() is None
+
+
+def test_byte_observation_memo_uses_object_identity_not_equal_bytes(small_program, monkeypatch):
+    program = small_program.program
+    collector = _path_collector(program)
+    first = bytes(bytearray(b"equal byte values"))
+    second = bytes(bytearray(first))
+    assert first == second and first is not second
+    normal = fp.sha
+    calls = []
+
+    def counted(content):
+        calls.append(content)
+        return normal(content)
+
+    monkeypatch.setattr(fp, "sha", counted)
+    with fp._collect_dependencies(collector):
+        for image in (first, first, second, second):
+            fp._observe_bytes(program.repo / "proof", image, 100, "reader")
+        memo = fp._dependency_names.get().byte_observations
+        assert len(memo.images) == 2
+        assert memo.images[id(first)][0] is first
+        assert memo.images[id(second)][0] is second
+    assert len(calls) == 2
+    assert len(collector._facts["files"]) == 1
+
+
+def test_byte_observation_memo_preserves_each_expected_sha_consumer(small_program):
+    program = small_program.program
+    path = program.directory / "evidence/proof.txt"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(b"original exact evidence")
+    collector = _path_collector(program)
+    reader = fp.ReadBudget()
+    with fp._collect_dependencies(collector):
+        program.verify_refs(
+            [{"path": "evidence/proof.txt", "sha256": fp.sha(path.read_bytes())}], reader
+        )
+        with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+            program.verify_refs([{"path": "evidence/proof.txt", "sha256": "0" * 64}], reader)
