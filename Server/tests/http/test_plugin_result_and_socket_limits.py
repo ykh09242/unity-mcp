@@ -37,7 +37,6 @@ def isolated(monkeypatch):
         )
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
-    monkeypatch.setattr(PluginHub, "REGISTRATION_TIMEOUT", 0.05, raising=False)
     return PluginRegistry()
 
 
@@ -65,7 +64,8 @@ def test_unregistered_connections_consume_global_capacity(client, monkeypatch):
     assert PluginHub._admitted == {}
 
 
-def test_silent_connection_has_registration_deadline(client):
+def test_silent_connection_has_registration_deadline(client, monkeypatch):
+    monkeypatch.setattr(PluginHub, "REGISTRATION_TIMEOUT", 0.05)
     with client.websocket_connect("/plugin") as wire:
         wire.receive_json()
         with pytest.raises(WebSocketDisconnect) as closed:
@@ -84,6 +84,8 @@ def test_registration_must_be_first_message(client):
 
 
 def test_registration_processing_obeys_same_deadline(client, monkeypatch):
+    monkeypatch.setattr(PluginHub, "REGISTRATION_TIMEOUT", 0.05)
+
     async def stalled(self, websocket, payload):
         await asyncio.Event().wait()
 
@@ -97,14 +99,61 @@ def test_registration_processing_obeys_same_deadline(client, monkeypatch):
     assert PluginHub._admitted == {}
 
 
+def _assert_raw_ceiling_on_real_socket(client):
+    phase = "connection entry"
+    try:
+        with client.websocket_connect("/plugin") as wire:
+            phase = "welcome"
+            wire.receive_json()
+            phase = "oversized payload send"
+            wire.send_text(json.dumps({"type": "register", "project_hash": "x" * 201}))
+            phase = "oversized payload close"
+            with pytest.raises(WebSocketDisconnect) as closed:
+                wire.receive_json()
+            assert closed.value.code == 1009, (
+                f"Unexpected close during {phase}: code={closed.value.code}, "
+                f"reason={closed.value.reason!r}"
+            )
+    except WebSocketDisconnect as exc:
+        pytest.fail(f"Unexpected disconnect during {phase}: code={exc.code}, reason={exc.reason!r}")
+
+
 def test_raw_ceiling_rejects_before_json_decode(client, monkeypatch):
     monkeypatch.setattr(PluginHub, "MAX_RAW_MESSAGE_BYTES", 200, raising=False)
-    with client.websocket_connect("/plugin") as wire:
-        wire.receive_json()
-        wire.send_text(json.dumps({"type": "register", "project_hash": "x" * 201}))
+    _assert_raw_ceiling_on_real_socket(client)
+
+
+@pytest.mark.parametrize("short_deadline", [True, False], ids=["50ms", "normal"])
+def test_preaccept_delay_distinguishes_registration_timeout_from_raw_limit(
+    client, monkeypatch, short_deadline
+):
+    original = PluginHub._connect_authenticated
+    phases = []
+
+    async def delayed_connect(self, websocket):
+        phases.append("before accept")
+        await asyncio.sleep(0.1)
+        phases.append("accept")
+        await original(self, websocket)
+
+    monkeypatch.setattr(PluginHub, "_connect_authenticated", delayed_connect)
+    monkeypatch.setattr(PluginHub, "MAX_RAW_MESSAGE_BYTES", 200, raising=False)
+    if short_deadline:
+        monkeypatch.setattr(PluginHub, "REGISTRATION_TIMEOUT", 0.05)
         with pytest.raises(WebSocketDisconnect) as closed:
-            wire.receive_json()
-        assert closed.value.code == 1009
+            with client.websocket_connect("/plugin"):
+                pytest.fail("The controlled 50 ms deadline must expire before accept")
+        assert closed.value.code == 4408
+        assert closed.value.reason == "Plugin registration timeout"
+        assert phases == ["before accept"]
+    else:
+        _assert_raw_ceiling_on_real_socket(client)
+        assert phases == ["before accept", "accept"]
+    assert PluginHub._admitted == {}
+    assert PluginHub._connections == {}
+    assert PluginHub._pending == {}
+    assert PluginHub._ping_tasks == {}
+    assert PluginHub._last_pong == {}
 
 
 @pytest.mark.asyncio
