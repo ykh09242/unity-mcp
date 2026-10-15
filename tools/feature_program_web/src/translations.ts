@@ -1196,8 +1196,8 @@ export const korean = {
   'Selected evidence bindings changed': '선택한 근거의 연결 정보가 변경됐어요',
   'Selected evidence is unavailable': '선택한 근거를 확인할 수 없어요',
   'Evidence preparation needs inspection': '근거 준비 내용을 확인하세요',
-  '{retained} / {selected} selected evidence retained':
-    '선택한 근거 {selected}개 중 {retained}개 보존',
+  'Selected evidence: {selected} · Retained attachments: {retained}':
+    '선택한 근거 {selected}개 · 보관한 파일 {retained}개',
   '{count} unresolved': '미해결 {count}개',
   'Preparation details': '근거 준비 상세',
   '{ready} / {planned} attachments ready': '첨부 근거 {planned}개 중 {ready}개 준비',

@@ -484,7 +484,7 @@ export function EvidencePreparationSummary({
           summary.nextAction === 'Supply missing decisions'
         ) && <p className="lane-warning">{i18n.t(reviewFlowLabel(summary.reasons[0]))}</p>}
       <p className="muted">
-        {i18n.t('{retained} / {selected} selected evidence retained', {
+        {i18n.t('Selected evidence: {selected} · Retained attachments: {retained}', {
           retained: summary.counts.retained || 0,
           selected: summary.counts.selected || 0,
         })}
