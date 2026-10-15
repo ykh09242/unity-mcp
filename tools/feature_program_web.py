@@ -42,18 +42,34 @@ MAX_VALIDATOR_BYTES = 8 * 1024
 ENTITY_TAG = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"')
 
 
-def snapshot_etag(snapshot: Json) -> str:
-    """Identify all semantic snapshot data, retaining unknown future fields."""
+def _semantic_bytes(snapshot: Json) -> bytes:
     semantic = (
         {key: value for key, value in snapshot.items() if key != "generated_at"}
         if isinstance(snapshot, dict)
         else snapshot
     )
-    encoded = json.dumps(
-        semantic, ensure_ascii=True, sort_keys=True, separators=(",", ":")
-    ).encode()
+    return json.dumps(semantic, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+
+
+def snapshot_etag(snapshot: Json) -> str:
+    """Identify all semantic snapshot data, retaining unknown future fields."""
     # Observation time changes representation bytes, so this validator is weak.
-    return f'W/"{sha256(encoded).hexdigest()}"'
+    return f'W/"{sha256(_semantic_bytes(snapshot)).hexdigest()}"'
+
+
+def _snapshot_encoding(snapshot: Json) -> tuple[bytes, str]:
+    """Reuse one fresh semantic encoding for its validator and response body."""
+    semantic = _semantic_bytes(snapshot)
+    body = semantic
+    if isinstance(snapshot, dict) and "generated_at" in snapshot:
+        observed = json.dumps(
+            snapshot["generated_at"], ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        # The observation slot is first; all remaining members reuse canonical semantic bytes.
+        body = b'{"generated_at":' + observed + (b"," + semantic[1:] if semantic != b"{}" else b"}")
+    return body, f'W/"{sha256(semantic).hexdigest()}"'
 
 
 def matches_validator(value: str, etag: str) -> bool:
@@ -191,10 +207,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 # Never reuse a prior snapshot: sources/evidence can drift independently
                 # of registry revision, including while a conditional request is made.
                 snapshot = self.server.snapshot()
-                body = json.dumps(snapshot, ensure_ascii=True).encode("utf-8")
+                body, etag = _snapshot_encoding(snapshot)
                 if len(body) > MAX_RESPONSE_BYTES:
                     raise ValueError("Snapshot response exceeds limit")
-                etag = snapshot_etag(snapshot)
             except (OSError, TypeError, ValueError, UnicodeError, feature_program.ProgramError):
                 self._error(503, "Program snapshot unavailable; check the configured program", head)
                 return

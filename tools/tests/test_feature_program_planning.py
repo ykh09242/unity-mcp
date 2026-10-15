@@ -17,6 +17,94 @@ from tools.tests.test_feature_program_phases import GateFixture, create_program,
 from tools.tests.test_feature_program import fp
 
 
+@pytest.mark.parametrize("envelope", [False, True])
+def test_typed_relocation_archive_preserves_raw_hash_and_decodes_only_its_body(gate, envelope):
+    state = gate.program.load()
+    previous = deepcopy(state["source"])
+    old = gate.program.directory.relative_to(gate.program.repo).as_posix()
+    new = "moved"
+    raw = fp.canonical(state)
+    if envelope:
+        raw = fp.flow_module("storage").encode_registry(raw, "1" * 64)
+    original_hash = fp.sha(raw)
+    base = f"recovery/relocations/{original_hash}"
+    archive = gate.program.path(base + "/original-backlog.json")
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_bytes(raw)
+    gate.fixture.write(
+        base + "/manifest.json",
+        {"source": old, "destination": new, "original_registry_sha256": original_hash},
+    )
+    state["source"] = deepcopy(previous)
+    for key in ("path", "reference_base"):
+        if previous[key] == old or previous[key].startswith(old + "/"):
+            state["source"][key] = new + previous[key][len(old) :]
+    state["events"].append(
+        {
+            "action": "relocate",
+            "previous_source": previous,
+            "source_directory": old,
+            "destination_directory": new,
+            "original_registry_sha256": original_hash,
+        }
+    )
+    assert (
+        fp.planning.coverage_source_identity(gate.program, state, state["source"], fp.ReadBudget())
+        == previous
+    )
+    assert archive.read_bytes() == raw
+
+    # A raw-container change is rejected before any typed archive decoder is called.
+    archive.write_bytes(raw + b" ")
+    storage = fp.flow_module("storage")
+
+    def unexpected_decode(value):
+        pytest.fail("Archive was decoded before its original raw digest was verified")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(storage, "decode_registry", unexpected_decode)
+        with pytest.raises(fp.planning.PlanningError, match="archive changed"):
+            fp.planning.coverage_source_identity(
+                gate.program, state, state["source"], fp.ReadBudget()
+            )
+    if envelope:
+        malformed = raw[:-1]
+        malformed_hash = fp.sha(malformed)
+        malformed_base = f"recovery/relocations/{malformed_hash}"
+        malformed_path = gate.program.path(malformed_base + "/original-backlog.json")
+        malformed_path.parent.mkdir(parents=True, exist_ok=True)
+        malformed_path.write_bytes(malformed)
+        state["events"][-1]["original_registry_sha256"] = malformed_hash
+        with pytest.raises(
+            fp.planning.PlanningError, match="Invalid coverage relocation registry archive"
+        ):
+            fp.planning.coverage_source_identity(
+                gate.program, state, state["source"], fp.ReadBudget()
+            )
+
+
+def test_publication_presence_probe_preserves_missing_and_permission_semantics(gate, monkeypatch):
+    observations = []
+    errors = []
+    monkeypatch.setattr(fp, "observe_path_probe", lambda *args: observations.append(args))
+    monkeypatch.setattr(fp, "observe_path_error", lambda *args: errors.append(args))
+    path = gate.program.path("missing-ledger.json")
+    assert fp.planning._present(path) is False
+    assert observations == [(path, "exists", "false")]
+    original = Path.stat
+
+    def denied(candidate, *args, **kwargs):
+        if candidate == path:
+            raise PermissionError("Synthetic unavailable publication metadata")
+        return original(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", denied)
+    with pytest.raises(PermissionError):
+        fp.planning._present(path)
+    assert errors == [(path, "publication_probe_unavailable")]
+    assert observations == [(path, "exists", "false")]
+
+
 def planned_input(gate: GateFixture, operation: str = "task-plan") -> fp.Record:
     state = gate.program.load()
     return {

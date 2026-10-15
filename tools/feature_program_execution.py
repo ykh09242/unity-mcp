@@ -1047,16 +1047,38 @@ def summarize_capture(capture: Record) -> Record:
     }
 
 
+@dataclass(frozen=True, slots=True)
+class _LoadedCapture:
+    """One checked sealed image and inputs from one artifact observation epoch."""
+
+    capture: Record
+    start: Record
+    before: Record | None
+    after: Record | None
+
+
+def _capture_json(program: ProgramAccess, ref: Record, budget: core.ReadBudget) -> Record:
+    name = core.string(ref["path"], "capture path")
+    captured = budget.capture(program.directory, name, MAX_CAPTURE_BYTES)
+    core.require(captured.sha256 == ref["sha256"], f"Frozen evidence changed: {name}")
+    return budget.json(captured)
+
+
 def _read_capture(
     program: ProgramAccess, capture_ref: Record, budget: core.ReadBudget | None = None
 ) -> Record:
+    """Validate an independently selected sealed original; no metadata authority is inferred."""
+    return _load_capture(program, capture_ref, budget).capture
+
+
+def _load_capture(
+    program: ProgramAccess, capture_ref: Record, budget: core.ReadBudget | None = None
+) -> _LoadedCapture:
     """Resolve one sealed producer and its existing immutable transitive references."""
     _require(set(capture_ref) == {"path", "sha256"}, "Capture reference requires exact path/hash")
     verification._ref(capture_ref)
-    program.verify_refs([capture_ref], budget)
-    capture = core.read_json(
-        program.path(core.string(capture_ref["path"], "capture path")), budget=budget
-    )
+    capture_budget = budget if budget is not None else core.ReadBudget(64 * 1024 * 1024)
+    capture = _capture_json(program, capture_ref, capture_budget)
     _require(
         capture.get("schema_version") == 1
         and capture.get("producer") == "feature_program_execution",
@@ -1082,8 +1104,10 @@ def _read_capture(
     for ref in refs:
         verification._ref(ref)
         _require(str(ref["path"]).startswith(prefix), "Captured output escaped original task scope")
+    # Standalone admission historically budgets the sealed image separately from its refs.
+    budget = budget if budget is not None else core.ReadBudget(64 * 1024 * 1024)
     program.verify_refs(refs, budget)
-    start = core.read_json(program.path(str(capture["start_ref"]["path"])), budget=budget)
+    start = _capture_json(program, capture["start_ref"], budget)
     for key in (
         "run_id",
         "task_id",
@@ -1097,13 +1121,14 @@ def _read_capture(
         "method",
     ):
         _require(capture.get(key) == start.get(key), f"Sealed execution {key} differs from start")
+    captured_inputs: list[Record | None] = []
     for ref in (before_ref, after_ref):
+        actual = None
         if ref is not None:
-            actual = inputs.validate_capture(
-                core.read_json(program.path(str(ref["path"])), budget=budget)
-            )
+            actual = inputs.validate_capture(_capture_json(program, ref, budget))
             _require(actual["method"] == capture["method"], "Sealed input method changed")
-    return capture
+        captured_inputs.append(actual)
+    return _LoadedCapture(capture, start, captured_inputs[0], captured_inputs[1])
 
 
 def prepare_observation(
@@ -1116,14 +1141,39 @@ def prepare_observation(
 ) -> Record:
     """Prepare an inert existing verification event from exact sealed execution evidence."""
     program.require_current_location()
-    capture = _read_capture(program, capture_ref, budget)
+    loaded = _load_capture(program, capture_ref, budget)
     binding = deepcopy(request_binding)
     request = _request(state, binding)
+    return _prepare_observation_loaded(
+        program,
+        state,
+        capture_ref,
+        binding,
+        loaded,
+        request,
+        core.phases.revision(state),
+        core.digest(request["context"]),
+    )
+
+
+def _prepare_observation_loaded(
+    program: ProgramAccess,
+    state: Record,
+    capture_ref: Record,
+    binding: Record,
+    loaded: _LoadedCapture,
+    request: Record,
+    revision: str,
+    request_digest: str,
+) -> Record:
+    """Prepare from same-epoch private facts while retaining current authority checks."""
+    program.require_current_location()
+    capture = loaded.capture
     for key in ("task_id", "request_id", "request_version", "actor_id"):
         _require(capture.get(key) == binding.get(key), f"Captured {key} binding changed")
     _require(
         capture["request_receipt"] == request["receipt"]
-        and capture["request_context_digest"] == core.digest(request["context"]),
+        and capture["request_context_digest"] == request_digest,
         "Original request binding changed",
     )
     task = program.task(state, str(binding["task_id"]))
@@ -1145,7 +1195,7 @@ def prepare_observation(
         "kind": "finished",
         "task_id": capture["task_id"],
         "actor_id": capture["actor_id"],
-        "expected_revision": core.phases.revision(state),
+        "expected_revision": revision,
         "reason": core.string(binding.get("reason"), "observation reason"),
         "request_id": capture["request_id"],
         "request_version": capture["request_version"],
@@ -1156,12 +1206,8 @@ def prepare_observation(
         "artifacts": [capture_ref["path"]],
     }
     if before_ref is not None and after_ref is not None:
-        before = inputs.validate_capture(
-            core.read_json(program.path(str(before_ref["path"])), budget=budget)
-        )
-        after = inputs.validate_capture(
-            core.read_json(program.path(str(after_ref["path"])), budget=budget)
-        )
+        before, after = loaded.before, loaded.after
+        _require(before is not None and after is not None, "Sealed input captures unavailable")
         event.update(
             {
                 "input_capture_before": before_ref,
@@ -1189,7 +1235,8 @@ def project_capture(
     """Project one explicitly selected sealed capture; never scan, execute or publish."""
     program.require_current_location()
     reads = verification._reads(budget)
-    capture = _read_capture(program, capture_ref, reads.artifacts)
+    loaded = _load_capture(program, capture_ref, reads.artifacts)
+    capture = loaded.capture
     reads.index(state)
     request_id = core.string(capture.get("request_id"), "captured request_id")
     request = reads.record_index.get(request_id)
@@ -1197,12 +1244,13 @@ def project_capture(
         request is not None and request["input"]["kind"] == "request",
         "Selected execution has no exact adopted origin request",
     )
+    request_digest = core.digest(request["context"])
     _require(
         request["input"]["task_id"] == capture["task_id"]
         and request["request_version"] == capture["request_version"]
         and request["context"]["attempt"] == capture["attempt"]
         and request["receipt"] == capture["request_receipt"]
-        and core.digest(request["context"]) == capture["request_context_digest"],
+        and request_digest == capture["request_context_digest"],
         "Selected execution origin task/request binding is invalid",
     )
     program.verify_refs(
@@ -1226,9 +1274,7 @@ def project_capture(
         and latest["input"]["kind"] != "request"
         and latest["input"].get("run_capture_ref") != capture_ref
     ):
-        start = core.read_json(
-            program.path(str(capture["start_ref"]["path"])), budget=reads.artifacts
-        )
+        start = loaded.start
         reserved_at = verification._time(start.get("prepared_at"), "capture reservation")
         recorded_at = verification._time(latest.get("recorded_at"), "verification publication")
         if reserved_at is None or recorded_at is None or recorded_at >= reserved_at:
@@ -1247,7 +1293,15 @@ def project_capture(
     draft_reasons = ["Observation preparation is unavailable for the current request"]
     try:
         _require(not newer_fact, "A newer recorded fact prevents old observation preparation")
-        prepare_observation(
+        _require(
+            reads.latest_lane[(str(capture["task_id"]), str(request["input"]["lane"]))][
+                "request_id"
+            ]
+            == request_id,
+            "Execution request was superseded",
+        )
+        revision = core.phases.revision(state)
+        _prepare_observation_loaded(
             program,
             state,
             capture_ref,
@@ -1256,10 +1310,13 @@ def project_capture(
                 "actor_id": capture["actor_id"],
                 "request_id": request_id,
                 "request_version": capture["request_version"],
-                "expected_revision": core.phases.revision(state),
+                "expected_revision": revision,
                 "reason": "Prepare the explicitly selected actual execution observation",
             },
-            budget=reads.artifacts,
+            loaded,
+            request,
+            revision,
+            request_digest,
         )
         draft_status = "prepared"
         draft_reasons = []

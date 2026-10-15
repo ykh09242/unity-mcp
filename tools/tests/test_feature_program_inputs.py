@@ -9,10 +9,81 @@ import pytest
 from tools.tests.test_feature_program_verification import fixture  # noqa: F401
 from tools.tests.test_feature_program import fp
 import feature_program_inputs as inputs
+import feature_program_read_model as read_model
 
 
 ENV = {"facts": {"runtime": "fixture-v1"}, "unknowns": []}
 METHOD = {"procedure": "Fixture input inspection", "version": "1", "execution_kind": "manual"}
+
+
+@pytest.mark.parametrize("change", ["add", "remove"])
+def test_read_model_closes_separate_excluded_boundary_walk(fixture, change):
+    # Given a source directory with a measured skipped-boundary inventory.
+    program = fixture.program
+    directory = program.repo / "checks"
+    directory.mkdir()
+    excluded = directory / "node_modules"
+    if change == "remove":
+        excluded.mkdir()
+    manifest = declaration()
+    manifest["groups"]["test"] = [{"path": "checks", "kind": "directory", "required": True}]
+    parsed = inputs.normalize_manifest(manifest)
+    state = program.load()
+    body = fp.canonical(state)
+    observation = fp.flow_module("storage").decode_registry(body)
+    collector = read_model.Collector(
+        program.repo,
+        program.directory,
+        program_id=state["program_id"],
+        body_sha256=fp.sha(body),
+        producer=read_model.producer_identity(program.repo),
+        query=read_model.QUERY,
+    )
+    with read_model.collect(collector):
+        inputs._exclusions(program, parsed)
+    model = collector.finish({"status": "measured"})
+    # When only a skipped directory boundary is added or removed.
+    if change == "add":
+        excluded.mkdir()
+    else:
+        excluded.rmdir()
+    # Then fresh exclusion discovery rejects the old model without reading excluded bytes.
+    assert (
+        read_model.validate(
+            model, program, observation=observation, observer=fp._ClosingObserver(program)
+        )
+        is None
+    )
+
+
+def test_read_model_exclusion_walk_does_not_read_sensitive_descendants(fixture):
+    # Given an excluded directory containing bytes outside the declared readable scope.
+    program = fixture.program
+    directory = program.repo / "checks" / "node_modules"
+    directory.mkdir(parents=True)
+    (directory / "secret.env").write_bytes(b"excluded bytes must not enter model")
+    manifest = declaration()
+    manifest["groups"]["test"] = [{"path": "checks", "kind": "directory", "required": True}]
+    state = program.load()
+    body = fp.canonical(state)
+    collector = read_model.Collector(
+        program.repo,
+        program.directory,
+        program_id=state["program_id"],
+        body_sha256=fp.sha(body),
+        producer=read_model.producer_identity(program.repo),
+        query=read_model.QUERY,
+    )
+    with read_model.collect(collector):
+        inputs._exclusions(program, inputs.normalize_manifest(manifest))
+    # When the boundary-only dependency image is retained.
+    model = collector.finish({"status": "measured"})
+    # Then the skipped directory is explicit but neither sensitive names nor bytes were read.
+    exclusions = model["dependencies"]["exclusions"]
+    assert exclusions[0]["entries"] == [
+        {"group": "test", "path": "checks/node_modules", "kind": "excluded_directory"}
+    ]
+    assert model["dependencies"]["files"] == []
 
 
 def declaration(*, complete=True):
@@ -473,3 +544,21 @@ def test_conflicting_redundant_selector_definitions_still_fail(variation):
     with pytest.raises(fp.ProgramError):
         inputs.normalize_manifest(manifest)
     # Then coalescing never hides conflicting category/kind/policy/check obligations.
+
+
+def test_overlapping_directory_and_exact_selectors_keep_check_specific_changes(fixture):
+    # Given one directory-wide check and an overlapping exact-file check.
+    manifest = declaration()
+    manifest["checks"] = ["scoped_tests", "format_lint"]
+    manifest["groups"]["source"] = [
+        {"path": "src", "kind": "directory", "required": True, "check_ids": ["scoped_tests"]},
+        {"path": "src/S01.py", "kind": "file", "required": True, "check_ids": ["format_lint"]},
+    ]
+    before = capture(fixture, manifest)
+    (fixture.program.repo / "src/S02.py").write_bytes(b"changed sibling")
+    # When a sibling belongs to only the directory selector.
+    result = inputs.compare_inputs(before, capture(fixture, manifest))
+    # Then the exact-file check does not inherit unrelated sibling changes.
+    assert result["status"] == "changed"
+    assert result["affected_checks"] == ["scoped_tests"]
+    assert any(row["path"] == "src/S02.py" for row in result["differences"])

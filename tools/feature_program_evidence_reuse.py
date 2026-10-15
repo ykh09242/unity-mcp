@@ -90,7 +90,15 @@ def _bounded(value: Record) -> Record:
 
 def _read(program: Program, ref: Record, budget: ReadBudget) -> bytes:
     program.verify_refs([ref], budget)
-    return budget.read(program.path(str(ref["path"])), LIMIT)
+    captured = budget.capture(program.directory, str(ref["path"]), LIMIT)
+    _require(captured.sha256 == ref["sha256"], f"Frozen evidence changed: {ref['path']}")
+    return captured.content
+
+
+def _json(program: Program, ref: Record, budget: ReadBudget) -> Record:
+    """Strictly decode checked bytes while preserving the consumer's own reference check."""
+    _read(program, ref, budget)
+    return budget.json(budget.capture(program.directory, str(ref["path"]), LIMIT))
 
 
 def _version(value: Record, kind: str) -> None:
@@ -193,7 +201,7 @@ def _plan_evidence(
         ref = _ref(item["origin_ref"])
         raw_bytes = _read(program, ref, budget)
         if item["role"] != "artifact":
-            core.read_json(program.path(str(ref["path"])), budget=budget)
+            _json(program, ref, budget)
         origin = {"key": key, "origin_ref": ref, "role": item["role"], "byte_count": len(raw_bytes)}
         origins[key] = origin
         normalized_origins.append({"key": key, "origin_ref": ref, "role": item["role"]})
@@ -367,7 +375,7 @@ def validate_manifest(
             "Copied bytes differ from original",
         )
         if row["role"] != "artifact":
-            core.read_json(program.path(str(origin["path"])), budget=reader)
+            _json(program, origin, reader)
         refs.extend([origin, target])
     _mappings(manifest["mappings"], keys)
     return refs
@@ -568,7 +576,7 @@ def _decisions(program: Program, refs: Json, subject: Record) -> tuple[list[Reco
     for raw in _rows(refs, "actual decision references"):
         ref = _ref(raw)
         _read(program, ref, budget)
-        decision = core.read_json(program.path(str(ref["path"])), budget=budget)
+        decision = _json(program, ref, budget)
         _shape(
             decision,
             {"schema_version", "kind", "subject_binding", "actor_id", "facts"},
@@ -603,7 +611,7 @@ def _materialized_target(
     ref = _ref(target["manifest_ref"])
     budget = _core().ReadBudget(READ_LIMIT)
     _read(program, ref, budget)
-    manifest = _core().read_json(program.path(str(ref["path"])), budget=budget)
+    manifest = _json(program, ref, budget)
     _require(
         manifest["program_id"] == state["program_id"]
         and manifest["task_id"] == task_id
@@ -1344,7 +1352,7 @@ def _selection_materialization(
         )
         ref = _ref(target["manifest_ref"])
         _read(program, ref, reader)
-        manifest = _core().read_json(program.path(str(ref["path"])), budget=reader)
+        manifest = _json(program, ref, reader)
         graph_refs = validate_manifest(program, manifest, budget=reader)
         _require(
             manifest["program_id"] == state["program_id"]
@@ -1595,7 +1603,7 @@ def validate_selection(
         for raw in selected_decisions:
             ref = _ref(raw)
             _read(program, ref, reader)
-            decision = core.read_json(program.path(str(ref["path"])), budget=reader)
+            decision = _json(program, ref, reader)
             _shape(
                 decision,
                 {"schema_version", "kind", "subject_binding", "actor_id", "facts"},

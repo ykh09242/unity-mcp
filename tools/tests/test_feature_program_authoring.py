@@ -799,12 +799,21 @@ def test_two_distinct_delivery_inputs_from_one_frozen_provider_observation(
     name = gate.fixture.write("delivery-request.json", request)
     before = tree(gate.program.repo)
     capsys.readouterr()
+    assessments = []
+    original_assess = author.provider_execution
+
+    def assess(program, receipt, budget=None):
+        assessments.append(receipt["task_id"])
+        return original_assess(program, receipt, budget)
+
     with monkeypatch.context() as patch:
+        patch.setattr(author, "provider_execution", assess)
         patch.setattr(fp.Program, "lock", forbidden)
         patch.setattr(fp, "git", forbidden)
         patch.setattr(fp, "atomic_write", forbidden)
         assert gate.fixture.run("delivery-inputs", "--input", name) == 0
     result = json.loads(capsys.readouterr().out)
+    assert assessments == ["S01", "S02"]
     assert result["status"] == "not_assessed"
     assert tree(gate.program.repo) == before
 
@@ -1031,3 +1040,32 @@ def test_provider_reader_guards_authoring_and_actual_delivery_identically(gate, 
     assert gate.fixture.run("delivery", "S01", "--receipt", name) == 1
     assert capsys.readouterr().err
     assert tree(gate.program.repo) == before
+
+
+def test_operation_parser_catalog_is_local_and_selected_parsers_are_isolated(gate, monkeypatch):
+    # Given one host and the normal closed operation catalog.
+    calls = []
+    original = author._parsers
+
+    def catalog():
+        calls.append(True)
+        return original()
+
+    monkeypatch.setattr(author, "_parsers", catalog)
+    host = author.ClosureHost(gate.program)
+    first = host._operation_parser("submit")
+    first.set_defaults(receipt="changed-by-first-stage")
+    first.error = lambda message: None
+    # When another stage and then a new host request ordinary parsers.
+    second = host._operation_parser("submit")
+    another = author.ClosureHost(gate.program)._operation_parser("submit")
+    # Then a host builds once, while stage mutation never leaks into another parser.
+    assert calls == [True, True]
+    assert second.get_default("receipt") is None
+    assert another.get_default("receipt") is None
+    assert (
+        second.parse_args(["S01", "--owner", "worker", "--receipt", "proof.json"]).receipt
+        == "proof.json"
+    )
+    with pytest.raises(SystemExit):
+        second.parse_args(["S01", "--owner", "worker"])

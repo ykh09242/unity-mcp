@@ -102,6 +102,30 @@ function fixture(): Snapshot {
 }
 
 describe('recorded throughput context', () => {
+  it('rechecks projection envelopes and readiness on a same-revision replacement snapshot', () => {
+    const valid = fixture();
+    const task = valid.tasks[0]!;
+    expect(verificationContext(valid, task)?.lanes.items).toHaveLength(2);
+    const unavailable = parseSnapshot({
+      ...valid,
+      verification: { schema_version: 1, status: 'unavailable' },
+    });
+    expect(unavailable.revision).toBe(valid.revision);
+    expect(verificationContext(unavailable, task)).toBeNull();
+    expect(verificationContext(valid, task)?.lanes.items).toHaveLength(2);
+    const availableTask = valid.tasks[1]!;
+    expect(readinessFactors(valid, availableTask).available).toBe(true);
+    const changedTask = {
+      ...availableTask,
+      readiness: {
+        ...record(availableTask.readiness),
+        reference: { ...reference('B'), revision: 'stale' },
+      },
+    };
+    const changed = parseSnapshot({ ...valid, tasks: [task, changedTask] });
+    expect(readinessFactors(changed, changed.tasks[1]!).available).toBe(false);
+    expect(readinessFactors(valid, availableTask).available).toBe(true);
+  });
   it('maps only exact source-bound verification narratives into Korean session content', () => {
     const snapshot = fixture(),
       task = snapshot.tasks[0]!;
@@ -469,71 +493,80 @@ describe('recorded throughput context', () => {
     expect(laneRow?.textContent).not.toContain('평가 안 됨');
     expect(view.container.querySelector('.lane-explanation')).toBeNull();
   });
-  it('renders independent early provider streams once with the same stage ID under different requests', async () => {
-    const snapshot = fixture(),
-      task = snapshot.tasks[0]!;
-    const stage = {
-      id: 'web',
-      kind: 'pr_ci',
-      status: 'passed',
-      current: true,
-      reported_outcome: 'success',
-      source: { head_sha: '1'.repeat(40), base_sha: '2'.repeat(40), tested_sha: '3'.repeat(40) },
-      checks: [{ id: 'Web', run_id: 1, run_attempt: 1, job_id: 1, status: 'passed' }],
-      checks_total: 1,
-      checks_shown: 1,
-      checks_omitted: 0,
-      history: [
-        {
-          run_id: 1,
-          run_attempt: 1,
-          captured_at: '2026-01-01T09:00:00Z',
-          head_sha: '1'.repeat(40),
-          checkout_sha: '3'.repeat(40),
-          job_ids: [1],
-          jobs_total: 1,
-          jobs_shown: 1,
-          jobs_omitted: 0,
+  it.each(['current', null, 'stale'])(
+    'renders independent provider streams once with aggregate applicability %s',
+    async (applicability) => {
+      const snapshot = fixture(),
+        task = snapshot.tasks[0]!;
+      const stage = {
+        id: 'web',
+        kind: 'pr_ci',
+        status: 'passed',
+        current: true,
+        reported_outcome: 'success',
+        source: { head_sha: '1'.repeat(40), base_sha: '2'.repeat(40), tested_sha: '3'.repeat(40) },
+        checks: [{ id: 'Web', run_id: 1, run_attempt: 1, job_id: 1, status: 'passed' }],
+        checks_total: 1,
+        checks_shown: 1,
+        checks_omitted: 0,
+        history: [
+          {
+            run_id: 1,
+            run_attempt: 1,
+            captured_at: '2026-01-01T09:00:00Z',
+            head_sha: '1'.repeat(40),
+            checkout_sha: '3'.repeat(40),
+            job_ids: [1],
+            jobs_total: 1,
+            jobs_shown: 1,
+            jobs_omitted: 0,
+          },
+        ],
+        history_total: 1,
+        history_shown: 1,
+        history_omitted: 0,
+        timing: { started_at: null, completed_at: null, duration_seconds: null },
+      };
+      const captured = (request_id: string) => ({
+        task_id: 'A',
+        reference: reference(),
+        adopted: true,
+        request_id,
+        status: 'passed',
+        applicability: 'current',
+        stages: [{ ...stage, request_id }],
+        total: 1,
+        shown: 1,
+        omitted: 0,
+      });
+      const first = captured('review-1'),
+        second = captured('qa-1');
+      const aggregate = {
+        ...first,
+        applicability,
+        stages: [...first.stages, ...second.stages],
+        total: 2,
+        shown: 2,
+      };
+      const enriched = {
+        ...task,
+        provider_execution: aggregate,
+        verification: {
+          ...record(task.verification),
+          lanes: collection([
+            lane('review-1', 'code_review', { provider_execution: first }),
+            lane('qa-1', 'qa', { provider_execution: second }),
+          ]),
         },
-      ],
-      history_total: 1,
-      history_shown: 1,
-      history_omitted: 0,
-      timing: { started_at: null, completed_at: null, duration_seconds: null },
-    };
-    const captured = (request_id: string) => ({
-      task_id: 'A',
-      reference: reference(),
-      adopted: true,
-      request_id,
-      status: 'passed',
-      applicability: 'current',
-      stages: [{ ...stage, request_id }],
-      total: 1,
-      shown: 1,
-      omitted: 0,
-    });
-    const first = captured('review-1'),
-      second = captured('qa-1');
-    const aggregate = { ...first, stages: [...first.stages, ...second.stages], total: 2, shown: 2 };
-    const enriched = {
-      ...task,
-      provider_execution: aggregate,
-      verification: {
-        ...record(task.verification),
-        lanes: collection([
-          lane('review-1', 'code_review', { provider_execution: first }),
-          lane('qa-1', 'qa', { provider_execution: second }),
-        ]),
-      },
-    };
-    expect(providerContext(snapshot, enriched)?.stages).toHaveLength(2);
-    window.history.replaceState(null, '', '#task/A');
-    render(<App loader={async () => ({ ...snapshot, tasks: [enriched, snapshot.tasks[1]!] })} />);
-    await screen.findByRole('heading', { name: 'PR and beta execution' });
-    expect(screen.getAllByText('PR CI')).toHaveLength(2);
-    expect(screen.getAllByRole('heading', { name: 'PR and beta execution' })).toHaveLength(1);
-  });
+      };
+      expect(providerContext(snapshot, enriched)?.stages).toHaveLength(2);
+      window.history.replaceState(null, '', '#task/A');
+      render(<App loader={async () => ({ ...snapshot, tasks: [enriched, snapshot.tasks[1]!] })} />);
+      await screen.findByRole('heading', { name: 'PR and beta execution' });
+      expect(screen.getAllByText('PR CI')).toHaveLength(2);
+      expect(screen.getAllByRole('heading', { name: 'PR and beta execution' })).toHaveLength(1);
+    },
+  );
   it.each(['en', 'ko'])(
     'summarizes delivered matrix volume once with one-level details in %s',
     async (locale) => {

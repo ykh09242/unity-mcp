@@ -167,6 +167,26 @@ def test_missing_verification_artifact_is_visible_in_snapshot_and_brief(fixture,
     assert selected["task"]["verification"]["lanes"]["items"][0]["applicability"] == "unavailable"
 
 
+def test_independent_snapshot_epoch_rejects_previous_checked_evidence_success(fixture):
+    # Given actual fixture records whose first public snapshot has complete checked evidence.
+    assert fixture.claim() == 0
+    record_cli(fixture, request(fixture))
+    value = observation(fixture)
+    record_cli(fixture, value)
+    before = fixture.program.path("backlog.json").read_bytes()
+    first = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    assert first["verification"]["tasks"]["S01"]["lanes"]["items"][0]["applicability"] == "current"
+    # When retained output changes between independent public requests.
+    fixture.program.path(value["artifacts"][0]).write_bytes(b"changed after the first response")
+    second = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    lane = second["verification"]["tasks"]["S01"]["lanes"]["items"][0]
+    # Then the new epoch cannot inherit a cached pass and no preparation mutates the registry.
+    assert lane["result"] == "passed"
+    assert lane["applicability"] == "unavailable"
+    assert second["integrity"]["status"] == "stale"
+    assert fixture.program.path("backlog.json").read_bytes() == before
+
+
 def test_actual_record_publication_rechecks_source_after_save_preflight(fixture, monkeypatch):
     assert fixture.claim() == 0
     name = fixture.write("evidence/_verification/attempt-1/drift.json", request(fixture))

@@ -21,7 +21,7 @@ export type Closure = {
   readonly total: number;
   readonly omitted: number;
 };
-export function closureContext(snapshot: Snapshot): Closure | null {
+function parseClosure(snapshot: Snapshot): Closure | null {
   const value = record(snapshot.closure),
     requirements = boundedCollection(value.requirements, 50);
   if (
@@ -60,4 +60,10 @@ export function closureContext(snapshot: Snapshot): Closure | null {
     total: requirements.total,
     omitted: requirements.omitted,
   };
+}
+
+const closureCache = new WeakMap<Snapshot, Closure | null>();
+export function closureContext(snapshot: Snapshot): Closure | null {
+  if (!closureCache.has(snapshot)) closureCache.set(snapshot, parseClosure(snapshot));
+  return closureCache.get(snapshot) ?? null;
 }

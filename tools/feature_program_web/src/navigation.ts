@@ -286,16 +286,25 @@ export function navigationHash(route: Route, context: WorkContext): string {
   }
   return '#' + path + '?' + params.toString();
 }
+const goalCache = new WeakMap<Snapshot, ReadonlySet<string> | null>();
+const scopeCache = new WeakMap<Snapshot, readonly Task[]>();
 export function goalTaskIds(snapshot: Snapshot): ReadonlySet<string> | null {
+  if (goalCache.has(snapshot)) return goalCache.get(snapshot) ?? null;
   const objective = record(snapshot.objective);
-  return Array.isArray(objective.task_ids)
+  const ids = Array.isArray(objective.task_ids)
     ? new Set(items(objective.task_ids).map(string).filter(Boolean))
     : null;
+  goalCache.set(snapshot, ids);
+  return ids;
 }
 export function scopedTasks(snapshot: Snapshot, scope: WorkContext['scope']): readonly Task[] {
   if (scope === 'all') return snapshot.tasks;
+  const cached = scopeCache.get(snapshot);
+  if (cached) return cached;
   const ids = goalTaskIds(snapshot);
-  return ids ? snapshot.tasks.filter((task) => ids.has(task.id)) : [];
+  const tasks = ids ? snapshot.tasks.filter((task) => ids.has(task.id)) : [];
+  scopeCache.set(snapshot, tasks);
+  return tasks;
 }
 export function selectWorkTasks(
   snapshot: Snapshot,
@@ -330,12 +339,17 @@ export type SearchResult = {
   readonly owner?: string;
   readonly originalLabel?: string;
 };
-const navigationSearchCache = new WeakMap<Snapshot, readonly SearchResult[]>();
+const navigationSearchCache = new WeakMap<
+  Snapshot,
+  readonly { readonly result: SearchResult; readonly searchText: string }[]
+>();
 export function navigationSearch(
   snapshot: Snapshot,
   query: string,
   limit = 12,
 ): { readonly results: readonly SearchResult[]; readonly total: number } {
+  const text = query.trim().toLocaleLowerCase();
+  if (!text) return { results: [], total: 0 };
   let all = navigationSearchCache.get(snapshot);
   if (!all) {
     const index = snapshotIndex(snapshot);
@@ -349,13 +363,11 @@ export function navigationSearch(
       })),
       ...[...new Set([...index.actors.keys(), ...presentedActorIds(snapshot)])].map((id) => {
         const actor = index.actors.get(id) || {};
+        const label = actorLabel(snapshot, id);
         return {
           kind: 'actor' as const,
           id,
-          label:
-            actorLabel(snapshot, id) !== id
-              ? actorLabel(snapshot, id)
-              : string(actor.name || actor.role) || id,
+          label: label !== id ? label : string(actor.name || actor.role) || id,
           originalLabel: string(actor.name || actor.role),
           route: { view: 'team' as const },
           owner: id,
@@ -368,16 +380,14 @@ export function navigationSearch(
         originalLabel: string(originalValue(question).prompt || originalValue(question).title),
         route: { view: 'question' as const, questionId: id },
       })),
-    ];
+    ].map((item) => ({
+      result: item,
+      searchText: `${item.id} ${item.label} ${item.originalLabel || ''}`.toLocaleLowerCase(),
+    }));
     navigationSearchCache.set(snapshot, all);
   }
-  const text = query.trim().toLocaleLowerCase();
-  const matches = text
-    ? all.filter((item) =>
-        `${item.id} ${item.label} ${item.originalLabel || ''}`.toLocaleLowerCase().includes(text),
-      )
-    : [];
-  return { results: matches.slice(0, limit), total: matches.length };
+  const matches = all.filter((item) => item.searchText.includes(text));
+  return { results: matches.slice(0, limit).map((item) => item.result), total: matches.length };
 }
 export const columns = ['owner', 'category', 'workstream'] as const;
 export type Column = (typeof columns)[number];

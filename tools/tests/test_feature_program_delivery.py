@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from tools import feature_program_delivery as delivery
+from tools import feature_program as core
 
 
 HEAD = "1" * 40
@@ -12,6 +13,63 @@ BASE = "2" * 40
 TESTED = "3" * 40
 BETA = "4" * 40
 OTHER = "5" * 40
+
+
+def test_provider_result_reuse_is_exact_epoch_bound_and_detached(monkeypatch):
+    capture, expected = fixture()
+    reader = core.ReadBudget(1024)
+    context = delivery.ExecutionAssessmentContext(reader)
+    calls = []
+    original = delivery.validate_execution
+
+    def validate(value):
+        calls.append(deepcopy(value))
+        return original(value)
+
+    monkeypatch.setattr(delivery, "validate_execution", validate)
+    first = context.assess(capture, expected, reader=reader)
+    first["status"] = "mutated consumer overlay"
+    assert (
+        context.assess(deepcopy(capture), deepcopy(expected), reader=reader)["status"] == "passed"
+    )
+    assert len(calls) == 1
+    changed = deepcopy(expected)
+    changed["root_actor_id"] = "another-root"
+    context.assess(capture, changed, reader=reader)
+    current_job(capture)["conclusion"] = "failure"
+    assert context.assess(capture, expected, reader=reader)["status"] == "failed"
+    assert len(calls) == 3
+    with pytest.raises(delivery.DeliveryError, match="epoch differs"):
+        context.assess(capture, expected, reader=core.ReadBudget(1024))
+    delivery.ExecutionAssessmentContext(reader).assess(capture, expected, reader=reader)
+    assert len(calls) == 4
+
+
+@pytest.mark.parametrize("kind", ["premerge", "cleanup"])
+def test_composed_provider_assessment_parses_capture_once(kind, monkeypatch):
+    capture, expected = fixture(beta=kind == "cleanup")
+    globals()[kind](capture)
+    calls = []
+    original = delivery.validate_execution
+
+    def validate(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(delivery, "validate_execution", validate)
+    result = getattr(delivery, f"assess_{kind}")(capture, expected)
+    assert result["status"] == "ready"
+    assert len(calls) == 1
+
+
+def test_shared_job_indexes_keep_each_explicit_step_obligation():
+    capture, expected = fixture()
+    second = deepcopy(expected["stages"][0]["checks"][0])
+    second.update(id="additional", steps=["missing-step"])
+    expected["stages"][0]["checks"].append(second)
+    capture["stages"][0]["checks"].append(deepcopy(second))
+    checks = delivery.assess_execution(capture, expected)["stages"][0]["checks"]
+    assert [row["status"] for row in checks] == ["passed", "not_assessed"]
 
 
 def fixture(*, beta=False):

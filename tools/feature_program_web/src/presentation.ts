@@ -107,10 +107,6 @@ function put(root: Json, path: readonly string[], value: string): boolean {
   return true;
 }
 
-function byId(value: Json | undefined, id: string): JsonRecord | undefined {
-  return rows(value).find((row) => row.id === id);
-}
-
 function permitted(target: JsonRecord): boolean {
   const kind = text(target.kind),
     field = text(target.field);
@@ -215,10 +211,45 @@ function receiptRoots(snapshot: Snapshot): readonly { origin: Origin; value: Jso
   return result;
 }
 
+function constructionIndex(snapshot: Snapshot) {
+  const collections = new Map<Json | undefined, Map<Json | undefined, JsonRecord>>();
+  const receipts = new Map<string, JsonRecord[]>();
+  for (const root of receiptRoots(snapshot)) {
+    const key = JSON.stringify([root.origin.path, root.origin.sha256]);
+    const group = receipts.get(key) || [];
+    group.push(root.value);
+    receipts.set(key, group);
+  }
+  const digests = new Map<Json, string>();
+  return {
+    byId(value: Json | undefined, id: Json | undefined) {
+      let index = collections.get(value);
+      if (!index) {
+        index = new Map();
+        // Preserve the first matching row, including duplicate identifiers.
+        for (const row of rows(value)) if (!index.has(row.id)) index.set(row.id, row);
+        collections.set(value, index);
+      }
+      return index.get(id);
+    },
+    receipts(origin: JsonRecord) {
+      return receipts.get(JSON.stringify([origin.path, origin.sha256])) || [];
+    },
+    digest(value: Json) {
+      let digest = digests.get(value);
+      if (digest === undefined) {
+        digest = presentationDigest(originalValue(value));
+        digests.set(value, digest);
+      }
+      return digest;
+    },
+  };
+}
+
 function locations(
   snapshot: Snapshot,
   entry: JsonRecord,
-  receipts: ReturnType<typeof receiptRoots>,
+  index: ReturnType<typeof constructionIndex>,
 ): readonly [Json, readonly string[]][] {
   const target = object(entry.target),
     origin = object(entry.origin);
@@ -228,18 +259,13 @@ function locations(
   const path = pointer(text(origin.pointer));
   if (!path || !matchesField(target, path)) return [];
   if (origin.path !== 'backlog.json')
-    return receipts
-      .filter(
-        (root) =>
-          root.origin.path === origin.path &&
-          root.origin.sha256 === origin.sha256 &&
-          (!target.source_path || target.source_path === origin.path),
-      )
-      .map((root) => [root.value, path]);
+    return !target.source_path || target.source_path === origin.path
+      ? index.receipts(origin).map((value) => [value, path])
+      : [];
   if (origin.revision !== snapshot.revision) return [];
   if (kind === 'verification') {
     const context = object(object(entry.binding).context);
-    const task = snapshot.tasks.find((item) => item.id === context.task_id);
+    const task = index.byId(snapshot.tasks, context.task_id);
     const projection = object(task?.verification);
     if (!task || projection.task_id !== task.id) return [];
     const projectionRef = object(projection.reference);
@@ -281,7 +307,7 @@ function locations(
     return result;
   }
   if (path[0] === 'tasks') {
-    const task = snapshot.tasks.find((item) => item.id === id);
+    const task = index.byId(snapshot.tasks, id);
     if (!task) return [];
     if (kind === 'task_title')
       return [
@@ -301,30 +327,25 @@ function locations(
           );
         })
         .map((item) => [object(item.record), path.slice(4)]);
-      const current = originalValue(task.delivery);
-      if (
-        current &&
-        result.some(
-          ([value]) => presentationDigest(originalValue(value)) === presentationDigest(current),
-        )
-      )
+      const current = task.delivery;
+      if (current && result.some(([value]) => index.digest(value) === index.digest(current)))
         result.push([object(task.delivery), path.slice(4)]);
       return result;
     }
     return [[task, path.slice(2)]];
   }
   if (path[0] === 'questions' && path[1] === 'items') {
-    const question = byId(snapshot.questions, id);
+    const question = index.byId(snapshot.questions, id);
     const context = object(object(entry.binding).context);
     if (!question || (context.version !== undefined && question.version !== context.version))
       return [];
     return [[question, path.slice(path[3] === 'issued' ? 4 : 3)]];
   }
   if (['categories', 'workstreams', 'actors', 'handoffs'].includes(path[0] || '')) {
-    const row = byId(snapshot[path[0]!], id);
+    const row = index.byId(snapshot[path[0]!], id);
     const result: [Json, readonly string[]][] = row ? [[row, path.slice(2)]] : [];
     if (path[0] === 'workstreams' && ['title', 'name'].includes(field)) {
-      const category = byId(snapshot.categories, id);
+      const category = index.byId(snapshot.categories, id);
       // Only derived roots inherit workstream labels; explicit categories have their own targets.
       const explicit = Object.values(object(object(snapshot.presentation).entries)).some(
         (value) => {
@@ -345,7 +366,7 @@ function locations(
     const digest = object(object(entry.binding).context).record_sha256;
     const matches = rows(coverage.criteria)
       .flatMap((criterion) => rows(criterion.uncovered))
-      .filter((value) => presentationDigest(originalValue(value)) === digest);
+      .filter((value) => index.digest(value) === digest);
     return matches.length === 1 ? [[matches[0]!, path.slice(5)]] : [];
   }
   // These supplied collections preserve canonical order; task/question/category adapters above do not.
@@ -358,7 +379,10 @@ function locations(
   return [];
 }
 
-function updateDerivedCopies(snapshot: Snapshot): void {
+function updateDerivedCopies(
+  snapshot: Snapshot,
+  index: ReturnType<typeof constructionIndex>,
+): void {
   const brief = object(snapshot.brief),
     objective = object(snapshot.objective);
   const referenceMatches = (value: JsonRecord, path: string) => {
@@ -391,7 +415,7 @@ function updateDerivedCopies(snapshot: Snapshot): void {
   const queue = object(snapshot.review_queue);
   if (queue.observed_revision === snapshot.revision) {
     for (const row of rows(object(queue.rows).items)) {
-      const task = snapshot.tasks.find((item) => item.id === row.task_id);
+      const task = index.byId(snapshot.tasks, row.task_id);
       if (!task) continue;
       const ref = object(row.reference);
       if (
@@ -437,8 +461,7 @@ function updateDerivedCopies(snapshot: Snapshot): void {
     completionRef.sha256 === aggregateRef.sha256 &&
     completion.criteria_results &&
     aggregate.criteria_results &&
-    presentationDigest(originalValue(completion.criteria_results)) ===
-      presentationDigest(originalValue(aggregate.criteria_results))
+    index.digest(completion.criteria_results) === index.digest(aggregate.criteria_results)
   )
     (aggregate as MutableRecord).criteria_results = completion.criteria_results;
   for (const entry of Object.values(object(object(snapshot.presentation).entries)).map(object)) {
@@ -485,7 +508,7 @@ function updateDerivedCopies(snapshot: Snapshot): void {
     }
   }
   for (const row of rows(object(brief.questions).items)) {
-    const source = byId(snapshot.questions, text(row.id)),
+    const source = index.byId(snapshot.questions, text(row.id)),
       ref = object(row.reference);
     if (
       source &&
@@ -506,15 +529,15 @@ function updateDerivedCopies(snapshot: Snapshot): void {
       ['blocked', 'collision', 'review', 'dependency', 'revalidation'].includes(text(row.kind)) &&
       /^\/tasks\/\d+$/u.test(text(ref.pointer))
     ) {
-      const task = snapshot.tasks.find(
-        (task) =>
-          task.id === ref.task_id &&
-          (task.id === row.entity_id ||
-            (row.kind === 'collision' &&
-              Array.isArray(row.task_ids) &&
-              row.task_ids.includes(task.id))),
-      );
-      if (task) copy(row, task, ['next_action'], true);
+      const task = index.byId(snapshot.tasks, ref.task_id);
+      if (
+        task &&
+        (task.id === row.entity_id ||
+          (row.kind === 'collision' &&
+            Array.isArray(row.task_ids) &&
+            row.task_ids.includes(task.id)))
+      )
+        copy(row, task, ['next_action'], true);
     }
   }
   const director = object(brief.director);
@@ -530,7 +553,7 @@ export function presentSnapshot(raw: Snapshot): Snapshot {
   const aliases = new Map<string, string>(),
     fields: PresentedField[] = [];
   const view = clone(raw) as Snapshot;
-  const receipts = receiptRoots(view);
+  const index = constructionIndex(view);
   const compatible =
     projection.schema_version === 1 &&
     projection.revision === raw.revision &&
@@ -561,14 +584,14 @@ export function presentSnapshot(raw: Snapshot): Snapshot {
         });
         continue;
       }
-      for (const [root, path] of locations(view, entry, receipts)) {
+      for (const [root, path] of locations(view, entry, index)) {
         const old = at(originalValue(root), path);
         if (typeof old !== 'string') continue;
         const isBody = target.kind === 'task_content' && target.field === 'source_body';
         const context = object(binding.context);
         if (isBody && context.projection_rule !== 'section_after_first_heading_v1') continue;
         const content = isBody ? old.slice(old.indexOf('\n') + 1) : old;
-        if (binding.source_value_sha256 !== presentationDigest(content)) continue;
+        if (binding.source_value_sha256 !== index.digest(content)) continue;
         const replacement = isBody ? old.slice(0, old.indexOf('\n') + 1) + entry.text : entry.text;
         if (put(root, path, replacement))
           fields.push({
@@ -579,7 +602,7 @@ export function presentSnapshot(raw: Snapshot): Snapshot {
           });
       }
     }
-    updateDerivedCopies(view);
+    updateDerivedCopies(view, index);
   }
   const unique = new Map(
     fields.map((field) => [JSON.stringify([field.origin, field.original]), field]),

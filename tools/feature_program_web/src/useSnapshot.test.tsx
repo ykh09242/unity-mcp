@@ -18,6 +18,62 @@ describe('snapshot refresh lifecycle', () => {
   });
   afterEach(() => vi.useRealTimers());
 
+  it('coalesces write invalidations behind a pending read and fetches the saved state', async () => {
+    let finish: ((value: unknown) => void) | undefined;
+    const loader = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValue({
+        ...fixture(),
+        tasks: [{ id: 'A', title: 'Saved task', status: 'planned' }],
+      });
+    const hook = renderHook(() => useSnapshot(loader));
+    await act(async () => {
+      await hook.result.current.refresh(false, true);
+      await hook.result.current.refresh(false, true);
+      await hook.result.current.refresh(true);
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(loader).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finish?.(fixture());
+    });
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.snapshot?.tasks[0]?.title).toBe('Saved task');
+    expect(hook.result.current.busy).toBe(false);
+  });
+
+  it('discards queued invalidation and aborts the old request on loader replacement', async () => {
+    let finish: ((value: unknown) => void) | undefined;
+    let oldSignal: AbortSignal | undefined;
+    const oldLoader = vi.fn((signal: AbortSignal) => {
+      oldSignal = signal;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+    const nextLoader = vi.fn().mockResolvedValue(fixture('new source'));
+    const hook = renderHook(({ loader }) => useSnapshot(loader), {
+      initialProps: { loader: oldLoader },
+    });
+    await act(async () => {
+      await hook.result.current.refresh(false, true);
+    });
+    hook.rerender({ loader: nextLoader });
+    await act(async () => {
+      finish?.(fixture('late old source'));
+    });
+    expect(oldSignal?.aborted).toBe(true);
+    expect(oldLoader).toHaveBeenCalledTimes(1);
+    expect(nextLoader).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.snapshot?.generated_at).toBe('new source');
+  });
+
   it('retains exact model when only top-level observation generation changes', async () => {
     // Given
     const loader = vi.fn().mockResolvedValue(fixture());

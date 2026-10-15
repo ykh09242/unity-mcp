@@ -119,6 +119,77 @@ def prepared(fixture, host, **options):
     )
 
 
+def test_checked_plan_is_private_detached_and_reparsed_once_at_publication(fixture, monkeypatch):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    host = fp.authoring.BatchHost(fixture.program, publication_base=state)
+    plan = batch.prepare_batch(fixture.program, state, request(fixture), host)
+    checked = batch._check_plan(plan)
+    changed = deepcopy(plan)
+    changed["operations"][0]["payload"]["reason"] = "changed after preparation"
+    assert checked.value == plan
+    with pytest.raises(batch.BatchError):
+        batch.inspect_batch(fixture.program, state, changed, host)
+    calls = []
+    original = batch._validate_plan
+
+    def validate(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(batch, "_validate_plan", validate)
+    result = batch.publish_batch(fixture.program, plan, host, "worker", plan["base_revision"])
+    assert result["status"] == "committed"
+    assert len(calls) == 1
+
+
+def test_checked_history_supplies_references_and_projection_without_revalidation(
+    fixture, monkeypatch
+):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    host = fp.authoring.BatchHost(fixture.program, publication_base=state)
+    plan = batch.prepare_batch(fixture.program, state, request(fixture), host)
+    batch.publish_batch(fixture.program, plan, host, "worker", plan["base_revision"])
+    state = fixture.program.load()
+    checked = batch._check_history(state)
+    projected = batch.project_latest_batch(state)
+    expected_refs = batch.evidence_references(state)
+
+    def unexpected_validation(value):
+        pytest.fail("Checked history was parsed again")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(batch, "_validate_history", unexpected_validation)
+        assert batch._project_latest_checked(checked) == projected
+        assert batch._history_references(checked) == expected_refs
+    state["events"][-2]["reason"] = "Changed normal event after observation"
+    assert batch._project_latest_checked(checked) == projected
+    with pytest.raises(batch.BatchError):
+        batch.project_latest_batch(state)
+
+
+def test_composition_carries_each_real_predecessor_revision_once(fixture, monkeypatch):
+    assert fixture.claim() == 0
+    state = fixture.program.load()
+    host = fp.authoring.BatchHost(fixture.program, publication_base=state)
+    plan = batch.prepare_batch(fixture.program, state, request(fixture), host)
+    calls = []
+    original = fp.authoring.BatchHost.revision
+
+    def revision(self, value):
+        calls.append(value)
+        return original(self, value)
+
+    monkeypatch.setattr(fp.authoring.BatchHost, "revision", revision)
+    _, stages = batch._compose(fixture.program, state, plan, host)
+    assert len(calls) == 1
+    assert stages == plan["stages"]
+    assert [row["before_revision"] for row in stages[1:]] == [
+        row["after_revision"] for row in stages[:-1]
+    ]
+
+
 def test_python_311_syntax_is_checked_first():
     # Given the two authored files, not the runtime's newer grammar.
     paths = [Path(batch.__file__), Path(__file__)]

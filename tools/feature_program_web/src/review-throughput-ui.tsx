@@ -271,6 +271,7 @@ export function ReviewFlow({
     timing = reviewTiming(snapshot);
   const intervals = timing?.intervals.filter((row) => row.taskId === taskId) || [];
   const history = handoffs?.rows.filter((row) => row.taskId === taskId) || [];
+  const currentHandoffId = taskHandoff(snapshot, taskId)?.id;
   if (
     !history.length &&
     !intervals.length &&
@@ -344,7 +345,7 @@ export function ReviewFlow({
               </li>
             ))}
             {history
-              .filter((row) => row.id !== taskHandoff(snapshot, taskId)?.id)
+              .filter((row) => row.id !== currentHandoffId)
               .sort((left, right) => left.sequence - right.sequence)
               .map((handoff) => (
                 <li key={handoff.id}>

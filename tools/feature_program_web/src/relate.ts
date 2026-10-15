@@ -7,24 +7,33 @@ import { originalValue } from './presentation';
 
 export function workload(snapshot: Snapshot, scope: WorkContext['scope']) {
   const tasks = scopedTasks(snapshot, scope);
-  const groups = new Map<string, Task[]>();
-  for (const actor of snapshotIndex(snapshot).actors.keys()) groups.set(actor, []);
-  groups.set('', []);
+  const empty = (owner: string) => ({
+    owner,
+    total: 0,
+    planned: 0,
+    active: 0,
+    blocked: 0,
+    review: 0,
+    done: 0,
+  });
+  const groups = new Map<string, ReturnType<typeof empty>>();
+  for (const actor of snapshotIndex(snapshot).actors.keys()) groups.set(actor, empty(actor));
+  groups.set('', empty(''));
   for (const task of tasks) {
     const owner = ownerOf(task);
-    const group = groups.get(owner) || [];
-    group.push(task);
+    const group = groups.get(owner) || empty(owner);
+    group.total++;
+    if (
+      task.status === 'planned' ||
+      task.status === 'active' ||
+      task.status === 'blocked' ||
+      task.status === 'review' ||
+      task.status === 'done'
+    )
+      group[task.status]++;
     groups.set(owner, group);
   }
-  return [...groups].map(([owner, assignments]) => ({
-    owner,
-    total: assignments.length,
-    planned: assignments.filter((task) => task.status === 'planned').length,
-    active: assignments.filter((task) => task.status === 'active').length,
-    blocked: assignments.filter((task) => task.status === 'blocked').length,
-    review: assignments.filter((task) => task.status === 'review').length,
-    done: assignments.filter((task) => task.status === 'done').length,
-  }));
+  return [...groups.values()];
 }
 
 export function hasActionGlance(task: Task): boolean {

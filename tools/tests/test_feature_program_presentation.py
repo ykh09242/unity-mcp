@@ -244,7 +244,7 @@ def test_read_capabilities_and_race_rejection(gate, monkeypatch):
         patch.setattr(fp, "atomic_write", denied)
         fp.read_snapshot(gate.program.repo, gate.program.directory)
     assert tree(gate.program.repo) == before
-    original = p.projection
+    original = p._projection_from_checked
 
     def interleave(*args, **kwargs):
         result = original(*args, **kwargs)
@@ -253,7 +253,7 @@ def test_read_capabilities_and_race_rejection(gate, monkeypatch):
         )
         return result
 
-    monkeypatch.setattr(p, "projection", interleave)
+    monkeypatch.setattr(p, "_projection_from_checked", interleave)
     with pytest.raises(fp.ProgramError, match="Registry changed"):
         fp.read_snapshot(gate.program.repo, gate.program.directory)
 
@@ -723,3 +723,268 @@ def test_complete_reviewed_catalog_stays_complete_after_publication(gate):
     assert after["technical_records"]["presentation_audit_events"] == 1
     assert after["technical_records"]["presentation_transactions"] == 1
     assert after["technical_records"]["disposition"] == "original_only"
+
+
+def test_checked_projection_reuses_first_validation_and_detaches_outputs(gate, monkeypatch):
+    # Given one strictly validated immutable capture and its independently expected view.
+    language(gate)
+    record(gate)
+    state = gate.program.load()
+    expected = p.projection(gate.program, state)
+    checked = p.validate(state)
+
+    def unexpected_validation(*args, **kwargs):
+        raise AssertionError("Repeated structural validation of the same capture")
+
+    # When the private projection consumes that first checked result.
+    with monkeypatch.context() as patch:
+        patch.setattr(p, "_input_keys", unexpected_validation)
+        actual = p._projection_from_checked(gate.program, state, checked)
+    # Then the complete view is preserved and nested output cannot alter later projections.
+    assert actual == expected
+    next(iter(actual["entries"].values()))["binding"]["context"]["consumer"] = True
+    assert p._projection_from_checked(gate.program, state, checked) == expected
+
+
+def test_checked_projection_rejects_a_different_captured_state(gate):
+    # Given a checked ledger belonging to one exact capture.
+    state = gate.program.load()
+    checked = p.validate(state)
+    # When a different state object is supplied with the old checked result.
+    with pytest.raises(fp.ProgramError, match="another state"):
+        p._projection_from_checked(gate.program, deepcopy(state), checked)
+
+
+def test_public_projection_still_rejects_changed_ledger(gate):
+    # Given a previously valid captured ledger.
+    language(gate)
+    record(gate)
+    state = gate.program.load()
+    p.validate(state)
+    state["presentation"]["records"][0]["input"]["operations"][0]["supersedes"] = "unknown"
+    # When an independent public call observes the changed state.
+    with pytest.raises(fp.ProgramError, match="supersession"):
+        p.projection(gate.program, state)
+
+
+def _state_with_repeated_receipt_refs(gate, *, conflicting=False):
+    """Retain real frozen transaction/review bytes with two source-bound operations."""
+    language(gate)
+    name, value = receipt(gate)
+    source = gate.fixture.write("source-proof.json", {"summary": "Synthetic original proof"})
+    ref = {"path": source, "sha256": fp.sha(gate.program.path(source).read_bytes())}
+    first = value["operations"][0]
+    first["binding"]["context"]["receipt"] = deepcopy(ref)
+    second = deepcopy(first)
+    second["target"]["field"] = "goal"
+    if conflicting:
+        second["binding"]["context"]["receipt"]["sha256"] = "0" * 64
+    value["operations"].append(second)
+    review_name = value["review"]["path"]
+    review = json.loads(gate.program.path(review_name).read_text(encoding="utf-8"))
+    review["payload_sha256"] = p.review_payload(value)
+    gate.program.path(review_name).write_bytes(fp.canonical(review))
+    value["review"]["sha256"] = fp.sha(gate.program.path(review_name).read_bytes())
+    gate.program.path(name).write_bytes(fp.canonical(value))
+    state = gate.program.load()
+    state["presentation"] = {
+        "schema_version": 1,
+        "records": [
+            {
+                "input": value,
+                "receipt": {"path": name, "sha256": fp.sha(gate.program.path(name).read_bytes())},
+                "recorded_at": "2026-01-01T00:00:00+00:00",
+                "recorded_by": value["actor_id"],
+            }
+        ],
+    }
+    return state, source
+
+
+def test_exact_duplicate_source_refs_are_verified_once_per_transaction(gate, monkeypatch):
+    # Given two operations relying on the same actual frozen source receipt.
+    state, source = _state_with_repeated_receipt_refs(gate)
+    original = fp.Program.verify_refs
+    observed = []
+
+    def verify(program, refs, budget=None):
+        observed.extend(deepcopy(refs))
+        return original(program, refs, budget)
+
+    # When a complete projection checks the frozen transaction.
+    with monkeypatch.context() as patch:
+        patch.setattr(fp.Program, "verify_refs", verify)
+        result = p.projection(gate.program, state)
+    # Then one exact dependency check retains both operations without promoting stale bindings.
+    assert [ref["path"] for ref in observed] == [source]
+    assert len(result["entries"]) == 2
+    assert all(entry["status"] == "stale" for entry in result["entries"].values())
+
+
+def test_conflicting_source_hash_is_not_hidden_by_reference_dedup(gate):
+    # Given two references with the same path and conflicting expected bytes.
+    state, _ = _state_with_repeated_receipt_refs(gate, conflicting=True)
+    # When normal projection verifies each distinct path/hash dependency.
+    result = p.projection(gate.program, state)
+    # Then every dependent operation remains unavailable.
+    assert all(entry["status"] == "unavailable" for entry in result["entries"].values())
+
+
+def test_later_projection_rechecks_source_bytes(gate):
+    # Given an earlier projection with available immutable dependency bytes.
+    state, source = _state_with_repeated_receipt_refs(gate)
+    assert all(
+        entry["status"] == "stale"
+        for entry in p.projection(gate.program, state)["entries"].values()
+    )
+    gate.program.path(source).write_bytes(b"changed")
+    # When another independent capture observes the same expected source reference.
+    result = p.projection(gate.program, state)
+    # Then no previous successful assessment can hide the changed bytes.
+    assert all(entry["status"] == "unavailable" for entry in result["entries"].values())
+
+
+def test_existing_section_hash_does_not_eagerly_hash_fallback(gate, monkeypatch):
+    # Given valid task sections carrying their exact supplied source SHA.
+    state = gate.program.load()
+    sections = [task["source"] for task in state["tasks"]]
+    original = fp.digest
+
+    def digest(value):
+        if any(value is section for section in sections):
+            raise AssertionError("Unneeded eager section digest")
+        return original(value)
+
+    # When catalog binds authored source fields.
+    with monkeypatch.context() as patch:
+        patch.setattr(fp, "digest", digest)
+        observed = p.catalog(gate.program, state, fp.ReadBudget(), fp.phases.revision(state))
+    # Then every task source title/body retains its independently stored section fingerprint.
+    for target in observed.targets.values():
+        if target["family"] in {"F06", "F07"}:
+            task = next(
+                task for task in state["tasks"] if task["id"] == target["target"]["entity_id"]
+            )
+            assert target["binding"]["context"]["section_sha256"] == task["source"]["sha256"]
+
+
+def test_inventory_cli_reuses_its_first_strict_ledger_validation(gate, capsys, monkeypatch):
+    # Given one recorded presentation transaction and the real CLI inventory reader.
+    language(gate)
+    record(gate)
+    capsys.readouterr()
+    original = p._input_keys
+    checked_ids = []
+
+    def check(value):
+        checked_ids.append(value["id"])
+        return original(value)
+
+    # When the CLI obtains the first validated host result and projects its inventory.
+    with monkeypatch.context() as patch:
+        patch.setattr(p, "_input_keys", check)
+        status = gate.fixture.run("presentation-inventory")
+    result = json.loads(capsys.readouterr().out)
+    # Then one strict ledger pass retains the complete current inventory.
+    assert status == 0
+    assert checked_ids == ["translation-1"]
+    assert result["totals"]["current_translated"] == 1
+
+
+def test_envelope_inventory_keeps_body_revision_and_physical_registry(gate, capsys):
+    # Given the same valid logical state in an explicitly enabled registry envelope.
+    from tools import feature_program_storage as storage
+
+    language(gate)
+    path = gate.program.path("backlog.json")
+    body = path.read_bytes()
+    raw = storage.encode_registry(body, "1" * 64)
+    path.write_bytes(raw)
+    capsys.readouterr()
+    # When the ordinary standalone inventory reads the known registry explicitly.
+    assert gate.fixture.run("presentation-inventory") == 0
+    result = json.loads(capsys.readouterr().out)
+    # Then its semantic revision is BODY identity and the physical envelope is untouched.
+    assert result["revision"] == fp.sha(body)
+    assert result["revision"] != fp.sha(raw)
+    assert path.read_bytes() == raw
+
+
+def test_envelope_binding_reports_physical_observation_separately(gate, capsys):
+    # Given an authored input bound to the unchanged logical registry state.
+    from tools import feature_program_storage as storage
+
+    language(gate)
+    name, value = receipt(gate)
+    path = gate.program.path("backlog.json")
+    body = path.read_bytes()
+    raw = storage.encode_registry(body, "2" * 64)
+    path.write_bytes(raw)
+    capsys.readouterr()
+    # When binding runs through the real read-only command.
+    status = gate.fixture.run("presentation-binding", "--input", name)
+    result = json.loads(capsys.readouterr().out)
+    # Then raw observation identity remains distinct from logical transaction revision.
+    assert status == 0
+    assert result["observed_registry_sha256"] == fp.sha(raw)
+    assert result["expected_revision"] == value["expected_revision"]
+    assert result["operations"] == value["operations"]
+    assert path.read_bytes() == raw
+
+
+def test_presentation_publish_rejects_selector_only_registry_change(gate):
+    # Given a prepared transaction against one physical selection and exact BODY.
+    from tools import feature_program_storage as storage
+
+    language(gate)
+    name, _ = receipt(gate)
+    path = gate.program.path("backlog.json")
+    body = path.read_bytes()
+    path.write_bytes(storage.encode_registry(body, "1" * 64))
+    prepared = p.prepare_record(gate.program, gate.program.load(), name)
+    path.write_bytes(storage.encode_registry(body, "2" * 64))
+    # When publication reaches its independent full-storage guard.
+    with pytest.raises(fp.ProgramError, match="Registry changed"):
+        prepared.before_publish()
+    # Then no transaction is published over a changed physical selector.
+    assert not p._records(gate.program.load())
+
+
+def test_inventory_closing_guard_rejects_selector_only_race(gate, monkeypatch, capsys):
+    # Given a valid envelope and a concurrent physical selection change after projection.
+    from tools import feature_program_storage as storage
+
+    language(gate)
+    path = gate.program.path("backlog.json")
+    body = path.read_bytes()
+    path.write_bytes(storage.encode_registry(body, "1" * 64))
+    original = p._projection_from_checked
+
+    def interleave(*args, **kwargs):
+        result = original(*args, **kwargs)
+        path.write_bytes(storage.encode_registry(body, "2" * 64))
+        return result
+
+    monkeypatch.setattr(p, "_projection_from_checked", interleave)
+    capsys.readouterr()
+    # When the real inventory command runs its closing storage observation.
+    status = gate.fixture.run("presentation-inventory")
+    # Then equal BODY cannot conceal the changed selected model token.
+    assert status == 1
+    assert "registry changed" in capsys.readouterr().err.lower()
+
+
+def test_presentation_input_receipt_does_not_implicitly_decode_envelope(gate):
+    # Given an envelope-shaped artifact at a generic receipt path, not the live registry.
+    from tools import feature_program_storage as storage
+
+    language(gate)
+    name, _ = receipt(gate)
+    path = gate.program.path(name)
+    path.write_bytes(storage.encode_registry(path.read_bytes(), "1" * 64))
+    before = gate.program.path("backlog.json").read_bytes()
+    # When normal preparation parses that generic receipt as strict raw JSON.
+    with pytest.raises(fp.ProgramError, match="Invalid JSON"):
+        p.prepare_record(gate.program, gate.program.load(), name)
+    # Then the canonical registry remains untouched.
+    assert gate.program.path("backlog.json").read_bytes() == before

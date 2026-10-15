@@ -56,6 +56,14 @@ def revision(state: Record) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _core() -> ModuleType:
+    if __package__:
+        from tools import feature_program
+    else:
+        import feature_program
+    return feature_program
+
+
 def _tasks(state: Record) -> dict[str, Record]:
     return coordination._indexed(state.get("tasks"), "task")
 
@@ -542,10 +550,10 @@ def add_commands(commands: argparse._SubParsersAction[argparse.ArgumentParser]) 
 def succession_guard(program: Program) -> None:
     """Reject execution at guarded locations, including interrupted publication."""
     require(
-        not program.path("SUCCESSION_INCOMPLETE.json").exists(),
+        not _core().observed_exists(program.path("SUCCESSION_INCOMPLETE.json")),
         "Succession publication incomplete; use program-succeed-recover at predecessor",
     )
-    if program.path("SUCCEEDED.json").exists():
+    if _core().observed_exists(program.path("SUCCEEDED.json")):
         if __package__:
             from tools.feature_program import read_json
         else:
@@ -562,7 +570,10 @@ def _pair(predecessor: Program, successor_name: str) -> Program:
     target = Path(successor_name)
     require(not target.is_absolute(), "Successor must be an explicit repository-relative path")
     successor = Program(predecessor.repo, safe_path(predecessor.repo, successor_name))
-    require(successor.path("backlog.json").is_file(), "Successor must already be initialized")
+    require(
+        _core().observed_is_file(successor.path("backlog.json")),
+        "Successor must already be initialized",
+    )
     require(
         successor.directory != predecessor.repo
         and not successor.directory.is_relative_to(predecessor.directory)
@@ -603,13 +614,16 @@ class Publication:
 def _publish(predecessor: Program, successor: Program, publication: Publication) -> None:
     """Predecessor guard always precedes any successor publication; retry is idempotent."""
     if __package__:
-        from tools.feature_program import atomic_write, canonical, read_json, bounded_bytes
+        from tools.feature_program import atomic_write, canonical
     else:
-        from feature_program import atomic_write, canonical, read_json, bounded_bytes
+        from feature_program import atomic_write, canonical
     marker = publication.marker
     encoded = canonical(marker)
+    observations: list[tuple[Program, str]] = []
     for program, key in ((predecessor, "predecessor_revision"), (successor, "successor_revision")):
-        current = read_json(program.path("backlog.json"))
+        observation = program.read_registry_observation()
+        observations.append((program, observation.storage_sha256))
+        current = _core().parse_registry_state(observation, path=program.path("backlog.json"))
         program.validate(current)
         if current.get("planning_path") is not None:
             _verify_planning(
@@ -617,15 +631,18 @@ def _publish(predecessor: Program, successor: Program, publication: Publication)
             )
         if publication.recovery and program is successor:
             require(
-                _succession_contract(read_json(successor.path("backlog.json")))
-                == marker["successor_contract"],
+                _succession_contract(current) == marker["successor_contract"],
                 "Frozen successor provenance changed; preserve markers and investigate",
             )
             continue
         require(
-            hashlib.sha256(bounded_bytes(program.path("backlog.json"), 8 * 1024 * 1024)).hexdigest()
-            == marker[key],
+            observation.body_sha256 == marker[key],
             "Succession registry changed; preserve markers and investigate",
+        )
+    for program, storage_sha256 in observations:
+        require(
+            program.read_registry_observation().storage_sha256 == storage_sha256,
+            "Succession registry storage changed; preserve markers and investigate",
         )
     operation_id = publication.operation_id or _planning().publication_register(
         predecessor, "succession", marker, successor, legacy_observed=publication.recovery
@@ -667,7 +684,10 @@ def prepare_succession(
         "Successor identity must match initialized distinct program",
     )
     require(args.successor_revision == revision(target), "Stale successor registry revision")
-    require(not successor.path("PREDECESSOR.json").exists(), "Successor already has a predecessor")
+    require(
+        not _core().observed_exists(successor.path("PREDECESSOR.json")),
+        "Successor already has a predecessor",
+    )
     marker: Record = {
         "schema_version": 1,
         "predecessor": predecessor.directory.relative_to(predecessor.repo).as_posix(),
@@ -722,11 +742,15 @@ def prepare_succession_recovery(
     )
     successor = _pair(predecessor, coordination._text(marker.get("successor"), "successor"))
     require(
-        not successor.path("SUCCEEDED.json").exists(),
+        not _core().observed_exists(successor.path("SUCCEEDED.json")),
         "Successor has itself succeeded; investigate incomplete publication",
     )
-    state = read_json(predecessor.path("backlog.json"))
-    target = read_json(successor.path("backlog.json"))
+    state = _core().parse_registry_state(
+        predecessor.read_registry_observation(), path=predecessor.path("backlog.json")
+    )
+    target = _core().parse_registry_state(
+        successor.read_registry_observation(), path=successor.path("backlog.json")
+    )
     predecessor.validate(state)
     successor.validate(target)
     if target.get("planning_path") is not None:
@@ -748,7 +772,7 @@ def prepare_succession_recovery(
         (successor, "SUCCESSION_INCOMPLETE.json"),
         (successor, "PREDECESSOR.json"),
     ):
-        if program.path(name).exists():
+        if _core().observed_exists(program.path(name)):
             require(
                 read_json(program.path(name)) == marker,
                 "Conflicting succession marker; preserve and investigate",

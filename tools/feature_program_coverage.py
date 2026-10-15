@@ -32,6 +32,7 @@ class Reads:
     artifacts: ReadBudget
     sources: ReadBudget
     snapshots: Record = field(default_factory=dict)
+    sections: dict[tuple[str, str], Record] = field(default_factory=dict)
 
 
 def reads(budget: ReadBudget | None = None) -> Reads:
@@ -123,12 +124,80 @@ def _link_refs(link: Record) -> list[Json]:
     return refs
 
 
+@dataclass(frozen=True, slots=True)
+class _Bindings:
+    """Lazy derived bindings for one immutable state and its existing read ledgers."""
+
+    program: Program
+    state: Record
+    reader: Reads
+    values: Record = field(default_factory=dict)
+    definitions: Record = field(default_factory=dict)
+    sources: dict[bytes, Record] = field(default_factory=dict)
+
+    def objective(self) -> Record:
+        if "objective" not in self.values:
+            self.values["objective"] = objective_binding(self.state)
+        return self.values["objective"]
+
+    def definition(self, task: Record) -> Record:
+        identifier = str(task["id"])
+        if identifier not in self.definitions:
+            self.definitions[identifier] = planning.task_definition(task)
+        return self.definitions[identifier]
+
+    def source(self, source: Record) -> Record:
+        key = _core().canonical(source)
+        if key not in self.sources:
+            self.sources[key] = planning.coverage_source_identity(
+                self.program, self.state, source, self.reader.artifacts
+            )
+        return self.sources[key]
+
+    def inventory(self) -> str:
+        core = _core()
+        if "inventory" not in self.values:
+            self.values["inventory"] = core.digest(
+                {
+                    "definitions": [
+                        self.definition(self.program.task(self.state, identifier))
+                        for identifier in self.objective()["member_ids"]
+                    ],
+                    "sources": [self.source(source) for source in planning.descriptors(self.state)],
+                    "planning": planning.planning_digest(self.state),
+                }
+            )
+        return self.values["inventory"]
+
+    def revision(self) -> str:
+        if "revision" not in self.values:
+            self.values["revision"] = phases.revision(self.state)
+        return self.values["revision"]
+
+
+def _metadata(program: Program, value: Json, reader: ReadBudget) -> Record:
+    """Decode the exact admitted bytes after checking this consumer's expected hash."""
+    core = _core()
+    ref = reference(value)
+    name = str(ref["path"])
+    captured = reader.capture(program.directory, name, 8 * 1024 * 1024)
+    core.require(captured.sha256 == ref["sha256"], f"Frozen evidence changed: {name}")
+    return reader.json(captured)
+
+
 def task_binding(program: Program, state: Record, link: Record, reader: Reads) -> Record:
+    """Bind an independently supplied link without accepting unchecked derived facts."""
+    return _task_binding(program, state, link, reader, _Bindings(program, state, reader))
+
+
+def _task_binding(
+    program: Program, state: Record, link: Record, reader: Reads, bindings: _Bindings
+) -> Record:
     core = _core()
     task_id = coordination._text(link.get("task_id"), "linked task")
     task = program.task(state, task_id)
     require(
-        task_id in objective_binding(state)["member_ids"],
+        task_id in bindings.objective()["member_ids"],
         "Linked task is outside current objective membership",
     )
     require(
@@ -173,12 +242,13 @@ def task_binding(program: Program, state: Record, link: Record, reader: Reads) -
             "Linked path outside applicable task scope",
         )
     source = planning.source_for_task(state, task)
-    source_path = core.safe_path(program.repo, coordination._relative(source.get("path")))
-    require(
-        core.sha(reader.artifacts.read(source_path, 8 * 1024 * 1024)) == source["sha256"],
-        "Coverage frozen source drifted",
-    )
-    sections = core.extract_sections(reader.artifacts.read(source_path, 8 * 1024 * 1024))
+    source_name = coordination._relative(source.get("path"))
+    captured = reader.artifacts.capture(program.repo, source_name, 8 * 1024 * 1024)
+    require(captured.sha256 == source["sha256"], "Coverage frozen source drifted")
+    source_key = (source_name, captured.sha256)
+    if source_key not in reader.sections:
+        reader.sections[source_key] = core.extract_sections(captured.content)
+    sections = reader.sections[source_key]
     require(
         core.canonical(sections.get(task_id)) == core.canonical(task["source"]),
         "Coverage source section mismatch",
@@ -192,7 +262,7 @@ def task_binding(program: Program, state: Record, link: Record, reader: Reads) -
     for value in coordination._items(link.get("records", []), "linked records"):
         record = coordination._record(value, "linked record")
         ref = reference(record["receipt"])
-        metadata = core.read_json(program.path(str(ref["path"])), budget=reader.artifacts)
+        metadata = _metadata(program, ref, reader.artifacts)
         require(metadata.get("task_id") == task_id, "Linked artifact task mismatch")
         if mode == "attempt":
             require(
@@ -203,8 +273,8 @@ def task_binding(program: Program, state: Record, link: Record, reader: Reads) -
     if scope_key not in reader.snapshots:
         reader.snapshots[scope_key] = core.digest(program.source_snapshot(scope, reader.sources))
     return {
-        "definition_digest": core.digest(planning.task_definition(task)),
-        "source": planning.coverage_source_identity(program, state, source, reader.artifacts),
+        "definition_digest": core.digest(bindings.definition(task)),
+        "source": deepcopy(bindings.source(source)),
         "section": deepcopy(task["source"]),
         "scope": scope,
         "source_digest": reader.snapshots[scope_key],
@@ -221,9 +291,15 @@ def bind_input(
     program: Program, state: Record, receipt: Record, reader: Reads | None = None
 ) -> Record:
     """Read real bindings for authored contributors; never create evidence or passing results."""
-    core = _core()
     reader = reader if reader is not None else reads()
-    objective = objective_binding(state)
+    return _bind_input(program, state, receipt, reader, _Bindings(program, state, reader))
+
+
+def _bind_input(
+    program: Program, state: Record, receipt: Record, reader: Reads, bindings: _Bindings
+) -> Record:
+    core = _core()
+    objective = bindings.objective()
     links: list[Json] = []
     seen: set[tuple[int, str]] = set()
     linked: set[int] = set()
@@ -234,7 +310,9 @@ def bind_input(
         require((ordinal, identifier) not in seen, "Duplicate/conflicting contributor link")
         seen.add((ordinal, identifier))
         linked.add(ordinal)
-        links.append({**deepcopy(link), "binding": task_binding(program, state, link, reader)})
+        links.append(
+            {**deepcopy(link), "binding": _task_binding(program, state, link, reader, bindings)}
+        )
     uncovered: set[int] = set()
     uncovered_rows: list[Json] = []
     if coordination._items(receipt.get("uncovered", []), "uncovered criteria"):
@@ -244,19 +322,7 @@ def bind_input(
                 core.sha(reader.artifacts.read(path, 8 * 1024 * 1024)) == source["sha256"],
                 "Coverage uncovered frozen source drifted",
             )
-    inventory_digest = core.digest(
-        {
-            "definitions": [
-                planning.task_definition(program.task(state, identifier))
-                for identifier in objective["member_ids"]
-            ],
-            "sources": [
-                planning.coverage_source_identity(program, state, source, reader.artifacts)
-                for source in planning.descriptors(state)
-            ],
-            "planning": planning.planning_digest(state),
-        }
-    )
+    inventory_digest = bindings.inventory()
     for value in coordination._items(receipt.get("uncovered", []), "uncovered criteria"):
         item = coordination._record(value, "uncovered criterion")
         ordinal = criterion(item.get("criterion"), objective)
@@ -265,7 +331,7 @@ def bind_input(
         uncovered.add(ordinal)
         uncovered_rows.append({**deepcopy(item), "inventory_digest": inventory_digest})
     return {
-        "expected_revision": phases.revision(state),
+        "expected_revision": bindings.revision(),
         "objective_binding": objective,
         "links": links,
         "uncovered": uncovered_rows,
@@ -363,20 +429,30 @@ def verify_history(program: Program, state: Record, budget: ReadBudget | None = 
         )
 
 
-def _current(program: Program, state: Record, annotation: Record, reader: Reads) -> None:
+def _current(
+    program: Program,
+    state: Record,
+    annotation: Record,
+    reader: Reads,
+    bindings: _Bindings | None = None,
+) -> None:
     core = _core()
     receipt = coordination._record(annotation["annotation"], "annotation")
     program.verify_refs(
         coordination._items(annotation["evidence"], "coverage evidence"), reader.artifacts
     )
-    captured = core.read_json(
-        program.path(str(reference(annotation["receipt"])["path"])), budget=reader.artifacts
-    )
+    captured = _metadata(program, annotation["receipt"], reader.artifacts)
     require(
         core.canonical(captured) == core.canonical(receipt),
         "Frozen coverage receipt metadata mismatch",
     )
-    current = bind_input(program, state, receipt, reader)
+    current = _bind_input(
+        program,
+        state,
+        receipt,
+        reader,
+        bindings if bindings is not None else _Bindings(program, state, reader),
+    )
     for field in ("objective_binding", "links", "uncovered"):
         require(
             core.canonical(receipt[field]) == core.canonical(current[field]),
@@ -393,6 +469,10 @@ def validate_refs(
     used_paths: set[str] = set()
     used_criteria: set[int] = set()
     reader = reads()
+    bindings = _Bindings(program, state, reader)
+    annotations: dict[bytes, list[Record]] = {}
+    for annotation in annotation_records(state):
+        annotations.setdefault(core.canonical(annotation["receipt"]), []).append(annotation)
     current_objective: Record | None = None
     for value in coordination._items(receipt.get("coverage_refs", []), "coverage_refs"):
         row = coordination._record(value, "coverage reliance")
@@ -401,15 +481,11 @@ def validate_refs(
         path = str(ref["path"])
         require(path not in used_paths, "Duplicate/conflicting coverage reliance")
         used_paths.add(path)
-        matches = [
-            item
-            for item in annotation_records(state)
-            if core.canonical(item["receipt"]) == core.canonical(ref)
-        ]
+        matches = annotations.get(core.canonical(ref), [])
         require(len(matches) == 1, "Coverage reliance requires exact recorded receipt/hash")
         annotation = matches[0]
-        _current(program, state, annotation, reader)
-        current_objective = objective_binding(state)
+        _current(program, state, annotation, reader, bindings)
+        current_objective = bindings.objective()
         criteria = coordination._items(row.get("criteria"), "relied criteria")
         require(bool(criteria), "Coverage reliance needs nonempty criteria")
         bound = coordination._record(annotation["annotation"], "annotation")
@@ -507,9 +583,10 @@ def publication_guard(program: Program, future: Record) -> Callable[[], None] | 
     """Recheck only newly declared reliance against actual pre-state at publication."""
     core = _core()
     path = program.path("backlog.json")
-    if not path.is_file():
+    if not core.observed_is_file(path):
         return None
-    before = core.read_json(path, limit=8 * 1024 * 1024)
+    observed = program.read_registry_observation()
+    before = core.parse_registry_state(observed, path=path)
     existing = {core.canonical(ref) for ref, _ in _acceptance_refs(before)}
     supplied: list[tuple[Record, Record, str | None]] = []
     reader = core.ReadBudget(64 * 1024 * 1024)
@@ -529,9 +606,11 @@ def publication_guard(program: Program, future: Record) -> Callable[[], None] | 
 
     def recheck() -> None:
         program.require_current_location()
-        current = core.read_json(path, limit=8 * 1024 * 1024)
+        current_observation = program.read_registry_observation()
+        current = core.parse_registry_state(current_observation, path=path)
         require(
-            phases.revision(current) == revision,
+            phases.revision(current) == revision
+            and current_observation.storage_sha256 == observed.storage_sha256,
             "Registry changed before coverage reliance publication",
         )
         for ref, metadata, task_id in supplied:
@@ -553,6 +632,7 @@ def prepare_record(program: Program, state: Record, name: str) -> PreparedChange
     """Prepare the real immutable annotation without publishing it."""
     core = _core()
     program.require_current_location()
+    observed = program.read_registry_observation()
     program.validate(state)
     receipt, parsed_hash = core.read_json_frozen(program.path(name))
     require(
@@ -621,7 +701,12 @@ def prepare_record(program: Program, state: Record, name: str) -> PreparedChange
     )
 
     def precommit() -> None:
-        current = core.read_json(program.path("backlog.json"))
+        current_observation = program.read_registry_observation()
+        current = core.parse_registry_state(current_observation, path=program.path("backlog.json"))
+        require(
+            current_observation.storage_sha256 == observed.storage_sha256,
+            "Registry changed before coverage recording publication",
+        )
         preconditions(current)
         program.verify_refs(refs)
 
@@ -633,13 +718,14 @@ def projection(program: Program, state: Record, budget: ReadBudget | None = None
     core = _core()
     validate(state)
     reader = reads(budget)
+    bindings = _Bindings(program, state, reader)
     history: list[Json] = []
     current: Record | None = None
     for annotation in annotation_records(state):
         freshness = "current"
         reasons: list[Json] = []
         try:
-            _current(program, state, annotation, reader)
+            _current(program, state, annotation, reader, bindings)
         except (
             CoverageError,
             core.ProgramError,
@@ -673,31 +759,23 @@ def projection(program: Program, state: Record, budget: ReadBudget | None = None
     annotation = (
         coordination._record(current["annotation"], "annotation") if current is not None else None
     )
+    links_by_ordinal: dict[int, list[Record]] = {}
+    uncovered_by_ordinal: dict[int, list[Json]] = {}
+    if annotation is not None:
+        for value in coordination._items(annotation["links"], "links"):
+            link = coordination._record(value, "link")
+            links_by_ordinal.setdefault(link["criterion"]["ordinal"], []).append(link)
+        for value in coordination._items(annotation.get("uncovered", []), "uncovered"):
+            uncovered_by_ordinal.setdefault(value["criterion"]["ordinal"], []).append(value)
     for ordinal, text in enumerate(criteria):
-        links = (
-            [
-                deepcopy(coordination._record(value, "link"))
-                for value in coordination._items(annotation["links"], "links")
-                if value["criterion"]["ordinal"] == ordinal
-            ]
-            if annotation
-            else []
-        )
-        uncovered = (
-            [
-                deepcopy(value)
-                for value in coordination._items(annotation.get("uncovered", []), "uncovered")
-                if value["criterion"]["ordinal"] == ordinal
-            ]
-            if annotation
-            else []
-        )
+        links = deepcopy(links_by_ordinal.get(ordinal, []))
+        uncovered = deepcopy(uncovered_by_ordinal.get(ordinal, []))
         observations: list[Json] = []
         for link in links:
             for value in coordination._items(link.get("records", []), "records"):
                 artifact = coordination._record(value, "record")
                 ref = reference(artifact["receipt"])
-                captured = core.read_json(program.path(str(ref["path"])), budget=reader.artifacts)
+                captured = _metadata(program, ref, reader.artifacts)
                 observations.append(
                     {
                         "task_id": link["task_id"],
@@ -782,7 +860,7 @@ def projection(program: Program, state: Record, budget: ReadBudget | None = None
                 program.verify_refs(refs, reader.artifacts)
                 require(bool(refs), "Completion lacks immutable receipt")
                 ref = coordination._record(refs[0], "completion receipt")
-                completion = core.read_json(program.path(str(ref["path"])), budget=reader.artifacts)
+                completion = _metadata(program, ref, reader.artifacts)
                 require(
                     core.canonical(completion) == core.canonical(goal_record["completion"]),
                     "Recorded completion receipt metadata mismatch",

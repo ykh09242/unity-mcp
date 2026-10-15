@@ -47,6 +47,7 @@ export const questionStageLabel: Readonly<Record<QuestionStage, string>> = {
   withdrawn: 'Withdrawn',
   unknown: 'Unknown question state',
 };
+const questionTextCache = new WeakMap<JsonRecord, string>();
 export function questionMatches(question: JsonRecord, context: QuestionContext): boolean {
   const historical = question.status === 'resolved';
   if (context.view === 'current' && historical) return false;
@@ -55,19 +56,25 @@ export function questionMatches(question: JsonRecord, context: QuestionContext):
   if (context.goal && string(question.objective_id) !== context.goal) return false;
   if (context.task && !items(question.affected_task_ids).some((id) => id === context.task))
     return false;
-  const label = [question, originalValue(question)]
-    .flatMap((value) => [
-      value.id,
-      value.prompt,
-      value.requested_decision,
-      value.why,
-      ...items(value.options),
-      record(value.outcome).summary,
-    ])
-    .map(string)
-    .join(' ')
-    .toLocaleLowerCase();
-  return label.includes(context.search.trim().toLocaleLowerCase());
+  const query = context.search.trim().toLocaleLowerCase();
+  if (!query) return true;
+  let label = questionTextCache.get(question);
+  if (label === undefined) {
+    label = [question, originalValue(question)]
+      .flatMap((value) => [
+        value.id,
+        value.prompt,
+        value.requested_decision,
+        value.why,
+        ...items(value.options),
+        record(value.outcome).summary,
+      ])
+      .map(string)
+      .join(' ')
+      .toLocaleLowerCase();
+    questionTextCache.set(question, label);
+  }
+  return label.includes(query);
 }
 export function questionGoals(snapshot: Snapshot): readonly string[] {
   return [

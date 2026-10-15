@@ -41,6 +41,22 @@ check inputs against the canonical checkout, retain the comparison evidence, and
 actual current submission. Earlier implementation review remains useful evidence; obtain a real
 acceptance review of the newly submitted packet rather than claiming it approved an unseen receipt.
 
+## Read performance and storage handoff
+
+For a program using prepared dashboard reads, record the canonical program location and
+actual producer checkout in the private recovery note. After changing producer code, use the
+explicit `storage-enable` rebuild described in the tool guide before measuring the delivered
+screen. Preserve the original registry backup and logical history. Relocation requires a new
+model for the destination; a copied store does not establish currentness.
+
+Keep write preparation, cold first response, completed refresh and normal new-revision
+response timings separate. Include the complete freshness checks in measured reads, retain
+slow fallback results, and test representative accumulated history. A fast cached response
+alone does not establish correct refresh behavior. During browser verification, preserve the
+selected route, filters, scroll, focus and unsaved answers across the actual completed refresh.
+Use targeted regression checks for changed dependencies and one frozen integration result;
+repeat a check only after a relevant change, failure or unresolved finding.
+
 ## Roles
 
 | Role | Responsibility | Limit |

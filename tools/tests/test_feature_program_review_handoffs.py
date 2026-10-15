@@ -628,3 +628,85 @@ def test_projected_readiness_rechecks_recorded_reviewer_retirement(submitted):
     assert row["reasons"] == ["reviewer_eligibility_changed"]
     assert state["review_handoffs"]["records"][0]["eligibility"]["status"] == "eligible"
     assert row["native_liveness"] == "unknown"
+
+
+def _rechain(records):
+    previous = None
+    for item in records:
+        item["previous_digest"] = previous
+        item["digest"] = fp.digest({key: value for key, value in item.items() if key != "digest"})
+        previous = item["digest"]
+
+
+@pytest.mark.parametrize("limit", [0, 50])
+def test_full_handoff_bound_preserves_all_history_and_detaches_nested_facts(submitted, limit):
+    # Given more assignments than the display bound, all retained against one exact subject.
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    first = state["review_handoffs"]["records"][0]
+    records = [deepcopy(first) for _ in range(55)]
+    for generation, item in enumerate(records, 1):
+        item["assignment_generation"] = generation
+        item["id"] = item["handoff_id"] + f"-assignment-{generation}"
+    _rechain(records)
+    state["review_handoffs"]["records"] = records
+    full = project(fixture, state)
+    original = deepcopy(full)
+    # When the already assessed full value is bounded for a separate consumer.
+    bounded = handoffs.bound_projection(full, limit=limit)
+    # Then all population counts/order/reference metadata agree without shared mutable facts.
+    assert bounded == handoffs.project_handoffs(
+        state, {"S01": {"context": context(fixture, state), "review_inputs": {}}}, limit=limit
+    )
+    assert bounded["rows"]["total"] == 55
+    assert bounded["rows"]["shown"] == limit
+    assert full == original
+    bounded["counts"]["phase"]["ready"] = 999
+    if limit:
+        bounded["rows"]["items"][0]["subject"]["attempt"] = 999
+        bounded["rows"]["items"][0]["observations"][0]["subject"]["attempt"] = 999
+    assert full == original
+
+
+def test_handoff_bound_rejects_previously_truncated_population(submitted):
+    # Given an assessed envelope whose underlying population has already been clipped.
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    partial = handoffs.project_handoffs(state, {}, limit=0)
+    # When a consumer tries to treat it as the complete shared facts.
+    with pytest.raises(fp.ProgramError):
+        handoffs.bound_projection(partial)
+    # Then missing historical rows cannot silently become a complete empty population.
+
+
+@pytest.mark.parametrize("barrier", ["terminal", "reconciliation"])
+def test_later_history_cannot_legitimize_an_earlier_native_resend(submitted, barrier):
+    # Given a valid exact chronology with a completed or reconciled first dispatch.
+    fixture, state = submitted
+    state = intent(fixture, state)["state"]
+    if barrier == "terminal":
+        state = handoffs.prepare_observation(state, observation(fixture, state))["state"]
+        state = handoffs.prepare_observation(
+            state,
+            observation(
+                fixture, state, "terminal", "done-1", actor_id="reviewer", terminal_kind="finished"
+            ),
+        )["state"]
+    else:
+        state = handoffs.prepare_observation(
+            state, observation(fixture, state, "dispatch_unknown", "unknown-1")
+        )["state"]
+        state = handoffs.prepare_observation(
+            state,
+            observation(fixture, state, "dispatch_failed", "failed-1", reconciles="unknown-1"),
+        )["state"]
+    state = handoffs.prepare_observation(
+        state, observation(fixture, state, identifier="retry-2", dispatch_attempt_id="dispatch-2")
+    )["state"]
+    records = state["review_handoffs"]["records"]
+    records[-2], records[-1] = records[-1], records[-2]
+    _rechain(records)
+    # When the barrier now occurs after the attempted resend, despite a valid hash chain.
+    with pytest.raises(fp.ProgramError):
+        handoffs.project_handoffs(state, {}, limit=0)
+    # Then a later terminal or reconciliation never supplies authority for an earlier row.

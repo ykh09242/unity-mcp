@@ -15,6 +15,7 @@ import {
 import { IconButton } from './icons';
 import { useRef, useSyncExternalStore } from 'react';
 import { useQuestionDrafts } from './question-drafts';
+import { snapshotIndex } from './selectors';
 
 function QuestionRow({
   question,
@@ -126,12 +127,25 @@ export function QuestionList({
     q = context.questions || defaultQuestions;
   const presentation = usePresentation();
   const questions = records(snapshot.questions);
+  const questionIndex = snapshotIndex(snapshot).questions;
+  const stageCounts = new Map(questionStages.map((stage) => [stage, 0]));
+  let historical = 0;
+  for (const question of questions) {
+    const stage = questionStage(question);
+    stageCounts.set(stage, stageCounts.get(stage)! + 1);
+    if (question.status === 'resolved') historical++;
+  }
+  const viewCounts = {
+    current: questions.length - historical,
+    history: historical,
+    all: questions.length,
+  };
   const drafts = useQuestionDrafts();
   useSyncExternalStore(drafts.subscribe, drafts.revision);
   const unavailableDrafts = drafts
     .forProgram(snapshot.program_id)
     .filter(({ questionId, draft }) => {
-      const question = questions.find((item) => item.id === questionId);
+      const question = questionIndex.get(questionId);
       const answer = record(question?.answer);
       const confirmed =
         draft.submission &&
@@ -207,15 +221,7 @@ export function QuestionList({
                     ? 'Question history'
                     : 'All questions',
               )}
-              <span className="muted">
-                {' '}
-                {
-                  questions.filter(
-                    (item) =>
-                      view === 'all' || (view === 'history') === (item.status === 'resolved'),
-                  ).length
-                }
-              </span>
+              <span className="muted"> {viewCounts[view]}</span>
             </button>
           ))}
         </div>
@@ -245,8 +251,7 @@ export function QuestionList({
                 <option value="">{i18n.t('All states')}</option>
                 {questionStages.map((stage) => (
                   <option key={stage} value={stage}>
-                    {i18n.t(questionStageLabel[stage])} (
-                    {questions.filter((item) => questionStage(item) === stage).length})
+                    {i18n.t(questionStageLabel[stage])} ({stageCounts.get(stage)})
                   </option>
                 ))}
               </select>

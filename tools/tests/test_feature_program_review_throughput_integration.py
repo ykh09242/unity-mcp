@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from tools.tests.test_feature_program import HEAD, fp, make_small_program
+from tools.tests.test_feature_program import HEAD, fp, make_small_program, _mock_link_lstat
 
 
 @pytest.fixture
@@ -617,12 +617,12 @@ def test_selected_failed_batch_unknown_operation_count_remains_unknown_in_brief(
     assert snapshot["brief"]["record_batch"]["operations"]["omitted"] is None
 
 
-def _shared_provenance_rounds(fixture):
+def _shared_provenance_rounds(fixture, *, origin_payload="retained"):
     from tools.tests.test_feature_program_evidence_reuse import selection
 
     assert fixture.claim() == 0
     reuse = fp.flow_module("evidence_reuse")
-    origin = fixture.write("design/shared-origin.json", {"proof": "retained"})
+    origin = fixture.write("design/shared-origin.json", {"proof": origin_payload})
     origin_ref = {"path": origin, "sha256": fp.sha(fixture.program.path(origin).read_bytes())}
     state = fixture.program.load()
     plan = reuse.plan_evidence(fixture.program, state, selection([origin_ref]))
@@ -799,21 +799,11 @@ def test_lexical_path_reuse_keeps_filesystem_link_checks_fresh(tmp_path, monkeyp
     candidate = tmp_path / "proof.txt"
     candidate.write_bytes(b"inside")
     assert fp.safe_path(tmp_path, candidate.name) == candidate
-    normal = getattr(type(candidate), kind, lambda _path: False)
-    checks = []
-
-    def changed(path):
-        if path == candidate:
-            checks.append(path)
-            return True
-        return normal(path)
-
-    monkeypatch.setattr(type(candidate), kind, changed, raising=False)
+    _mock_link_lstat(monkeypatch, candidate, kind)
     # When: the same lexical name now resolves through a linked component.
     # Then: lexical cache reuse cannot skip fresh symlink or junction rejection.
     with pytest.raises(fp.ProgramError, match="Linked path rejected"):
         fp.safe_path(tmp_path, candidate.name)
-    assert checks == [candidate]
 
 
 def test_lexical_path_cache_bypasses_long_valid_names_without_rejection(monkeypatch):
@@ -979,3 +969,660 @@ def test_verification_projection_revision_is_fresh_for_each_state(fixture, monke
         fp.verification._collection(state, [], "/verification/records")["reference"]["revision"]
         == expected_revision
     )
+
+
+def make_snapshot_history_fixture(repo, *, task_count=60, rounds=3):
+    """Build new isolated synthetic ordinary history for an explicitly invoked scale check.
+
+    No live program is read or copied; fake Git identity is fixture-only. Native/provider
+    observations are deliberately absent, so the generated packets never claim real dispatch.
+    """
+    from tools.tests.test_feature_program import HEAD, make_small_program
+
+    fp.require(not repo.exists(), "History fixture destination must not exist")
+    fp.require(
+        0 < task_count <= 120 and 0 < rounds <= 12 and task_count * rounds <= 240,
+        "Fixture history must stay inside the ordinary evidence-file bound",
+    )
+    original_git = fp.git
+    fp.git = lambda _repo, argv: "" if argv[0] == "status" else HEAD
+    try:
+        sample = make_small_program(
+            repo, "snapshot-scale-synthetic", tuple(f"S{i:03d}" for i in range(task_count))
+        )
+        _register_reviewer(sample)
+        for index in range(task_count):
+            task_id = f"S{index:03d}"
+            worker = f"synthetic-worker-{index}"
+            assert sample.claim(task_id, owner=worker) == 0
+            for number in range(1, rounds + 1):
+                execution = sample.receipt(task_id, number)
+                handoff = sample.write(
+                    f"evidence/{task_id}/attempt-1/handoff-{number}.json",
+                    {"reviewer_id": "reviewer"},
+                )
+                assert (
+                    sample.run(
+                        "submit",
+                        task_id,
+                        "--owner",
+                        worker,
+                        "--receipt",
+                        execution,
+                        "--handoff",
+                        handoff,
+                    )
+                    == 0
+                )
+                accepted = number == rounds
+                review = sample.review(task_id, accepted, number)
+                assert (
+                    sample.run("complete" if accepted else "rework", task_id, "--review", review)
+                    == 0
+                )
+        sample.program.load()
+        return sample
+    finally:
+        fp.git = original_git
+
+
+def test_larger_history_factory_uses_normal_records_and_preserves_full_population(tmp_path, capsys):
+    # Given a fresh isolated fixture generated through ordinary submit/review controls.
+    sample = make_snapshot_history_fixture(tmp_path / "history", task_count=2, rounds=2)
+    capsys.readouterr()
+    # When the real snapshot captures all retained history.
+    snapshot = fp.read_snapshot(sample.program.repo, sample.program.directory)
+    # Then all exact handoff subjects survive, without invented native observations.
+    assert snapshot["counts"]["done"] == 2
+    assert snapshot["review_handoffs"]["rows"]["total"] == 4
+    assert all(
+        observation["kind"] in {"ready_recorded", "intent"} and observation["observed_at"] is None
+        for row in snapshot["review_handoffs"]["rows"]["items"]
+        for observation in row["observations"]
+    )
+    assert snapshot["integrity"]["status"] == "fresh"
+
+
+def _enable_storage(fixture):
+    with fixture.program.lock():
+        return fp.storage_enable(
+            fixture.program, owner="leader", reason="Synthetic storage fixture"
+        )
+
+
+def test_storage_enable_preserves_exact_body_backup_and_complete_snapshot(fixture, monkeypatch):
+    # Given: a legacy BODY has meaningful whitespace and rendered views.
+    from tools.tests.test_feature_program_web import web
+
+    body = fixture.program.read_state_bytes()
+    noncanonical = json.dumps(json.loads(body), ensure_ascii=True).encode()
+    fixture.program.path("backlog.json").write_bytes(noncanonical)
+    before = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    # When: explicit enable changes only the physical representation.
+    result = _enable_storage(fixture)
+    observation = fixture.program.read_registry_observation()
+    # Then: logical bytes/history and semantic projection remain exact.
+    assert observation.body_bytes == noncanonical
+    assert fixture.program.path(result["backup"]["path"]).read_bytes() == noncanonical
+
+    def unexpected_full(*_args, **_kwargs):
+        raise AssertionError("The complete current model should be usable")
+
+    monkeypatch.setattr(fp, "_capture_projection", unexpected_full)
+    after = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    assert web.snapshot_etag(after) == web.snapshot_etag(before)
+    assert not any(
+        item["path"] == ".feature-program.lock" for item in after["brief"].get("recovery", [])
+    )
+
+
+def test_storage_normal_write_prepares_future_views_without_replaying_history(fixture):
+    # Given: enabled state has an immutable matching initial model.
+    from tools.tests.test_feature_program_web import web
+
+    _enable_storage(fixture)
+    original = fixture.program.load()
+    # When: a normal supported business command commits one language event.
+    assert (
+        fixture.run(
+            "language", "--owner", "leader", "--reason", "Synthetic language", "--value", "ko"
+        )
+        == 0
+    )
+    observation = fixture.program.read_registry_observation()
+    model = fp.flow_module("storage").load_model(
+        fixture.program.repo, fixture.program.directory, observation.model_id
+    )
+    fast = fp._read_materialized_projection(fixture.program.repo, fixture.program.directory)
+    strict = fp._read_projection(fixture.program.repo, fixture.program.directory, brief_only=True)
+    # Then: one new business event and future view/lock postconditions are current.
+    assert len(fixture.program.load()["events"]) == len(original["events"]) + 1
+    assert model["binding"]["body_sha256"] == observation.body_sha256
+    assert fast is not None and model["eligible"] is True
+    assert fast["brief"] == strict
+    assert not any("Derived view drift:" in warning for warning in fast["integrity"]["warnings"])
+    assert web.snapshot_etag(fast) == web.snapshot_etag(model["snapshot"])
+
+
+def test_storage_explicit_repair_preserves_body_and_original_backup(fixture, monkeypatch):
+    # Given: producer identity changes without a business state transition.
+    _enable_storage(fixture)
+    original = fixture.program.read_registry_observation()
+    backups = {
+        p: p.read_bytes()
+        for p in fixture.program.directory.glob("recovery/storage/*/original-backlog.json")
+    }
+    module = fp.flow_module("read_model")
+    actual = module.producer_identity
+
+    def changed(repo):
+        value = actual(repo)
+        value["runtime"]["parser_version"] += 1
+        return value
+
+    monkeypatch.setattr(module, "producer_identity", changed)
+    assert fp._read_materialized_projection(fixture.program.repo, fixture.program.directory) is None
+    # When: the normal explicit storage command rebuilds a selected object.
+    result = _enable_storage(fixture)
+    # Then: BODY/backup are untouched and a fresh eligible model is selected.
+    assert result["status"] == "repaired"
+    assert fixture.program.read_state_bytes() == original.body_bytes
+    assert fixture.program.read_registry_observation().model_id != original.model_id
+    assert all(path.read_bytes() == content for path, content in backups.items())
+    assert (
+        fp._read_materialized_projection(fixture.program.repo, fixture.program.directory)
+        is not None
+    )
+
+
+def test_storage_ineligible_normal_write_commits_without_servable_dto(fixture, monkeypatch):
+    # Given: an enabled producer encounters an explicitly unrepresentable branch.
+    _enable_storage(fixture)
+    module = fp.flow_module("read_model")
+    original = module.Collector.expect_view
+
+    def opaque(self, root, name, content):
+        self.ineligible("synthetic_unrepresentable_branch")
+        return original(self, root, name, content)
+
+    monkeypatch.setattr(module.Collector, "expect_view", opaque)
+    # When: ordinary valid business state is published.
+    assert (
+        fixture.run(
+            "language", "--owner", "leader", "--reason", "Synthetic opaque branch", "--value", "ko"
+        )
+        == 0
+    )
+    observation = fixture.program.read_registry_observation()
+    model = fp.flow_module("storage").load_model(
+        fixture.program.repo, fixture.program.directory, observation.model_id
+    )
+    # Then: a bounded unavailable model never becomes a cached passing DTO.
+    assert fixture.program.load()["communication_language"] == "ko"
+    assert model["eligible"] is False and "snapshot" not in model
+    assert fp._read_materialized_projection(fixture.program.repo, fixture.program.directory) is None
+
+
+def test_storage_initial_enable_rejects_ineligible_model_without_swapping_registry(
+    fixture, monkeypatch
+):
+    # Given: a deterministic unsupported branch is identified during preparation.
+    before = fixture.program.path("backlog.json").read_bytes()
+    module = fp.flow_module("read_model")
+    original = module.Collector.expect_view
+
+    def opaque(self, root, name, content):
+        self.ineligible("synthetic_unrepresentable_branch")
+        original(self, root, name, content)
+
+    monkeypatch.setattr(module.Collector, "expect_view", opaque)
+    # When: explicit enable is attempted.
+    with pytest.raises(fp.ProgramError):
+        _enable_storage(fixture)
+    # Then: the original legacy authority is preserved.
+    assert fixture.program.path("backlog.json").read_bytes() == before
+
+
+def test_storage_real_guard_failure_does_not_commit_normal_operation(fixture):
+    # Given: enabled state has a valid proposed business transition.
+    _enable_storage(fixture)
+    before = fixture.program.read_registry_observation()
+    state = fixture.program.load()
+    state["communication_language"] = "ko"
+
+    def fail():
+        raise fp.ProgramError("Synthetic actual publication guard rejection")
+
+    # When: the normal guard rejects after model preparation.
+    with fixture.program.lock(), pytest.raises(fp.ProgramError):
+        fixture.program.save(state, before_publish=fail)
+    # Then: no business transition or selected-object change occurred.
+    assert fixture.program.read_registry_observation() == before
+
+
+def test_storage_same_body_selector_race_blocks_publication(fixture):
+    # Given: an enabled state is prepared under the normal lock.
+    _enable_storage(fixture)
+    storage = fp.flow_module("storage")
+    before = fixture.program.read_registry_observation()
+    state = fixture.program.load()
+    state["communication_language"] = "ko"
+    raced = storage.encode_registry(before.body_bytes, "f" * 64)
+
+    def race():
+        fixture.program.path("backlog.json").write_bytes(raced)
+
+    # When: another physical selection appears after preparation.
+    with fixture.program.lock(), pytest.raises(fp.ProgramError):
+        fixture.program.save(state, before_publish=race)
+    # Then: raw CAS prevents this operation from overwriting the observed winner.
+    assert fixture.program.path("backlog.json").read_bytes() == raced
+
+
+@pytest.mark.parametrize(
+    "drift", ["view", "missing_source", "changed_source", "new_publication_marker", "foreign_lock"]
+)
+def test_storage_changed_dependency_uses_strict_fallback(fixture, drift):
+    # Given: a complete current selected model.
+    _enable_storage(fixture)
+    program = fixture.program
+    # When: one of its actual observed inputs changes.
+    if drift == "view":
+        program.path("BOARD.md").write_text("Synthetic drift", encoding="utf-8")
+    elif drift == "missing_source":
+        program.path("source/feature-opportunities.md").unlink()
+    elif drift == "changed_source":
+        program.path("source/feature-opportunities.md").write_text(
+            "Synthetic changed source", encoding="utf-8"
+        )
+    elif drift == "new_publication_marker":
+        program.path(fp.planning.TRACKING).write_text("{}", encoding="utf-8")
+    else:
+        program.path(".feature-program.lock").write_bytes(b'{"pid":1}')
+    # Then: a stale success cannot be returned from the selected object.
+    assert fp._read_materialized_projection(program.repo, program.directory) is None
+
+
+def test_storage_final_raw_read_barrier_rejects_selector_only_race(fixture, monkeypatch):
+    # Given: a valid model's full dependency validation succeeds.
+    _enable_storage(fixture)
+    module = fp.flow_module("read_model")
+    validate = module.validate
+    original = fixture.program.read_registry_observation()
+
+    def raced(*args, **kwargs):
+        result = validate(*args, **kwargs)
+        fixture.program.path("backlog.json").write_bytes(
+            fp.flow_module("storage").encode_registry(original.body_bytes, "e" * 64)
+        )
+        return result
+
+    monkeypatch.setattr(module, "validate", raced)
+    # When: physical selection changes just before the closing registry barrier.
+    with pytest.raises(fp.ProgramError):
+        fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    # Then: unchanged logical bytes cannot authorize a stale response.
+    assert fixture.program.read_state_bytes() == original.body_bytes
+
+
+def test_storage_relocation_keeps_raw_archive_and_publishes_legacy_destination(fixture):
+    # Given: the enabled source has an exact immutable envelope.
+    _enable_storage(fixture)
+    original = fixture.program.read_registry_observation()
+    # When: ordinary relocation copies evidence and republishes changed source identity.
+    assert (
+        fixture.run(
+            "relocate",
+            "--owner",
+            "leader",
+            "--reason",
+            "Synthetic move",
+            "--destination",
+            "moved-storage",
+        )
+        == 0
+    )
+    target = fp.Program(fixture.program.repo, fixture.program.repo / "moved-storage")
+    state = target.load()
+    # Then: the archive hashes raw storage and destination selects no stale root-bound model.
+    assert target.read_registry_observation().format == "json"
+    event = next(item for item in state["events"] if item["action"] == "relocate")
+    archived = target.path(
+        f"recovery/relocations/{event['original_registry_sha256']}/original-backlog.json"
+    )
+    assert archived.read_bytes() == original.raw_bytes
+    assert (
+        fp.planning.coverage_source_identity(target, state, state["source"], fp.ReadBudget())[
+            "path"
+        ]
+        == event["previous_source"]["path"]
+    )
+
+
+@pytest.mark.parametrize("failure", ["bounded", "permission", "linked_admission"])
+def test_storage_caught_source_failure_is_nonservable_after_repair(fixture, monkeypatch, failure):
+    # Given: actual ordinary review projection catches a source observation failure.
+    from pathlib import Path
+    from tools.tests.test_feature_program_web import web
+
+    assert fixture.claim() == 0
+    fixture.submit()
+    program = fixture.program
+    module = fp.flow_module("read_model")
+    observation = program.read_registry_observation()
+    collector = module.Collector(
+        program.repo,
+        program.directory,
+        program_id=program.load()["program_id"],
+        body_sha256=observation.body_sha256,
+        producer=module.producer_identity(program.repo),
+        query=module.QUERY,
+    )
+    source = program.repo / "src/S01.py"
+    normal_read = fp.bounded_bytes
+    normal_open = Path.open
+    with monkeypatch.context() as active:
+        if failure == "bounded":
+            active.setattr(
+                fp,
+                "bounded_bytes",
+                lambda path, limit: normal_read(path, 0 if path == source else limit),
+            )
+        elif failure == "permission":
+
+            def unavailable(path, *args, **kwargs):
+                if path == source:
+                    raise PermissionError("Synthetic source admission failure")
+                return normal_open(path, *args, **kwargs)
+
+            active.setattr(Path, "open", unavailable)
+        else:
+            _mock_link_lstat(active, source, "is_symlink")
+        with module.collect(collector):
+            stale = fp.read_snapshot(program.repo, program.directory)
+        model = collector.finish(stale)
+    # When: that actual source becomes readable/admissible again with original bytes.
+    repaired = fp.read_snapshot(program.repo, program.directory)
+    # Then: no persisted stale/warning DTO can survive the repaired source as cached success.
+    assert model["eligible"] is False and "snapshot" not in model
+    assert (
+        module.validate(
+            model, program, observation=observation, observer=fp._ClosingObserver(program)
+        )
+        is None
+    )
+    assert web.snapshot_etag(stale) != web.snapshot_etag(repaired)
+
+
+def test_storage_final_dependency_close_runs_after_normal_callback(fixture):
+    # Given: a valid new state and a callback that changes a noncanonical model input.
+    _enable_storage(fixture)
+    original = fixture.program.read_registry_observation()
+    state = fixture.program.load()
+    state["communication_language"] = "ko"
+
+    def changed_source():
+        fixture.program.path("source/feature-opportunities.md").write_text(
+            "Changed after preparation", encoding="utf-8"
+        )
+
+    # When: the actual callback changes source after the immutable object was staged.
+    with fixture.program.lock(), pytest.raises(fp.ProgramError):
+        fixture.program.save(state, before_publish=changed_source)
+    # Then: complete final dependency closure prevents selecting a stale computed model.
+    assert fixture.program.read_registry_observation().raw_bytes == original.raw_bytes
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_storage_explicit_repair_renders_drifted_views_without_history_replay(fixture, missing):
+    # Given: committed state has drifted or missing derived output.
+    _enable_storage(fixture)
+    original = fixture.program.read_state_bytes()
+    if missing:
+        fixture.program.path("BOARD.md").unlink()
+    else:
+        fixture.program.path("BOARD.md").write_text("Synthetic drift", encoding="utf-8")
+    # When: explicit derived repair publishes the matching object and normal pure views.
+    result = _enable_storage(fixture)
+    # Then: the repaired model is usable without altering the logical body.
+    assert result["status"] == "repaired"
+    assert fixture.program.read_state_bytes() == original
+    assert (
+        fp._read_materialized_projection(fixture.program.repo, fixture.program.directory)
+        is not None
+    )
+
+
+def test_storage_initial_enable_reclaims_only_unselected_interrupted_stages(fixture, monkeypatch):
+    # Given: explicit enable is interrupted after staging but before canonical publication.
+    original = fixture.program.read_registry_observation()
+    close = fp._close_staged_model
+    counter = iter(range(20))
+    monkeypatch.setattr(fp, "utc", lambda: f"2026-10-15T01:00:{next(counter):02d}+00:00")
+
+    def fail(_program, _staged):
+        raise fp.ProgramError("Synthetic interruption before atomic publication")
+
+    with monkeypatch.context() as active:
+        active.setattr(fp, "_close_staged_model", fail)
+        for _ in range(2):
+            with pytest.raises(fp.ProgramError):
+                _enable_storage(fixture)
+    assert fixture.program.read_registry_observation() == original
+    # When: the actual explicit operation resumes under a fresh normal writer lock.
+    result = _enable_storage(fixture)
+    # Then: orphan stages cannot exhaust retention or replay business state.
+    assert result["status"] == "enabled"
+    assert fixture.program.read_state_bytes() == original.body_bytes
+    assert close is fp._close_staged_model
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_storage_explicit_repair_rebuilds_only_damaged_selected_model(fixture, damage):
+    # Given: logical state is valid but the schema-valid derived store lost its selected object.
+    import sqlite3
+
+    _enable_storage(fixture)
+    program = fixture.program
+    original = program.read_registry_observation()
+    storage = fp.flow_module("storage")
+    with sqlite3.connect(storage._store_path(program.repo, program.directory)) as connection:
+        if damage == "missing":
+            connection.execute("DELETE FROM model_objects WHERE object_id=?", (original.model_id,))
+        else:
+            payload = b"corrupt derived bytes"
+            connection.execute(
+                "UPDATE model_objects SET payload=?,byte_length=? WHERE object_id=?",
+                (payload, len(payload), original.model_id),
+            )
+    assert fp._read_materialized_projection(program.repo, program.directory) is None
+    # When: the authorized explicit repair rebuilds the exact same logical BODY.
+    result = _enable_storage(fixture)
+    # Then: no business history is replayed and the rebuilt selection is usable.
+    assert result["status"] == "repaired"
+    assert program.read_state_bytes() == original.body_bytes
+    assert fp._read_materialized_projection(program.repo, program.directory) is not None
+
+
+def test_storage_prepared_provenance_is_assessed_once_with_exact_snapshot(fixture, monkeypatch):
+    # Given: real retained controls require full graph and source currentness assessment.
+    _shared_provenance_rounds(fixture)
+    expected = fp.read_snapshot(fixture.program.repo, fixture.program.directory)[
+        "evidence_preparation"
+    ]
+    normal = fp.verify_provenance
+    calls = []
+
+    def counted(program, state, budget=None):
+        calls.append(state)
+        return normal(program, state, budget)
+
+    monkeypatch.setattr(fp, "verify_provenance", counted)
+    # When: a normal explicit writer prepares and selects the exact complete model.
+    _enable_storage(fixture)
+    observation = fixture.program.read_registry_observation()
+    model = fp.flow_module("storage").load_model(
+        fixture.program.repo, fixture.program.directory, observation.model_id
+    )
+    # Then: one strict assessment supplies the same retained facts and final-current model.
+    assert len(calls) == 1
+    assert model["eligible"] is True
+    assert model["snapshot"]["evidence_preparation"] == expected
+    assert (
+        fp._read_materialized_projection(fixture.program.repo, fixture.program.directory)
+        is not None
+    )
+
+
+@pytest.mark.parametrize("change", ["origin", "copy"])
+def test_storage_prepared_provenance_final_close_rejects_transitive_mutation(
+    fixture, monkeypatch, change
+):
+    # Given: an enabled program has a strictly assessed retained origin and its immutable copy.
+    target = _shared_provenance_rounds(fixture)
+    _enable_storage(fixture)
+    state = fixture.program.load()
+    state["communication_language"] = "ko"
+    original = fixture.program.read_registry_observation()
+    attachment = target["attachments"][0]
+    path = fixture.program.path(
+        attachment["origin_ref" if change == "origin" else "attachment_ref"]["path"]
+    )
+
+    def changed_evidence():
+        path.write_bytes(path.read_bytes() + b" changed after preparation")
+
+    # When: the normal callback changes transitive proof after prepared facts were reused.
+    with fixture.program.lock(), pytest.raises(fp.ProgramError):
+        fixture.program.save(state, before_publish=changed_evidence)
+    # Then: the fresh final model image rejects publication and leaves the exact registry intact.
+    assert fixture.program.read_registry_observation().raw_bytes == original.raw_bytes
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_storage_prepared_provenance_does_not_authorize_later_reads(fixture, monkeypatch, selected):
+    # Given: earlier writer facts were valid, but a retained origin has since changed.
+    target = _shared_provenance_rounds(fixture)
+    _enable_storage(fixture)
+    path = fixture.program.path(target["attachments"][0]["origin_ref"]["path"])
+    path.write_bytes(path.read_bytes() + b" later changed")
+    normal = fp.verify_provenance
+    calls = []
+
+    def counted(program, state, budget=None):
+        calls.append(state)
+        return normal(program, state, budget)
+
+    monkeypatch.setattr(fp, "verify_provenance", counted)
+    # When: an ordinary or explicitly selected read captures its own current evidence image.
+    if selected:
+        name = fixture.write("design/invalid-selected-evidence.json", {"kind": "unknown"})
+        with pytest.raises(fp.ProgramError):
+            fp.read_snapshot(
+                fixture.program.repo, fixture.program.directory, evidence_preparation=name
+            )
+    else:
+        snapshot = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+        assert snapshot["evidence_preparation"]["status"] == "unavailable"
+    # Then: retained writer facts cannot skip either the independent check or explicit selection.
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("change", ["identity", "content"])
+def test_storage_prepared_provenance_rejects_transplanted_state(fixture, monkeypatch, change):
+    from dataclasses import replace
+
+    # Given: a real writer produced checked facts for one exact proposed state.
+    original = fixture.program.read_registry_observation()
+    capture = fp._capture_projection
+
+    def swapped(*args, **kwargs):
+        proposed = kwargs["_proposed"]
+        if change == "identity":
+            prepared = replace(proposed.prepared, state=deepcopy(proposed.prepared.state))
+        else:
+            proposed.prepared.state["communication_language"] = "ko"
+            prepared = proposed.prepared
+        kwargs["_proposed"] = replace(proposed, prepared=prepared)
+        return capture(*args, **kwargs)
+
+    monkeypatch.setattr(fp, "_capture_projection", swapped)
+    # When: an equal but different state, or changed bytes, tries to consume that exact proof.
+    with pytest.raises(fp.ProgramError, match="Prepared state changed before projection"):
+        _enable_storage(fixture)
+    # Then: the original registry is never selected with another state's facts.
+    assert fixture.program.read_registry_observation().raw_bytes == original.raw_bytes
+
+
+def test_storage_prepared_provenance_preserves_projection_transitive_byte_budget(
+    fixture, monkeypatch
+):
+    # Given: valid transitive origin/copy bytes exceed the projection budget, not save validation.
+    _shared_provenance_rounds(fixture, origin_payload="x" * (16 * 1024))
+    _enable_storage(fixture)
+    original = fixture.program.read_registry_observation()
+    state = fixture.program.load()
+    state["communication_language"] = "ko"
+    normal = fp.ReadBudget
+
+    def reduced_budget(remaining=72 * 1024 * 1024, cached=None):
+        return normal(32 * 1024 if remaining == 64 * 1024 * 1024 else remaining, cached)
+
+    monkeypatch.setattr(fp, "ReadBudget", reduced_budget)
+    strict = fp._capture_projection(
+        fixture.program.repo, fixture.program.directory, fp._SourceObservations(), False, None
+    )
+    assert strict["evidence_preparation"]["status"] == "unavailable"
+    # When: normal enabled publication builds from the larger valid save-ledger proof.
+    with fixture.program.lock():
+        fixture.program.save(state)
+    observation = fixture.program.read_registry_observation()
+    model = fp.flow_module("storage").load_model(
+        fixture.program.repo, fixture.program.directory, observation.model_id
+    )
+    # Then: the smaller projection admission cannot become a servable ready cached result.
+    assert observation.body_sha256 != original.body_sha256
+    assert model["eligible"] is False
+    assert "snapshot" not in model
+    assert "bounded_read_unavailable" in model["reasons"]
+
+
+def test_storage_prepared_provenance_readset_tracks_warm_hits_without_unrelated_bytes(
+    fixture, monkeypatch
+):
+    # Given: the provenance graph is already warm alongside an unrelated artifact.
+    target = _shared_provenance_rounds(fixture)
+    state = fixture.program.load()
+    unrelated = fixture.program.path("design/unrelated.bin")
+    unrelated.write_bytes(b"not a provenance dependency")
+    budget = fp.ReadBudget()
+    budget.read(unrelated, 1024)
+    fp.verify_provenance(fixture.program, state, budget)
+    normal = fp.ReadBudget
+
+    def warmed_budget(remaining=72 * 1024 * 1024, cached=None):
+        return (
+            budget
+            if remaining == 72 * 1024 * 1024 and cached is None
+            else normal(remaining, cached)
+        )
+
+    monkeypatch.setattr(fp, "ReadBudget", warmed_budget)
+    # When: a strict save validation retains only its provenance call's already-warm reads.
+    checked = fixture.program.validate(state)
+    reads = checked.provenance_reads
+    assert reads is not None
+    paths = {item.path for item in reads}
+    assert unrelated not in paths
+    assert fixture.program.path(target["manifest_ref"]["path"]) in paths
+    assert fixture.program.path(target["attachments"][0]["origin_ref"]["path"]) in paths
+    # Then: replay charges warm controls and transitive bytes once, including own per-path bounds.
+    receiving = normal(sum(len(item.content) for item in reads))
+    receiving._charge_provenance(reads)
+    assert receiving.remaining == 0
+    receiving._charge_provenance(reads)
+    assert receiving.remaining == 0
+    changed = reads[0]
+    conflicting = normal(cached={changed.path: b"different already observed image"})
+    with pytest.raises(fp.ProgramError):
+        conflicting._charge_provenance(reads)

@@ -7,6 +7,7 @@ import { selectedPlan } from './flow-plan';
 import { SnapshotResponse } from './useSnapshot';
 import { LanguageProvider, PREFERENCE_KEY, translationTools } from './i18n';
 import { ClosureSummary } from './flow-closure-ui';
+import { closureContext } from './flow-closure';
 import { PlanSummary } from './flow-plan-ui';
 
 const closure = (extra: JsonRecord = {}): JsonRecord => ({
@@ -70,6 +71,20 @@ const plan = (extra: JsonRecord = {}): JsonRecord => ({
   ...extra,
 });
 describe('flow closure and overview', () => {
+  it('revalidates closure and plan references in independent same-revision snapshots', () => {
+    const valid = flowFixture({ closure: closure() });
+    const invalid = flowFixture({
+      closure: closure({ reference: { ...flowReference(), revision: 'stale' } }),
+    });
+    expect(valid.revision).toBe(invalid.revision);
+    expect(closureContext(valid)?.status).toBe('incomplete');
+    expect(closureContext(invalid)).toBeNull();
+    expect(closureContext(valid)?.status).toBe('incomplete');
+    const selected = plan();
+    expect(selectedPlan(valid, selected)?.publication).toBe('partial');
+    expect(selectedPlan(valid, plan({ observed_revision: 'stale' }))).toBeNull();
+    expect(selectedPlan(invalid, selected)?.publication).toBe('partial');
+  });
   it.each(['en', 'ko'])(
     'localizes fixed closure readiness and plan diagnostics while preserving authored limitations in %s',
     (locale) => {

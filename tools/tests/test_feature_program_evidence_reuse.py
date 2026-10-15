@@ -1151,6 +1151,60 @@ def test_saved_integrated_reviewer_cannot_become_current_director(gate):
     assert reuse.validate_selection(gate.program, current, saved)["summary"]["status"] == "stale"
 
 
+def test_same_epoch_metadata_reads_preserve_each_hash_and_fresh_later_admission(
+    fixture, monkeypatch
+):
+    # Given one explicitly captured immutable metadata image and its exact expected reference.
+    ref = reference(fixture, "evidence/S01/attempt-1/checked-image.bin", b"original exact bytes")
+    reader = fp.ReadBudget()
+    original = fp.safe_path
+    admissions = []
+
+    def counted(root, name):
+        if root == fixture.program.directory and name == ref["path"]:
+            admissions.append(name)
+        return original(root, name)
+
+    monkeypatch.setattr(fp, "safe_path", counted)
+    # When several consumers use the same existing ledger and still supply their own hash.
+    assert reuse._read(fixture.program, ref, reader) == b"original exact bytes"
+    assert reuse._read(fixture.program, ref, reader) == b"original exact bytes"
+    assert len(admissions) == 1
+    with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+        reuse._read(fixture.program, {**ref, "sha256": "f" * 64}, reader)
+    # Then a later independent epoch observes changed bytes rather than the prior success.
+    fixture.program.path(ref["path"]).write_bytes(b"later changed bytes")
+    with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+        reuse._read(fixture.program, ref, fp.ReadBudget())
+
+
+def test_checked_metadata_decode_is_strict_once_and_returns_isolated_documents(
+    fixture, monkeypatch
+):
+    # Given a typed control image, as distinct from opaque retained artifact bytes.
+    ref = reference(fixture, "evidence/S01/attempt-1/checked-control.json", b'{"values": [1]}')
+    reader = fp.ReadBudget()
+    original = fp.json.loads
+    decoded = []
+
+    def counted(*args, **kwargs):
+        decoded.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(fp.json, "loads", counted)
+    # When a consumer mutates its returned document before another consumer reads it.
+    first = reuse._json(fixture.program, ref, reader)
+    first["values"].append(2)
+    assert reuse._json(fixture.program, ref, reader) == {"values": [1]}
+    assert len(decoded) == 1
+    # Then strict control parsing and per-consumer bounds still reject malformed images.
+    bad = reference(fixture, "evidence/S01/attempt-1/duplicate-control.json", b'{"x":1,"x":2}')
+    with pytest.raises(fp.ProgramError, match="Duplicate JSON key"):
+        reuse._json(fixture.program, bad, reader)
+    with pytest.raises(fp.ProgramError, match="bounded read"):
+        reader.capture(fixture.program.directory, ref["path"], 1)
+
+
 def test_unrelated_recorded_actor_observation_does_not_invalidate_ready_preparation(gate):
     # Given ready completion and the same actual authority before/after an unrelated actor record.
     saved = _completion_preparation(gate)["completion"]

@@ -83,6 +83,40 @@ function fixture(entries: JsonRecord) {
 }
 
 describe('source-bound presentation', () => {
+  it('applies one origin binding to every retained copy without crossing hash or value boundaries', () => {
+    const origin = { path: 'evidence/shared-review.json', sha256: 'a'.repeat(64) };
+    const raw = fixture({
+      shared: entry('receipt_narrative', 'T1', 'reason', '/reason', '공유된 검토 근거', {
+        target: {
+          kind: 'receipt_narrative',
+          entity_id: 'T1',
+          field: 'reason',
+          source_path: origin.path,
+        },
+        origin: { ...origin, pointer: '/reason' },
+        binding: { source_value_sha256: presentationDigest('Shared review reason') },
+      }),
+    });
+    const reviews = [
+      { review: origin, review_record: { reason: 'Shared review reason' } },
+      { review: origin, review_record: { reason: 'Shared review reason' } },
+      {
+        review: { ...origin, sha256: 'b'.repeat(64) },
+        review_record: { reason: 'Shared review reason' },
+      },
+      { review: origin, review_record: { reason: 'Different value' } },
+    ];
+    const snapshot = { ...raw, tasks: [{ ...raw.tasks[0]!, attempts: [{ rounds: reviews }] }] };
+    const shown = records(records(presentSnapshot(snapshot).tasks[0]!.attempts)[0]!.rounds);
+    expect(shown.map((round) => (round.review_record as JsonRecord).reason)).toEqual([
+      '공유된 검토 근거',
+      '공유된 검토 근거',
+      'Shared review reason',
+      'Different value',
+    ]);
+    expect(originalValue(shown)).toEqual(reviews);
+    expect(reviews[0]?.review_record.reason).toBe('Shared review reason');
+  });
   it.each([
     {
       originals: ['Original finding', 'Original finding'],

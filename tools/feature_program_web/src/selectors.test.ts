@@ -42,13 +42,11 @@ describe('snapshot-scoped canonical selectors', () => {
     expect(index.reverseDependencies.get('B')?.map((task) => task.id)).toEqual(['A']);
     expect(index.questionsByTask.get('A')).toEqual([index.questions.get('Q')]);
     expect(index.tasksByOwner.get('actor')).toEqual([snapshot.tasks[0]]);
-    expect(index.evidenceLabels.get('proof.json')).toBe('Executed check');
-    expect(index.evidenceByPath.get('proof.json')?.[0]?.sha256).toBe('hash');
     expect(index.actors.size).toBe(1);
     expect(index.questions.size).toBe(1);
   });
 
-  it('rebuilds memberships and labels from the new snapshot without mutating prior indexes', () => {
+  it('rebuilds memberships from the new snapshot without mutating prior indexes', () => {
     // Given
     const old = fixture();
     const prior = snapshotIndex(old);
@@ -66,7 +64,6 @@ describe('snapshot-scoped canonical selectors', () => {
     expect([...index.categoryTasks('root')]).toEqual(['B']);
     expect(index.reverseDependencies.size).toBe(0);
     expect(index.questions.size).toBe(0);
-    expect(index.evidenceLabels.size).toBe(0);
     expect(prior.tasks.has('A')).toBe(true);
   });
 

@@ -1492,3 +1492,123 @@ def test_transition_rejection_retains_valid_legacy_projection(
     assert before == {
         path: path.read_bytes() for path in gate.program.repo.rglob("*") if path.is_file()
     }
+
+
+def test_many_coverage_links_share_source_derivation_without_losing_exact_criteria(
+    gate, monkeypatch
+):
+    # Given several criteria linking one exact frozen task source.
+    gate.ready()
+    state = gate.program.load()
+    value = draft(gate)
+    template = value["links"][0]
+    value["links"] = [
+        {
+            **deepcopy(template),
+            "criterion": {"ordinal": ordinal, "text_sha256": fp.sha(text.encode())},
+        }
+        for ordinal, text in enumerate(state["objective"]["criteria"])
+    ]
+    original = fp.extract_sections
+    parsed = []
+
+    def observe(raw):
+        parsed.append(raw)
+        return original(raw)
+
+    monkeypatch.setattr(fp, "extract_sections", observe)
+    # When all bindings are computed in one immutable read context.
+    result = fp.coverage.bind_input(gate.program, state, value)
+    # Then each exact criterion survives while shared source sections are parsed once.
+    assert len(result["links"]) == len(state["objective"]["criteria"])
+    assert len(parsed) == 1
+    assert all(item["binding"] == result["links"][0]["binding"] for item in result["links"])
+
+
+def test_coverage_metadata_rechecks_expected_hash_on_same_epoch_hit(gate):
+    # Given an admitted original JSON and a second consumer claiming a conflicting hash.
+    name = gate.fixture.write("evidence/_coverage/attempt-1/metadata.json", {"task_id": "S01"})
+    ref = {"path": name, "sha256": fp.sha(gate.program.path(name).read_bytes())}
+    reader = fp.ReadBudget()
+    first = fp.coverage._metadata(gate.program, ref, reader)
+    first["task_id"] = "changed consumer copy"
+    # When the same epoch is consumed with another expected hash.
+    with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+        fp.coverage._metadata(gate.program, {**ref, "sha256": "0" * 64}, reader)
+    # Then the original decoded facts remain detached and its actual identity is unchanged.
+    assert fp.coverage._metadata(gate.program, ref, reader) == {"task_id": "S01"}
+
+
+def test_duplicate_exact_coverage_annotation_is_not_hidden_by_reference_index(gate):
+    # Given conflicting history entries for the same immutable annotation reference.
+    gate.ready()
+    ref = record_annotation(gate)
+    state = gate.program.load()
+    state["coverage_annotations"].append(deepcopy(state["coverage_annotations"][0]))
+    # When an explicit consumer relies on that exact reference.
+    with pytest.raises(fp.coverage.CoverageError, match="exact recorded receipt"):
+        fp.coverage.validate_refs(gate.program, state, {"coverage_refs": reliance(gate, ref)})
+    # Then no indexed last-winner selection can turn ambiguous history into authority.
+
+
+@pytest.mark.parametrize("guard_kind", ["record", "reliance"])
+@pytest.mark.parametrize("drift", [None, "selector", "body"])
+def test_envelope_coverage_guards_use_body_and_recheck_physical_storage(
+    gate: GateFixture, guard_kind: str, drift: str | None
+) -> None:
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    ref = record_annotation(gate)
+    state = gate.program.load()
+    storage = fp.flow_module("storage")
+    body = gate.program.read_state_bytes()
+    path = gate.program.path("backlog.json")
+    original = storage.encode_registry(body, "1" * 64)
+    path.write_bytes(original)
+    if guard_kind == "record":
+        value = draft(gate)
+        value["id"] = "coverage-envelope"
+        value.update(fp.coverage.bind_input(gate.program, state, value))
+        name = gate.fixture.write("evidence/_coverage/attempt-1/envelope.json", value)
+        guard = fp.coverage.prepare_record(gate.program, state, name).before_publish
+    else:
+        name = gate.fixture.receipt()
+        receipt = fp.read_json(gate.program.path(name))
+        receipt["coverage_refs"] = reliance(gate, ref)
+        gate.fixture.write(name, receipt)
+        future = gate.program.prepare_submit(
+            state,
+            argparse.Namespace(id="S01", owner="worker", receipt=name),
+            observed_head=gate.program.current_head(),
+        )
+        guard = fp.coverage.publication_guard(gate.program, future)
+    assert guard is not None
+    if drift is None:
+        guard()
+        assert path.read_bytes() == original
+    else:
+        changed = deepcopy(state)
+        if drift == "body":
+            changed["runtime_observation"] = "Concurrent logical update"
+        replacement = storage.encode_registry(
+            body if drift == "selector" else fp.canonical(changed), "2" * 64
+        )
+        path.write_bytes(replacement)
+        with pytest.raises(fp.coverage.CoverageError, match="[Rr]egistry changed"):
+            guard()
+        assert path.read_bytes() == replacement
+
+
+def test_coverage_receipt_remains_raw_even_when_registry_uses_envelope(gate: GateFixture) -> None:
+    gate.ready()
+    state = gate.program.load()
+    value = draft(gate)
+    value.update(fp.coverage.bind_input(gate.program, state, value))
+    storage = fp.flow_module("storage")
+    gate.program.path("backlog.json").write_bytes(
+        storage.encode_registry(fp.canonical(state), "1" * 64)
+    )
+    name = gate.fixture.write("evidence/_coverage/attempt-1/encoded-artifact.json", value)
+    gate.program.path(name).write_bytes(storage.encode_registry(fp.canonical(value), "2" * 64))
+    with pytest.raises(fp.ProgramError, match="JSON"):
+        fp.coverage.prepare_record(gate.program, state, name)

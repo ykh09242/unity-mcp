@@ -24,7 +24,7 @@ export const checkLabels: Readonly<Record<string, string>> = {
   scoped_tests: 'Scoped tests',
   format_lint: 'Formatting and lint',
 };
-export function readinessFactors(snapshot: Snapshot, task: Task) {
+function parseReadinessFactors(snapshot: Snapshot, task: Task) {
   const readiness = recordedReadiness(snapshot, task);
   const dependencies = currentCollection(snapshot, readiness?.unmet_dependencies, task.id);
   const collisions = currentCollection(snapshot, readiness?.collisions, task.id);
@@ -45,10 +45,26 @@ export function readinessFactors(snapshot: Snapshot, task: Task) {
       !stale,
   };
 }
+const readinessCache = new WeakMap<
+  Snapshot,
+  WeakMap<Task, ReturnType<typeof parseReadinessFactors>>
+>();
+export function readinessFactors(snapshot: Snapshot, task: Task) {
+  let tasks = readinessCache.get(snapshot);
+  if (!tasks) {
+    tasks = new WeakMap();
+    readinessCache.set(snapshot, tasks);
+  }
+  const cached = tasks.get(task);
+  if (cached) return cached;
+  const parsed = parseReadinessFactors(snapshot, task);
+  tasks.set(task, parsed);
+  return parsed;
+}
 const phases = new Set(['requested', 'running', 'blocked', 'finished', 'canceled']);
 const results = new Set(['passed', 'failed', 'pending', 'not_run', 'unknown', 'not_applicable']);
 const applicability = new Set(['current', 'stale', 'unavailable', 'unknown']);
-export function verificationContext(snapshot: Snapshot, task: Task) {
+function parseVerificationContext(snapshot: Snapshot, task: Task) {
   const envelope = record(snapshot.verification);
   if (envelope.schema_version !== 1 || envelope.status !== 'recorded') return null;
   const value = record(task.verification);
@@ -72,6 +88,21 @@ export function verificationContext(snapshot: Snapshot, task: Task) {
   )
     return null;
   return { value, lanes: { ...lanes, items: rows }, findings };
+}
+const verificationCache = new WeakMap<
+  Snapshot,
+  WeakMap<Task, ReturnType<typeof parseVerificationContext>>
+>();
+export function verificationContext(snapshot: Snapshot, task: Task) {
+  let tasks = verificationCache.get(snapshot);
+  if (!tasks) {
+    tasks = new WeakMap();
+    verificationCache.set(snapshot, tasks);
+  }
+  if (tasks.has(task)) return tasks.get(task) ?? null;
+  const parsed = parseVerificationContext(snapshot, task);
+  tasks.set(task, parsed);
+  return parsed;
 }
 export function laneNeedsAction(lane: JsonRecord) {
   const provider = record(lane.provider_execution);
@@ -112,14 +143,15 @@ export function matchesCoordination(snapshot: Snapshot, task: Task, filter = '')
   if (!filter) return true;
   if (filter === 'review_queue')
     return Boolean(reviewQueue(snapshot)?.rows.some((row) => row.taskId === task.id));
-  const factors = readinessFactors(snapshot, task);
+  if (filter === 'available') return readinessFactors(snapshot, task).available;
   const verification = verificationContext(snapshot, task);
-  if (filter === 'available') return factors.available;
+  const factors =
+    filter === 'blocked' || filter === 'unknown' ? readinessFactors(snapshot, task) : null;
   if (filter === 'blocked')
     return (
       task.status === 'blocked' ||
-      factors.stale ||
-      Number(factors.blockers) > 0 ||
+      factors?.stale ||
+      Number(factors?.blockers) > 0 ||
       Boolean(verification?.lanes.items.some((lane) => lane.phase === 'blocked'))
     );
   if (filter === 'verification')
@@ -130,7 +162,7 @@ export function matchesCoordination(snapshot: Snapshot, task: Task, filter = '')
   if (filter === 'waiting')
     return Boolean(verification?.lanes.items.some((lane) => observedWait(lane.waiting)?.open));
   return (
-    filter === 'unknown' && (!factors.known || !verification || verification.lanes.omitted > 0)
+    filter === 'unknown' && (!factors?.known || !verification || verification.lanes.omitted > 0)
   );
 }
 export function executionPriority(snapshot: Snapshot, task: Task) {

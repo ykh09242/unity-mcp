@@ -215,6 +215,50 @@ def test_partial_sequence_resumes_exact_remaining_events(fixture):
     assert len(host.load()["events"]) == len(initial_events) + 2
 
 
+def test_committed_inspection_generates_views_once_and_rechecks_bytes(fixture, monkeypatch):
+    assert fixture.claim() == 0
+    host = Host(fixture.program)
+    plan = note_plan(fixture, host, count=3)
+    for stage in plan["stages"]:
+        host.publish(stage, stage["before_revision"], "worker")
+    state = host.load()
+    calls = []
+    original = fp.Program.views
+
+    def views(program, value):
+        calls.append(value)
+        return original(program, value)
+
+    monkeypatch.setattr(fp.Program, "views", views)
+    result = closure.inspect_plan(fixture.program, plan, state, host)
+    assert result["committed"] == 3
+    assert not any(row["view_recovery_required"] for row in result["stages"])
+    assert len(calls) == 1
+    factory = Host._inspection_context
+
+    class ChangedObservation:
+        def __init__(self, context):
+            self.context = context
+
+        def inspect_stage(self, checked):
+            value = self.context.inspect_stage(checked)
+            fixture.program.path("BOARD.md").write_text(
+                "Changed during observation", encoding="utf-8"
+            )
+            return value
+
+        def recheck(self):
+            self.context.recheck()
+
+    monkeypatch.setattr(
+        Host,
+        "_inspection_context",
+        lambda self, value, refs: ChangedObservation(factory(self, value, refs)),
+    )
+    with pytest.raises(fp.ProgramError, match="changed|Changed|differs"):
+        closure.inspect_plan(fixture.program, plan, state, host)
+
+
 def test_committed_render_failure_requires_render_then_continues(fixture, monkeypatch):
     # Given a plan and a normal publisher whose derived render fails once after commit.
     assert fixture.claim() == 0
@@ -315,6 +359,45 @@ def test_readiness_bounds_requirements_without_inferring_acceptance(fixture):
     assert result["requirements"]["total"] > 5
     assert result["requirements"]["omitted"] == result["requirements"]["total"] - 5
     assert result["accepted"] is False
+
+
+def test_checked_readiness_retains_current_guards_without_revalidating_initial_state(
+    gate, monkeypatch
+):
+    complete_tasks(gate)
+    state = gate.program.load()
+    checked = gate.program.validate(state)
+    terminals = []
+    current_checks = []
+    original_terminal = fp.Program.verify_terminal
+    original_completion = fp.verification.validate_completion
+
+    def duplicate_validation(program, value):
+        pytest.fail("Initial canonical state was validated twice")
+
+    def terminal(program, task, attempt, budget=None):
+        terminals.append(task["id"])
+        return original_terminal(program, task, attempt, budget)
+
+    def current(program, value, task_id, *args, **kwargs):
+        current_checks.append(task_id)
+        original_completion(program, value, task_id, *args, **kwargs)
+        if task_id == "S01":
+            raise fp.ProgramError("Current required lane is pending")
+
+    monkeypatch.setattr(fp.Program, "validate", duplicate_validation)
+    monkeypatch.setattr(fp.Program, "verify_terminal", terminal)
+    monkeypatch.setattr(fp.verification, "validate_completion", current)
+    result = closure._readiness_from_checked(gate.program, state, checked)
+    assert terminals == current_checks == ["S01", "S02"]
+    assert any(
+        row["kind"] == "current_verification"
+        and row["task_id"] == "S01"
+        and row["reason"] == "Current required lane is pending"
+        for row in result["requirements"]["items"]
+    )
+    with pytest.raises(closure.ClosureError, match="initial-state observation differs"):
+        closure._readiness_from_checked(gate.program, deepcopy(state), checked)
 
 
 def test_selected_plan_projects_actual_partial_publication_and_bounds(fixture):
@@ -444,7 +527,7 @@ def test_completion_assembly_keeps_unperformed_criteria_and_review_pending(gate)
     assert gate.program.path("backlog.json").read_bytes() == before
 
 
-def test_delivery_attachment_assembly_retains_raw_shared_origin_and_failed_ci(gate):
+def test_delivery_attachment_assembly_retains_raw_shared_origin_and_failed_ci(gate, monkeypatch):
     # Given reviewed tasks and one raw provider observation with failed actual CI.
     complete_tasks(gate)
     supplied = provider_request(gate, "failure")
@@ -455,8 +538,24 @@ def test_delivery_attachment_assembly_retains_raw_shared_origin_and_failed_ci(ga
     supplied["shared_evidence"] = [{"path": origin, "sha256": fp.sha(raw)}]
     for item in supplied["tasks"]:
         item["assembly_prefix"] = f"evidence/{item['task_id']}/attempt-1/closure-assembly"
+    state = gate.program.load()
+    provider_calls = []
+    validation_calls = []
+    original_provider = fp.authoring.provider_observation
+    original_validate = fp.Program.validate
+
+    def observe(program, ref, budget):
+        provider_calls.append(ref["path"])
+        return original_provider(program, ref, budget)
+
+    def validate(program, state):
+        validation_calls.append(state)
+        return original_validate(program, state)
+
+    monkeypatch.setattr(fp.authoring, "provider_observation", observe)
+    monkeypatch.setattr(fp.Program, "validate", validate)
     # When one supported preparation attaches shared bytes individually.
-    result = closure.prepare_delivery_inputs(gate.program, gate.program.load(), supplied)
+    result = closure.prepare_delivery_inputs(gate.program, state, supplied)
     # Then each task retains exact attribution and no failed result becomes green.
     assert [item["ci_status"] for item in result["inputs"]] == ["ci_failed", "ci_failed"]
     for item in result["inputs"]:
@@ -466,6 +565,8 @@ def test_delivery_attachment_assembly_retains_raw_shared_origin_and_failed_ci(ga
             f"evidence/{item['task_id']}/attempt-1/"
         )
     assert gate.program.path(origin).read_bytes() == raw
+    assert provider_calls.count(supplied["provider"]["path"]) == 1
+    assert len(validation_calls) == 1
 
 
 def test_cleanup_resources_keep_eligible_and_in_use_observations_independent(fixture):

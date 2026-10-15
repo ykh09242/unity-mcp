@@ -1,11 +1,17 @@
 """Assess frozen caller-recorded provider execution without IO or provider authority."""
 
+from __future__ import annotations
+
 from copy import deepcopy
 from datetime import datetime
+import hashlib
 import json
 import re
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:
+    from tools.feature_program import ReadBudget
 
 try:
     from .feature_program_coordination import Json, Record
@@ -483,7 +489,12 @@ def _advisory_run_failure(plan: Record, run: Record | None) -> bool:
 
 
 def _assess_check(
-    selection: Record, run: Record | None, current: bool, advisory_failure: bool
+    selection: Record,
+    run: Record | None,
+    current: bool,
+    advisory_failure: bool,
+    jobs: dict[str, Record],
+    step_indexes: dict[str, dict[str, Record]],
 ) -> Record:
     result: Record = {
         "id": selection["id"],
@@ -503,8 +514,7 @@ def _assess_check(
         reasons.append("No current run observation")
     else:
         result.update({"run_id": run["run_id"], "run_attempt": run["run_attempt"]})
-        jobs = [_record(value, "Job") for value in _rows(run["jobs"], "Jobs")]
-        job = next((job for job in jobs if job["name"] == selection["job"]), None)
+        job = jobs.get(str(selection["job"]))
         if job is not None:
             result.update({"job_id": job["job_id"], "reported_outcome": job["conclusion"]})
         if not current:
@@ -551,10 +561,7 @@ def _assess_check(
                 result["status"] = outcome
                 if outcome == "passed":
                     step_outcomes: list[str] = []
-                    steps = {
-                        _record(value, "Step")["name"]: _record(value, "Step")
-                        for value in _rows(job["steps"], "Steps")
-                    }
+                    steps = step_indexes[str(job["name"])]
                     for name in _rows(selection["steps"], "Selected steps"):
                         step = steps.get(name)
                         if step is None:
@@ -618,6 +625,33 @@ def assess_execution(value: Json, expected: Json) -> Record:
     """Compare frozen captures with explicit expected obligations; never authenticate them."""
     capture = validate_execution(value)
     context = _context(expected)
+    return _assess_checked_execution(capture, context)
+
+
+class ExecutionAssessmentContext:
+    """Reuse pure results only within one caller-owned captured-byte observation epoch."""
+
+    def __init__(self, reader: ReadBudget) -> None:
+        self._reader = reader
+        self._results: dict[bytes, Record] = {}
+
+    def assess(self, value: Json, expected: Json, *, reader: ReadBudget) -> Record:
+        """Return isolated facts; callers still admit paths and check every consuming binding."""
+        _require(reader is self._reader, "Provider assessment observation epoch differs")
+        try:
+            encoded = json.dumps(
+                [value, expected], ensure_ascii=True, sort_keys=True, allow_nan=False
+            ).encode()
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise DeliveryError("Provider assessment identity must be finite JSON") from exc
+        key = hashlib.sha256(encoded).digest()
+        if key not in self._results:
+            self._results[key] = assess_execution(value, expected)
+        return deepcopy(self._results[key])
+
+
+def _assess_checked_execution(capture: Record, context: Record) -> Record:
+    """Assess a detached strictly parsed pair; callers own the public parsing boundary."""
     reasons = _identity(capture, context)
     stages = {
         _record(item, "Stage")["id"]: _record(item, "Stage")
@@ -648,8 +682,25 @@ def assess_execution(value: Json, expected: Json) -> Record:
             and run["checkout_sha"] == plan["expected_sha"]
         )
         advisory_failure = _advisory_run_failure(plan, run)
+        jobs = (
+            {
+                str(_record(job, "Job")["name"]): _record(job, "Job")
+                for job in _rows(run["jobs"], "Jobs")
+            }
+            if run is not None
+            else {}
+        )
+        step_indexes = {
+            name: {
+                str(_record(step, "Step")["name"]): _record(step, "Step")
+                for step in _rows(job["steps"], "Steps")
+            }
+            for name, job in jobs.items()
+        }
         checks = [
-            _assess_check(_record(item, "Check"), run, current, advisory_failure)
+            _assess_check(
+                _record(item, "Check"), run, current, advisory_failure, jobs, step_indexes
+            )
             for item in _rows(plan["checks"], "Selected checks")
         ]
         statuses = [
@@ -749,7 +800,7 @@ def assess_premerge(value: Json, expected: Json) -> Record:
         reasons.append(
             "Premerge identity, root inspection or expected-head squash guard is stale/unknown"
         )
-    assessment = assess_execution(capture, context)
+    assessment = _assess_checked_execution(capture, context)
     pr_stages = [
         _record(stage, "Stage")
         for stage in _rows(assessment["stages"], "Stages")
@@ -801,7 +852,7 @@ def assess_cleanup(value: Json, expected: Json) -> Record:
         }
         if tree != safe:
             reasons.append("Worktree use, changes or private recovery is unsafe/unknown")
-    assessment = assess_execution(capture, context)
+    assessment = _assess_checked_execution(capture, context)
     beta = [
         _record(stage, "Stage")
         for stage in _rows(assessment["stages"], "Stages")

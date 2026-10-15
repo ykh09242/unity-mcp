@@ -1,11 +1,11 @@
-import { act, fireEvent, render as rtlRender, screen } from '@testing-library/react';
+import { act, fireEvent, render as rtlRender, renderHook, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QuestionDraftProvider } from './question-drafts';
 import type { ReactElement } from 'react';
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: QuestionDraftProvider });
-import { QuestionForm } from './questions';
-import type { AnswerResult, AnswerSaver } from './questions';
+import { QuestionForm, useSession } from './questions';
+import type { AnswerResult, AnswerSaver, Session, SessionLoader } from './questions';
 import type { JsonRecord } from './model';
 
 const question: JsonRecord = {
@@ -21,6 +21,73 @@ const question: JsonRecord = {
   outcome: null,
 };
 const session = { responsesEnabled: true, nonce: 'synthetic-nonce' };
+
+describe('session read lifecycle', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('keeps one pending read, aborts at the deadline and ignores a late response', async () => {
+    let finish: ((value: Session) => void) | undefined;
+    let signal: AbortSignal | undefined;
+    const loader = vi
+      .fn<SessionLoader>()
+      .mockImplementationOnce((input) => {
+        signal = input;
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      })
+      .mockResolvedValue(session);
+    const hook = renderHook(() => useSession(loader));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+    expect(loader).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(signal?.aborted).toBe(true);
+    expect(hook.result.current).toEqual({ responsesEnabled: false, nonce: null });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(hook.result.current).toEqual(session);
+    await act(async () => {
+      finish?.({ responsesEnabled: true, nonce: 'late old nonce' });
+    });
+    expect(hook.result.current).toEqual(session);
+  });
+
+  it('aborts the replaced loader and retains the new nonce after old settlement', async () => {
+    let finish: ((value: Session) => void) | undefined;
+    let signal: AbortSignal | undefined;
+    const oldLoader = vi.fn<SessionLoader>((input) => {
+      signal = input;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+    const nextLoader = vi.fn<SessionLoader>().mockResolvedValue(session);
+    const hook = renderHook(({ loader }) => useSession(loader), {
+      initialProps: { loader: oldLoader },
+    });
+    hook.rerender({ loader: nextLoader });
+    await act(async () => {
+      finish?.({ responsesEnabled: true, nonce: 'old nonce' });
+    });
+    expect(signal?.aborted).toBe(true);
+    expect(hook.result.current).toEqual(session);
+    hook.unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20000);
+    });
+    expect(nextLoader).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('director question responses', () => {
   it.each(['{Enter}', ' '])(
@@ -265,6 +332,7 @@ describe('director question responses', () => {
     expect(screen.queryByText('Needs your answer')).toBeNull();
     expect(screen.getByText('Answer saved')).toBeDefined();
     expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledWith(false, true);
     view.rerender(
       <QuestionForm
         question={{
