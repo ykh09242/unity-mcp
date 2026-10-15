@@ -82,6 +82,28 @@ or program APIs for JSON access; generic JSON readers and older tool versions ca
 envelope. Initial enable preserves the original bytes at
 `recovery/storage/<original-storage-sha256>/original-backlog.json` inside the program.
 
+For an already enabled program approaching the registry limit, the current director can
+explicitly select versioned compact ASCII JSON for the registry only:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example registry-compact --owner director-example --reason "Remove registry whitespace overhead" --expected-revision ACTUAL_CURRENT_REVISION
+```
+
+This adds the closed technical marker `registry_format: {schema_version: 1,
+encoding: compact-ascii}` and preserves every existing value and history entry. Unmarked
+registries keep their legacy serialization. Generic evidence, receipts, review payloads and
+their digests remain unchanged. The registry BODY and optimistic revision use the same
+selected serializer; migration changes that current revision, so bind uncommitted inputs
+again afterward. All existing registry, artifact, derived-view and response limits remain.
+
+Migration requires the normal owned lock, current director and exact revision, validates
+the original evidence and current inputs, saves a byte-exact original envelope under
+`recovery/storage/compact-ascii/<original-storage-sha256>/original-backlog.json`, and builds
+a new model before atomic publication. It does not replay task history. A preparation
+failure preserves the old registry; a committed rendering failure requires `render` or
+explicit model repair, never migration replay. `storage-enable` continues to preserve the
+exact BODY in either mode. Unknown or malformed format markers fail closed.
+
 Derived models use the Python standard library SQLite implementation under
 `.work/read-models/<program-location-identity>/read-model.sqlite3`. This store is outside the
 program relocation tree and is not the task authority. A writer commits an immutable model
