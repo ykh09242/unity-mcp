@@ -254,6 +254,12 @@ def test_actual_acceptance_decision_and_observations_prepare_normal_submission(f
     # Then a normal ready draft retains exact claims and canonical state is untouched.
     assert result["status"] == "ready"
     assert result["accepted"] is False and result["executed"] is False
+    assert (
+        reuse.validate_selection(fixture.program, fixture.program.load(), result)["summary"][
+            "status"
+        ]
+        == "ready"
+    )
     assert result["receipt"]["verification_refs"][0]["id"] == "finished-1"
     assert result["receipt"]["evidence_provenance_ref"] == evidence["targets"][0]["manifest_ref"]
     assert fixture.program.path("backlog.json").read_bytes() == before
@@ -371,6 +377,12 @@ def test_exact_submitted_review_decision_reuses_original_and_normal_validator(fi
         adapter=NormalAdapter(),
     )
     assert result["status"] == "ready"
+    assert (
+        reuse.validate_selection(fixture.program, fixture.program.load(), result)["summary"][
+            "status"
+        ]
+        == "ready"
+    )
     assert result["receipt"]["reviewer"] == "qa"
     assert (
         result["receipt"]["receipt_sha256"]
@@ -545,6 +557,12 @@ def test_actual_counter_capture_prepares_repeatedly_without_command_replay(fixtu
     )
     assert first["status"] == second["status"] == "ready"
     assert first["receipt"] == second["receipt"]
+    assert (
+        reuse.validate_selection(fixture.program, fixture.program.load(), first)["summary"][
+            "status"
+        ]
+        == "ready"
+    )
     assert first["receipt"]["result"] == "passed"
     assert fixture.program.path("backlog.json").read_bytes() == before
     assert (fixture.program.repo / "reuse-counter.txt").read_text() == "1"
@@ -681,7 +699,7 @@ def test_delivery_reuses_exact_provider_outcome_and_real_cleanup_decision(gate, 
     assert gate.program.path("backlog.json").read_bytes() == before
 
 
-def test_completion_retains_real_director_and_independent_decisions_through_normal_preflight(gate):
+def _completion_preparation(gate):
     # Given actual isolated task acceptance and ordinary delivery records, never project acceptance.
     from tools.tests.test_feature_program_authoring import complete_tasks, provider_request
 
@@ -777,6 +795,11 @@ def test_completion_retains_real_director_and_independent_decisions_through_norm
     assert result["receipt"]["unresolved_findings"] == []
     assert result["accepted"] is False
     assert gate.program.path("backlog.json").read_bytes() == before
+    return {"completion": result, "integrated_review": review}
+
+
+def test_completion_retains_real_director_and_independent_decisions_through_normal_preflight(gate):
+    _completion_preparation(gate)
 
 
 @pytest.mark.parametrize("kind", ["plan", "materialized", "receipt"])
@@ -991,3 +1014,257 @@ def test_multi_target_plan_shares_existing_source_read_limit(fixture, monkeypatc
     with pytest.raises(fp.ProgramError, match="bounded read"):
         reuse.plan_evidence(fixture.program, state, selected)
     assert not fixture.program.path("evidence/S01/attempt-1/proof").exists()
+
+
+def _director_transfer(gate, successor="director-next"):
+    scope = ["src/S01.py", "src/S02.py"]
+    binding = {
+        "scope": scope,
+        "source_head": HEAD,
+        "source_digest": gate.program.source_digest(scope),
+    }
+    actor = {
+        "id": successor,
+        "role": "director",
+        "parent_id": None,
+        "model_id": None,
+        "reasoning_effort": None,
+        "provenance": "unknown",
+        "observed_status": "unknown",
+        "decision": "new",
+        "reason": "Explicit isolated successor registration",
+    }
+    name = gate.fixture.write("evidence/_coordination/attempt-1/successor-actor.json", actor)
+    assert gate.fixture.run("actor-record", "--input", name) == 0
+    outgoing = {
+        **binding,
+        "id": "authority-handoff",
+        "role": "director",
+        "from_actor": "director",
+        "to_actor": successor,
+        "task_id": None,
+        "goal": "Preserve scoped work",
+        "constraints": ["Preserve original evidence"],
+        "changed_paths": [],
+        "decisions": ["Actual isolated authority transfer"],
+        "evidence": [],
+        "unresolved_findings": [],
+        "next_action": "Inspect accepted work",
+        "authority": {
+            "authorized_by": "synthetic-human",
+            "basis": "Explicit isolated succession",
+            "merge_target": "beta",
+        },
+    }
+    for command, receipt in [
+        ("transfer", outgoing),
+        (
+            "transfer-ack",
+            {
+                **binding,
+                "transfer_id": "authority-handoff",
+                "actor_id": successor,
+                "summary": "Inspected current exact source and preserved findings",
+                "evidence": [],
+            },
+        ),
+        (
+            "transfer-accept",
+            {
+                **binding,
+                "transfer_id": "authority-handoff",
+                "actor_id": "director",
+                "summary": "Accepted actual isolated succession",
+                "evidence": [],
+            },
+        ),
+    ]:
+        name = gate.fixture.write(f"evidence/_coordination/attempt-1/{command}.json", receipt)
+        assert gate.fixture.run(command, "--input", name) == 0
+
+
+def test_saved_ready_completion_rechecks_actual_current_director_after_accepted_handoff(
+    gate, monkeypatch
+):
+    # Given an actual ready ordinary preparation from the accepted original director.
+    saved = _completion_preparation(gate)["completion"]
+    normal = fp.authoring.EvidenceReceiptAdapter()
+    before = gate.program.load()
+    assert (
+        normal.assess(gate.program, before, "completion", saved["receipt"], owner="director")[
+            "status"
+        ]
+        == "ready"
+    )
+    assert reuse.validate_selection(gate.program, before, saved)["summary"]["status"] == "ready"
+    # When normal transfer/ack/accept changes only actual final authority, not the source/goal/tasks.
+    _director_transfer(gate)
+    current = gate.program.load()
+    assert fp.coordination.current_director_id(current) == "director-next"
+    assert current["objective"] == before["objective"]
+    assert current["tasks"] == before["tasks"]
+    assert (
+        gate.program.source_digest(saved["binding"]["scope"]) == saved["binding"]["source_digest"]
+    )
+    rejected = normal.assess(
+        gate.program, current, "completion", saved["receipt"], owner="director"
+    )
+    assert rejected["status"] == "incomplete"
+    assert any("current final director" in reason for reason in rejected["reasons"])
+
+    # Then selection is read-only and cannot call the inert-file writing ordinary assessor.
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Saved-result selection must not prepare files")
+
+    before_bytes = gate.program.path("backlog.json").read_bytes()
+    with monkeypatch.context() as patch:
+        patch.setattr(fp.authoring.EvidenceReceiptAdapter, "assess", forbidden)
+        patch.setattr(fp.authoring, "freeze_document", forbidden)
+        assert (
+            reuse.validate_selection(gate.program, current, saved)["summary"]["status"] == "stale"
+        )
+    assert gate.program.path("backlog.json").read_bytes() == before_bytes
+
+
+def test_saved_integrated_reviewer_cannot_become_current_director(gate):
+    # Given an actually independent aggregate review that ordinary assessment accepted.
+    saved = _completion_preparation(gate)["integrated_review"]
+    normal = fp.authoring.EvidenceReceiptAdapter()
+    assert (
+        normal.assess(
+            gate.program,
+            gate.program.load(),
+            "integrated_review",
+            saved["receipt"],
+            owner="director",
+        )["status"]
+        == "ready"
+    )
+    # When that actual reviewer legitimately succeeds as director, the original bytes stay historical.
+    _director_transfer(gate, successor="independent")
+    current = gate.program.load()
+    rejected = normal.assess(
+        gate.program, current, "integrated_review", saved["receipt"], owner="director"
+    )
+    assert rejected["status"] == "incomplete"
+    assert any("independent" in reason for reason in rejected["reasons"])
+    assert reuse.validate_selection(gate.program, current, saved)["summary"]["status"] == "stale"
+
+
+def test_unrelated_recorded_actor_observation_does_not_invalidate_ready_preparation(gate):
+    # Given ready completion and the same actual authority before/after an unrelated actor record.
+    saved = _completion_preparation(gate)["completion"]
+    before = reuse.validate_selection(gate.program, gate.program.load(), saved)["summary"]
+    actor = {
+        "id": "unrelated-observer",
+        "role": "worker",
+        "parent_id": "director",
+        "model_id": None,
+        "reasoning_effort": None,
+        "provenance": "unknown",
+        "observed_status": "idle",
+        "observed_at": "2026-10-15T00:00:00+00:00",
+        "decision": "new",
+        "reason": "Actual unrelated isolated staffing observation",
+    }
+    name = gate.fixture.write("evidence/_coordination/attempt-1/unrelated-observer.json", actor)
+    assert gate.fixture.run("actor-record", "--input", name) == 0
+    current = gate.program.load()
+    assert (
+        fp.authoring.EvidenceReceiptAdapter().assess(
+            gate.program, current, "completion", saved["receipt"], owner="director"
+        )["status"]
+        == "ready"
+    )
+    assert reuse.validate_selection(gate.program, current, saved)["summary"] == before
+
+
+def test_saved_observation_rechecks_actual_retired_verifier(fixture):
+    # Given a registered active verifier and an actually ready ordinary retained-outcome draft.
+    actor = {
+        "id": "qa",
+        "role": "worker",
+        "parent_id": None,
+        "model_id": None,
+        "reasoning_effort": None,
+        "provenance": "unknown",
+        "observed_status": "unknown",
+        "decision": "new",
+        "reason": "Actual isolated verifier registration",
+    }
+    name = fixture.write("evidence/_coordination/attempt-1/qa-active.json", actor)
+    assert fixture.run("actor-record", "--input", name) == 0
+    record(fixture, request(fixture))
+    original = reference(
+        fixture,
+        "design/retained-verifier-outcome.json",
+        fp.canonical({"argv": ["tool"], "cwd": "/recorded", "exit_code": 0}),
+    )
+    materialized = copied(fixture, [original])
+    inputs = {
+        "task_id": "S01",
+        "owner": "qa",
+        "outcome_ref": original,
+        "materialization": materialized,
+        "request_binding": {
+            "observation_id": "retained-before-retirement",
+            "actor_id": "qa",
+            "request_id": "request-1",
+            "request_version": 1,
+            "reason": "Retained actual fixture outcome",
+            "execution_kind": "test",
+        },
+    }
+    normal = fp.authoring.EvidenceReceiptAdapter()
+    saved = reuse.prepare_receipt(
+        fixture.program, fixture.program.load(), "observation", inputs, adapter=normal
+    )
+    assert saved["status"] == "ready" and saved["receipt"]["result"] == "unknown"
+    # When normal staffing retirement removes participant authority without changing source/request.
+    actor.update(decision="retire", reason="Actual isolated verifier retirement")
+    name = fixture.write("evidence/_coordination/attempt-1/qa-retired.json", actor)
+    assert fixture.run("actor-record", "--input", name) == 0
+    current = fixture.program.load()
+    reassessed = reuse.prepare_receipt(
+        fixture.program, current, "observation", inputs, adapter=normal
+    )
+    rejected = reassessed["assessment"]
+    assert rejected["status"] == "incomplete"
+    assert any("retired" in reason.lower() for reason in rejected["reasons"]), rejected
+    assert reuse.validate_selection(fixture.program, current, saved)["summary"]["status"] == "stale"
+
+
+def test_saved_leader_review_rechecks_actual_director_override(gate):
+    # Given a real submitted task and an explicitly labeled leader review by its current director.
+    gate.ready()
+    assert gate.fixture.claim() == 0
+    gate.fixture.submit()
+    state = gate.program.load()
+    inputs = {"task_id": "S01", "owner": "director", "scope": ["src/S01.py"]}
+    initial = reuse.prepare_receipt(gate.program, state, "review", inputs)
+    note = reference(gate.fixture, "design/leader-inspection.txt")
+    actual = decision(
+        gate.fixture,
+        initial["binding"],
+        {
+            "verdict": "accepted",
+            "reviewer_role": "leader",
+            "reason": "Actual explicit isolated director override review",
+            "acceptance_complete": True,
+            "unresolved_findings": [],
+            "evidence": [note["path"]],
+            "next_action": "Inspect delivery",
+        },
+        actor="director",
+    )
+    inputs.update(decision_refs=[actual], materialization=copied(gate.fixture, [note, actual]))
+    normal = fp.authoring.EvidenceReceiptAdapter()
+    saved = reuse.prepare_receipt(gate.program, state, "review", inputs, adapter=normal)
+    assert saved["status"] == "ready"
+    # When the director role transfers normally, the old leader no longer has override authority.
+    _director_transfer(gate)
+    current = gate.program.load()
+    rejected = normal.assess(gate.program, current, "review", saved["receipt"], owner="director")
+    assert rejected["status"] == "incomplete"
+    assert any("current accepted director" in reason for reason in rejected["reasons"])
+    assert reuse.validate_selection(gate.program, current, saved)["summary"]["status"] == "stale"

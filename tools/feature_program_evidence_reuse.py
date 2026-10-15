@@ -1378,6 +1378,55 @@ def _selection_materialization(
     return refs, current
 
 
+def _current_receipt_authority(
+    program: Program, state: Record, operation: str, receipt: Record, owner: Json
+) -> bool:
+    """Recheck only current normal authority; saved assessment is not present permission.
+
+    This read path must not call the ordinary assessor, which materializes inert
+    files. Existing authority helpers remain the source of participant/retirement
+    rules; ordinary review independence uses the same recorded director/owners.
+    """
+    core = _core()
+    try:
+        if operation == "completion":
+            actor = _text(receipt.get("actor_id"), "original completion actor")
+            _require(
+                actor == core.coordination.current_director_id(state), "Final director changed"
+            )
+            core.coordination.require_task_authority(state, actor)
+        elif operation == "integrated_review":
+            reviewer = _text(receipt.get("reviewer"), "original integrated reviewer")
+            implementers = {
+                str(attempt["owner"]) for task in state["tasks"] for attempt in task["attempts"]
+            }
+            _require(
+                reviewer != core.coordination.current_director_id(state)
+                and reviewer not in implementers,
+                "Integrated reviewer is no longer independent",
+            )
+        elif operation in {"submission", "review", "observation"}:
+            task = program.task(state, _text(receipt.get("task_id"), "original receipt task"))
+            attempt = program.current_attempt(task)
+            if operation == "submission":
+                core.coordination.require_task_authority(
+                    state,
+                    _text(owner, "original acting owner"),
+                    _text(task.get("owner"), "current task owner"),
+                )
+            elif operation == "review":
+                reviewer = _text(receipt.get("reviewer"), "original reviewer")
+                if receipt.get("reviewer_role") == "leader" or reviewer == attempt["owner"]:
+                    core.coordination.require_task_authority(state, reviewer)
+            else:
+                request = core.verification._index(state).get(str(receipt.get("request_id")))
+                _require(request is not None, "Original request unavailable")
+                core.verification._authority(state, task, receipt, request)
+        return True
+    except (core.ProgramError, core.coordination.GovernanceError):
+        return False
+
+
 def validate_selection(
     program: Program, state: Record, value: Record, *, budget: ReadBudget | None = None
 ) -> Record:
@@ -1562,6 +1611,13 @@ def validate_selection(
             _record(decision["facts"], "selected actual decision facts")
             refs.append(ref)
         receipt = _record(value["receipt"], "selected ordinary draft")
+        if value["status"] == "ready":
+            current = (
+                _current_receipt_authority(
+                    program, state, str(operation), receipt, value["next_actor_id"]
+                )
+                and current
+            )
         related = _record(value["related_inputs"], "selected related inputs")
         for raw in _rows(receipt.get("verification_refs", []), "selected verification reliance"):
             reliance = _record(raw, "selected observation reliance")
