@@ -1431,10 +1431,12 @@ def prepare_record(
     return core.PreparedChange(proposal, before_publish)
 
 
-def _reference(state: Record, pointer: str, task_id: str | None = None) -> Record:
+def _reference(
+    state: Record, pointer: str, task_id: str | None = None, *, revision: str | None = None
+) -> Record:
     result: Record = {
         "path": "backlog.json",
-        "revision": _core().phases.revision(state),
+        "revision": revision if revision is not None else _core().phases.revision(state),
         "pointer": pointer,
     }
     if task_id is not None:
@@ -1449,13 +1451,14 @@ def _collection(
     task_id: str | None = None,
     *,
     limit: int | None = MAX_ROWS,
+    revision: str | None = None,
 ) -> Record:
     return {
         "total": len(rows),
         "shown": len(rows) if limit is None else min(len(rows), limit),
         "omitted": 0 if limit is None else max(0, len(rows) - limit),
         "items": rows[:] if limit is None else rows[:limit],
-        "reference": _reference(state, pointer, task_id),
+        "reference": _reference(state, pointer, task_id, revision=revision),
     }
 
 
@@ -2004,6 +2007,7 @@ def projection(
 ) -> Record:
     """Project recorded outcomes and an explicitly selected immutable execution separately."""
     validate(state)
+    revision = _core().phases.revision(state)
     reads = _reads(budget)
     records = _records(state)
     selected = (
@@ -2108,9 +2112,13 @@ def projection(
                         state,
                         f"/verification/records/{positions[str(request['input']['id'])]}",
                         task_id,
+                        revision=revision,
                     ),
                     "observation_reference": _reference(
-                        state, f"/verification/records/{positions[str(value['id'])]}", task_id
+                        state,
+                        f"/verification/records/{positions[str(value['id'])]}",
+                        task_id,
+                        revision=revision,
                     )
                     if latest is not request
                     else None,
@@ -2247,7 +2255,10 @@ def projection(
                         "task_id": task_id,
                         "request_id": request["request_id"],
                         "reference": _reference(
-                            state, f"/verification/records/{positions[str(value['id'])]}", task_id
+                            state,
+                            f"/verification/records/{positions[str(value['id'])]}",
+                            task_id,
+                            revision=revision,
                         ),
                     }
                 )
@@ -2272,16 +2283,23 @@ def projection(
                         "resolutions": resolutions,
                         "status": "recorded",
                         "reference": _reference(
-                            state, f"/verification/records/{positions[str(value['id'])]}", task_id
+                            state,
+                            f"/verification/records/{positions[str(value['id'])]}",
+                            task_id,
+                            revision=revision,
                         ),
                         "receipt_ref": deepcopy(item["receipt"]),
                     }
                 )
         tasks[task_id] = {
             "task_id": task_id,
-            "lanes": _collection(state, lanes, "/verification/records", task_id, limit=None),
-            "findings": _collection(state, findings, "/verification/records", task_id, limit=None),
-            "reference": _reference(state, "/verification/records", task_id),
+            "lanes": _collection(
+                state, lanes, "/verification/records", task_id, limit=None, revision=revision
+            ),
+            "findings": _collection(
+                state, findings, "/verification/records", task_id, limit=None, revision=revision
+            ),
+            "reference": _reference(state, "/verification/records", task_id, revision=revision),
         }
     history = [
         {
@@ -2296,7 +2314,9 @@ def projection(
         "schema_version": 1,
         "status": "recorded" if "verification" in state else "absent",
         "tasks": tasks,
-        "history": _collection(state, history, "/verification/records", limit=None),
+        "history": _collection(
+            state, history, "/verification/records", limit=None, revision=revision
+        ),
         "integrity": {
             "unavailable_total": len(integrity),
             "records": _collection(
@@ -2304,6 +2324,7 @@ def projection(
                 [{"id": identifier, "reason": reason} for identifier, reason in integrity.items()],
                 "/verification/records",
                 limit=None,
+                revision=revision,
             ),
         },
     }

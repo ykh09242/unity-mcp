@@ -890,3 +890,92 @@ def test_lexical_path_cache_has_finite_entry_retention():
         assert fp.safe_relative(name) == name
     # Then: retained strings/results remain bounded independently of request count.
     assert fp._cached_safe_relative.cache_info().currsize == 2048
+
+
+def test_verification_projection_reuses_revision_without_changing_reference_facts(
+    fixture, monkeypatch
+):
+    from tools.tests.test_feature_program_verification import request, observation
+
+    # Given: actual request/finished facts require several exact registry references.
+    assert fixture.claim() == 0
+    name = fixture.write("evidence/_verification/attempt-1/revision-request.json", request(fixture))
+    assert fixture.run("verification-record", "--input", name) == 0
+    name = fixture.write(
+        "evidence/_verification/attempt-1/revision-finished.json", observation(fixture)
+    )
+    assert fixture.run("verification-record", "--input", name) == 0
+    state = fixture.program.load()
+    normal_reference = fp.verification._reference
+
+    def uncached_reference(value, pointer, task_id=None, **_kwargs):
+        return normal_reference(value, pointer, task_id)
+
+    with monkeypatch.context() as baseline:
+        baseline.setattr(fp.verification, "_reference", uncached_reference)
+        expected = fp.verification.projection(fixture.program, state, limit=None)
+    normal = fp.phases.revision
+    calls = []
+
+    def revision(value):
+        calls.append(value)
+        return normal(value)
+
+    monkeypatch.setattr(fp.phases, "revision", revision)
+    # When: a full projection constructs every lane, task and history reference.
+    actual = fp.verification.projection(fixture.program, state, limit=None)
+    # Then: one serialization preserves the entire projection and immutable input state.
+    assert len(calls) == 1
+    assert calls[0] is state
+    assert actual == expected
+    assert normal(state) == actual["tasks"]["S01"]["reference"]["revision"]
+
+
+def test_verification_projection_revision_is_fresh_for_each_state(fixture, monkeypatch):
+    from tools.tests.test_feature_program_verification import request
+
+    # Given: a real request has already been projected with its current registry revision.
+    assert fixture.claim() == 0
+    name = fixture.write("evidence/_verification/attempt-1/fresh-request.json", request(fixture))
+    assert fixture.run("verification-record", "--input", name) == 0
+    first_state = fixture.program.load()
+    first = fp.verification.projection(fixture.program, first_state, limit=None)
+    first_revision = fp.phases.revision(first_state)
+    assert first["history"]["reference"]["revision"] == first_revision
+    # When: an ordinary unrelated note creates a new actual registry state.
+    assert (
+        fixture.run(
+            "note",
+            "S01",
+            "--owner",
+            "worker",
+            "--reason",
+            "New retained progress",
+            "--next-action",
+            "Inspect current verification",
+        )
+        == 0
+    )
+    state = fixture.program.load()
+    expected_revision = fp.phases.revision(state)
+    assert expected_revision != first_revision
+    normal = fp.phases.revision
+    calls = []
+
+    def revision(value):
+        calls.append(value)
+        return normal(value)
+
+    monkeypatch.setattr(fp.phases, "revision", revision)
+    second = fp.verification.projection(fixture.program, state, limit=None)
+    # Then: no prior invocation's token survives, and ordinary helper callers remain fresh.
+    assert len(calls) == 1
+    assert second["history"]["reference"]["revision"] == expected_revision
+    assert second["tasks"]["S01"]["reference"]["revision"] == expected_revision
+    assert (
+        fp.verification._reference(state, "/verification/records")["revision"] == expected_revision
+    )
+    assert (
+        fp.verification._collection(state, [], "/verification/records")["reference"]["revision"]
+        == expected_revision
+    )
