@@ -44,7 +44,13 @@ import {
 } from './history-ui';
 import { useSnapshot } from './useSnapshot';
 import type { SnapshotLoader } from './useSnapshot';
-import { QuestionForm, MissingQuestionDraft, useSession, saveAnswer } from './questions';
+import {
+  QuestionForm,
+  MissingQuestionDraft,
+  useSession,
+  saveAnswer,
+  parseAnswerReceipt,
+} from './questions';
 import { QuestionDraftProvider, questionDraftKey, useQuestionDrafts } from './question-drafts';
 import { QuestionList, QuestionLinks } from './question-list';
 import { questionListIdentity } from './question-state';
@@ -1414,9 +1420,25 @@ function Dashboard({
     coordinateWrite,
     writePhase,
   } = useSnapshot(loader);
+  const currentSession = useRef<{
+    readonly nonce: string | null;
+    readonly responsesEnabled: boolean;
+  } | null>(null);
   const coordinatedSaver = useCallback<AnswerSaver>(
-    async (input, nonce) => {
-      const settled = await coordinateWrite(() => (answerSaver || saveAnswer)(input, nonce));
+    async (input, nonce, received) => {
+      let returnedReceipt: ReturnType<typeof parseAnswerReceipt> = null;
+      const settled = await coordinateWrite(
+        () => (answerSaver || saveAnswer)(input, nonce),
+        (result) => {
+          if (currentSession.current?.nonce !== nonce || !currentSession.current.responsesEnabled)
+            return;
+          const receipt = result.ok ? parseAnswerReceipt(result.receipt, input) : null;
+          if (receipt) {
+            returnedReceipt = receipt;
+            received?.(receipt);
+          }
+        },
+      );
       if (!settled) return { ok: false, conflict: false };
       const freshQuestion = items(settled.snapshot?.questions)
         .map(record)
@@ -1424,12 +1446,14 @@ function Dashboard({
       const receipt = record(freshQuestion?.answer);
       if (
         settled.refreshed &&
+        freshQuestion?.version === input.version &&
         receipt.question_id === input.question_id &&
         receipt.version === input.version &&
         receipt.answer === input.answer &&
         receipt.submission_id === input.submission_id
       )
         return { ok: true, conflict: false };
+      if (returnedReceipt) return { ok: true, conflict: false, receipt: returnedReceipt };
       if (settled.outcome.status === 'rejected') throw settled.outcome.reason;
       return { ok: false, conflict: settled.outcome.value.conflict };
     },
@@ -1448,6 +1472,7 @@ function Dashboard({
     i18n.setProgramLanguage(language(programLanguage));
   }, [programLanguage, i18n.setProgramLanguage]);
   const session = useSession(sessionLoader);
+  currentSession.current = session;
   const drafts = useQuestionDrafts();
   const [questionFiltersOpen, setQuestionFiltersOpen] = useState(false);
   const questionOrigin = useRef<{

@@ -132,7 +132,10 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
     [loader],
   );
   const coordinateWrite = useCallback(
-    async <T>(operation: () => Promise<T>): Promise<CoordinatedWrite<T> | null> => {
+    async <T>(
+      operation: () => Promise<T>,
+      completed?: (value: T) => void,
+    ): Promise<CoordinatedWrite<T> | null> => {
       if (!alive.current || writeReservation.current) return null;
       const reservation = {};
       const programId = current.current?.snapshot.program_id;
@@ -163,6 +166,14 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
           (programId !== undefined && current.current?.snapshot.program_id !== programId)
         )
           return null;
+        if (outcome.status === 'fulfilled' && completed) {
+          try {
+            completed(outcome.value);
+          } catch (reason) {
+            // no-excuse-ok: catch -- local notification failure still requires the real reconciliation.
+            outcome = { status: 'rejected', reason };
+          }
+        }
         setWritePhase('reconciling');
         const beforeRead = successfulReads.current;
         await refresh(false, false, reservation);

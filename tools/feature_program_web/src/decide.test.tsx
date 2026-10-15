@@ -569,7 +569,7 @@ describe('draft identity and truthful state boundaries', () => {
       answer: 'Exact private answer',
       submission_id: 'stable-id',
     };
-    expect(await saveAnswer(input, 'private-nonce')).toEqual({ ok: true, conflict: false });
+    expect(await saveAnswer(input, 'private-nonce')).toEqual({ ok: false, conflict: false });
     expect(fetcher).toHaveBeenCalledWith(
       '/api/questions/answer',
       expect.objectContaining({
@@ -669,4 +669,137 @@ describe('coordinated answer receipt confirmation', () => {
       expect(saver.mock.calls[1]?.[0]).toEqual(saver.mock.calls[0]?.[0]);
     },
   );
+});
+
+function completeReceipt(input: Parameters<AnswerSaver>[0]) {
+  return {
+    ...input,
+    saved_at: '2026-10-16T03:37:46.747043+09:00',
+    channel: 'local_web' as const,
+    provenance: 'unverified_local_human' as const,
+    status: 'answered' as const,
+  };
+}
+describe('durable receipt before mandatory full refresh', () => {
+  it.each(['success', 'failure'])(
+    'shows actual200 receipt before delayed GET and retains it after GET %s',
+    async (outcome) => {
+      window.history.replaceState(null, '', '#question/Q1');
+      let settleRead!: (value: unknown) => void, failRead!: (reason: Error) => void;
+      const loader = vi
+        .fn()
+        .mockResolvedValueOnce(snapshot())
+        .mockImplementationOnce(
+          () =>
+            new Promise((yes, no) => {
+              settleRead = yes;
+              failRead = no;
+            }),
+        );
+      const saver = vi.fn<AnswerSaver>(async (input) => ({
+        ok: true,
+        conflict: false,
+        receipt: completeReceipt(input),
+      }));
+      render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+      fireEvent.change(await screen.findByLabelText('Your answer'), {
+        target: { value: 'Receipt-backed saved answer' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      await screen.findByRole('heading', { name: 'Your saved answer' });
+      expect(screen.getByText('Receipt-backed saved answer')).toBeTruthy();
+      expect(screen.getByText(/Saved .*local response/)).toBeTruthy();
+      expect(loader).toHaveBeenCalledTimes(2);
+      expect(saver).toHaveBeenCalledTimes(1);
+      // The global model remains the last actual snapshot while mandatory GET is unresolved.
+      expect(screen.getByText('Refreshing…')).toBeTruthy();
+      await act(async () => {
+        if (outcome === 'failure') failRead(new Error('refresh unavailable'));
+        else {
+          const model = snapshot();
+          const input = saver.mock.calls[0]?.[0];
+          if (!input) throw new Error('Missing input');
+          settleRead({
+            ...model,
+            revision: 'saved',
+            questions: records(model.questions).map((q) =>
+              q.id === 'Q1' ? { ...q, status: 'answered', answer: completeReceipt(input) } : q,
+            ),
+          });
+        }
+      });
+      expect(screen.getByRole('heading', { name: 'Your saved answer' })).toBeTruthy();
+      expect(screen.queryByRole('alert')).toBeNull();
+      if (outcome === 'failure') expect(screen.getByText('Unavailable')).toBeTruthy();
+      expect(loader).toHaveBeenCalledTimes(2);
+    },
+  );
+  it('ignores a stale-session200 callback until the exact fresh receipt is observed', async () => {
+    window.history.replaceState(null, '', '#question/Q1');
+    let finishPost!: () => void, finishRead!: (value: unknown) => void;
+    let model = snapshot();
+    const loader = vi
+      .fn()
+      .mockResolvedValueOnce(model)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRead = resolve;
+          }),
+      );
+    const saver = vi.fn<AnswerSaver>(async (input) => {
+      await new Promise<void>((resolve) => {
+        finishPost = resolve;
+      });
+      return { ok: true, conflict: false, receipt: completeReceipt(input) };
+    });
+    const view = render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+    fireEvent.change(await screen.findByLabelText('Your answer'), {
+      target: { value: 'Session bound answer' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+    const renewed = vi.fn(async () => ({ responsesEnabled: true, nonce: 'replacement-session' }));
+    view.rerender(<App loader={loader} sessionLoader={renewed} answerSaver={saver} />);
+    await waitFor(() => expect(renewed).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      finishPost();
+    });
+    expect(screen.queryByRole('heading', { name: 'Your saved answer' })).toBeNull();
+    await act(async () => {
+      const input = saver.mock.calls[0]?.[0];
+      if (!input) throw new Error('Missing input');
+      model = parseSnapshot({
+        ...model,
+        revision: 'saved',
+        questions: records(model.questions).map((q) =>
+          q.id === 'Q1' ? { ...q, status: 'answered', answer: completeReceipt(input) } : q,
+        ),
+      });
+      finishRead(model);
+    });
+    expect(screen.getByRole('heading', { name: 'Your saved answer' })).toBeTruthy();
+  });
+  it('does not overwrite a changed draft with a late valid callback or result', async () => {
+    const store = createQuestionDrafts(),
+      key = questionDraftKey('program', 'Q1');
+    store.read(key, 1);
+    store.update(key, { answer: 'Original' });
+    let notify!: NonNullable<Parameters<AnswerSaver>[2]>, finish!: (result: AnswerResult) => void;
+    const saver = vi.fn<AnswerSaver>((_input, _nonce, received) => {
+      if (!received) throw new Error('Missing callback');
+      notify = received;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+    const pending = store.submit(key, { questionId: 'Q1', nonce: 'nonce', saver });
+    const input = saver.mock.calls[0]?.[0];
+    if (!input) throw new Error('Missing input');
+    store.update(key, { answer: 'Changed', phase: 'editing' });
+    notify(completeReceipt(input));
+    finish({ ok: true, conflict: false, receipt: completeReceipt(input) });
+    expect(await pending).toBe(false);
+    expect(store.read(key, 1)).toMatchObject({ answer: 'Changed', phase: 'editing' });
+    expect(store.read(key, 1).receipt).toBeUndefined();
+  });
 });

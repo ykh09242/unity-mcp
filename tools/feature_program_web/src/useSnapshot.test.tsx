@@ -572,3 +572,67 @@ it('does not return an old-program receipt when reconciliation changes program w
   expect(hook.result.current.snapshot?.program_id).toBe('replacement');
   expect(hook.result.current.writePhase).toBeNull();
 });
+
+it('publishes the completed operation callback before GET but keeps reservation until that GET settles', async () => {
+  let finishRead!: (value: unknown) => void;
+  const loader = vi
+    .fn()
+    .mockResolvedValueOnce(fixture())
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRead = resolve;
+        }),
+    );
+  const hook = renderHook(() => useSnapshot(loader));
+  await act(async () => {});
+  const received = vi.fn(),
+    second = vi.fn().mockResolvedValue('second');
+  let pending!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+  await act(async () => {
+    pending = hook.result.current.coordinateWrite(async () => 'durably-complete', received);
+  });
+  expect(received).toHaveBeenCalledExactlyOnceWith('durably-complete');
+  expect(hook.result.current.writePhase).toBe('reconciling');
+  await act(async () => {
+    expect(await hook.result.current.coordinateWrite(second)).toBeNull();
+    await hook.result.current.refresh(true);
+  });
+  expect(second).not.toHaveBeenCalled();
+  expect(loader).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    finishRead(fixture());
+    await pending;
+  });
+  expect(hook.result.current.writePhase).toBeNull();
+});
+it.each(['unmount', 'replace'])(
+  'does not notify an old operation callback after %s',
+  async (change) => {
+    let finishPost!: (value: string) => void;
+    const loader = vi.fn().mockResolvedValue(fixture()),
+      replacement = vi.fn().mockResolvedValue({ ...fixture(), program_id: 'replacement' });
+    const hook = renderHook(({ input }) => useSnapshot(input), { initialProps: { input: loader } });
+    await act(async () => {});
+    const received = vi.fn();
+    let pending!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+    await act(async () => {
+      pending = hook.result.current.coordinateWrite(
+        () =>
+          new Promise((resolve) => {
+            finishPost = resolve;
+          }),
+        received,
+      );
+    });
+    if (change === 'unmount') hook.unmount();
+    else hook.rerender({ input: replacement });
+    await act(async () => {});
+    await act(async () => {
+      finishPost('old-receipt');
+      await pending;
+    });
+    expect(received).not.toHaveBeenCalled();
+    expect(replacement).toHaveBeenCalledTimes(change === 'unmount' ? 0 : 1);
+  },
+);
