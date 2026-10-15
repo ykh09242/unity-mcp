@@ -106,6 +106,7 @@ a {
   inset-block-start: 8px;
 }
 .topbar {
+  position: relative;
   min-block-size: 72px;
   display: flex;
   flex-wrap: wrap;
@@ -146,6 +147,38 @@ a {
   min-inline-size: 0;
   text-align: end;
   font-variant-numeric: tabular-nums;
+}
+.refresh-notice {
+  margin: 0;
+}
+.refresh-notice > summary {
+  min-block-size: 40px;
+  align-content: center;
+  border-radius: var(--radius);
+}
+.refresh-notice > summary[aria-disabled='true'] {
+  list-style: none;
+  cursor: default;
+}
+.refresh-notice > summary[aria-disabled='false'] {
+  color: var(--warning);
+}
+.refresh-notice .refresh-explanation {
+  position: absolute;
+  z-index: 20;
+  inset-block-start: calc(100% + var(--s2));
+  inset-inline-end: var(--s4);
+  inline-size: min(28rem, calc(100vw - var(--s8)));
+  max-block-size: min(240px, 50dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  text-align: start;
+  white-space: normal;
+  word-break: keep-all;
 }
 .overview-heading {
   align-items: center;
