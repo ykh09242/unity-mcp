@@ -871,7 +871,7 @@ def _capture_rows(state: Record, facts: list[Record]) -> list[Record]:
     for item in facts:
         capture = _record(item.get("capture"))
         reference = _record(item.get("reference"))
-        identity = _digest([capture.get("run_id"), capture.get("task_id"), capture.get("attempt")])
+        identity = _digest(["original_capture", reference["sha256"]])
         content = _digest(_stable(capture))
         if identity in seen:
             _require(seen[identity] == content, "Conflicting original timing capture")

@@ -854,3 +854,147 @@ def test_explicit_assessed_currentness_cannot_revive_an_old_attempt():
     )
     # Then a saved old request stays historical, even if it is the latest request in that lane.
     assert interval(result, "verification_wait")["applicability"] == "historical"
+
+
+from tools.tests import test_feature_program_execution as execution_cases  # noqa: E402
+
+execution_fixture = execution_cases.fixture
+
+
+@pytest.fixture
+def original_capture_pair(execution_fixture):
+    """Create two genuine sealed producer captures sharing one explicit display label."""
+    fixture = execution_fixture
+    script = (
+        "from pathlib import Path; import sys; "
+        "p=Path('timing-capture-counter.txt'); "
+        "count=int(p.read_text()) if p.exists() else 0; "
+        "p.write_text(str(count+1)); sys.exit(7 if count else 0)"
+    )
+    first = execution_cases.prepare(fixture, script, capture_dir="evidence/S01/attempt-1/origin-a")
+    registry = fixture.program.load()
+    second = execution_cases.execution.prepare_run(
+        fixture.program,
+        registry,
+        {
+            "argv": first.invocation["argv"],
+            "cwd": ".",
+            "execution_kind": "test",
+            "capture_dir": "evidence/S01/attempt-1/origin-b",
+        },
+        deepcopy(first.binding),
+    )
+    produced = [execution_cases.execution.execute_run(prepared) for prepared in (first, second)]
+    facts = [
+        {
+            "capture": execution_cases.execution._read_capture(
+                fixture.program, item["capture_ref"]
+            ),
+            "reference": item["capture_ref"],
+        }
+        for item in produced
+    ]
+    return fixture, registry, facts
+
+
+def project_original_captures(registry, facts, *, records=None):
+    return timing.project(
+        registry,
+        handoff_facts={"schema_version": 1, "rows": {"items": [], "total": 0}},
+        verification_facts={
+            "schema_version": 1,
+            "records": records if records is not None else registry["verification"]["records"],
+            "applicability": {"request-1": "current"},
+        },
+        capture_facts=facts,
+        source_binding={"program_id": registry["program_id"]},
+    )
+
+
+def test_distinct_original_hashes_with_same_display_run_id_remain_distinct(original_capture_pair):
+    # Given actual producer runs using one explicit run_id and fresh origin directories.
+    fixture, registry, facts = original_capture_pair
+    assert facts[0]["capture"]["run_id"] == facts[1]["capture"]["run_id"]
+    assert facts[0]["reference"]["sha256"] != facts[1]["reference"]["sha256"]
+    # When both verified original sealed references flow through the normal timing API.
+    result = project_original_captures(registry, facts)
+    # Then both actual outcomes/durations and logical identities survive independently.
+    rows = [row for row in result["intervals"]["items"] if row["kind"] == "command_process"]
+    assert len(rows) == 2 and len({row["interval_id"] for row in rows}) == 2
+    assert {row["outcome"] for row in rows} == {"completed", "failed"}
+    actual = {
+        fact["reference"]["sha256"]: fact["capture"]["process"]["elapsed_seconds"] for fact in facts
+    }
+    assert {row["start"]["reference"]["sha256"]: row["closed_seconds"] for row in rows} == actual
+    summary = next(
+        row
+        for row in result["cohorts"][0]["summaries"]
+        if row["kind"] == "command_process" and row["outcome"] == "all_observed"
+    )
+    assert summary["relevant_total"] == summary["closed_valid"] == 2
+    assert (fixture.program.repo / "timing-capture-counter.txt").read_text() == "2"
+
+
+def test_same_original_hash_across_verified_aliases_counts_once(original_capture_pair):
+    # Given exact byte copies of an actual sealed capture under different valid locators.
+    fixture, registry, facts = original_capture_pair
+    original = facts[0]
+    raw = fixture.program.path(original["reference"]["path"]).read_bytes()
+    aliases = []
+    for name in ("capture-copy-one.json", "capture-copy-two.json"):
+        path = "evidence/S01/attempt-1/" + name
+        fixture.program.path(path).write_bytes(raw)
+        reference = {"path": path, "sha256": execution_cases.fp.sha(raw)}
+        aliases.append(
+            {
+                "capture": execution_cases.execution._read_capture(fixture.program, reference),
+                "reference": reference,
+            }
+        )
+    prepared_event = execution_cases.execution.prepare_observation(
+        fixture.program,
+        registry,
+        aliases[0]["reference"],
+        {
+            "task_id": "S01",
+            "actor_id": "qa",
+            "request_id": "request-1",
+            "request_version": 1,
+            "reason": "Observe the original sealed bytes through a verified alias",
+        },
+    )
+    records = [
+        *registry["verification"]["records"],
+        {
+            "input": prepared_event,
+            "request_id": "request-1",
+            "request_version": 1,
+            "context": registry["verification"]["records"][0]["context"],
+            "receipt": aliases[0]["reference"],
+        },
+    ]
+    # When repeated references and verified aliases are all supplied together.
+    result = project_original_captures(
+        registry, [original, deepcopy(original), *aliases], records=records
+    )
+    # Then content reuse contributes one measured process, not missing-capture placeholders or extra samples.
+    rows = [row for row in result["intervals"]["items"] if row["kind"] == "command_process"]
+    assert (
+        len(rows) == 1
+        and rows[0]["closed_seconds"] == original["capture"]["process"]["elapsed_seconds"]
+    )
+    assert rows[0]["state"] == "closed"
+
+
+def test_conflicting_content_for_same_exact_original_reference_remains_diagnostic(
+    original_capture_pair,
+):
+    # Given a verified original plus a contradictory assessed object alleging its same exact reference.
+    _, registry, facts = original_capture_pair
+    original = facts[0]
+    contradictory = deepcopy(original)
+    contradictory["capture"]["process"]["elapsed_seconds"] += 1
+    # When the pure boundary receives the contradictory same-reference facts.
+    with pytest.raises(timing.TimingError, match="Conflicting original timing capture"):
+        project_original_captures(registry, [original, contradictory])
+    # Then no arbitrary first/last value can silently replace the immutable original.
