@@ -19,14 +19,14 @@ import importlib
 import json
 import math
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PosixPath, PurePath, PurePosixPath, PureWindowsPath, WindowsPath
 import re
 import stat
 from time import perf_counter
 import subprocess
 import sys
 import tempfile
-from typing import TYPE_CHECKING, Callable, Final, Iterator, TypeAlias
+from typing import TYPE_CHECKING, Callable, Final, Iterator, Literal, TypeAlias
 
 # Extensions lazily import core helpers. Reuse this entrypoint module so rejected
 # input has the same ProgramError identity under script, module and imported runs.
@@ -62,6 +62,26 @@ if TYPE_CHECKING:
     from tools.feature_program_batch import _CheckedHistory
     from tools.feature_program_storage import RegistryObservation
     from tools.feature_program_read_model import Collector
+
+
+# One explicit CLI invocation only; this records publication, never authorizes it.
+_MUTATION_OUTCOME: ContextVar[dict | None] = ContextVar(
+    "feature_program_mutation_outcome", default=None
+)
+OUTCOME_COMMANDS: Final = frozenset(
+    {
+        "note",
+        "checkpoint",
+        "verification-record",
+        "review-handoff-record",
+        "submit",
+        "complete",
+        "rework",
+        "delivery",
+        "objective-complete",
+        "presentation-record",
+    }
+)
 
 
 Json: TypeAlias = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
@@ -131,12 +151,26 @@ def _active_collector():
     return module.active_collector() if module is not None else None
 
 
+_OBSERVED_IMAGE_LIMIT: Final = 4096
+_OBSERVED_BYTE_LIMIT: Final = 64 * 1024 * 1024
+
+
+@dataclass(slots=True)
+class _ByteObservations:
+    """Pure bookkeeping for retained immutable objects, never pathname truth."""
+
+    images: dict[int, tuple[bytes, str]] = field(default_factory=dict)
+    descriptors: set[tuple[Path, str, int, int, str | None]] = field(default_factory=set)
+    retained_bytes: int = 0
+
+
 @dataclass(frozen=True, slots=True)
 class _DependencyNames:
-    """Pure lexical results retained only by one explicit collector activation."""
+    """Pure results retained only by one explicit collector activation."""
 
     owner: Collector
     paths: dict[str, tuple[Path, str] | None] = field(default_factory=dict)
+    byte_observations: _ByteObservations = field(default_factory=_ByteObservations)
 
 
 _dependency_names: ContextVar[_DependencyNames | None] = ContextVar(
@@ -152,6 +186,137 @@ def _collect_dependencies(collector: Collector) -> Iterator[None]:
             yield
     finally:
         _dependency_names.reset(token)
+
+
+_HELD_IMAGE_LIMIT: Final = 10000
+_HELD_BYTE_LIMIT: Final = 128 * 1024 * 1024
+_HELD_COMPONENT_LIMIT: Final = 4096
+_HELD_COMPONENT_SPELLING_LIMIT: Final = 4096
+
+
+@dataclass(slots=True)
+class _InitialComponents:
+    """Positive metadata within one enrolled initial image, with a strict closing barrier."""
+
+    positive: dict[str, tuple[Path, int]] = field(default_factory=dict)
+    roots: dict[str, Path] = field(default_factory=dict)
+
+    def linked(self, path: Path) -> bool:
+        key = str(path)
+        if key in self.positive:
+            return False
+        linked, captured, kind = _component_image(path)
+        if (
+            captured
+            and not linked
+            and kind is not None
+            and len(self.positive) < _HELD_COMPONENT_LIMIT
+            and len(key) <= _HELD_COMPONENT_SPELLING_LIMIT
+        ):
+            self.positive[key] = (path, kind)
+        return linked
+
+    def finish(self) -> None:
+        for path, expected_kind in self.positive.values():
+            linked, captured, kind = _component_image(path)
+            require(
+                captured and not linked and kind == expected_kind,
+                "Initial component changed or unavailable; refresh",
+            )
+        for root in self.roots.values():
+            linked, captured, kind = _component_image(root)
+            require(
+                captured and not linked and kind == stat.S_IFDIR,
+                "Initial root changed or unavailable; refresh",
+            )
+            require(root.resolve() == root.absolute(), "Initial root redirected; refresh")
+
+
+@dataclass(slots=True)
+class _InitialImages:
+    """Held immutable inputs for one explicitly enrolled initial computation."""
+
+    repo: Path
+    directory: Path
+    original_storage_sha256: str
+    proposed_body_sha256: str
+    collector: Collector
+    aliases: dict[tuple[str, str], tuple[Path, bytes, str]] = field(default_factory=dict)
+    retained_bytes: int = 0
+    components: _InitialComponents = field(default_factory=_InitialComponents)
+
+    def key(self, root: Path, name: str) -> tuple[str, str] | None:
+        if _initial_images.get() is not self or _active_collector() is not self.collector:
+            return None
+        if not root.is_absolute():
+            return None
+        spelling = str(root)
+        if spelling not in {str(self.repo), str(self.directory)}:
+            return None
+        relative = safe_relative(name)
+        path = root / relative
+        if path.is_relative_to(self.directory):
+            local = path.relative_to(self.directory).as_posix().casefold()
+            if local in {
+                "backlog.json",
+                ".feature-program.lock",
+                "board.md",
+                "checkpoint.md",
+            } or local.startswith(("tasks/", "recovery/")):
+                return None
+        return spelling, name
+
+    def remember(self, key: tuple[str, str], image: CapturedBytes) -> None:
+        previous = self.aliases.get(key)
+        if previous is not None:
+            require(previous[1] == image.content, "Held initial input changed during capture")
+        elif (
+            len(self.aliases) < _HELD_IMAGE_LIMIT
+            and self.retained_bytes + len(image.content) <= _HELD_BYTE_LIMIT
+        ):
+            self.aliases[key] = (image.path, image.content, image.sha256)
+            self.retained_bytes += len(image.content)
+
+
+_initial_images: ContextVar[_InitialImages | None] = ContextVar("initial_images", default=None)
+
+
+@contextmanager
+def _hold_initial_images(
+    program: Program,
+    original: RegistryObservation,
+    collector: Collector,
+    *,
+    proposed_body: bytes,
+) -> Iterator[None]:
+    """Opt in only during checked initial computation; ordinary readers stay fresh."""
+    require(_active_collector() is collector, "Initial image collector changed")
+    require(
+        collector.repo == program.repo.absolute()
+        and collector.program_dir == program.directory.absolute()
+        and collector.body_sha256 == sha(proposed_body)
+        and sha(original.raw_bytes) == original.storage_sha256,
+        "Initial image operation binding changed",
+    )
+    held = _InitialImages(
+        program.repo.absolute(),
+        program.directory.absolute(),
+        original.storage_sha256,
+        collector.body_sha256,
+        collector,
+    )
+    token = _initial_images.set(held)
+    try:
+        yield
+        # Initial metadata is an explicit image, not a claim about intermediate ABA changes.
+        # This barrier precedes model construction; later callbacks and final closure stay fresh.
+        held.components.finish()
+    finally:
+        _initial_images.reset(token)
+        held.aliases.clear()
+        held.components.positive.clear()
+        held.components.roots.clear()
+        held.retained_bytes = 0
 
 
 def _dependency_name(path: Path) -> tuple[Path, str] | None:
@@ -252,14 +417,44 @@ def _observe_bytes(path: Path, content: bytes, limit: int, budget_tag: str | Non
         and named is not None
         and not (named[0] == collector.program_dir and os.path.normcase(named[1]) == "backlog.json")
     ):
+        active = _dependency_names.get()
+        memo = (
+            active.byte_observations if active is not None and active.owner is collector else None
+        )
+        reusable = (
+            memo is not None
+            and type(content) is bytes
+            and type(limit) is int
+            and 0 <= limit <= 128 * 1024 * 1024
+            and (budget_tag is None or type(budget_tag) is str)
+        )
+        identity = id(content)
+        previous = memo.images.get(identity) if reusable else None
+        descriptor = (*named, identity, limit, budget_tag)
+        retained = previous is not None and previous[0] is content
+        if retained and descriptor in memo.descriptors:
+            return
+        digest_value = previous[1] if retained else sha(content)
         collector.observe_file(
             *named,
             kind="file",
-            sha256=sha(content),
+            sha256=digest_value,
             size=len(content),
             limit=limit,
             budget_tag=budget_tag,
         )
+        if reusable:
+            if (
+                not retained
+                and len(memo.images) < _OBSERVED_IMAGE_LIMIT
+                and memo.retained_bytes + len(content) <= _OBSERVED_BYTE_LIMIT
+            ):
+                # The strong reference makes integer object-id reuse impossible.
+                memo.images[identity] = (content, digest_value)
+                memo.retained_bytes += len(content)
+                retained = True
+            if retained and len(memo.descriptors) < _OBSERVED_IMAGE_LIMIT:
+                memo.descriptors.add(descriptor)
 
 
 def parse_registry_state(observation: RegistryObservation, *, path: Path) -> Record:
@@ -577,7 +772,9 @@ def safe_path(root: Path, name: str) -> Path:
     return _checked_safe_path(root, name)
 
 
-def _checked_safe_path(root: Path, name: str, components: _ClosingComponents | None = None) -> Path:
+def _checked_safe_path(
+    root: Path, name: str, components: _ClosingComponents | _InitialComponents | None = None
+) -> Path:
     # Lexically excluded names are represented by explicit scope exclusions.
     safe_relative(name)
     try:
@@ -587,12 +784,12 @@ def _checked_safe_path(root: Path, name: str, components: _ClosingComponents | N
         raise
 
 
-def _component_check(path: Path) -> tuple[bool, bool]:
-    """Return the link result and whether a fresh metadata image was available."""
+def _component_image(path: Path) -> tuple[bool, bool, int | None]:
+    """Classify one fresh metadata image without adding a second filesystem observation."""
     try:
         metadata = path.lstat()
     except (OSError, ValueError):
-        return path.is_symlink() or getattr(path, "is_junction", lambda: False)(), False
+        return path.is_symlink() or getattr(path, "is_junction", lambda: False)(), False, None
     linked = stat.S_ISLNK(metadata.st_mode) or (
         getattr(path, "is_junction", None) is not None
         and (
@@ -603,7 +800,13 @@ def _component_check(path: Path) -> tuple[bool, bool]:
         and getattr(metadata, "st_reparse_tag", None)
         == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
     )
-    return linked, True
+    return linked, True, stat.S_IFMT(metadata.st_mode)
+
+
+def _component_check(path: Path) -> tuple[bool, bool]:
+    """Return the link result and whether a fresh metadata image was available."""
+    linked, captured, _ = _component_image(path)
+    return linked, captured
 
 
 def _component_linked(path: Path) -> bool:
@@ -611,7 +814,51 @@ def _component_linked(path: Path) -> bool:
     return _component_check(path)[0]
 
 
-def _admit_safe_path(root: Path, name: str, components: _ClosingComponents | None = None) -> Path:
+_ContainmentFlavor = Literal["windows", "posix"]
+_CONTAINMENT_MAX_SPELLING = 2048
+_CONTAINMENT_MAX_COMPONENTS = 64
+_CONTAINMENT_MAX_DESCRIPTORS = 4096
+
+
+def _containment_flavor(value: PurePath) -> _ContainmentFlavor | None:
+    if type(value) in (PureWindowsPath, WindowsPath):
+        return "windows"
+    if type(value) in (PurePosixPath, PosixPath):
+        return "posix"
+    return None
+
+
+@lru_cache(maxsize=_CONTAINMENT_MAX_DESCRIPTORS)
+def _absolute_path_components(flavor: _ContainmentFlavor, spelling: str) -> tuple[str, ...] | None:
+    # The caller bounds spelling; exact public parsers retain anchor/root semantics.
+    value = PureWindowsPath(spelling.lower()) if flavor == "windows" else PurePosixPath(spelling)
+    if not value.is_absolute():
+        return None
+    parts = value.parts
+    return parts if len(parts) <= _CONTAINMENT_MAX_COMPONENTS else None
+
+
+def _is_path_within(path: PurePath, other: PurePath) -> bool:
+    """Use exact lexical components for known absolute builtins; delegate every other case."""
+    kind = _containment_flavor(path)
+    if kind is None or kind != _containment_flavor(other):
+        return path.is_relative_to(other)
+    spelling, parent_spelling = str(path), str(other)
+    if (
+        len(spelling) > _CONTAINMENT_MAX_SPELLING
+        or len(parent_spelling) > _CONTAINMENT_MAX_SPELLING
+    ):
+        return path.is_relative_to(other)
+    parts = _absolute_path_components(kind, spelling)
+    parent = _absolute_path_components(kind, parent_spelling)
+    if parts is None or parent is None:
+        return path.is_relative_to(other)
+    return len(parts) >= len(parent) and parts[: len(parent)] == parent
+
+
+def _admit_safe_path(
+    root: Path, name: str, components: _ClosingComponents | _InitialComponents | None = None
+) -> Path:
     relative = safe_relative(name)
     path = root / relative
     cursor = root
@@ -624,7 +871,7 @@ def _admit_safe_path(root: Path, name: str, components: _ClosingComponents | Non
             f"Linked path rejected: {name}",
         )
     resolved = path.resolve()
-    require(resolved.is_relative_to(root.absolute()), f"Path outside root: {name}")
+    require(_is_path_within(resolved, root.absolute()), f"Path outside root: {name}")
     # Canonical candidate equality also proves its root/ancestors are unredirected.
     # Reject late inward links too; mere containment could accept that race window.
     require(resolved == path.absolute(), f"Linked or noncanonical path rejected: {name}")
@@ -684,6 +931,36 @@ class ReadBudget:
     _admissions: dict[tuple[str, str], CapturedBytes] = field(default_factory=dict, init=False)
     _documents: dict[Path, tuple[CapturedBytes, Record]] = field(default_factory=dict, init=False)
     _provenance_reads: dict[Path, _ProvenanceRead] | None = field(default=None, init=False)
+    _held_initial: _InitialImages | None = field(default=None, init=False)
+
+    def _held_alias(self, root: Path, name: str) -> tuple[Path, bytes, str] | None:
+        held = self._held_initial
+        key = held.key(root, name) if held is not None else None
+        return held.aliases.get(key) if key is not None else None
+
+    def _observed_alias(self, root: Path, name: str) -> CapturedBytes | None:
+        """A held alias is useful only to an explicitly enrolled initial reader."""
+        observed = self._admissions.get((str(root.absolute()), name))
+        if observed is not None:
+            return observed
+        held = self._held_alias(root, name)
+        return CapturedBytes(*held) if held is not None else None
+
+    def _import_initial(self, root: Path, name: str, limit: int) -> CapturedBytes | None:
+        held = self._held_alias(root, name)
+        if held is None:
+            return None
+        path, content, checksum = held
+        require(path == root / safe_relative(name), "Held input alias changed")
+        # Charge this consumer independently even though the immutable image is shared.
+        self._charge_provenance((_ProvenanceRead(path, content, limit),))
+        image = self._images.get(path)
+        if image is None or image.content is not self.cached[path]:
+            image = CapturedBytes(path, self.cached[path], checksum)
+            self._images[path] = image
+        self._admissions[(str(root.absolute()), name)] = image
+        self._remember_provenance(path, image.content, limit)
+        return image
 
     def _remember_provenance(self, path: Path, content: bytes, limit: int) -> None:
         if self._provenance_reads is not None:
@@ -740,6 +1017,17 @@ class ReadBudget:
             self._images[path] = image
         return image
 
+    def _admit(self, root: Path, name: str) -> Path:
+        """Use initial metadata only for this explicitly enrolled reader's exact active roots."""
+        held = self._held_initial
+        components = (
+            held.components if held is not None and held.key(root, name) is not None else None
+        )
+        if components is not None:
+            # held.key permits only this operation's exact repository/program roots.
+            components.roots.setdefault(str(root), root)
+        return _checked_safe_path(root, name, components)
+
     def capture(self, root: Path, name: str, limit: int) -> CapturedBytes:
         """Admit one exact logical path; every consumer still checks its expected hash/subject."""
         key = (str(root.absolute()), name)
@@ -752,7 +1040,10 @@ class ReadBudget:
             _observe_bytes(image.path, image.content, limit, f"reader-{id(self)}")
             self._remember_provenance(image.path, image.content, limit)
             return image
-        return self._capture_admitted(root, name, safe_path(root, name), limit)
+        initial = self._import_initial(root, name, limit)
+        if initial is not None:
+            return initial
+        return self._capture_admitted(root, name, self._admit(root, name), limit)
 
     def _capture_admitted(self, root: Path, name: str, path: Path, limit: int) -> CapturedBytes:
         """Finish a core source walk's existing safe_path admission without traversing it twice."""
@@ -767,9 +1058,16 @@ class ReadBudget:
             self._remember_provenance(path, image.content, limit)
             return image
         require(path == root / safe_relative(name), "Captured path differs from logical admission")
+        initial = self._import_initial(root, name, limit)
+        if initial is not None:
+            return initial
         require(observed_is_file(path), f"Missing frozen evidence: {name}")
         image = self._image(path, limit)
         self._admissions[key] = image
+        held = self._held_initial
+        alias = held.key(root, name) if held is not None else None
+        if alias is not None:
+            held.remember(alias, image)
         return image
 
     def json(self, captured: CapturedBytes) -> Record:
@@ -813,6 +1111,15 @@ class ReadBudget:
                     current.content == raw,
                     "Observed source/evidence changed during snapshot; refresh",
                 )
+
+
+def _initial_read_budget(remaining: int = 72 * 1024 * 1024) -> ReadBudget:
+    """Enroll a known initial consumer, never a default or closing reader."""
+    reader = ReadBudget(remaining)
+    held = _initial_images.get()
+    if held is not None and _active_collector() is held.collector:
+        reader._held_initial = held
+    return reader
 
 
 @dataclass(frozen=True, slots=True)
@@ -1146,7 +1453,16 @@ class Program:
         )
 
     def current_head(self) -> str:
-        return git(self.repo, ["rev-parse", "HEAD"])
+        collector = _active_collector()
+        try:
+            head = git(self.repo, ["rev-parse", "HEAD"])
+        except (ProgramError, OSError):
+            if collector is not None:
+                collector.ineligible("git_head_unavailable")
+            raise
+        if collector is not None:
+            collector.observe_head(self.repo, head)
+        return head
 
     def source_digest(self, scope: list[str]) -> str:
         return digest(self.source_snapshot(scope))
@@ -1201,10 +1517,10 @@ class Program:
                 "Private .work paths cannot be source scopes",
             )
             safe_relative(scope)
-            observed = reader._admissions.get((str(self.repo.absolute()), scope))
-            path = observed.path if observed is not None else safe_path(self.repo, scope)
+            observed = reader._observed_alias(self.repo, scope)
+            path = observed.path if observed is not None else reader._admit(self.repo, scope)
             require(
-                path != self.repo and not self.directory.is_relative_to(path),
+                path != self.repo and not _is_path_within(self.directory, path),
                 "Root/program-wide claims are invalid",
             )
             if observed is not None:
@@ -1225,16 +1541,16 @@ class Program:
                     for name in list(dirs):
                         relative = (folder_path / name).relative_to(self.repo).as_posix()
                         try:
-                            safe_path(self.repo, relative)
+                            reader._admit(self.repo, relative)
                         except ProgramError:
                             boundaries.append({"path": relative, "kind": "excluded_path"})
                             dirs.remove(name)
                     for name in sorted(files):
                         relative = (folder_path / name).relative_to(self.repo).as_posix()
-                        observed = reader._admissions.get((str(self.repo.absolute()), relative))
+                        observed = reader._observed_alias(self.repo, relative)
                         if observed is None:
                             try:
-                                candidate = safe_path(self.repo, relative)
+                                candidate = reader._admit(self.repo, relative)
                             except ProgramError:
                                 boundary = (
                                     str(PurePosixPath(relative).parent / ".env*")
@@ -1342,7 +1658,7 @@ class Program:
         self, state: Record, verify_artifacts: bool = True, *, prospective: bool = False
     ) -> _ValidatedState:
         _compact_registry(state)
-        budget = ReadBudget() if verify_artifacts else None
+        budget = _initial_read_budget() if verify_artifacts else None
         require(state.get("schema_version") == 1, "Unsupported registry")
         string(state.get("program_id"), "program_id")
         communication_language(state.get("communication_language"))
@@ -2976,10 +3292,35 @@ class Program:
         if _registry_backup is not None:
             _assert_registry_backup(self, *_registry_backup)
             _assert_registry_storage(self, initial)
+        outcome = _MUTATION_OUTCOME.get()
+        if outcome is not None:
+            published_revision = flow_module("storage").decode_registry(encoded).body_sha256
+            original_tasks = (
+                {
+                    str(record(value, "task")["id"]): value
+                    for value in sequence(original["tasks"], "original tasks")
+                }
+                if original is not None
+                else {}
+            )
+            outcome.update(
+                program=self,
+                before_revision=initial.body_sha256 if initial is not None else None,
+                proposed_revision=published_revision,
+                changed_task_ids=[
+                    str(record(value, "task")["id"])
+                    for value in sequence(state["tasks"], "tasks")
+                    if original_tasks.get(str(record(value, "task")["id"])) != value
+                ],
+            )
         atomic_write(self.path("backlog.json"), encoded)
+        if outcome is not None:
+            outcome.update(status="committed", revision=published_revision)
         try:
             self.render(state)
         except (OSError, ProgramError) as exc:
+            if outcome is not None:
+                outcome.update(status="committed_view_failed", view_recovery_required=True)
             raise ProgramError(
                 f"Registry committed at revision {phases.revision(state)}; derived rendering failed. Run render to recover views: {exc}"
             ) from exc
@@ -3367,7 +3708,7 @@ def _capture_projection(
         raise ProgramError(str(exc)) from exc
     # Capture source identities separately from their recorded hashes: an already
     # drifted source must not change again while its advisory projection is built.
-    source_inputs = ReadBudget(64 * 1024 * 1024)
+    source_inputs = _initial_read_budget(64 * 1024 * 1024)
     unavailable_sources: set[Path] = set()
     source_names = {str(item["path"]) for item in planning.descriptors(state)}
     if state.get("planning_path"):
@@ -3385,7 +3726,7 @@ def _capture_projection(
         raise ProgramError(str(exc)) from exc
     refs: dict[str, str] = {}
     observations: dict = {"submissions": {}, "blocks": {}, "recovery": [], "publication": []}
-    publication_inputs = ReadBudget(64 * 1024 * 1024)
+    publication_inputs = _initial_read_budget(64 * 1024 * 1024)
     absent_publication: set[Path] = set()
     for name in sorted(planning.PUBLICATION_MARKERS | {planning.TRACKING}):
         path = program.path(name)
@@ -3396,7 +3737,7 @@ def _capture_projection(
             )
         else:
             absent_publication.add(path)
-    review_sources = ReadBudget(128 * 1024 * 1024)
+    review_sources = _initial_read_budget(128 * 1024 * 1024)
     all_refs = (
         list(coordination.evidence_references(state))
         + list(questions.evidence_references(state))
@@ -3465,7 +3806,7 @@ def _capture_projection(
             warnings.append(f"Conflicting frozen evidence hashes: {name}")
         refs[name] = expected
     require(len(refs) <= 2000, "Snapshot exceeds 2000 evidence files")
-    evidence_budget = ReadBudget(64 * 1024 * 1024)
+    evidence_budget = _initial_read_budget(64 * 1024 * 1024)
     unavailable_evidence: set[Path] = set()
     for name, expected in refs.items():
         path = program.path(name)
@@ -3473,7 +3814,7 @@ def _capture_projection(
             warnings.append(f"Frozen evidence unavailable: {name}")
             unavailable_evidence.add(path)
             continue
-        captured = evidence_budget.capture(program.directory, name, 8 * 1024 * 1024)
+        captured = evidence_budget._capture_admitted(program.directory, name, path, 8 * 1024 * 1024)
         if captured.sha256 != expected:
             warnings.append(f"Frozen evidence changed: {name}")
     try:
@@ -3627,7 +3968,9 @@ def _capture_projection(
         "amendments": state.get("amendments", []),
         "execution_priorities": state.get("execution_priorities"),
         "verification": verification_view,
-        "coverage": coverage.projection(program, state, evidence_budget),
+        "coverage": coverage.projection(
+            program, state, evidence_budget, verification_facts=full_verification
+        ),
         "presentation": presentation._projection_from_checked(
             program,
             state,
@@ -3700,39 +4043,24 @@ def _capture_projection(
                 "reference": reference,
             }
     handoff_producer = flow_module("review_handoffs")
-    assessed_handoffs: Record = {}
-    context_reads = verification._reads(evidence_budget)
-    for value in sequence(
-        record(state.get("review_handoffs", {}), "review handoffs").get("records", []),
-        "handoff records",
-    ):
-        item = record(value, "handoff record")
-        if item["kind"] != "intent":
-            continue
-        subject = record(item["subject"], "subject")
-        identifier = str(subject["task_id"])
-        try:
-            context = verification._context(program, state, identifier, context_reads)
-            packet_ref = record(item["packet_ref"], "packet ref")
-            program.verify_refs([packet_ref], evidence_budget)
-            packet = read_json(program.path(str(packet_ref["path"])), budget=evidence_budget)
-            assessed_handoffs[str(item["handoff_id"])] = {
-                "context": context,
-                "review_inputs": authoring.assess_review_inputs(
-                    program,
-                    packet.get("review_inputs", {}),
-                    source_budget=source_inputs,
-                    evidence_budget=evidence_budget,
-                ),
-                "evidence_status": "observed",
-            }
-        except (ProgramError, OSError):
-            assessed_handoffs[str(item["handoff_id"])] = {
-                "context": None,
-                "evidence_status": "unavailable",
-            }
-    full_handoffs = handoff_producer.project_handoffs(state, assessed_handoffs, limit=None)
+    full_handoffs = authoring.assess_handoffs(
+        program, state, source_budget=source_inputs, evidence_budget=evidence_budget
+    )
+    queue_producer = flow_module("queue")
+    full_reviewer_load = queue_producer.project_capacity(
+        state, full_handoffs, full_verification, limit=None
+    )
+    full_handoffs = queue_producer.guide_handoffs(
+        state, full_handoffs, full_verification, reviewer_load=full_reviewer_load
+    )
     result["review_handoffs"] = handoff_producer.bound_projection(full_handoffs, limit=50)
+    result["reviewer_load"] = deepcopy(full_reviewer_load)
+    reviewer_rows = result["reviewer_load"]["rows"]
+    reviewer_rows.update(
+        items=reviewer_rows["items"][:50],
+        shown=min(50, reviewer_rows["total"]),
+        omitted=max(0, reviewer_rows["total"] - 50),
+    )
     latest_handoffs: Record = {}
     for value in full_handoffs["rows"]["items"]:
         item = record(value, "handoff row")
@@ -3875,10 +4203,17 @@ def _capture_projection(
             "checks": deepcopy(receipt.get("checks", [])),
         }
     full_verification["task_facts"] = task_facts
+    integrated_review = record(result["coverage"]["integrated_review"], "integrated review")
+    full_verification["integrated_review"] = integrated_review
     # Queue assessment needs full inputs; ordinary detached row display omits only
     # the new raw capture/manifest facts, as the bounded verification view does.
     queue_view = deepcopy(
-        flow_module("queue").project(state, full_verification, handoff_facts=full_handoffs)
+        flow_module("queue").project(
+            state,
+            full_verification,
+            handoff_facts=full_handoffs,
+            integrated_review=integrated_review,
+        )
     )
     for row_value in sequence(record(queue_view["rows"], "queue rows")["items"], "queue items"):
         context = record(row_value, "queue row").get("context")
@@ -3887,7 +4222,11 @@ def _capture_projection(
             context.pop("input_manifest", None)
     result["review_queue"] = queue_view
     result["closure"] = flow_module("closure").readiness(
-        program, state, prevalidated=True, verification_facts=full_verification
+        program,
+        state,
+        prevalidated=True,
+        verification_facts=full_verification,
+        integrated_review=integrated_review,
     )
     closure_view = record(result["closure"], "closure projection")
     closure_view["reference"] = {
@@ -4035,6 +4374,7 @@ class _ClosingObserver:
         self.normalized_roots: dict[Path, Path] = {}
         self.probes: dict[tuple[Path, str], str] = {}
         self.components = _ClosingComponents()
+        self._observed_head: str | None = None
 
     def _admitted_path(self, root: Path, name: str) -> Path:
         """Retain one checked Path per original logical admission in this fresh image."""
@@ -4059,6 +4399,24 @@ class _ClosingObserver:
 
     def finish(self) -> None:
         self.components.finish()
+        if self._observed_head is not None:
+            with flow_module("read_model").collect(None):
+                require(
+                    self.program.current_head() == self._observed_head,
+                    "Git HEAD changed during read-model closing observation",
+                )
+
+    def head(self) -> str:
+        with flow_module("read_model").collect(None):
+            head = self.program.current_head()
+        require(bool(re.fullmatch(r"[0-9a-f]{40}", head)), "Invalid current Git HEAD")
+        if self._observed_head is not None:
+            require(
+                head == self._observed_head,
+                "Git HEAD changed during read-model closing observation",
+            )
+        self._observed_head = head
+        return head
 
     def admit(self, root: Path, name: str) -> None:
         self._admitted_path(root, name)
@@ -4199,7 +4557,10 @@ def _prepare_model_publication(
     observations = _SourceObservations()
     source_token = _source_observations.set(observations)
     try:
-        with _collect_dependencies(collector):
+        with (
+            _collect_dependencies(collector),
+            _hold_initial_images(program, original, collector, proposed_body=intended_body),
+        ):
             body = program.prepare_save(state)
             require(
                 len(facts) == 1 and facts[0].body == body,
@@ -5069,6 +5430,10 @@ def parser() -> argparse.ArgumentParser:
     authoring.add_commands(commands)
     brief_command = commands.add_parser("brief", help="Bounded advisory program or task context")
     brief_command.add_argument("--task")
+    for name in OUTCOME_COMMANDS:
+        commands.choices[name].add_argument(
+            "--outcome-path", help="Retain actual mutation publication facts without a snapshot"
+        )
     return result
 
 
@@ -5094,6 +5459,73 @@ def parse_command_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     actual_argv = sys.argv[1:] if argv is None else argv
     args = parse_command_args(actual_argv)
+    destination = getattr(args, "outcome_path", None)
+    if destination is None:
+        return _main(args)
+    capture: dict = {"status": "not_committed", "view_recovery_required": False}
+    token = _MUTATION_OUTCOME.set(capture)
+    try:
+        repo = args.repo.absolute()
+        requested = Path(args.program_dir)
+        directory = requested.absolute() if requested.is_absolute() else repo / requested
+        require(
+            directory.is_relative_to(repo) and directory != repo,
+            "Program must be within configured repository",
+        )
+        program = Program(repo, safe_path(repo, directory.relative_to(repo).as_posix()))
+        name = safe_relative(destination)
+        require(name.startswith("evidence/"), "Mutation outcome must be program evidence")
+        path = program.path(name)
+        require(not observed_exists(path), "Mutation outcome destination already exists")
+        result = _main(args)
+        status = str(capture["status"])
+        # If atomic replacement raised after changing the file, inspect identity;
+        # never interpret a nonzero CLI return as permission to replay a mutation.
+        if "proposed_revision" in capture and status == "not_committed":
+            actual = parse_registry_state(
+                program.read_registry_observation(), path=program.path("backlog.json")
+            )
+            revision = phases.revision(actual)
+            capture["revision"] = revision
+            if revision == capture["proposed_revision"]:
+                status = "committed_view_failed"
+                capture["view_recovery_required"] = True
+            elif revision != capture.get("before_revision"):
+                status = "unknown"
+        outcome: Record = {
+            "schema_version": 1,
+            "kind": "mutation_outcome",
+            "operation": args.command,
+            "publication": {
+                "status": status,
+                "before_revision": capture.get("before_revision"),
+                "revision": capture.get("revision"),
+                "view_recovery_required": capture["view_recovery_required"],
+            },
+            "changed_task_ids": capture.get("changed_task_ids", []),
+            "command_exit_code": result,
+            "acceptance_complete": False,
+            "next_action": "recover_views"
+            if capture["view_recovery_required"]
+            else "inspect_current_state"
+            if status == "unknown"
+            else "continue"
+            if status in {"committed", "already_committed"}
+            else "correct_input",
+        }
+        authoring.freeze_document(program, name, outcome)
+        return result
+    except (ProgramError, OSError) as exc:
+        print(
+            f"feature-program: mutation outcome retention failed; publication={capture['status']}; inspect current state before retry: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        _MUTATION_OUTCOME.reset(token)
+
+
+def _main(args: argparse.Namespace) -> int:
     try:
         repo = args.repo.absolute()
         requested = Path(args.program_dir)
@@ -5267,6 +5699,16 @@ def main(argv: list[str] | None = None) -> int:
                 changed = phases.revision(prepared.state) != phases.revision(state)
                 if changed:
                     program.save(prepared.state, before_publish=prepared.before_publish)
+                else:
+                    outcome = _MUTATION_OUTCOME.get()
+                    if outcome is not None:
+                        revision = phases.revision(state)
+                        outcome.update(
+                            status="already_committed",
+                            revision=revision,
+                            before_revision=revision,
+                            changed_task_ids=[],
+                        )
                 print(
                     canonical(
                         {

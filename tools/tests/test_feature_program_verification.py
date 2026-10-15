@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.tests.test_feature_program import HEAD, fp, make_small_program  # noqa: E402
 import feature_program_verification as verification  # noqa: E402
 from tools.tests.test_feature_program_delivery import fixture as provider_fixture  # noqa: E402
+from tools.tests.test_feature_program_phases import gate  # noqa: E402, F401
 
 
 @pytest.fixture
@@ -220,6 +221,58 @@ def test_newer_failed_result_never_revives_previous_success(fixture):
         "lanes"
     ]["items"][0]
     assert lane["result"] == "failed"
+
+
+def test_integrated_adverse_selector_keeps_pending_and_failed_required_checks(gate):
+    # Given a real ordinary request followed by an actual synthetic nonpassing record.
+    gate.ready()
+    fixture = gate.fixture
+    assert fixture.claim() == 0
+    record(fixture, request(fixture))
+    state = fixture.program.load()
+    pending = verification.integrated_adverse_obligations(
+        state, verification.projection(fixture.program, state, limit=None)
+    )
+    assert pending[0]["reason_code"] == "verification_pending"
+    assert pending[0]["next_actor_id"] == "qa"
+    record(fixture, observation(fixture, result="failed"))
+    state = fixture.program.load()
+    failed = verification.integrated_adverse_obligations(
+        state, verification.projection(fixture.program, state, limit=None)
+    )
+    assert failed[0]["reason_code"] == "verification_nonpassing"
+
+
+def test_stale_pass_names_actual_context_dimensions_without_changing_result(gate):
+    gate.ready()
+    fixture = gate.fixture
+    assert fixture.claim() == 0
+    record(fixture, request(fixture))
+    record(fixture, observation(fixture))
+    before = verification.projection(fixture.program, fixture.program.load(), limit=None)
+    identity = before["tasks"]["S01"]["lanes"]["items"][0]["selection_identity"]
+    (fixture.program.repo / "src/S01.py").write_text("changed = True\n", encoding="utf-8")
+    state = fixture.program.load()
+    facts = verification.projection(fixture.program, state, limit=None)
+    lane = facts["tasks"]["S01"]["lanes"]["items"][0]
+    assert lane["result"] == "passed" and lane["applicability"] == "stale"
+    assert lane["currentness_changes"] == ["input_digest", "source_digest"]
+    assert lane["selection_identity"] == identity
+    assert verification.integrated_adverse_obligations(state, facts) == []
+
+
+def test_integrated_adverse_selector_rejects_bounded_or_other_state_facts(fixture):
+    assert fixture.claim() == 0
+    record(fixture, request(fixture))
+    state = fixture.program.load()
+    facts = verification.projection(fixture.program, state, limit=0)
+    with pytest.raises(fp.ProgramError, match="full same-state"):
+        verification.integrated_adverse_obligations(state, facts)
+    facts = verification.projection(fixture.program, state, limit=None)
+    changed = deepcopy(state)
+    changed["tasks"][0]["next_action"] = "A later unrelated note still requires coherent facts"
+    with pytest.raises(fp.ProgramError, match="full same-state"):
+        verification.integrated_adverse_obligations(changed, facts)
 
 
 @pytest.mark.parametrize("kind", ["request", "finished"])
@@ -459,6 +512,46 @@ def test_resolution_preserves_finding_and_does_not_accept_task(fixture):
     assert item["status"] == "recorded"
     assert item["resolutions"][0]["id"] == "resolution-1"
     assert fixture.program.load()["tasks"][0]["status"] == "active"
+
+
+def test_resolution_pointing_to_failed_execution_cannot_clear_integrated_finding(gate):
+    gate.ready()
+    fixture = gate.fixture
+    assert fixture.claim() == 0
+    record(fixture, request(fixture))
+    finding = observation(
+        fixture,
+        "finding-1",
+        kind="finding",
+        statement="Synthetic defect",
+        affected_paths=["src/S01.py"],
+        check_ids=["scoped_tests"],
+        criteria=[],
+        next_action="Fix actual defect",
+    )
+    for name in ("result", "method", "environment", "input_before", "input_after"):
+        finding.pop(name)
+    record(fixture, finding)
+    record(fixture, observation(fixture, result="failed"))
+    resolution = observation(
+        fixture,
+        "resolution-1",
+        kind="resolution",
+        finding_id="finding-1",
+        observation_id="finished-1",
+        next_action="Independent review",
+    )
+    for name in ("result", "method", "environment", "input_before", "input_after"):
+        resolution.pop(name)
+    record(fixture, resolution)
+    state = fixture.program.load()
+    facts = verification.projection(fixture.program, state, limit=None)
+    finding_fact = facts["tasks"]["S01"]["findings"]["items"][0]
+    assert finding_fact["resolutions"][0]["status"] == "requires_recheck"
+    assert any(
+        row["reason_code"] == "unresolved_finding"
+        for row in verification.integrated_adverse_obligations(state, facts)
+    )
 
 
 def test_projection_artifact_unavailable_preserves_recorded_result(fixture):
@@ -830,6 +923,66 @@ def provider_pair(fixture, *, different_head=False):
         "sha256": fp.sha(fixture.program.path(provider_path).read_bytes()),
     }
     return context_path, provider_ref, expected
+
+
+def test_integrated_adverse_selector_preserves_required_provider_pending(gate):
+    gate.ready()
+    fixture = gate.fixture
+    assert fixture.claim() == 0
+    context_path, _provider_ref, _expected = provider_pair(fixture)
+    record(fixture, request(fixture, lane="pr_ci", provider_context_path=context_path))
+    record(fixture, observation(fixture))
+    state = fixture.program.load()
+    facts = verification.projection(fixture.program, state, limit=None)
+    lane = facts["tasks"]["S01"]["lanes"]["items"][0]
+    assert lane["result"] == "passed"
+    assert lane["provider_execution"]["status"] == "pending"
+    adverse = verification.integrated_adverse_obligations(state, facts)
+    assert adverse[0]["reason_code"] == "provider_execution_pending"
+    assert adverse[0]["next_actor_id"] == "qa"
+
+
+@pytest.mark.parametrize("provider_outcome", ["pending", "failed"])
+def test_provider_overlay_preserves_verification_integrity_precedence(gate, provider_outcome):
+    gate.ready()
+    fixture = gate.fixture
+    assert fixture.claim() == 0
+    context_path, provider_ref, _expected = provider_pair(fixture)
+    record(fixture, request(fixture, lane="pr_ci", provider_context_path=context_path))
+    fields = (
+        {"result": "failed", "provider_ref": provider_ref} if provider_outcome == "failed" else {}
+    )
+    event = record(fixture, observation(fixture, **fields))
+    state = fixture.program.load()
+    fixture.program.path(event["input"]["artifacts"][0]).write_bytes(b"corrupt actual artifact")
+    facts = verification.projection(fixture.program, state, limit=None)
+    lane = facts["tasks"]["S01"]["lanes"]["items"][0]
+    assert lane["provider_execution"]["status"] == provider_outcome
+    assert lane["applicability"] == "unavailable"
+    adverse = verification.integrated_adverse_obligations(state, facts)
+    assert adverse[0]["reason_code"] == "verification_unavailable"
+
+
+def test_local_failure_is_not_demoted_to_pending_provider(gate):
+    gate.ready()
+    fixture = gate.fixture
+    assert fixture.claim() == 0
+    context_path, _provider_ref, _expected = provider_pair(fixture)
+    record(fixture, request(fixture, lane="pr_ci", provider_context_path=context_path))
+    record(fixture, observation(fixture, result="failed"))
+    state = fixture.program.load()
+    facts = verification.projection(fixture.program, state, limit=None)
+    lane = facts["tasks"]["S01"]["lanes"]["items"][0]
+    assert lane["provider_execution"]["status"] == "pending"
+    assert (
+        verification.integrated_adverse_obligations(state, facts)[0]["reason_code"]
+        == "verification_nonpassing"
+    )
+    result = fp.coverage.assess_integrated_completion(
+        fixture.program, state, verification_facts=facts
+    )
+    rows = [row for row in result["obligations"] if row["task_id"] == "S01"]
+    assert all(row["status"] == "adverse" and row["actionable"] for row in rows)
 
 
 def test_submitted_task_exposes_actual_early_provider_assessment_without_delivery(fixture):
@@ -2054,3 +2207,80 @@ def test_verification_receipt_remains_raw_even_when_registry_uses_envelope(fixtu
     fixture.program.path(name).write_bytes(storage.encode_registry(fp.canonical(value), "2" * 64))
     with pytest.raises(fp.ProgramError, match="JSON"):
         verification.prepare_record(fixture.program, state, name, observed_head=HEAD)
+
+
+def _verification_initial_epoch(fixture):
+    """Bind a held initial-image owner to actual fixture registry bytes."""
+    program = fixture.program
+    state = program.load()
+    body = fp.registry_body(state)
+    observation = program.read_registry_observation()
+    models = fp.flow_module("read_model")
+    collector = models.Collector(
+        program.repo,
+        program.directory,
+        program_id=state["program_id"],
+        body_sha256=fp.sha(body),
+        producer=models.producer_identity(program.repo),
+        query=models.QUERY,
+    )
+    return observation, body, collector
+
+
+def test_verification_initial_readers_enroll_explicitly_and_preserve_each_readset(
+    fixture, monkeypatch
+):
+    program = fixture.program
+    observation, body, collector = _verification_initial_epoch(fixture)
+    name = "src/S01.py"
+    target = program.repo / name
+    original = fp.bounded_bytes
+    opened = []
+
+    def counted(path, limit):
+        if path == target:
+            opened.append(path)
+        return original(path, limit)
+
+    monkeypatch.setattr(fp, "bounded_bytes", counted)
+    supplied = fp.ReadBudget(1024 * 1024)
+    with fp._collect_dependencies(collector):
+        with fp._hold_initial_images(program, observation, collector, proposed_body=body):
+            first = verification._reads()
+            second = verification._reads(supplied)
+            assert second.artifacts is supplied
+            one = first.artifacts.capture(program.repo, name, verification.LIMIT)
+            two = second.sources.capture(program.repo, name, verification.LIMIT)
+            assert one is not two and one.content == two.content
+            assert len(opened) == 1
+            assert first.artifacts.remaining == 64 * 1024 * 1024 - len(one.content)
+            assert second.sources.remaining == 128 * 1024 * 1024 - len(two.content)
+            supplied.capture(program.repo, name, verification.LIMIT)
+            assert len(opened) == 2  # Supplied plain readers do not attach to the ambient owner.
+    rows = collector.finish({})["dependencies"]["files"]
+    tags = {row["budget_tag"] for row in rows if row["name"] == name}
+    assert {
+        f"reader-{id(first.artifacts)}",
+        f"reader-{id(second.sources)}",
+        f"reader-{id(supplied)}",
+    } <= tags
+    verification._reads().sources.capture(program.repo, name, verification.LIMIT)
+    assert len(opened) == 3  # Factory use outside the narrow initial owner is fresh.
+
+
+def test_verification_source_recheck_stays_fresh_inside_held_initial_epoch(fixture):
+    program = fixture.program
+    observation, body, collector = _verification_initial_epoch(fixture)
+    name = "src/S01.py"
+    target = program.repo / name
+    with fp._collect_dependencies(collector):
+        with fp._hold_initial_images(program, observation, collector, proposed_body=body):
+            initial = verification._reads()
+            captured = initial.snapshot(program, [name])
+            target.write_bytes(b"persistent_mutation = True\n")
+            held = verification._reads().sources.capture(program.repo, name, verification.LIMIT)
+            assert held.sha256 == captured[name]
+            with pytest.raises(fp.ProgramError, match="Verification source changed"):
+                initial.recheck(program)
+    current = verification._reads().snapshot(program, [name])
+    assert current[name] == fp.sha(target.read_bytes()) and current != captured

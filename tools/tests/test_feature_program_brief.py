@@ -728,3 +728,48 @@ def test_legacy_block_origin_uses_retained_events_or_explicit_unknown(gate, ambi
     else:
         assert binding["origin"] == "review"
         assert result["task"]["readiness"]["submission"]["status"] == "observed"
+
+
+def test_task_byte_bound_compacts_context_before_unavailable_verification_lane():
+    reference = {"path": "backlog.json", "pointer": "/verification/records", "revision": "a" * 64}
+    request_ref = {"path": "evidence/_verification/attempt-1/request.json", "sha256": "b" * 64}
+    observation_ref = {"path": "evidence/_verification/attempt-1/finished.json", "sha256": "c" * 64}
+    context = {"source": "Original complete context" * 2000}
+    lane = {
+        "request_id": "request",
+        "phase": "finished",
+        "result": "passed",
+        "applicability": "unavailable",
+        "reasons": ["Verification evidence is unavailable"],
+        "next_trigger": "Restore exact frozen evidence",
+        "context": context,
+        "request_ref": request_ref,
+        "observation_ref": observation_ref,
+        "request_reference": reference,
+        "selection_identity": "d" * 64,
+    }
+    value = {"task": {"verification": {"lanes": fp.brief.collection([lane], reference)}}}
+    original = deepcopy(value)
+    result = fp.brief.bounded(value, 16384)
+    lanes = result["task"]["verification"]["lanes"]
+    retained = lanes["items"][0]
+    assert len(fp.canonical(result)) <= 16384
+    assert (lanes["total"], lanes["shown"], lanes["omitted"]) == (1, 1, 0)
+    assert retained["context"] == {
+        "status": "omitted",
+        "reason": "brief_byte_bound",
+        "sha256": fp.digest(context),
+    }
+    for key in (
+        "phase",
+        "result",
+        "applicability",
+        "reasons",
+        "next_trigger",
+        "request_ref",
+        "observation_ref",
+        "request_reference",
+        "selection_identity",
+    ):
+        assert retained[key] == lane[key]
+    assert value == original

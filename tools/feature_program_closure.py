@@ -248,10 +248,16 @@ def readiness(
     *,
     prevalidated: bool = False,
     verification_facts: Record | None = None,
+    integrated_review: Record | None = None,
 ) -> Record:
-    """Bound ordinary closure obligations once, without Git/provider calls or writes."""
+    """Bound closure obligations from current local facts without provider calls or writes."""
     return _readiness(
-        program, state, limit, prevalidated=prevalidated, verification_facts=verification_facts
+        program,
+        state,
+        limit,
+        prevalidated=prevalidated,
+        verification_facts=verification_facts,
+        integrated_review=integrated_review,
     )
 
 
@@ -273,6 +279,7 @@ def _readiness(
     prevalidated: bool = False,
     verification_facts: Record | None = None,
     checked: object | None = None,
+    integrated_review: Record | None = None,
 ) -> Record:
     _require(type(limit) is int and 0 < limit <= REFERENCE_LIMIT, "Invalid closure row limit")
     core = _core()
@@ -299,6 +306,11 @@ def _readiness(
                 program.validate(state)
         director = coordination.current_director_id(state)
         goal = _record(state.get("objective"), "current objective")
+        integrated = integrated_review
+        if integrated is None:
+            integrated = core.coverage.assess_integrated_completion(
+                program, state, verification_facts=verification_facts
+            )
         members = core.strings(goal.get("task_ids"), "objective members")
         for task_id in members:
             task = program.task(state, task_id)
@@ -331,34 +343,27 @@ def _readiness(
             try:
                 if not prevalidated:
                     program.verify_terminal(task, attempt)
-                    core.verification.validate_completion(program, state, task_id)
+                    if integrated.get("status") != "accepted":
+                        core.verification.validate_completion(program, state, task_id)
             except _errors() as exc:
                 gap("current_verification", str(exc), task_id)
             if delivery.get("status") != "ci_recorded_success":
                 gap("delivery", str(delivery.get("status")), task_id)
         for question in program.pending_questions(state, str(goal["id"]), members):
             gap("question", str(question))
-        if verification_facts is not None:
-            for fact_value in _record(
-                verification_facts.get("tasks", {}), "verification tasks"
-            ).values():
-                fact = _record(fact_value, "verification task")
-                task_id = fact.get("task_id")
-                if task_id not in members:
-                    continue
-                lanes = _record(fact.get("lanes", {}), "verification lanes")
-                for lane_value in _items(lanes.get("items", []), "verification lane items"):
-                    lane = _record(lane_value, "verification lane")
-                    if lane.get("applicability") != "current" or lane.get("result") not in {
-                        "passed",
-                        "not_applicable",
-                    }:
-                        gap(
-                            "current_verification",
-                            str(lane.get("request_id")),
-                            str(task_id),
-                            lane.get("verifier_id"),
-                        )
+        for value in _items(integrated.get("obligations", []), "integrated obligations"):
+            obligation = _record(value, "integrated obligation")
+            if obligation.get("actionable") is True:
+                gap(
+                    "current_verification",
+                    str(obligation.get("request_id")),
+                    str(obligation["task_id"]),
+                    obligation.get("next_actor_id"),
+                )
+                row = _record(rows[-1], "integrated requirement")
+                row["next_action"] = obligation["next_action"]
+                row["next_trigger"] = obligation["next_trigger"]
+                row["reason_codes"] = deepcopy(obligation["reason_codes"])
         scopes = [
             path
             for task_id in members
@@ -381,7 +386,9 @@ def _readiness(
                     )
                 ):
                     gap("handoff", str(transfer.get("id")))
-        accepted = goal.get("status") == "awaiting_next_goal"
+        accepted = (
+            goal.get("status") == "awaiting_next_goal" and integrated.get("status") == "accepted"
+        )
         if not accepted:
             gap(
                 "integrated_review",
@@ -413,10 +420,16 @@ def _readiness(
                 },
                 "next_actor_id": "user"
                 if accepted
+                else integrated.get("next_actor_id")
+                if _record(integrated.get("counts", {}), "integrated counts").get("actionable")
                 else _record(rows[0], "requirement").get("next_actor_id"),
                 "next_action": "set_next_goal"
                 if accepted
+                else integrated.get("next_action")
+                if _record(integrated.get("counts", {}), "integrated counts").get("actionable")
                 else _record(rows[0], "requirement")["next_action"],
+                "next_trigger": "next_user_goal" if accepted else integrated.get("next_trigger"),
+                "integrated_review": deepcopy(integrated),
                 "accepted": accepted,
                 "remote_verified_by_tool": False,
             }

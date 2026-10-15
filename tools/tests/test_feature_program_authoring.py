@@ -1069,3 +1069,73 @@ def test_operation_parser_catalog_is_local_and_selected_parsers_are_isolated(gat
     )
     with pytest.raises(SystemExit):
         second.parse_args(["S01", "--owner", "worker"])
+
+
+def test_records_prepare_cli_returns_normal_plan_without_canonical_publication(gate, capsys):
+    assert gate.fixture.claim() == 0
+    state = gate.program.load()
+    name = gate.fixture.write(
+        "actual-records.json",
+        {
+            "schema_version": 1,
+            "id": "actual-note-plan",
+            "owner_id": "worker",
+            "expected_revision": fp.phases.revision(state),
+            "scope": ["src/S01.py"],
+            "refs": [],
+            "records": [
+                {
+                    "id": "observed-note",
+                    "operation": "note",
+                    "payload": {
+                        "id": "S01",
+                        "owner": "worker",
+                        "reason": "Actual fixture report",
+                        "next_action": "Inspect actual evidence",
+                    },
+                    "observed_at": "2026-10-15T00:00:01+00:00",
+                }
+            ],
+        },
+    )
+    before = gate.program.read_registry_observation().raw_bytes
+    capsys.readouterr()
+    assert gate.fixture.run("records-prepare", "--input", name) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["base_revision"] == fp.phases.revision(state)
+    assert plan["operations"][0]["operation"] == "note"
+    assert gate.program.read_registry_observation().raw_bytes == before
+
+
+def test_handoff_capacity_cli_and_snapshot_share_same_bound_facts(gate, capsys):
+    request = gate.fixture.write("capacity-request.json", {})
+    before = gate.program.read_registry_observation().raw_bytes
+    capsys.readouterr()
+    assert gate.fixture.run("review-capacity", "--input", request) == 0
+    result = json.loads(capsys.readouterr().out)
+    snapshot = fp.read_snapshot(gate.program.repo, gate.program.directory)
+    assert result == snapshot["reviewer_load"]
+    assert "review_capacity" not in snapshot
+    assert gate.program.read_registry_observation().raw_bytes == before
+
+
+def test_worker_action_cli_checks_current_markdown_packet_and_explicit_contact(gate, capsys):
+    assert gate.fixture.claim() == 0
+    path = "tasks/S01.md"
+    ref = {"path": path, "sha256": fp.sha(gate.program.path(path).read_bytes())}
+    name = gate.fixture.write(
+        "worker-action.json",
+        {"request": {"kind": "worker_assignment", "task_id": "S01", "packet_ref": ref}},
+    )
+    before = gate.program.read_registry_observation().raw_bytes
+    capsys.readouterr()
+    assert gate.fixture.run("handoff-action", "--input", name) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "incomplete"
+    assert result["action_code"] == "observe_runtime"
+    assert result["recipient_actor_id"] == "worker"
+    assert result["transport"] is None
+    assert gate.program.read_registry_observation().raw_bytes == before
+    gate.program.path(path).write_text("stale task packet", encoding="utf-8")
+    assert gate.fixture.run("handoff-action", "--input", name) == 1
+    assert "changed" in capsys.readouterr().err
