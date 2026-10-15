@@ -1998,6 +1998,10 @@ summary {
   }
 }
 @media (max-width: 700px) {
+  .work-ledger .filters .search {
+    flex: 1 0 100%;
+    min-inline-size: 0;
+  }
   .topbar {
     min-block-size: 56px;
     padding: 8px 16px;
