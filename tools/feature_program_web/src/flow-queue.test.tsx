@@ -270,6 +270,9 @@ describe('flow review queue', () => {
     const link = view.container.querySelector<HTMLAnchorElement>('.queue-task');
     const details = view.container.querySelector<HTMLDetailsElement>('.queue-details');
     expect(link && details).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('main', { name: 'Program content' })),
+    );
     link?.focus();
     if (details) details.open = true;
     next = flowFixture({
