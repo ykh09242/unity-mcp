@@ -1804,6 +1804,11 @@ binds all authored content and source fingerprints, excluding the review referen
 the transaction revision. A later unrelated revision requires rebinding; an unchanged payload
 can retain its actual independent review. This command performs no review or publication.
 
+Verification narrative bindings store a digest of the complete verification context instead
+of repeating that context for each field. Existing full-context bindings remain compatible;
+their immutable input and review bytes are unchanged. Treat source bindings as opaque and
+use `presentation-binding` to produce them.
+
 The independent review JSON has exactly `schema_version: 1`,
 `operation: presentation-review`, `program_id`, `locale`, `payload_sha256`, `reviewer_id`,
 `reviewer_role: independent`, `verdict: accepted`, `unresolved_findings: []` and a nonempty

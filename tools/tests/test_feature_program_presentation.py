@@ -93,6 +93,174 @@ def record(gate, **kwargs) -> fp.Record:
     return value
 
 
+def verification_request(gate):
+    """Publish a real isolated request; no product check execution is implied."""
+    from tools.tests.test_feature_program_verification import request
+
+    gate.ready()
+    language(gate)
+    assert gate.fixture.claim() == 0
+    value = request(gate.fixture, verifier_id="worker")
+    name = gate.fixture.write("evidence/_verification/attempt-1/request-1.json", value)
+    assert gate.fixture.run("verification-record", "--input", name) == 0
+    return gate.program.load()["verification"]["records"][-1]
+
+
+def legacy_verification_receipt(gate):
+    observed = verification_request(gate)
+    name, value = receipt(gate, kind="verification", field="reason")
+    context = value["operations"][0]["binding"]["context"]
+    assert context.pop("verification_context_sha256") == fp.digest(observed["context"])
+    context["verification_context"] = deepcopy(observed["context"])
+    # Author the synthetic legacy review over its original full-context spelling.
+    review_name = value["review"]["path"]
+    review = fp.read_json(gate.program.path(review_name))
+    review["payload_sha256"] = p.review_payload(value)
+    gate.fixture.write(review_name, review)
+    value["review"]["sha256"] = fp.sha(gate.program.path(review_name).read_bytes())
+    gate.fixture.write(name, value)
+    return name, value
+
+
+def test_verification_catalog_digest_bounds_large_context_once(gate, monkeypatch):
+    state = gate.program.load()
+    context = {"source": [{"path": f"src/{index}.py", "sha256": "a" * 64} for index in range(1000)]}
+    state["verification"] = {
+        "records": [
+            {
+                "input": {
+                    "id": "large",
+                    "task_id": "S01",
+                    "reason": "Review inputs",
+                    "next_trigger": "Inspect result",
+                },
+                "context": context,
+            }
+        ]
+    }
+    actual_digest = fp.digest
+    calls = []
+
+    def digest(value):
+        if value is context:
+            calls.append(value)
+        return actual_digest(value)
+
+    monkeypatch.setattr(fp, "digest", digest)
+    observed = p.catalog(gate.program, state, fp.ReadBudget(), "fixture-revision")
+    rows = [row for row in observed.targets.values() if row["target"]["kind"] == "verification"]
+    assert len(rows) == 2 and len(calls) == 1
+    assert len(fp.canonical(context)) > 100_000
+    for row in rows:
+        binding = row["binding"]
+        assert "verification_context" not in binding["context"]
+        assert binding["context"]["verification_context_sha256"] == actual_digest(context)
+        assert len(fp.canonical(binding)) < 700
+
+
+def test_legacy_verification_publication_and_frozen_review_stay_current(gate):
+    name, value = legacy_verification_receipt(gate)
+    original_input = gate.program.path(name).read_bytes()
+    original_review = gate.program.path(value["review"]["path"]).read_bytes()
+    payload = p.review_payload(value)
+    assert gate.fixture.run("presentation-record", "--input", name) == 0
+    key = p.target_key(value["operations"][0]["target"])
+    current = inventory(gate)
+    assert current["entries"][key]["status"] == "current"
+    assert current["totals"]["current_translated"] == 1
+    record(gate, identifier="compact", kind="verification", field="next_trigger")
+    current = inventory(gate)
+    assert current["entries"][key]["status"] == "current"
+    assert current["totals"]["current_translated"] == 2
+    assert gate.program.path(name).read_bytes() == original_input
+    assert gate.program.path(value["review"]["path"]).read_bytes() == original_review
+    assert p.review_payload(value) == payload
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("attempt", 2),
+        ("source_digest", "b" * 64),
+        ("definition_digest", "c" * 64),
+        ("objective_binding", {"criteria": ["changed"]}),
+        ("input_digest", "d" * 64),
+        ("provider_context_ref", {"path": "evidence/changed.json", "sha256": "e" * 64}),
+        (
+            "input_capture",
+            {"environment": {"facts": {"python": "changed"}}, "method": {"argv": ["changed"]}},
+        ),
+    ],
+)
+def test_legacy_verification_context_identity_changes_are_stale(gate, field, value):
+    name, authored = legacy_verification_receipt(gate)
+    assert gate.fixture.run("presentation-record", "--input", name) == 0
+    state = gate.program.load()
+    state["verification"]["records"][-1]["context"][field] = value
+    # A detached observed input tests presentation applicability; no invalid state is published.
+    projected = p.projection(gate.program, state)
+    entry = projected["entries"][p.target_key(authored["operations"][0]["target"])]
+    assert entry["status"] == "stale" and "text" not in entry
+
+
+@pytest.mark.parametrize("mutation", ["extra", "both", "not_record", "invalid_hash", "bool_hash"])
+def test_verification_binding_compatibility_is_closed(gate, mutation):
+    observed = verification_request(gate)
+    name, value = receipt(gate, kind="verification", field="reason")
+    compact = value["operations"][0]["binding"]
+    altered = deepcopy(compact)
+    context = altered["context"]
+    if mutation == "extra":
+        context["extra"] = "unrecognized"
+    elif mutation == "both":
+        context["verification_context"] = observed["context"]
+    elif mutation == "not_record":
+        del context["verification_context_sha256"]
+        context["verification_context"] = []
+    else:
+        context["verification_context_sha256"] = (
+            "not-a-digest" if mutation == "invalid_hash" else True
+        )
+    target = value["operations"][0]["target"]
+    assert not p._binding_equivalent(target, altered, compact)
+    assert not p._binding_equivalent(target, altered, altered)
+    value["operations"][0]["binding"] = altered
+    review_name = value["review"]["path"]
+    review = fp.read_json(gate.program.path(review_name))
+    review["payload_sha256"] = p.review_payload(value)
+    gate.fixture.write(review_name, review)
+    value["review"]["sha256"] = fp.sha(gate.program.path(review_name).read_bytes())
+    gate.fixture.write(name, value)
+    before = gate.program.path("backlog.json").read_bytes()
+    assert gate.fixture.run("presentation-record", "--input", name) == 1
+    assert gate.program.path("backlog.json").read_bytes() == before
+
+
+def test_legacy_equivalence_never_changes_other_operation_fields_or_families(gate):
+    _, value = legacy_verification_receipt(gate)
+    old = value["operations"]
+    current = p.bind_input(gate.program, gate.program.load(), value)["operations"]
+    assert p._operations_equivalent(old, current)
+    for field, replacement in (
+        ("text", "다른 의미"),
+        ("mode", "original"),
+        ("action", "withdraw"),
+        ("supersedes", "other"),
+    ):
+        changed = deepcopy(current)
+        changed[0][field] = replacement
+        assert not p._operations_equivalent(old, changed)
+    assert not p._operations_equivalent(old, [])
+    assert not p._binding_equivalent(
+        {"kind": "objective"}, old[0]["binding"], current[0]["binding"]
+    )
+    altered = deepcopy(old[0]["binding"])
+    altered["context"]["verification_context"]["bool_identity"] = True
+    other = deepcopy(altered)
+    other["context"]["verification_context"]["bool_identity"] = 1
+    assert not p._binding_equivalent(old[0]["target"], altered, other)
+
+
 def test_inventory_is_readonly_and_has_exact_original_targets(gate, capsys):
     before = gate.program.path("backlog.json").read_bytes()
     capsys.readouterr()
