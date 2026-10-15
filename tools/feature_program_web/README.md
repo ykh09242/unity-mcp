@@ -90,3 +90,24 @@ Run server checks from the repository root:
 These tests use isolated synthetic programs and HTTP processes. Real browser verification
 must also cover the affected routes, keyboard flow, narrow reflow and question lifecycle.
 Keep actual program records, screenshots and execution evidence in ignored local storage.
+
+## Recorded review flow
+
+The existing Review queue and task Review section distinguish a prepared handoff, an
+actual request sent, reviewer acknowledgement, review start and terminal observations.
+The next responsible actor and trigger remain visible. Team keeps submitted/requested
+reviews primary and groups check-only gaps by task in one optional section.
+
+Overview qualifies observed review waiting by its full producer cohort and measurement
+coverage. Submission-observed-to-review-start is separate from observed review span,
+verification waiting, sealed process duration and recorded history. Missing endpoints
+remain unavailable. An explicitly retained age is fixed at its last observation; the
+browser does not tick, sort by age or substitute fetch time for a missing event.
+
+Retained evidence and selected evidence preparation preserve original outcomes and
+explicit missing decisions. A record-batch summary separates preparation, actual
+publication, historical applicability and view recovery. These read-only summaries do
+not execute commands, dispatch reviewers, publish state or imply acceptance. Legacy
+absence stays quiet; explicit malformed or stale facts remain inspectable. Interface
+copy follows the chosen locale while reviewed human content retains its separate
+source-bound session-language presentation.
