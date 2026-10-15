@@ -44,7 +44,7 @@ import {
 } from './history-ui';
 import { useSnapshot } from './useSnapshot';
 import type { SnapshotLoader } from './useSnapshot';
-import { QuestionForm, MissingQuestionDraft, useSession } from './questions';
+import { QuestionForm, MissingQuestionDraft, useSession, saveAnswer } from './questions';
 import { QuestionDraftProvider, questionDraftKey, useQuestionDrafts } from './question-drafts';
 import { QuestionList, QuestionLinks } from './question-list';
 import { questionListIdentity } from './question-state';
@@ -1404,7 +1404,37 @@ function Dashboard({
   readonly answerSaver?: AnswerSaver;
 }) {
   const i18n = useI18n();
-  const { snapshot: rawSnapshot, observed, error, busy, announce, refresh } = useSnapshot(loader);
+  const {
+    snapshot: rawSnapshot,
+    observed,
+    error,
+    busy,
+    announce,
+    refresh,
+    coordinateWrite,
+    writePhase,
+  } = useSnapshot(loader);
+  const coordinatedSaver = useCallback<AnswerSaver>(
+    async (input, nonce) => {
+      const settled = await coordinateWrite(() => (answerSaver || saveAnswer)(input, nonce));
+      if (!settled) return { ok: false, conflict: false };
+      const freshQuestion = items(settled.snapshot?.questions)
+        .map(record)
+        .find((row) => row.id === input.question_id);
+      const receipt = record(freshQuestion?.answer);
+      if (
+        settled.refreshed &&
+        receipt.question_id === input.question_id &&
+        receipt.version === input.version &&
+        receipt.answer === input.answer &&
+        receipt.submission_id === input.submission_id
+      )
+        return { ok: true, conflict: false };
+      if (settled.outcome.status === 'rejected') throw settled.outcome.reason;
+      return { ok: false, conflict: settled.outcome.value.conflict };
+    },
+    [coordinateWrite, answerSaver],
+  );
   const refreshNotice = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (!error && refreshNotice.current) refreshNotice.current.open = false;
@@ -1960,6 +1990,8 @@ function Dashboard({
               context={navigation}
               session={session}
               saver={answerSaver}
+              coordinatedSaver={coordinatedSaver}
+              writePhase={writePhase}
               refresh={refresh}
             />
           ) : (
@@ -1998,6 +2030,8 @@ function Dashboard({
     revealTask,
     session,
     answerSaver,
+    coordinatedSaver,
+    writePhase,
     refresh,
     i18n,
     navigation,

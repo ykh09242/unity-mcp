@@ -354,3 +354,221 @@ describe('snapshot refresh lifecycle', () => {
     expect(hook.result.current.snapshot?.timing).not.toBe(previous?.timing);
   });
 });
+
+describe('answer write coordination', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+  });
+  afterEach(() => vi.useRealTimers());
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    return { promise, resolve, reject };
+  }
+  it('drains an existing read, blocks duplicate writes and coalesces refreshes into one post-write read', async () => {
+    const prior = deferred<unknown>(),
+      posted = deferred<string>();
+    const loader = vi
+      .fn()
+      .mockReturnValueOnce(prior.promise)
+      .mockResolvedValue({ ...fixture('after'), revision: 'after' });
+    const operation = vi.fn(() => posted.promise);
+    const hook = renderHook(() => useSnapshot(loader));
+    let result!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+    await act(async () => {
+      result = hook.result.current.coordinateWrite(operation);
+      expect(await hook.result.current.coordinateWrite(operation)).toBeNull();
+      await hook.result.current.refresh(true);
+      await hook.result.current.refresh(false, true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(hook.result.current.writePhase).toBe('waiting-read');
+    expect(operation).not.toHaveBeenCalled();
+    expect(loader).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      prior.resolve(fixture());
+    });
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.writePhase).toBe('writing');
+    await act(async () => {
+      await hook.result.current.refresh(true);
+      await vi.advanceTimersByTimeAsync(5000);
+      posted.resolve('post-result');
+      await result;
+    });
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(await result).toMatchObject({
+      outcome: { status: 'fulfilled', value: 'post-result' },
+      refreshed: true,
+    });
+    expect(hook.result.current.writePhase).toBeNull();
+    expect(hook.result.current.snapshot?.generated_at).toBe('after');
+  });
+  it.each(['rejected', 'conflict'])(
+    'reconciles exactly once after a %s POST outcome',
+    async (outcome) => {
+      const loader = vi.fn().mockResolvedValue(fixture());
+      const hook = renderHook(() => useSnapshot(loader));
+      await act(async () => {});
+      let result: unknown;
+      await act(async () => {
+        result = await hook.result.current.coordinateWrite(async () => {
+          if (outcome === 'rejected') throw new Error('transport unknown');
+          return { ok: false, conflict: true };
+        });
+      });
+      expect(loader).toHaveBeenCalledTimes(2);
+      expect(result).toMatchObject({
+        refreshed: true,
+        outcome: { status: outcome === 'rejected' ? 'rejected' : 'fulfilled' },
+      });
+      expect(hook.result.current.writePhase).toBeNull();
+    },
+  );
+  it('does not send after an unsuccessful drain and permits a later explicit retry', async () => {
+    const prior = deferred<unknown>();
+    const loader = vi.fn().mockReturnValueOnce(prior.promise).mockResolvedValue(fixture());
+    const operation = vi.fn().mockResolvedValue('sent');
+    const hook = renderHook(() => useSnapshot(loader));
+    let result!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+    await act(async () => {
+      result = hook.result.current.coordinateWrite(operation);
+      prior.reject(new Error('read failed'));
+      await result;
+    });
+    expect(await result).toBeNull();
+    expect(operation).not.toHaveBeenCalled();
+    expect(hook.result.current.error).toBe(true);
+    expect(hook.result.current.writePhase).toBeNull();
+    await act(async () => {
+      await hook.result.current.coordinateWrite(operation);
+    });
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+  it('retains failed reconciliation as unavailable and resumes polling without another POST', async () => {
+    const loader = vi
+      .fn()
+      .mockResolvedValueOnce(fixture())
+      .mockRejectedValueOnce(new Error('read failed'))
+      .mockResolvedValue(fixture('recovered'));
+    const operation = vi.fn().mockResolvedValue('sent');
+    const hook = renderHook(() => useSnapshot(loader));
+    await act(async () => {});
+    const previous = hook.result.current.snapshot;
+    let result: unknown;
+    await act(async () => {
+      result = await hook.result.current.coordinateWrite(operation);
+    });
+    expect(result).toMatchObject({ refreshed: false });
+    expect(hook.result.current.snapshot).toBe(previous);
+    expect(hook.result.current.error).toBe(true);
+    expect(hook.result.current.writePhase).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(hook.result.current.error).toBe(false);
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+  it.each(['unmount', 'replace'])(
+    'does not send a deferred old-program write after %s',
+    async (change) => {
+      const prior = deferred<unknown>();
+      const loader = vi.fn(() => prior.promise),
+        next = vi.fn().mockResolvedValue({ ...fixture(), program_id: 'replacement' });
+      const operation = vi.fn().mockResolvedValue('must-not-send');
+      const hook = renderHook(({ input }) => useSnapshot(input), {
+        initialProps: { input: loader },
+      });
+      let result!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+      await act(async () => {
+        result = hook.result.current.coordinateWrite(operation);
+      });
+      await act(async () => {
+        if (change === 'unmount') hook.unmount();
+        else hook.rerender({ input: next });
+      });
+      await act(async () => {
+        await result;
+      });
+      expect(operation).not.toHaveBeenCalled();
+      expect(await result).toBeNull();
+    },
+  );
+  it('does not apply an in-flight old-program result or release a replacement write barrier', async () => {
+    const post = deferred<string>(),
+      replacementPost = deferred<string>();
+    const loader = vi.fn().mockResolvedValue(fixture()),
+      next = vi.fn().mockResolvedValue({ ...fixture(), program_id: 'replacement' });
+    const hook = renderHook(({ input }) => useSnapshot(input), { initialProps: { input: loader } });
+    await act(async () => {});
+    let old!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+    await act(async () => {
+      old = hook.result.current.coordinateWrite(() => post.promise);
+    });
+    hook.rerender({ input: next });
+    await act(async () => {});
+    let current!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+    await act(async () => {
+      current = hook.result.current.coordinateWrite(() => replacementPost.promise);
+      post.resolve('old');
+      await old;
+    });
+    expect(hook.result.current.writePhase).toBe('writing');
+    expect(next).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      replacementPost.resolve('current');
+      await current;
+    });
+    expect(next).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.snapshot?.program_id).toBe('replacement');
+  });
+});
+
+it('does not send an old-program write when the same loader observes a replacement program during drain', async () => {
+  let finish!: (value: unknown) => void;
+  const loader = vi
+    .fn()
+    .mockResolvedValueOnce(fixture())
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+  const hook = renderHook(() => useSnapshot(loader));
+  await act(async () => {});
+  let result!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+  const operation = vi.fn().mockResolvedValue('must-not-send');
+  await act(async () => {
+    void hook.result.current.refresh();
+    result = hook.result.current.coordinateWrite(operation);
+    finish({ ...fixture(), program_id: 'replacement' });
+    await result;
+  });
+  expect(await result).toBeNull();
+  expect(operation).not.toHaveBeenCalled();
+  expect(hook.result.current.writePhase).toBeNull();
+});
+it('does not return an old-program receipt when reconciliation changes program with the same loader', async () => {
+  const loader = vi
+    .fn()
+    .mockResolvedValueOnce(fixture())
+    .mockResolvedValue({ ...fixture(), program_id: 'replacement' });
+  const hook = renderHook(() => useSnapshot(loader));
+  await act(async () => {});
+  let result: unknown;
+  await act(async () => {
+    result = await hook.result.current.coordinateWrite(async () => 'sent-once');
+  });
+  expect(result).toBeNull();
+  expect(loader).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.snapshot?.program_id).toBe('replacement');
+  expect(hook.result.current.writePhase).toBeNull();
+});

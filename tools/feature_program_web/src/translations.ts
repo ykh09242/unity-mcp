@@ -623,6 +623,7 @@ export const korean = {
   'Use current question version': '현재 질문 버전 사용',
   'Responses are disabled for this server. Task records remain readable.':
     '이 서버에서는 답변이 비활성화되어 있습니다. 작업 기록은 계속 읽을 수 있습니다.',
+  'Waiting for the current refresh before saving…': '현재 갱신이 끝나면 답변을 저장해요…',
   'Saving answer…': '답변 저장 중…',
   'Save answer': '답변 저장',
   'Your saved answer': '저장된 내 답변',

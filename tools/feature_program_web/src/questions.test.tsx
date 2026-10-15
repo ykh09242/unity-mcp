@@ -490,3 +490,59 @@ it('shows actual producer saved_at after snapshot confirmation without claiming 
   );
   expect(screen.getByText(/Saved Not recorded/)).toBeTruthy();
 });
+
+it('shows the honest waiting-read state for the local pending save without sending through the fallback', async () => {
+  const fallback = vi.fn<AnswerSaver>(async () => ({ ok: true, conflict: false }));
+  let settle!: (value: AnswerResult) => void;
+  const coordinated = vi.fn<AnswerSaver>(
+    () =>
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+  );
+  const refresh = vi.fn(async () => {});
+  const view = render(
+    <QuestionForm
+      question={question}
+      session={session}
+      saver={fallback}
+      coordinatedSaver={coordinated}
+      refresh={refresh}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText('Your answer'), {
+    target: { value: 'Retained during drain' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+  view.rerender(
+    <QuestionForm
+      question={question}
+      session={session}
+      saver={fallback}
+      coordinatedSaver={coordinated}
+      writePhase="waiting-read"
+      refresh={refresh}
+    />,
+  );
+  expect(
+    screen
+      .getByRole('button', { name: 'Waiting for the current refresh before saving…' })
+      .hasAttribute('disabled'),
+  ).toBe(true);
+  expect(fallback).not.toHaveBeenCalled();
+  await act(async () => {
+    settle({ ok: false, conflict: false });
+  });
+  view.rerender(
+    <QuestionForm
+      question={question}
+      session={session}
+      saver={fallback}
+      coordinatedSaver={coordinated}
+      refresh={refresh}
+    />,
+  );
+  expect(screen.getByDisplayValue('Retained during drain')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Save answer' }).hasAttribute('disabled')).toBe(false);
+  expect(refresh).not.toHaveBeenCalled();
+});

@@ -7,6 +7,7 @@ import { navigationHash, defaultContext } from './navigation';
 import type { WorkContext } from './navigation';
 import { items, record, string } from './model';
 import type { JsonRecord } from './model';
+import type { SnapshotWritePhase } from './useSnapshot';
 
 export type Session = { readonly responsesEnabled: boolean; readonly nonce: string | null };
 export type AnswerInput = {
@@ -93,6 +94,8 @@ export function QuestionForm({
   question,
   session,
   saver = saveAnswer,
+  coordinatedSaver,
+  writePhase,
   refresh,
   programId = 'standalone-question',
   context = defaultContext,
@@ -102,6 +105,8 @@ export function QuestionForm({
   readonly question: JsonRecord;
   readonly session: Session | null;
   readonly saver?: AnswerSaver;
+  readonly coordinatedSaver?: AnswerSaver;
+  readonly writePhase?: SnapshotWritePhase | null;
   readonly refresh: (manual?: boolean, afterWrite?: boolean) => Promise<void>;
 }) {
   const i18n = useI18n();
@@ -117,6 +122,7 @@ export function QuestionForm({
   const { draft, store } = useQuestionDraft(key, Number(question.version));
   const { answer, version } = draft;
   const busy = draft.phase === 'saving';
+  const saveBlocked = busy || Boolean(writePhase);
   const setAnswer = (value: string) => store.update(key, { answer: value, phase: 'editing' });
   const status = string(question.status);
   const recordedAnswer = record(question.answer);
@@ -171,12 +177,19 @@ export function QuestionForm({
     else failureMessage.current?.focus();
   }, [saved, failure, draft]);
   const save = async () => {
-    if (!session?.responsesEnabled || !session.nonce || busy) return;
+    if (!session?.responsesEnabled || !session.nonce || saveBlocked) return;
     const active = document.activeElement;
     submitFocus.current =
       active instanceof HTMLElement && formRoot.current?.contains(active) ? active : null;
-    if (await store.submit(key, { questionId: string(question.id), nonce: session.nonce, saver }))
-      await refresh(false, true);
+    if (
+      await store.submit(key, {
+        questionId: string(question.id),
+        nonce: session.nonce,
+        saver: coordinatedSaver || saver,
+      })
+    ) {
+      if (!coordinatedSaver) await refresh(false, true);
+    }
   };
   const submit = async () => {
     if (!canAnswer || changed) return;
@@ -345,8 +358,12 @@ export function QuestionForm({
               </button>
             </div>
           )}
-          <button type="submit" disabled={!canAnswer || busy || !answer.trim() || changed}>
-            {busy ? i18n.t('Saving answer…') : i18n.t('Save answer')}
+          <button type="submit" disabled={!canAnswer || saveBlocked || !answer.trim() || changed}>
+            {busy && writePhase === 'waiting-read'
+              ? i18n.t('Waiting for the current refresh before saving…')
+              : busy
+                ? i18n.t('Saving answer…')
+                : i18n.t('Save answer')}
           </button>
         </form>
       ) : (

@@ -428,6 +428,7 @@ describe('complete question navigation', () => {
   it('retains a pending save and exact uncertain retry across route unmounts', async () => {
     initial();
     const user = userEvent.setup();
+    let model = snapshot();
     let settle: ((value: AnswerResult) => void) | undefined;
     const saver = vi.fn<AnswerSaver>(
       () =>
@@ -435,9 +436,7 @@ describe('complete question navigation', () => {
           settle = resolve;
         }),
     );
-    render(
-      <App loader={async () => snapshot()} sessionLoader={sessionLoader} answerSaver={saver} />,
-    );
+    render(<App loader={async () => model} sessionLoader={sessionLoader} answerSaver={saver} />);
     await user.click(await screen.findByRole('link', { name: /Choose the first scope/ }));
     await user.type(screen.getByLabelText('Your answer'), 'A frozen retry');
     await user.click(screen.getByRole('button', { name: 'Save answer' }));
@@ -454,6 +453,25 @@ describe('complete question navigation', () => {
     await user.click(screen.getByRole('link', { name: /Choose the first scope/ }));
     await user.click(screen.getByRole('button', { name: 'Save answer' }));
     expect(saver.mock.calls[1]?.[0]).toEqual(saver.mock.calls[0]?.[0]);
+    const submitted = saver.mock.calls[1]?.[0];
+    if (!submitted) throw new Error('Missing exact retry submission');
+    model = parseSnapshot({
+      ...model,
+      revision: 'actual-retry-saved',
+      questions: records(model.questions).map((q) =>
+        q.id === 'Q1'
+          ? {
+              ...q,
+              status: 'answered',
+              answer: {
+                ...submitted,
+                saved_at: '2026-10-16T03:37:46.747043+09:00',
+                channel: 'local_web',
+              },
+            }
+          : q,
+      ),
+    });
     await act(async () => {
       settle?.({ ok: true, conflict: false });
     });
@@ -562,4 +580,93 @@ describe('draft identity and truthful state boundaries', () => {
       }),
     );
   });
+});
+
+describe('coordinated answer receipt confirmation', () => {
+  it.each(['ok', 'unknown'])(
+    'confirms only the exact fresh stored receipt after %s transport and makes no extra refresh',
+    async (transport) => {
+      window.history.replaceState(null, '', '#question/Q1');
+      let model = snapshot();
+      let finishPost!: () => void;
+      const saver = vi.fn<AnswerSaver>(async (input) => {
+        await new Promise<void>((resolve) => {
+          finishPost = resolve;
+        });
+        model = parseSnapshot({
+          ...model,
+          revision: 'saved',
+          questions: records(model.questions).map((q) =>
+            q.id === 'Q1'
+              ? {
+                  ...q,
+                  status: 'answered',
+                  answer: {
+                    ...input,
+                    saved_at: '2026-10-16T03:37:46.747043+09:00',
+                    channel: 'local_web',
+                  },
+                }
+              : q,
+          ),
+        });
+        if (transport === 'unknown') throw new Error('response aborted');
+        return { ok: true, conflict: false };
+      });
+      const loader = vi.fn(async () => model);
+      render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+      const answer = await screen.findByLabelText('Your answer');
+      fireEvent.change(answer, { target: { value: 'Exact receipt confirmation' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      expect(screen.queryByText('Answer saved. Waiting for director acknowledgement.')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Saving answer…' }).hasAttribute('disabled')).toBe(
+        true,
+      );
+      await act(async () => {
+        finishPost();
+      });
+      await screen.findByRole('heading', { name: 'Your saved answer' });
+      expect(saver).toHaveBeenCalledTimes(1);
+      expect(loader).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole('alert')).toBeNull();
+    },
+  );
+  it.each(['question_id', 'version', 'answer', 'submission_id'])(
+    'keeps uncertainty and exact retry when fresh stored %s does not match',
+    async (field) => {
+      window.history.replaceState(null, '', '#question/Q1');
+      let model = snapshot();
+      const saver = vi.fn<AnswerSaver>(async (input) => {
+        model = parseSnapshot({
+          ...model,
+          revision: 'different',
+          questions: records(model.questions).map((q) =>
+            q.id === 'Q1'
+              ? {
+                  ...q,
+                  answer: {
+                    ...input,
+                    [field]: field === 'version' ? 99 : 'different',
+                    saved_at: '2026-10-16T03:37:46.747043+09:00',
+                  },
+                }
+              : q,
+          ),
+        });
+        return { ok: true, conflict: false };
+      });
+      const loader = vi.fn(async () => model);
+      render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+      fireEvent.change(await screen.findByLabelText('Your answer'), {
+        target: { value: 'Retained exact tuple' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      await screen.findByRole('alert');
+      expect(screen.getByDisplayValue('Retained exact tuple')).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'Your saved answer' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      await waitFor(() => expect(saver).toHaveBeenCalledTimes(2));
+      expect(saver.mock.calls[1]?.[0]).toEqual(saver.mock.calls[0]?.[0]);
+    },
+  );
 });
