@@ -168,7 +168,9 @@ def verify_provenance(
         )
     }
     for ref, identifier in control_receipt_refs(state):
-        receipt, captured = read_json_frozen(program.path(str(ref["path"])), budget=reader)
+        receipt, captured = read_json_frozen(
+            program.path(str(ref["path"])), limit=8 * 1024 * 1024, budget=reader
+        )
         require(captured == ref["sha256"], "Control receipt changed during provenance validation")
         if "evidence_provenance_ref" not in receipt:
             continue

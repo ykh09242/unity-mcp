@@ -313,7 +313,14 @@ def test_real_counter_receipt_preparation_uses_actual_adapter_and_does_not_reexe
     task_timing = fp.read_brief(fixture.program.repo, fixture.program.directory, "S01")["task"][
         "timing"
     ]
-    assert task_timing["intervals"]["items"][0]["closed_seconds"] == process[0]["closed_seconds"]
+    if task_timing.get("status") == "omitted":
+        assert task_timing["reason"] == "brief_byte_bound"
+        assert task_timing["intervals"]["total"] >= 1
+        assert task_timing["intervals"]["shown"] == 0
+    else:
+        assert (
+            task_timing["intervals"]["items"][0]["closed_seconds"] == process[0]["closed_seconds"]
+        )
     assert snapshot["evidence_preparation"]["status"] == "ready"
     source_path = fixture.program.repo / "src/S01.py"
     source_bytes = source_path.read_bytes()

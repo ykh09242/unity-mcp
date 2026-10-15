@@ -2624,7 +2624,9 @@ def publication_guard(
     for ref, task_id in core.control_receipt_refs(future):
         if task_id is None or core.digest(ref) in old_controls:
             continue
-        receipt, captured = core.read_json_frozen(program.path(str(ref["path"])))
+        receipt, captured = core.read_json_frozen(
+            program.path(str(ref["path"])), limit=8 * 1024 * 1024
+        )
         _require(captured == ref["sha256"], "New control receipt changed before publication")
         if "verification_refs" in receipt:
             validate_receipt_refs(program, original, receipt, task_id)

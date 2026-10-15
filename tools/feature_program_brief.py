@@ -120,6 +120,17 @@ def _task_timing(value: dict | None, task_id: str) -> dict | None:
             "shown": len(items),
             "omitted": 0 if total is not None else None,
         }
+    actual_boundary = any(
+        item.get("waiting_since") is not None or item.get("age") is not None
+        for item in selected["current"]["items"]
+    ) or any(
+        item.get("closed_seconds") is not None or item.get("state") == "open"
+        for item in selected["intervals"]["items"]
+    )
+    if not actual_boundary and all(
+        value[family]["omitted"] == 0 for family in ("current", "intervals")
+    ):
+        return None
     return _throughput_brief(selected, "current")
 
 
@@ -253,13 +264,33 @@ def bounded(value: dict, limit: int) -> dict:
 
     counts()
     while len(core.canonical(result)) > limit:
+        task = result.get("task", {})
+        timing = task.get("timing")
+        if isinstance(timing, dict) and timing.get("status") != "omitted":
+            # New advisory details must not evict established current verification facts.
+            task["timing"] = {
+                "status": "omitted",
+                "reason": "brief_byte_bound",
+                "projection_scope": timing["projection_scope"],
+                **{
+                    family: {
+                        "total": timing[family]["total"],
+                        "shown": 0,
+                        "omitted": timing[family]["total"],
+                        "reference": deepcopy(task["reference"]),
+                    }
+                    for family in ("current", "intervals")
+                },
+            }
+            continue
         choices = [item for item in _collections(result) if item["items"]]
         core.require(bool(choices), f"Brief essential envelope exceeds {limit} encoded bytes")
         # Stable largest removable tail first; high-priority attention stays at the front.
         selected = max(choices, key=lambda item: len(core.canonical(item["items"][-1])))
         selected["items"].pop()
         selected["shown"] -= 1
-        selected["omitted"] += 1
+        if selected["omitted"] is not None:
+            selected["omitted"] += 1
         counts()
     return result
 
@@ -605,6 +636,9 @@ def project(program: Program, state: Record, snapshot: Record, observations: dic
             },
             ("title", "expected_result", "next_action"),
         )
+        for field in ("timing", "review_handoff"):
+            if view.get(field) is None:
+                view.pop(field, None)
         task_views[identifier] = view
         actor = task["owner"] or director_id
         if task["status"] == "blocked":
