@@ -82,6 +82,68 @@ async function navigate(hash: string) {
 }
 
 describe('work program user outcomes', () => {
+  it.each([
+    ['en', 'Refresh', 'Unavailable', /^Fetched /],
+    ['ko', '새로고침', '사용 불가', /^조회 /],
+  ])(
+    'keeps the %s refresh failure in the reserved header without losing work context',
+    async (locale, refreshLabel, unavailable, fetched) => {
+      localStorage.setItem(PREFERENCE_KEY, locale);
+      const user = userEvent.setup();
+      const loader = vi.fn().mockResolvedValue(new SnapshotResponse(200, 'one', fixture()));
+      const view = render(<App loader={loader} />);
+      await waitFor(() =>
+        expect(within(screen.getByRole('banner')).getByRole('status').textContent).toMatch(fetched),
+      );
+      await navigate('#work');
+      const main = screen.getByRole('main');
+      await waitFor(() => expect(document.activeElement).toBe(main));
+      const header = screen.getByRole('banner');
+      const status = within(header).getByRole('status');
+      const language = within(header).getByRole('combobox');
+      const refresh = within(header).getByRole('button', { name: refreshLabel });
+      const shell = view.container.querySelector('.shell');
+      const rail = view.container.querySelector('.rail');
+      if (!rail || !shell) throw new Error('Workspace missing');
+      main.scrollTop = 120;
+      rail.scrollTop = 24;
+      language.focus();
+      const route = window.location.hash;
+      loader.mockRejectedValueOnce(new Error('publication in progress'));
+      fireEvent.click(refresh);
+      await waitFor(() => expect(status.textContent).toBe(unavailable));
+      const disclosure = status.closest('details');
+      const summary = disclosure?.querySelector('summary');
+      if (!disclosure || !summary) throw new Error('Refresh explanation missing');
+      expect(disclosure.closest('header')).toBe(header);
+      expect(header.nextElementSibling).toBe(shell);
+      expect(screen.getByRole('main')).toBe(main);
+      expect(disclosure.open).toBe(false);
+      expect(status.getAttribute('aria-live')).toBe('polite');
+      expect(summary.getAttribute('aria-describedby')).toBe('snapshot-unavailable-explanation');
+      expect(document.getElementById('snapshot-unavailable-explanation')?.textContent).toMatch(
+        locale === 'ko' ? /마지막/ : /last observed records/,
+      );
+      expect(document.activeElement).toBe(language);
+      expect([main.scrollTop, rail.scrollTop, window.location.hash]).toEqual([120, 24, route]);
+      summary.focus();
+      await user.click(summary);
+      expect(disclosure.open).toBe(true);
+      await user.keyboard('{Escape}');
+      expect(disclosure.open).toBe(false);
+      expect(document.activeElement).toBe(summary);
+      await user.click(summary);
+      loader.mockResolvedValueOnce(new SnapshotResponse(304, 'one'));
+      fireEvent.click(refresh);
+      await waitFor(() => expect(status.textContent).toMatch(fetched));
+      expect(status.closest('details')).toBe(disclosure);
+      expect(disclosure.open).toBe(false);
+      expect(document.activeElement).toBe(summary);
+      expect(header.nextElementSibling).toBe(shell);
+      expect([main.scrollTop, rail.scrollTop, window.location.hash]).toEqual([120, 24, route]);
+      expect(document.getElementById('snapshot-unavailable-explanation')).toBeNull();
+    },
+  );
   it('keeps a pending manual refresh in keyboard traversal without allowing another request or stealing moved focus', async () => {
     localStorage.setItem(PREFERENCE_KEY, 'en');
     let release: ((response: SnapshotResponse) => void) | undefined;

@@ -1390,6 +1390,10 @@ function Dashboard({
 }) {
   const i18n = useI18n();
   const { snapshot: rawSnapshot, observed, error, busy, announce, refresh } = useSnapshot(loader);
+  const refreshNotice = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!error && refreshNotice.current) refreshNotice.current.open = false;
+  }, [error]);
   const snapshot = useMemo(
     () => (rawSnapshot ? presentSnapshot(rawSnapshot) : null),
     [rawSnapshot],
@@ -2010,9 +2014,35 @@ function Dashboard({
           </span>
         </div>
         <div className="refresh">
-          <span className="refresh-status" role="status" aria-live={announce ? 'polite' : 'off'}>
-            {freshness}
-          </span>
+          <details ref={refreshNotice} className="refresh-status refresh-notice">
+            <summary
+              aria-disabled={!error}
+              aria-describedby={error ? 'snapshot-unavailable-explanation' : undefined}
+              tabIndex={error ? 0 : -1}
+              onClick={(event) => {
+                if (!error) event.preventDefault();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && refreshNotice.current)
+                  refreshNotice.current.open = false;
+              }}
+            >
+              <span role="status" aria-live={error || announce ? 'polite' : 'off'}>
+                {freshness}
+              </span>
+            </summary>
+            {error && (
+              <div id="snapshot-unavailable-explanation" className="notice refresh-explanation">
+                {i18n.t('Snapshot unavailable. {message}', {
+                  message: observed
+                    ? i18n.t('Showing last observed records from {time}.', {
+                        time: observed.toLocaleString(i18n.localeName),
+                      })
+                    : i18n.t('Check the configured program and refresh.'),
+                })}
+              </div>
+            )}
+          </details>
           <label className="language-control">
             {i18n.t('Language')}
             <select
@@ -2037,18 +2067,10 @@ function Dashboard({
           />
         </div>
       </header>
-      {(error || stale) && (
+      {!error && stale && (
         <div className="notice" role="status">
-          {error
-            ? i18n.t('Snapshot unavailable. {message}', {
-                message: observed
-                  ? i18n.t('Showing last observed records from {time}.', {
-                      time: observed.toLocaleString(i18n.localeName),
-                    })
-                  : i18n.t('Check the configured program and refresh.'),
-              })
-            : i18n.t('Snapshot integrity is stale.')}
-          {!error && items(integrity.warnings).length > 0 && (
+          {i18n.t('Snapshot integrity is stale.')}
+          {items(integrity.warnings).length > 0 && (
             <details className="integrity-details">
               <summary>
                 {i18n.t('Integrity warnings: {count}', { count: items(integrity.warnings).length })}
