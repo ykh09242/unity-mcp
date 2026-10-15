@@ -3681,14 +3681,14 @@ def test_held_initial_rechecks_defaults_direct_reads_and_expected_sha_stay_fresh
 def test_held_initial_new_alias_does_not_inherit_parent_admission(small_program, monkeypatch, kind):
     program = small_program.program
     original, body, collector = _held_initial_binding(program)
-    with (
-        fp._collect_dependencies(collector),
-        fp._hold_initial_images(program, original, collector, proposed_body=body),
-    ):
-        fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
-        _mock_link_lstat(monkeypatch, program.repo / "src", kind)
-        # A distinct logical alias must still inspect the actual linked parent immediately.
-        with pytest.raises(fp.ProgramError, match="Linked path"):
+    with pytest.raises(fp.ProgramError, match="Initial component"):
+        with (
+            fp._collect_dependencies(collector),
+            fp._hold_initial_images(program, original, collector, proposed_body=body),
+        ):
+            fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+            _mock_link_lstat(monkeypatch, program.repo / "src", kind)
+            # Metadata-only injection does not redirect resolve; strict epoch closure catches it.
             fp._initial_read_budget().capture(program.repo, "src/docs.2.py", 1000)
 
 
@@ -3811,3 +3811,278 @@ def test_held_initial_collector_descriptor_image_matches_independent_readers(sma
         return result
 
     assert capture(True) == capture(False)
+
+
+def test_initial_components_reduce_parent_metadata_but_resolve_every_distinct_alias(
+    small_program, monkeypatch
+):
+    # Given: twenty real inputs share one parent, with separately charged initial readers.
+    program = small_program.program
+    names = [f"src/component-{index}.py" for index in range(20)]
+    for name in names:
+        (program.repo / name).write_bytes(b"same input")
+    original, body, collector = _held_initial_binding(program)
+    metadata, resolutions = [], []
+    normal_image, normal_resolve = fp._component_image, Path.resolve
+
+    def image(path):
+        metadata.append(path)
+        return normal_image(path)
+
+    def resolve(path, *args, **kwargs):
+        resolutions.append(path)
+        return normal_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(fp, "_component_image", image)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    # When: ordinary readers establish the comparison, then enrolled source readers capture.
+    expected = program.source_snapshot(names, fp.ReadBudget())
+    parent = program.repo / "src"
+    assert metadata.count(parent) == 20
+    metadata.clear()
+    resolutions.clear()
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        actual = program.source_snapshot(names, fp._initial_read_budget())
+        assert metadata.count(parent) == 1
+        assert all(resolutions.count(program.repo / name) == 1 for name in names)
+        held = fp._initial_images.get()
+    # Then: exact fingerprints remain unchanged and the shared parent has a fresh final check.
+    assert actual == expected
+    assert metadata.count(parent) == 2
+    assert not held.components.positive
+
+
+@pytest.mark.parametrize("location", ["parent", "root"])
+@pytest.mark.parametrize("target_kind", ["inward", "outward"])
+def test_initial_components_new_alias_resolves_real_redirect_immediately(
+    small_program, location, target_kind
+):
+    # Given: an enrolled reader has positively classified a shared source parent.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    selected = program.repo / "src" if location == "parent" else program.repo
+    moved = selected.with_name(selected.name + "-before-link")
+    outside = program.repo.parent / "component-outside"
+    outside.mkdir()
+    (outside / "docs.2.py").write_bytes(b"outside")
+    # When: the parent or root redirects before a distinct alias performs fresh resolution.
+    try:
+        with pytest.raises(fp.ProgramError):
+            with (
+                fp._collect_dependencies(collector),
+                fp._hold_initial_images(program, original, collector, proposed_body=body),
+            ):
+                fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+                selected.rename(moved)
+                target = moved if target_kind == "inward" else outside
+                _directory_alias(selected, target)
+                fp._initial_read_budget().capture(program.repo, "src/docs.2.py", 1000)
+    finally:
+        if selected.is_symlink():
+            selected.unlink()
+        elif getattr(selected, "is_junction", lambda: False)():
+            selected.rmdir()
+        if moved.exists():
+            moved.rename(selected)
+    # Then: no redirected alias was retained as a successful initial capture.
+    assert fp._initial_images.get() is None
+
+
+@pytest.mark.parametrize("change", ["missing", "file", "unavailable", "linked"])
+def test_initial_components_strict_exit_rejects_late_positive_change(
+    small_program, monkeypatch, change
+):
+    # Given: the source parent was positively classified before the last initial capture.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    parent = program.repo / "src"
+    normal = fp._component_image
+
+    def changed(path):
+        if path == parent:
+            if change == "unavailable":
+                return False, False, None
+            if change == "linked":
+                return True, True, fp.stat.S_IFDIR
+        return normal(path)
+
+    # When: no further initial file admission occurs before the mandatory closing barrier.
+    with pytest.raises(fp.ProgramError, match="Initial component"):
+        with (
+            fp._collect_dependencies(collector),
+            fp._hold_initial_images(program, original, collector, proposed_body=body),
+        ):
+            fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+            if change in {"missing", "file"}:
+                parent.rename(parent.with_name("previous-source"))
+                if change == "file":
+                    parent.write_bytes(b"not a directory")
+            monkeypatch.setattr(fp, "_component_image", changed)
+            held = fp._initial_images.get()
+    # Then: missing/error/nonlinked type drift cannot masquerade as a stable positive image.
+    assert fp._initial_images.get() is None and not held.components.positive
+
+
+@pytest.mark.parametrize(
+    "reader_kind", ["default", "recheck", "closing", "foreign_root", "collector"]
+)
+def test_initial_components_unenrolled_admissions_stay_fresh_inside_epoch(
+    small_program, monkeypatch, reader_kind
+):
+    # Given: a positive parent is warm only for the current exact initial-reader operation.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    normal = fp._component_image
+    parent = program.repo / "src"
+    calls = []
+
+    def counted(path):
+        calls.append(path)
+        return normal(path)
+
+    monkeypatch.setattr(fp, "_component_image", counted)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        reader = fp._initial_read_budget()
+        reader.capture(program.repo, "src/compile-api.py", 1000)
+        calls.clear()
+        # When: a reader or owner outside this explicit initial ledger admits another path.
+        if reader_kind == "default":
+            fp.ReadBudget().capture(program.repo, "src/docs.2.py", 1000)
+        elif reader_kind == "recheck":
+            reader.recheck(program.repo)
+        elif reader_kind == "closing":
+            fp._ClosingObserver(program).admit(program.repo, "src/docs.2.py")
+        elif reader_kind == "foreign_root":
+            reader.capture(parent, "docs.2.py", 1000)
+            assert parent not in calls  # narrower-root canonical resolution remains independent
+            assert parent / "docs.2.py" in calls
+            return
+        else:
+            with fp.flow_module("read_model").collect(None):
+                fp._initial_read_budget().capture(program.repo, "src/docs.2.py", 1000)
+        # Then: initial positive metadata does not suppress that reader's actual parent check.
+        assert parent in calls
+
+
+def test_initial_components_cap_fallback_and_nested_failure_restore(small_program, monkeypatch):
+    # Given: only one positive component may be retained in each bounded initial ledger.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    monkeypatch.setattr(fp, "_HELD_COMPONENT_LIMIT", 1)
+    normal, calls = fp._component_image, []
+
+    def counted(path):
+        calls.append(path)
+        return normal(path)
+
+    monkeypatch.setattr(fp, "_component_image", counted)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+        outer = fp._initial_images.get()
+        assert len(outer.components.positive) == 1
+        leaf = program.repo / "src/docs.2.py"
+        fp._initial_read_budget()._admit(program.repo, "src/docs.2.py")
+        fp._initial_read_budget()._admit(program.repo, "src/docs.2.py")
+        assert calls.count(leaf) == 2  # unretained positives keep fresh metadata probes
+        with pytest.raises(RuntimeError):
+            with fp._hold_initial_images(program, original, collector, proposed_body=body):
+                inner = fp._initial_images.get()
+                fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+                raise RuntimeError("caller failure")
+        assert not inner.components.positive
+        assert fp._initial_images.get() is outer
+    # Then: capacity never expands, nested failures restore the owner, and no memo survives exit.
+    assert not outer.components.positive and fp._initial_images.get() is None
+
+
+@pytest.mark.parametrize("outcome", ["missing", "unavailable", "linked"])
+def test_initial_components_never_retain_negative_metadata(small_program, monkeypatch, outcome):
+    # Given: a leaf has no positive nonlinked metadata image for this initial epoch.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    leaf = program.repo / "src/no-positive.py"
+    normal, calls = fp._component_image, []
+
+    def image(path):
+        if path == leaf:
+            calls.append(path)
+            if outcome == "linked":
+                return True, True, fp.stat.S_IFLNK
+            if outcome == "unavailable":
+                return False, False, None
+        return normal(path)
+
+    monkeypatch.setattr(fp, "_component_image", image)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        # When: two distinct initial readers admit that same unresolved logical name.
+        for _ in range(2):
+            reader = fp._initial_read_budget()
+            if outcome == "linked":
+                with pytest.raises(fp.ProgramError):
+                    reader._admit(program.repo, "src/no-positive.py")
+            else:
+                assert reader._admit(program.repo, "src/no-positive.py") == leaf
+        # Then: the metadata observation is retried and cannot enter the positive ledger.
+        assert calls == [leaf, leaf]
+        assert str(leaf) not in fp._initial_images.get().components.positive
+
+
+@pytest.mark.parametrize("location", ["root", "ancestor"])
+def test_initial_components_exit_resolves_used_root_after_last_admission(small_program, location):
+    # Given: the last successful initial alias leaves an exact held root requiring closure.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    selected = program.repo if location == "root" else program.repo.parent
+    moved = selected.with_name(selected.name + "-initial-before-link")
+    # When: a root or its ancestor redirects only after the final file capture.
+    try:
+        with pytest.raises(fp.ProgramError, match="Initial root"):
+            with (
+                fp._collect_dependencies(collector),
+                fp._hold_initial_images(program, original, collector, proposed_body=body),
+            ):
+                fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+                selected.rename(moved)
+                _directory_alias(selected, moved)
+    finally:
+        if selected.is_symlink():
+            selected.unlink()
+        elif getattr(selected, "is_junction", lambda: False)():
+            selected.rmdir()
+        if moved.exists():
+            moved.rename(selected)
+    # Then: a byte-identical relocated tree does not prove the original root remained canonical.
+    assert fp._initial_images.get() is None
+
+
+@pytest.mark.parametrize("change", ["missing", "file"])
+def test_initial_components_exit_requires_used_root_directory_even_without_positive_leaf(
+    small_program, change
+):
+    # Given: only missing descendants were admitted, so no positive component can prove root kind.
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    # When: the actual root disappears or becomes a regular file before successful epoch exit.
+    with pytest.raises(fp.ProgramError, match="Initial root"):
+        with (
+            fp._collect_dependencies(collector),
+            fp._hold_initial_images(program, original, collector, proposed_body=body),
+        ):
+            fp._initial_read_budget()._admit(program.repo, "not-present/leaf")
+            program.repo.rename(program.repo.with_name("previous-root"))
+            if change == "file":
+                program.repo.write_bytes(b"not a directory")
+    # Then: strict=False resolution equality alone cannot authorize a missing or wrong-kind root.
+    assert fp._initial_images.get() is None

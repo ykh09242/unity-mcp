@@ -190,6 +190,46 @@ def _collect_dependencies(collector: Collector) -> Iterator[None]:
 
 _HELD_IMAGE_LIMIT: Final = 10000
 _HELD_BYTE_LIMIT: Final = 128 * 1024 * 1024
+_HELD_COMPONENT_LIMIT: Final = 4096
+_HELD_COMPONENT_SPELLING_LIMIT: Final = 4096
+
+
+@dataclass(slots=True)
+class _InitialComponents:
+    """Positive metadata within one enrolled initial image, with a strict closing barrier."""
+
+    positive: dict[str, tuple[Path, int]] = field(default_factory=dict)
+    roots: dict[str, Path] = field(default_factory=dict)
+
+    def linked(self, path: Path) -> bool:
+        key = str(path)
+        if key in self.positive:
+            return False
+        linked, captured, kind = _component_image(path)
+        if (
+            captured
+            and not linked
+            and kind is not None
+            and len(self.positive) < _HELD_COMPONENT_LIMIT
+            and len(key) <= _HELD_COMPONENT_SPELLING_LIMIT
+        ):
+            self.positive[key] = (path, kind)
+        return linked
+
+    def finish(self) -> None:
+        for path, expected_kind in self.positive.values():
+            linked, captured, kind = _component_image(path)
+            require(
+                captured and not linked and kind == expected_kind,
+                "Initial component changed or unavailable; refresh",
+            )
+        for root in self.roots.values():
+            linked, captured, kind = _component_image(root)
+            require(
+                captured and not linked and kind == stat.S_IFDIR,
+                "Initial root changed or unavailable; refresh",
+            )
+            require(root.resolve() == root.absolute(), "Initial root redirected; refresh")
 
 
 @dataclass(slots=True)
@@ -203,6 +243,7 @@ class _InitialImages:
     collector: Collector
     aliases: dict[tuple[str, str], tuple[Path, bytes, str]] = field(default_factory=dict)
     retained_bytes: int = 0
+    components: _InitialComponents = field(default_factory=_InitialComponents)
 
     def key(self, root: Path, name: str) -> tuple[str, str] | None:
         if _initial_images.get() is not self or _active_collector() is not self.collector:
@@ -267,9 +308,14 @@ def _hold_initial_images(
     token = _initial_images.set(held)
     try:
         yield
+        # Initial metadata is an explicit image, not a claim about intermediate ABA changes.
+        # This barrier precedes model construction; later callbacks and final closure stay fresh.
+        held.components.finish()
     finally:
         _initial_images.reset(token)
         held.aliases.clear()
+        held.components.positive.clear()
+        held.components.roots.clear()
         held.retained_bytes = 0
 
 
@@ -726,7 +772,9 @@ def safe_path(root: Path, name: str) -> Path:
     return _checked_safe_path(root, name)
 
 
-def _checked_safe_path(root: Path, name: str, components: _ClosingComponents | None = None) -> Path:
+def _checked_safe_path(
+    root: Path, name: str, components: _ClosingComponents | _InitialComponents | None = None
+) -> Path:
     # Lexically excluded names are represented by explicit scope exclusions.
     safe_relative(name)
     try:
@@ -736,12 +784,12 @@ def _checked_safe_path(root: Path, name: str, components: _ClosingComponents | N
         raise
 
 
-def _component_check(path: Path) -> tuple[bool, bool]:
-    """Return the link result and whether a fresh metadata image was available."""
+def _component_image(path: Path) -> tuple[bool, bool, int | None]:
+    """Classify one fresh metadata image without adding a second filesystem observation."""
     try:
         metadata = path.lstat()
     except (OSError, ValueError):
-        return path.is_symlink() or getattr(path, "is_junction", lambda: False)(), False
+        return path.is_symlink() or getattr(path, "is_junction", lambda: False)(), False, None
     linked = stat.S_ISLNK(metadata.st_mode) or (
         getattr(path, "is_junction", None) is not None
         and (
@@ -752,7 +800,13 @@ def _component_check(path: Path) -> tuple[bool, bool]:
         and getattr(metadata, "st_reparse_tag", None)
         == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
     )
-    return linked, True
+    return linked, True, stat.S_IFMT(metadata.st_mode)
+
+
+def _component_check(path: Path) -> tuple[bool, bool]:
+    """Return the link result and whether a fresh metadata image was available."""
+    linked, captured, _ = _component_image(path)
+    return linked, captured
 
 
 def _component_linked(path: Path) -> bool:
@@ -802,7 +856,9 @@ def _is_path_within(path: PurePath, other: PurePath) -> bool:
     return len(parts) >= len(parent) and parts[: len(parent)] == parent
 
 
-def _admit_safe_path(root: Path, name: str, components: _ClosingComponents | None = None) -> Path:
+def _admit_safe_path(
+    root: Path, name: str, components: _ClosingComponents | _InitialComponents | None = None
+) -> Path:
     relative = safe_relative(name)
     path = root / relative
     cursor = root
@@ -961,6 +1017,17 @@ class ReadBudget:
             self._images[path] = image
         return image
 
+    def _admit(self, root: Path, name: str) -> Path:
+        """Use initial metadata only for this explicitly enrolled reader's exact active roots."""
+        held = self._held_initial
+        components = (
+            held.components if held is not None and held.key(root, name) is not None else None
+        )
+        if components is not None:
+            # held.key permits only this operation's exact repository/program roots.
+            components.roots.setdefault(str(root), root)
+        return _checked_safe_path(root, name, components)
+
     def capture(self, root: Path, name: str, limit: int) -> CapturedBytes:
         """Admit one exact logical path; every consumer still checks its expected hash/subject."""
         key = (str(root.absolute()), name)
@@ -976,7 +1043,7 @@ class ReadBudget:
         initial = self._import_initial(root, name, limit)
         if initial is not None:
             return initial
-        return self._capture_admitted(root, name, safe_path(root, name), limit)
+        return self._capture_admitted(root, name, self._admit(root, name), limit)
 
     def _capture_admitted(self, root: Path, name: str, path: Path, limit: int) -> CapturedBytes:
         """Finish a core source walk's existing safe_path admission without traversing it twice."""
@@ -1451,7 +1518,7 @@ class Program:
             )
             safe_relative(scope)
             observed = reader._observed_alias(self.repo, scope)
-            path = observed.path if observed is not None else safe_path(self.repo, scope)
+            path = observed.path if observed is not None else reader._admit(self.repo, scope)
             require(
                 path != self.repo and not _is_path_within(self.directory, path),
                 "Root/program-wide claims are invalid",
@@ -1474,7 +1541,7 @@ class Program:
                     for name in list(dirs):
                         relative = (folder_path / name).relative_to(self.repo).as_posix()
                         try:
-                            safe_path(self.repo, relative)
+                            reader._admit(self.repo, relative)
                         except ProgramError:
                             boundaries.append({"path": relative, "kind": "excluded_path"})
                             dirs.remove(name)
@@ -1483,7 +1550,7 @@ class Program:
                         observed = reader._observed_alias(self.repo, relative)
                         if observed is None:
                             try:
-                                candidate = safe_path(self.repo, relative)
+                                candidate = reader._admit(self.repo, relative)
                             except ProgramError:
                                 boundary = (
                                     str(PurePosixPath(relative).parent / ".env*")
