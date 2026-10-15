@@ -188,6 +188,91 @@ def _collect_dependencies(collector: Collector) -> Iterator[None]:
         _dependency_names.reset(token)
 
 
+_HELD_IMAGE_LIMIT: Final = 10000
+_HELD_BYTE_LIMIT: Final = 128 * 1024 * 1024
+
+
+@dataclass(slots=True)
+class _InitialImages:
+    """Held immutable inputs for one explicitly enrolled initial computation."""
+
+    repo: Path
+    directory: Path
+    original_storage_sha256: str
+    proposed_body_sha256: str
+    collector: Collector
+    aliases: dict[tuple[str, str], tuple[Path, bytes, str]] = field(default_factory=dict)
+    retained_bytes: int = 0
+
+    def key(self, root: Path, name: str) -> tuple[str, str] | None:
+        if _initial_images.get() is not self or _active_collector() is not self.collector:
+            return None
+        if not root.is_absolute():
+            return None
+        spelling = str(root)
+        if spelling not in {str(self.repo), str(self.directory)}:
+            return None
+        relative = safe_relative(name)
+        path = root / relative
+        if path.is_relative_to(self.directory):
+            local = path.relative_to(self.directory).as_posix().casefold()
+            if local in {
+                "backlog.json",
+                ".feature-program.lock",
+                "board.md",
+                "checkpoint.md",
+            } or local.startswith(("tasks/", "recovery/")):
+                return None
+        return spelling, name
+
+    def remember(self, key: tuple[str, str], image: CapturedBytes) -> None:
+        previous = self.aliases.get(key)
+        if previous is not None:
+            require(previous[1] == image.content, "Held initial input changed during capture")
+        elif (
+            len(self.aliases) < _HELD_IMAGE_LIMIT
+            and self.retained_bytes + len(image.content) <= _HELD_BYTE_LIMIT
+        ):
+            self.aliases[key] = (image.path, image.content, image.sha256)
+            self.retained_bytes += len(image.content)
+
+
+_initial_images: ContextVar[_InitialImages | None] = ContextVar("initial_images", default=None)
+
+
+@contextmanager
+def _hold_initial_images(
+    program: Program,
+    original: RegistryObservation,
+    collector: Collector,
+    *,
+    proposed_body: bytes,
+) -> Iterator[None]:
+    """Opt in only during checked initial computation; ordinary readers stay fresh."""
+    require(_active_collector() is collector, "Initial image collector changed")
+    require(
+        collector.repo == program.repo.absolute()
+        and collector.program_dir == program.directory.absolute()
+        and collector.body_sha256 == sha(proposed_body)
+        and sha(original.raw_bytes) == original.storage_sha256,
+        "Initial image operation binding changed",
+    )
+    held = _InitialImages(
+        program.repo.absolute(),
+        program.directory.absolute(),
+        original.storage_sha256,
+        collector.body_sha256,
+        collector,
+    )
+    token = _initial_images.set(held)
+    try:
+        yield
+    finally:
+        _initial_images.reset(token)
+        held.aliases.clear()
+        held.retained_bytes = 0
+
+
 def _dependency_name(path: Path) -> tuple[Path, str] | None:
     collector = _active_collector()
     if collector is None:
@@ -790,6 +875,36 @@ class ReadBudget:
     _admissions: dict[tuple[str, str], CapturedBytes] = field(default_factory=dict, init=False)
     _documents: dict[Path, tuple[CapturedBytes, Record]] = field(default_factory=dict, init=False)
     _provenance_reads: dict[Path, _ProvenanceRead] | None = field(default=None, init=False)
+    _held_initial: _InitialImages | None = field(default=None, init=False)
+
+    def _held_alias(self, root: Path, name: str) -> tuple[Path, bytes, str] | None:
+        held = self._held_initial
+        key = held.key(root, name) if held is not None else None
+        return held.aliases.get(key) if key is not None else None
+
+    def _observed_alias(self, root: Path, name: str) -> CapturedBytes | None:
+        """A held alias is useful only to an explicitly enrolled initial reader."""
+        observed = self._admissions.get((str(root.absolute()), name))
+        if observed is not None:
+            return observed
+        held = self._held_alias(root, name)
+        return CapturedBytes(*held) if held is not None else None
+
+    def _import_initial(self, root: Path, name: str, limit: int) -> CapturedBytes | None:
+        held = self._held_alias(root, name)
+        if held is None:
+            return None
+        path, content, checksum = held
+        require(path == root / safe_relative(name), "Held input alias changed")
+        # Charge this consumer independently even though the immutable image is shared.
+        self._charge_provenance((_ProvenanceRead(path, content, limit),))
+        image = self._images.get(path)
+        if image is None or image.content is not self.cached[path]:
+            image = CapturedBytes(path, self.cached[path], checksum)
+            self._images[path] = image
+        self._admissions[(str(root.absolute()), name)] = image
+        self._remember_provenance(path, image.content, limit)
+        return image
 
     def _remember_provenance(self, path: Path, content: bytes, limit: int) -> None:
         if self._provenance_reads is not None:
@@ -858,6 +973,9 @@ class ReadBudget:
             _observe_bytes(image.path, image.content, limit, f"reader-{id(self)}")
             self._remember_provenance(image.path, image.content, limit)
             return image
+        initial = self._import_initial(root, name, limit)
+        if initial is not None:
+            return initial
         return self._capture_admitted(root, name, safe_path(root, name), limit)
 
     def _capture_admitted(self, root: Path, name: str, path: Path, limit: int) -> CapturedBytes:
@@ -873,9 +991,16 @@ class ReadBudget:
             self._remember_provenance(path, image.content, limit)
             return image
         require(path == root / safe_relative(name), "Captured path differs from logical admission")
+        initial = self._import_initial(root, name, limit)
+        if initial is not None:
+            return initial
         require(observed_is_file(path), f"Missing frozen evidence: {name}")
         image = self._image(path, limit)
         self._admissions[key] = image
+        held = self._held_initial
+        alias = held.key(root, name) if held is not None else None
+        if alias is not None:
+            held.remember(alias, image)
         return image
 
     def json(self, captured: CapturedBytes) -> Record:
@@ -919,6 +1044,15 @@ class ReadBudget:
                     current.content == raw,
                     "Observed source/evidence changed during snapshot; refresh",
                 )
+
+
+def _initial_read_budget(remaining: int = 72 * 1024 * 1024) -> ReadBudget:
+    """Enroll a known initial consumer, never a default or closing reader."""
+    reader = ReadBudget(remaining)
+    held = _initial_images.get()
+    if held is not None and _active_collector() is held.collector:
+        reader._held_initial = held
+    return reader
 
 
 @dataclass(frozen=True, slots=True)
@@ -1316,7 +1450,7 @@ class Program:
                 "Private .work paths cannot be source scopes",
             )
             safe_relative(scope)
-            observed = reader._admissions.get((str(self.repo.absolute()), scope))
+            observed = reader._observed_alias(self.repo, scope)
             path = observed.path if observed is not None else safe_path(self.repo, scope)
             require(
                 path != self.repo and not _is_path_within(self.directory, path),
@@ -1346,7 +1480,7 @@ class Program:
                             dirs.remove(name)
                     for name in sorted(files):
                         relative = (folder_path / name).relative_to(self.repo).as_posix()
-                        observed = reader._admissions.get((str(self.repo.absolute()), relative))
+                        observed = reader._observed_alias(self.repo, relative)
                         if observed is None:
                             try:
                                 candidate = safe_path(self.repo, relative)
@@ -1457,7 +1591,7 @@ class Program:
         self, state: Record, verify_artifacts: bool = True, *, prospective: bool = False
     ) -> _ValidatedState:
         _compact_registry(state)
-        budget = ReadBudget() if verify_artifacts else None
+        budget = _initial_read_budget() if verify_artifacts else None
         require(state.get("schema_version") == 1, "Unsupported registry")
         string(state.get("program_id"), "program_id")
         communication_language(state.get("communication_language"))
@@ -3507,7 +3641,7 @@ def _capture_projection(
         raise ProgramError(str(exc)) from exc
     # Capture source identities separately from their recorded hashes: an already
     # drifted source must not change again while its advisory projection is built.
-    source_inputs = ReadBudget(64 * 1024 * 1024)
+    source_inputs = _initial_read_budget(64 * 1024 * 1024)
     unavailable_sources: set[Path] = set()
     source_names = {str(item["path"]) for item in planning.descriptors(state)}
     if state.get("planning_path"):
@@ -3525,7 +3659,7 @@ def _capture_projection(
         raise ProgramError(str(exc)) from exc
     refs: dict[str, str] = {}
     observations: dict = {"submissions": {}, "blocks": {}, "recovery": [], "publication": []}
-    publication_inputs = ReadBudget(64 * 1024 * 1024)
+    publication_inputs = _initial_read_budget(64 * 1024 * 1024)
     absent_publication: set[Path] = set()
     for name in sorted(planning.PUBLICATION_MARKERS | {planning.TRACKING}):
         path = program.path(name)
@@ -3536,7 +3670,7 @@ def _capture_projection(
             )
         else:
             absent_publication.add(path)
-    review_sources = ReadBudget(128 * 1024 * 1024)
+    review_sources = _initial_read_budget(128 * 1024 * 1024)
     all_refs = (
         list(coordination.evidence_references(state))
         + list(questions.evidence_references(state))
@@ -3605,7 +3739,7 @@ def _capture_projection(
             warnings.append(f"Conflicting frozen evidence hashes: {name}")
         refs[name] = expected
     require(len(refs) <= 2000, "Snapshot exceeds 2000 evidence files")
-    evidence_budget = ReadBudget(64 * 1024 * 1024)
+    evidence_budget = _initial_read_budget(64 * 1024 * 1024)
     unavailable_evidence: set[Path] = set()
     for name, expected in refs.items():
         path = program.path(name)
@@ -4356,7 +4490,10 @@ def _prepare_model_publication(
     observations = _SourceObservations()
     source_token = _source_observations.set(observations)
     try:
-        with _collect_dependencies(collector):
+        with (
+            _collect_dependencies(collector),
+            _hold_initial_images(program, original, collector, proposed_body=intended_body),
+        ):
             body = program.prepare_save(state)
             require(
                 len(facts) == 1 and facts[0].body == body,

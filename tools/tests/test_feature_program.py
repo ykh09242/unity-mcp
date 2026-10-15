@@ -3585,3 +3585,229 @@ def test_byte_observation_memo_preserves_each_expected_sha_consumer(small_progra
         )
         with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
             program.verify_refs([{"path": "evidence/proof.txt", "sha256": "0" * 64}], reader)
+
+
+def _held_initial_binding(program):
+    state = program.load()
+    body = fp.registry_body(state)
+    module = fp.flow_module("read_model")
+    collector = module.Collector(
+        program.repo,
+        program.directory,
+        program_id=state["program_id"],
+        body_sha256=fp.sha(body),
+        producer=module.producer_identity(program.repo),
+        query=module.QUERY,
+    )
+    return program.read_registry_observation(), body, collector
+
+
+def test_held_initial_exact_alias_is_repeatable_and_handles_remain_local(
+    small_program, monkeypatch
+):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    path = program.repo / "src/compile-api.py"
+    first_bytes = b'{"value":1}'
+    path.write_bytes(first_bytes)
+    normal, opens = fp.bounded_bytes, []
+
+    def counted(path, limit):
+        opens.append(path)
+        return normal(path, limit)
+
+    monkeypatch.setattr(fp, "bounded_bytes", counted)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        readers = [fp._initial_read_budget(100) for _ in range(40)]
+        first = readers[0].capture(program.repo, "src/compile-api.py", 100)
+        path.write_bytes(b'{"value":2}')
+        for reader in readers[1:]:
+            image = reader.capture(program.repo, "src/compile-api.py", 100)
+            assert image is not first and image.content is first.content
+            assert reader.json(image) == {"value": 1}
+            assert reader.remaining == 100 - len(first_bytes)
+            with pytest.raises(fp.ProgramError, match="Foreign captured"):
+                reader.json(first)
+        # No outside open samples the transient image; this is the explicit held-byte contract.
+        assert opens.count(path) == 1
+        path.write_bytes(first_bytes)
+        readers[0].recheck(program.repo)
+        assert opens.count(path) == 2
+        held = fp._initial_images.get()
+    assert not held.aliases and held.retained_bytes == 0
+    assert fp._initial_images.get() is None
+    assert fp._initial_read_budget()._held_initial is None
+
+
+def test_held_initial_rechecks_defaults_direct_reads_and_expected_sha_stay_fresh(small_program):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    path = program.directory / "evidence/held-proof.txt"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(b"original")
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        first = fp._initial_read_budget(100)
+        first.capture(program.directory, "evidence/held-proof.txt", 100)
+        second = fp._initial_read_budget(100)
+        with pytest.raises(fp.ProgramError, match="Frozen evidence changed"):
+            program.verify_refs([{"path": "evidence/held-proof.txt", "sha256": "0" * 64}], second)
+        with pytest.raises(fp.ProgramError, match="bounded read"):
+            fp._initial_read_budget(3).capture(program.directory, "evidence/held-proof.txt", 100)
+        with pytest.raises(fp.ProgramError, match="bounded read"):
+            fp._initial_read_budget(100).capture(program.directory, "evidence/held-proof.txt", 3)
+        path.write_bytes(b"changed!")
+        assert (
+            fp._initial_read_budget(100)
+            .capture(program.directory, "evidence/held-proof.txt", 100)
+            .content
+            == b"original"
+        )
+        assert (
+            fp.ReadBudget().capture(program.directory, "evidence/held-proof.txt", 100).content
+            == b"changed!"
+        )
+        assert fp._initial_read_budget().read(path, 100) == b"changed!"
+        with pytest.raises(fp.ProgramError, match="changed during snapshot"):
+            first.recheck(program.repo)
+
+
+@pytest.mark.parametrize("kind", ["is_symlink", "is_junction"])
+def test_held_initial_new_alias_does_not_inherit_parent_admission(small_program, monkeypatch, kind):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+        _mock_link_lstat(monkeypatch, program.repo / "src", kind)
+        # A distinct logical alias must still inspect the actual linked parent immediately.
+        with pytest.raises(fp.ProgramError, match="Linked path"):
+            fp._initial_read_budget().capture(program.repo, "src/docs.2.py", 1000)
+
+
+def test_held_initial_directory_membership_and_negative_types_are_not_shared(small_program):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        before = program.source_snapshot(["src"], fp._initial_read_budget())
+        (program.repo / "src/added.py").write_bytes(b"new member")
+        after = program.source_snapshot(["src"], fp._initial_read_budget())
+        assert "src/added.py" not in before and "src/added.py" in after
+        missing = "src/previously-missing.py"
+        with pytest.raises(fp.ProgramError, match="Missing frozen"):
+            fp._initial_read_budget().capture(program.repo, missing, 100)
+        (program.repo / missing).write_bytes(b"now present")
+        assert (
+            fp._initial_read_budget().capture(program.repo, missing, 100).content == b"now present"
+        )
+        with pytest.raises(fp.ProgramError, match="Missing frozen"):
+            fp._initial_read_budget().capture(program.repo, "src", 100)
+
+
+def test_held_initial_bounds_outputs_nested_activation_and_exception_restore(
+    small_program, monkeypatch
+):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    monkeypatch.setattr(fp, "_HELD_IMAGE_LIMIT", 1)
+    monkeypatch.setattr(fp, "_HELD_BYTE_LIMIT", 4)
+    one, two = program.repo / "one.txt", program.repo / "two.txt"
+    one.write_bytes(b"1234")
+    two.write_bytes(b"5678")
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        outer = fp._initial_images.get()
+        fp._initial_read_budget().capture(program.repo, "one.txt", 100)
+        fp._initial_read_budget().capture(program.repo, "two.txt", 100)
+        assert len(outer.aliases) == 1 and outer.retained_bytes == 4
+        for name in (
+            "backlog.json",
+            ".feature-program.lock",
+            "BOARD.md",
+            "tasks/S01.md",
+            "recovery/state.json",
+        ):
+            assert outer.key(program.directory, name) is None
+        with pytest.raises(RuntimeError, match="inner failure"):
+            with fp._hold_initial_images(program, original, collector, proposed_body=body):
+                assert fp._initial_images.get() is not outer
+                raise RuntimeError("inner failure")
+        assert fp._initial_images.get() is outer
+        assert len(outer.aliases) == 1
+    assert fp._initial_images.get() is None and not outer.aliases
+
+
+def test_held_initial_operation_binding_rejects_wrong_collector_or_body(small_program):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    with fp._collect_dependencies(collector):
+        with pytest.raises(fp.ProgramError, match="operation binding"):
+            with fp._hold_initial_images(program, original, collector, proposed_body=body + b" "):
+                pytest.fail("Changed proposed BODY was accepted")
+    with pytest.raises(fp.ProgramError, match="collector changed"):
+        with fp._hold_initial_images(program, original, collector, proposed_body=body):
+            pytest.fail("Foreign collector was accepted")
+
+
+def test_held_initial_distinct_root_alias_and_direct_image_stay_independent(
+    small_program, monkeypatch
+):
+    program = small_program.program
+    original, body, collector = _held_initial_binding(program)
+    path = program.repo / "src/compile-api.py"
+    initial = path.read_bytes()
+    with (
+        fp._collect_dependencies(collector),
+        fp._hold_initial_images(program, original, collector, proposed_body=body),
+    ):
+        captured = fp._initial_read_budget().capture(program.repo, "src/compile-api.py", 1000)
+        assert captured.content == initial
+        path.write_bytes(b"fresh independent root")
+        narrow = fp._initial_read_budget().capture(program.repo / "src", "compile-api.py", 1000)
+        assert narrow.content == b"fresh independent root"
+        monkeypatch.chdir(program.repo)
+        relative = fp._initial_read_budget().capture(Path("src"), "compile-api.py", 1000)
+        assert relative.content == b"fresh independent root"
+        direct = fp._initial_read_budget()._image(path, 1000)
+        assert direct.content == b"fresh independent root"
+
+
+def test_held_initial_collector_descriptor_image_matches_independent_readers(small_program):
+    program = small_program.program
+    path = program.repo / "src/compile-api.py"
+    path.write_bytes(b'{"exact":true}')
+
+    def capture(shared):
+        original, body, collector = _held_initial_binding(program)
+        with fp._collect_dependencies(collector):
+            context = (
+                fp._hold_initial_images(program, original, collector, proposed_body=body)
+                if shared
+                else fp.nullcontext()
+            )
+            with context:
+                readers = [fp._initial_read_budget(1000), fp._initial_read_budget(1000)]
+                for reader, limit in zip(readers, (100, 200)):
+                    image = reader.capture(program.repo, "src/compile-api.py", limit)
+                    assert reader.json(image) == {"exact": True}
+        result = collector.finish({"same": "snapshot"})
+        # Reader tags label independent ledgers; normalize only their opaque identities.
+        tags = {f"reader-{id(reader)}": f"reader-{index}" for index, reader in enumerate(readers)}
+        for row in result["dependencies"]["files"]:
+            row["budget_tag"] = tags.get(row["budget_tag"], row["budget_tag"])
+        result["dependencies"]["files"].sort(key=fp.canonical)
+        return result
+
+    assert capture(True) == capture(False)

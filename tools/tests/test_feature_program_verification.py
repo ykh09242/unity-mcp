@@ -2207,3 +2207,80 @@ def test_verification_receipt_remains_raw_even_when_registry_uses_envelope(fixtu
     fixture.program.path(name).write_bytes(storage.encode_registry(fp.canonical(value), "2" * 64))
     with pytest.raises(fp.ProgramError, match="JSON"):
         verification.prepare_record(fixture.program, state, name, observed_head=HEAD)
+
+
+def _verification_initial_epoch(fixture):
+    """Bind a held initial-image owner to actual fixture registry bytes."""
+    program = fixture.program
+    state = program.load()
+    body = fp.registry_body(state)
+    observation = program.read_registry_observation()
+    models = fp.flow_module("read_model")
+    collector = models.Collector(
+        program.repo,
+        program.directory,
+        program_id=state["program_id"],
+        body_sha256=fp.sha(body),
+        producer=models.producer_identity(program.repo),
+        query=models.QUERY,
+    )
+    return observation, body, collector
+
+
+def test_verification_initial_readers_enroll_explicitly_and_preserve_each_readset(
+    fixture, monkeypatch
+):
+    program = fixture.program
+    observation, body, collector = _verification_initial_epoch(fixture)
+    name = "src/S01.py"
+    target = program.repo / name
+    original = fp.bounded_bytes
+    opened = []
+
+    def counted(path, limit):
+        if path == target:
+            opened.append(path)
+        return original(path, limit)
+
+    monkeypatch.setattr(fp, "bounded_bytes", counted)
+    supplied = fp.ReadBudget(1024 * 1024)
+    with fp._collect_dependencies(collector):
+        with fp._hold_initial_images(program, observation, collector, proposed_body=body):
+            first = verification._reads()
+            second = verification._reads(supplied)
+            assert second.artifacts is supplied
+            one = first.artifacts.capture(program.repo, name, verification.LIMIT)
+            two = second.sources.capture(program.repo, name, verification.LIMIT)
+            assert one is not two and one.content == two.content
+            assert len(opened) == 1
+            assert first.artifacts.remaining == 64 * 1024 * 1024 - len(one.content)
+            assert second.sources.remaining == 128 * 1024 * 1024 - len(two.content)
+            supplied.capture(program.repo, name, verification.LIMIT)
+            assert len(opened) == 2  # Supplied plain readers do not attach to the ambient owner.
+    rows = collector.finish({})["dependencies"]["files"]
+    tags = {row["budget_tag"] for row in rows if row["name"] == name}
+    assert {
+        f"reader-{id(first.artifacts)}",
+        f"reader-{id(second.sources)}",
+        f"reader-{id(supplied)}",
+    } <= tags
+    verification._reads().sources.capture(program.repo, name, verification.LIMIT)
+    assert len(opened) == 3  # Factory use outside the narrow initial owner is fresh.
+
+
+def test_verification_source_recheck_stays_fresh_inside_held_initial_epoch(fixture):
+    program = fixture.program
+    observation, body, collector = _verification_initial_epoch(fixture)
+    name = "src/S01.py"
+    target = program.repo / name
+    with fp._collect_dependencies(collector):
+        with fp._hold_initial_images(program, observation, collector, proposed_body=body):
+            initial = verification._reads()
+            captured = initial.snapshot(program, [name])
+            target.write_bytes(b"persistent_mutation = True\n")
+            held = verification._reads().sources.capture(program.repo, name, verification.LIMIT)
+            assert held.sha256 == captured[name]
+            with pytest.raises(fp.ProgramError, match="Verification source changed"):
+                initial.recheck(program)
+    current = verification._reads().snapshot(program, [name])
+    assert current[name] == fp.sha(target.read_bytes()) and current != captured

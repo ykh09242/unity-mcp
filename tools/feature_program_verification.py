@@ -549,8 +549,8 @@ class _Reads:
 def _reads(budget: ReadBudget | None = None) -> _Reads:
     core = _core()
     return _Reads(
-        budget if budget is not None else core.ReadBudget(64 * 1024 * 1024),
-        core.ReadBudget(128 * 1024 * 1024),
+        budget if budget is not None else core._initial_read_budget(64 * 1024 * 1024),
+        core._initial_read_budget(128 * 1024 * 1024),
     )
 
 
