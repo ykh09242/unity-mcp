@@ -636,3 +636,152 @@ it.each(['unmount', 'replace'])(
     expect(replacement).toHaveBeenCalledTimes(change === 'unmount' ? 0 : 1);
   },
 );
+
+describe('visible draft automatic-read deferral', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+  });
+  afterEach(() => vi.useRealTimers());
+  it('defers ticks and visibility only, preserves initial/manual reads and resumes one missed intent', async () => {
+    const loader = vi.fn().mockResolvedValue(fixture());
+    const hook = renderHook(() => useSnapshot(loader));
+    await act(async () => {});
+    const release = hook.result.current.holdAutomaticReads();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000);
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(loader).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await hook.result.current.refresh(true);
+    });
+    expect(loader).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      release();
+    });
+    expect(loader).toHaveBeenCalledTimes(2); // The successful manual read already served prior missed intents.
+    const again = hook.result.current.holdAutomaticReads();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+      again();
+    });
+    expect(loader).toHaveBeenCalledTimes(3);
+    await act(async () => {
+      again();
+    });
+    expect(loader).toHaveBeenCalledTimes(3);
+  });
+  it('does not let old-form cleanup clear a replacement form lease', async () => {
+    const loader = vi.fn().mockResolvedValue(fixture());
+    const hook = renderHook(() => useSnapshot(loader));
+    await act(async () => {});
+    const old = hook.result.current.holdAutomaticReads(),
+      current = hook.result.current.holdAutomaticReads();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+      old();
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(loader).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      current();
+    });
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+  it.each(['success', 'conflict', 'unknown'])(
+    'consumes editing intents in the reserved mandatory GET after %s without another resume read',
+    async (outcome) => {
+      const loader = vi.fn().mockResolvedValue(fixture());
+      const hook = renderHook(() => useSnapshot(loader));
+      await act(async () => {});
+      const release = hook.result.current.holdAutomaticReads();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      let finish!: () => void;
+      const operation = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        if (outcome === 'unknown') throw new Error('transport unknown');
+        return outcome;
+      });
+      let pending!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+      await act(async () => {
+        pending = hook.result.current.coordinateWrite(operation);
+        release();
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(loader).toHaveBeenCalledTimes(1);
+      expect(operation).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        finish();
+        await pending;
+        release();
+      });
+      expect(loader).toHaveBeenCalledTimes(2);
+      expect(hook.result.current.writePhase).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(loader).toHaveBeenCalledTimes(3);
+    },
+  );
+  it('finishes an already active GET and drains it before POST without aborting or adding a resume GET', async () => {
+    let finishRead!: (value: unknown) => void;
+    let signal!: AbortSignal;
+    const loader = vi
+      .fn()
+      .mockResolvedValueOnce(fixture())
+      .mockImplementationOnce((input: AbortSignal) => {
+        signal = input;
+        return new Promise((resolve) => {
+          finishRead = resolve;
+        });
+      })
+      .mockResolvedValue(fixture());
+    const hook = renderHook(() => useSnapshot(loader));
+    await act(async () => {});
+    await act(async () => {
+      void hook.result.current.refresh();
+    });
+    const release = hook.result.current.holdAutomaticReads();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    const operation = vi.fn().mockResolvedValue('actual write');
+    let pending!: ReturnType<typeof hook.result.current.coordinateWrite<string>>;
+    await act(async () => {
+      pending = hook.result.current.coordinateWrite(operation);
+      release();
+    });
+    expect(signal.aborted).toBe(false);
+    expect(operation).not.toHaveBeenCalled();
+    expect(loader).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finishRead(fixture());
+      await pending;
+    });
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(3);
+  });
+  it('never defers replacement-loader initial read or leaves it paused by old cleanup', async () => {
+    const old = vi.fn().mockResolvedValue(fixture()),
+      next = vi.fn().mockResolvedValue({ ...fixture(), program_id: 'replacement' });
+    const hook = renderHook(({ loader }) => useSnapshot(loader), { initialProps: { loader: old } });
+    await act(async () => {});
+    const release = hook.result.current.holdAutomaticReads();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    hook.rerender({ loader: next });
+    await act(async () => {});
+    expect(next).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release();
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(next).toHaveBeenCalledTimes(2);
+  });
+});

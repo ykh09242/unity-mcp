@@ -1419,6 +1419,7 @@ function Dashboard({
     refresh,
     coordinateWrite,
     writePhase,
+    holdAutomaticReads,
   } = useSnapshot(loader);
   const currentSession = useRef<{
     readonly nonce: string | null;
@@ -2017,6 +2018,7 @@ function Dashboard({
               saver={answerSaver}
               coordinatedSaver={coordinatedSaver}
               writePhase={writePhase}
+              holdAutomaticReads={holdAutomaticReads}
               refresh={refresh}
             />
           ) : (
@@ -2057,6 +2059,7 @@ function Dashboard({
     answerSaver,
     coordinatedSaver,
     writePhase,
+    holdAutomaticReads,
     refresh,
     i18n,
     navigation,

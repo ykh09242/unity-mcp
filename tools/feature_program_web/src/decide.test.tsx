@@ -269,7 +269,7 @@ describe('complete question navigation', () => {
     ]) {
       response = next;
       await act(async () => {
-        document.dispatchEvent(new Event('visibilitychange'));
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
       });
       expect(document.activeElement).toBe(input);
       expect(input.value).toBe('Private draft during outage');
@@ -278,19 +278,19 @@ describe('complete question navigation', () => {
     }
     failure = true;
     await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     });
     expect(document.activeElement).toBe(input);
     expect(input.value).toBe('Private draft during outage');
     failure = false;
     response = snapshot();
     await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     });
     expect(document.activeElement).toBe(input);
     response = { ...snapshot(), questions: [] };
     await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     });
     expect(screen.getByRole('heading', { name: 'Question not available' })).toBeDefined();
     expect(document.activeElement).toBe(
@@ -324,14 +324,14 @@ describe('complete question navigation', () => {
               ),
       });
       await act(async () => {
-        document.dispatchEvent(new Event('visibilitychange'));
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
       });
       expect(document.activeElement).toBe(language);
       expect(screen.getByDisplayValue('Keep this private draft')).toBeTruthy();
       expect(screen.queryByRole('button', { name: 'Save answer' })).toBeNull();
     },
   );
-  it('continues at the question heading when a background answer removes the focused editor', async () => {
+  it('continues at the question heading when an explicit refresh observes an answer removing the focused editor', async () => {
     initial();
     const user = userEvent.setup();
     let model = snapshot();
@@ -347,7 +347,7 @@ describe('complete question navigation', () => {
       ),
     });
     await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     });
     expect(document.activeElement).toBe(
       screen.getByRole('heading', { name: 'Choose the first scope' }),
@@ -801,5 +801,73 @@ describe('durable receipt before mandatory full refresh', () => {
     expect(await pending).toBe(false);
     expect(store.read(key, 1)).toMatchObject({ answer: 'Changed', phase: 'editing' });
     expect(store.read(key, 1).receipt).toBeUndefined();
+  });
+});
+
+describe('editing deferral wiring', () => {
+  it('pauses dirty-form automatic reads but keeps manual refresh and one Save reconciliation', async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, '', '#question/Q1');
+      let model = snapshot();
+      const loader = vi.fn(async () => model);
+      const saver = vi.fn<AnswerSaver>(async (input) => {
+        model = parseSnapshot({
+          ...model,
+          revision: 'saved',
+          questions: records(model.questions).map((q) =>
+            q.id === 'Q1' ? { ...q, status: 'answered', answer: completeReceipt(input) } : q,
+          ),
+        });
+        return { ok: true, conflict: false, receipt: completeReceipt(input) };
+      });
+      render(<App loader={loader} sessionLoader={sessionLoader} answerSaver={saver} />);
+      await act(async () => {});
+      fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Dirty first' } });
+      fireEvent.change(screen.getByLabelText('Your answer'), {
+        target: { value: 'Dirty first plus more' },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(loader).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      });
+      expect(loader).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+        fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      });
+      expect(saver).toHaveBeenCalledTimes(1);
+      expect(loader).toHaveBeenCalledTimes(3);
+      expect(screen.getByRole('heading', { name: 'Your saved answer' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('resumes one missed automatic read when navigating away from a dirty visible form', async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, '', '#question/Q1');
+      const loader = vi.fn(async () => snapshot());
+      render(<App loader={loader} sessionLoader={sessionLoader} />);
+      await act(async () => {});
+      fireEvent.change(screen.getByLabelText('Your answer'), {
+        target: { value: 'Retain on navigation' },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+      expect(loader).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('link', { name: 'Back to questions' }));
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(loader).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

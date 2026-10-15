@@ -172,6 +172,7 @@ export function QuestionForm({
   saver = saveAnswer,
   coordinatedSaver,
   writePhase,
+  holdAutomaticReads,
   refresh,
   programId = 'standalone-question',
   context = defaultContext,
@@ -183,6 +184,7 @@ export function QuestionForm({
   readonly saver?: AnswerSaver;
   readonly coordinatedSaver?: AnswerSaver;
   readonly writePhase?: SnapshotWritePhase | null;
+  readonly holdAutomaticReads?: () => () => void;
   readonly refresh: (manual?: boolean, afterWrite?: boolean) => Promise<void>;
 }) {
   const i18n = useI18n();
@@ -235,6 +237,10 @@ export function QuestionForm({
   const changed = validVersion && version !== Number(question.version);
   const canAnswer =
     session?.responsesEnabled && session.nonce && status === 'open' && !saved && validVersion;
+  const editing = Boolean(canAnswer && !changed && draft.phase === 'editing' && answer.trim());
+  useEffect(() => {
+    if (editing) return holdAutomaticReads?.();
+  }, [editing, holdAutomaticReads, key]);
   useEffect(() => {
     // A result belongs to this explicit interaction, never to a later focus or route.
     const moved = (event: Event) => {

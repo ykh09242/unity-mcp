@@ -50,6 +50,8 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
   const pendingRead = useRef<Promise<boolean> | null>(null);
   const writeReservation = useRef<object | null>(null);
   const successfulReads = useRef(0);
+  const automaticLease = useRef<object | null>(null);
+  const missedAutomatic = useRef(false);
   const [writePhase, setWritePhase] = useState<SnapshotWritePhase | null>(null);
   const current = useRef<{
     readonly snapshot: Snapshot;
@@ -108,6 +110,7 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
         }
         setObserved(new Date());
         setError(false);
+        missedAutomatic.current = false;
         successfulReads.current += 1;
         succeeded = true;
       } catch {
@@ -140,6 +143,7 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
       const reservation = {};
       const programId = current.current?.snapshot.program_id;
       writeReservation.current = reservation;
+      missedAutomatic.current = false;
       const priorRead = pendingRead.current;
       setWritePhase(priorRead ? 'waiting-read' : 'writing');
       try {
@@ -197,20 +201,39 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
     },
     [refresh],
   );
+  const holdAutomaticReads = useCallback(() => {
+    const lease = {};
+    automaticLease.current = lease;
+    return () => {
+      if (automaticLease.current !== lease) return;
+      automaticLease.current = null;
+      if (missedAutomatic.current) {
+        missedAutomatic.current = false;
+        // A write already owns one mandatory fresh read; lease cleanup must not add another.
+        if (alive.current && !writeReservation.current) void refresh();
+      }
+    };
+  }, [refresh]);
   useEffect(() => {
     alive.current = true;
     setWritePhase(null);
     void refresh();
-    const interval = setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, 5000);
-    const visible = () => {
-      if (!document.hidden) void refresh();
+    const automatic = () => {
+      if (document.hidden || writeReservation.current) return;
+      if (automaticLease.current) {
+        missedAutomatic.current = true;
+        return;
+      }
+      void refresh();
     };
+    const interval = setInterval(automatic, 5000);
+    const visible = automatic;
     document.addEventListener('visibilitychange', visible);
     return () => {
       alive.current = false;
       writeReservation.current = null;
+      automaticLease.current = null;
+      missedAutomatic.current = false;
       queuedAfterWrite.current = false;
       pending.current?.abort();
       pending.current = null;
@@ -218,5 +241,15 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
       document.removeEventListener('visibilitychange', visible);
     };
   }, [refresh]);
-  return { snapshot, observed, error, busy, announce, refresh, coordinateWrite, writePhase };
+  return {
+    snapshot,
+    observed,
+    error,
+    busy,
+    announce,
+    refresh,
+    coordinateWrite,
+    writePhase,
+    holdAutomaticReads,
+  };
 }

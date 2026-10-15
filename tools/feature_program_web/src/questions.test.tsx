@@ -655,3 +655,82 @@ it('does not present a prior-version local receipt as the answer to a revised qu
   });
   expect(screen.queryByRole('heading', { name: 'Your saved answer' })).toBeNull();
 });
+
+describe('visible editable draft lease', () => {
+  it('holds only across the dirty boolean transition, not on every typed character', async () => {
+    const release = vi.fn(),
+      hold = vi.fn(() => release);
+    render(
+      <QuestionForm
+        question={question}
+        session={session}
+        holdAutomaticReads={hold}
+        refresh={async () => {}}
+      />,
+    );
+    expect(hold).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'First' } });
+    expect(hold).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByLabelText('Your answer'), {
+      target: { value: 'First plus more' },
+    });
+    expect(hold).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: ' ' } });
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+  it.each(['closed', 'disabled', 'revised', 'unmount'])(
+    'releases automatic reads when current editability ends through %s',
+    async (change) => {
+      const release = vi.fn(),
+        hold = vi.fn(() => release);
+      const props = { question, session, holdAutomaticReads: hold, refresh: async () => {} };
+      const view = render(<QuestionForm {...props} />);
+      fireEvent.change(screen.getByLabelText('Your answer'), {
+        target: { value: 'Retained draft' },
+      });
+      expect(hold).toHaveBeenCalledTimes(1);
+      if (change === 'unmount') view.unmount();
+      else
+        view.rerender(
+          <QuestionForm
+            {...props}
+            question={
+              change === 'closed'
+                ? { ...question, status: 'answered' }
+                : change === 'revised'
+                  ? { ...question, version: 2 }
+                  : question
+            }
+            session={change === 'disabled' ? { responsesEnabled: false, nonce: null } : session}
+          />,
+        );
+      expect(release).toHaveBeenCalledTimes(1);
+    },
+  );
+  it.each([false, true])(
+    'does not retain editing pause after settled save conflict=%s',
+    async (conflict) => {
+      const release = vi.fn(),
+        hold = vi.fn(() => release);
+      const saver = vi.fn<AnswerSaver>(async () => ({ ok: false, conflict }));
+      render(
+        <QuestionForm
+          question={question}
+          session={session}
+          holdAutomaticReads={hold}
+          coordinatedSaver={saver}
+          refresh={async () => {}}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText('Your answer'), {
+        target: { value: 'Keep after failure' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save answer' }));
+      await screen.findByRole('alert');
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(hold).toHaveBeenCalledTimes(1);
+      expect(screen.getByDisplayValue('Keep after failure')).toBeTruthy();
+    },
+  );
+});
