@@ -34,6 +34,13 @@ whether the user authorized merges, and which actions remain outside scope. A po
 template is not authorization. A new session inherits recorded user decisions after checking
 them against newer instructions; it must not request the same permission repeatedly.
 
+Keep one actual canonical program in its designated checkout. Separate implementation/QA/PR
+checkouts supply frozen source and original proof without copying the live registry or inventing
+production submit/review events. After delivery, compare exact scoped bytes and full relevant
+check inputs against the canonical checkout, retain the comparison evidence, and prepare the
+actual current submission. Earlier implementation review remains useful evidence; obtain a real
+acceptance review of the newly submitted packet rather than claiming it approved an unseen receipt.
+
 ## Roles
 
 | Role | Responsibility | Limit |
@@ -221,6 +228,14 @@ To inspect captured execution before publication, explicitly select its sealed c
 with snapshot or server `--execution-capture`. This read changes no canonical phase/result;
 record actual evidence separately through the ordinary guarded flow.
 
+Use [original-proof preparation](feature-program-tool.md#original-proof-receipt-preparation)
+to retain exact original references, task-local attachments and their provenance. Supply actual
+criterion decisions, responsible actors and independent verdicts explicitly. Preparation can
+fill mechanical current bindings; it cannot infer a PASS from log text or turn one executor into
+another verifier. Ordinary JSON attachments remain opaque bytes; only actual typed control
+receipts are parsed as control documents. Preserve the original run's time and outcome when
+packaging a later submission or review.
+
 For explicitly compatible targets, attach the same original capture byte-for-byte inside
 each current task/attempt evidence directory. Retain its original executor, invocation,
 times and origin references. Assess each target's authority, obligations, attempt/submission,
@@ -240,6 +255,15 @@ Historical backlog hashes describe historical observations; they are not the nex
 revision. Record-only retry must not rerun an unchanged successful check or perform remote
 merge/cleanup. Keep human criterion decisions and independent verdicts explicitly supplied.
 
+When all required facts are already observed, use a supported
+[record batch](feature-program-tool.md#one-guarded-record-batch) for one local canonical
+publication. Each ordered operation still passes its ordinary projected-predecessor and fresh
+publication guards. A late invalid operation publishes none of the batch. Do not place native
+messages, tests, provider queries, merge or cleanup inside it. Inspect the exact batch result after
+interruption: an already committed batch needs no repeat publication; committed view failure needs
+`render`. Refresh an uncommitted stale plan without rerunning its unchanged original check. The
+existing sequential closure flow remains available for operations outside the batch allowlist.
+
 A reviewer returns all actionable findings discovered in the assigned bounded pass, with
 source identity, criterion or check, evidence, correction owner and affected verification.
 Separate required corrections from optional suggestions. Notify an urgent blocker promptly;
@@ -255,11 +279,20 @@ requires verification. Equal owned paths or an unchanged registry revision is in
 unrelated notes alone need not invalidate equal stable inputs. Actual current PR and beta
 checks and fresh independent aggregate review remain separate required obligations.
 
-Track waiting only from explicit compatible observed endpoints or clearly qualified provider
-intervals. Name the wait cause, resolver and next trigger. Task status age, a publication time
-or a saved actor observation cannot measure worker activity. Missing or mixed-clock endpoints
-remain unknown; overlapping intervals are not summed as elapsed lead time. Preserve repeated
-waits, failures and retries without inventing utilization, ETA or a throughput improvement.
+Track submission-to-start wait and start-to-terminal review spans from exact attributable
+observations with compatible declared clocks. Keep intent, send, acknowledgement, start and
+terminal boundaries separate. A post-save observation is the observed publication boundary,
+not an invented atomic-write time. Name each wait cause, resolver and next trigger. Missing,
+mixed-clock, reversed or otherwise unavailable endpoints mean unknown, including when canonical
+review has completed without an observed terminal endpoint. Gross review spans include blocked
+time and do not measure hands-on effort. Retain repeated waits, retries and historical rounds.
+
+Read [observed timing](feature-program-tool.md#observed-timing) with its cohort and valid/eligible
+coverage. A completed-sample median excludes unknown durations without hiding their denominator.
+No completed samples means unavailable, not zero. Open age is null unless a retained compatible
+as-of observation supports a fixed last-observed age. Refresh time, browser clocks, saved actor
+status and canonical event preparation time do not measure worker activity. Do not sum overlapping
+task or provider spans into lead time, critical path, utilization, ETA or time saved.
 
 Monitor outstanding lanes with a bounded current snapshot and the native tools' supported
 batch waits or provider reads. Wake for a completion, failure, actionable finding or required
@@ -363,6 +396,35 @@ Owner actions and director overrides use current nonretired authority; a histori
 a role label cannot authorize a new override. Reopen remains a director action. Preserve old
 actors, settings, blockers, resolutions and evidence, and recover committed view errors with
 `render` instead of repeating a resolution.
+
+## Start review at submission
+
+Adopt the [review handoff](feature-program-tool.md#review-handoff-at-submission) when a task is
+ready. Select an eligible independent reviewer and current director explicitly; recorded idle
+status does not establish live availability. The immutable packet binds the exact submitted
+round, source, criteria and proof. Successful canonical submission can publish the packet-ready
+intent in the same transaction. A prepared packet or saved intent has not started a reviewer.
+
+The active director consumes that ready result immediately, without waiting for unrelated units:
+
+1. Recheck current packet/round/source, reviewer independence, actual native contact and any shared
+   resource boundary. Use the produced packet directly instead of rebuilding its proof in a prompt.
+2. For an idle/completed native reviewer, use `followup_task` to trigger a new turn. For an already
+   running reviewer, use `send_message`. Sending a message alone does not wake a completed reviewer.
+3. Record the actual native dispatch attempt, tool/contact and result with immutable evidence.
+   A successful send is transport acceptance; acknowledgement and review start require actual
+   attributable reviewer evidence. They may occur in one explicit response or remain unknown.
+4. Let independent work continue. The reviewer checks that exact packet and returns the complete
+   bounded finding bundle and actual independent verdict through the ordinary review flow.
+5. If delivery failed or its outcome is ambiguous, inspect the real native runtime and reconcile
+   it before a deliberate retry. Retrying a canonical record must never resend the message.
+
+Consume current ready work again at actual worker completion, source freeze and recovery boundaries.
+No CLI read, import, dashboard refresh, batch or stored prompt launches an agent. A changed source,
+round, definition or reviewer assignment invalidates incompatible current reliance while retaining
+history; it does not prove an old reviewer stopped. For an existing submitted legacy task, explicit
+adoption attaches a current packet without backdating dispatch or creating a second submit round.
+Ordinary task acceptance and current required verification/provider gates remain unchanged.
 
 ## Handoffs and recovery
 
