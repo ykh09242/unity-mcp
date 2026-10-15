@@ -560,7 +560,9 @@ def catalog(program: Program, state: Record, budget: ReadBudget, revision: str) 
                 context={
                     "task_id": authored["task_id"],
                     "input_sha256": result.record_digest(authored),
-                    "verification_context": recorded["context"],
+                    "verification_context_sha256": result.record_digest(
+                        core.record(recorded["context"], "verification context")
+                    ),
                 },
             )
     for index, event in enumerate(state.get("events", [])):
@@ -825,6 +827,64 @@ def _latest(state: Record, locale: str | None) -> dict[str, tuple[int, Record, R
     return result
 
 
+def _comparison_binding(target: Record, binding: Record) -> Record | None:
+    """Compare only the two exact F23 spellings without rewriting reviewed bytes."""
+    if target.get("kind") != FAMILIES["F23"]:
+        return binding
+    if set(binding) != {"program_id", "source_value_sha256", "context"}:
+        return None
+    context = binding.get("context")
+    if not isinstance(context, dict):
+        return None
+    common = {"task_id", "input_sha256", "record_sha256"}
+    if set(context) == common | {"verification_context"}:
+        if not isinstance(context["verification_context"], dict):
+            return None
+        normalized = {key: value for key, value in context.items() if key != "verification_context"}
+        normalized["verification_context_sha256"] = _core().digest(context["verification_context"])
+    elif set(context) == common | {"verification_context_sha256"}:
+        normalized = context
+    else:
+        return None
+    if not isinstance(normalized.get("task_id"), str) or not normalized["task_id"].strip():
+        return None
+    if not all(
+        type(normalized[name]) is str
+        and re.fullmatch(r"[0-9a-f]{64}", normalized[name]) is not None
+        for name in ("input_sha256", "record_sha256", "verification_context_sha256")
+    ):
+        return None
+    return {**binding, "context": normalized}
+
+
+def _binding_equivalent(target: Record, original: Record, current: Record) -> bool:
+    """Retain every target/source binding, with exact legacy F23 digest equivalence."""
+    before = _comparison_binding(target, original)
+    after = _comparison_binding(target, current)
+    return (
+        before is not None
+        and after is not None
+        and _core().canonical(before) == _core().canonical(after)
+    )
+
+
+def _operations_equivalent(original: list[Json], current: list[Json]) -> bool:
+    """Keep order, text, mode, target and supersession exact outside F23 spelling."""
+    if len(original) != len(current):
+        return False
+    core = _core()
+    for first, second in zip(original, current, strict=True):
+        before = core.record(first, "original presentation operation")
+        after = core.record(second, "bound presentation operation")
+        if core.canonical(
+            {key: value for key, value in before.items() if key != "binding"}
+        ) != core.canonical({key: value for key, value in after.items() if key != "binding"}):
+            return False
+        if not _binding_equivalent(before["target"], before["binding"], after["binding"]):
+            return False
+    return True
+
+
 def review_payload(receipt: Record) -> str:
     """The review itself cannot hash itself; all authored content remains in its payload."""
     return _core().digest(
@@ -979,7 +1039,8 @@ def prepare_record(program: Program, state: Record, name: str) -> PreparedChange
             receipt["expected_revision"] == binding["expected_revision"], "Stale expected revision"
         )
         require(
-            receipt["operations"] == binding["operations"], "Stale source binding or supersession"
+            _operations_equivalent(receipt["operations"], binding["operations"]),
+            "Stale source binding or supersession",
         )
         _review(program, receipt, core.ReadBudget(64 * 1024 * 1024))
 
@@ -1111,7 +1172,7 @@ def _projection_from_checked(
             status = "withdrawn"
         elif (
             row is None
-            or row["binding"] != operation["binding"]
+            or not _binding_equivalent(operation["target"], operation["binding"], row["binding"])
             or row["disposition"] != "eligible"
         ):
             status = "stale"
