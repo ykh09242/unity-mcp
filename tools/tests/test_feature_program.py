@@ -2226,13 +2226,13 @@ def test_captured_bytes_reuses_only_same_logical_admission(tmp_path, monkeypatch
     path.write_bytes(raw)
     budget = fp.ReadBudget(remaining=100)
     admissions = []
-    original = fp.safe_path
+    original = fp._checked_safe_path
 
-    def admitted(root, name):
+    def admitted(root, name, components=None):
         admissions.append((root, name))
-        return original(root, name)
+        return original(root, name, components)
 
-    monkeypatch.setattr(fp, "safe_path", admitted)
+    monkeypatch.setattr(fp, "_checked_safe_path", admitted)
     # When the same logical read repeats, aliases and distinct roots are admitted separately.
     captured = budget.capture(tmp_path, "records/receipt.json", 100)
     assert budget.capture(tmp_path, "records/receipt.json", 100) is captured
@@ -2386,13 +2386,13 @@ def test_explicit_file_scope_overlap_admits_once_per_reader(tmp_path, monkeypatc
     program = fp.Program(tmp_path, tmp_path / "program")
     reader = fp.ReadBudget()
     admissions = []
-    original = fp.safe_path
+    original = fp._checked_safe_path
 
-    def admit(root, name):
+    def admit(root, name, components=None):
         admissions.append((root, name))
-        return original(root, name)
+        return original(root, name, components)
 
-    monkeypatch.setattr(fp, "safe_path", admit)
+    monkeypatch.setattr(fp, "_checked_safe_path", admit)
     first = program.source_snapshot(["src/first.py", "src/second.py"], reader)
     # When a later overlapping scope observes an already captured exact file.
     second = program.source_snapshot(["src/first.py"], reader)
