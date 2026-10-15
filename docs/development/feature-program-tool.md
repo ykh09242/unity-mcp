@@ -630,6 +630,32 @@ Use a reasoned `reopen` for follow-up work after completion; a new claim needs r
 An independent reviewer should challenge acceptance and execution evidence. If a director
 performs self-review, identify that honestly and record the reason.
 
+### Observe an ordinary publication outcome
+
+Ordinary `note`, `checkpoint`, `verification-record`, `review-handoff-record`, `submit`,
+`complete`, `rework`, `delivery`, `objective-complete` and `presentation-record` accept optional
+`--outcome-path PATH`. Default stdout and existing JSON interfaces keep their normal shape.
+This option retains one actual publication result without constructing a full snapshot:
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example submit EXAMPLE-1 --owner worker-example --receipt evidence/EXAMPLE-1/attempt-1/execution.json --outcome-path evidence/EXAMPLE-1/attempt-1/submit-outcome.json
+```
+
+The typed result has `schema_version: 1`, `kind: mutation_outcome`, `operation`,
+`publication`, `changed_task_ids`, `command_exit_code`, `acceptance_complete: false` and
+`next_action`. Publication retains `status` (`committed`, `already_committed`,
+`committed_view_failed`, `not_committed`, `unknown`), exact `before_revision`/`revision` and
+`view_recovery_required`. Exact ordinary replay recognition reports `already_committed` without
+adding another event; do not execute the original action again.
+A published local record is not by itself accepted work, actual check execution or native delivery.
+
+A committed view failure retains `committed_view_failed`, exits nonzero and requires view
+recovery. Outcome retention itself can also fail after successful publication and return nonzero;
+inspect the exact durable record and its immutable identity before retrying. Never infer
+`not_committed` from a wrapper exception, missing result file, failed JSON parse or later process
+exit alone, and never replay a known successful operation. Existing batch `--result-path`
+retention has its own result shape described below.
+
 ### Review handoff at submission
 
 The optional review handoff retains one immutable packet for the exact task/attempt/submission
@@ -662,10 +688,28 @@ is the actual live post-save result boundary, not an atomic-write timestamp or r
 Retain that exact milestone with the next actual native observation; no timing-only record is
 required. Legacy submit without `--handoff` retains its ordinary behavior.
 
+Read an exact current action with `handoff-action --input JSON`. Its request is
+`{request: {kind, task_id, packet_ref: {path, sha256}}, runtime_contact?}`; kind is
+`worker_assignment` or `independent_review`. Supply actual runtime contact fields `actor_id`,
+`contact`, `recipient_status`, `evidence_refs`, aware `observed_at` and `clock_id`; absent or
+unverified contact remains incomplete. The returned `handoff_action` retains exact `action_id`,
+subject/packet, recipient, generation, transport/contact and reasons with
+`acceptance_complete: false`. A ready action descriptor has not sent anything.
+Worker actions require an already claimed active task and its exact current `tasks/TASK.md`;
+review actions require the current adopted immutable submission packet and independent reviewer.
+
+For an independent review, publish ordinary `review-handoff-record` kind `dispatch_claimed`
+before calling native transport. Bind the exact returned `action_id`, handoff/generation,
+subject/packet, unique `dispatch_attempt_id`, actual contact/transport and observation evidence.
+Only the successful claimant sends; a competitor or ambiguous claim sends nothing. This record
+is a durable intent, not a transport receipt. Worker assignment uses its ordinary task claim,
+not an invented review intent; retain actual worker ACK/start through ordinary note/outcome proof.
+
 After the real native action, use the same schema/operation fields and record its unique `id`,
 `handoff_id`, `assignment_generation`, `subject`, `packet_ref`, actual `actor_id`, reason,
-`evidence_refs` and current `expected_revision`. Kinds are `submitted`, `dispatch_sent`,
-`dispatch_failed`, `dispatch_unknown`, `reviewer_acknowledged`, `review_started` and `terminal`.
+`evidence_refs` and current `expected_revision`. Kinds are `submitted`, `dispatch_claimed`,
+`dispatch_sent`, `dispatch_failed`, `dispatch_unknown`, `reviewer_acknowledged`, `review_started`
+and `terminal`.
 Dispatch includes `dispatch_attempt_id`, actual `contact`, observed `recipient_status` and
 `transport` (`followup_task` for idle/completed; `send_message` for running). ACK/start binds
 that dispatch attempt; a director preserves the actual `reporter_id`. Supplied actual timing
@@ -698,6 +742,16 @@ unpublished outcome, and committed observation with a view failure. Inspect exac
 and immutable bytes before publishing the remainder. Reuse an identical packet, recover a committed
 view error with `render`, and never manufacture another round, acknowledgement or resend from a
 missing CLI result. Existing ordinary review/verification authority and completion guards apply.
+
+To prepare attributable reviewer reports, `handoff-report-prepare --input JSON [--result-path PATH]`
+accepts exact `action_ref` and `report_ref`, both `{path, sha256}`. The actual report names
+`action_id`, designated `reporter_id`, `dispatch_attempt_id`, immutable `evidence_refs` and explicit
+`milestones` for ACK, start or terminal observations. It must bind an actually sent process.
+Preparation returns ordinary record `inputs` needing `per_record_current_binding`; feed them as
+explicit controls to the finite record preparation below. Actual separate endpoints remain
+separate even in a combined report. Exact previously recorded milestones return `already_recorded`
+identities with no new inputs; do not resend or republish them. Worker reports use ordinary notes,
+not this review-report converter.
 
 ### Resolving a blocked attempt
 
@@ -1113,6 +1167,24 @@ Every operation retains its normal authority, source, evidence, predecessor and 
 the final locked recheck also covers the original state and all frozen references. A precommit
 failure publishes no canonical registry, events or views. Inert prepared evidence may remain.
 
+To supply the already observed facts once, use `records-prepare --input JSON [--result-path PATH]`.
+Its outer request has the same fields as a batch request below, with `records` replacing
+`operations`. Each record supplies `id`, ordinary `operation`, `payload` and actual aware
+`observed_at`. For verification-record or review-handoff-record only, optional
+`control: {path, value}` retains that exact supplied control document; its payload must be
+exactly `{input: control.path}`. Other operations omit `control`. The host binds only an absent
+or already exact control `expected_revision` against each normal projected predecessor.
+Actual actors, reporter identity, results, endpoints, evidence and intended operations remain
+caller-supplied facts. Missing facts do not become passed checks or future decisions.
+
+```sh
+python tools/feature_program.py --program-dir .work/programs/example records-prepare --input evidence/_coordination/attempt-1/observed-records.json --result-path evidence/_coordination/attempt-1/batch-plan.json
+```
+
+The result is the same ordinary batch plan, inspected and published through the existing commands
+below. This preparation does not publish records, execute checks, contact a worker or change
+external state. Materialized control files are inert; their existence is not committed history.
+
 A request has exactly `schema_version: 1`, unique `id`, actual `owner_id`, current
 `expected_revision`, nonempty source `scope`, immutable `refs` and ordered `operations`.
 Each operation has exactly a unique `id`, supported `operation`, ordinary `payload` and actual
@@ -1265,8 +1337,24 @@ Integrated acceptance still requires exact criterion evidence, current membershi
 reviews, separate delivery/CI, no unresolved relevant questions/transfers, and an integrated reviewer
 independent of the director and every member implementer. Coverage links supply none of those facts.
 The shared snapshot adds detached `coverage` metadata with linkage, knowledge, freshness, captured
-results, historical acceptance origins and explicit integrated-review prerequisites. Snapshot and
-projection remain Git/lock/write-free; unavailable facts are not passing facts. Existing 8 MiB
+results, historical acceptance origins and explicit integrated-review prerequisites.
+`snapshot.coverage.integrated_review` is the shared assessed basis consumed by current flow
+summaries, rather than a second acceptance registry. Version 1 separates `status`
+(`accepted`, `not_accepted`, `not_assessed`, `unavailable`) from `currentness`
+(`current`, `stale`, `unknown`, `unavailable`). It retains exact completion/review references,
+objective/source/scope/reviewer binding, full member and obligation counts, reasons and the next
+actor/action/trigger. Missing or corrupt basis remains unavailable or unassessed.
+
+Keep three facts separate: original executed result and applicability, validated integrated member
+acceptance, and present named-obligation/full-input coverage. Historical or unmapped lanes never
+become newly executed passing checks because an aggregate was accepted. Optional reviewed
+`obligation_coverage` version 1 maps exact criterion ordinal/text hash, task/attempt/check,
+submission round/receipt/source digest, request and observation references, and context digest.
+Ordinary objective completion validates each declared current full-input passing lane; missing
+mapping stays unmapped or unassessed. Relevant new pending/blocked/failed work, changed obligations
+or unavailable proof takes precedence over positive aggregate prose, including for done members.
+
+Snapshot and projection remain Git/lock/write-free; unavailable facts are not passing facts. Existing 8 MiB
 registry/output and per-document limits, 2000 snapshot evidence references, 64 MiB artifact reads
 and 128 MiB scoped-source reads remain enforced. Observation caches are request-local, never a
 registry-revision-only freshness cache. Precommit failures publish no annotation; committed render
@@ -1404,6 +1492,21 @@ keeps legacy views quiet; explicit malformed/unavailable selections fail visibly
 not copy proof, publish records, replay checks or contact a reviewer. The dashboard shows concise
 original-proof preparation and batch outcome summaries before one-level details; original run
 results, current applicability, task review and provider delivery remain separate.
+
+Read full recorded workload and policy with `review-capacity --input JSON`, or prepare an inert
+allocation with `reviewer-allocation --input JSON`. Both inputs accept only optional `policy` and
+`runtime_facts`; `{}` preserves recorded declarations and unknown runtime. A supplied policy must
+match actual actor declarations, including optional `review_wip_limit`. Native dispatches and
+verification work are counted before display bounds, including ambiguous and superseded
+nonterminal processes. A different dispatch's terminal or a canonical verdict does not prove that
+an outstanding native process stopped.
+
+Keep `recorded_occupied`, `policy_limit`/`policy_headroom` and actual `available_slots` distinct.
+Runtime capacity needs a complete same-revision `runtime_facts` observation covering every relevant
+reviewer, with per-actor actual status/slots, complete provenance, aware time, clock and evidence.
+Missing/incompatible runtime keeps slots null, not zero or policy headroom. A known unavailable or
+zero-slot recipient requires capacity release/reassessment; eligibility and recorded WIP limits
+still apply. These reads propose no actual assignment, permission, native send or new task status.
 
 ### Observed timing
 
@@ -1773,6 +1876,13 @@ execute those steps. Ambiguous legacy origins stay explicitly unassessed. Histor
 completed, released or rejected submissions do not gain a new freshness prerequisite.
 
 ## Reviewed session-language presentation
+
+Author new supported human JSON in the recorded session language from the first operation. When
+that language is Korean, write the actual human summaries, reasons, questions and decisions in
+Korean; keep Markdown documentation in English and preserve technical IDs, models and paths.
+Use a small independently reviewed presentation delta only for imported human content that needs
+it. Do not add duplicate catalog entries for already-current original-language fields or silently
+translate frozen source/history.
 
 The dashboard applies verified current presentation independently of the interface selector.
 Goals, criteria, tasks, questions and recorded people use consistent displayed labels in lists,
