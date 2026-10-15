@@ -3032,8 +3032,14 @@ def test_component_metadata_does_not_invent_junctions_from_other_metadata(
 
 def test_component_metadata_keeps_junction_api_absence_compatible(tmp_path, monkeypatch):
     # Given: a Python3.11-style runtime exposes no Path.is_junction predicate.
+    class LegacyPath(type(tmp_path)):
+        @property
+        def is_junction(self):
+            raise AttributeError("is_junction")
+
     _mount_metadata_support(monkeypatch)
-    monkeypatch.delattr(Path, "is_junction")
+    legacy_path = LegacyPath(tmp_path / "ordinary")
+    assert not hasattr(legacy_path, "is_junction")
     monkeypatch.setattr(
         Path,
         "lstat",
@@ -3043,7 +3049,7 @@ def test_component_metadata_keeps_junction_api_absence_compatible(tmp_path, monk
     )
     # When: the component check runs on that runtime capability surface.
     # Then: it preserves the previous missing-API semantics; final canonical resolution stays separate.
-    assert fp._component_linked(tmp_path / "ordinary") is False
+    assert fp._component_linked(legacy_path) is False
 
 
 def test_closing_components_model_read_finishes_after_all_dependencies(small_program, monkeypatch):

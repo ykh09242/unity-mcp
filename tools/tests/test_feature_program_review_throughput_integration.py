@@ -1422,21 +1422,32 @@ def test_storage_initial_enable_reclaims_only_unselected_interrupted_stages(fixt
 @pytest.mark.parametrize("damage", ["missing", "corrupt"])
 def test_storage_explicit_repair_rebuilds_only_damaged_selected_model(fixture, damage):
     # Given: logical state is valid but the schema-valid derived store lost its selected object.
+    from contextlib import closing
+    import gc
     import sqlite3
 
     _enable_storage(fixture)
     program = fixture.program
     original = program.read_registry_observation()
     storage = fp.flow_module("storage")
-    with sqlite3.connect(storage._store_path(program.repo, program.directory)) as connection:
-        if damage == "missing":
-            connection.execute("DELETE FROM model_objects WHERE object_id=?", (original.model_id,))
-        else:
-            payload = b"corrupt derived bytes"
-            connection.execute(
-                "UPDATE model_objects SET payload=?,byte_length=? WHERE object_id=?",
-                (payload, len(payload), original.model_id),
-            )
+    with closing(
+        sqlite3.connect(storage._store_path(program.repo, program.directory))
+    ) as connection:
+        with connection:
+            if damage == "missing":
+                connection.execute(
+                    "DELETE FROM model_objects WHERE object_id=?", (original.model_id,)
+                )
+            else:
+                payload = b"corrupt derived bytes"
+                connection.execute(
+                    "UPDATE model_objects SET payload=?,byte_length=? WHERE object_id=?",
+                    (payload, len(payload), original.model_id),
+                )
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+    del connection
+    gc.collect()
     assert fp._read_materialized_projection(program.repo, program.directory) is None
     # When: the authorized explicit repair rebuilds the exact same logical BODY.
     result = _enable_storage(fixture)
