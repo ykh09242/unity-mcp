@@ -283,6 +283,22 @@ def bounded(value: dict, limit: int) -> dict:
                 },
             }
             continue
+        verification = task.get("verification") or {}
+        contexts = [
+            lane
+            for lane in verification.get("lanes", {}).get("items", [])
+            if isinstance(lane.get("context"), dict) and lane["context"].get("status") != "omitted"
+        ]
+        if contexts:
+            # Context bytes are available through each exact request ref. Keep the
+            # current outcome, unavailable reason and recovery action before detail.
+            lane = max(contexts, key=lambda item: len(core.canonical(item["context"])))
+            lane["context"] = {
+                "status": "omitted",
+                "reason": "brief_byte_bound",
+                "sha256": core.digest(lane["context"]),
+            }
+            continue
         choices = [item for item in _collections(result) if item["items"]]
         core.require(bool(choices), f"Brief essential envelope exceeds {limit} encoded bytes")
         # Stable largest removable tail first; high-priority attention stays at the front.
