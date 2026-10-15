@@ -950,3 +950,171 @@ it('respects explicit no-current-handoff without reviving retained history', () 
   const view = render(<HandoffInline snapshot={snapshot} taskId="A" />);
   expect(view.container.textContent).toBe('');
 });
+
+it.each(['en', 'ko'])(
+  'retains actual-shaped unknown dispatch endpoints beside measured review spans in %s',
+  (locale) => {
+    localStorage.setItem(PREFERENCE_KEY, locale);
+    const submitted = endpoint('2026-10-15T02:13:42.721903+00:00', 'local_system_utc');
+    const acknowledged = endpoint('2026-10-15T02:14:06+00:00', 'local_system_utc');
+    const started = endpoint('2026-10-15T02:14:15+00:00', 'local_system_utc');
+    const dispatch = {
+      ...submitted,
+      observed_at: null,
+      clock_id: null,
+      boundary: 'dispatch_sent',
+      timestamp_source: 'retained_observation',
+    };
+    const missing = ['missing_observed_at', 'missing_clock'];
+    // Actual normal producer retains unknown endpoint metadata; it does not fabricate a time.
+    const rows = [
+      interval({ interval_id: 'wait', start: submitted, end: started, closed_seconds: 32.278097 }),
+      interval({
+        interval_id: 'ack',
+        kind: 'ack_to_start',
+        start: acknowledged,
+        end: started,
+        closed_seconds: 9,
+      }),
+      interval({
+        interval_id: 'dispatch-ack',
+        kind: 'dispatch_to_ack',
+        start: dispatch,
+        end: acknowledged,
+        state: 'unknown',
+        closed_seconds: null,
+        reasons: missing,
+      }),
+      interval({
+        interval_id: 'submit-dispatch',
+        kind: 'submission_to_dispatch',
+        start: submitted,
+        end: dispatch,
+        state: 'unknown',
+        closed_seconds: null,
+        reasons: missing,
+      }),
+      interval({
+        interval_id: 'verification',
+        kind: 'verification_wait',
+        round: null,
+        start: { ...dispatch, boundary: 'request' },
+        end: acknowledged,
+        state: 'unknown',
+        closed_seconds: null,
+        reasons: missing,
+      }),
+      interval({
+        interval_id: 'running',
+        kind: 'start_to_terminal',
+        start: started,
+        end: null,
+        state: 'open',
+        closed_seconds: null,
+      }),
+    ];
+    const snapshot = flowFixture({
+      timing: timing({
+        intervals: flowCollection(rows),
+        cohorts: [
+          {
+            id: 'all_retained',
+            task_total: 2,
+            interval_total: 6,
+            summaries: [
+              metric({ min_seconds: 32.278097, max_seconds: 32.278097, median_seconds: 32.278097 }),
+            ],
+          },
+        ],
+        coverage: {
+          status: 'complete',
+          relevant_total: 6,
+          represented_total: 6,
+          unknown_total: 3,
+          open_total: 1,
+          excluded_total: 0,
+          reasons: ['unobserved_or_incompatible_intervals'],
+        },
+      }),
+    });
+    const parsed = reviewTiming(snapshot);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.intervals.map((row) => row.closedSeconds)).toEqual([
+      32.278097,
+      9,
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(parsed?.intervals[2]?.start).toBeNull();
+    expect(parsed?.intervals[2]?.reasons).toEqual(missing);
+    expect(parsed?.intervals[5]?.state).toBe('open');
+    expect(parsed?.intervals[5]?.age).toBeNull();
+    render(
+      <LanguageProvider>
+        <ReviewBottleneck snapshot={snapshot} context={defaultContext} />
+      </LanguageProvider>,
+    );
+    expect(screen.queryByText(/32[.,]28/)).not.toBeNull();
+    expect(screen.queryByText('Review timing is unavailable.')).toBeNull();
+    expect(screen.queryByText('검토 시간 기록을 확인할 수 없어요.')).toBeNull();
+  },
+);
+
+const retainedMissingEndpoint = { ...start, observed_at: null, clock_id: null };
+const invalidUnmeasuredIntervals: readonly JsonRecord[] = [
+  { start: { ...retainedMissingEndpoint, observed_at: 'not-a-time' } },
+  { start: { ...retainedMissingEndpoint, clock_id: 7 } },
+  { start: { ...retainedMissingEndpoint, reference: {} } },
+  { start: { ...retainedMissingEndpoint, timestamp_source: '' } },
+  { start: { ...retainedMissingEndpoint, boundary: '' } },
+  { reasons: ['missing_observed_at'] },
+  { reasons: ['missing_clock'] },
+  { state: 'closed', closed_seconds: 0.25 },
+  { state: 'open' },
+  { closed_seconds: 0 },
+];
+it.each(invalidUnmeasuredIntervals)(
+  'rejects malformed or measured incomplete endpoint %j',
+  (change) => {
+    const snapshot = flowFixture({
+      timing: timing({
+        intervals: flowCollection([
+          interval({
+            state: 'unknown',
+            start: retainedMissingEndpoint,
+            closed_seconds: null,
+            reasons: ['missing_observed_at', 'missing_clock'],
+            ...change,
+          }),
+        ]),
+      }),
+    });
+    expect(reviewTiming(snapshot)).toBeNull();
+  },
+);
+const partiallyObservedEndpoints: readonly JsonRecord[] = [
+  { start: { ...start, observed_at: null }, reasons: ['missing_observed_at'] },
+  { start: { ...start, clock_id: null }, reasons: ['missing_clock'] },
+];
+it.each(partiallyObservedEndpoints)(
+  'retains only explicitly unknown partial endpoint %j',
+  (change) => {
+    const snapshot = flowFixture({
+      timing: timing({
+        intervals: flowCollection([
+          interval({
+            state: 'unknown',
+            closed_seconds: null,
+            ...change,
+          }),
+        ]),
+      }),
+    });
+    const parsed = reviewTiming(snapshot);
+    expect(parsed?.intervals[0]?.state).toBe('unknown');
+    expect(parsed?.intervals[0]?.start).toBeNull();
+    expect(parsed?.intervals[0]?.closedSeconds).toBeNull();
+  },
+);
