@@ -3156,29 +3156,40 @@ def test_closing_components_finish_rejects_late_seen_missing_path(small_program,
         observer.finish()
 
 
+@pytest.mark.parametrize("legacy_lstat_fallback", [False, True], ids=["native", "legacy-lstat"])
 def test_closing_components_do_not_cache_failed_metadata_or_cross_observers(
-    small_program, monkeypatch
+    small_program, monkeypatch, legacy_lstat_fallback
 ):
-    # Given: missing components use the runtime's uncached fallback semantics.
+    # Given: runtime fallback predicates may perform extra lstat calls for missing paths.
     program = small_program.program
     observer = fp._ClosingObserver(program)
-    normal = Path.lstat
+    normal = fp._component_check
     missing = program.repo / "src" / "missing"
     calls = []
 
     def metadata(path):
-        if path == missing:
-            calls.append(str(path))
+        calls.append(str(path))
         return normal(path)
 
-    monkeypatch.setattr(Path, "lstat", metadata)
+    monkeypatch.setattr(fp, "_component_check", metadata)
+    if legacy_lstat_fallback:
+
+        def legacy_symlink(path):
+            try:
+                return fp.stat.S_ISLNK(path.lstat().st_mode)
+            except FileNotFoundError:
+                return False
+
+        monkeypatch.setattr(Path, "is_symlink", legacy_symlink)
     # When: distinct admissions revisit missing ancestors and then a new observer starts.
     observer.admit(program.repo, "src/missing/one")
     observer.admit(program.repo, "src/missing/two")
     observer.finish()
     fp._ClosingObserver(program).admit(program.repo, "src/missing/three")
-    # Then: acquisition failures were never memoized, and the new observer is independent.
-    assert len(calls) == 4
+    # Then: four fresh classifications retry the failure independently of fallback internals.
+    assert calls.count(str(missing)) == 4
+    # The successful ancestor is checked first+finish, then freshly in the new observer.
+    assert calls.count(str(program.repo / "src")) == 3
 
 
 def test_closing_components_new_alias_still_rejects_immediate_resolution_drift(
