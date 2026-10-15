@@ -541,22 +541,26 @@ def safe_relative(name: str) -> str:
 
 
 def safe_path(root: Path, name: str) -> Path:
+    return _checked_safe_path(root, name)
+
+
+def _checked_safe_path(root: Path, name: str, components: _ClosingComponents | None = None) -> Path:
     # Lexically excluded names are represented by explicit scope exclusions.
     safe_relative(name)
     try:
-        return _admit_safe_path(root, name)
+        return _admit_safe_path(root, name, components)
     except (ProgramError, OSError):
         observe_path_error(root, "path_admission_unavailable")
         raise
 
 
-def _component_linked(path: Path) -> bool:
-    """Inspect one fresh metadata image; preserve runtime predicate errors on failed stat."""
+def _component_check(path: Path) -> tuple[bool, bool]:
+    """Return the link result and whether a fresh metadata image was available."""
     try:
         metadata = path.lstat()
     except (OSError, ValueError):
-        return path.is_symlink() or getattr(path, "is_junction", lambda: False)()
-    return stat.S_ISLNK(metadata.st_mode) or (
+        return path.is_symlink() or getattr(path, "is_junction", lambda: False)(), False
+    linked = stat.S_ISLNK(metadata.st_mode) or (
         getattr(path, "is_junction", None) is not None
         and (
             getattr(metadata, "st_file_attributes", 0)
@@ -566,16 +570,24 @@ def _component_linked(path: Path) -> bool:
         and getattr(metadata, "st_reparse_tag", None)
         == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
     )
+    return linked, True
 
 
-def _admit_safe_path(root: Path, name: str) -> Path:
+def _component_linked(path: Path) -> bool:
+    """Inspect fresh metadata, retaining the runtime predicates' error semantics."""
+    return _component_check(path)[0]
+
+
+def _admit_safe_path(root: Path, name: str, components: _ClosingComponents | None = None) -> Path:
     relative = safe_relative(name)
     path = root / relative
     cursor = root
     for part in PurePosixPath(relative).parts:
         cursor /= part
         require(
-            not _component_linked(cursor),
+            not (
+                components.linked(cursor) if components is not None else _component_linked(cursor)
+            ),
             f"Linked path rejected: {name}",
         )
     resolved = path.resolve()
@@ -745,8 +757,16 @@ class ReadBudget:
             original = self._limits.get(path, 8 * 1024 * 1024)
             return original if limit is None else min(original, limit)
 
+        def recapture(base: Path, name: str, path: Path) -> CapturedBytes:
+            try:
+                return fresh.capture(base, name, bound(path))
+            except ProgramError as exc:
+                raise ProgramError(
+                    f"Observed source/evidence changed during snapshot; refresh. Recheck failed: {exc}"
+                ) from exc
+
         for (logical_root, name), captured in self._admissions.items():
-            current = fresh.capture(Path(logical_root), name, bound(captured.path))
+            current = recapture(Path(logical_root), name, captured.path)
             require(
                 current.content == captured.content,
                 "Observed source/evidence changed during snapshot; refresh",
@@ -755,7 +775,7 @@ class ReadBudget:
         for path, raw in (self.cached or {}).items():
             if path not in admitted:
                 require(path.is_relative_to(root), "Observed input outside recheck root")
-                current = fresh.capture(root, path.relative_to(root).as_posix(), bound(path))
+                current = recapture(root, path.relative_to(root).as_posix(), path)
                 require(
                     current.content == raw,
                     "Observed source/evidence changed during snapshot; refresh",
@@ -3934,6 +3954,32 @@ def _capture_projection(
     return output
 
 
+@dataclass(slots=True)
+class _ClosingComponents:
+    """One observer's metadata reuse; every seen name must finish with a fresh check."""
+
+    seen: dict[str, Path] = field(default_factory=dict)
+    nonlinked: set[str] = field(default_factory=set)
+
+    def linked(self, path: Path) -> bool:
+        key = str(path)
+        self.seen.setdefault(key, path)
+        if key in self.nonlinked:
+            return False
+        linked, captured = _component_check(path)
+        if captured and not linked:
+            self.nonlinked.add(key)
+        return linked
+
+    def finish(self) -> None:
+        for path in self.seen.values():
+            try:
+                require(not _component_linked(path), "Closing component changed; refresh")
+            except (ProgramError, OSError):
+                observe_path_error(path, "path_admission_unavailable")
+                raise
+
+
 class _ClosingObserver:
     """One fresh physical image; all original logical admissions are still replayed."""
 
@@ -3944,6 +3990,7 @@ class _ClosingObserver:
         self.admitted: dict[tuple[Path, str], Path] = {}
         self.normalized_roots: dict[Path, Path] = {}
         self.probes: dict[tuple[Path, str], str] = {}
+        self.components = _ClosingComponents()
 
     def _admitted_path(self, root: Path, name: str) -> Path:
         """Retain one checked Path per original logical admission in this fresh image."""
@@ -3960,11 +4007,14 @@ class _ClosingObserver:
                 base = max(bases, key=lambda candidate: len(candidate.parts))
                 # A narrower logical root needs one namespace admission. Every
                 # distinct name below still rechecks that root's actual resolution.
-                safe_path(base, absolute.relative_to(base).as_posix())
+                _checked_safe_path(base, absolute.relative_to(base).as_posix(), self.components)
             self.normalized_roots[root] = absolute
-        path = safe_path(absolute, name)
+        path = _checked_safe_path(absolute, name, self.components)
         self.admitted[key] = path
         return path
+
+    def finish(self) -> None:
+        self.components.finish()
 
     def admit(self, root: Path, name: str) -> None:
         self._admitted_path(root, name)
@@ -4184,13 +4234,15 @@ def _close_staged_model(program: Program, staged: _StagedModel) -> None:
     )
     if staged.model.get("eligible") is True:
         observation = flow_module("storage").decode_registry(staged.prepared.body)
+        observer = _ProspectiveObserver(program, staged.prepared)
         closed = flow_module("read_model").validate(
             staged.model,
             program,
             observation=observation,
-            observer=_ProspectiveObserver(program, staged.prepared),
+            observer=observer,
         )
         require(closed is not None, "Read-model inputs changed before publication")
+        observer.finish()
     program.require_current_location()
     _assert_owned_lock(program)
 
@@ -4215,9 +4267,10 @@ def _read_materialized_projection(repo: Path, program_dir: Path) -> Record | Non
     # Derived corruption/currentness is a miss. Canonical and authority failures above remain errors.
     module = flow_module("read_model")
     try:
-        result = module.validate(
-            model, program, observation=original, observer=_ClosingObserver(program)
-        )
+        observer = _ClosingObserver(program)
+        result = module.validate(model, program, observation=original, observer=observer)
+        if result is not None:
+            observer.finish()
     except (ProgramError, OSError, module.ModelError):
         return None
     if result is None:

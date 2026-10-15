@@ -1081,7 +1081,7 @@ def test_registry_publication_guards_reject_one_byte_over_inherited_limit(fixtur
     oversized = encoded + b" " * (8 * 1024 * 1024 + 1 - len(encoded))
     fixture.program.path("backlog.json").write_bytes(oversized)
     # When the actual provider publication guard reads the original registry.
-    with pytest.raises(fp.ProgramError, match="bounded read"):
+    with pytest.raises(fp.ProgramError, match="^Invalid registry storage: registry_size$"):
         fp.authoring.delivery_publication_guard(fixture.program, state)
     # Then bounded rejection leaves the original bytes unchanged rather than bypassing the read.
     assert fixture.program.path("backlog.json").read_bytes() == oversized

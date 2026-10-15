@@ -17,7 +17,7 @@ import pytest
 # Collection must work from Server with CI's tools-only PYTHONPATH, independently of other tests.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.tests.test_feature_program import Fixture, HEAD, fp  # noqa: E402
+from tools.tests.test_feature_program import Fixture, HEAD, _mock_link_lstat, fp  # noqa: E402
 
 phases = fp.phases
 
@@ -651,16 +651,34 @@ def test_succession_recovery_refuses_changed_frozen_provenance(
 
 
 def test_succession_rejects_linked_successor_before_publication(
-    gate: GateFixture, monkeypatch: pytest.MonkeyPatch
+    gate: GateFixture, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     target = create_program(gate.program.repo, "execution")
     args = succession_arguments(gate, target)
-    original = Path.is_symlink
-    monkeypatch.setattr(
-        Path, "is_symlink", lambda path: path == target.program.directory or original(path)
-    )
-    assert gate.fixture.run(*args) == 1
+    before = {
+        program.path("backlog.json"): program.path("backlog.json").read_bytes()
+        for program in (gate.program, target.program)
+    }
+    alias = gate.program.repo / "linked-execution"
+    with monkeypatch.context() as linked:
+        try:
+            alias.symlink_to(target.program.directory, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            # Hosts without symlink privileges still exercise the actual metadata guard.
+            _mock_link_lstat(linked, target.program.directory, "is_symlink")
+            surface = "injected-lstat-symlink"
+        else:
+            assert alias.is_symlink()
+            args[args.index("--successor") + 1] = alias.relative_to(gate.program.repo).as_posix()
+            surface = "actual-directory-symlink"
+        assert gate.fixture.run(*args) == 1
+    observed = capsys.readouterr()
+    assert "Linked path rejected" in observed.err or "Linked or noncanonical path" in observed.err
+    print(f"LINKED_SUCCESSOR_SURFACE={surface}")
+    assert all(path.read_bytes() == raw for path, raw in before.items())
     assert not gate.program.path("SUCCESSION_INCOMPLETE.json").exists()
+    assert not gate.program.path("SUCCEEDED.json").exists()
+    assert not target.program.path("PREDECESSOR.json").exists()
 
 
 def test_adopted_program_relocation_keeps_gate_provenance_and_snapshot_reads(

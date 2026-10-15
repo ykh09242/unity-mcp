@@ -139,17 +139,21 @@ def test_presentation_evidence_interleave_rejects_snapshot(tmp_path, monkeypatch
     fixture = gate_fixture.__wrapped__(tmp_path, monkeypatch)
     language(fixture)
     value = record(fixture)
-    project = fp.presentation.projection
+    project = fp.presentation._projection_from_checked
+    mutated = False
 
     def changed_after_projection(*args, **kwargs):
+        nonlocal mutated
         result = project(*args, **kwargs)
         path = fixture.program.path(value["review"]["path"])
         path.write_bytes(path.read_bytes() + b" ")
+        mutated = True
         return result
 
-    monkeypatch.setattr(fp.presentation, "projection", changed_after_projection)
+    monkeypatch.setattr(fp.presentation, "_projection_from_checked", changed_after_projection)
     with pytest.raises(fp.ProgramError, match="Observed source/evidence changed"):
         fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    assert mutated
 
 
 def delivery_fixture(repo, monkeypatch):

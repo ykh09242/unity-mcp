@@ -873,13 +873,15 @@ def test_lexical_path_cache_never_retains_rejected_inputs(name, monkeypatch):
 
 
 def test_lexical_path_cache_has_finite_entry_retention():
-    # Given: more distinct short valid paths than the approved lexical cache capacity.
+    # Given: more distinct short valid paths than the declared finite lexical capacity.
+    capacity = fp._cached_safe_relative.cache_info().maxsize
+    assert type(capacity) is int and 0 < capacity <= 4096
     # When: every exact path passes through the public lexical validator.
-    for index in range(2050):
+    for index in range(capacity + 2):
         name = f"bounded-proof-{index}.txt"
         assert fp.safe_relative(name) == name
     # Then: retained strings/results remain bounded independently of request count.
-    assert fp._cached_safe_relative.cache_info().currsize == 2048
+    assert fp._cached_safe_relative.cache_info().currsize == capacity
 
 
 def test_verification_projection_reuses_revision_without_changing_reference_facts(

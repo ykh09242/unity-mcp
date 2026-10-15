@@ -1244,9 +1244,11 @@ def test_generic_custom_verification_catalog_is_explicit_and_frozen(
 
 def test_snapshot_budget_rejects_oversized_state_without_truncation(small_program: Fixture) -> None:
     path = small_program.program.path("backlog.json")
-    path.write_bytes(b" " * (8 * 1024 * 1024 + 1))
-    with pytest.raises(fp.ProgramError, match="8 MiB"):
+    oversized = b" " * (8 * 1024 * 1024 + 1)
+    path.write_bytes(oversized)
+    with pytest.raises(fp.ProgramError, match="registry_size"):
         fp.read_snapshot(small_program.program.repo, small_program.program.directory)
+    assert path.read_bytes() == oversized
 
 
 def test_assignment_settings_are_frozen_at_claim_and_legacy_is_unknown(
@@ -2467,14 +2469,14 @@ def test_storage_closing_image_retains_each_alias_but_reuses_one_file_image(
     # Given: two independently admitted root/name pairs identify one bounded file.
     program = small_program.program
     observer = fp._ClosingObserver(program)
-    normal = fp.safe_path
+    normal = fp._checked_safe_path
     admissions = []
 
-    def counted(root, name):
+    def counted(root, name, components=None):
         admissions.append((root, name))
-        return normal(root, name)
+        return normal(root, name, components)
 
-    monkeypatch.setattr(fp, "safe_path", counted)
+    monkeypatch.setattr(fp, "_checked_safe_path", counted)
     # When: repeated consumers use different limits and logical roots.
     first = observer.file(program.repo, "src/compile-api.py", limit=100, budget_tag="first")
     second = observer.file(program.repo / "src", "compile-api.py", limit=100, budget_tag="second")
@@ -2549,14 +2551,14 @@ def test_closing_observer_admits_narrow_root_once_and_every_logical_name(
     program = small_program.program
     root = program.repo / "src"
     observer = fp._ClosingObserver(program)
-    normal = fp.safe_path
+    normal = fp._checked_safe_path
     admissions = []
 
-    def counted(base, name):
+    def counted(base, name, components=None):
         admissions.append((base, name))
-        return normal(base, name)
+        return normal(base, name, components)
 
-    monkeypatch.setattr(fp, "safe_path", counted)
+    monkeypatch.setattr(fp, "_checked_safe_path", counted)
     # When: the complete image sees each name and repeats its admission/probe.
     names = ("compile-api.py", "docs.2.py", "test_9.py")
     for name in names:
@@ -2596,14 +2598,14 @@ def test_closing_observer_exact_allowed_root_needs_no_repeated_ancestor_prefix(
     # Given: the program root is already a host-bound root and an alias of repo-relative names.
     program = small_program.program
     observer = fp._ClosingObserver(program)
-    normal = fp.safe_path
+    normal = fp._checked_safe_path
     admissions = []
 
-    def counted(root, name):
+    def counted(root, name, components=None):
         admissions.append((root, name))
-        return normal(root, name)
+        return normal(root, name, components)
 
-    monkeypatch.setattr(fp, "safe_path", counted)
+    monkeypatch.setattr(fp, "_checked_safe_path", counted)
     # When: the canonical source is accessed through both original logical aliases.
     relative = program.directory.relative_to(program.repo).as_posix()
     first = observer.file(program.directory, "planning.json", limit=100000, budget_tag="one")
@@ -3042,3 +3044,217 @@ def test_component_metadata_keeps_junction_api_absence_compatible(tmp_path, monk
     # When: the component check runs on that runtime capability surface.
     # Then: it preserves the previous missing-API semantics; final canonical resolution stays separate.
     assert fp._component_linked(tmp_path / "ordinary") is False
+
+
+def test_closing_components_model_read_finishes_after_all_dependencies(small_program, monkeypatch):
+    from tools.tests.test_feature_program_review_throughput_integration import _enable_storage
+
+    # Given: the complete model's actual source parent changes after all dependencies were read.
+    program = small_program.program
+    _enable_storage(small_program)
+    module = fp.flow_module("read_model")
+    normal = module.validate
+    source = program.directory / "source"
+    moved = program.directory / "previous-source"
+    changed = []
+
+    def late(*args, **kwargs):
+        value = normal(*args, **kwargs)
+        if value is not None:
+            source.rename(moved)
+            _directory_alias(source, moved)
+            changed.append(source)
+        return value
+
+    monkeypatch.setattr(module, "validate", late)
+    # When: the ordinary cached reader reaches its final component barrier.
+    result = fp._read_materialized_projection(program.repo, program.directory)
+    # Then: a late real ancestor alias cannot become a served successful representation.
+    assert changed == [source]
+    assert result is None
+
+
+def test_closing_components_publication_finishes_before_registry_swap(small_program, monkeypatch):
+    from tools.tests.test_feature_program_review_throughput_integration import _enable_storage
+
+    # Given: exact proposed model inputs pass before an ancestor becomes linked.
+    program = small_program.program
+    _enable_storage(small_program)
+    original = program.read_registry_observation()
+    state = program.load()
+    state["communication_language"] = "ko"
+    module = fp.flow_module("read_model")
+    normal = module.validate
+    source = program.directory / "source"
+    moved = program.directory / "previous-source"
+
+    def late(*args, **kwargs):
+        value = normal(*args, **kwargs)
+        if value is not None:
+            source.rename(moved)
+            _directory_alias(source, moved)
+        return value
+
+    monkeypatch.setattr(module, "validate", late)
+    # When: the actual proposed writer closes dependencies immediately before publication.
+    with program.lock(), pytest.raises(fp.ProgramError):
+        program.save(state)
+    # Then: mandatory fresh component closure rejects the swap without changing canonical bytes.
+    assert program.read_registry_observation().raw_bytes == original.raw_bytes
+
+
+def test_closing_components_share_classification_but_resolve_every_alias(
+    small_program, monkeypatch
+):
+    # Given: distinct logical aliases share one ancestor within one closing image.
+    program = small_program.program
+    source = program.repo / "src"
+    observer = fp._ClosingObserver(program)
+    normal_stat, normal_resolve = Path.lstat, Path.resolve
+    stats, resolves = [], []
+
+    def metadata(path):
+        stats.append(str(path))
+        return normal_stat(path)
+
+    def resolve(path, *args, **kwargs):
+        resolves.append(str(path))
+        return normal_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    # When: original aliases are admitted and then every seen component closes freshly.
+    observer.admit(program.repo, "src/compile-api.py")
+    observer.admit(program.repo, "src/docs.2.py")
+    observer.admit(source, "compile-api.py")
+    observer.finish()
+    # Then: shared metadata is read initially+finally while every alias still resolves itself.
+    assert stats.count(str(source)) == 2
+    assert resolves.count(str(source / "compile-api.py")) == 2
+    assert resolves.count(str(source / "docs.2.py")) == 1
+
+
+@pytest.mark.parametrize("kind", ["is_symlink", "is_junction"])
+def test_closing_components_finish_rejects_late_seen_missing_path(small_program, monkeypatch, kind):
+    # Given: an admitted missing leaf has no successful metadata classification to cache.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    missing = program.repo / "src" / "absent.py"
+    observer.admit(program.repo, "src/absent.py")
+    normal = Path.lstat
+    _mount_metadata_support(monkeypatch)
+
+    def changed(path):
+        if path == missing:
+            return _link_metadata(SimpleNamespace(st_mode=fp.stat.S_IFDIR), kind)
+        return normal(path)
+
+    monkeypatch.setattr(Path, "lstat", changed)
+    # When: a previously missing pathname is now a linked component at final closure.
+    # Then: all seen names close, including paths whose first metadata read failed.
+    with pytest.raises(fp.ProgramError):
+        observer.finish()
+
+
+def test_closing_components_do_not_cache_failed_metadata_or_cross_observers(
+    small_program, monkeypatch
+):
+    # Given: missing components use the runtime's uncached fallback semantics.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    normal = Path.lstat
+    missing = program.repo / "src" / "missing"
+    calls = []
+
+    def metadata(path):
+        if path == missing:
+            calls.append(str(path))
+        return normal(path)
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    # When: distinct admissions revisit missing ancestors and then a new observer starts.
+    observer.admit(program.repo, "src/missing/one")
+    observer.admit(program.repo, "src/missing/two")
+    observer.finish()
+    fp._ClosingObserver(program).admit(program.repo, "src/missing/three")
+    # Then: acquisition failures were never memoized, and the new observer is independent.
+    assert len(calls) == 4
+
+
+def test_closing_components_new_alias_still_rejects_immediate_resolution_drift(
+    small_program, monkeypatch
+):
+    # Given: one successful alias warmed the common ancestor classification.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    observer.admit(program.repo, "src/compile-api.py")
+    new = program.repo / "src/docs.2.py"
+    normal = Path.resolve
+    monkeypatch.setattr(
+        Path,
+        "resolve",
+        lambda path, *args, **kwargs: (
+            program.repo.parent / "outside.py" if path == new else normal(path, *args, **kwargs)
+        ),
+    )
+    # When: the next alias resolves outside the original lexical namespace.
+    # Then: cached ancestor metadata cannot bypass that candidate's fresh resolution.
+    with pytest.raises(fp.ProgramError):
+        observer.admit(program.repo, "src/docs.2.py")
+
+
+def test_closing_components_do_not_change_generic_source_or_path_checks(small_program, monkeypatch):
+    # Given: an observer has memoized an ordinary source ancestor.
+    program = small_program.program
+    observer = fp._ClosingObserver(program)
+    observer.admit(program.repo, "src/compile-api.py")
+    _mock_link_lstat(monkeypatch, program.repo / "src", "is_symlink")
+    # When: unrelated generic admission and a fresh source observation run normally.
+    # Then: neither sees the observer-only memo as permission to skip fresh component checks.
+    with pytest.raises(fp.ProgramError):
+        fp.safe_path(program.repo, "src/docs.2.py")
+    with pytest.raises(fp.ProgramError):
+        program.source_snapshot(["src/docs.2.py"], fp.ReadBudget())
+
+
+@pytest.mark.parametrize("admitted", [False, True])
+def test_recheck_growth_preserves_snapshot_context_and_original_bound(tmp_path, admitted):
+    # Given: an exact bounded observation later grows beyond its original closing budget.
+    path = tmp_path / "proof.txt"
+    path.write_bytes(b"original")
+    budget = fp.ReadBudget()
+    if admitted:
+        budget.capture(tmp_path, path.name, 100)
+    else:
+        budget.read(path, 100)
+    changed = b"original with more bytes"
+    path.write_bytes(changed)
+    # When: the independent final capture cannot fit the original aggregate bound.
+    with pytest.raises(fp.ProgramError, match="changed during snapshot") as caught:
+        budget.recheck(tmp_path)
+    # Then: contextual diagnostics preserve the original bound failure and actual bytes.
+    assert isinstance(caught.value.__cause__, fp.ProgramError)
+    assert "bounded read" in str(caught.value.__cause__)
+    assert str(caught.value.__cause__) in str(caught.value)
+    assert path.read_bytes() == changed
+
+
+@pytest.mark.parametrize("kind", ["is_symlink", "is_junction", "missing"])
+def test_recheck_path_failure_preserves_snapshot_context_and_guard_cause(
+    tmp_path, monkeypatch, kind
+):
+    # Given: one successful logical admission later becomes linked or unavailable.
+    path = tmp_path / "proof.txt"
+    path.write_bytes(b"original")
+    budget = fp.ReadBudget()
+    budget.capture(tmp_path, path.name, 100)
+    if kind == "missing":
+        path.unlink()
+    else:
+        _mock_link_lstat(monkeypatch, path, kind)
+    # When: independent path admission enforces its original safety and regular-file rules.
+    with pytest.raises(fp.ProgramError, match="changed during snapshot") as caught:
+        budget.recheck(tmp_path)
+    # Then: original guard detail and exception cause survive the contextual failure.
+    assert isinstance(caught.value.__cause__, fp.ProgramError)
+    assert str(caught.value.__cause__) in str(caught.value)
