@@ -13,6 +13,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 import hashlib
 import importlib
 import json
@@ -158,6 +159,7 @@ def verify_provenance(
     """Retain exact transitive provenance only through explicitly typed control fields."""
     reader = budget if budget is not None else ReadBudget(64 * 1024 * 1024)
     facts: list[Record] = []
+    validated_manifests: set[tuple[str, str]] = set()
     verification_reads = verification._reads(reader)
     verification_controls = {
         digest(record(value, "verification record")["receipt"]): record(
@@ -205,13 +207,16 @@ def verify_provenance(
             ),
             "Provenance manifest escaped consuming attempt",
         )
-        flow_module("evidence_reuse").validate_manifest(program, manifest, budget=reader)
+        manifest_key = (str(manifest_ref["path"]), str(manifest_ref["sha256"]))
+        if manifest_key not in validated_manifests:
+            flow_module("evidence_reuse").validate_manifest(program, manifest, budget=reader)
+            validated_manifests.add(manifest_key)
         current = None
         if identifier is not None:
             task = program.task(state, identifier)
             latest = program.current_attempt(task)
             current = latest["number"] == expected_attempt
-            source = program.source_digest(strings(latest["scope"], "scope"))
+            source = digest(verification_reads.snapshot(program, strings(latest["scope"], "scope")))
             rounds = sequence(latest["rounds"], "rounds")
             matches = [
                 record(value, "round")
@@ -333,7 +338,7 @@ def check_policy(state: Record) -> tuple[set[str], set[str]]:
     return catalog, minimum
 
 
-def safe_relative(name: str) -> str:
+def _safe_relative(name: str) -> str:
     """Reject sensitive or escaping paths before checking any filesystem contents."""
     require("\\" not in name, "Use repository-relative forward-slash paths")
     require(
@@ -365,18 +370,31 @@ def safe_relative(name: str) -> str:
     return path.as_posix()
 
 
+@lru_cache(maxsize=2048)
+def _cached_safe_relative(name: str) -> str:
+    return _safe_relative(name)
+
+
+def safe_relative(name: str) -> str:
+    # Only bounded plain strings retain lexical results; filesystem facts are never cached.
+    if type(name) is str and len(name) <= 1024:
+        return _cached_safe_relative(name)
+    return _safe_relative(name)
+
+
 def safe_path(root: Path, name: str) -> Path:
     relative = safe_relative(name)
     path = root / relative
     cursor = root
-    require(root.resolve() == root.absolute(), "Repository/program root must not contain links")
+    resolved_root = root.resolve()
+    require(resolved_root == root.absolute(), "Repository/program root must not contain links")
     for part in PurePosixPath(relative).parts:
         cursor /= part
         require(
             not cursor.is_symlink() and not getattr(cursor, "is_junction", lambda: False)(),
             f"Linked path rejected: {name}",
         )
-    require(path.resolve().is_relative_to(root.resolve()), f"Path outside root: {name}")
+    require(path.resolve().is_relative_to(resolved_root), f"Path outside root: {name}")
     return path
 
 

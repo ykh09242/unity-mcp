@@ -615,3 +615,278 @@ def test_selected_failed_batch_unknown_operation_count_remains_unknown_in_brief(
     assert snapshot["record_batch"]["requested_operation_count"] is None
     assert snapshot["brief"]["record_batch"]["operations"]["total"] is None
     assert snapshot["brief"]["record_batch"]["operations"]["omitted"] is None
+
+
+def _shared_provenance_rounds(fixture):
+    from tools.tests.test_feature_program_evidence_reuse import selection
+
+    assert fixture.claim() == 0
+    reuse = fp.flow_module("evidence_reuse")
+    origin = fixture.write("design/shared-origin.json", {"proof": "retained"})
+    origin_ref = {"path": origin, "sha256": fp.sha(fixture.program.path(origin).read_bytes())}
+    state = fixture.program.load()
+    plan = reuse.plan_evidence(fixture.program, state, selection([origin_ref]))
+    target = reuse.materialize_evidence(fixture.program, state, plan)["targets"][0]
+    for number in (1, 2):
+        receipt_path = fixture.receipt(round_number=number)
+        receipt = fp.read_json(fixture.program.path(receipt_path))
+        receipt["evidence_provenance_ref"] = target["manifest_ref"]
+        fixture.write(receipt_path, receipt)
+        assert fixture.run("submit", "S01", "--owner", "worker", "--receipt", receipt_path) == 0
+        accepted = number == 2
+        review_path = fixture.review(accepted=accepted, round_number=number)
+        review = fp.read_json(fixture.program.path(review_path))
+        review["evidence_provenance_ref"] = target["manifest_ref"]
+        fixture.write(review_path, review)
+        assert (
+            fixture.run("complete" if accepted else "rework", "S01", "--review", review_path) == 0
+        )
+    return target
+
+
+def test_shared_provenance_reuses_graph_and_scope_without_collapsing_consuming_facts(
+    fixture, monkeypatch
+):
+    # Given: four real submission/review controls share one exact retained graph and source scope.
+    target = _shared_provenance_rounds(fixture)
+    state = fixture.program.load()
+    reuse = fp.flow_module("evidence_reuse")
+    normal_validate = reuse.validate_manifest
+    normal_snapshot = fp.Program.source_snapshot
+    graph_calls = []
+    source_calls = []
+
+    def validate(program, manifest, **kwargs):
+        graph_calls.append(manifest["selection_digest"])
+        return normal_validate(program, manifest, **kwargs)
+
+    def snapshot(program, scope, budget=None):
+        source_calls.append(tuple(scope))
+        return normal_snapshot(program, scope, budget)
+
+    monkeypatch.setattr(reuse, "validate_manifest", validate)
+    monkeypatch.setattr(fp.Program, "source_snapshot", snapshot)
+    # When: the actual provenance adapter assesses all controls in one request.
+    facts = fp.verify_provenance(fixture.program, state)
+    # Then: graph/source work is shared, but historical/current control facts remain distinct.
+    assert len(graph_calls) == 1
+    assert source_calls == [("src/S01.py",), ("src/S01.py",)]
+    assert len(facts) == 4
+    assert [fact["current"] for fact in facts] == [False, False, True, True]
+    assert all(fact["manifest_ref"] == target["manifest_ref"] for fact in facts)
+    assert len({fp.digest(fact["control_ref"]) for fact in facts}) == 4
+
+
+@pytest.mark.parametrize("change", ["attempt", "manifest_hash", "control_hash"])
+def test_shared_provenance_rechecks_each_consuming_subject_and_hash(fixture, change):
+    # Given: the second control reuses an already valid graph, with one invalid binding.
+    _shared_provenance_rounds(fixture)
+    state = fixture.program.load()
+    controls = [
+        ref
+        for ref, _identifier in fp.control_receipt_refs(state)
+        if "evidence_provenance_ref" in fp.read_json(fixture.program.path(ref["path"]))
+    ]
+    ref = controls[1]
+    receipt = fp.read_json(fixture.program.path(ref["path"]))
+    match change:
+        case "attempt":
+            receipt["attempt"] = 2
+        case "manifest_hash":
+            receipt["evidence_provenance_ref"]["sha256"] = "0" * 64
+        case "control_hash":
+            receipt["summary"] = "Changed control bytes"
+    fixture.write(ref["path"], receipt)
+    if change != "control_hash":
+        ref["sha256"] = fp.sha(fixture.program.path(ref["path"]).read_bytes())
+    # When: a later consuming control is validated in the same request.
+    # Then: successful earlier graph validation never authorizes an invalid subject or hash.
+    with pytest.raises(fp.ProgramError):
+        fp.verify_provenance(fixture.program, state)
+
+
+@pytest.mark.parametrize("change", ["origin", "copy", "source"])
+def test_shared_provenance_rechecks_fresh_request_after_changed_bytes(fixture, change):
+    # Given: a complete snapshot already observed a graph shared by four controls.
+    target = _shared_provenance_rounds(fixture)
+    first = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+    assert first["evidence_preparation"]["counts"]["retained"] > 0
+    assert fp.verify_provenance(fixture.program, fixture.program.load())[-1]["current"] is True
+    attachment = target["attachments"][0]
+    path = (
+        fixture.program.repo / "src/S01.py"
+        if change == "source"
+        else fixture.program.path(
+            attachment["origin_ref" if change == "origin" else "attachment_ref"]["path"]
+        )
+    )
+    path.write_bytes(path.read_bytes() + b" ")
+    # When: another request captures the changed original/copy/source independently.
+    # Then: cached success cannot survive across requests or keep changed inputs ready.
+    if change == "source":
+        second = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+        assert second["evidence_preparation"]["status"] == "stale"
+        assert not any(
+            fact["current"]
+            for fact in fp.verify_provenance(fixture.program, fixture.program.load())
+        )
+    else:
+        second = fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+        assert second["evidence_preparation"]["status"] == "unavailable"
+        with pytest.raises(fp.ProgramError):
+            fp.verify_provenance(
+                fixture.program, state=fp.read_json(fixture.program.path("backlog.json"))
+            )
+
+
+@pytest.mark.parametrize("change", ["origin", "copy", "source"])
+def test_shared_provenance_final_capture_guard_rejects_changed_bytes(fixture, monkeypatch, change):
+    # Given: the actual snapshot has verified all shared controls before a concurrent change.
+    target = _shared_provenance_rounds(fixture)
+    attachment = target["attachments"][0]
+    path = (
+        fixture.program.repo / "src/S01.py"
+        if change == "source"
+        else fixture.program.path(
+            attachment["origin_ref" if change == "origin" else "attachment_ref"]["path"]
+        )
+    )
+    normal = fp.verify_provenance
+
+    def change_after_capture(*args, **kwargs):
+        facts = normal(*args, **kwargs)
+        path.write_bytes(path.read_bytes() + b" ")
+        return facts
+
+    monkeypatch.setattr(fp, "verify_provenance", change_after_capture)
+    # When: original/copy/source bytes change after assessment but before final snapshot guards.
+    # Then: request-local reuse cannot publish an internally inconsistent successful snapshot.
+    with pytest.raises(fp.ProgramError):
+        fp.read_snapshot(fixture.program.repo, fixture.program.directory)
+
+
+def test_safe_path_rejects_outward_root_redirection_after_initial_observation(
+    tmp_path, monkeypatch
+):
+    # Given: filesystem resolution redirects the root between its initial and final observation.
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    candidate = root / "proof.txt"
+    candidate.write_bytes(b"inside")
+    normal = type(root).resolve
+    root_observations = []
+
+    def redirected(path, *args, **kwargs):
+        if path == root:
+            root_observations.append(path)
+            return root if len(root_observations) == 1 else outside
+        if path == candidate:
+            return outside / candidate.name
+        return normal(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(root), "resolve", redirected)
+    # When: the requested path resolves outside the originally admitted root.
+    # Then: a second redirected root observation cannot authorize the outside path.
+    with pytest.raises(fp.ProgramError, match="Path outside root"):
+        fp.safe_path(root, candidate.name)
+
+
+@pytest.mark.parametrize("kind", ["is_symlink", "is_junction"])
+def test_lexical_path_reuse_keeps_filesystem_link_checks_fresh(tmp_path, monkeypatch, kind):
+    # Given: a safe lexical name has already been admitted for an ordinary file.
+    candidate = tmp_path / "proof.txt"
+    candidate.write_bytes(b"inside")
+    assert fp.safe_path(tmp_path, candidate.name) == candidate
+    normal = getattr(type(candidate), kind, lambda _path: False)
+    checks = []
+
+    def changed(path):
+        if path == candidate:
+            checks.append(path)
+            return True
+        return normal(path)
+
+    monkeypatch.setattr(type(candidate), kind, changed, raising=False)
+    # When: the same lexical name now resolves through a linked component.
+    # Then: lexical cache reuse cannot skip fresh symlink or junction rejection.
+    with pytest.raises(fp.ProgramError, match="Linked path rejected"):
+        fp.safe_path(tmp_path, candidate.name)
+    assert checks == [candidate]
+
+
+def test_lexical_path_cache_bypasses_long_valid_names_without_rejection(monkeypatch):
+    # Given: an otherwise valid path exceeds the lexical cache key-size bound.
+    name = "/".join(["segment"] * 150)
+    normal = fp._safe_relative
+    validations = []
+    before = fp._cached_safe_relative.cache_info().currsize
+
+    def validate(value):
+        validations.append(value)
+        return normal(value)
+
+    monkeypatch.setattr(fp, "_safe_relative", validate)
+    # When: repeated calls validate the long path through the ordinary uncached validator.
+    assert fp.safe_relative(name) == name
+    assert fp.safe_relative(name) == name
+    # Then: valid input is preserved, not rejected or retained in the cache.
+    assert validations == [name, name]
+    assert fp._cached_safe_relative.cache_info().currsize == before
+
+
+def test_lexical_path_cache_bypasses_string_subclasses_and_nonstring_inputs(monkeypatch):
+    # Given: a custom string or nonstring is outside the plain-string cache contract.
+    class CustomPath(str):
+        pass
+
+    normal = fp._safe_relative
+    validations = []
+    before = fp._cached_safe_relative.cache_info().currsize
+
+    def validate(value):
+        validations.append(value)
+        return normal(value)
+
+    monkeypatch.setattr(fp, "_safe_relative", validate)
+    name = CustomPath("proof.txt")
+    # When: repeated custom values and a nonstring reach the identical uncached validator.
+    assert fp.safe_relative(name) == name
+    assert fp.safe_relative(name) == name
+    with pytest.raises(TypeError):
+        fp.safe_relative(["proof.txt"])
+    # Then: custom/nonstring values do not become retained cache keys or bypass validation.
+    assert validations == [name, name, ["proof.txt"]]
+    assert fp._cached_safe_relative.cache_info().currsize == before
+
+
+@pytest.mark.parametrize("name", ["../outside.txt", ".git/config", ".env.local", "bad\\path"])
+def test_lexical_path_cache_never_retains_rejected_inputs(name, monkeypatch):
+    # Given: an unsafe lexical input has not passed the existing validator.
+    normal = fp._safe_relative
+    validations = []
+    before = fp._cached_safe_relative.cache_info().currsize
+
+    def validate(value):
+        validations.append(value)
+        return normal(value)
+
+    monkeypatch.setattr(fp, "_safe_relative", validate)
+    # When: that same unsafe input is requested repeatedly.
+    for _attempt in range(2):
+        with pytest.raises(fp.ProgramError):
+            fp.safe_relative(name)
+    # Then: exceptions are never retained as successful lexical admissions.
+    assert validations == [name, name]
+    assert fp._cached_safe_relative.cache_info().currsize == before
+
+
+def test_lexical_path_cache_has_finite_entry_retention():
+    # Given: more distinct short valid paths than the approved lexical cache capacity.
+    # When: every exact path passes through the public lexical validator.
+    for index in range(2050):
+        name = f"bounded-proof-{index}.txt"
+        assert fp.safe_relative(name) == name
+    # Then: retained strings/results remain bounded independently of request count.
+    assert fp._cached_safe_relative.cache_info().currsize == 2048
