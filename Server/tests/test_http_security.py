@@ -40,6 +40,7 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
         env=env,
         capture_output=True,
         text=True,
-        timeout=90,
+        # Bound the expanded isolated suite, including child startup; request deadlines stay unchanged.
+        timeout=120,
     )
     assert result.returncode == 0, result.stdout + result.stderr

@@ -36,7 +36,7 @@ Place global options before subcommands. HTTP tokens are discovered automaticall
 
 ## Command groups
 
-Registered groups include `instance`, `scene`, `scene_edit`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `play_scenario`, `scenario_recording`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `physics`, `profiler`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
+Registered groups include `instance`, `scene`, `scene_edit`, `gameobject`, `component`, `asset`, `asset_gen`, `blender`, `script`, `code`, `editor`, `play_scenario`, `scenario_recording`, `prefab`, `material`, `lighting`, `animation`, `sprite`, `audio`, `ui`, `shader`, `vfx`, `batch`, `texture`, `probuilder`, `build`, `camera`, `graphics`, `packages`, `reflect`, `docs`, `doctor`, `physics`, `profiler`, `tool`, and `custom_tool`. Optional module-load failures can change available groups; installed help is authoritative.
 
 CLI verbs/flags are not automatically generated from MCP tool parameters. Use exact help:
 

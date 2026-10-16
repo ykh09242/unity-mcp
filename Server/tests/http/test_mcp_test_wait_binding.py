@@ -248,23 +248,40 @@ async def test_registered_wait_honors_captured_inner_deadline_without_fresh_cloc
 async def test_journal_admission_spends_original_inner_deadline_even_when_capacity_falls_back(
     command_hub, tmp_path, monkeypatch, refuse
 ):
+    from dataclasses import replace
     from threading import Event
-    from services.test_wait_journal import JournalCapacity
+    from time import monotonic, time
+    from services.test_wait_journal import DeadlineCheckpoint, JournalCapacity
     from transport.plugin_hub import PluginHub
 
     monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 3)
     entered, release = Event(), Event()
+    held_at = []
     async with bound_http(tmp_path, monkeypatch) as (client, runtime):
         create = runtime.journal.create
         captured = []
         capture = runtime.capture
 
         async def remember(*args):
-            value = await capture(*args)
+            original = await capture(*args)
+            monotonic_now, wall_now = monotonic(), time()
+            short = min(original.wait_deadline, monotonic_now + 0.2)
+            checkpoint = DeadlineCheckpoint.capture(short - monotonic_now, now=wall_now)
+            operation = original.operation.model_copy(update={"wait": checkpoint})
+            value = replace(original, operation=operation, wait_deadline=short)
+            assert 0 < short - monotonic_now <= 0.201
+            assert value.operation.wait_timeout == original.operation.wait_timeout == 1
+            assert value.operation.model_dump(exclude={"wait"}) == original.operation.model_dump(
+                exclude={"wait"}
+            )
+            assert value.outer_deadline == original.outer_deadline
+            assert value.budget_snapshot is original.budget_snapshot
+            assert value.outer_timeout_result == original.outer_timeout_result
             captured.append(value)
             return value
 
         def hold(operation):
+            held_at.append(monotonic())
             entered.set()
             assert release.wait(3)
             if refuse:
@@ -283,7 +300,9 @@ async def test_journal_admission_spends_original_inner_deadline_even_when_capaci
         )
         try:
             assert await anyio.to_thread.run_sync(entered.wait, 2)
+            assert held_at[0] < captured[0].wait_deadline
             await anyio.sleep_until(captured[0].wait_deadline + 0.01)
+            assert monotonic() >= captured[0].wait_deadline
         finally:
             release.set()
         response = await request
@@ -400,8 +419,31 @@ async def test_task_preserves_ordinary_status_read_reconnect_policy_without_star
     command_hub, tmp_path, monkeypatch
 ):
     from copy import copy
+    from types import SimpleNamespace
+    from services.tools import run_tests, test_job_wait
+    from services.tools.shared_tool_reads import SharedToolReads
     from transport.models import CommandResultMessage
     from transport.plugin_hub import PluginHub
+
+    monkeypatch.setattr(run_tests, "_job_status_reads", SharedToolReads(freshness_s=0.01))
+    real_sleep = asyncio.sleep
+    poll_delays = []
+
+    async def short_poll_sleep(delay):
+        poll_delays.append(delay)
+        await real_sleep(min(delay, 0.02))
+
+    # Only this wait module's poll pause is capped; event-loop clocks and deadlines stay real.
+    monkeypatch.setattr(
+        test_job_wait,
+        "asyncio",
+        SimpleNamespace(
+            get_event_loop=asyncio.get_event_loop,
+            wait_for=asyncio.wait_for,
+            TimeoutError=asyncio.TimeoutError,
+            sleep=short_poll_sleep,
+        ),
+    )
 
     monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 4)
     source = command_hub.websocket
@@ -450,6 +492,9 @@ async def test_task_preserves_ordinary_status_read_reconnect_policy_without_star
         record = runtime.journal.get(created["taskId"], runtime.journal.local_owner)
         assert record.operation.session_id == "session"
         assert record.operation.instance == "Fixture@hash"
+
+        assert poll_delays == [2.0, 2.0]
+        assert asyncio.sleep is real_sleep
 
 
 @pytest.mark.asyncio
