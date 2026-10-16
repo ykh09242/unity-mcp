@@ -466,5 +466,172 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsTrue(importer.isReadable);
             LogAssert.NoUnexpectedReceived();
         }
+
+        [TestCase("set_import_settings")]
+        [TestCase("modify")]
+        public void MixedImporterOutcomesReportRejectedAndActualAppliedSettings(string action)
+        {
+            // Given an owned imported image and valid plus rejected setting requests.
+            byte[] source = File.ReadAllBytes(Absolute(_path));
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            var requested = JObject.Parse("{textureType:'future-enum',isReadable:true,unrecognizedSetting:42}");
+
+            // When importer settings are applied through either public update path.
+            var response = Send(action, new JObject { ["import_settings"] = requested });
+
+            // Then valid partial writes remain, while rejected requests are visible.
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var report = response["data"]?["import_settings"];
+            Assert.IsNotNull(report, "Importer outcomes must not be silently discarded.");
+            Assert.IsTrue(JToken.DeepEquals(requested, report["requested"]));
+            Assert.IsTrue(report["applied"].Value<bool>("isReadable"));
+            Assert.IsTrue(report["effective"].Value<bool>("isReadable"));
+            Assert.IsNotNull(report["rejected"]["textureType"]);
+            Assert.IsNotNull(report["rejected"]["unrecognizedSetting"]);
+            Assert.AreEqual("partial", report.Value<string>("status"));
+            Assert.AreEqual(((TextureImporter)AssetImporter.GetAtPath(_path)).textureType.ToString(), report["effective"].Value<string>("textureType"));
+            CollectionAssert.AreEqual(source, File.ReadAllBytes(Absolute(_path)));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ImportReportDistinguishesNoOpAndRealChange(bool readable)
+        {
+            // Given a freshly imported unreadable texture.
+            var importer = (TextureImporter)AssetImporter.GetAtPath(_path);
+            Assert.IsFalse(importer.isReadable);
+            byte[] metadata = File.ReadAllBytes(Absolute(_path) + ".meta");
+
+            // When the request either matches current state or changes it.
+            var response = Send("set_import_settings", new JObject { ["import_settings"] = new JObject { ["isReadable"] = readable } });
+
+            // Then reported change and effective value agree with a fresh native importer.
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var report = response["data"]?["import_settings"];
+            Assert.IsNotNull(report);
+            Assert.AreEqual(readable, report.Value<bool>("changed"));
+            Assert.AreEqual(readable, report["effective"].Value<bool>("isReadable"));
+            Assert.AreEqual(readable ? "applied" : "unchanged", report["per_setting"]["isReadable"].Value<string>("status"));
+            if (!readable)
+                CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Absolute(_path) + ".meta"));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("anisoLevel", "17")]
+        [TestCase("compressionQuality", "101")]
+        [TestCase("maxTextureSize", "33")]
+        [TestCase("spriteExtrude", "-1")]
+        [TestCase("spritePixelsPerUnit", "0")]
+        public void InvalidImporterRangeRejectsBeforeAnyAcceptedSettingMutates(string key, string json)
+        {
+            // Given a range violation following an otherwise valid change.
+            var settings = new JObject { ["isReadable"] = true, [key] = JToken.Parse(json) };
+
+            // When preflight validates all scalar values, then no changes are permitted.
+            AssertRejectedWithoutChanges("set_import_settings", new JObject { ["import_settings"] = settings });
+        }
+
+        [Test]
+        public void UndefinedNumericEnumIsRejectedWhileValidSettingApplies()
+        {
+            // Given an integer that is not defined by this Editor's enum.
+            var before = ((TextureImporter)AssetImporter.GetAtPath(_path)).filterMode;
+
+            // When a valid readable setting accompanies it.
+            var response = Send("set_import_settings", JObject.Parse("{import_settings:{filterMode:999,isReadable:true}}"));
+
+            // Then the enum is explicitly rejected rather than assigned as a native value.
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(before, ((TextureImporter)AssetImporter.GetAtPath(_path)).filterMode);
+            Assert.IsNotNull(response["data"]?["import_settings"]?["rejected"]?["filterMode"]);
+            Assert.IsTrue(((TextureImporter)AssetImporter.GetAtPath(_path)).isReadable);
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void PlatformOverrideReportsFreshNativeSettingsAndPreservesSource()
+        {
+            // Given a platform override request for the owned image.
+            byte[] source = File.ReadAllBytes(Absolute(_path));
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            var options = JObject.Parse(
+                "{import_settings:{platformSettings:{Standalone:{overridden:true,maxTextureSize:64,format:'RGBA32',textureCompression:'Uncompressed'}}}}"
+            );
+
+            // When the override is saved and reimported.
+            var response = Send("set_import_settings", options);
+
+            // Then actual native override values agree with the serialized readback.
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var platform = ((TextureImporter)AssetImporter.GetAtPath(_path)).GetPlatformTextureSettings("Standalone");
+            Assert.IsTrue(platform.overridden);
+            Assert.AreEqual(64, platform.maxTextureSize);
+            Assert.AreEqual(TextureImporterFormat.RGBA32, platform.format);
+            var report = response["data"]?["import_settings"];
+            Assert.IsNotNull(report);
+            Assert.AreEqual(platform.maxTextureSize, report["effective"]["platformSettings"]["Standalone"].Value<int>("maxTextureSize"));
+            Assert.AreEqual(platform.format.ToString(), report["effective"]["platformSettings"]["Standalone"].Value<string>("format"));
+            CollectionAssert.AreEqual(source, File.ReadAllBytes(Absolute(_path)));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void DisabledOverrideReportsInheritedEffectiveValuesSeparatelyFromStoredValues()
+        {
+            // Given an existing native override with a value different from the default.
+            var importer = (TextureImporter)AssetImporter.GetAtPath(_path);
+            var platform = importer.GetPlatformTextureSettings("Standalone");
+            platform.overridden = true;
+            platform.maxTextureSize = 64;
+            importer.SetPlatformTextureSettings(platform);
+            importer.SaveAndReimport();
+
+            // When the override is disabled while its stored size is updated.
+            var response = Send(
+                "set_import_settings",
+                JObject.Parse("{import_settings:{platformSettings:{Standalone:{overridden:false,maxTextureSize:128}}}}")
+            );
+
+            // Then effective values come from the native default, not the requested copy.
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            importer = (TextureImporter)AssetImporter.GetAtPath(_path);
+            Assert.IsFalse(importer.GetPlatformTextureSettings("Standalone").overridden);
+            var report = response["data"]?["import_settings"];
+            Assert.IsNotNull(report);
+            Assert.AreEqual(
+                importer.GetDefaultPlatformTextureSettings().maxTextureSize,
+                report["effective"]["platformSettings"]["Standalone"].Value<int>("maxTextureSize")
+            );
+            Assert.AreEqual(
+                importer.GetPlatformTextureSettings("Standalone").maxTextureSize,
+                report["platform_overrides"]["Standalone"]["stored"].Value<int>("maxTextureSize")
+            );
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void UnsupportedPlatformAndSettingAreExplicitlyRejectedWithoutMasqueradingAsChange()
+        {
+            // Given settings the Editor/tool contract does not support.
+            var options = JObject.Parse("{import_settings:{unrecognizedSetting:true,platformSettings:{FutureConsole:{overridden:true}}}}");
+            byte[] metadata = File.ReadAllBytes(Absolute(_path) + ".meta");
+
+            // When every requested setting is rejected.
+            var response = Send("set_import_settings", options);
+
+            // Then the response exposes rejection and preserves the original importer metadata.
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            var report = response["data"]?["import_settings"];
+            Assert.IsNotNull(report);
+            Assert.AreEqual("rejected", report.Value<string>("status"));
+            Assert.IsFalse(report.Value<bool>("changed"));
+            Assert.IsNotNull(report["rejected"]["unrecognizedSetting"]);
+            Assert.IsNotNull(report["rejected"]["platformSettings.FutureConsole"]);
+            CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Absolute(_path) + ".meta"));
+            LogAssert.NoUnexpectedReceived();
+        }
     }
 }

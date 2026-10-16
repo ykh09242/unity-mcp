@@ -242,8 +242,8 @@ async def test_null_option_uses_false_default(script_wire, option):
         (textures._normalize_sprite_settings, {"pivot": None, "pixels_per_unit": None}, {}),
         (
             textures._normalize_import_settings,
-            {"srgb": None, "aniso_level": None, "sprite_pixels_per_unit": None},
-            {},
+            None,
+            None,
         ),
         (textures._normalize_sprite_settings, False, None),
     ],
