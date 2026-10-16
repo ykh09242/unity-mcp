@@ -42,6 +42,17 @@ logger = logging.getLogger("mcp-for-unity-server")
 
 _DEFAULT_POLL_INTERVAL = 1.0
 _MAX_POLL_SECONDS = 600
+# Native backend commands used by existing Python wrappers, never extra public custom tools.
+# Keep its raw descriptor available for native admission and parent/alias policy checks.
+_BACKEND_ONLY_TOOL_NAMES = frozenset(
+    {
+        "tail_console",
+        "inspect_menu_item",
+        "execute_menu_item_observed",
+        "manage_components_selected",
+        "manage_object_handles_v1",
+    }
+)
 _MAX_ACTIVE_POLLS_PER_SESSION = 16
 _MAX_ACTIVE_POLLS_PER_USER = 32
 _MAX_ACTIVE_POLLS_GLOBAL = 256
@@ -275,7 +286,11 @@ class CustomToolService:
         if config.http_remote_hosted:
             if not user_id:
                 return []
-            return await PluginHub.get_tools_for_project(project_id, user_id=user_id)
+            return [
+                tool
+                for tool in await PluginHub.get_tools_for_project(project_id, user_id=user_id)
+                if tool.name not in _BACKEND_ONLY_TOOL_NAMES
+            ]
         definitions = dict(self._project_tools.get(project_id, {}))
         transport_project = self._transport_project_id(project_id)
         kind = "http" if config.transport_mode.lower() == "http" else "stdio"
@@ -287,7 +302,7 @@ class CustomToolService:
         )
         for tool in hub_tools:
             definitions.setdefault(tool.name, tool)
-        return list(definitions.values())
+        return [tool for tool in definitions.values() if tool.name not in _BACKEND_ONLY_TOOL_NAMES]
 
     async def get_tool_definition(
         self,
@@ -864,6 +879,8 @@ class CustomToolService:
                     if not source.publish_global or config.http_remote_hosted:
                         continue
                     for name, definition in source.tools.items():
+                        if name in _BACKEND_ONLY_TOOL_NAMES:
+                            continue
                         if name not in builtin_names or name in self._owned_tools:
                             winners.setdefault(name, (source, definition))
                 owned = {}
