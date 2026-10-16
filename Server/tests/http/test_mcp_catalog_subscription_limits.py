@@ -112,16 +112,24 @@ class PluginStream:
         self.principal = principal
         self.project_hash = project_hash
         self.project_name = project_name
-        self.input, self.reader = anyio.create_memory_object_stream[dict](1)
-        self.ready = anyio.Event()
+        self.started = False
         self.welcome = anyio.Event()
+        self.registered = anyio.Event()
         self.done = anyio.Event()
         self.session_id = None
 
-    async def run(self):
+    async def run(self, *, task_status=anyio.TASK_STATUS_IGNORED):
+        processed = None
+
         async def receive():
-            self.ready.set()
-            return await self.reader.receive()
+            nonlocal processed
+            # The Hub invokes receive again only after its previous frame's
+            # handler returned. Readiness before queue consumption is not that
+            # barrier, particularly for its pre-registration receive Task.
+            if processed is not None:
+                processed.set()
+            message, processed = await self.reader.receive()
+            return message
 
         async def send(message):
             if message["type"] == "websocket.send":
@@ -130,23 +138,47 @@ class PluginStream:
                     self.welcome.set()
                 elif payload["type"] == "registered":
                     self.session_id = payload["session_id"]
+                    self.registered.set()
             elif message["type"] == "websocket.close":
-                await self.input.send({"type": "websocket.disconnect", "code": 1000})
+                await self.input.send(({"type": "websocket.disconnect", "code": 1000}, None))
 
         scope = scope_for(
             [(b"x-api-key", self.principal.encode())], "/hub/plugin", scope_type="websocket"
         )
         scope.update(scheme="ws", subprotocols=[])
         try:
+            # Peers constructed after an earlier failing connection never start,
+            # so they must not allocate streams that have no cleanup owner.
+            self.input, self.reader = anyio.create_memory_object_stream[
+                tuple[dict, anyio.Event | None]
+            ](1)
             async with self.input, self.reader:
+                self.started = True
+                task_status.started()
                 await self.app(scope, receive, send)
         finally:
             self.done.set()
 
+    async def _wait(self, event):
+        """Fail promptly on actual peer exit, retaining the existing wait bound."""
+        finished = anyio.Event()
+
+        async def watch(signal):
+            await signal.wait()
+            finished.set()
+
+        with anyio.fail_after(3):
+            async with anyio.create_task_group() as group:
+                group.start_soon(watch, event)
+                group.start_soon(watch, self.done)
+                await finished.wait()
+                group.cancel_scope.cancel()
+        assert event.is_set(), "Plugin peer exited before the expected processing boundary"
+
     async def connect(self, group):
-        group.start_soon(self.run)
-        await self.input.send({"type": "websocket.connect"})
-        await wait(self.welcome)
+        await group.start(self.run)
+        await self.input.send(({"type": "websocket.connect"}, None))
+        await self._wait(self.welcome)
         await self.send_json(
             {
                 "type": "register",
@@ -155,20 +187,22 @@ class PluginStream:
                 "unity_version": "6000.0",
             }
         )
+        await self._wait(self.registered)
         assert self.session_id is not None
 
     async def send_json(self, payload):
-        await wait(self.ready)
-        self.ready = anyio.Event()
-        await self.input.send({"type": "websocket.receive", "text": json.dumps(payload)})
-        await wait(self.ready)
+        processed = anyio.Event()
+        await self.input.send(
+            ({"type": "websocket.receive", "text": json.dumps(payload)}, processed)
+        )
+        await self._wait(processed)
 
     async def catalog(self, tools):
         await self.send_json({"type": "register_tools", "tools": tools})
 
     async def close(self):
-        if not self.done.is_set():
-            await self.input.send({"type": "websocket.disconnect", "code": 1000})
+        if self.started and not self.done.is_set():
+            await self.input.send(({"type": "websocket.disconnect", "code": 1000}, None))
             await wait(self.done)
 
 
