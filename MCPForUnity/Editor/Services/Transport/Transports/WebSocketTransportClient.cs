@@ -931,6 +931,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             var tools = await GetEnabledToolsOnMainThreadAsync(token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             McpLog.Info($"[WebSocket] Preparing to register {tools.Count} tool(s) with the bridge.", false);
+            var payload = BuildToolsRegistration(tools);
+            await SendJsonAsync(payload, token).ConfigureAwait(false);
+            McpLog.Info($"[WebSocket] Sent {tools.Count} tools registration", false);
+        }
+
+        private static JObject BuildToolsRegistration(IReadOnlyList<ToolMetadata> tools)
+        {
             var toolsArray = new JArray();
 
             foreach (var tool in tools)
@@ -964,13 +971,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     }
                 }
                 toolObj["parameters"] = paramsArray;
+                ToolSchemaBuilder.AppendSchema(toolObj, tool);
                 toolsArray.Add(toolObj);
             }
 
-            var payload = new JObject { ["type"] = "register_tools", ["tools"] = toolsArray };
-
-            await SendJsonAsync(payload, token).ConfigureAwait(false);
-            McpLog.Info($"[WebSocket] Sent {tools.Count} tools registration", false);
+            return new JObject { ["type"] = "register_tools", ["tools"] = toolsArray };
         }
 
         public async Task ReregisterToolsAsync()

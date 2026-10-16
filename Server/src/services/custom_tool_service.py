@@ -26,6 +26,12 @@ from models.models import (
     parse_tool_parameter_default,
 )
 from models.response_lifetime import ResponsePollLifetime
+from models.custom_tool_schema import (
+    PreparedSchema,
+    SchemaContractError,
+    prepare_descriptor,
+    validation_contract,
+)
 from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool
 from transport.unity_transport import send_with_unity_instance
@@ -178,6 +184,10 @@ class CustomToolService:
     def __init__(self, mcp: FastMCP, project_scoped_tools: bool = True):
         CustomToolService._instance = self
         self._mcp = mcp
+        if isinstance(getattr(mcp, "middleware", None), list):
+            from services.custom_tool_schema_tool import install_schema_listing_policy
+
+            install_schema_listing_policy(mcp)
         self._project_scoped_tools = project_scoped_tools
         self._project_tools: dict[str, dict[str, ToolDefinitionModel]] = {}
         self._hash_to_project: dict[str, str] = {}
@@ -389,14 +399,23 @@ class CustomToolService:
         )
 
         try:
-            inputs = self._get_input_model(definition)
-            supplied_names = set(params)
-            validated = inputs.model_validate(params)
-            params = {
-                name: value
-                for name, value in validated.model_dump(by_alias=True).items()
-                if value is not None or (not omit_nulls and name in supplied_names)
-            }
+            schema = prepare_descriptor(
+                definition.schema_version,
+                definition.input_schema,
+                definition.output_data_schema,
+                definition.structured_output,
+            )
+            if schema is not None:
+                params = schema.validate_input(params)
+            else:
+                inputs = self._get_input_model(definition)
+                supplied_names = set(params)
+                validated = inputs.model_validate(params)
+                params = {
+                    name: value
+                    for name, value in validated.model_dump(by_alias=True).items()
+                    if value is not None or (not omit_nulls and name in supplied_names)
+                }
         except (ValidationError, ValueError):
             return MCPResponse(
                 success=False, message=f"Invalid parameters for custom tool '{tool_name}'"
@@ -404,7 +423,7 @@ class CustomToolService:
 
         if not definition.requires_polling:
             response = await self._send_custom(guard, unity_instance, tool_name, params, user_id)
-            result = self._normalize_response(response)
+            result = self._finish_schema_response(response, schema)
             logger.info("Custom tool completed (success=%s, polled=False)", result.success)
             return result
 
@@ -441,6 +460,7 @@ class CustomToolService:
                         deadline=deadline,
                         responses=responses,
                         catalog_guard=guard,
+                        output_schema=schema,
                     )
                 except asyncio.TimeoutError:
                     return self._poll_timeout(tool_name, None)
@@ -550,6 +570,7 @@ class CustomToolService:
         deadline: float | None = None,
         responses: ResponsePollLifetime | None = None,
         catalog_guard=None,
+        output_schema: PreparedSchema | None = None,
     ) -> MCPResponse:
         async with (
             nullcontext(responses) if responses is not None else ResponsePollLifetime() as responses
@@ -596,7 +617,9 @@ class CustomToolService:
                     )
 
                     if status in ("complete", "error", "final"):
-                        return self._normalize_response(response)
+                        return self._finish_schema_response(
+                            response, output_schema, poll_params.get("job_id")
+                        )
 
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -682,7 +705,7 @@ class CustomToolService:
 
         return "final", _DEFAULT_POLL_INTERVAL
 
-    def _normalize_response(self, response) -> MCPResponse:
+    def _normalize_response(self, response, *, typed_output: bool = False) -> MCPResponse:
         if isinstance(response, MCPResponse):
             return response
         if isinstance(response, dict):
@@ -693,10 +716,39 @@ class CustomToolService:
                 message=response.get("message"),
                 error=response.get("error"),
                 hint=response.get("hint"),
-                data=response.get("data", response),
+                data=response.get(
+                    "data", None if typed_output and "success" in response else response
+                ),
             )
 
         return MCPResponse(success=False, message=str(response))
+
+    def _finish_schema_response(
+        self, response, schema: PreparedSchema | None, job_id=None
+    ) -> MCPResponse:
+        result = self._normalize_response(
+            response, typed_output=schema is not None and schema.output_json is not None
+        )
+        if schema is not None and result.success:
+            try:
+                schema.validate_output(result.data)
+            except SchemaContractError:
+                if job_id is None and isinstance(result.data, dict):
+                    job_id = result.data.get("job_id")
+                diagnostic = {
+                    "reason": "custom_tool_output_invalid",
+                    "execution_status": "unknown",
+                    "retry_safe": False,
+                }
+                if isinstance(job_id, str) and len(job_id) <= 256:
+                    diagnostic["job_id"] = job_id
+                return MCPResponse(
+                    success=False,
+                    message="Custom tool returned invalid output",
+                    hint="inspect_state_before_retry",
+                    data=diagnostic,
+                )
+        return result
 
     def _safe_response(self, response):
         if isinstance(response, dict):
@@ -738,6 +790,26 @@ class CustomToolService:
 
     @staticmethod
     def _wire_contract(definition):
+        schema = prepare_descriptor(
+            definition.schema_version,
+            definition.input_schema,
+            definition.output_data_schema,
+            definition.structured_output,
+        )
+        if schema is not None:
+            return json.dumps(
+                {
+                    "schema_version": 1,
+                    "input_schema": validation_contract(json.loads(schema.input_json)),
+                    "output_data_schema": None
+                    if schema.output_json is None
+                    else validation_contract(json.loads(schema.output_json)),
+                    "structured_output": bool(definition.structured_output),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
         aliases = {
             "int": "integer",
             "float": "number",
@@ -1023,10 +1095,17 @@ class CustomToolService:
 
     def _prepare_global_tool(self, definition: ToolDefinitionModel) -> Tool:
         """Generate the runtime validator and SDK schema without publishing a tool."""
-        self._get_input_model(definition).model_json_schema()
+        schema = prepare_descriptor(
+            definition.schema_version,
+            definition.input_schema,
+            definition.output_data_schema,
+            definition.structured_output,
+        )
+        if schema is None:
+            self._get_input_model(definition).model_json_schema()
         handler = self._build_global_tool_handler(definition)
         tool_handler = handler
-        if not definition.structured_output:
+        if schema is None and not definition.structured_output:
             from fastmcp.tools import ToolResult
             from mcp.types import TextContent
 
@@ -1042,6 +1121,11 @@ class CustomToolService:
         wrapped = telemetry_tool(definition.name)(wrapped)
         # Python 3.14 wraps copies __annotate__, not dynamically assigned annotations.
         wrapped.__annotations__ = dict(handler.__annotations__)
+        if schema is not None:
+            from services.custom_tool_schema_tool import SchemaTool, require_schema_listing_policy
+
+            require_schema_listing_policy(self._mcp)
+            return SchemaTool(definition, wrapped)
         return Tool.from_function(
             wrapped,
             name=definition.name,

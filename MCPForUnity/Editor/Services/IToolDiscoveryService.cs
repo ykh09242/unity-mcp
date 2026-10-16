@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Services
 {
@@ -21,6 +22,10 @@ namespace MCPForUnity.Editor.Services
         public int MaxPollSeconds { get; set; } = 0;
         public bool IsBuiltIn { get; set; }
         public string Group { get; set; } = "core";
+        public int SchemaVersion { get; set; }
+        public JObject InputSchema { get; set; }
+        public JObject OutputDataSchema { get; set; }
+        public string SchemaError { get; set; }
     }
 
     /// <summary>

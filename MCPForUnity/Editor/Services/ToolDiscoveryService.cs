@@ -148,7 +148,7 @@ namespace MCPForUnity.Editor.Services
                 string description = toolAttr.Description ?? $"Tool: {toolName}";
 
                 // Extract parameters
-                var parameters = ExtractParameters(type);
+                var parameters = toolAttr.SchemaVersion == 0 ? ExtractParameters(type) : new List<ParameterMetadata>();
 
                 var metadata = new ToolMetadata
                 {
@@ -165,9 +165,24 @@ namespace MCPForUnity.Editor.Services
                     PollAction = string.IsNullOrEmpty(toolAttr.PollAction) ? "status" : toolAttr.PollAction,
                     MaxPollSeconds = toolAttr.MaxPollSeconds,
                     Group = toolAttr.Group ?? "core",
+                    SchemaVersion = toolAttr.SchemaVersion,
                 };
 
                 metadata.IsBuiltIn = StringCaseUtility.IsBuiltInMcpType(type, metadata.AssemblyName, "MCPForUnity.Editor.Tools");
+
+                if (toolAttr.SchemaVersion != 0 || toolAttr.OutputDataType != null || toolAttr.OutputAllowNull)
+                {
+                    try
+                    {
+                        ToolSchemaBuilder.Build(type, toolAttr, metadata);
+                    }
+                    catch (Exception)
+                    {
+                        // Keep the failed member so a refresh cannot turn it into an authoritative removal.
+                        metadata.SchemaError = "Custom rich schema discovery failed.";
+                        metadata.InputSchema = metadata.OutputDataSchema = null;
+                    }
+                }
 
                 return metadata;
             }
