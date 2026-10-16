@@ -365,6 +365,9 @@ class GetTestJobData(BaseModel):
     completion_kind: str | None = None
     result_availability: str | None = None
     result_page: dict[str, Any] | None = None
+    native_control: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class GetTestJobResponse(MCPResponse):
@@ -396,6 +399,11 @@ async def run_tests(
         "Initialization timeout in milliseconds (1..2147483647). PlayMode tests may need longer "
         "due to domain reload (default: 15000). Recommended: 120000 for PlayMode.",
     ] = None,
+    run_timeout_ms: Annotated[
+        int | None,
+        Field(strict=True, ge=1, le=600000),
+        "Opt-in native job deadline in milliseconds, including queue/setup. Requires exact supported native control; wait timeout does not cancel Unity.",
+    ] = None,
     clear_stuck: Annotated[
         bool,
         "Clear an orphaned running job instead of starting a run. Use when a job "
@@ -425,6 +433,11 @@ async def run_tests(
             success=False,
             error="init_timeout must be a positive 32-bit integer (milliseconds) or None",
         )
+
+    if run_timeout_ms is not None and (
+        type(run_timeout_ms) is not int or not 1 <= run_timeout_ms <= 600000
+    ):
+        return MCPResponse(success=False, error="run_timeout_ms must be 1..600000 milliseconds")
 
     gate = await preflight(
         ctx, requires_no_tests=True, wait_for_no_compile=True, refresh_if_dirty=True
@@ -457,6 +470,8 @@ async def run_tests(
         params["includeDetails"] = True
     if init_timeout is not None and init_timeout > 0:
         params["initTimeout"] = init_timeout
+    if run_timeout_ms is not None:
+        params["runTimeoutMs"] = run_timeout_ms
 
     response = await unity_transport.send_with_unity_instance(
         async_send_command_with_retry,

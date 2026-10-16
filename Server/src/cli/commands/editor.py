@@ -493,6 +493,12 @@ def execute_menu(menu_path: str):
     default=None,
     help="Wait up to N seconds for completion (default: no wait).",
 )
+@click.option(
+    "--run-timeout-ms",
+    type=click.IntRange(1, 600000),
+    default=None,
+    help="Opt-in native job deadline; requires supported native control.",
+)
 @click.option("--details", is_flag=True, help="Include detailed results for all tests.")
 @click.option("--failed-only", is_flag=True, help="Include details for failed/skipped tests only.")
 @click.option(
@@ -508,6 +514,7 @@ def run_tests(
     details: bool,
     failed_only: bool,
     clear_stuck: bool,
+    run_timeout_ms: int | None = None,
 ):
     """Run Unity tests.
 
@@ -527,6 +534,8 @@ def run_tests(
         return
 
     params: dict[str, Any] = {"mode": mode}
+    if run_timeout_ms is not None:
+        params["runTimeoutMs"] = run_timeout_ms
     if details:
         params["includeDetails"] = True
     if failed_only:
@@ -551,6 +560,16 @@ def run_tests(
             poll_test.callback(job_id, wait, details, failed_only)
             return
 
+    click.echo(format_output(result, config.format))
+
+
+@editor.command("cancel-test")
+@click.argument("job_id")
+@handle_unity_errors
+def cancel_test(job_id: str):
+    """Request native cancellation; accepted intent is not confirmed termination."""
+    config = get_config()
+    result = run_command("cancel_test_job", {"job_id": job_id}, config)
     click.echo(format_output(result, config.format))
 
 

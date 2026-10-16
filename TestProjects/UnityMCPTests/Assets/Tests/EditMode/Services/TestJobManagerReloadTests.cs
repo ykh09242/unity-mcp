@@ -52,9 +52,13 @@ namespace MCPForUnityTests.Editor.Services
 
         private static void InvokeManager(string name, params object[] args) => typeof(TestJobManager).GetMethod(name, PrivateStatic).Invoke(null, args);
 
+        private bool _oldControlDisabled;
+
         [SetUp]
         public void SetUp()
         {
+            _oldControlDisabled = NativeTestRunControl.DisableForTests;
+            NativeTestRunControl.DisableForTests = true;
             _jobs = (Dictionary<string, TestJob>)ManagerField("Jobs").GetValue(null);
             _originalJobs = new Dictionary<string, TestJob>(_jobs);
             _originalCurrent = TestJobManager.CurrentJobId;
@@ -83,6 +87,7 @@ namespace MCPForUnityTests.Editor.Services
         [TearDown]
         public void TearDown()
         {
+            NativeTestRunControl.DisableForTests = _oldControlDisabled;
             ManagerField("ResultStoreOverride").SetValue(null, _originalResultStore);
             if (Directory.Exists(_resultRoot))
                 Directory.Delete(_resultRoot, true);
@@ -426,28 +431,31 @@ namespace MCPForUnityTests.Editor.Services
             bool captured = SessionState.GetBool(capturedKey, false);
             int previousIdle = SessionState.GetInt(idleKey, 4);
             int previousMode = SessionState.GetInt(modeKey, 0);
-            bool hadIdle = EditorPrefs.HasKey("ApplicationIdleTime");
-            bool hadMode = EditorPrefs.HasKey("InteractionMode");
-            int idle = EditorPrefs.GetInt("ApplicationIdleTime", 4);
-            int mode = EditorPrefs.GetInt("InteractionMode", 0);
+            var read = TestRunnerNoThrottle.ReadPreference;
+            var write = TestRunnerNoThrottle.WritePreference;
+            var apply = TestRunnerNoThrottle.ApplyInteractionPreferences;
+            var preferences = new Dictionary<string, int> { ["ApplicationIdleTime"] = 7, ["InteractionMode"] = 0 };
+            int refreshes = 0;
             try
             {
                 SessionState.SetBool(capturedKey, false);
-                EditorPrefs.SetInt("ApplicationIdleTime", 7);
-                EditorPrefs.SetInt("InteractionMode", 0);
+                TestRunnerNoThrottle.ReadPreference = (key, fallback) => preferences.TryGetValue(key, out int value) ? value : fallback;
+                TestRunnerNoThrottle.WritePreference = (key, value) => preferences[key] = value;
+                TestRunnerNoThrottle.ApplyInteractionPreferences = () => refreshes++;
                 TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
-                Assert.AreEqual(0, EditorPrefs.GetInt("ApplicationIdleTime"));
-                Assert.AreEqual(1, EditorPrefs.GetInt("InteractionMode"));
+                Assert.AreEqual(0, preferences["ApplicationIdleTime"]);
+                Assert.AreEqual(1, preferences["InteractionMode"]);
 
                 var callbackType = typeof(TestRunnerNoThrottle).GetNestedType("TestCallbacks", BindingFlags.NonPublic);
                 var callback = Activator.CreateInstance(callbackType, true) as IErrorCallbacks;
                 Assert.NotNull(callback, "Initialization errors must be observed even before RunStarted.");
                 callback.OnError("Prebuild setup failed");
 
-                Assert.AreEqual(7, EditorPrefs.GetInt("ApplicationIdleTime"));
-                Assert.AreEqual(0, EditorPrefs.GetInt("InteractionMode"));
+                Assert.AreEqual(7, preferences["ApplicationIdleTime"]);
+                Assert.AreEqual(0, preferences["InteractionMode"]);
                 Assert.IsFalse(SessionState.GetBool(activeKey, true));
                 Assert.IsFalse(SessionState.GetBool(capturedKey, true));
+                Assert.AreEqual(2, refreshes, "Apply and error restoration must use only the owned refresh action.");
             }
             finally
             {
@@ -455,15 +463,9 @@ namespace MCPForUnityTests.Editor.Services
                 SessionState.SetBool(capturedKey, captured);
                 SessionState.SetInt(idleKey, previousIdle);
                 SessionState.SetInt(modeKey, previousMode);
-                if (hadIdle)
-                    EditorPrefs.SetInt("ApplicationIdleTime", idle);
-                else
-                    EditorPrefs.DeleteKey("ApplicationIdleTime");
-                if (hadMode)
-                    EditorPrefs.SetInt("InteractionMode", mode);
-                else
-                    EditorPrefs.DeleteKey("InteractionMode");
-                typeof(TestRunnerNoThrottle).GetMethod("ForceEditorToApplyInteractionPrefs", PrivateStatic).Invoke(null, null);
+                TestRunnerNoThrottle.ReadPreference = read;
+                TestRunnerNoThrottle.WritePreference = write;
+                TestRunnerNoThrottle.ApplyInteractionPreferences = apply;
             }
         }
 
