@@ -29,7 +29,32 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Unknown job_id.");
             }
 
-            var payload = TestJobManager.ToSerializable(job, includeDetails, includeFailedTests);
+            object payload;
+            if (@params?["page_size"] != null || @params?["cursor"] != null)
+            {
+                if (
+                    @params?["page_size"]?.Type != JTokenType.Integer
+                    || (long)@params["page_size"] < 1
+                    || (long)@params["page_size"] > 100
+                    || @params?["cursor"] != null && @params["cursor"].Type != JTokenType.String
+                    || !includeDetails && !includeFailedTests
+                )
+                    return new ErrorResponse("Paging requires page_size 1..100, optional string cursor and explicit detail selection.");
+                try
+                {
+                    var value = JObject.FromObject(TestJobManager.ToSerializable(job, false, false));
+                    value["result_page"] = JObject.FromObject(
+                        TestJobManager.Page(job, (int)@params["page_size"], (string)@params["cursor"], !includeDetails && includeFailedTests)
+                    );
+                    payload = value;
+                }
+                catch (Exception)
+                {
+                    return new ErrorResponse("Test result page is unavailable or the cursor is invalid.");
+                }
+            }
+            else
+                payload = TestJobManager.ToSerializable(job, includeDetails, includeFailedTests);
             return new SuccessResponse("Test job status retrieved.", payload);
         }
     }

@@ -1230,3 +1230,13 @@ unity-mcp [GLOBAL_OPTIONS] command subcommand [ARGS] [OPTIONS]
    unity-mcp material info "Assets/Materials/Mat.mat"
    unity-mcp asset info "Assets/Prefabs/Player.prefab"
    ```
+
+## Completed test results and exports
+
+`editor tests` and `editor poll-test JOB` keep their existing defaults. For bounded completed details, use `editor poll-test JOB --details --page-size 100`, then pass the returned `result_page.next_cursor` with `--cursor`. `--failed-only` includes non-Passed results, including skipped tests. Paged reads return immediately and do not wait for a running job. Legacy `--details` without paging still requests a whole result and can reach transport limits.
+
+Use `editor export-test JOB --format json --output results.json` or `--format junit --output junit.xml` to stream a completed export into a new local file. Existing output files are never replaced. The remote export API accepts job id, format and cursor; it does not accept output paths. The CLI verifies one immutable generation, total byte count and SHA-256 before publishing a file.
+
+Completed summaries survive managed domain reload in the current Editor session. Detail artifacts are project-local Library data: at most 10 retained jobs, 24 hours, 32 MiB per job, 128 MiB total, and 10,000 captured results. Optional fields can be truncated with explicit metadata. Final-tree traversal is also limited to 50,000 visited nodes and depth 128; these limits do not preempt work inside Unity/native getters. Traversal, quota or storage failure preserves the authoritative terminal summary and reports details unavailable. Missing, corrupt or evicted details do not change the recorded test outcome. Interrupted and legacy jobs without a recorded summary are not treated as completed empty runs. Editor restart durability is not promised; a reload and a restarted Editor are different lifetimes.
+
+On Windows, test-result storage applies a portable Unity/Mono compatibility budget of fewer than 260 characters per absolute path. A path rejected by that admission reports `path_limit_exceeded`; an actual filesystem PathTooLongException reports `path_too_long`. Other write failures remain `write_failed`. These detail-storage failures preserve the actual terminal summary/status; the shorter layout does not promise all Windows project paths fit.

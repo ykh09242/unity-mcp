@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.TestTools.TestRunner.Api;
 using UnityEditorInternal;
@@ -41,6 +44,10 @@ namespace MCPForUnity.Editor.Services
         public string Error { get; set; }
         public TestRunResult Result { get; set; }
         public long InitTimeoutMs { get; set; }
+        public TestRunSummary RetainedSummary { get; set; }
+        public JObject ResultArtifact { get; set; }
+        public string CompletionKind { get; set; }
+        public string ResultAvailability { get; set; }
     }
 
     /// <summary>
@@ -65,6 +72,26 @@ namespace MCPForUnity.Editor.Services
         private static readonly Dictionary<string, TestJob> Jobs = new();
         private static string _currentJobId;
         private static long _lastPersistUnixMs;
+        private static TestJobResultStore ResultStoreOverride;
+        private static TestJobResultStore _resultStore;
+        internal static TestJobResultStore ResultStore
+        {
+            get
+            {
+                if (ResultStoreOverride != null)
+                    return ResultStoreOverride;
+                if (_resultStore != null)
+                    return _resultStore;
+                const string key = "MCPForUnity.TestResultSessionV1";
+                string id = SessionState.GetString(key, "");
+                if (string.IsNullOrEmpty(id))
+                {
+                    id = Guid.NewGuid().ToString("N");
+                    SessionState.SetString(key, id);
+                }
+                return _resultStore = new TestJobResultStore(Directory.GetParent(UnityEngine.Application.dataPath).FullName, id);
+            }
+        }
 
         static TestJobManager()
         {
@@ -156,6 +183,7 @@ namespace MCPForUnity.Editor.Services
                     long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     job.Status = TestJobStatus.Failed;
                     job.Error = "Job cleared manually (stuck or orphaned)";
+                    job.CompletionKind = "interrupted";
                     job.FinishedUnixMs = now;
                     job.LastUpdateUnixMs = now;
                     McpLog.Warn($"[TestJobManager] Manually cleared stuck job {_currentJobId}");
@@ -171,6 +199,7 @@ namespace MCPForUnity.Editor.Services
 
         private sealed class PersistedState
         {
+            public int version { get; set; } = 2;
             public string current_job_id { get; set; }
             public List<PersistedJob> jobs { get; set; }
         }
@@ -192,6 +221,11 @@ namespace MCPForUnity.Editor.Services
             public List<TestJobFailure> failures_so_far { get; set; }
             public string error { get; set; }
             public long init_timeout_ms { get; set; }
+            public TestRunSummary summary { get; set; }
+            public JObject artifact { get; set; }
+            public string completion_kind { get; set; }
+            public string result_availability { get; set; }
+            public int omitted_failure_previews { get; set; }
         }
 
         private static TestJobStatus ParseStatus(string status)
@@ -210,6 +244,102 @@ namespace MCPForUnity.Editor.Services
             };
         }
 
+        private static bool Integer(JToken value, long maximum = long.MaxValue)
+        {
+            if (value?.Type != JTokenType.Integer)
+                return false;
+            try
+            {
+                long number = (long)value;
+                return number >= 0 && number <= maximum;
+            }
+            catch (OverflowException)
+            {
+                return false;
+            }
+        }
+
+        private static bool ValidSummary(JToken token)
+        {
+            if (token is not JObject value)
+                return false;
+            JToken Field(string name) => value.Properties().FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))?.Value;
+            foreach (string name in new[] { "total", "passed", "failed", "skipped" })
+                if (!Integer(Field(name), int.MaxValue))
+                    return false;
+            var duration = Field("durationSeconds");
+            bool supportedDuration =
+                duration?.Type == JTokenType.Integer
+                || duration?.Type == JTokenType.Float
+                || duration?.Type == JTokenType.String && ((string)duration == "NaN" || (string)duration == "Infinity" || (string)duration == "-Infinity");
+            return supportedDuration && Field("resultState")?.Type == JTokenType.String && Encoding.UTF8.GetByteCount((string)Field("resultState")) <= 256;
+        }
+
+        private static PersistedState ReadHistory(string json)
+        {
+            if (Encoding.UTF8.GetByteCount(json) > 48 * 1024)
+                throw new InvalidDataException("history byte limit");
+            using var reader = new JsonTextReader(new StringReader(json)) { MaxDepth = 32, DateParseHandling = DateParseHandling.None };
+            var envelope = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+            if (reader.Read() || envelope["version"] != null && (!Integer(envelope["version"], 2) || (int)envelope["version"] < 1))
+                throw new InvalidDataException("unsupported history schema");
+            if (envelope["jobs"] is not JArray rows || rows.Count > MaxJobsToKeep)
+                throw new InvalidDataException("history count limit");
+            var state = new PersistedState
+            {
+                current_job_id = envelope["current_job_id"]?.Type == JTokenType.String ? (string)envelope["current_job_id"] : null,
+                jobs = new List<PersistedJob>(),
+            };
+            foreach (var token in rows)
+            {
+                if (token is not JObject source)
+                    continue;
+                try
+                {
+                    var row = (JObject)source.DeepClone();
+                    string id = row["job_id"]?.Type == JTokenType.String ? (string)row["job_id"] : null;
+                    string status = row["status"]?.Type == JTokenType.String ? ((string)row["status"]).Trim().ToLowerInvariant() : null;
+                    if (
+                        string.IsNullOrWhiteSpace(id)
+                        || Encoding.UTF8.GetByteCount(id) > 256
+                        || status != "running" && status != "failed" && status != "succeeded"
+                        || !Integer(row["started_unix_ms"])
+                        || !Integer(row["last_update_unix_ms"])
+                        || !Integer(row["completed_tests"], int.MaxValue)
+                    )
+                        continue;
+                    bool corrupt = false;
+                    if (row["summary"] != null && row["summary"].Type != JTokenType.Null && !ValidSummary(row["summary"]))
+                    {
+                        row["summary"] = null;
+                        corrupt = true;
+                    }
+                    if (row["artifact"] != null && row["artifact"].Type != JTokenType.Null && !TestJobResultStore.ValidDescriptor(row["artifact"], id))
+                    {
+                        row["artifact"] = null;
+                        corrupt = true;
+                    }
+                    if (corrupt)
+                        row["result_availability"] = "corrupt";
+                    if (Encoding.UTF8.GetByteCount(row.ToString(Formatting.None)) > 4096)
+                    {
+                        row["artifact"] = null;
+                        row["failures_so_far"] = new JArray();
+                        row["error"] = null;
+                        row["current_test_full_name"] = null;
+                        row["last_finished_test_full_name"] = null;
+                        row["result_availability"] = "corrupt";
+                    }
+                    if (Encoding.UTF8.GetByteCount(row.ToString(Formatting.None)) > 4096)
+                        continue;
+                    state.jobs.Add(row.ToObject<PersistedJob>());
+                }
+                catch (Exception error)
+                    when (error is JsonException || error is ArgumentException || error is OverflowException || error is InvalidCastException) { }
+            }
+            return state;
+        }
+
         private static void TryRestoreFromSessionState()
         {
             try
@@ -222,7 +352,7 @@ namespace MCPForUnity.Editor.Services
                     return;
                 }
 
-                var state = JsonConvert.DeserializeObject<PersistedState>(json);
+                var state = ReadHistory(json);
                 if (state?.jobs == null)
                 {
                     return;
@@ -255,7 +385,10 @@ namespace MCPForUnity.Editor.Services
                             FailuresSoFar = pj.failures_so_far ?? new List<TestJobFailure>(),
                             Error = pj.error,
                             InitTimeoutMs = pj.init_timeout_ms,
-                            // Intentionally not persisted to avoid ballooning SessionState.
+                            RetainedSummary = pj.summary,
+                            ResultArtifact = pj.artifact,
+                            CompletionKind = pj.completion_kind,
+                            ResultAvailability = pj.result_availability ?? "legacy_unavailable",
                             Result = null,
                         };
                     }
@@ -289,21 +422,23 @@ namespace MCPForUnity.Editor.Services
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // Restoration is best-effort; never block editor load.
-                McpLog.Warn($"[TestJobManager] Failed to restore SessionState: {ex.Message}");
+                McpLog.Warn("[TestJobManager] Stored job history could not be restored.");
             }
         }
 
-        private static void PersistToSessionState(bool force = false)
+        private static string Preview(string text) => text == null ? null : TestJobResultStore.BoundedText(text, 256, out _);
+
+        private static bool PersistToSessionState(bool force = false)
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             // Throttle non-critical updates to reduce overhead during large test runs
             if (!force && (now - _lastPersistUnixMs) < MinPersistIntervalMs)
             {
-                return;
+                return true;
             }
 
             try
@@ -336,28 +471,60 @@ namespace MCPForUnity.Editor.Services
                             last_update_unix_ms = j.LastUpdateUnixMs,
                             total_tests = j.TotalTests,
                             completed_tests = j.CompletedTests,
-                            current_test_full_name = j.CurrentTestFullName,
+                            current_test_full_name = Preview(j.CurrentTestFullName),
                             current_test_started_unix_ms = j.CurrentTestStartedUnixMs,
-                            last_finished_test_full_name = j.LastFinishedTestFullName,
+                            last_finished_test_full_name = Preview(j.LastFinishedTestFullName),
                             last_finished_unix_ms = j.LastFinishedUnixMs,
-                            failures_so_far = (j.FailuresSoFar ?? new List<TestJobFailure>()).Take(FailureCap).ToList(),
-                            error = j.Error,
+                            failures_so_far = (j.FailuresSoFar ?? new List<TestJobFailure>())
+                                .Take(FailureCap)
+                                .Select(f => new TestJobFailure { FullName = Preview(f.FullName), Message = Preview(f.Message) })
+                                .ToList(),
+                            error = Preview(j.Error),
                             init_timeout_ms = j.InitTimeoutMs,
+                            summary = j.RetainedSummary,
+                            artifact = j.ResultArtifact,
+                            completion_kind = j.CompletionKind,
+                            result_availability = j.ResultAvailability,
                         })
                         .ToList();
 
+                    foreach (var persisted in jobs)
+                    {
+                        while (Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(persisted)) > 4096 && persisted.failures_so_far.Count > 0)
+                        {
+                            persisted.failures_so_far.RemoveAt(persisted.failures_so_far.Count - 1);
+                            persisted.omitted_failure_previews++;
+                        }
+                        if (Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(persisted)) > 4096)
+                        {
+                            persisted.current_test_full_name = null;
+                            persisted.last_finished_test_full_name = null;
+                            persisted.error = null;
+                        }
+                    }
+                    if (jobs.Any(row => Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(row)) > 4096))
+                        throw new InvalidDataException("Test job row exceeds its byte limit.");
                     snapshot = new PersistedState { current_job_id = _currentJobId, jobs = jobs };
                 }
 
+                string encoded = JsonConvert.SerializeObject(snapshot);
+                if (Encoding.UTF8.GetByteCount(encoded) > 48 * 1024)
+                    throw new InvalidDataException("Test job metadata exceeds its byte limit.");
                 SessionState.SetString(SessionKeyCurrentJobId, snapshot.current_job_id ?? string.Empty);
-                SessionState.SetString(SessionKeyJobs, JsonConvert.SerializeObject(snapshot));
+                SessionState.SetString(SessionKeyJobs, encoded);
+                if (SessionState.GetString(SessionKeyJobs, "") != encoded)
+                    return false;
                 _lastPersistUnixMs = now;
+                return true;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[TestJobManager] Failed to persist SessionState: {ex.Message}");
+                McpLog.Warn("[TestJobManager] Failed to persist bounded job metadata.");
+                return false;
             }
         }
+
+        internal static bool PersistResultArtifactMetadata() => PersistToSessionState(force: true);
 
         public static string StartJob(TestMode mode, TestFilterOptions filterOptions = null, long initTimeoutMs = 0)
         {
@@ -461,6 +628,7 @@ namespace MCPForUnity.Editor.Services
                 job.Status = resultPayload != null && resultPayload.Failed > 0 ? TestJobStatus.Failed : TestJobStatus.Succeeded;
                 job.Error = null;
                 job.Result = resultPayload;
+                RetainResult(job, resultPayload);
                 if (resultPayload != null)
                 {
                     job.TotalTests = resultPayload.Total;
@@ -484,6 +652,7 @@ namespace MCPForUnity.Editor.Services
                 }
                 job.Status = TestJobStatus.Failed;
                 job.Error = message;
+                job.CompletionKind = "interrupted";
                 job.LastUpdateUnixMs = now;
                 job.FinishedUnixMs = now;
                 job.CurrentTestFullName = null;
@@ -559,7 +728,11 @@ namespace MCPForUnity.Editor.Services
                     if (job.FailuresSoFar.Count < FailureCap)
                     {
                         job.FailuresSoFar.Add(
-                            new TestJobFailure { FullName = testFullName, Message = string.IsNullOrWhiteSpace(message) ? "Test failed" : message }
+                            new TestJobFailure
+                            {
+                                FullName = Preview(testFullName),
+                                Message = string.IsNullOrWhiteSpace(message) ? "Test failed" : Preview(message),
+                            }
                         );
                     }
                 }
@@ -612,6 +785,7 @@ namespace MCPForUnity.Editor.Services
                         McpLog.Warn($"[TestJobManager] Job {jobId} failed to initialize within {initTimeout}ms, auto-failing");
                         job.Status = TestJobStatus.Failed;
                         job.Error = "Test job failed to initialize (tests did not start within timeout)";
+                        job.CompletionKind = "interrupted";
                         job.FinishedUnixMs = now;
                         job.LastUpdateUnixMs = now;
                         if (_currentJobId == jobId)
@@ -647,9 +821,25 @@ namespace MCPForUnity.Editor.Services
             }
 
             object resultPayload = null;
-            if (job.Status != TestJobStatus.Running && job.Result != null)
+            if (job.Status != TestJobStatus.Running)
             {
-                resultPayload = job.Result.ToSerializable(job.Mode, includeDetails, includeFailedTests);
+                try
+                {
+                    var result = RestoreResult(job);
+                    if (result != null)
+                        resultPayload = result.ToSerializable(job.Mode, includeDetails, includeFailedTests);
+                }
+                catch (Exception error)
+                {
+                    job.ResultAvailability = error is FileNotFoundException ? (error.Message == "evicted" ? "evicted" : "missing") : "corrupt";
+                    if (job.RetainedSummary != null)
+                        resultPayload = new
+                        {
+                            mode = job.Mode,
+                            summary = job.RetainedSummary.ToSerializable(),
+                            results = (object)null,
+                        };
+                }
             }
 
             return new
@@ -677,6 +867,9 @@ namespace MCPForUnity.Editor.Services
                 },
                 error = job.Error,
                 result = resultPayload,
+                result_truncated_count = (int?)job.ResultArtifact?["truncated_result_count"] ?? 0,
+                completion_kind = job.CompletionKind,
+                result_availability = job.ResultAvailability ?? (job.Result == null ? "legacy_unavailable" : "available"),
                 diagnostics = BuildDiagnostics(
                     job,
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
@@ -688,6 +881,69 @@ namespace MCPForUnity.Editor.Services
                     EditorApplication.isUpdating
                 ),
             };
+        }
+
+        private static void RetainResult(TestJob job, TestRunResult result)
+        {
+            if (result == null)
+            {
+                job.CompletionKind = "interrupted";
+                return;
+            }
+            job.CompletionKind = "completed";
+            job.RetainedSummary = result.Summary;
+            job.ResultArtifact = result.Artifact;
+            job.ResultAvailability = result.Availability;
+            if (result.Artifact == null && result.Availability == null)
+            {
+                try
+                {
+                    job.ResultArtifact = ResultStore.Save(job.JobId, job.Mode, result, job.FinishedUnixMs ?? job.LastUpdateUnixMs);
+                    job.ResultAvailability = "available";
+                }
+                catch (Exception error)
+                {
+                    job.ResultAvailability =
+                        error is PathTooLongException ? "path_too_long"
+                        : error is InvalidDataException && error.Message == "path_limit_exceeded" ? "path_limit_exceeded"
+                        : error.Message == "quota_exceeded" ? "quota_exceeded"
+                        : "write_failed";
+                }
+            }
+            if (job.ResultArtifact != null)
+            {
+                job.ResultArtifact["status"] = job.Status.ToString().ToLowerInvariant();
+                job.ResultArtifact["started_unix_ms"] = job.StartedUnixMs;
+                job.ResultArtifact["finished_unix_ms"] = job.FinishedUnixMs;
+            }
+        }
+
+        private static TestRunResult RestoreResult(TestJob job)
+        {
+            if (job.ResultArtifact != null)
+                ResultStore.Manifest(job.JobId, job.ResultArtifact);
+            if (job.Result != null)
+                return job.Result;
+            if (job.RetainedSummary == null)
+                return null;
+            if (job.ResultArtifact == null)
+                return new TestRunResult(job.RetainedSummary, Array.Empty<TestRunTestResult>());
+            ResultStore.Manifest(job.JobId, job.ResultArtifact);
+            return new TestRunResult(job.RetainedSummary, ResultStore.Results(job.JobId, job.ResultArtifact));
+        }
+
+        internal static string ModeForCapture(string jobId)
+        {
+            // RunFinished must not call GetJob: polling can expire initialization.
+            lock (LockObj)
+                return jobId != null && Jobs.TryGetValue(jobId, out var job) ? job.Mode : null;
+        }
+
+        internal static object Page(TestJob job, int size, string cursor, bool failedOnly)
+        {
+            if (job.CompletionKind != "completed" || job.ResultArtifact == null)
+                throw new InvalidOperationException("Test result details are unavailable.");
+            return ResultStore.ReadPage(job.JobId, job.ResultArtifact, size, cursor, failedOnly);
         }
 
         // Pure observation core: tests can model a Linux/Vulkan environment without
@@ -864,6 +1120,7 @@ namespace MCPForUnity.Editor.Services
                     existing.Status = result != null && result.Failed > 0 ? TestJobStatus.Failed : TestJobStatus.Succeeded;
                     existing.Error = null;
                     existing.Result = result;
+                    RetainResult(existing, result);
                 }
 
                 if (_currentJobId == jobId)

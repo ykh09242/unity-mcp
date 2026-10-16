@@ -529,7 +529,10 @@ namespace MCPForUnity.Editor.Services
             // This handles domain reload scenarios (e.g., PlayMode tests) where the TestRunnerService
             // is recreated and _runCompletionSource is lost, but TestJobManager state persists via
             // SessionState and the Test Runner still delivers the RunFinished callback.
-            var payload = _runCompletionSource != null || IsTrackingCurrentJob ? TestRunResult.Create(result, _leafResults) : null;
+            var payload =
+                _runCompletionSource != null || IsTrackingCurrentJob
+                    ? TestRunResult.Create(result, _leafResults, () => TestJobManager.ResultStore, _trackedJobId, TestJobManager.ModeForCapture(_trackedJobId))
+                    : null;
             CompleteRun(payload, null);
         }
 
@@ -847,6 +850,8 @@ namespace MCPForUnity.Editor.Services
 
         public TestRunSummary Summary { get; }
         public IReadOnlyList<TestRunTestResult> Results { get; }
+        internal Newtonsoft.Json.Linq.JObject Artifact { get; set; }
+        internal string Availability { get; set; }
 
         public int Total => Summary.Total;
         public int Passed => Summary.Passed;
@@ -881,57 +886,111 @@ namespace MCPForUnity.Editor.Services
             };
         }
 
-        internal static TestRunResult Create(ITestResultAdaptor summary, IReadOnlyList<ITestResultAdaptor> tests)
+        internal static TestRunResult Create(
+            ITestResultAdaptor summary,
+            IReadOnlyList<ITestResultAdaptor> tests,
+            Func<TestJobResultStore> storeFactory = null,
+            string jobId = null,
+            string mode = null
+        )
         {
-            // RunFinished includes the complete result tree, including tests completed
-            // before a domain reload erased the service's per-test callback list.
-            var resultLeaves = new List<ITestResultAdaptor>();
-            if (summary != null && summary.HasChildren)
+            var authoritative =
+                summary == null
+                    ? null
+                    : new TestRunSummary(
+                        summary.PassCount + summary.FailCount + summary.SkipCount,
+                        summary.PassCount,
+                        summary.FailCount,
+                        summary.SkipCount,
+                        summary.Duration,
+                        summary.ResultState ?? "Unknown"
+                    );
+            try
             {
-                CollectResultLeaves(summary, resultLeaves);
+                var store = storeFactory?.Invoke();
+                var rows = CaptureLeaves(summary, tests);
+                if (store != null && jobId != null && authoritative != null)
+                {
+                    var descriptor = store.SaveCapture(jobId, mode, authoritative, rows, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    return new TestRunResult(authoritative, store.Results(jobId, descriptor)) { Artifact = descriptor, Availability = "available" };
+                }
+                var materialized = rows.ToList();
+                return new TestRunResult(
+                    authoritative
+                        ?? new TestRunSummary(
+                            materialized.Count,
+                            materialized.Count(t => t.State == "Passed"),
+                            materialized.Count(t => t.State == "Failed"),
+                            materialized.Count(t => t.State == "Skipped"),
+                            materialized.Sum(t => t.DurationSeconds),
+                            "Unknown"
+                        ),
+                    materialized
+                );
             }
-            var materializedTests = (resultLeaves.Count > 0 ? resultLeaves : tests)
-                .Where(t => t != null && t.Test?.IsSuite != true)
-                .Select(TestRunTestResult.FromAdaptor)
-                .ToList();
-
-            int passed = summary?.PassCount ?? materializedTests.Count(t => string.Equals(t.State, "Passed", StringComparison.OrdinalIgnoreCase));
-            int failed = summary?.FailCount ?? materializedTests.Count(t => string.Equals(t.State, "Failed", StringComparison.OrdinalIgnoreCase));
-            int skipped = summary?.SkipCount ?? materializedTests.Count(t => string.Equals(t.State, "Skipped", StringComparison.OrdinalIgnoreCase));
-
-            double duration = summary?.Duration ?? materializedTests.Sum(t => t.DurationSeconds);
-
-            int total = summary != null ? passed + failed + skipped : materializedTests.Count;
-
-            var summaryPayload = new TestRunSummary(total, passed, failed, skipped, duration, summary?.ResultState ?? "Unknown");
-
-            return new TestRunResult(summaryPayload, materializedTests);
+            catch (Exception error)
+            {
+                if (authoritative == null)
+                    throw;
+                string reason =
+                    error is System.IO.PathTooLongException ? "path_too_long"
+                    : error is System.IO.InvalidDataException && error.Message == "path_limit_exceeded" ? "path_limit_exceeded"
+                    : error.Message == "traversal_limit" ? "traversal_limit"
+                    : error.Message == "quota_exceeded" ? "quota_exceeded"
+                    : "write_failed";
+                return new TestRunResult(authoritative, Array.Empty<TestRunTestResult>()) { Availability = reason };
+            }
         }
 
-        private static void CollectResultLeaves(ITestResultAdaptor result, List<ITestResultAdaptor> leaves)
+        private static IEnumerable<TestRunTestResult> CaptureLeaves(ITestResultAdaptor summary, IReadOnlyList<ITestResultAdaptor> fallback)
         {
-            if (result == null)
+            // Managed visit/depth limits do not preempt work inside Unity/native getters.
+            var stack = new Stack<(IEnumerator<ITestResultAdaptor> Nodes, int Depth)>();
+            int visited = 0,
+                leaves = 0;
+            IEnumerable<ITestResultAdaptor> initial = summary != null && summary.HasChildren ? new[] { summary } : fallback;
+            stack.Push((initial.GetEnumerator(), 0));
+            try
             {
-                return;
-            }
-            if (!result.HasChildren)
-            {
-                if (result.Test?.IsSuite != true)
-                    leaves.Add(result);
-                return;
-            }
-            if (result.Children != null)
-            {
-                foreach (var child in result.Children)
+                while (stack.Count > 0)
                 {
-                    CollectResultLeaves(child, leaves);
+                    var frame = stack.Peek();
+                    if (!frame.Nodes.MoveNext())
+                    {
+                        frame.Nodes.Dispose();
+                        stack.Pop();
+                        continue;
+                    }
+                    if (++visited > 50000 || frame.Depth > 128)
+                        throw new System.IO.InvalidDataException("traversal_limit");
+                    var node = frame.Nodes.Current;
+                    if (node == null)
+                        continue;
+                    if (node.HasChildren)
+                    {
+                        var children = node.Children;
+                        if (children != null)
+                            stack.Push((children.GetEnumerator(), frame.Depth + 1));
+                    }
+                    else if (node.Test?.IsSuite != true)
+                    {
+                        if (++leaves > 10000)
+                            throw new System.IO.InvalidDataException("quota_exceeded");
+                        yield return TestRunTestResult.FromAdaptor(node);
+                    }
                 }
+            }
+            finally
+            {
+                while (stack.Count > 0)
+                    stack.Pop().Nodes.Dispose();
             }
         }
     }
 
     public sealed class TestRunSummary
     {
+        [Newtonsoft.Json.JsonConstructor]
         internal TestRunSummary(int total, int passed, int failed, int skipped, double durationSeconds, string resultState)
         {
             Total = total;

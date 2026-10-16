@@ -3,6 +3,7 @@
 import sys
 import time
 from uuid import uuid4
+from pathlib import Path
 import click
 from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any, assert_never
@@ -561,7 +562,21 @@ def run_tests(
 @click.option("--details", is_flag=True, help="Include detailed results for all tests.")
 @click.option("--failed-only", is_flag=True, help="Include details for failed/skipped tests only.")
 @handle_unity_errors
-def poll_test(job_id: str, wait: int, details: bool, failed_only: bool):
+@click.option(
+    "--page-size",
+    type=click.IntRange(1, 100),
+    default=None,
+    help="Read one bounded terminal detail page; requires --details or --failed-only.",
+)
+@click.option("--cursor", default=None, help="Opaque next_cursor from the previous page.")
+def poll_test(
+    job_id: str,
+    wait: int,
+    details: bool,
+    failed_only: bool,
+    page_size: int | None = None,
+    cursor: str | None = None,
+):
     """Poll an async test job for status/results.
 
     \b
@@ -577,6 +592,19 @@ def poll_test(job_id: str, wait: int, details: bool, failed_only: bool):
         params["includeDetails"] = True
     if failed_only:
         params["includeFailedTests"] = True
+
+    if (
+        cursor is not None
+        and page_size is None
+        or page_size is not None
+        and not (details or failed_only)
+    ):
+        raise click.UsageError("Paging requires --page-size and --details or --failed-only")
+    if page_size is not None:
+        params["page_size"] = page_size
+        wait = 0
+    if cursor is not None:
+        params["cursor"] = cursor
 
     deadline = time.monotonic() + max(wait, 0)
     if wait > 0:
@@ -796,3 +824,34 @@ def custom_tool(tool_name: str, params: str):
             except UnityConnectionError:
                 pass
         sys.exit(1)
+
+
+@editor.command("export-test")
+@click.argument("job_id")
+@click.option(
+    "--format",
+    "export_format",
+    type=click.Choice(["json", "junit"]),
+    default="json",
+    show_default=True,
+)
+@click.option("--output", type=click.Path(path_type=Path), required=True)
+@handle_unity_errors
+def export_test(job_id: str, export_format: str, output):
+    """Export completed test evidence to a new local JSON or JUnit file."""
+    from cli.utils.test_job_export import write_export
+    from cli.utils.play_scenario_analysis_io import AnalysisError
+
+    config = get_config()
+
+    def fetch(cursor):
+        params = {"job_id": job_id, "format": export_format}
+        if cursor is not None:
+            params["cursor"] = cursor
+        return run_command("export_test_job", params, config)
+
+    try:
+        path = write_export(output, fetch)
+    except (AnalysisError, OSError, UnicodeError) as error:
+        raise click.ClickException("Test export could not be completed safely") from error
+    click.echo(str(path))

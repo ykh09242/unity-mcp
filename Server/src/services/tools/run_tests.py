@@ -15,7 +15,7 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from core.config import config
 from models import MCPResponse
@@ -363,6 +363,10 @@ class GetTestJobData(BaseModel):
     error: str | None = None
     result: RunTestsResult | None = None
     diagnostics: TestJobDiagnostics | None = None
+    result_truncated_count: int | None = None
+    completion_kind: str | None = None
+    result_availability: str | None = None
+    result_page: dict[str, Any] | None = None
 
 
 class GetTestJobResponse(MCPResponse):
@@ -496,6 +500,13 @@ async def get_test_job(
         "Reduces polling frequency and avoids client-side loop detection. "
         "Recommended: 30-60 seconds. Returns immediately if tests complete sooner.",
     ] = None,
+    page_size: Annotated[
+        int | None,
+        Field(
+            ge=1, le=100, description="Opt-in terminal detail page size; requires a detail flag."
+        ),
+    ] = None,
+    cursor: Annotated[str | None, "Opaque next_cursor from a result page"] = None,
 ) -> GetTestJobResponse | MCPResponse:
     unity_instance = await get_unity_instance_from_context(ctx)
     user_id = await ctx.get_state("user_id") if config.http_remote_hosted else None
@@ -505,6 +516,20 @@ async def get_test_job(
         params["includeFailedTests"] = True
     if include_details:
         params["includeDetails"] = True
+
+    if (
+        cursor is not None
+        and page_size is None
+        or page_size is not None
+        and not (include_details or include_failed_tests)
+    ):
+        return MCPResponse(
+            success=False, error="Paging requires page_size and an explicit detail selection"
+        )
+    if page_size is not None:
+        params["page_size"] = page_size
+    if cursor is not None:
+        params["cursor"] = cursor
 
     async def _fetch_status() -> tuple[Any, int]:
         observation_order = next(_poll_observation_order)
@@ -519,7 +544,7 @@ async def get_test_job(
         return response, observation_order
 
     # If wait_timeout is specified, poll server-side until complete or timeout
-    if wait_timeout and wait_timeout > 0:
+    if wait_timeout and wait_timeout > 0 and page_size is None:
         http_session = (
             await ctx.get_state("unity_session_id")
             if config.transport_mode.lower() == "http"
