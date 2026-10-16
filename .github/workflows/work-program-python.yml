@@ -39,7 +39,7 @@ jobs:
         python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
     env:
       PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python-version == '3.15' && 'true' || 'false' }}
-      PYTHONPATH: ${{ github.workspace }}/tools
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/tools
     defaults:
       run:
         working-directory: Server
