@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 
@@ -285,7 +286,7 @@ namespace MCPForUnity.Editor.Tools
                 else if (!context && exists == false)
                     availability = "not_found";
             }
-            int[] selected = Selection.instanceIDs;
+            var selected = Selection.objects;
             var data = new JObject
             {
                 ["menu_path"] = path,
@@ -312,7 +313,7 @@ namespace MCPForUnity.Editor.Tools
                 },
                 ["context"] = new JObject
                 {
-                    ["selected_ids"] = new JArray(selected.Take(32)),
+                    ["selected_ids"] = new JArray(selected.Take(32).Select(item => item.GetInstanceIDCompat())),
                     ["selected_count"] = selected.Length,
                     ["selection_truncated"] = selected.Length > 32,
                     ["focused_window_type"] = Bounded(EditorWindow.focusedWindow?.GetType().FullName),

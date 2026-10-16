@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +9,7 @@ using MCPForUnity.Editor.Resources.MenuItems;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -343,6 +345,42 @@ namespace MCPForUnityTests.Editor.Tools
                 if (!wasOpen)
                     foreach (var window in UnityEngine.Resources.FindObjectsOfTypeAll(type))
                         ((EditorWindow)window).Close();
+            }
+        }
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(33)]
+        public void InspectSelectionContextPreservesCompatIdsCountAndBound(int selectedCount)
+        {
+            var original = Selection.objects;
+            var owned = new UnityEngine.GameObject[selectedCount];
+            try
+            {
+                for (int i = 0; i < owned.Length; i++)
+                    owned[i] = new UnityEngine.GameObject("DEV11 selection compatibility " + i);
+                Selection.objects = owned;
+                var selected = Selection.objects;
+                Assert.AreEqual(selectedCount, selected.Length, "All owned objects must be selected before inspection.");
+                Seam("_existsOverride", (Func<string, bool?>)(_ => true));
+                Seam("_enabledOverride", (Func<string, bool>)(_ => true));
+                var result = ToJO(ExecuteMenuItem.HandleCommand(Request("inspect")));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                var context = result["data"]["context"];
+                Assert.AreEqual(selectedCount, (int)context["selected_count"]);
+                Assert.AreEqual(selectedCount > 32, (bool)context["selection_truncated"]);
+                CollectionAssert.AreEqual(
+                    selected.Take(32).Select(item => item.GetInstanceIDCompat()).ToArray(),
+                    context["selected_ids"].Values<int>().ToArray()
+                );
+                Assert.IsFalse(_ownedMenuInvoked);
+            }
+            finally
+            {
+                Selection.objects = original;
+                foreach (var item in owned)
+                    if (item != null)
+                        UnityEngine.Object.DestroyImmediate(item);
             }
         }
 
