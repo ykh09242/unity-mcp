@@ -51,7 +51,10 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `scale_mode` | `Literal['ConstantPixelSize', 'ConstantPhysicalSize', 'ScaleWithScreenSize'] \| None` | — | Panel scale mode. Legacy shorthand; prefer using 'settings' dict. |
 | `reference_resolution` | `dict[str, int] \| None` | — | Reference resolution as {width, height}. Legacy shorthand; prefer using 'settings' dict. |
 | `settings` | `dict[str, Any] \| None` | — | Generic PanelSettings properties dict for create_panel_settings. Keys: scaleMode (ConstantPixelSize\|ConstantPhysicalSize\|ScaleWithScreenSize), referenceResolution ({width,height}), screenMatchMode (MatchWidthOrHeight\|ShrinkToFit\|ExpandToFill), match (0-1 float), referenceDpi, fallbackDpi, sortingOrder, targetDisplay, clearColor (bool), colorClearValue (#RRGGBB or {r,g,b,a}), clearDepthStencil, themeStyleSheet (asset path), dynamicAtlasSettings ({minAtlasSize,maxAtlasSize,maxSubTextureSize,activeFilters}). |
-| `max_depth` | `int \| None` | — | Max depth to traverse visual tree (default 10). |
+| `max_depth` | `int \| None` | — | get_visual_tree inclusive depth: root is 0; default 10, maximum 24. |
+| `max_nodes` | `int \| None` | — | get_visual_tree emitted node budget, including root (default 200). |
+| `max_evaluations` | `int \| None` | — | get_visual_tree operation budget: node admissions, child fetches and class probes (default 5000). Not a time or scene-lookup bound. |
+| `max_characters` | `int \| None` | — | get_visual_tree shared copied UTF-16 string budget, including metadata (default 65536). Per-string limit 8192 and per-node class limit 64 also apply. |
 | `capture_id` | `str \| None` | — | Play-mode capture ID returned by render_ui. Supply this ID alone to poll the original request; optional target/output settings must match the start request. Omit to start a separate capture even with identical settings. Results expire after 30 seconds. |
 | `cancel_capture` | `bool \| None` | — | Cancel the Play-mode capture owned by capture_id (default false). For render_ui. |
 | `width` | `int \| None` | — | Render width in pixels, 1 to 8192 (default 1920). The frame may contain at most 33,554,432 pixels. For render_ui. |

@@ -773,101 +773,282 @@ namespace MCPForUnity.Editor.Tools
         private static object GetVisualTree(JObject @params)
         {
             var p = new ToolParams(@params);
-
+            // Validate producer budgets before shared scene/component lookup.
+            var budget = new VisualTreeBudget(
+                ReadTreeBudget(p, "max_depth", 10, 0, 24),
+                ReadTreeBudget(p, "max_nodes", 200, 1, 1000),
+                ReadTreeBudget(p, "max_evaluations", 5000, 1, 20000),
+                ReadTreeBudget(p, "max_characters", 65536, 1, 262144)
+            );
             var targetResult = p.GetRequired("target");
             var targetError = targetResult.GetOrError(out string target);
             if (targetError != null)
                 return targetError;
 
-            int maxDepth = p.GetInt("max_depth") ?? 10;
-
+            if (target.Length > 4096)
+                return new ErrorResponse("get_visual_tree target must be at most 4096 characters.");
             var goInstruction = new JObject { ["find"] = target };
             GameObject go = ObjectResolver.Resolve(goInstruction, typeof(GameObject)) as GameObject;
             if (go == null)
             {
-                return new ErrorResponse($"Could not find target GameObject: {target}");
+                return new ErrorResponse("Could not find target GameObject for get_visual_tree.");
             }
-
-            var ui = UIComponentAdapter.Resolve(go, p.Get("component_type"));
-            var root = ui.Root;
-            if (root == null)
+            UIComponentAdapter ui;
+            try
             {
-                return new SuccessResponse(
-                    $"{ui.DisplayName} on {go.name} has no visual tree (not yet built).",
-                    new
-                    {
-                        gameObject = go.name,
-                        componentType = ui.Kind,
-                        sourceAsset = ui.SourceAsset != null ? AssetDatabase.GetAssetPath(ui.SourceAsset) : null,
-                        tree = (object)null,
-                    }
+                ui = UIComponentAdapter.Resolve(go, p.Get("component_type"));
+            }
+            catch (ArgumentException)
+            {
+                // Adapter diagnostics may contain the entire, arbitrarily long GameObject name.
+                return new ErrorResponse(
+                    "get_visual_tree could not resolve the requested UI component (UIDocument or supported PanelRenderer; component_type: auto, ui_document, panel_renderer)."
                 );
             }
-
-            var tree = SerializeVisualElement(root, 0, maxDepth);
-
+            var root = ui.Root;
+            var metadataFields = new List<string>();
+            string gameObject = budget.Copy(go.name, "gameObject", metadataFields);
+            string sourceAsset = ui.SourceAsset != null ? budget.Copy(AssetDatabase.GetAssetPath(ui.SourceAsset), "sourceAsset", metadataFields) : null;
+            var tree = root == null ? null : SerializeVisualTree(root, budget);
             return new SuccessResponse(
-                $"Visual tree for {ui.DisplayName} on {go.name}",
+                root == null ? "UI component has no visual tree (not yet built)." : "Visual tree read.",
                 new
                 {
-                    gameObject = go.name,
+                    gameObject,
                     componentType = ui.Kind,
-                    sourceAsset = ui.SourceAsset != null ? AssetDatabase.GetAssetPath(ui.SourceAsset) : null,
+                    sourceAsset,
                     tree,
+                    traversal = new
+                    {
+                        max_depth = budget.MaxDepth,
+                        max_nodes = budget.MaxNodes,
+                        max_evaluations = budget.MaxEvaluations,
+                        max_characters = budget.MaxCharacters,
+                        returned_nodes = budget.Nodes,
+                        evaluations = budget.Evaluations,
+                        characters = budget.Characters,
+                        tree_status = root == null ? "not_initialized" : "ready",
+                        complete = root != null && budget.Reasons.Count == 0,
+                        truncated = budget.Reasons.Count != 0,
+                        reasons = budget.Reasons,
+                        metadata_truncated_fields = metadataFields,
+                    },
                 }
             );
         }
 
-        private static object SerializeVisualElement(VisualElement element, int depth, int maxDepth)
+        private static int ReadTreeBudget(ToolParams p, string key, int fallback, int minimum, int maximum)
         {
+            int value;
+            try
+            {
+                value = p.GetInt(key) ?? fallback;
+            }
+            catch (ArgumentException)
+            {
+                throw new ArgumentException($"{key} must be an integer from {minimum} to {maximum}.");
+            }
+            if (value < minimum || value > maximum)
+                throw new ArgumentException($"{key} must be an integer from {minimum} to {maximum}.");
+            return value;
+        }
+
+        // Local to get_visual_tree: snapshots and mutation selectors have different domains/bounds.
+        private sealed class VisualTreeBudget
+        {
+            internal readonly int MaxDepth,
+                MaxNodes,
+                MaxEvaluations,
+                MaxCharacters;
+            internal int Nodes,
+                Evaluations,
+                Characters;
+            internal readonly List<string> Reasons = new();
+
+            internal VisualTreeBudget(int depth, int nodes, int evaluations, int characters)
+            {
+                MaxDepth = depth;
+                MaxNodes = nodes;
+                MaxEvaluations = evaluations;
+                MaxCharacters = characters;
+            }
+
+            internal void Reason(string reason)
+            {
+                if (!Reasons.Contains(reason))
+                    Reasons.Add(reason);
+            }
+
+            internal bool Charge()
+            {
+                if (Evaluations == MaxEvaluations)
+                {
+                    Reason("max_evaluations");
+                    return false;
+                }
+                Evaluations++;
+                return true;
+            }
+
+            internal string Copy(string value, string field, List<string> fields, bool whole = false)
+            {
+                value ??= "";
+                int available = MaxCharacters - Characters;
+                int intended = Math.Min(value.Length, 8192);
+                if (intended < value.Length && intended > 0 && char.IsHighSurrogate(value[intended - 1]) && char.IsLowSurrogate(value[intended]))
+                    intended--;
+                int count = Math.Min(intended, available);
+                if (count < intended && count > 0 && char.IsHighSurrogate(value[count - 1]) && char.IsLowSurrogate(value[count]))
+                    count--;
+                if (count < value.Length)
+                {
+                    if (!fields.Contains(field))
+                        fields.Add(field);
+                    if (intended < value.Length)
+                        Reason("per_string_limit");
+                    // A local cap does not exhaust the shared allowance. Compare only
+                    // the surrogate-safe prefix this field could otherwise emit.
+                    if (count < intended)
+                        Reason("max_characters");
+                    if (whole)
+                        return null;
+                }
+                Characters += count;
+                return count == value.Length ? value : value.Substring(0, count);
+            }
+        }
+
+        private sealed class VisualTreeFrame
+        {
+            internal VisualElement Element;
+            internal Dictionary<string, object> Output;
+            internal List<object> Children;
+            internal int ChildCount,
+                NextChild,
+                Depth;
+        }
+
+        private static VisualTreeFrame ReadVisualTreeNode(VisualElement element, int depth, VisualTreeBudget budget)
+        {
+            // Caller charges admission before fixed scalar reads. Classes require their own probes.
+            budget.Nodes++;
+            var fields = new List<string>();
             var result = new Dictionary<string, object>
             {
-                ["type"] = element.GetType().Name,
-                ["name"] = element.name ?? "",
-                ["classes"] = new List<string>(element.GetClasses()),
+                ["type"] = budget.Copy(element.GetType().Name, "type", fields),
+                ["name"] = budget.Copy(element.name, "name", fields),
             };
+            var classes = new List<string>();
+            result["classes"] = classes;
+            using (var names = element.GetClasses().GetEnumerator())
+            {
+                while (true)
+                {
+                    if (!budget.Charge())
+                    {
+                        if (!fields.Contains("classes"))
+                            fields.Add("classes");
+                        break;
+                    }
+                    if (!names.MoveNext())
+                        break;
+                    if (classes.Count == 64)
+                    {
+                        if (!fields.Contains("classes"))
+                            fields.Add("classes");
+                        budget.Reason("class_limit");
+                        break;
+                    }
+                    classes.Add(budget.Copy(names.Current, "classes", fields));
+                    if (budget.Reasons.Contains("max_characters"))
+                        break;
+                }
+            }
 
-            // Include basic computed style info
             var style = new Dictionary<string, object>();
             var resolved = element.resolvedStyle;
-
             if (resolved.width > 0)
                 style["width"] = resolved.width;
             if (resolved.height > 0)
                 style["height"] = resolved.height;
             if (resolved.color != Color.clear)
-                style["color"] = ColorToHex(resolved.color);
+            {
+                string color = budget.Copy(ColorToHex(resolved.color), "resolvedStyle.color", fields, whole: true);
+                if (color != null)
+                    style["color"] = color;
+            }
             if (resolved.backgroundColor != Color.clear)
-                style["backgroundColor"] = ColorToHex(resolved.backgroundColor);
+            {
+                string color = budget.Copy(ColorToHex(resolved.backgroundColor), "resolvedStyle.backgroundColor", fields, whole: true);
+                if (color != null)
+                    style["backgroundColor"] = color;
+            }
             if (resolved.fontSize > 0)
                 style["fontSize"] = resolved.fontSize;
 
             if (style.Count > 0)
                 result["resolvedStyle"] = style;
 
-            // Include text content for labels/buttons
             if (element is TextElement textEl && !string.IsNullOrEmpty(textEl.text))
+                result["text"] = budget.Copy(textEl.text, "text", fields);
+            if (fields.Count != 0)
+                result["truncated_fields"] = fields;
+            return new VisualTreeFrame
             {
-                result["text"] = textEl.text;
-            }
+                Element = element,
+                Output = result,
+                ChildCount = element.childCount,
+                Depth = depth,
+            };
+        }
 
-            // Serialize children
-            if (depth < maxDepth && element.childCount > 0)
+        private static object SerializeVisualTree(VisualElement root, VisualTreeBudget budget)
+        {
+            budget.Charge(); // A root stub is emitted even if envelope strings exhausted the character budget.
+            var first = ReadVisualTreeNode(root, 0, budget);
+            var stack = new List<VisualTreeFrame> { first };
+            while (stack.Count != 0)
             {
-                var children = new List<object>();
-                foreach (var child in element.Children())
+                var frame = stack[stack.Count - 1];
+                if (frame.NextChild == frame.ChildCount)
                 {
-                    children.Add(SerializeVisualElement(child, depth + 1, maxDepth));
+                    stack.RemoveAt(stack.Count - 1);
+                    continue;
                 }
-                result["children"] = children;
+                string cutoff =
+                    frame.Depth == budget.MaxDepth ? "max_depth"
+                    : budget.Nodes == budget.MaxNodes ? "max_nodes"
+                    : budget.Characters == budget.MaxCharacters || budget.Reasons.Contains("max_characters") ? "max_characters"
+                    : budget.Evaluations == budget.MaxEvaluations ? "max_evaluations"
+                    : null;
+                if (cutoff != null)
+                {
+                    budget.Reason(cutoff);
+                    frame.Output["childCount"] = frame.ChildCount;
+                    frame.Output["truncated"] = true;
+                    stack.RemoveAt(stack.Count - 1);
+                    continue;
+                }
+                budget.Charge(); // Fetch exactly one content-container child; never precollect siblings.
+                var child = frame.Element.ElementAt(frame.NextChild);
+                if (!budget.Charge())
+                {
+                    frame.Output["childCount"] = frame.ChildCount;
+                    frame.Output["truncated"] = true;
+                    stack.RemoveAt(stack.Count - 1);
+                    continue;
+                }
+                var next = ReadVisualTreeNode(child, frame.Depth + 1, budget);
+                if (frame.Children == null)
+                {
+                    frame.Children = new List<object>();
+                    frame.Output["children"] = frame.Children;
+                }
+                frame.Children.Add(next.Output);
+                frame.NextChild++;
+                stack.Add(next);
             }
-            else if (element.childCount > 0)
-            {
-                result["childCount"] = element.childCount;
-                result["truncated"] = true;
-            }
-
-            return result;
+            return first.Output;
         }
 
         // ---- Render UI ----
