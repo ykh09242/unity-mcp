@@ -84,7 +84,7 @@ namespace MCPForUnity.Editor.Tools
             return nodes;
         }
 
-        private static string Segment(VisualElement element)
+        internal static string Segment(VisualElement element)
         {
             string segment = string.IsNullOrEmpty(element.name) ? "type:" + element.GetType().FullName : "name:" + element.name;
             if (segment.Length > 1024)

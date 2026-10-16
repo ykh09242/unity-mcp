@@ -1871,7 +1871,9 @@ namespace MCPForUnity.Editor.Tools
                 return targetError;
 
             string elementName = p.Get("element_name") ?? p.Get("elementName");
-            if (string.IsNullOrEmpty(elementName))
+            bool explicitSelector = p.Has("element_path") || p.Has("element_id");
+            bool strictName = p.GetBool("strict_name");
+            if (!explicitSelector && string.IsNullOrEmpty(elementName))
             {
                 return new ErrorResponse("'element_name' parameter is required.");
             }
@@ -1884,6 +1886,10 @@ namespace MCPForUnity.Editor.Tools
             }
 
             var ui = UIComponentAdapter.Resolve(go, p.Get("component_type"));
+            if ((explicitSelector || strictName) && (!go.activeInHierarchy || (ui.Component is Behaviour behaviour && !behaviour.isActiveAndEnabled)))
+                return new ErrorResponse("Strict or explicit visual element selection requires an active GameObject and enabled UI component.");
+            if (p.Has("element_id"))
+                RequireCanonicalSnapshotComponent(go, ui);
             var root = ui.Root;
             if (root == null)
             {
@@ -1892,13 +1898,17 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
 
-            // Find the target element by name
-            var element = root.Q(elementName);
+            // Preserve legacy first-match queries unless the caller requests a safer selector.
+            var element =
+                explicitSelector ? ResolveExplicitVisualElement(p, go, ui, root, elementName)
+                : strictName ? ResolveUniqueVisualElement(root, elementName)
+                : root.Q(elementName);
             if (element == null)
             {
                 return new ErrorResponse($"Visual element with name '{elementName}' not found in the visual tree.");
             }
 
+            elementName = element.name;
             string text = p.Get("text");
             if (text != null && element is not TextElement)
                 return new ErrorResponse($"Element '{elementName}' ({element.GetType().Name}) does not support text content.");
@@ -2017,6 +2027,127 @@ namespace MCPForUnity.Editor.Tools
                 responseData["skipped"] = skipped;
 
             return new SuccessResponse($"Modified element '{elementName}' on {go.name}: {string.Join(", ", applied)}", responseData);
+        }
+
+        private static void RequireCanonicalSnapshotComponent(GameObject go, UIComponentAdapter ui)
+        {
+            if (ui.Component != UIComponentAdapter.Resolve(go, "auto").Component)
+                throw new ArgumentException("element_id requires the snapshot's auto-selected UI component. Use element_path for a different component_type.");
+        }
+
+        private static VisualElement ResolveExplicitVisualElement(
+            ToolParams parameters,
+            GameObject go,
+            UIComponentAdapter ui,
+            VisualElement root,
+            string nameGuard
+        )
+        {
+            bool byPath = parameters.Has("element_path");
+            if (byPath && parameters.Has("element_id"))
+                throw new ArgumentException("Provide only one of element_path and element_id.");
+            if (!byPath)
+                RequireCanonicalSnapshotComponent(go, ui);
+            string key = byPath ? "element_path" : "element_id";
+            JToken token = parameters.GetRaw(key);
+            if (token?.Type != JTokenType.String)
+                throw new ArgumentException($"'{key}' must be a string.");
+            string value = token.Value<string>();
+            if (value.Length > 4096)
+                throw new ArgumentException("Visual element selector exceeds the 4096 character bound.");
+            string suffix = value;
+            if (!byPath)
+            {
+                string rootId = CaptureUISnapshot.Identity(go);
+                if (value == rootId)
+                    suffix = "";
+                else if (value.StartsWith(rootId + "/", StringComparison.Ordinal))
+                    suffix = value.Substring(rootId.Length);
+                else
+                    throw new ArgumentException("element_id does not belong to the selected UI root's snapshot identity.");
+            }
+            if (suffix.Length != 0 && suffix[0] != '/')
+                throw new ArgumentException("element_path must be empty for the root or start with '/'.");
+            string[] segments = suffix.Length == 0 ? Array.Empty<string>() : suffix.Substring(1).Split('/');
+            if (segments.Length >= 128)
+                throw new ArgumentException("Visual element selector exceeds the 128 level bound, including the root.");
+            VisualElement element = root;
+            int examined = 0;
+            foreach (string segment in segments)
+            {
+                // This is the snapshot's content-container enumeration, not control internals.
+                if (element.childCount > 1000)
+                    throw new ArgumentException("Visual element selector exceeds the 1000 sibling bound.");
+                if (byPath)
+                {
+                    if (
+                        segment.Length == 0
+                        || (segment.Length > 1 && segment[0] == '0')
+                        || segment.Any(c => c < '0' || c > '9')
+                        || !int.TryParse(segment, NumberStyles.None, CultureInfo.InvariantCulture, out int index)
+                    )
+                        throw new ArgumentException("element_path requires canonical zero-based decimal child indices, for example '/0/1'.");
+                    if (index >= element.childCount)
+                        throw new ArgumentException("element_path does not exist in the selected UI root.");
+                    element = element.ElementAt(index);
+                }
+                else
+                {
+                    VisualElement match = null;
+                    for (int i = 0; i < element.childCount; i++)
+                    {
+                        if (++examined > 10000)
+                            throw new ArgumentException("Visual element selector exceeds the 10000 node work bound.");
+                        VisualElement candidate = element.ElementAt(i);
+                        if (UitoolkitSnapshotCapture.Segment(candidate) != segment)
+                            continue;
+                        if (match != null)
+                            throw new ArgumentException("element_id is ambiguous among the selected root's snapshot siblings.");
+                        match = candidate;
+                    }
+                    element = match ?? throw new ArgumentException("element_id is stale or missing in the selected UI root.");
+                }
+            }
+            if (nameGuard != null && element.name != nameGuard)
+                throw new ArgumentException("element_name does not match the explicit selector's element.");
+            // Bind the resolved managed element to this actual engine root; never search globally.
+            VisualElement ancestor = element;
+            for (int depth = 0; ancestor != null && depth < 128; depth++, ancestor = ancestor.hierarchy.parent)
+                if (ReferenceEquals(ancestor, root))
+                    return element;
+            throw new ArgumentException("Explicit element is outside the selected root or exceeds the 128 ancestor bound.");
+        }
+
+        private static VisualElement ResolveUniqueVisualElement(VisualElement root, string name)
+        {
+            VisualElement match = null;
+            var stack = new Stack<(VisualElement element, int nextChild)>();
+            stack.Push((root, 0));
+            int examined = 0;
+            while (stack.Count > 0)
+            {
+                var frame = stack.Pop();
+                if (frame.nextChild == 0)
+                {
+                    if (++examined > 10000 || stack.Count >= 128 || frame.element.hierarchy.childCount > 1000)
+                        throw new ArgumentException("Strict name selection exceeds the 10000 node, 128 level or 1000 sibling bound.");
+                    // UQuery includes the root and physical control internals. A content-container
+                    // scan could miss a second match and incorrectly claim the name is unique.
+                    if (frame.element.name == name)
+                    {
+                        if (match != null)
+                            throw new ArgumentException("Visual element name is ambiguous; use element_path or element_id.");
+                        match = frame.element;
+                    }
+                }
+                if (frame.nextChild < frame.element.hierarchy.childCount)
+                {
+                    VisualElement child = frame.element.hierarchy[frame.nextChild++];
+                    stack.Push(frame);
+                    stack.Push((child, 0));
+                }
+            }
+            return match;
         }
 
         private static List<Action<VisualElement>> PrepareInlineStyles(JObject styleObj, List<string> modifications)

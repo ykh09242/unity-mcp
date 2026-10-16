@@ -742,6 +742,363 @@ namespace MCPForUnityTests.Editor.Tools
             );
         }
 
+        private GameObject MutationTree(out VisualElement root, out Label first, out Label second)
+        {
+            var go = new GameObject("__McpMutation_" + Guid.NewGuid().ToString("N"));
+            allocated.Add(go);
+            var document = go.AddComponent<UIDocument>();
+            root = document.rootVisualElement;
+            Assert.IsNotNull(root);
+            root.Clear();
+            var left = new VisualElement { name = "left/[%]" };
+            var right = new VisualElement { name = "right" };
+            first = new Label("first") { name = "shared", tooltip = "first-tip" };
+            second = new Label("second") { name = "shared", tooltip = "second-tip" };
+            first.style.width = 7;
+            second.style.width = 8;
+            left.Add(first);
+            right.Add(second);
+            root.Add(left);
+            root.Add(right);
+            return go;
+        }
+
+        private static JObject MutationRequest(GameObject go) =>
+            new JObject
+            {
+                ["action"] = "modify_visual_element",
+                ["target"] = go.GetInstanceID().ToString(),
+                ["element_name"] = "shared",
+                ["text"] = "changed",
+                ["add_classes"] = new JArray("changed"),
+                ["style"] = new JObject { ["width"] = 99 },
+                ["enabled"] = false,
+                ["tooltip"] = "changed",
+            };
+
+        private static string MutationSnapshotId(GameObject go, params VisualElement[] elements)
+        {
+            var segment = typeof(ManageUI)
+                .Assembly.GetType("MCPForUnity.Editor.Tools.UitoolkitSnapshotCapture")
+                .GetMethod("Segment", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(segment);
+            string result = CaptureUISnapshot.Identity(go);
+            foreach (VisualElement element in elements)
+                result += "/" + (string)segment.Invoke(null, new object[] { element });
+            return result;
+        }
+
+        private static void AssertMutationUntouched(Label first, Label second)
+        {
+            Assert.AreEqual("first", first.text);
+            Assert.AreEqual("second", second.text);
+            Assert.AreEqual(7, first.style.width.value.value);
+            Assert.AreEqual(8, second.style.width.value.value);
+            Assert.IsTrue(first.enabledSelf && second.enabledSelf);
+            Assert.AreEqual("first-tip", first.tooltip);
+            Assert.AreEqual("second-tip", second.tooltip);
+            Assert.IsFalse(first.ClassListContains("changed") || second.ClassListContains("changed"));
+        }
+
+        [Test]
+        public void MutationSelection_StrictDuplicateNamesRejectBeforeEveryMutation()
+        {
+            var go = MutationTree(out _, out var first, out var second);
+            JObject request = MutationRequest(go);
+            request["strict_name"] = true;
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("ambiguous", response.Value<string>("error"));
+            AssertMutationUntouched(first, second);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MutationSelection_LegacyFirstMatchRemainsAvailable(bool explicitFalse)
+        {
+            var go = MutationTree(out _, out var first, out var second);
+            JObject request = MutationRequest(go);
+            if (explicitFalse)
+                request["strict_name"] = false;
+            Assert.IsTrue(JObject.FromObject(ManageUI.HandleCommand(request)).Value<bool>("success"));
+            Assert.AreEqual("changed", first.text);
+            Assert.AreEqual("second", second.text);
+        }
+
+        [TestCase("element_path", true)]
+        [TestCase("elementPath", false)]
+        [TestCase("element_id", true)]
+        [TestCase("elementId", false)]
+        public void MutationSelection_ExplicitSelectorChangesExactlyOneDuplicate(string key, bool guard)
+        {
+            var go = MutationTree(out var root, out var first, out var second);
+            JObject request = MutationRequest(go);
+            if (!guard)
+                request.Remove("element_name");
+            request[key] = key.Contains("ath") ? "/1/0" : MutationSnapshotId(go, root.ElementAt(1), second);
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("first", first.text);
+            Assert.AreEqual("changed", second.text);
+            Assert.AreEqual(7, first.style.width.value.value);
+            Assert.AreEqual(99, second.style.width.value.value);
+            Assert.IsTrue(first.enabledSelf);
+            Assert.IsFalse(second.enabledSelf);
+        }
+
+        [Test]
+        public void MutationSelection_EscapedSnapshotIdUsesExistingEncoding()
+        {
+            var go = MutationTree(out var root, out var first, out var second);
+            JObject request = MutationRequest(go);
+            request["element_id"] = MutationSnapshotId(go, root.ElementAt(0), first);
+            StringAssert.Contains("%2F", request.Value<string>("element_id"));
+            Assert.IsTrue(JObject.FromObject(ManageUI.HandleCommand(request)).Value<bool>("success"));
+            Assert.AreEqual("changed", first.text);
+            Assert.AreEqual("second", second.text);
+        }
+
+        private sealed class MutationContentHost : VisualElement
+        {
+            internal readonly VisualElement Content = new VisualElement();
+            internal readonly Label InternalLabel = new Label("internal") { name = "shared" };
+            public override VisualElement contentContainer => Content;
+
+            internal MutationContentHost()
+            {
+                hierarchy.Add(InternalLabel);
+                hierarchy.Add(Content);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MutationSelection_ExplicitSelectorsUseSnapshotContentContainerOrder(bool semanticId)
+        {
+            var go = MutationTree(out var root, out _, out _);
+            root.Clear();
+            var host = new MutationContentHost { name = "host" };
+            var label = new Label("content") { name = "shared" };
+            host.Add(label);
+            root.Add(host);
+            Assert.AreSame(label, host.ElementAt(0));
+            Assert.AreSame(host.InternalLabel, host.hierarchy.ElementAt(0));
+            JObject request = MutationRequest(go);
+            request[semanticId ? "element_id" : "element_path"] = semanticId ? MutationSnapshotId(go, host, label) : "/0/0";
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("internal", host.InternalLabel.text);
+            Assert.AreEqual("changed", label.text);
+        }
+
+        [Test]
+        public void MutationSelection_StrictNameIncludesInternalControlDuplicates()
+        {
+            var go = MutationTree(out var root, out _, out _);
+            root.Clear();
+            var host = new MutationContentHost { name = "host" };
+            var label = new Label("content") { name = "shared" };
+            host.Add(label);
+            root.Add(host);
+            Assert.AreSame(host.InternalLabel, root.Q("shared"), "Characterize the actual legacy UQuery candidate domain.");
+            JObject request = MutationRequest(go);
+            request["strict_name"] = true;
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("ambiguous", response.Value<string>("error"));
+            Assert.AreEqual("internal", host.InternalLabel.text);
+            Assert.AreEqual("content", label.text);
+            Assert.IsTrue(host.InternalLabel.enabledSelf && label.enabledSelf);
+            Assert.IsFalse(host.InternalLabel.ClassListContains("changed") || label.ClassListContains("changed"));
+        }
+
+        [Test]
+        public void MutationSelection_SemanticIdRejectsSyntheticForeignComponentRoot()
+        {
+            // Unity 6000.0 has no PanelRenderer. Two real owned UIDocuments exercise the
+            // component/root guard synthetically, not a claimed dual-component integration.
+            var go = MutationTree(out var root, out _, out var second);
+            var other = MutationTree(out var otherRoot, out var otherFirst, out var otherSecond);
+            var request = new ToolParams(new JObject { ["element_id"] = MutationSnapshotId(go, root.ElementAt(1), second) });
+            var select = typeof(ManageUI).GetMethod("ResolveExplicitVisualElement", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(select);
+            object[] args =
+                select.GetParameters().Length == 4
+                    ? new object[] { request, go, otherRoot, "shared" }
+                    : new object[] { request, go, new UIComponentAdapter(other.GetComponent<UIDocument>()), otherRoot, "shared" };
+            var error = Assert.Throws<TargetInvocationException>(() => select.Invoke(null, args));
+            StringAssert.Contains("component", error.InnerException.Message);
+            AssertMutationUntouched(otherFirst, otherSecond);
+        }
+
+        [Test]
+        public void MutationSelection_StrictNameIncludesTheRootAsLegacyQDoes()
+        {
+            var go = MutationTree(out var root, out var first, out var second);
+            root.name = "unique-root";
+            Assert.AreSame(root, root.Q("unique-root"));
+            JObject request = MutationRequest(go);
+            request["element_name"] = root.name;
+            request["strict_name"] = true;
+            request.Remove("text");
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("changed", root.tooltip);
+            AssertMutationUntouched(first, second);
+        }
+
+        [Test]
+        public void MutationSelection_StrictUniqueNameBindsToNumericGameObjectIdentity()
+        {
+            var go = MutationTree(out _, out var first, out var second);
+            first.name = "unique";
+            var other = MutationTree(out _, out var otherFirst, out _);
+            other.name = go.name;
+            JObject request = MutationRequest(go);
+            request["element_name"] = "unique";
+            request["strictName"] = true;
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("changed", first.text);
+            Assert.AreEqual("second", second.text);
+            Assert.AreEqual("first", otherFirst.text);
+        }
+
+        [Test]
+        public void MutationSelection_EmptyPathSelectsRootByPresence()
+        {
+            var go = MutationTree(out var root, out var first, out var second);
+            JObject request = MutationRequest(go);
+            request.Remove("element_name");
+            request.Remove("text");
+            request["element_path"] = "";
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("changed", root.tooltip);
+            AssertMutationUntouched(first, second);
+        }
+
+        [TestCase("element_path", "/01/0")]
+        [TestCase("element_path", "/-1")]
+        [TestCase("element_path", "/")]
+        [TestCase("element_path", "/1/7")]
+        [TestCase("element_path", "/1/0/")]
+        [TestCase("element_path", null)]
+        [TestCase("element_id", "")]
+        [TestCase("element_id", "not-a-snapshot-id")]
+        public void MutationSelection_InvalidExplicitSelectorNeverFallsBack(string key, string value)
+        {
+            var go = MutationTree(out _, out var first, out var second);
+            JObject request = MutationRequest(go);
+            request[key] = value;
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            AssertMutationUntouched(first, second);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MutationSelection_StaleOrForeignSemanticIdNeverFallsBack(bool foreign)
+        {
+            var go = MutationTree(out var root, out var first, out var second);
+            string identity = MutationSnapshotId(go, root.ElementAt(1), second);
+            if (foreign)
+            {
+                var other = MutationTree(out var otherRoot, out _, out var otherSecond);
+                identity = MutationSnapshotId(other, otherRoot.ElementAt(1), otherSecond);
+            }
+            else
+                second.RemoveFromHierarchy();
+            JObject request = MutationRequest(go);
+            request["element_id"] = identity;
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            AssertMutationUntouched(first, second);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MutationSelection_ConflictingSelectorOrNameGuardRejects(bool twoSelectors)
+        {
+            var go = MutationTree(out var root, out var first, out var second);
+            JObject request = MutationRequest(go);
+            request["element_path"] = "/1/0";
+            if (twoSelectors)
+                request["element_id"] = MutationSnapshotId(go, root.ElementAt(1), second);
+            else
+                request["element_name"] = "different-name";
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            AssertMutationUntouched(first, second);
+        }
+
+        [Test]
+        public void MutationSelection_AmbiguousSemanticSiblingIdRejects()
+        {
+            var go = MutationTree(out var root, out var first, out var second);
+            root.ElementAt(1).Add(new Label("third") { name = "shared" });
+            JObject request = MutationRequest(go);
+            request["element_id"] = MutationSnapshotId(go, root.ElementAt(1), second);
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("ambiguous", response.Value<string>("error"));
+            AssertMutationUntouched(first, second);
+        }
+
+        [TestCase("depth")]
+        [TestCase("siblings")]
+        [TestCase("nodes")]
+        public void MutationSelection_StrictScanBoundRejectsEvenAnEarlyMatch(string kind)
+        {
+            var go = MutationTree(out var root, out var first, out var second);
+            first.name = "unique";
+            second.name = "other";
+            if (kind == "depth")
+            {
+                VisualElement parent = root;
+                for (int i = 0; i < 129; i++)
+                {
+                    var child = new VisualElement();
+                    parent.Add(child);
+                    parent = child;
+                }
+            }
+            else if (kind == "siblings")
+                for (int i = 0; i < 1001; i++)
+                    root.Add(new VisualElement());
+            else
+                for (int group = 0; group < 11; group++)
+                {
+                    var parent = new VisualElement();
+                    root.Add(parent);
+                    for (int i = 0; i < 999; i++)
+                        parent.Add(new VisualElement());
+                }
+            JObject request = MutationRequest(go);
+            request["element_name"] = "unique";
+            request["strict_name"] = true;
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("bound", response.Value<string>("error"));
+            AssertMutationUntouched(first, second);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MutationSelection_InactiveDocumentRejectsStrictOrExplicit(bool explicitPath)
+        {
+            var go = MutationTree(out _, out var first, out var second);
+            JObject request = MutationRequest(go);
+            if (explicitPath)
+                request["element_path"] = "/1/0";
+            else
+                request["strict_name"] = true;
+            go.SetActive(false);
+            JObject response = JObject.FromObject(ManageUI.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            AssertMutationUntouched(first, second);
+        }
+
         private PanelSettings CreateOwnedPanel(string path)
         {
             PanelSettings panel = ScriptableObject.CreateInstance<PanelSettings>();

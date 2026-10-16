@@ -55,7 +55,10 @@ def _canonical_ui_path(path: str) -> str:
         "   - auto (default) preserves existing UIDocument; new objects prefer PanelRenderer when available.\n"
         "   - ui_document explicitly selects UIDocument; panel_renderer requires Unity 6.5+ API support.\n"
         "6. Use get_visual_tree to inspect the result\n"
-        "7. Use modify_visual_element to change text, classes, or inline styles on live elements\n"
+        "7. Use modify_visual_element to change text, classes, or inline styles on live elements. "
+        "Legacy element_name selects the first match; strict_name=true requires uniqueness. "
+        "Use element_path for current child indices or element_id from a snapshot for explicit selection. "
+        "Explicit selectors never fall back to a name.\n"
         "8. Use render_ui to capture a visual preview for self-evaluation\n"
         "   - In play mode: first call queues a WaitForEndOfFrame screen capture and returns pending=true;\n"
         "     resume with capture_id from that response to retrieve the PNG. Cancel with that ID and cancel_capture=true.\n"
@@ -206,8 +209,27 @@ async def manage_ui(
     # modify_visual_element
     element_name: Annotated[
         str,
-        "Name of the visual element to modify (the 'name' attribute in UXML). "
-        "For modify_visual_element.",
+        "Visual element name. Legacy first match unless strict_name=true. "
+        "Optional exact name guard with element_path or element_id. For modify_visual_element.",
+    ]
+    | None = None,
+    element_path: Annotated[
+        str,
+        "Current snapshot/content-container child-index path, e.g. '/0/1'; empty string selects root. "
+        "Zero-based decimal indices, no leading zeros. No persistent identity or replacement detection. "
+        "Mutually exclusive with element_id; no name fallback. Omit when unused; explicit null is invalid.",
+    ] = None,
+    element_id: Annotated[
+        str,
+        "Exact current UI Toolkit snapshot node ID. Uses the snapshot's auto-selected UI component; "
+        "use element_path for another component_type. Semantic path, not a persistent handle; "
+        "same-path replacement is not detected. No name fallback. Omit when unused; null/empty invalid.",
+    ] = None,
+    strict_name: Annotated[
+        bool,
+        "Require exactly one element_name match over the UQuery root and physical control internals. "
+        "Default false keeps legacy first match. Active initialized UI required; bounded scan may refuse. "
+        "Explicit selectors take precedence; element_name then guards the selected name.",
     ]
     | None = None,
     text: Annotated[str, "New text content for Label/Button elements. For modify_visual_element."]
@@ -341,6 +363,12 @@ async def manage_ui(
         params_dict["pageNumber"] = page_number
 
     # modify_visual_element params
+    if element_path is not None:
+        params_dict["elementPath"] = element_path
+    if element_id is not None:
+        params_dict["elementId"] = element_id
+    if strict_name is not None:
+        params_dict["strictName"] = strict_name
     if element_name is not None:
         params_dict["elementName"] = element_name
     if text is not None:

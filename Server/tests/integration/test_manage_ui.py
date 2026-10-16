@@ -587,3 +587,56 @@ class TestManageUIComponentSelection:
         )
         assert response["success"] is False
         assert "component_type" in response["message"]
+
+
+@pytest.mark.parametrize(
+    "selectors,expected",
+    [
+        ({"element_path": ""}, {"elementPath": ""}),
+        ({"element_path": "/1/0"}, {"elementPath": "/1/0"}),
+        (
+            {"element_id": "unsaved:Fixture::Panel/name%3Alabel"},
+            {"elementId": "unsaved:Fixture::Panel/name%3Alabel"},
+        ),
+        ({"strict_name": False}, {"strictName": False}),
+        ({"strict_name": True}, {"strictName": True}),
+        ({}, {}),
+    ],
+)
+def test_mutation_selector_forwarding_preserves_empty_false_and_native_failure(
+    monkeypatch, selectors, expected
+):
+    captured = []
+    failure = {
+        "success": False,
+        "error": "Controlled native selector refusal",
+        "data": {"modified": False},
+    }
+
+    async def instance(_ctx):
+        return None
+
+    async def send(_ctx, _instance, command, params, **_kwargs):
+        assert command == "manage_ui"
+        captured.append(params)
+        return dict(failure)
+
+    monkeypatch.setattr(manage_ui_mod, "get_unity_instance_from_context", instance)
+    monkeypatch.setattr(manage_ui_mod, "send_mutation", send)
+    response = run_async(
+        manage_ui_mod.manage_ui(
+            DummyContext(),
+            action="modify_visual_element",
+            target="123",
+            element_name="shared",
+            text="changed",
+            **selectors,
+        )
+    )
+    assert response == failure
+    assert len(captured) == 1
+    wire = captured[0]
+    for key in ("elementPath", "elementId", "strictName"):
+        assert (key in wire) == (key in expected)
+        if key in expected:
+            assert wire[key] == expected[key]
