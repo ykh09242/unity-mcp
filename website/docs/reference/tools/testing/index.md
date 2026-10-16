@@ -8,6 +8,7 @@ description: "MCP for Unity tools in the testing group."
 
 Test runner, async test jobs & bounded Play Mode input simulation
 
+- **[`cancel_test_job`](./cancel_test_job.md)** — Request cancellation of an owned native test job.
 - **[`export_test_job`](./export_test_job.md)** — Export completed Unity test evidence as JSON or JUnit.
 - **[`get_test_job`](./get_test_job.md)** — Polls an async Unity test job by job_id.
 - **[`get_tests`](./get_tests.md)** — Lists Unity tests without running them.

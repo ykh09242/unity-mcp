@@ -119,6 +119,12 @@ async def manage_tools(
             "disabled_groups": result.get("disabled_groups", []),
             "enabled_tool_count": result.get("enabled_tool_count", 0),
             "total_tool_count": result.get("total_tool_count", 0),
+            **({"settings_sync": result["settings_sync"]} if "settings_sync" in result else {}),
+            **(
+                {"notification_status": result["notification_status"]}
+                if "notification_status" in result
+                else {}
+            ),
             "message": (
                 "Tool visibility synced from Unity Editor. "
                 f"Enabled groups: {', '.join(result.get('enabled_groups', []))}. "

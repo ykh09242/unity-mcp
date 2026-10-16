@@ -50,6 +50,8 @@ READ_ONLY = {
 }
 
 NON_DESTRUCTIVE = {
+    # Cancels an already owned native job; session control, no test start or project-asset writes.
+    "cancel_test_job",
     # preflight(refresh_if_dirty=True) at find_gameobjects.py can refresh assets,
     # so it is not read-only -- but it never destroys anything.
     "find_gameobjects",

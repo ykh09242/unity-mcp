@@ -155,8 +155,28 @@ import socket
 @asynccontextmanager
 async def live_mcp(server, trace, legacy_only=False, required_token=None, redirect_status=None):
     """Serve actual loopback HTTP; record method names only, never request credentials."""
+    from asyncio.trsock import TransportSocket
     import uvicorn
     from starlette.responses import JSONResponse
+    from uvicorn.protocols.http.h11_impl import H11Protocol
+
+    class OwnedH11Protocol(H11Protocol):
+        def connection_made(self, transport):
+            exposed = transport.get_extra_info("socket")
+            assert isinstance(exposed, TransportSocket)
+            # Fixture-only CPython socket ownership; never inspect client/global sockets.
+            self._owned_socket = exposed._sock
+            assert isinstance(self._owned_socket, socket.socket)
+            assert self._owned_socket.getsockname() == transport.get_extra_info("sockname")
+            assert self._owned_socket.getpeername() == transport.get_extra_info("peername")
+            return super().connection_made(transport)
+
+        def connection_lost(self, exc):
+            try:
+                return super().connection_lost(exc)
+            finally:
+                # Proactor shutdown() can raise on peer reset before its own close().
+                self._owned_socket.close()
 
     app = server.http_app()
 
@@ -212,6 +232,7 @@ async def live_mcp(server, trace, legacy_only=False, required_token=None, redire
         host = uvicorn.Server(
             uvicorn.Config(
                 traced,
+                http=OwnedH11Protocol,
                 lifespan="on",
                 log_config=None,
                 access_log=False,
@@ -228,6 +249,61 @@ async def live_mcp(server, trace, legacy_only=False, required_token=None, redire
         finally:
             host.should_exit = True
             await asyncio.wait_for(task, 3)
+
+
+@pytest.mark.asyncio
+async def test_live_server_releases_accepted_socket_when_windows_shutdown_resets(monkeypatch):
+    import sys
+    import httpx2
+    from fastmcp import FastMCP
+    from uvicorn.protocols.http.h11_impl import H11Protocol
+
+    if sys.platform != "win32":
+        pytest.skip("Regression targets the Windows Proactor shutdown-before-close path")
+    owned, completed, shutdown_attempts = [], [], []
+    connection_made = H11Protocol.connection_made
+
+    class ResetDuringShutdown:
+        def __init__(self, original):
+            self.original = original
+
+        def __getattr__(self, name):
+            return getattr(self.original, name)
+
+        def shutdown(self, *_):
+            shutdown_attempts.append(self.original.fileno())
+            raise ConnectionResetError(10054, "owned fixture peer reset during shutdown")
+
+    def reset_on_close(protocol, transport):
+        connection_made(protocol, transport)
+        original_socket = transport._sock
+        original_callback = transport._call_connection_lost
+        assert isinstance(original_socket, socket.socket)
+        transport._sock = ResetDuringShutdown(original_socket)
+
+        def observe_completion(exc):
+            original_callback(exc)
+            completed.append(transport)
+
+        transport._call_connection_lost = observe_completion
+        owned.append((transport, original_socket, original_callback))
+
+    monkeypatch.setattr(H11Protocol, "connection_made", reset_on_close)
+    try:
+        async with live_mcp(FastMCP("owned-server-close"), []) as port:
+            async with httpx2.AsyncClient() as client:
+                response = await client.get(f"http://127.0.0.1:{port}/not-a-resource")
+                assert response.status_code == 404
+        assert owned and all(sock.fileno() == -1 for _, sock, _ in owned)
+        assert len(completed) == len(owned)
+        assert all(transport._called_connection_lost for transport, _, _ in owned)
+        assert shutdown_attempts == []
+    finally:
+        # Release deliberately faulted test sockets even when the pre-fix assertion fails.
+        for transport, sock, original_callback in owned:
+            sock.close()
+            original_callback(None)
+            del transport._call_connection_lost
 
 
 @pytest.mark.asyncio

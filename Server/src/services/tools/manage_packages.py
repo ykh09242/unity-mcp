@@ -59,7 +59,7 @@ async def _send_packages_command(
         "- search_packages: Search Unity registry by keyword\n"
         "- get_package_info: Get details about a specific installed package\n"
         "- ping: Check package manager availability\n"
-        "- status: Poll async job status (job_id required for list/search; optional for add/remove/embed)\n\n"
+        "- status: Poll async job status (job_id required for list/search; optional for add/remove/embed/resolve)\n\n"
         "INSTALL/REMOVE:\n"
         "- add_package: Install a package (name, name@version, git URL, or file: path)\n"
         "- remove_package: Remove a package (checks dependents; use force=true to override)\n\n"
@@ -69,7 +69,8 @@ async def _send_packages_command(
         "- remove_registry: Remove a scoped registry\n\n"
         "UTILITY:\n"
         "- embed_package: Copy package to local Packages/ for editing\n"
-        "- resolve_packages: Force re-resolution of all packages"
+        "- resolve_packages: Trigger re-resolution; completion stays unknown (void Unity API).\n"
+        "  Session-only job observations do not prove idleness or safe retry; status never repeats Resolve."
     ),
     annotations=ToolAnnotations(
         title="Manage Packages",

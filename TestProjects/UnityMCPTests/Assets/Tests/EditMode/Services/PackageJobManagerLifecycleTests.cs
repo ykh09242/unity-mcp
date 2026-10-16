@@ -124,5 +124,12 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(PackageJobStatus.Failed, restored.Status);
             Assert.AreEqual("owned-error", restored.Error);
         }
+
+        [Test]
+        public void UnknownTerminalStatusIsExplicitAndNotReinterpretedAsRunning()
+        {
+            var parse = typeof(PackageJobManager).GetMethod("ParseStatus", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.AreEqual("Unknown", parse.Invoke(null, new object[] { "unknown" }).ToString());
+        }
     }
 }

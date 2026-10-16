@@ -187,6 +187,16 @@ async def sync_tool_visibility_from_unity(
             )
             return {"error": "No tool data returned from Unity"}
 
+        from transport.models import ToolSettingsCorrelation
+
+        correlation = None
+        if isinstance(data, dict) and any(
+            key in data for key in ("settings_epoch", "desired_revision")
+        ):
+            correlation = ToolSettingsCorrelation.model_validate(data)
+        settings_sync = {"status": "unconfirmed", "reason": "peer_provenance_unavailable"}
+        notification_status = "not_requested" if not notify else "not_needed"
+
         from models.models import ToolDefinitionModel
         import json
 
@@ -240,7 +250,7 @@ async def sync_tool_visibility_from_unity(
                     raise ValueError("Empty Unity catalog has no same-generation extended evidence")
 
                 def publish(current, prepared):
-                    nonlocal outcome, scope
+                    nonlocal outcome, scope, settings_sync
                     outcome = PluginHub._publish_session_catalog(
                         current,
                         prepared,
@@ -255,6 +265,14 @@ async def sync_tool_visibility_from_unity(
                         catalog_revision=current.tools_revision
                         + int(not current.tools_known or current.tools != prepared),
                     )
+                    if correlation is not None and (extended or known_empty):
+                        settings_sync = {
+                            "status": "applied",
+                            **correlation.model_dump(),
+                            "source_kind": "http",
+                            "source_generation": current.session_id,
+                            "catalog_revision": scope["catalog_revision"],
+                        }
 
                 if not extended and tools:
                     # Old-format states carry toggles, not replacement schemas.
@@ -292,7 +310,14 @@ async def sync_tool_visibility_from_unity(
                     _publish=publish,
                 )
             if notify:
-                await PluginHub._notify_committed_catalog(outcome, scope)
+                try:
+                    await PluginHub._notify_committed_catalog(outcome, scope)
+                    notification_status = (
+                        "requested" if outcome and outcome.get("changed") else "not_needed"
+                    )
+                except Exception as exc:
+                    notification_status = "failed"
+                    logger.warning("Committed catalog notification failed (%s)", type(exc).__name__)
         else:
             from transport.legacy.unity_connection import (
                 get_authenticated_stdio_generation,
@@ -335,6 +360,14 @@ async def sync_tool_visibility_from_unity(
                             visibility=visibility,
                         ),
                     )
+                    if correlation is not None:
+                        settings_sync = {
+                            "status": "applied",
+                            **correlation.model_dump(),
+                            "source_kind": "stdio",
+                            "source_generation": generation,
+                            "catalog_revision": outcome["revision"],
+                        }
                 elif tools:
                     _commit_stdio_catalog(
                         connection,
@@ -351,7 +384,12 @@ async def sync_tool_visibility_from_unity(
             else:
                 raise ValueError("Unity catalog has no authenticated connection provenance")
             if notify and outcome.get("changed"):
-                await PluginHub._notify_mcp_tool_list_changed()
+                try:
+                    await PluginHub._notify_mcp_tool_list_changed()
+                    notification_status = "requested"
+                except Exception as exc:
+                    notification_status = "failed"
+                    logger.warning("Committed catalog notification failed (%s)", type(exc).__name__)
         custom_tool_count = len(custom_models) if extended and service is not None else 0
 
         # Build summary
@@ -375,6 +413,8 @@ async def sync_tool_visibility_from_unity(
             "enabled_tool_count": len(enabled_tools),
             "total_tool_count": len(tools),
             "custom_tool_count": custom_tool_count,
+            "settings_sync": settings_sync,
+            "notification_status": notification_status,
         }
 
     except Exception as exc:

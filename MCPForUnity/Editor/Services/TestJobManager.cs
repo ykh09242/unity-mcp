@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Services
         Running,
         Succeeded,
         Failed,
+        Cancelled,
     }
 
     internal sealed class TestJobFailure
@@ -48,6 +49,8 @@ namespace MCPForUnity.Editor.Services
         public JObject ResultArtifact { get; set; }
         public string CompletionKind { get; set; }
         public string ResultAvailability { get; set; }
+        public JObject NativeControl { get; set; }
+        internal NativeTestRunControl Control;
     }
 
     /// <summary>
@@ -72,6 +75,7 @@ namespace MCPForUnity.Editor.Services
         private static readonly Dictionary<string, TestJob> Jobs = new();
         private static string _currentJobId;
         private static long _lastPersistUnixMs;
+        private static bool _controlMonitor;
         private static TestJobResultStore ResultStoreOverride = null;
         private static TestJobResultStore _resultStore;
         internal static TestJobResultStore ResultStore
@@ -106,6 +110,8 @@ namespace MCPForUnity.Editor.Services
             // Progress callbacks are normally throttled. Flush the last update before the
             // managed domain (and the original RunTestsAsync task) is discarded.
             PersistToSessionState(force: true);
+            foreach (var job in Jobs.Values)
+                job.Control?.Dispose();
         }
 
         private static void RestoreRunningJobCallbacks()
@@ -226,6 +232,7 @@ namespace MCPForUnity.Editor.Services
             public string completion_kind { get; set; }
             public string result_availability { get; set; }
             public int omitted_failure_previews { get; set; }
+            public JObject native_control { get; set; }
         }
 
         private static TestJobStatus ParseStatus(string status)
@@ -240,6 +247,7 @@ namespace MCPForUnity.Editor.Services
             {
                 "succeeded" => TestJobStatus.Succeeded,
                 "failed" => TestJobStatus.Failed,
+                "cancelled" => TestJobStatus.Cancelled,
                 _ => TestJobStatus.Running,
             };
         }
@@ -302,7 +310,7 @@ namespace MCPForUnity.Editor.Services
                     if (
                         string.IsNullOrWhiteSpace(id)
                         || Encoding.UTF8.GetByteCount(id) > 256
-                        || status != "running" && status != "failed" && status != "succeeded"
+                        || status != "running" && status != "failed" && status != "succeeded" && status != "cancelled"
                         || !Integer(row["started_unix_ms"])
                         || !Integer(row["last_update_unix_ms"])
                         || !Integer(row["completed_tests"], int.MaxValue)
@@ -317,6 +325,17 @@ namespace MCPForUnity.Editor.Services
                     if (row["artifact"] != null && row["artifact"].Type != JTokenType.Null && !TestJobResultStore.ValidDescriptor(row["artifact"], id))
                     {
                         row["artifact"] = null;
+                        corrupt = true;
+                    }
+                    if (
+                        row["native_control"] != null
+                        && row["native_control"].Type != JTokenType.Null
+                        && !NativeTestRunControl.ValidState(row["native_control"], id)
+                    )
+                    {
+                        // A corrupt optional flag is not proof of native termination.
+                        // Keep the authoritative outcome, but retain an unknown owner barrier.
+                        row["native_control"] = NativeTestRunControl.CorruptState(id);
                         corrupt = true;
                     }
                     if (corrupt)
@@ -389,8 +408,19 @@ namespace MCPForUnity.Editor.Services
                             ResultArtifact = pj.artifact,
                             CompletionKind = pj.completion_kind,
                             ResultAvailability = pj.result_availability ?? "legacy_unavailable",
+                            NativeControl = pj.native_control,
                             Result = null,
                         };
+                    }
+
+                    foreach (var restored in Jobs.Values)
+                    {
+                        if (restored.NativeControl != null && (bool?)restored.NativeControl["settled"] != true)
+                        {
+                            restored.Control = NativeTestRunControl.Restore(restored.JobId, restored.NativeControl);
+                            if (restored.Control != null)
+                                BindControl(restored);
+                        }
                     }
 
                     _currentJobId = string.IsNullOrWhiteSpace(state.current_job_id) ? null : state.current_job_id;
@@ -404,7 +434,9 @@ namespace MCPForUnity.Editor.Services
                     // may still be set. If the job hasn't been updated recently, it's likely orphaned.
                     if (!string.IsNullOrEmpty(_currentJobId) && Jobs.TryGetValue(_currentJobId, out var currentJob))
                     {
-                        if (currentJob.Status == TestJobStatus.Running)
+                        // Managed native ownership survives history age. Its captured GUID, final
+                        // progress and idle observer decide termination; wall clock is not evidence.
+                        if (currentJob.Status == TestJobStatus.Running && currentJob.Control == null)
                         {
                             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                             long staleCutoffMs = 5 * 60 * 1000; // 5 minutes
@@ -451,7 +483,7 @@ namespace MCPForUnity.Editor.Services
                     if (Jobs.Count > MaxJobsToKeep)
                     {
                         var expiredIds = Jobs
-                            .Values.Where(j => j.Status != TestJobStatus.Running)
+                            .Values.Where(j => j.Status != TestJobStatus.Running && (j.NativeControl == null || (bool?)j.NativeControl["released"] == true))
                             .OrderBy(j => j.LastUpdateUnixMs)
                             .Take(Jobs.Count - MaxJobsToKeep)
                             .Select(j => j.JobId)
@@ -485,6 +517,7 @@ namespace MCPForUnity.Editor.Services
                             artifact = j.ResultArtifact,
                             completion_kind = j.CompletionKind,
                             result_availability = j.ResultAvailability,
+                            native_control = j.NativeControl,
                         })
                         .ToList();
 
@@ -526,8 +559,132 @@ namespace MCPForUnity.Editor.Services
 
         internal static bool PersistResultArtifactMetadata() => PersistToSessionState(force: true);
 
-        public static string StartJob(TestMode mode, TestFilterOptions filterOptions = null, long initTimeoutMs = 0)
+        private static void BindControl(TestJob job)
         {
+            job.NativeControl = job.Control.State;
+            job.Control.Persist = () => PersistToSessionState(force: true);
+            if (!_controlMonitor)
+            {
+                _controlMonitor = true;
+                EditorApplication.update += TickNativeControls;
+            }
+        }
+
+        internal static NativeTestRunControl EnsureNativeControl(string id, long timeoutMs = 0)
+        {
+            if (id == null || !Jobs.TryGetValue(id, out var job))
+                return null;
+            if (job.Control != null)
+                return job.Control;
+            job.Control = NativeTestRunControl.Create(id, timeoutMs);
+            if (job.Control != null)
+            {
+                BindControl(job);
+                PersistToSessionState(force: true);
+            }
+            return job.Control;
+        }
+
+        internal static NativeTestRunControl ControlFor(string id) => id != null && Jobs.TryGetValue(id, out var job) ? job.Control : null;
+
+        internal static bool ControlOwnsCallback(string id) => ControlFor(id)?.AcceptsCallback() ?? true;
+
+        internal static bool NativeAdmissionBlocked => Jobs.Values.Any(job => job.Control != null && !job.Control.Released);
+
+        internal static bool OtherNativeAdmissionBlocked(string admittedJobId) =>
+            Jobs.Values.Any(job =>
+                job.Control != null
+                && !job.Control.Released
+                && (job.JobId != admittedJobId || job.Control.NativeGuid != null || (bool?)job.Control.State["native_invoked"] == true)
+            );
+
+        internal static void RetireQueuedControl(string id)
+        {
+            var control = ControlFor(id);
+            if (control != null && control.NativeGuid == null)
+                control.RetireQueued();
+        }
+
+        internal static object CancelJob(string id)
+        {
+            if (!NativeTestRunControl.Available)
+                throw new NotSupportedException("unsupported_native_test_control");
+            if (!Jobs.TryGetValue(id, out var job))
+                throw new ArgumentException("Test job not found.");
+            if (job.Control == null)
+                throw new NotSupportedException("unsupported_native_test_control: job has no captured native control ownership");
+            if (!job.Control.Released)
+                job.Control.Request("user");
+            TickNativeControls();
+            return new
+            {
+                job_id = id,
+                status = job.Status.ToString().ToLowerInvariant(),
+                native_control = job.NativeControl,
+            };
+        }
+
+        private static void TickNativeControls()
+        {
+            foreach (var job in Jobs.Values.ToArray())
+            {
+                var control = job.Control;
+                if (control == null || (bool?)control.State["settled"] == true)
+                    continue;
+                if (!control.Released)
+                    control.Tick();
+                if (!control.Released)
+                    continue;
+                if (control.Requested && job.Status == TestJobStatus.Running)
+                {
+                    bool stoppedBeforeStart = control.NativeGuid == null;
+                    if (stoppedBeforeStart)
+                        TestRunnerService.RetireJob(job.JobId, "Test job stopped before native execution.");
+                    // The API bool acknowledges an intent, not the authoritative outcome.
+                    // A retained callback summary survives reload even when Result is evicted.
+                    var summary = job.RetainedSummary ?? job.Result?.Summary;
+                    bool cancelledResult = summary != null && new[] { "Canceled", "Cancelled" }.Contains(summary.ResultState, StringComparer.OrdinalIgnoreCase);
+                    if (stoppedBeforeStart || cancelledResult || control.CancelAccepted && summary == null)
+                    {
+                        bool deadline = (string)control.State["reason"] == "deadline";
+                        job.Status = deadline ? TestJobStatus.Failed : TestJobStatus.Cancelled;
+                        job.CompletionKind = deadline ? "deadline_exceeded" : "cancelled";
+                        job.Error = deadline ? "Native test job deadline exceeded." : null;
+                        if (summary == null)
+                            job.ResultAvailability = "unavailable";
+                    }
+                    else
+                    {
+                        job.Status = summary == null || summary.Failed > 0 ? TestJobStatus.Failed : TestJobStatus.Succeeded;
+                        job.CompletionKind = summary == null ? "interrupted" : "completed";
+                    }
+                    job.FinishedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    job.LastUpdateUnixMs = job.FinishedUnixMs.Value;
+                    if (_currentJobId == job.JobId)
+                        _currentJobId = null;
+                    TestRunStatus.MarkFinished();
+                    PersistToSessionState(force: true);
+                }
+                TestRunnerService.ConfirmNativeTermination(job.JobId);
+                control.State["settled"] = true;
+                PersistToSessionState(force: true);
+                control.Dispose();
+            }
+            if (!NativeAdmissionBlocked && _controlMonitor)
+            {
+                EditorApplication.update -= TickNativeControls;
+                _controlMonitor = false;
+            }
+        }
+
+        public static string StartJob(TestMode mode, TestFilterOptions filterOptions = null, long initTimeoutMs = 0, long runTimeoutMs = 0)
+        {
+            if (runTimeoutMs < 0 || runTimeoutMs > 600000)
+                throw new ArgumentException("runTimeoutMs must be 1..600000 when supplied.");
+            if (runTimeoutMs > 0 && !NativeTestRunControl.Available)
+                throw new NotSupportedException("unsupported_native_test_control");
+            if (NativeAdmissionBlocked)
+                throw new InvalidOperationException("A Unity test run or native cleanup is already in progress.");
             TestRunnerService.ThrowIfRetiredRunPending();
             // Clamp to valid range: non-positive values mean "use default", cap at 10 minutes
             if (initTimeoutMs < 0)
@@ -568,6 +725,12 @@ namespace MCPForUnity.Editor.Services
                 }
                 Jobs[jobId] = job;
                 _currentJobId = jobId;
+            }
+            if (runTimeoutMs > 0 && EnsureNativeControl(jobId, runTimeoutMs) == null)
+            {
+                Jobs.Remove(jobId);
+                _currentJobId = null;
+                throw new NotSupportedException("unsupported_native_test_control");
             }
             PersistToSessionState(force: true);
 
@@ -636,7 +799,14 @@ namespace MCPForUnity.Editor.Services
                 }
                 job.CurrentTestFullName = null;
                 job.CurrentTestStartedUnixMs = null;
-                _currentJobId = null;
+                if (job.Control?.Requested == true && !job.Control.Released)
+                {
+                    job.Status = TestJobStatus.Running;
+                    job.FinishedUnixMs = null;
+                    job.CompletionKind = "cancellation_pending";
+                }
+                else
+                    _currentJobId = null;
             }
             PersistToSessionState(force: true);
         }
@@ -796,7 +966,7 @@ namespace MCPForUnity.Editor.Services
                 // Check if job is stuck in "running" state without having called OnRunStarted (TotalTests still null).
                 // This happens when tests fail to initialize (e.g., unsaved scene, compilation issues).
                 // After 15 seconds without initialization, auto-fail the job to prevent hanging.
-                if (job.Status == TestJobStatus.Running && job.TotalTests == null)
+                if (job.Status == TestJobStatus.Running && job.TotalTests == null && job.Control?.Requested != true)
                 {
                     long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     long initTimeout = job.InitTimeoutMs > 0 ? job.InitTimeoutMs : DefaultInitializationTimeoutMs;
@@ -887,6 +1057,7 @@ namespace MCPForUnity.Editor.Services
                 },
                 error = job.Error,
                 result = resultPayload,
+                native_control = job.NativeControl,
                 result_truncated_count = (int?)job.ResultArtifact?["truncated_result_count"] ?? 0,
                 completion_kind = job.CompletionKind,
                 result_availability = job.ResultAvailability ?? (job.Result == null ? "legacy_unavailable" : "available"),
@@ -1111,6 +1282,8 @@ namespace MCPForUnity.Editor.Services
                     return;
                 }
 
+                if (existing.Control?.Requested == true && !existing.Control.Released)
+                    return;
                 // If RunFinished already finalized the job, do nothing.
                 if (existing.Status != TestJobStatus.Running)
                 {

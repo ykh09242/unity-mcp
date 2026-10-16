@@ -41,6 +41,8 @@ from transport.catalog_subscriptions import (
     install_catalog_subscriptions,
 )
 from transport.mcp_version_middleware import McpVersionMiddleware
+from transport.inventory_ordering import InventoryOrderingMiddleware
+from transport.skills_extension import install_skills
 from transport.test_job_tasks import WaitTaskDeliveryMiddleware
 from transport.test_wait_binding import install_test_job_tasks
 from transport.request_body_limit_middleware import (
@@ -583,6 +585,7 @@ def create_mcp_server(
             _build_instructions(project_scoped_tools), custom_instructions
         ),
     )
+    mcp.add_middleware(InventoryOrderingMiddleware())
     mcp.add_middleware(ResponseLimitMiddleware())
     install_catalog_subscriptions(mcp, remote_hosted=config.http_remote_hosted)
 
@@ -904,6 +907,7 @@ def create_mcp_server(
 
     # Register all resources
     register_all_resources(mcp, project_scoped_tools=project_scoped_tools)
+    install_skills(mcp)
 
     if test_wait_tasks_root is not None:
         install_test_job_tasks(mcp, test_wait_tasks_root, remote_hosted=config.http_remote_hosted)

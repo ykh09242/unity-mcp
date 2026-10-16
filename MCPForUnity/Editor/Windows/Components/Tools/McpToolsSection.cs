@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Constants;
@@ -26,6 +27,15 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private Toggle projectScopedToolsToggle;
         private Label summaryLabel;
         private Label noteLabel;
+        private Label applyStatusLabel;
+        private Button retryToolsButton;
+        private readonly IToolSettingsStatusSource providedStatusSource;
+        private readonly bool? httpMode;
+        private readonly SynchronizationContext uiContext;
+        private readonly int uiThread;
+        private IToolSettingsStatusSource statusSource;
+        private bool statusAttached = true;
+        private int statusRenderQueued;
         private TextField searchField;
         private Label visibleCountLabel;
         private Label emptyStateLabel;
@@ -57,10 +67,31 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         public VisualElement Root { get; }
 
         public McpToolsSection(VisualElement root)
+            : this(root, null, null) { }
+
+        public McpToolsSection(VisualElement root, IToolSettingsStatusSource source, bool useHttp)
+            : this(root, source, (bool?)useHttp) { }
+
+        private McpToolsSection(VisualElement root, IToolSettingsStatusSource source, bool? useHttp)
         {
             Root = root;
+            providedStatusSource = source;
+            httpMode = useHttp;
+            uiContext = SynchronizationContext.Current;
+            uiThread = Thread.CurrentThread.ManagedThreadId;
             CacheUIElements();
             RegisterCallbacks();
+            Root.RegisterCallback<AttachToPanelEvent>(_ =>
+            {
+                statusAttached = true;
+                BindStatusSource();
+            });
+            Root.RegisterCallback<DetachFromPanelEvent>(_ =>
+            {
+                statusAttached = false;
+                UnbindStatusSource();
+            });
+            BindStatusSource();
         }
 
         private void CacheUIElements()
@@ -68,6 +99,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             projectScopedToolsToggle = Root.Q<Toggle>("project-scoped-tools-toggle");
             summaryLabel = Root.Q<Label>("tools-summary");
             noteLabel = Root.Q<Label>("tools-note");
+            applyStatusLabel = Root.Q<Label>("tools-apply-status");
+            retryToolsButton = Root.Q<Button>("retry-tools-button");
             searchField = Root.Q<TextField>("tools-search");
             visibleCountLabel = Root.Q<Label>("tools-visible-count");
             emptyStateLabel = Root.Q<Label>("tools-empty-state");
@@ -81,6 +114,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private void RegisterCallbacks()
         {
             searchField?.RegisterValueChangedCallback(evt => ApplySearch());
+            if (retryToolsButton != null)
+                retryToolsButton.clicked += () => _ = RetryToolSettingsAsync();
 
             if (projectScopedToolsToggle != null)
             {
@@ -131,6 +166,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         /// </summary>
         public void Refresh()
         {
+            BindStatusSource();
             toolToggleMap.Clear();
             groupToggleMap.Clear();
             foldoutEntries.Clear();
@@ -357,6 +393,11 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
         private void ReregisterToolsAsync()
         {
+            BindStatusSource();
+            statusSource?.NotifyToolSettingsChanged();
+            RenderToolSettingsStatus();
+            if (!IsHttpMode())
+                return;
             // Fire and forget - don't block UI thread
             var transportManager = MCPServiceLocator.TransportManager;
             var client = transportManager.GetClient(TransportMode.Http);
@@ -546,7 +587,96 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             }
 
             int enabledCount = allTools.Count(tool => MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name));
-            summaryLabel.text = $"{enabledCount} of {allTools.Count} tools will register with connected clients.";
+            summaryLabel.text = $"{enabledCount} of {allTools.Count} tools enabled in saved local settings.";
+        }
+
+        private bool IsHttpMode() => httpMode ?? EditorConfigurationCache.Instance.UseHttpTransport;
+
+        private void BindStatusSource()
+        {
+            if (!statusAttached)
+                return;
+            var next = !IsHttpMode()
+                ? null
+                : providedStatusSource ?? MCPServiceLocator.TransportManager.GetClient(TransportMode.Http) as IToolSettingsStatusSource;
+            if (!ReferenceEquals(next, statusSource))
+            {
+                UnbindStatusSource();
+                statusSource = next;
+                if (statusSource != null)
+                    statusSource.StatusChanged += OnToolSettingsStatusChanged;
+            }
+            RenderToolSettingsStatus();
+        }
+
+        private void UnbindStatusSource()
+        {
+            if (statusSource != null)
+                statusSource.StatusChanged -= OnToolSettingsStatusChanged;
+            statusSource = null;
+        }
+
+        private void OnToolSettingsStatusChanged()
+        {
+            if (!statusAttached)
+                return;
+            if (Thread.CurrentThread.ManagedThreadId == uiThread)
+                RenderToolSettingsStatus();
+            else if (uiContext != null && Interlocked.CompareExchange(ref statusRenderQueued, 1, 0) == 0)
+                uiContext.Post(
+                    _ =>
+                    {
+                        Interlocked.Exchange(ref statusRenderQueued, 0);
+                        if (statusAttached)
+                            RenderToolSettingsStatus();
+                    },
+                    null
+                );
+        }
+
+        private void RenderToolSettingsStatus()
+        {
+            bool http = IsHttpMode();
+            ToolSettingsStatus status = http ? statusSource?.Status : null;
+            if (applyStatusLabel != null)
+            {
+                applyStatusLabel.text =
+                    !http ? "Not confirmed in stdio. Run manage_tools sync to refresh the server."
+                    : status == null ? "Not confirmed. Reconnect to obtain server catalog status."
+                    : status.Stage switch
+                    {
+                        "applied" => "Server catalog applied. Client visibility may also depend on enabled groups.",
+                        "pending" or "sending" or "awaiting_ack" => "Saved locally. Waiting for server confirmation.",
+                        "rejected" => "Rejected by server. Saved local settings are retained.",
+                        "disconnected" => "Disconnected. Saved local settings are not currently confirmed.",
+                        "preparation_failed" => "Not confirmed. Tool catalog preparation failed.",
+                        "send_failed" => "Not confirmed. Sending tool settings failed.",
+                        "unconfirmed" => "Not confirmed. The server has not acknowledged these settings.",
+                        _ => "Saved locally. Server application is not confirmed.",
+                    };
+                applyStatusLabel.tooltip =
+                    status == null
+                        ? string.Empty
+                        : $"Desired revision: {status.DesiredRevision}; last confirmed: {status.ConfirmedRevision?.ToString() ?? "none"}. {status.Reason} {status.Message}";
+            }
+            retryToolsButton?.SetEnabled(http && status?.CanRetry == true);
+        }
+
+        private async Task RetryToolSettingsAsync()
+        {
+            var source = statusSource;
+            if (!IsHttpMode() || source?.Status.CanRetry != true)
+                return;
+            try
+            {
+                await source.RetryToolSettingsAsync();
+            }
+            catch (Exception ex)
+            {
+                McpLog.Warn($"Tool settings retry failed: {ex.GetType().Name}");
+            }
+            if (statusAttached)
+                RenderToolSettingsStatus();
         }
 
         private void UpdateFoldoutHeaders()

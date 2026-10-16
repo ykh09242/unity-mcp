@@ -192,6 +192,7 @@ namespace MCPForUnity.Editor.Services
 
         internal static void RetireJob(string jobId, string message)
         {
+            TestJobManager.RetireQueuedControl(jobId);
             lock (PendingRunAdmissions)
             {
                 foreach (var pending in PendingRunAdmissions.Where(p => p.JobId == jobId).ToArray())
@@ -215,6 +216,19 @@ namespace MCPForUnity.Editor.Services
             if (PlayModeOptionsGuard.IsPending)
                 PlayModeOptionsGuard.Restore();
             completion?.TrySetException(new InvalidOperationException(message));
+        }
+
+        internal static void ConfirmNativeTermination(string jobId)
+        {
+            // Called only after the post-Dispose GUID witness and a later coherent idle check.
+            var control = TestJobManager.ControlFor(jobId);
+            if (control == null || !control.Released)
+                return;
+            var owner = _activeRunOwner;
+            if (owner != null && owner._trackedJobId == jobId)
+                owner.CompleteRun(null, new OperationCanceledException("Native test execution stopped."));
+            if (SessionState.GetString(RetiredRunSessionKey, "") == jobId)
+                SessionState.SetString(RetiredRunSessionKey, "");
         }
 
         public TestRunnerService()
@@ -302,6 +316,9 @@ namespace MCPForUnity.Editor.Services
                 throw new InvalidOperationException("A recovered Unity test run is still in progress.");
             }
 
+            if (TestJobManager.OtherNativeAdmissionBlocked(TestJobManager.CurrentJobId))
+                throw new InvalidOperationException("A Unity test run or native cleanup is already in progress.");
+            TestJobManager.EnsureNativeControl(TestJobManager.CurrentJobId);
             // Bind ownership before discovery or another operation can delay admission.
             // A retired waiter must never inherit the manager's later current job.
             var admission = new PendingRunAdmission
@@ -334,6 +351,8 @@ namespace MCPForUnity.Editor.Services
         {
             Task<TestRunResult> runTask;
             TaskCompletionSource<TestRunResult> completionSource = null;
+            bool nativeInvoked = false;
+            var nativeControl = TestJobManager.ControlFor(jobId);
             bool adjustedPlayModeOptions = false;
             bool appliedNoThrottling = false;
             bool originalEnterPlayModeOptionsEnabled = false;
@@ -342,6 +361,7 @@ namespace MCPForUnity.Editor.Services
             {
                 ThrowIfDisposed();
                 ThrowIfRetiredRunPending();
+                nativeControl?.CheckAdmission();
                 if (retirementError != null || (jobId != null && TestJobManager.CurrentJobId != jobId))
                     throw new InvalidOperationException(retirementError ?? "Test job was retired before execution started.");
                 if (_runCompletionSource != null && !_runCompletionSource.Task.IsCompleted)
@@ -400,10 +420,16 @@ namespace MCPForUnity.Editor.Services
                     TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
                 }
 
-                _testRunnerApi.Execute(settings);
+                nativeControl?.CheckAdmission();
+                nativeControl?.MarkExecuting();
+                nativeInvoked = true;
+                string nativeGuid = _testRunnerApi.Execute(settings);
+                nativeControl?.BindGuid(nativeGuid);
             }
             catch
             {
+                if (!nativeInvoked)
+                    nativeControl?.AbortBeforeExecute();
                 // Execute can throw before RunFinished is delivered. Release this run's
                 // completion source so a later request can retry instead of staying busy.
                 if (completionSource != null && _runCompletionSource == completionSource)
@@ -497,6 +523,8 @@ namespace MCPForUnity.Editor.Services
 
         public void RunStarted(ITestAdaptor testsToRun)
         {
+            if (!TestJobManager.ControlOwnsCallback(_trackedJobId))
+                return;
             _leafResults.Clear();
             if (!IsTrackingCurrentJob)
             {
@@ -520,6 +548,8 @@ namespace MCPForUnity.Editor.Services
 
         public void RunFinished(ITestResultAdaptor result)
         {
+            if (!TestJobManager.ControlOwnsCallback(_trackedJobId))
+                return;
             if (_runCompletionSource == null && _trackedJobId == null)
             {
                 return;
@@ -538,6 +568,8 @@ namespace MCPForUnity.Editor.Services
 
         public void OnError(string message)
         {
+            if (!TestJobManager.ControlOwnsCallback(_trackedJobId))
+                return;
             // Build/prebuild failures use IErrorCallbacks instead of RunFinished.
             CompleteRun(null, new InvalidOperationException(message ?? "Unity test run failed."));
         }
@@ -594,6 +626,8 @@ namespace MCPForUnity.Editor.Services
 
         public void TestStarted(ITestAdaptor test)
         {
+            if (!TestJobManager.ControlOwnsCallback(_trackedJobId))
+                return;
             if (!IsTrackingCurrentJob)
             {
                 return;
@@ -616,6 +650,8 @@ namespace MCPForUnity.Editor.Services
 
         public void TestFinished(ITestResultAdaptor result)
         {
+            if (!TestJobManager.ControlOwnsCallback(_trackedJobId))
+                return;
             if (result == null || (_runCompletionSource == null && !IsTrackingCurrentJob))
             {
                 return;

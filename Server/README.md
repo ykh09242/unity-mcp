@@ -32,7 +32,7 @@ Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` 
 Normally the Editor manages launch/configuration. This beta checkout uses the exact `mcpServerSource` recorded in [`MCPForUnity/package.json`](../MCPForUnity/package.json). Published stable releases keep their own immutable source pins; use the value from the installed package:
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/e280d0183e1cf2186225d9131dfc22480ae87c9b.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/414daac3d1bd33b577f66d3c080dd2fc99fc587f.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
 Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving branch. First launch can require dependency downloads; a source pin is not an offline-install guarantee. The commit-addressed archive avoids Git checkout and its Windows long-path limit; it still downloads the repository archive and builds only `Server`. Existing full-commit Git and explicit local development overrides remain supported.
@@ -76,6 +76,14 @@ Authenticated local clients share the journal installation's nonsecret owner ide
 
 `tasks/cancel` cancels the **wait Task**, not native test execution. Its acknowledgement records cancellation intent; inspect `tasks/get` for the final Task state. Use existing native-job polling/control separately.
 
+## Pinned Unity guidance over MCP
+
+On the reviewed MCP SDK **2.3.0** and FastMCP **4.1.0**, the server automatically offers the final `io.modelcontextprotocol/skills` extension when its packaged snapshot validates. Modern **2026-07-28** clients can discover it with `server/discover`, enumerate `skills/list`, and look up `skills/get` with `uri: "skill://unity-mcp-orchestrator/SKILL.md"`. Each entry includes unchanged frontmatter and a complete file manifest with raw-byte SHA-256 digests and sizes. Read individual files on demand with `resources/read`; directory reads are not offered. Explicit legacy clients can read the same ordinary resources but cannot call the modern Skills methods.
+
+The server serves one immutable copy of the existing Unity skill, built from the package's `mcpSkillRevision` and included in the server distribution. It does not scan user skill directories, fetch guidance, install files, or activate a skill in the host. File bytes stay unchanged; both metadata methods retain zero/private cache hints. Local HTTP token and hosted authentication still apply; the guidance itself contains no tenant or Editor state and needs no running Editor.
+
+A host must implement Skills discovery, manifest verification and its own consent/activation flow to use this delivery path; server advertisement does not prove host support. Unsupported SDK hooks or invalid/missing packaged data leave Skills unadvertised. The Editor's existing pinned skill preview/file-install workflow remains available for hosts that need files. Updating the guidance requires a new verified package build and server restart, rather than changing request paths or a live user directory.
+
 ## Scalar input types
 
 Tool arguments preserve their declared types. Use JSON `true`/`false` for boolean flags and whole JSON integers for integer arguments. Numeric `0`/`1` cannot substitute for booleans; booleans cannot substitute for numbers. Integer arguments reject floating values such as `1.0` and `1.5` instead of rounding or truncating them. Floating arguments accept integers and finite floats, but reject NaN and Infinity.
@@ -93,8 +101,8 @@ The routing middleware checks built-in tool signatures before instance discovery
 ## CLI and environment reference
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/e280d0183e1cf2186225d9131dfc22480ae87c9b.zip#subdirectory=Server" mcp-for-unity --help
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/e280d0183e1cf2186225d9131dfc22480ae87c9b.zip#subdirectory=Server" unity-mcp --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/414daac3d1bd33b577f66d3c080dd2fc99fc587f.zip#subdirectory=Server" mcp-for-unity --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/414daac3d1bd33b577f66d3c080dd2fc99fc587f.zip#subdirectory=Server" unity-mcp --help
 ```
 
 The server and Editor-control CLI have different options. `unity-mcp` requires local HTTP and accepts `--host`, `--port`, `--timeout`, `--format`, and `--instance`. Place global options before subcommands; see [CLI examples](../website/docs/guides/cli.md).

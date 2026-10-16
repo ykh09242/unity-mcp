@@ -39,13 +39,26 @@ namespace MCPForUnity.Editor.Tools
                     return Task.FromResult<object>(new ErrorResponse(parseError));
                 }
 
+                long runTimeoutMs = 0;
+                if (@params?["runTimeoutMs"] != null)
+                {
+                    if (
+                        @params["runTimeoutMs"].Type != JTokenType.Integer
+                        || !long.TryParse(@params["runTimeoutMs"].ToString(), out runTimeoutMs)
+                        || runTimeoutMs < 1
+                        || runTimeoutMs > 600000
+                    )
+                        return Task.FromResult<object>(new ErrorResponse("runTimeoutMs must be 1..600000 milliseconds."));
+                    if (!NativeTestRunControl.Available)
+                        return Task.FromResult<object>(new ErrorResponse("unsupported_native_test_control"));
+                }
                 var p = new ToolParams(@params);
                 bool includeDetails = p.GetBool("includeDetails");
                 bool includeFailedTests = p.GetBool("includeFailedTests");
 
                 var filterOptions = GetFilterOptions(@params);
                 long initTimeoutMs = p.GetInt("initTimeout") ?? 0;
-                string jobId = TestJobManager.StartJob(parsedMode.Value, filterOptions, initTimeoutMs);
+                string jobId = TestJobManager.StartJob(parsedMode.Value, filterOptions, initTimeoutMs, runTimeoutMs);
 
                 return Task.FromResult<object>(
                     new SuccessResponse(

@@ -23,7 +23,7 @@
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/e280d0183e1cf2186225d9131dfc22480ae87c9b.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/414daac3d1bd33b577f66d3c080dd2fc99fc587f.zip#subdirectory=Server",
         "mcp-for-unity"
       ],
       "env": {}
@@ -41,6 +41,10 @@
     {
       "name": "blender_bridge",
       "description": "Drive a running Blender through the BlenderMCP addon and bring its results into Unity"
+    },
+    {
+      "name": "cancel_test_job",
+      "description": "Request cancellation of an owned native Unity test job"
     },
     {
       "name": "capture_ui_snapshot",

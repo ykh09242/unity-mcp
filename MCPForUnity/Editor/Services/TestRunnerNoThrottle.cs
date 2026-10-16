@@ -30,6 +30,12 @@ namespace MCPForUnity.Editor.Services
         private const string ApplicationIdleTimeKey = "ApplicationIdleTime";
         private const string InteractionModeKey = "InteractionMode";
 
+        // Narrow test seam: owned fixtures must never read/write the user's global preferences.
+        // Production delegates retain the existing EditorPrefs and interaction-refresh behavior.
+        internal static Func<string, int, int> ReadPreference = EditorPrefs.GetInt;
+        internal static Action<string, int> WritePreference = EditorPrefs.SetInt;
+        internal static Action ApplyInteractionPreferences = ForceEditorToApplyInteractionPrefs;
+
         // SessionState keys to persist across domain reload
         private const string SessionKey_TestRunActive = "TestRunnerNoThrottle_TestRunActive";
         private const string SessionKey_PrevIdleTime = "TestRunnerNoThrottle_PrevIdleTime";
@@ -125,16 +131,16 @@ namespace MCPForUnity.Editor.Services
         {
             if (!AreSettingsCaptured())
             {
-                SetPrevIdleTime(EditorPrefs.GetInt(ApplicationIdleTimeKey, 4));
-                SetPrevInteractionMode(EditorPrefs.GetInt(InteractionModeKey, 0));
+                SetPrevIdleTime(ReadPreference(ApplicationIdleTimeKey, 4));
+                SetPrevInteractionMode(ReadPreference(InteractionModeKey, 0));
                 SetSettingsCaptured(true);
             }
 
             // 0ms idle + InteractionMode=1 (No Throttling)
-            EditorPrefs.SetInt(ApplicationIdleTimeKey, 0);
-            EditorPrefs.SetInt(InteractionModeKey, 1);
+            WritePreference(ApplicationIdleTimeKey, 0);
+            WritePreference(InteractionModeKey, 1);
 
-            ForceEditorToApplyInteractionPrefs();
+            ApplyInteractionPreferences();
             McpLog.Info("[TestRunnerNoThrottle] Applied No Throttling for test run.");
         }
 
@@ -143,9 +149,9 @@ namespace MCPForUnity.Editor.Services
             if (!AreSettingsCaptured())
                 return;
 
-            EditorPrefs.SetInt(ApplicationIdleTimeKey, GetPrevIdleTime());
-            EditorPrefs.SetInt(InteractionModeKey, GetPrevInteractionMode());
-            ForceEditorToApplyInteractionPrefs();
+            WritePreference(ApplicationIdleTimeKey, GetPrevIdleTime());
+            WritePreference(InteractionModeKey, GetPrevInteractionMode());
+            ApplyInteractionPreferences();
 
             SetSettingsCaptured(false);
             SetTestRunActive(false);

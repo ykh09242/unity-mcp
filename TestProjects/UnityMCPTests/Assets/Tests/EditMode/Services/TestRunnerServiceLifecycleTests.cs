@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.TestTools.TestRunner.Api;
@@ -16,6 +17,10 @@ namespace MCPForUnityTests.Editor.Services
         private TestRunnerService _service;
         private TestRunnerApi _api;
         private readonly Dictionary<FieldInfo, object> _status = new Dictionary<FieldInfo, object>();
+        private Func<string, int, int> _preferenceRead;
+        private Action<string, int> _preferenceWrite;
+        private Action _preferenceApply;
+        private readonly Dictionary<string, int> _preferences = new Dictionary<string, int>();
         private int _idleTime;
         private int _interactionMode;
         private bool _playOptionsEnabled;
@@ -37,16 +42,27 @@ namespace MCPForUnityTests.Editor.Services
         private const BindingFlags StaticPrivate = BindingFlags.NonPublic | BindingFlags.Static;
         private static Dictionary<string, TestJob> Jobs => (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", StaticPrivate).GetValue(null);
 
+        private bool _oldControlDisabled;
+
         [SetUp]
         public void SetUp()
         {
+            _oldControlDisabled = NativeTestRunControl.DisableForTests;
+            NativeTestRunControl.DisableForTests = true;
             if (PlayModeOptionsGuard.IsPending || TestRunnerService.HasRetiredRun)
                 Assert.Ignore("An existing run owns the PlayMode options backup.");
             foreach (var field in typeof(TestRunStatus).GetFields(BindingFlags.NonPublic | BindingFlags.Static))
                 if (!field.IsInitOnly)
                     _status[field] = field.GetValue(null);
-            _idleTime = EditorPrefs.GetInt("ApplicationIdleTime", 4);
-            _interactionMode = EditorPrefs.GetInt("InteractionMode", 0);
+            _preferenceRead = TestRunnerNoThrottle.ReadPreference;
+            _preferenceWrite = TestRunnerNoThrottle.WritePreference;
+            _preferenceApply = TestRunnerNoThrottle.ApplyInteractionPreferences;
+            _preferences.Clear();
+            TestRunnerNoThrottle.ReadPreference = (key, fallback) => _preferences.TryGetValue(key, out int value) ? value : fallback;
+            TestRunnerNoThrottle.WritePreference = (key, value) => _preferences[key] = value;
+            TestRunnerNoThrottle.ApplyInteractionPreferences = () => { };
+            _idleTime = TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4);
+            _interactionMode = TestRunnerNoThrottle.ReadPreference("InteractionMode", 0);
             _playOptionsEnabled = EditorSettings.enterPlayModeOptionsEnabled;
             _playOptions = EditorSettings.enterPlayModeOptions;
             _throttleActive = SessionState.GetBool("TestRunnerNoThrottle_TestRunActive", false);
@@ -74,31 +90,107 @@ namespace MCPForUnityTests.Editor.Services
         [TearDown]
         public void TearDown()
         {
+            NativeTestRunControl.DisableForTests = _oldControlDisabled;
             if (!_stateCaptured)
                 return;
-            _service?.Dispose();
-            SessionState.SetString(RetiredRunSessionKey, string.Empty);
-            typeof(TestRunnerService).GetField("_activeRunOwner", StaticPrivate).SetValue(null, _originalOwner);
-            typeof(MCPServiceLocator).GetField("_testRunnerService", StaticPrivate).SetValue(null, _originalService);
-            foreach (var pair in _status)
-                pair.Key.SetValue(null, pair.Value);
-            _status.Clear();
-            EditorPrefs.SetInt("ApplicationIdleTime", _idleTime);
-            EditorPrefs.SetInt("InteractionMode", _interactionMode);
-            EditorSettings.enterPlayModeOptionsEnabled = _playOptionsEnabled;
-            EditorSettings.enterPlayModeOptions = _playOptions;
-            SessionState.SetBool("TestRunnerNoThrottle_TestRunActive", _throttleActive);
-            SessionState.SetBool("TestRunnerNoThrottle_SettingsCaptured", _throttleCaptured);
-            SessionState.SetInt("TestRunnerNoThrottle_PrevIdleTime", _savedIdle);
-            SessionState.SetInt("TestRunnerNoThrottle_PrevInteractionMode", _savedMode);
-            Jobs.Clear();
-            foreach (var pair in _jobs)
-                Jobs.Add(pair.Key, pair.Value);
-            SetCurrent(_currentJobId);
-            typeof(TestJobManager).GetField("_lastPersistUnixMs", StaticPrivate).SetValue(null, _persistTime);
-            SessionState.SetString("MCPForUnity.TestJobsV1", _jobSession);
-            SessionState.SetString("MCPForUnity.CurrentTestJobIdV1", _currentJobSession);
+            try
+            {
+                _service?.Dispose();
+                SessionState.SetString(RetiredRunSessionKey, string.Empty);
+                typeof(TestRunnerService).GetField("_activeRunOwner", StaticPrivate).SetValue(null, _originalOwner);
+                typeof(MCPServiceLocator).GetField("_testRunnerService", StaticPrivate).SetValue(null, _originalService);
+                foreach (var pair in _status)
+                    pair.Key.SetValue(null, pair.Value);
+                _status.Clear();
+                TestRunnerNoThrottle.WritePreference("ApplicationIdleTime", _idleTime);
+                TestRunnerNoThrottle.WritePreference("InteractionMode", _interactionMode);
+                EditorSettings.enterPlayModeOptionsEnabled = _playOptionsEnabled;
+                EditorSettings.enterPlayModeOptions = _playOptions;
+                SessionState.SetBool("TestRunnerNoThrottle_TestRunActive", _throttleActive);
+                SessionState.SetBool("TestRunnerNoThrottle_SettingsCaptured", _throttleCaptured);
+                SessionState.SetInt("TestRunnerNoThrottle_PrevIdleTime", _savedIdle);
+                SessionState.SetInt("TestRunnerNoThrottle_PrevInteractionMode", _savedMode);
+                Jobs.Clear();
+                foreach (var pair in _jobs)
+                    Jobs.Add(pair.Key, pair.Value);
+                SetCurrent(_currentJobId);
+                typeof(TestJobManager).GetField("_lastPersistUnixMs", StaticPrivate).SetValue(null, _persistTime);
+                SessionState.SetString("MCPForUnity.TestJobsV1", _jobSession);
+                SessionState.SetString("MCPForUnity.CurrentTestJobIdV1", _currentJobSession);
+            }
+            finally
+            {
+                TestRunnerNoThrottle.ReadPreference = _preferenceRead;
+                TestRunnerNoThrottle.WritePreference = _preferenceWrite;
+                TestRunnerNoThrottle.ApplyInteractionPreferences = _preferenceApply;
+            }
             _stateCaptured = false;
+        }
+
+        [Test]
+        public async Task ConfirmedNativeStopWithoutRunFinishedReleasesOriginalCallerAndSemaphore()
+        {
+            const string nativeGuid = "fedcba0987654321fedcba0987654321";
+            JObject view = new JObject
+            {
+                ["registered"] = new JArray(),
+                ["active"] = new JArray(),
+                ["serialized_active"] = new JArray(),
+                ["global_active"] = false,
+            };
+            var oldFactory = NativeTestRunControl.FactoryOverride;
+            try
+            {
+                NativeTestRunControl.DisableForTests = false;
+                NativeTestRunControl.FactoryOverride = (id, timeout) => new NativeTestRunControl(id, timeout, () => 10, () => view, _ => true);
+                SetSchedule(_ =>
+                {
+                    view = new JObject
+                    {
+                        ["registered"] = new JArray(nativeGuid),
+                        ["active"] = new JArray(nativeGuid),
+                        ["serialized_active"] = new JArray(nativeGuid),
+                        ["global_active"] = true,
+                    };
+                    return nativeGuid;
+                });
+                string id = TestJobManager.StartJob(TestMode.EditMode);
+                var original = _runner.LastRun;
+                Assert.IsFalse(original.IsCompleted);
+                var control = TestJobManager.ControlFor(id);
+                control.Request("user");
+                view = new JObject
+                {
+                    ["registered"] = new JArray(),
+                    ["active"] = new JArray(),
+                    ["serialized_active"] = new JArray(),
+                    ["global_active"] = false,
+                };
+                control.ObserveFinal(nativeGuid);
+                typeof(TestJobManager).GetMethod("TickNativeControls", StaticPrivate).Invoke(null, null);
+                Assert.AreSame(
+                    original,
+                    await Task.WhenAny(original, Task.Delay(1000)),
+                    "Confirmed stop without a result callback must release the waiting execution."
+                );
+                try
+                {
+                    await original;
+                }
+                catch (OperationCanceledException) { }
+                catch (InvalidOperationException) { }
+                Assert.AreEqual(TestJobStatus.Cancelled, Jobs[id].Status);
+                var semaphore = (SemaphoreSlim)
+                    typeof(TestRunnerService).GetField("_operationLock", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(_service);
+                Assert.AreEqual(1, semaphore.CurrentCount);
+                Assert.IsNull(typeof(TestRunnerService).GetField("_trackedJobId", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(_service));
+                Assert.IsFalse(TestJobManager.NativeAdmissionBlocked);
+            }
+            finally
+            {
+                NativeTestRunControl.FactoryOverride = oldFactory;
+                NativeTestRunControl.DisableForTests = true;
+            }
         }
 
         [Test]
@@ -124,8 +216,8 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsTrue(PlayModeOptionsGuard.IsPending);
             bool optionsEnabled = EditorSettings.enterPlayModeOptionsEnabled;
             var options = EditorSettings.enterPlayModeOptions;
-            int idle = EditorPrefs.GetInt("ApplicationIdleTime", 4);
-            int interaction = EditorPrefs.GetInt("InteractionMode", 0);
+            int idle = TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4);
+            int interaction = TestRunnerNoThrottle.ReadPreference("InteractionMode", 0);
             var lifetime = (CancellationTokenSource)
                 typeof(TestRunnerService).GetField("_lifetimeCancellation", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
 
@@ -139,8 +231,8 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsTrue(PlayModeOptionsGuard.IsPending);
             Assert.AreEqual(optionsEnabled, EditorSettings.enterPlayModeOptionsEnabled);
             Assert.AreEqual(options, EditorSettings.enterPlayModeOptions);
-            Assert.AreEqual(idle, EditorPrefs.GetInt("ApplicationIdleTime", 4));
-            Assert.AreEqual(interaction, EditorPrefs.GetInt("InteractionMode", 0));
+            Assert.AreEqual(idle, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4));
+            Assert.AreEqual(interaction, TestRunnerNoThrottle.ReadPreference("InteractionMode", 0));
 
             _service.RunFinished(null);
             await run;
@@ -163,13 +255,13 @@ namespace MCPForUnityTests.Editor.Services
         [Test]
         public void PlayModeExecuteFailure_RestoresThrottleAndPlayModeOptions()
         {
-            EditorPrefs.SetInt("ApplicationIdleTime", 17);
-            EditorPrefs.SetInt("InteractionMode", 2);
+            TestRunnerNoThrottle.WritePreference("ApplicationIdleTime", 17);
+            TestRunnerNoThrottle.WritePreference("InteractionMode", 2);
             SetSchedule(_ => throw new InvalidOperationException("schedule-failure"));
             var run = _service.RunTestsAsync(TestMode.PlayMode);
             Assert.AreEqual("schedule-failure", ObserveFailure(run).Message);
-            Assert.AreEqual(17, EditorPrefs.GetInt("ApplicationIdleTime", 4));
-            Assert.AreEqual(2, EditorPrefs.GetInt("InteractionMode", 0));
+            Assert.AreEqual(17, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4));
+            Assert.AreEqual(2, TestRunnerNoThrottle.ReadPreference("InteractionMode", 0));
             Assert.AreEqual(_playOptionsEnabled, EditorSettings.enterPlayModeOptionsEnabled);
             Assert.AreEqual(_playOptions, EditorSettings.enterPlayModeOptions);
             Assert.IsFalse(TestRunStatus.IsRunning);
