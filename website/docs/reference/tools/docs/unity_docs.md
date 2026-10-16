@@ -27,13 +27,14 @@ Actions:
 | `action` | `str` | yes | The documentation action to perform. |
 | `class_name` | `str \| None` | — | Unity class name (e.g. 'Physics', 'Transform'). |
 | `member_name` | `str \| None` | — | Method or property name to look up. |
-| `version` | `str \| None` | — | Unity version (e.g. '6000.0.38f1'). Auto-extracted. |
+| `version` | `str \| None` | — | Unity version (e.g. '6000.0.38f1' or '2022.3'). Explicit value wins; omitted/empty uses selected instance metadata, otherwise unversioned docs. |
 | `slug` | `str \| None` | — | Manual page slug (e.g., 'execution-order'). |
 | `package` | `str \| None` | — | Package name (e.g., 'com.unity.render-pipelines.universal'). |
 | `page` | `str \| None` | — | Package doc page (e.g., 'index', '2d-index'). |
 | `pkg_version` | `str \| None` | — | Package version major.minor (e.g., '17.0'). |
 | `query` | `str \| None` | — | Single search query for lookup (class name, topic, or slug). |
 | `queries` | `str \| None` | — | Comma-separated search queries for batch lookup (e.g., 'Physics.Raycast,NavMeshAgent,Light2D'). |
+| `strict_version` | `bool` | — | Require the selected/explicit major.minor documentation version. Refuse unknown versions and unverifiable/different-version final URLs; disable unversioned 404 fallback. Does not govern package pkg_version or project assets. |
 
 ## Returns
 

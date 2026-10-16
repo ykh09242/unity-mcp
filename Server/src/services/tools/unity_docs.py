@@ -10,12 +10,18 @@ import time
 from html.parser import HTMLParser
 from typing import Annotated, Any, Optional
 from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
+from core.config import config
+from services.tools import get_unity_instance_from_context
 from services.registry import mcp_for_unity_tool
+from transport.legacy.unity_connection import get_unity_connection_pool
+from transport.plugin_hub import PluginHub
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -92,6 +98,160 @@ def _extract_version(version_str: str | None) -> str | None:
         return version_str
     second = re.sub(r"[a-zA-Z].*$", "", parts[1])
     return f"{parts[0]}.{second}"
+
+
+def _valid_version(value: str) -> bool:
+    return re.fullmatch(r"\d+\.\d+(?:\.\d+(?:[abfp]\d+)?(?:c\d+)?)?", value) is not None
+
+
+def _version_info(version: str | None, strict: bool = False) -> dict[str, Any]:
+    return {
+        "requested_version": version,
+        "version_source": "explicit" if version else "default",
+        "selected_instance": None,
+        "editor_version": None,
+        "target_version": _extract_version(version),
+        "resolved_version": None,
+        "strict_version": strict,
+        "resolution_reason": "explicit_version" if version else "no_selected_instance",
+        "fallback_attempted": False,
+        "fallback_used": False,
+        "fallback_reason": None,
+        "fallback_blocked": False,
+    }
+
+
+async def _resolve_version(ctx: Any, version: str | None, strict: bool) -> dict[str, Any]:
+    info = _version_info(version, strict)
+    if version:
+        return info
+    selected = await get_unity_instance_from_context(ctx)
+    if not selected:
+        return info
+    info["selected_instance"] = selected
+    info["resolution_reason"] = "instance_metadata_unavailable"
+    try:
+        if (config.transport_mode or "stdio").lower() == "http":
+            user_id = None
+            if config.http_remote_hosted:
+                user_id = await get_unity_instance_from_context(ctx, "user_id")
+                if not isinstance(user_id, str) or not user_id:
+                    return info
+            catalog = await PluginHub.get_sessions(user_id=user_id)
+            target_hash = selected.rsplit("@", 1)[-1]
+            matches = [s for s in catalog.sessions.values() if s.hash == target_hash]
+            editor_version = matches[0].unity_version if len(matches) == 1 else None
+        else:
+            instance = await asyncio.to_thread(
+                get_unity_connection_pool().resolve_instance, selected, force_refresh=False
+            )
+            editor_version = instance.unity_version
+    except (ConnectionError, RuntimeError, ValueError, KeyError, AttributeError, OSError):
+        return info
+    if editor_version is None or editor_version == "":
+        return info
+    info["editor_version"] = editor_version
+    if not isinstance(editor_version, str) or not _valid_version(editor_version):
+        info["resolution_reason"] = "instance_version_invalid"
+        return info
+    info.update(
+        version_source="selected_instance",
+        target_version=_extract_version(editor_version),
+        resolution_reason="selected_instance_metadata",
+    )
+    return info
+
+
+def _url_version(url: str) -> str | None:
+    """Establish a version only from a recognized official documentation URL."""
+    try:
+        # urllib may retain the raw selector while a server normalizes its path.
+        # An apparent version prefix is not proof when later segments can escape
+        # it. Refuse ambiguous encodings instead of guessing provider semantics.
+        if re.search(r"[\x00-\x20\x7f\\]", url):
+            return None
+        parsed = urlsplit(url)
+        decoded_path = unquote(parsed.path, errors="strict")
+        if (
+            re.search(r"%(?:2f|5c)", parsed.path, re.IGNORECASE)
+            or "%" in decoded_path
+            or "\\" in decoded_path
+            or "//" in decoded_path
+            or re.search(r"[\x00-\x1f\x7f]", decoded_path)
+            or any(segment in (".", "..") for segment in decoded_path.split("/"))
+        ):
+            return None
+        official = (
+            parsed.scheme == "https"
+            and parsed.hostname == "docs.unity3d.com"
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port in (None, 443)
+        )
+    except ValueError:
+        return None
+    match = re.match(r"^/(\d+\.\d+)/Documentation/(?:ScriptReference|Manual)/", parsed.path)
+    return match.group(1) if official and match else None
+
+
+async def _fetch_editor_page(paths: list[str], info: dict[str, Any], source: str) -> dict[str, Any]:
+    """Try finite page spellings and optional unversioned fallback under one budget."""
+    evidence = dict(info)
+    target = evidence["target_version"]
+    strict = evidence["strict_version"]
+    attempts = []
+    final_url = None
+    for route_version in [target, None] if target else [None]:
+        if target and route_version is None:
+            evidence["fallback_reason"] = "version_not_found"
+            if strict:
+                evidence["fallback_blocked"] = True
+                break
+            evidence["fallback_attempted"] = True
+        for path in paths:
+            prefix = f"{route_version}/Documentation/" if route_version else ""
+            url = f"https://docs.unity3d.com/{prefix}{path}"
+            try:
+                status, body, final_url = await _fetch_url_full(url)
+            except ConnectionError as exc:
+                attempts.append({"url": url, "final_url": None, "status": None, "source": source})
+                return {
+                    "success": False,
+                    "message": f"Could not reach docs.unity3d.com: {exc}",
+                    "data": {
+                        "found": False,
+                        "url": None,
+                        "version": evidence,
+                        "attempts": attempts,
+                    },
+                }
+            attempts.append(
+                {"url": url, "final_url": final_url, "status": status, "source": source}
+            )
+            data = {"found": False, "url": final_url, "version": evidence, "attempts": attempts}
+            if status == 404:
+                continue
+            if status != 200:
+                return {
+                    "success": False,
+                    "message": f"docs.unity3d.com returned HTTP {status}.",
+                    "data": data,
+                }
+            resolved = _url_version(final_url)
+            mismatch = target is not None and resolved != target
+            if mismatch and not evidence["fallback_attempted"]:
+                evidence["fallback_reason"] = "redirect_version_mismatch"
+            if strict and mismatch:
+                evidence["fallback_blocked"] = True
+                return {"success": True, "data": data}
+            evidence["resolved_version"] = resolved
+            evidence["fallback_used"] = mismatch
+            data["found"] = True
+            return {"success": True, "data": data, "body": body}
+    return {
+        "success": True,
+        "data": {"found": False, "url": final_url, "version": evidence, "attempts": attempts},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +336,7 @@ async def _fetch_url_full(url: str) -> tuple[int, str, str]:
                 body = body_bytes.decode("utf-8", errors="replace")
                 return (resp.status, body, resp.url)
         except HTTPError as e:
-            return (e.code, "", url)
+            return (e.code, "", e.geturl() or url)
         except URLError as e:
             raise ConnectionError(f"Cannot reach {url}: {e}") from e
 
@@ -460,59 +620,18 @@ def _parse_manual_html(html: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def _get_manual(slug: str, version: str | None) -> dict[str, Any]:
-    """Fetch a Unity Manual page by slug."""
-    extracted_version = _extract_version(version)
-
-    if extracted_version:
-        url = f"https://docs.unity3d.com/{extracted_version}/Documentation/Manual/{slug}.html"
-    else:
-        url = f"https://docs.unity3d.com/Manual/{slug}.html"
-
-    try:
-        status, body = await _fetch_url(url)
-
-        # Version fallback: try unversioned if versioned 404s
-        if status == 404 and extracted_version:
-            fallback_url = f"https://docs.unity3d.com/Manual/{slug}.html"
-            status, body = await _fetch_url(fallback_url)
-            if status == 200:
-                url = fallback_url
-
-        if status == 404:
-            return {
-                "success": True,
-                "data": {
-                    "found": False,
-                    "slug": slug,
-                    "suggestion": (
-                        "Check the slug matches the Manual page URL path. "
-                        "Common slugs: 'execution-order', 'urp/urp-introduction', "
-                        "'UIE-USS-Properties-Reference'."
-                    ),
-                },
-            }
-
-        if status != 200:
-            return {"success": False, "message": f"docs.unity3d.com returned HTTP {status}."}
-
-        parsed = _parse_manual_html(body)
-        return {
-            "success": True,
-            "data": {
-                "found": True,
-                "url": url,
-                "title": parsed["title"],
-                "sections": parsed["sections"],
-                "code_examples": parsed["code_examples"],
-            },
-        }
-
-    except ConnectionError as e:
-        return {
-            "success": False,
-            "message": f"Could not reach docs.unity3d.com: {e}",
-        }
+async def _get_manual(
+    slug: str, version: str | None, version_info: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    result = await _fetch_editor_page(
+        [f"Manual/{slug}.html"], version_info or _version_info(version), "manual"
+    )
+    data = result["data"]
+    if data["found"]:
+        data.update(_parse_manual_html(result.pop("body")))
+    elif result["success"]:
+        data.update(slug=slug, suggestion="Check the slug matches the Manual page URL path.")
+    return result
 
 
 async def _get_package_doc(
@@ -755,6 +874,7 @@ async def _lookup_single(
     package: str | None,
     pkg_version: str | None,
     ctx: Any = None,
+    version_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Search all doc sources for a single query."""
     # Split "Physics.Raycast" into class_name + member_name
@@ -768,15 +888,15 @@ async def _lookup_single(
     tasks: list[tuple[str, Any]] = []
 
     # ScriptReference
-    tasks.append(("script_ref", _get_doc(class_name, member_name, version)))
+    tasks.append(("script_ref", _get_doc(class_name, member_name, version, version_info)))
 
     # Manual — try original case first (e.g., UIE-USS-Properties-Reference),
     # then lowercase fallback if different
     original_slug = query.replace(" ", "-").replace("_", "-")
-    tasks.append(("manual", _get_manual(original_slug, version)))
+    tasks.append(("manual", _get_manual(original_slug, version, version_info)))
     lowercase_slug = original_slug.lower()
     if lowercase_slug != original_slug:
-        tasks.append(("manual_lc", _get_manual(lowercase_slug, version)))
+        tasks.append(("manual_lc", _get_manual(lowercase_slug, version, version_info)))
 
     # Package docs (if package info provided)
     if package and pkg_version:
@@ -791,12 +911,25 @@ async def _lookup_single(
     # Collect successful hits and errors
     hits = []
     errors = []
+    outcomes = []
     for label, result in zip(labels, results):
         if isinstance(result, Exception):
             errors.append({"source": label, "error": str(result)})
+            outcomes.append({"source": label, "success": False, "error": str(result)})
             continue
         if not isinstance(result, dict):
             continue
+        data = result.get("data", {})
+        outcomes.append(
+            {
+                "source": label,
+                "success": result.get("success", False),
+                **{
+                    key: data[key] for key in ("found", "url", "version", "attempts") if key in data
+                },
+                **({"message": result["message"]} if "message" in result else {}),
+            }
+        )
         if not result.get("success"):
             errors.append({"source": label, "error": result.get("message", "unknown error")})
             continue
@@ -809,8 +942,14 @@ async def _lookup_single(
         if asset_result:
             hits.append(asset_result)
             labels.append("project_assets")
+            outcomes.append({"source": "project_assets", "success": True, "found": True})
 
-    result: dict[str, Any] = {"query": query, "hits": hits, "sources_checked": labels}
+    result: dict[str, Any] = {
+        "query": query,
+        "hits": hits,
+        "sources_checked": labels,
+        "source_outcomes": outcomes,
+    }
     if errors and not hits:
         result["errors"] = errors
     return result
@@ -822,6 +961,7 @@ async def _lookup(
     package: str | None,
     pkg_version: str | None,
     ctx: Any = None,
+    version_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Search ScriptReference, Manual, and package docs in parallel.
 
@@ -835,7 +975,7 @@ async def _lookup(
         }
     queries = list(dict.fromkeys(queries))
     # Run the bounded query set; HTTP work shares the request and service limits.
-    tasks = [_lookup_single(q, version, package, pkg_version, ctx) for q in queries]
+    tasks = [_lookup_single(q, version, package, pkg_version, ctx, version_info) for q in queries]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     query_results = []
@@ -907,7 +1047,12 @@ async def unity_docs(
     action: Annotated[str, "The documentation action to perform."],
     class_name: Annotated[Optional[str], "Unity class name (e.g. 'Physics', 'Transform')."] = None,
     member_name: Annotated[Optional[str], "Method or property name to look up."] = None,
-    version: Annotated[Optional[str], "Unity version (e.g. '6000.0.38f1'). Auto-extracted."] = None,
+    version: Annotated[
+        Optional[str],
+        Field(
+            description="Unity version (e.g. '6000.0.38f1' or '2022.3'). Explicit value wins; omitted/empty uses selected instance metadata, otherwise unversioned docs."
+        ),
+    ] = None,
     slug: Annotated[Optional[str], "Manual page slug (e.g., 'execution-order')."] = None,
     package: Annotated[
         Optional[str], "Package name (e.g., 'com.unity.render-pipelines.universal')."
@@ -921,6 +1066,12 @@ async def unity_docs(
         Optional[str],
         "Comma-separated search queries for batch lookup (e.g., 'Physics.Raycast,NavMeshAgent,Light2D').",
     ] = None,
+    strict_version: Annotated[
+        bool,
+        Field(
+            description="Require the selected/explicit major.minor documentation version. Refuse unknown versions and unverifiable/different-version final URLs; disable unversioned 404 fallback. Does not govern package pkg_version or project assets."
+        ),
+    ] = False,
 ) -> dict[str, Any]:
     action_lower = action.lower()
     if action_lower not in ALL_ACTIONS:
@@ -929,18 +1080,35 @@ async def unity_docs(
             "message": f"Unknown action '{action}'. Valid actions: {', '.join(ALL_ACTIONS)}",
         }
 
+    version_info = None
+    if action_lower != "get_package_doc":
+        if version and not _valid_version(version):
+            return {
+                "success": False,
+                "error_type": "invalid_version",
+                "message": "version must be a Unity major.minor or full release version.",
+            }
+        version_info = await _resolve_version(ctx, version, strict_version)
+        if strict_version and version_info["target_version"] is None:
+            return {
+                "success": False,
+                "error_type": "version_unavailable",
+                "message": "strict_version requires an explicit version or valid selected-instance version metadata.",
+                "data": {"found": False, "version": version_info, "attempts": []},
+            }
+
     if action_lower == "get_doc":
         if not class_name:
             return {
                 "success": False,
                 "message": "get_doc requires class_name.",
             }
-        return await _get_doc(class_name, member_name, version)
+        return await _get_doc(class_name, member_name, version, version_info)
 
     if action_lower == "get_manual":
         if not slug:
             return {"success": False, "message": "get_manual requires slug."}
-        return await _get_manual(slug, version)
+        return await _get_manual(slug, version, version_info)
 
     if action_lower == "get_package_doc":
         if not package or not page or not pkg_version:
@@ -958,7 +1126,7 @@ async def unity_docs(
             query_list = [query]
         else:
             return {"success": False, "message": "lookup requires query or queries."}
-        return await _lookup(query_list, version, package, pkg_version, ctx)
+        return await _lookup(query_list, version, package, pkg_version, ctx, version_info)
 
     return {"success": False, "message": "Unreachable"}
 
@@ -967,68 +1135,19 @@ async def _get_doc(
     class_name: str,
     member_name: str | None,
     version: str | None,
+    version_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    extracted_version = _extract_version(version)
-
-    url = _build_doc_url(class_name, member_name, extracted_version)
-
-    try:
-        status, body = await _fetch_url(url)
-
-        # Member fallback: try property (dash) URL if method (dot) URL 404s
-        if status == 404 and member_name:
-            prop_url = _build_property_url(class_name, member_name, extracted_version)
-            status, body = await _fetch_url(prop_url)
-            if status == 200:
-                url = prop_url
-
-        # Version fallback: try versionless URL if versioned 404s
-        if status == 404 and extracted_version:
-            fallback_url = _build_doc_url(class_name, member_name, None)
-            status, body = await _fetch_url(fallback_url)
-            if status == 200:
-                url = fallback_url
-            elif status == 404 and member_name:
-                # Also try property fallback without version
-                prop_fallback = _build_property_url(class_name, member_name, None)
-                status, body = await _fetch_url(prop_fallback)
-                if status == 200:
-                    url = prop_fallback
-
-        if status == 404:
-            return {
-                "success": True,
-                "data": {
-                    "found": False,
-                    "suggestion": (
-                        "Try unity_reflect search action to verify the type name, "
-                        "then retry with the correct class_name."
-                    ),
-                },
-            }
-
-        if status != 200:
-            return {"success": False, "message": f"docs.unity3d.com returned HTTP {status}."}
-
-        parsed = _parse_unity_doc_html(body)
-        return {
-            "success": True,
-            "data": {
-                "found": True,
-                "url": url,
-                "class": class_name,
-                "member": member_name,
-                "description": parsed["description"],
-                "signatures": parsed["signatures"],
-                "parameters": parsed["parameters"],
-                "returns": parsed["returns"],
-                "examples": parsed["examples"],
-                "see_also": parsed["see_also"],
-            },
-        }
-
-    except ConnectionError as e:
-        return {
-            "success": False,
-            "message": f"Could not reach docs.unity3d.com: {e}",
-        }
+    page = f"{class_name}.{member_name}" if member_name else class_name
+    paths = [f"ScriptReference/{page}.html"]
+    if member_name:
+        paths.append(f"ScriptReference/{class_name}-{member_name}.html")
+    result = await _fetch_editor_page(paths, version_info or _version_info(version), "script_ref")
+    data = result["data"]
+    if data["found"]:
+        data.update(_parse_unity_doc_html(result.pop("body")))
+        data.update({"class": class_name, "member": member_name})
+    elif result["success"]:
+        data["suggestion"] = (
+            "Try unity_reflect search action to verify the type name, then retry with the correct class_name."
+        )
+    return result

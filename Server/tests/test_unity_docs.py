@@ -3,8 +3,290 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from importlib import import_module
 
 import pytest
+
+docs_module = import_module("services.tools.unity_docs")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize(
+    "slug",
+    [
+        "../../../6000.0/Documentation/Manual/topic",
+        "%2e%2e/%2E%2E/%2e%2e/6000.0/Documentation/Manual/topic",
+        "..%2f..%2f..%2f6000.0/Documentation/Manual/topic",
+        "%252e%252e%252f6000.0/Documentation/Manual/topic",
+        "..\\..\\..\\6000.0/Documentation/Manual/topic",
+        "nested//topic",
+        "nested/%2ftopic",
+        "nested/%5ctopic",
+    ],
+)
+async def test_ambiguous_final_path_cannot_prove_strict_version(monkeypatch, slug, strict):
+    # urllib can retain the raw request selector as the response URL. The server
+    # may normalize it to another version, so its prefix alone is not proof.
+    fetch = AsyncMock(side_effect=lambda url: (200, "<h1>Fixture</h1>", url))
+    monkeypatch.setattr(docs_module, "_fetch_url_full", fetch)
+    result = await unity_docs(
+        None, action="get_manual", slug=slug, version="2022.3", strict_version=strict
+    )
+    data = result["data"]
+    assert result["success"] and data["found"] is not strict
+    assert data["url"] == f"https://docs.unity3d.com/2022.3/Documentation/Manual/{slug}.html"
+    assert data["attempts"][0]["final_url"] == data["url"]
+    assert data["version"]["resolved_version"] is None
+    assert data["version"]["fallback_blocked"] is strict
+    assert data["version"]["fallback_used"] is not strict
+    fetch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["http", "stdio"])
+@pytest.mark.parametrize("editor", ["6000.0.69f1", "2022.3.45f1"])
+async def test_selected_version_routes_docs_once_per_request(monkeypatch, transport, editor):
+    selected = "Project@12345678"
+    context = SimpleNamespace(get_state=AsyncMock(return_value=selected))
+    monkeypatch.setattr(docs_module.config, "transport_mode", transport)
+    monkeypatch.setattr(docs_module.config, "http_remote_hosted", False)
+    catalog = AsyncMock(
+        return_value=SimpleNamespace(
+            sessions={"session": SimpleNamespace(hash="12345678", unity_version=editor)}
+        )
+    )
+    monkeypatch.setattr(docs_module.PluginHub, "get_sessions", catalog)
+    pool = SimpleNamespace(
+        resolve_instance=lambda *args, **kwargs: SimpleNamespace(unity_version=editor)
+    )
+    monkeypatch.setattr(docs_module, "get_unity_connection_pool", lambda: pool)
+    fetch = AsyncMock(side_effect=lambda url: (200, "<h1>Fixture</h1>", url))
+    monkeypatch.setattr(docs_module, "_fetch_url_full", fetch)
+    result = await unity_docs(context, action="lookup", queries="Physics,Camera")
+    assert result["success"]
+    target = ".".join(editor.split(".")[:2])
+    assert all(f"/{target}/Documentation/" in call.args[0] for call in fetch.await_args_list)
+    assert context.get_state.await_count == 1
+    for query in result["data"]["results"]:
+        assert query["source_outcomes"]
+        for hit in query["hits"]:
+            assert hit["version"]["editor_version"] == editor
+            assert hit["version"]["resolved_version"] == target
+
+
+@pytest.mark.asyncio
+async def test_explicit_version_never_reads_selected_metadata(monkeypatch):
+    context = SimpleNamespace(get_state=AsyncMock(side_effect=AssertionError("metadata read")))
+    fetch = AsyncMock(side_effect=lambda url: (200, "", url))
+    monkeypatch.setattr(docs_module, "_fetch_url_full", fetch)
+    result = await unity_docs(
+        context, action="get_doc", class_name="Physics", version="2022.3.45f1"
+    )
+    assert result["data"]["version"]["version_source"] == "explicit"
+    assert result["data"]["version"]["target_version"] == "2022.3"
+    context.get_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action,kwargs",
+    [("get_doc", {"class_name": "Physics"}), ("get_manual", {"slug": "execution-order"})],
+)
+@pytest.mark.parametrize("strict", [False, True])
+async def test_versioned_404_discloses_allow_or_refusal(monkeypatch, action, kwargs, strict):
+    async def fetch(url):
+        return (404 if "/2022.3/" in url else 200, "", url)
+
+    mocked = AsyncMock(side_effect=fetch)
+    monkeypatch.setattr(docs_module, "_fetch_url_full", mocked)
+    result = await unity_docs(
+        None, action=action, version="2022.3", strict_version=strict, **kwargs
+    )
+    assert result["success"]
+    assert result["data"]["found"] is not strict
+    evidence = result["data"]["version"]
+    assert evidence["fallback_blocked"] is strict
+    assert evidence["fallback_attempted"] is not strict
+    assert evidence["fallback_used"] is not strict
+    assert evidence["resolved_version"] is None
+    assert len(result["data"]["attempts"]) == (1 if strict else 2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize(
+    "final",
+    [
+        "https://docs.unity3d.com/6000.0/Documentation/Manual/topic.html",
+        "https://docs.unity3d.com/Manual/topic.html",
+        "https://elsewhere.example/2022.3/Documentation/Manual/topic.html",
+    ],
+)
+async def test_final_redirect_source_is_truthful(monkeypatch, strict, final):
+    monkeypatch.setattr(
+        docs_module, "_fetch_url_full", AsyncMock(return_value=(200, "<h1>Redirected</h1>", final))
+    )
+    result = await unity_docs(
+        None, action="get_manual", slug="topic", version="2022.3", strict_version=strict
+    )
+    assert result["data"]["url"] == final
+    assert result["data"]["found"] is not strict
+    assert result["data"]["version"]["fallback_blocked"] is strict
+    assert result["data"]["version"]["resolved_version"] == (
+        None if strict or "6000.0" not in final else "6000.0"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [None, ""])
+async def test_no_instance_default_and_strict_unavailable(monkeypatch, version):
+    fetch = AsyncMock(side_effect=lambda url: (200, "", url))
+    monkeypatch.setattr(docs_module, "_fetch_url_full", fetch)
+    default = await unity_docs(None, action="get_doc", class_name="Physics", version=version)
+    assert default["data"]["version"]["resolution_reason"] == "no_selected_instance"
+    assert default["data"]["version"]["fallback_used"] is False
+    fetch.reset_mock()
+    strict = await unity_docs(
+        None, action="get_doc", class_name="Physics", version=version, strict_version=True
+    )
+    assert strict["success"] is False and strict["error_type"] == "version_unavailable"
+    fetch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", ["banana", "6000.0/../../Manual", "2022.3?x=1"])
+async def test_malformed_explicit_version_refused_before_fetch(monkeypatch, version):
+    fetch = AsyncMock()
+    monkeypatch.setattr(docs_module, "_fetch_url_full", fetch)
+    result = await unity_docs(None, action="get_doc", class_name="Physics", version=version)
+    assert result["success"] is False and result["error_type"] == "invalid_version"
+    fetch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata", [None, "", "not-a-version"])
+@pytest.mark.parametrize("strict", [False, True])
+async def test_missing_selected_metadata_is_disclosed(monkeypatch, metadata, strict):
+    monkeypatch.setattr(docs_module.config, "transport_mode", "stdio")
+    context = SimpleNamespace(get_state=AsyncMock(return_value="Project@12345678"))
+    resolve = lambda *args, **kwargs: SimpleNamespace(unity_version=metadata)
+    monkeypatch.setattr(
+        docs_module, "get_unity_connection_pool", lambda: SimpleNamespace(resolve_instance=resolve)
+    )
+    fetch = AsyncMock(side_effect=lambda url: (200, "", url))
+    monkeypatch.setattr(docs_module, "_fetch_url_full", fetch)
+    result = await unity_docs(context, action="get_manual", slug="topic", strict_version=strict)
+    info = result["data"]["version"]
+    assert info["target_version"] is None
+    assert info["resolution_reason"] == (
+        "instance_version_invalid" if metadata else "instance_metadata_unavailable"
+    )
+    assert result["success"] is not strict
+    assert fetch.await_count == (0 if strict else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("principal", [None, "tenant-one"])
+async def test_hosted_version_metadata_stays_scoped(monkeypatch, principal):
+    monkeypatch.setattr(docs_module.config, "transport_mode", "http")
+    monkeypatch.setattr(docs_module.config, "http_remote_hosted", True)
+
+    async def state(key):
+        return {"unity_instance": "Project@12345678", "user_id": principal}.get(key)
+
+    context = SimpleNamespace(get_state=state)
+    catalog = AsyncMock(
+        return_value=SimpleNamespace(
+            sessions={"s": SimpleNamespace(hash="12345678", unity_version="2022.3.45f1")}
+        )
+    )
+    monkeypatch.setattr(docs_module.PluginHub, "get_sessions", catalog)
+    monkeypatch.setattr(
+        docs_module, "_fetch_url_full", AsyncMock(side_effect=lambda url: (200, "", url))
+    )
+    result = await unity_docs(context, action="get_manual", slug="topic", strict_version=True)
+    if principal:
+        catalog.assert_awaited_once_with(user_id=principal)
+        assert result["data"]["version"]["target_version"] == "2022.3"
+    else:
+        catalog.assert_not_awaited()
+        assert result["error_type"] == "version_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_strict_property_retry_stays_within_target(monkeypatch):
+    fetch = AsyncMock(side_effect=lambda url: (200 if "-position" in url else 404, "", url))
+    monkeypatch.setattr(docs_module, "_fetch_url_full", fetch)
+    result = await unity_docs(
+        None,
+        action="get_doc",
+        class_name="Transform",
+        member_name="position",
+        version="2022.3",
+        strict_version=True,
+    )
+    assert result["data"]["found"]
+    assert len(result["data"]["attempts"]) == 2
+    assert all("/2022.3/Documentation/" in call.args[0] for call in fetch.await_args_list)
+    assert result["data"]["version"]["fallback_attempted"] is False
+
+
+@pytest.mark.asyncio
+async def test_lookup_preserves_strict_misses_when_package_hits(monkeypatch):
+    fetch = AsyncMock(side_effect=lambda url: (200 if "/Packages/" in url else 404, "", url))
+    monkeypatch.setattr(docs_module, "_fetch_url_full", fetch)
+    result = await unity_docs(
+        None,
+        action="lookup",
+        query="Physics",
+        version="2022.3",
+        strict_version=True,
+        package="com.unity.fixture",
+        pkg_version="1.0",
+    )
+    query = result["data"]["results"][0]
+    assert query["hits"] and all(hit["source"].startswith("package") for hit in query["hits"])
+    assert all("version" not in hit for hit in query["hits"])
+    assert any(
+        outcome["source"] == "script_ref" and outcome["version"]["fallback_blocked"]
+        for outcome in query["source_outcomes"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_package_only_ignores_editor_version_policy(monkeypatch):
+    context = SimpleNamespace(get_state=AsyncMock(side_effect=AssertionError("metadata read")))
+    monkeypatch.setattr(
+        docs_module, "_fetch_url_full", AsyncMock(side_effect=lambda url: (200, "", url))
+    )
+    result = await unity_docs(
+        context,
+        action="get_package_doc",
+        package="com.unity.fixture",
+        page="index",
+        pkg_version="1.0",
+        strict_version=True,
+    )
+    assert result["data"]["found"]
+    assert "/Packages/com.unity.fixture@1.0/" in result["data"]["url"]
+    context.get_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_version_metadata_uses_existing_public_deadline(monkeypatch):
+    monkeypatch.setattr(docs_module, "REQUEST_TIMEOUT_SECONDS", 0.02)
+
+    async def blocked(*args):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(docs_module, "_resolve_version", blocked)
+    fetch = AsyncMock()
+    monkeypatch.setattr(docs_module, "_fetch_url_full", fetch)
+    result = await unity_docs(None, action="get_manual", slug="topic")
+    assert result["success"] is False and result["error_type"] == "TimeoutError"
+    fetch.assert_not_awaited()
+
 
 from services.tools.unity_docs import (
     unity_docs,
@@ -267,9 +549,9 @@ def test_get_doc_requires_class_name():
 
 def test_get_doc_success():
     async def mock_fetch(url):
-        return (200, SAMPLE_DOC_HTML)
+        return (200, SAMPLE_DOC_HTML, url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(unity_docs(SimpleNamespace(), action="get_doc", class_name="Physics"))
     assert result["success"] is True
     assert result["data"]["found"] is True
@@ -282,9 +564,9 @@ def test_get_doc_success():
 
 def test_get_doc_404():
     async def mock_fetch(url):
-        return (404, "")
+        return (404, "", url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(
             unity_docs(SimpleNamespace(), action="get_doc", class_name="FakeClass")
         )
@@ -301,10 +583,10 @@ def test_get_doc_property_fallback():
         nonlocal call_count
         call_count += 1
         if "-position" in url:
-            return (200, SAMPLE_DOC_HTML)
-        return (404, "")
+            return (200, SAMPLE_DOC_HTML, url)
+        return (404, "", url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(
             unity_docs(
                 SimpleNamespace(),
@@ -322,7 +604,7 @@ def test_get_doc_network_error():
     async def mock_fetch(url):
         raise ConnectionError("Network unreachable")
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(unity_docs(SimpleNamespace(), action="get_doc", class_name="Physics"))
     assert result["success"] is False
     assert "Could not reach" in result["message"]
@@ -333,10 +615,10 @@ def test_get_doc_version_fallback():
 
     async def mock_fetch(url):
         if "/6000.0/" in url:
-            return (404, "")
-        return (200, SAMPLE_DOC_HTML)
+            return (404, "", url)
+        return (200, SAMPLE_DOC_HTML, url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(
             unity_docs(
                 SimpleNamespace(),
@@ -352,9 +634,9 @@ def test_get_doc_version_fallback():
 
 def test_get_doc_with_member_and_version():
     async def mock_fetch(url):
-        return (200, SAMPLE_DOC_HTML)
+        return (200, SAMPLE_DOC_HTML, url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(
             unity_docs(
                 SimpleNamespace(),
@@ -372,9 +654,9 @@ def test_get_doc_with_member_and_version():
 
 def test_get_doc_class_only_no_member_in_response():
     async def mock_fetch(url):
-        return (200, SAMPLE_DOC_HTML)
+        return (200, SAMPLE_DOC_HTML, url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(unity_docs(SimpleNamespace(), action="get_doc", class_name="Physics"))
     assert result["data"]["member"] is None
 
@@ -411,7 +693,6 @@ def test_documentation_http_errors_return_failure(status, options):
         return code, body, url
 
     with (
-        patch("services.tools.unity_docs._fetch_url", side_effect=fetch),
         patch("services.tools.unity_docs._fetch_url_full", side_effect=fetch_full),
     ):
         # When: the public action attempts to retrieve the documentation.
@@ -428,9 +709,9 @@ def test_member_version_fallback_stops_when_endpoint_reports_http_error(status):
     responses = iter([(404, ""), (404, ""), (status, ""), (200, SAMPLE_DOC_HTML)])
 
     async def fetch(url):
-        return next(responses)
+        return (*next(responses), url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=fetch) as fetch_mock:
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=fetch) as fetch_mock:
         # When: a member lookup traverses the version fallback.
         result = asyncio.run(
             unity_docs(
@@ -510,9 +791,9 @@ def test_parse_manual_empty():
 
 def test_get_manual_success():
     async def mock_fetch(url):
-        return (200, SAMPLE_MANUAL_HTML)
+        return (200, SAMPLE_MANUAL_HTML, url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(
             unity_docs(SimpleNamespace(), action="get_manual", slug="execution-order")
         )
@@ -532,9 +813,9 @@ def test_get_manual_requires_slug():
 
 def test_get_manual_404():
     async def mock_fetch(url):
-        return (404, "")
+        return (404, "", url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(
             unity_docs(SimpleNamespace(), action="get_manual", slug="nonexistent-page")
         )
@@ -547,10 +828,10 @@ def test_get_manual_version_fallback():
 
     async def mock_fetch(url):
         if "/6000.0/" in url:
-            return (404, "")
-        return (200, SAMPLE_MANUAL_HTML)
+            return (404, "", url)
+        return (200, SAMPLE_MANUAL_HTML, url)
 
-    with patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch):
+    with patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch):
         result = asyncio.run(
             unity_docs(
                 SimpleNamespace(),
@@ -667,15 +948,11 @@ def test_lookup_single_query():
 
     async def mock_fetch(url):
         if "ScriptReference/Physics" in url:
-            return (200, SAMPLE_DOC_HTML)
-        return (404, "")
-
-    async def mock_fetch_full(url):
+            return (200, SAMPLE_DOC_HTML, url)
         return (404, "", url)
 
     with (
-        patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch),
-        patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch_full),
+        patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch),
     ):
         result = asyncio.run(unity_docs(SimpleNamespace(), action="lookup", query="Physics"))
     assert result["success"] is True
@@ -688,15 +965,11 @@ def test_lookup_batch_queries():
 
     async def mock_fetch(url):
         if "ScriptReference/Physics" in url or "ScriptReference/Camera" in url:
-            return (200, SAMPLE_DOC_HTML)
-        return (404, "")
-
-    async def mock_fetch_full(url):
+            return (200, SAMPLE_DOC_HTML, url)
         return (404, "", url)
 
     with (
-        patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch),
-        patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch_full),
+        patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch),
     ):
         result = asyncio.run(
             unity_docs(SimpleNamespace(), action="lookup", queries="Physics,Camera,zzz-nonexistent")
@@ -711,14 +984,10 @@ def test_lookup_no_results():
     """lookup with garbage returns found=False with suggestions."""
 
     async def mock_fetch(url):
-        return (404, "")
-
-    async def mock_fetch_full(url):
         return (404, "", url)
 
     with (
-        patch("services.tools.unity_docs._fetch_url", side_effect=mock_fetch),
-        patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch_full),
+        patch("services.tools.unity_docs._fetch_url_full", side_effect=mock_fetch),
     ):
         result = asyncio.run(
             unity_docs(SimpleNamespace(), action="lookup", query="zzz-nonexistent-xyz")
