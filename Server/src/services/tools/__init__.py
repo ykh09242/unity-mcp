@@ -131,14 +131,24 @@ async def sync_tool_visibility_from_unity(
     try:
         registry = PluginHub._registry
         session_id = None
+        http_revision = None
         if config.transport_mode.lower() == "http" and registry is not None:
             session_id = await PluginHub._resolve_session_id(instance_id, retry_on_reload=False)
+            session = await registry.get_session(session_id)
+            http_revision = session.tools_revision if session is not None else None
 
+        from services.custom_tool_service import CustomToolService
+
+        service = CustomToolService._instance
+        captured_sources = dict(service._sources) if service is not None else {}
+        capture = []
         response = await send_with_unity_instance(
             async_send_command_with_retry,
             instance_id,
             "get_tool_states",
             {},
+            retry_on_reload=False,
+            **({"_catalog_capture": capture} if config.transport_mode.lower() != "http" else {}),
         )
 
         # Detect unsupported command (Unity package too old)
@@ -171,102 +181,158 @@ async def sync_tool_visibility_from_unity(
             if tools is None:
                 tools = response.get("tools")
 
-        if not tools or not isinstance(tools, list):
+        if not isinstance(tools, list):
             logger.debug(
                 "sync_tool_visibility_from_unity: no tool data in Unity response",
             )
             return {"error": "No tool data returned from Unity"}
 
-        # Filter to enabled tools only — _sync_server_tool_visibility treats
-        # the list as "registered" (i.e. enabled) tools.
-        enabled_tools = [t for t in tools if t.get("enabled", True)]
-
-        logger.info(
-            "Syncing tool visibility from Unity: %d/%d tools enabled",
-            len(enabled_tools),
-            len(tools),
-        )
-
         from models.models import ToolDefinitionModel
-        from pydantic import ValidationError
+        import json
 
+        if len(tools) > 256 or len(json.dumps(tools, allow_nan=False).encode("utf-8")) > 512 * 1024:
+            raise ValueError("Unity catalog exceeds supported bounds")
+        # Validate the complete raw snapshot before filtering disabled tools.
+        # Partial parsing must never turn a malformed member into a deletion.
+        extended = any(isinstance(tool, dict) and "is_built_in" in tool for tool in tools)
         parsed_tools = []
-        valid_tools = []
-        for tool in enabled_tools:
-            try:
-                parsed = ToolDefinitionModel.model_validate(tool)
-            except ValidationError as exc:
-                issues = [
-                    {"loc": error["loc"], "type": error["type"]}
-                    for error in exc.errors(
-                        include_input=False, include_context=False, include_url=False
-                    )
-                ]
-                name = tool.get("name")
-                safe_name = name[:160] if isinstance(name, str) else "<invalid name>"
-                logger.warning("Skipping invalid Unity tool descriptor %r: %s", safe_name, issues)
-                continue
+        names = set()
+        for tool in tools:
+            if not isinstance(tool, dict) or type(tool.get("enabled", True)) is not bool:
+                raise ValueError("Malformed Unity catalog descriptor")
+            if extended and type(tool.get("is_built_in")) is not bool:
+                raise ValueError("Incomplete extended Unity catalog")
+            parsed = ToolDefinitionModel.model_validate(tool)
+            if parsed.name in names:
+                raise ValueError("Duplicate Unity catalog tool name")
+            names.add(parsed.name)
             parsed_tools.append(parsed)
-            valid_tools.append(tool)
-        enabled_tools = valid_tools
-
+        enabled_tools = [tool for tool in tools if tool.get("enabled", True)]
+        enabled_models = [
+            parsed for raw, parsed in zip(tools, parsed_tools) if raw.get("enabled", True)
+        ]
+        custom_models = [
+            parsed
+            for raw, parsed in zip(tools, parsed_tools)
+            if raw.get("enabled", True) and not raw.get("is_built_in", True)
+        ]
+        outcome = {"changed": False}
         if config.transport_mode.lower() == "http":
-            session = (
-                await registry.get_session(session_id)
-                if registry is not None and session_id
-                else None
-            )
-            if session is not None:
-                await registry.register_tools_for_session(
-                    session_id, [session.tools.get(tool.name, tool) for tool in parsed_tools]
+            hub_lock = PluginHub._lock
+            if registry is None or session_id is None or hub_lock is None:
+                raise ValueError("Unity catalog owner unavailable")
+            scope = None
+            async with hub_lock:  # pylint: disable=not-async-context-manager
+                if PluginHub._registry is not registry:
+                    raise ValueError("Unity catalog owner changed")
+                session = await registry.get_session(session_id)
+                if (
+                    session is None
+                    or session.tools_revision != http_revision
+                    or PluginHub._connections.get(session_id) is None
+                ):
+                    raise ValueError("Unity catalog generation changed")
+                previous = captured_sources.get(("http", session.user_id, session.project_hash))
+                known_empty = (
+                    previous is not None and previous.known and previous.generation == session_id
                 )
-            await PluginHub._refresh_server_tool_visibility()
-        else:
-            PluginHub._sync_server_tool_visibility(enabled_tools)
+                if not tools and not known_empty:
+                    raise ValueError("Empty Unity catalog has no same-generation extended evidence")
 
-        # Register custom (non-built-in) tools via CustomToolService.
-        # The extended get_tool_states response includes is_built_in,
-        # description, parameters, etc.  If those fields are missing
-        # (older Unity package), we skip custom tool registration.
-        custom_tool_count = 0
-        has_extended_metadata = any("is_built_in" in t for t in enabled_tools)
-        if has_extended_metadata:
-            custom_tool_models = [
-                parsed
-                for tool, parsed in zip(enabled_tools, parsed_tools)
-                if not tool.get("is_built_in", True)
-            ]
-            if custom_tool_models:
-                try:
-                    from services.custom_tool_service import CustomToolService
+                def publish(current, prepared):
+                    nonlocal outcome, scope
+                    outcome = PluginHub._publish_session_catalog(
+                        current,
+                        prepared,
+                        registry._sessions,
+                        generation=current.session_id,
+                    )
+                    scope = dict(
+                        user_id=current.user_id,
+                        project_hash=current.project_hash,
+                        session_id=current.session_id,
+                        catalog_revision=current.tools_revision
+                        + int(not current.tools_known or current.tools != prepared),
+                    )
 
-                    service = CustomToolService.get_instance()
-                    service.register_global_tools(custom_tool_models)
-                    custom_tool_count = len(custom_tool_models)
-                    logger.info(
-                        "Registered %d custom tool(s) from Unity via stdio sync",
-                        custom_tool_count,
+                if extended or not tools:
+                    await registry.register_tools_for_session(
+                        session_id,
+                        enabled_models,
+                        _publish=publish,
                     )
-                except RuntimeError as exc:
-                    logger.debug(
-                        "Skipping custom tool registration: "
-                        "CustomToolService not initialized yet (%s)",
-                        type(exc).__name__,
+                else:
+                    plan = PluginHub._prepare_server_tool_visibility(enabled_tools)
+                    PluginHub._commit_server_tool_visibility(plan)
+                    outcome = {"changed": plan is not None}
+                    scope = dict(
+                        user_id=session.user_id,
+                        project_hash=session.project_hash,
+                        session_id=session.session_id,
+                        catalog_revision=session.tools_revision,
                     )
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to register custom tools from Unity: %s",
-                        type(exc).__name__,
-                    )
+            if notify:
+                await PluginHub._notify_committed_catalog(outcome, scope)
         else:
-            logger.debug(
-                "Unity response does not include extended tool metadata "
-                "(is_built_in); skipping custom tool registration. "
-                "Update MCPForUnity to enable custom tool sync in stdio mode."
+            from transport.legacy.unity_connection import (
+                get_authenticated_stdio_generation,
+                _commit_stdio_catalog,
             )
 
-        if notify:
-            await PluginHub._notify_mcp_tool_list_changed()
+            plan = PluginHub._prepare_server_tool_visibility(enabled_tools)
+            if capture:
+                connection, generation = capture[0]
+                project = connection.instance_id.rsplit("@", 1)[-1]
+                if (
+                    not generation
+                    or await get_authenticated_stdio_generation(connection.instance_id)
+                    != generation
+                ):
+                    raise ValueError("Unity catalog generation changed during refresh")
+                previous = captured_sources.get(("stdio", None, project))
+                known_empty = (
+                    previous is not None and previous.known and previous.generation == generation
+                )
+                authoritative = extended or (not tools and known_empty)
+                if service is not None and authoritative:
+                    visibility = (
+                        None
+                        if plan is None
+                        else (
+                            lambda: PluginHub._commit_server_tool_visibility(plan),
+                            lambda: PluginHub._rollback_server_tool_visibility(plan),
+                        )
+                    )
+                    outcome = _commit_stdio_catalog(
+                        connection,
+                        generation,
+                        lambda: service.replace_project_catalog(
+                            project,
+                            custom_models,
+                            kind="stdio",
+                            generation=generation,
+                            expected_revision=previous.revision if previous is not None else 0,
+                            visibility=visibility,
+                        ),
+                    )
+                elif tools:
+                    _commit_stdio_catalog(
+                        connection,
+                        generation,
+                        lambda: PluginHub._commit_server_tool_visibility(plan),
+                    )
+                    outcome = {"changed": plan is not None}
+                else:
+                    raise ValueError("Empty Unity catalog has no same-generation extended evidence")
+            elif tools and not extended:
+                # Compatibility for unknown old peers: visibility only, never removal.
+                PluginHub._commit_server_tool_visibility(plan)
+                outcome = {"changed": plan is not None}
+            else:
+                raise ValueError("Unity catalog has no authenticated connection provenance")
+            if notify and outcome.get("changed"):
+                await PluginHub._notify_mcp_tool_list_changed()
+        custom_tool_count = len(custom_models) if extended and service is not None else 0
 
         # Build summary
         from services.registry import get_group_tool_names

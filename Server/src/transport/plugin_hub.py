@@ -270,6 +270,8 @@ class PluginHub(WebSocketEndpoint):
     # Index into mcp._transforms where Unity's server-level overrides start.
     # Transforms before this index are startup defaults; at and after are Unity syncs.
     _unity_transform_start: int | None = None
+    _unity_transforms: tuple = ()
+    _unity_visibility_signature: tuple | None = None
     _connections: dict[str, WebSocket] = {}
     # command_id -> {"future": Future, "session_id": str}
     _pending: dict[str, dict[str, Any]] = {}
@@ -553,6 +555,10 @@ class PluginHub(WebSocketEndpoint):
         cls._registry = registry
         if previous_registry is not None and previous_registry is not registry:
             previous_registry.notify_changed()
+        if cls._mcp is not mcp:
+            cls._unity_transform_start = None
+            cls._unity_transforms = ()
+            cls._unity_visibility_signature = None
         cls._mcp = mcp
         cls._loop = loop or asyncio.get_running_loop()
         # Ensure coordination primitives are bound to the configured loop
@@ -631,6 +637,8 @@ class PluginHub(WebSocketEndpoint):
             cls._loop = None
             cls._lock = None
             cls._unity_transform_start = None
+            cls._unity_transforms = ()
+            cls._unity_visibility_signature = None
 
         for entry in pending:
             future = entry.get("future")
@@ -815,6 +823,7 @@ class PluginHub(WebSocketEndpoint):
         lock = cls._lock
         if lock is None:
             return
+        catalog_changes = []
         async with lock:
             cls._discard_socket_state(websocket)
             session_ids = [sid for sid, ws in cls._connections.items() if ws is websocket]
@@ -846,12 +855,11 @@ class PluginHub(WebSocketEndpoint):
                             )
                         )
                 if cls._registry:
-                    await cls._registry.unregister(session_id)
+                    catalog_changes.append(await cls._unregister_catalog(cls._registry, session_id))
                 logger.info(f"Plugin session {session_id} disconnected ({close_code})")
 
-        if session_ids and not config.http_remote_hosted:
-            await cls._refresh_server_tool_visibility()
-            await cls._notify_mcp_tool_list_changed()
+        for outcome, scope in catalog_changes:
+            await cls._notify_committed_catalog(outcome, scope)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1130,6 +1138,7 @@ class PluginHub(WebSocketEndpoint):
         *,
         _budget: _CommandBudget | None = None,
         _expected_read: _ConnectionReadIdentity | None = None,
+        _catalog_guard=None,
     ) -> dict[str, Any]:
         budget = _budget or _CommandBudget(
             asyncio.get_running_loop().time() + cls._command_timeouts(command_type, params)[1]
@@ -1141,7 +1150,12 @@ class PluginHub(WebSocketEndpoint):
         try:
             async with asyncio.timeout_at(budget.expires_at):
                 return await cls._send_command(
-                    session_id, command_type, params, budget, _expected_read=_expected_read
+                    session_id,
+                    command_type,
+                    params,
+                    budget,
+                    _expected_read=_expected_read,
+                    _catalog_guard=_catalog_guard,
                 )
         except TimeoutError:
             return budget.timeout_response(command_type)
@@ -1155,6 +1169,7 @@ class PluginHub(WebSocketEndpoint):
         budget: _CommandBudget,
         *,
         _expected_read: _ConnectionReadIdentity | None = None,
+        _catalog_guard=None,
     ) -> dict[str, Any]:
         try:
             websocket = await cls._get_connection(session_id)
@@ -1172,6 +1187,10 @@ class PluginHub(WebSocketEndpoint):
             raise CommandNotDispatchedError("PluginHub not configured")
 
         async with lock:
+            if _catalog_guard is not None and not _catalog_guard.check_http(session_id, user_id):
+                from services.custom_tool_service import custom_catalog_changed
+
+                return custom_catalog_changed().model_dump()
             # Disconnect can run between the initial lookup and this lock.
             if cls._connections.get(session_id) is not websocket:
                 if _expected_read is not None:
@@ -1521,6 +1540,8 @@ class PluginHub(WebSocketEndpoint):
 
         session_id = str(uuid.uuid4())
         evicted_ws = None
+        catalog_outcome = None
+        catalog_scope = None
         async with lock:
             # The registry and routing insertion form one transaction. There is
             # no cancellation point after register mutates its maps and before
@@ -1529,6 +1550,23 @@ class PluginHub(WebSocketEndpoint):
                 await websocket.close(code=1013, reason="Plugin server unavailable")
                 return
             try:
+
+                def publish_registration(new_session, prospective):
+                    nonlocal catalog_outcome, catalog_scope
+                    catalog_outcome = cls._publish_session_catalog(
+                        new_session,
+                        {},
+                        prospective,
+                        known=False,
+                        generation=session_id,
+                    )
+                    catalog_scope = dict(
+                        user_id=new_session.user_id,
+                        project_hash=new_session.project_hash,
+                        session_id=session_id,
+                        catalog_revision=0,
+                    )
+
                 session, evicted_session_id = await registry.register(
                     session_id,
                     project_name,
@@ -1536,6 +1574,7 @@ class PluginHub(WebSocketEndpoint):
                     unity_version,
                     project_path,
                     user_id=user_id,
+                    _publish=publish_registration,
                 )
             except ValueError:
                 await websocket.close(code=4429, reason="Plugin session limit reached")
@@ -1601,9 +1640,7 @@ class PluginHub(WebSocketEndpoint):
             if evicted_ws is not None:
                 await cls._close_websocket(evicted_ws)
 
-        if evicted_session_id and not config.http_remote_hosted:
-            await cls._refresh_server_tool_visibility()
-            await cls._notify_mcp_tool_list_changed()
+        await cls._notify_committed_catalog(catalog_outcome, catalog_scope)
 
         if user_id:
             logger.info(
@@ -1625,47 +1662,34 @@ class PluginHub(WebSocketEndpoint):
             await websocket.close(code=4400, reason="Tool registration exceeds size limit")
             return
 
-        # Find session_id for this websocket
+        outcome = None
+        scope = None
         async with lock:
             session_id = next(
                 (sid for sid, ws in cls._connections.items() if ws is websocket), None
             )
+            if not session_id:
+                logger.warning("Received register_tools from unknown connection")
+                return
 
-        if not session_id:
-            logger.warning("Received register_tools from unknown connection")
-            return
+            def publish(session, prepared):
+                nonlocal outcome, scope
+                outcome = cls._publish_session_catalog(
+                    session,
+                    prepared,
+                    registry._sessions,
+                    generation=session.session_id,
+                )
+                scope = dict(
+                    user_id=session.user_id,
+                    project_hash=session.project_hash,
+                    session_id=session.session_id,
+                    catalog_revision=session.tools_revision
+                    + int(not session.tools_known or session.tools != prepared),
+                )
 
-        await registry.register_tools_for_session(session_id, payload.tools)
-        logger.info(f"Registered {len(payload.tools)} tools for session {session_id}")
-
-        # Hosted catalogs are read from the authenticated plugin session through
-        # custom_tools / execute_custom_tool, never installed process-wide.
-        if config.http_remote_hosted:
-            return
-
-        # Sync server-level FastMCP visibility so new MCP client sessions
-        # (e.g. new Claude Code conversations) see the correct tool set.
-        await cls._refresh_server_tool_visibility()
-
-        try:
-            from services.custom_tool_service import CustomToolService
-
-            service = CustomToolService.get_instance()
-            service.register_global_tools(payload.tools)
-        except RuntimeError as exc:
-            logger.debug(
-                "Skipping global custom tool registration: CustomToolService not initialized yet (%s)",
-                type(exc).__name__,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Unexpected error during global custom tool registration; "
-                "custom tools may not be available globally (%s)",
-                type(exc).__name__,
-            )
-
-        # Publish custom tools before clients can re-fetch the changed catalog.
-        await cls._notify_mcp_tool_list_changed()
+            await registry.register_tools_for_session(session_id, payload.tools, _publish=publish)
+        await cls._notify_committed_catalog(outcome, scope)
 
     @classmethod
     async def _refresh_server_tool_visibility(cls) -> None:
@@ -1674,94 +1698,174 @@ class PluginHub(WebSocketEndpoint):
         if config.http_remote_hosted or registry is None:
             return
         sessions = await registry.list_sessions()
-        if not sessions:
-            mcp = cls._mcp
-            if mcp is not None and cls._unity_transform_start is not None:
-                mcp._transforms = mcp._transforms[: cls._unity_transform_start]
-                cls._unity_transform_start = None
-            return
-        cls._sync_server_tool_visibility(
-            [tool for session in sessions.values() for tool in session.tools.values()]
+        cls._commit_server_tool_visibility(
+            cls._prepare_server_tool_visibility(
+                [tool for session in sessions.values() for tool in session.tools.values()],
+                reset=not sessions,
+            )
         )
 
     @classmethod
-    def _sync_server_tool_visibility(cls, registered_tools: list) -> None:
-        """Sync FastMCP server-level tool group visibility to match Unity's state.
+    def _prepare_server_tool_visibility(cls, registered_tools, *, reset=False):
+        """Build a detached local visibility delta, retaining foreign transforms."""
+        if config.http_remote_hosted or cls._mcp is None:
+            return None
+        from fastmcp.server.transforms.visibility import Visibility
+        from services.registry import get_group_tool_names, TOOL_GROUPS
 
-        When Unity sends ``register_tools``, some groups may have been toggled
-        on/off via the Unity Editor GUI.  We mirror that state at the FastMCP
-        server level so that **new** MCP client sessions (e.g. a fresh Claude
-        Code conversation) see the correct tool set without requiring
-        ``manage_tools`` activation.
-
-        The startup ``register_all_tools()`` disables non-default groups via
-        ``mcp.disable(tags=...)``.  Here we append ``mcp.enable(tags=...)``
-        transforms for groups that Unity has enabled, effectively overriding
-        the startup defaults.  FastMCP processes transforms in order so later
-        ``enable`` calls override earlier ``disable`` calls.
-        """
-        if config.http_remote_hosted:
-            return
         mcp = cls._mcp
-        if mcp is None:
+        old = mcp._transforms
+        owned = getattr(cls, "_unity_transforms", ())
+        owned_ids = {id(transform) for transform in owned}
+        base = [transform for transform in old if id(transform) not in owned_ids]
+        names = {
+            tool.get("name") if isinstance(tool, dict) else tool.name for tool in registered_tools
+        }
+        groups = get_group_tool_names()
+        signature = (
+            None
+            if reset
+            else tuple(
+                (group, any(name in names for name in groups.get(group, ())))
+                for group in sorted(TOOL_GROUPS)
+            )
+        )
+        if signature == getattr(cls, "_unity_visibility_signature", None):
+            return None
+        transforms = (
+            ()
+            if reset
+            else tuple(
+                Visibility(enabled, tags={f"group:{group}"}, components={"tool"})
+                for group, enabled in signature
+            )
+        )
+        return {
+            "mcp": mcp,
+            "old": old,
+            "old_contents": tuple(old),
+            "new": base + list(transforms),
+            "owned": transforms,
+            "start": len(base) if not reset else None,
+            "signature": signature,
+            "previous": (
+                cls._unity_transform_start,
+                owned,
+                getattr(cls, "_unity_visibility_signature", None),
+            ),
+        }
+
+    @classmethod
+    def _commit_server_tool_visibility(cls, plan):
+        if plan is None:
             return
+        mcp = plan["mcp"]
+        if (
+            cls._mcp is not mcp
+            or mcp._transforms is not plan["old"]
+            or tuple(mcp._transforms) != plan["old_contents"]
+        ):
+            raise ValueError("Tool visibility ownership changed during publication")
+        mcp._transforms = plan["new"]
+        cls._unity_transform_start = plan["start"]
+        cls._unity_transforms = plan["owned"]
+        cls._unity_visibility_signature = plan["signature"]
 
-        try:
-            from services.registry import get_group_tool_names, TOOL_GROUPS
-
-            registered_names: set[str] = set()
-            for tool in registered_tools:
-                name = (
-                    getattr(tool, "name", None) if not isinstance(tool, dict) else tool.get("name")
-                )
-                if isinstance(name, str) and name:
-                    registered_names.add(name)
-
-            group_tools = get_group_tool_names()
-
-            # Reset Unity overrides: trim transforms back to where Unity started,
-            # then re-apply based on current registered tools.
-            if cls._unity_transform_start is not None:
-                mcp._transforms = mcp._transforms[: cls._unity_transform_start]
-            else:
-                # First time: record where startup transforms end.
-                cls._unity_transform_start = len(mcp._transforms)
-
-            enabled_groups: list[str] = []
-            disabled_groups: list[str] = []
-
-            for group_name in sorted(TOOL_GROUPS.keys()):
-                tool_names = group_tools.get(group_name, [])
-                has_any_registered = any(n in registered_names for n in tool_names)
-
-                if has_any_registered:
-                    # Override the startup disable with an enable.
-                    tag = f"group:{group_name}"
-                    mcp.enable(tags={tag}, components={"tool"})
-                    enabled_groups.append(group_name)
-                else:
-                    # Group not present in Unity's registered tools — disable it.
-                    tag = f"group:{group_name}"
-                    mcp.disable(tags={tag}, components={"tool"})
-                    disabled_groups.append(group_name)
-
-            if enabled_groups or disabled_groups:
-                logger.info(
-                    "Server-level tool visibility synced from Unity: "
-                    "enabled=[%s], disabled=[%s], total_transforms=%d, unity_start=%d",
-                    ", ".join(enabled_groups),
-                    ", ".join(disabled_groups),
-                    len(mcp._transforms),
-                    cls._unity_transform_start or 0,
-                )
-        except Exception:
-            logger.debug(
-                "Failed to sync server-level tool visibility",
-                exc_info=True,
+    @classmethod
+    def _rollback_server_tool_visibility(cls, plan):
+        if plan is not None and plan["mcp"]._transforms is plan["new"]:
+            plan["mcp"]._transforms = plan["old"]
+            cls._unity_transform_start, cls._unity_transforms, cls._unity_visibility_signature = (
+                plan["previous"]
             )
 
     @classmethod
-    async def _notify_mcp_tool_list_changed(cls) -> None:
+    def _sync_server_tool_visibility(cls, registered_tools):
+        try:
+            cls._commit_server_tool_visibility(
+                cls._prepare_server_tool_visibility(registered_tools)
+            )
+        except Exception:
+            logger.debug("Failed to sync server-level tool visibility", exc_info=True)
+
+    @classmethod
+    def _publish_session_catalog(
+        cls, session, tools, sessions, *, known=True, generation=None, withdraw=False
+    ):
+        """Synchronous callback under Hub -> registry locks; never reacquire either."""
+        from services.custom_tool_service import CustomToolService
+
+        advertised = [
+            definition
+            for sid, entry in sessions.items()
+            for definition in (
+                tools.values() if sid == session.session_id else entry.tools.values()
+            )
+        ]
+        plan = cls._prepare_server_tool_visibility(advertised, reset=not sessions)
+        visibility = (
+            None
+            if plan is None
+            else (
+                lambda: cls._commit_server_tool_visibility(plan),
+                lambda: cls._rollback_server_tool_visibility(plan),
+            )
+        )
+        service = CustomToolService._instance
+        if service is None or cls._mcp is None or service._mcp is not cls._mcp:
+            cls._commit_server_tool_visibility(plan)
+            return {
+                "changed": plan is not None
+                or session.tools != tools
+                or session.tools_known != known,
+                "global_component_changed": False,
+            }
+        return service.replace_project_catalog(
+            session.project_hash,
+            list(tools.values()),
+            kind="http",
+            generation=generation,
+            user_id=session.user_id,
+            publish_global=not config.http_remote_hosted,
+            known=known,
+            visibility=visibility,
+            withdraw=withdraw,
+        )
+
+    @classmethod
+    async def _notify_committed_catalog(cls, outcome, scope):
+        if not outcome or not outcome.get("changed"):
+            return
+        if not config.http_remote_hosted and outcome.get("global_component_changed"):
+            await cls._notify_mcp_tool_list_changed()
+        else:
+            await cls._notify_mcp_tool_list_changed(**scope)
+
+    @classmethod
+    async def _unregister_catalog(cls, registry, session_id):
+        """Caller owns the Hub lock; registry calls publication synchronously."""
+        outcome = None
+        scope = None
+
+        def publish(session, remaining):
+            nonlocal outcome, scope
+            outcome = cls._publish_session_catalog(
+                session, {}, remaining, known=False, withdraw=True
+            )
+            scope = dict(
+                user_id=session.user_id,
+                project_hash=session.project_hash,
+                session_id=session.session_id,
+                catalog_revision=session.tools_revision + 1,
+            )
+
+        await registry.unregister(session_id, _publish=publish)
+        return outcome, scope
+
+    @classmethod
+    async def _notify_mcp_tool_list_changed(
+        cls, *, user_id=None, project_hash=None, session_id=None, catalog_revision=None
+    ) -> None:
         """Queue ``tools/list_changed`` for each connected MCP client.
 
         After server-level tool visibility is updated (e.g. when Unity reports
@@ -1771,7 +1875,11 @@ class PluginHub(WebSocketEndpoint):
         transforms but do **not** push notifications to already-connected
         sessions — we do that here.
         """
-        cls._catalog_notifications.publish(_active_mcp_sessions)
+        # Legacy connections have no trusted tenant/project routing metadata.
+        # Keep this process-global invalidation local. The trusted arguments
+        # remain available for the separately owned scoped modern publisher.
+        if not config.http_remote_hosted:
+            cls._catalog_notifications.publish(_active_mcp_sessions)
 
     async def _handle_editor_state(self, websocket: WebSocket, data: dict[str, Any]) -> None:
         cls = type(self)
@@ -2088,10 +2196,7 @@ class PluginHub(WebSocketEndpoint):
                 cancellation = error
         if cancellation is not None:
             raise cancellation from cleanup_error
-        had_registry = cleanup.result()
-        if had_registry and not config.http_remote_hosted:
-            await cls._refresh_server_tool_visibility()
-            await cls._notify_mcp_tool_list_changed()
+        cleanup.result()
         logger.debug("Evicted plugin session %s (%s)", session_id, reason)
 
     @classmethod
@@ -2110,6 +2215,8 @@ class PluginHub(WebSocketEndpoint):
         websocket: WebSocket | None = None
         ping_task: asyncio.Task | None = None
         pending_futures: list[asyncio.Future] = []
+        catalog_change = (None, None)
+        publication_error = None
         async with lock:
             if expected is not None and (
                 cls._registry is not expected[0]
@@ -2131,6 +2238,13 @@ class PluginHub(WebSocketEndpoint):
                     keys_to_remove.append(key)
             for key in keys_to_remove:
                 cls._pending.pop(key, None)
+            if registry is not None:
+                try:
+                    catalog_change = await cls._unregister_catalog(registry, session_id)
+                except Exception as exc:
+                    # A failed publication retains the prior catalog/registry;
+                    # it cannot retain physical socket or command ownership.
+                    publication_error = exc
 
         if ping_task is not None and ping_task is not initiating_task and not ping_task.done():
             ping_task.cancel()
@@ -2143,19 +2257,13 @@ class PluginHub(WebSocketEndpoint):
                     )
                 )
 
-        # Remove routing state before close I/O can block or be cancelled.
-        if registry is not None:
-            try:
-                await registry.unregister(session_id)
-            except Exception:
-                logger.debug(
-                    "Failed to unregister evicted plugin session %s",
-                    session_id,
-                    exc_info=True,
-                )
-
-        if websocket is not None:
-            await cls._close_websocket(websocket)
+        try:
+            await cls._notify_committed_catalog(*catalog_change)
+        finally:
+            if websocket is not None:
+                await cls._close_websocket(websocket)
+        if publication_error is not None:
+            raise publication_error
 
         return registry is not None
 
@@ -2364,6 +2472,7 @@ class PluginHub(WebSocketEndpoint):
         retry_on_reload: bool = True,
         *,
         editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
+        _catalog_guard=None,
     ) -> dict[str, Any]:
         """Send with one total execution budget, including recovery and admission.
 
@@ -2395,6 +2504,7 @@ class PluginHub(WebSocketEndpoint):
                     retry_on_reload,
                     editor_state_read_mode=editor_state_read_mode,
                     budget=budget,
+                    _catalog_guard=_catalog_guard,
                 )
         except TimeoutError:
             return budget.timeout_response(command_type)
@@ -2410,7 +2520,10 @@ class PluginHub(WebSocketEndpoint):
         *,
         budget: _CommandBudget,
         editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
+        _catalog_guard=None,
     ) -> dict[str, Any]:
+        if _catalog_guard is not None:
+            retry_on_reload = False
         try:
             session_id = await cls._resolve_session_id(
                 unity_instance,
@@ -2515,7 +2628,13 @@ class PluginHub(WebSocketEndpoint):
             return await cls.send_command(
                 session_id, command_type, params, _expected_read=identity, _budget=budget
             )
-        return await cls.send_command(session_id, command_type, params, _budget=budget)
+        return await cls.send_command(
+            session_id,
+            command_type,
+            params,
+            _budget=budget,
+            **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
+        )
 
     # ------------------------------------------------------------------
     # Blocking helpers for synchronous tool code

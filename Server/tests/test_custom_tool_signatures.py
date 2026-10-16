@@ -26,7 +26,8 @@ async def test_custom_tool_registration_accepts_mixed_required_parameter_order(m
     tools = await service._mcp.list_tools()
     assert [tool.name for tool in tools] == ["build"]
     assert tools[0].parameters["required"] == ["required"]
-    assert service._global_tools["build"] is definition
+    assert service._global_tools["build"] == definition
+    assert service._global_tools["build"] is not definition
 
 
 @pytest.mark.asyncio
@@ -65,4 +66,5 @@ async def test_custom_tool_accepts_required_parameters_after_optional_parameters
         {"required": "target", "optional": 3},
         user_id="user-a",
         omit_nulls=True,
+        _expected_contract=service._wire_contract(definition),
     )

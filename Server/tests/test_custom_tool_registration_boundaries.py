@@ -75,7 +75,7 @@ def test_late_registration_failure_restores_public_provider_generation(tmp_path,
                     # When: the final definition fails after earlier valid definitions.
                     response = await registration.post("/register-tools", json={"project_id": "project", "project_hash": "NEWHASH", "tools": [
                         {"name": "stable_probe", "parameters": [{"name": "changed", "required": True}]},
-                        {"name": "partial_probe"}, {"name": "foreign_probe"}, {"name": "blocked_probe"},
+                        {"name": "partial_probe"}, {"name": "blocked_probe"},
                     ]})
                     # Then: SDK list/call, project execution and hash routing keep the old generation.
                     assert response.status_code == (400 if FAILURE == "provider_conflict" else 500), response.text
@@ -199,7 +199,9 @@ def test_successful_batch_preserves_project_collisions_and_additive_empty_semant
                     assert not (await client.call_tool("first_probe", {})).is_error
                     active.return_value = "B@b"
                     result = await client.call_tool("shared_probe", {"count": 7})
-                    assert result.structured_content["data"] == {"instance": "B@b", "params": {"count": 7.0}}
+                    assert result.structured_content["data"]["reason"] == "custom_tool_schema_changed"
+                    fallback = await service.execute_tool("b", "shared_probe", "B@b", {"count": 7})
+                    assert fallback.data == {"instance": "B@b", "params": {"count": 7.0}}
                     assert not (await client.call_tool("second_probe", {})).is_error
         asyncio.run(scenario())
     """,

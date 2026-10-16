@@ -135,7 +135,8 @@ async def test_global_definition_remains_fallback_for_missing_project_tool(monke
     # When: runtime metadata is resolved for an unregistered project.
     result = await service.get_tool_definition("project", "fixture_global", user_id="user-a")
     # Then: the global tool remains usable after checking the selected project.
-    assert result is definition
+    assert result == definition
+    assert result is not definition
     lookup.assert_awaited_once_with("project", "fixture_global", user_id="user-a")
 
 

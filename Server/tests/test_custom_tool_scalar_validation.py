@@ -274,7 +274,7 @@ async def test_input_model_cache_tracks_schema_and_bounds_retained_models(custom
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["stdio", "http"])
-async def test_sync_preserves_good_descriptors_and_reports_invalid_fields(
+async def test_sync_rejects_whole_malformed_snapshot_without_partial_publication(
     custom_server, monkeypatch, caplog, transport
 ):
     from services.tools import sync_tool_visibility_from_unity
@@ -315,14 +315,9 @@ async def test_sync_preserves_good_descriptors_and_reports_invalid_fields(
 
     result = await sync_tool_visibility_from_unity("Project@hash", notify=False)
 
-    assert result["synced"] is True and result["custom_tool_count"] == 1
-    assert "good_custom" in service._global_tools and "bad_custom" not in service._global_tools
+    assert "error" in result and "synced" not in result
+    assert "good_custom" not in service._global_tools and "bad_custom" not in service._global_tools
     if transport == "http":
         session = await registry.get_session("session")
-        assert set(session.tools) == {"good_custom"}
-    assert (
-        "bad_custom" in caplog.text
-        and "default_value" in caplog.text
-        and "value_error" in caplog.text
-    )
+        assert session.tools == {}
     assert bad_default not in caplog.text

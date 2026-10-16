@@ -6,7 +6,8 @@ import keyword
 import logging
 import time
 from hashlib import sha256
-from threading import Lock
+from threading import Lock, RLock
+from dataclasses import dataclass
 from collections import OrderedDict
 from contextlib import nullcontext
 from typing import Annotated, Optional
@@ -45,6 +46,87 @@ _MAX_ACTIVE_POLLS_PER_SESSION = 16
 _MAX_ACTIVE_POLLS_PER_USER = 32
 _MAX_ACTIVE_POLLS_GLOBAL = 256
 _MAX_INPUT_MODELS = 128
+_MAX_CATALOG_TOOLS = 256
+_MAX_CATALOG_BYTES = 512 * 1024
+_MAX_CATALOG_SOURCES = 256
+
+
+@dataclass(frozen=True)
+class _SourceCatalog:
+    key: tuple[str, str | None, str]
+    generation: str | None
+    revision: int
+    ordinal: int
+    tools: dict[str, ToolDefinitionModel]
+    prepared: dict[str, Tool]
+    publish_global: bool
+    known: bool = True
+
+
+class _CatalogAdmission:
+    """One invocation's descriptor/source identity; checks run at actual admission."""
+
+    def __init__(self, service, catalog, project_id, user_id):
+        self.service = service
+        self.catalog = catalog
+        self.user_id = user_id
+        source_project = service._transport_project_id(project_id)
+        http = service._sources.get(("http", user_id, source_project))
+        stdio = service._sources.get(("stdio", None, source_project))
+        self.session_id = http.generation if http is not None else None
+        self.stdio_generation = stdio.generation if stdio is not None else None
+        self._stdio_identity = None
+
+    def _current(self):
+        return (
+            not self.service._publishing
+            and self.service._sources.get(self.catalog.key) is self.catalog
+        )
+
+    def check_http(self, session_id, user_id):
+        with self.service._catalog_lock:
+            if not self._current() or self.user_id != user_id:
+                return False
+            if self.session_id is None:
+                self.session_id = session_id
+            return self.session_id == session_id
+
+    def select_stdio(self, connection):
+        with self.service._catalog_lock:
+            if self._stdio_identity is None:
+                self._stdio_identity = (
+                    id(connection),
+                    id(connection.sock),
+                    connection.session_generation,
+                )
+
+    def check_stdio(self, connection):
+        with self.service._catalog_lock:
+            return (
+                self._current()
+                and self._stdio_identity
+                == (id(connection), id(connection.sock), connection.session_generation)
+                and (
+                    self.stdio_generation is None
+                    or self.stdio_generation == connection.session_generation
+                )
+            )
+
+    def current(self):
+        with self.service._catalog_lock:
+            return self._current()
+
+
+def custom_catalog_changed(reason="custom_tool_catalog_changed", job_id=None):
+    data = {"reason": reason, "dispatched": False}
+    if job_id is not None:
+        data["job_id"] = job_id
+    return MCPResponse(
+        success=False,
+        error="Custom tool catalog changed; rediscover the selected project's tools.",
+        hint="inspect_state_before_retry",
+        data=data,
+    )
 
 
 async def get_user_id_from_context(ctx: Context) -> str | None:
@@ -65,9 +147,10 @@ async def get_user_id_from_context(ctx: Context) -> str | None:
 
 
 class RegisterToolsPayload(BaseModel):
-    project_id: str
-    project_hash: str | None = None
-    tools: list[ToolDefinitionModel]
+    project_id: str = Field(min_length=1, max_length=256)
+    project_hash: str | None = Field(default=None, max_length=256)
+    tools: list[ToolDefinitionModel] = Field(max_length=256)
+    replace: bool = False
 
 
 class ToolRegistrationResponse(BaseModel):
@@ -75,6 +158,7 @@ class ToolRegistrationResponse(BaseModel):
     registered: list[str]
     replaced: list[str]
     message: str
+    removed: list[str] = Field(default_factory=list)
 
 
 class CustomToolService:
@@ -87,6 +171,12 @@ class CustomToolService:
         self._project_tools: dict[str, dict[str, ToolDefinitionModel]] = {}
         self._hash_to_project: dict[str, str] = {}
         self._global_tools: dict[str, ToolDefinitionModel] = {}
+        self._sources: dict[tuple[str, str | None, str], _SourceCatalog] = {}
+        self._owned_tools: dict[str, Tool] = {}
+        self._global_owners: dict[str, tuple[str, str | None, str]] = {}
+        self._catalog_lock = RLock()
+        self._publishing = False
+        self._next_source_ordinal = 0
         self._input_models: OrderedDict[
             tuple[tuple[str, str, bool, str | None, str | None], ...], type[BaseModel]
         ] = OrderedDict()
@@ -131,8 +221,14 @@ class CustomToolService:
                 )
 
             try:
+                previous = set(self._project_tools.get(payload.project_id, {}))
+                previous_sources = self._sources
+                previous_components = self._owned_tools
                 registered, replaced = self._register_project_tools(
-                    payload.project_id, payload.tools, project_hash=payload.project_hash
+                    payload.project_id,
+                    payload.tools,
+                    project_hash=payload.project_hash,
+                    replace=payload.replace,
                 )
             except ValueError:
                 return JSONResponse(
@@ -140,6 +236,13 @@ class CustomToolService:
                     status_code=400,
                 )
 
+            if (
+                self._sources is not previous_sources
+                or self._owned_tools is not previous_components
+            ):
+                # This route is local-only. Manual callers cannot supply a
+                # trusted hosted principal; use the existing local invalidation.
+                await PluginHub._notify_mcp_tool_list_changed()
             message = f"Registered {len(registered)} tool(s)"
             if replaced:
                 message += f" (replaced: {', '.join(replaced)})"
@@ -149,10 +252,21 @@ class CustomToolService:
                 registered=registered,
                 replaced=replaced,
                 message=message,
+                removed=sorted(previous - set(self._project_tools.get(payload.project_id, {})))
+                if payload.replace
+                else [],
             )
             return JSONResponse(response.model_dump())
 
     # --- Public API for MCP tools ---------------------------------------
+    def _transport_project_id(self, project_id):
+        if config.http_remote_hosted:
+            return project_id
+        return next(
+            (alias for alias, project in self._hash_to_project.items() if project == project_id),
+            project_id,
+        )
+
     async def list_registered_tools(
         self,
         project_id: str,
@@ -162,9 +276,18 @@ class CustomToolService:
             if not user_id:
                 return []
             return await PluginHub.get_tools_for_project(project_id, user_id=user_id)
-        legacy = list(self._project_tools.get(project_id, {}).values())
-        hub_tools = await PluginHub.get_tools_for_project(project_id, user_id=user_id)
-        return legacy + hub_tools
+        definitions = dict(self._project_tools.get(project_id, {}))
+        transport_project = self._transport_project_id(project_id)
+        kind = "http" if config.transport_mode.lower() == "http" else "stdio"
+        catalog = self._sources.get((kind, user_id if kind == "http" else None, transport_project))
+        hub_tools = (
+            catalog.tools.values()
+            if catalog is not None
+            else await PluginHub.get_tools_for_project(transport_project, user_id=user_id)
+        )
+        for tool in hub_tools:
+            definitions.setdefault(tool.name, tool)
+        return list(definitions.values())
 
     async def get_tool_definition(
         self,
@@ -179,10 +302,42 @@ class CustomToolService:
         tool = self._project_tools.get(project_id, {}).get(tool_name)
         if tool:
             return tool
-        tool = await PluginHub.get_tool_definition(project_id, tool_name, user_id=user_id)
+        transport_project = self._transport_project_id(project_id)
+        kind = "http" if config.transport_mode.lower() == "http" else "stdio"
+        catalog = self._sources.get((kind, user_id if kind == "http" else None, transport_project))
+        if catalog is not None:
+            return catalog.tools.get(tool_name)
+        tool = await PluginHub.get_tool_definition(transport_project, tool_name, user_id=user_id)
         if tool:
             return tool
-        return self._global_tools.get(tool_name)
+        if project_id in self._project_tools:
+            return None
+        shared = self._sources.get(("global", None, "shared"))
+        return shared.tools.get(tool_name) if shared is not None else None
+
+    def _definition_catalog(self, project_id, tool_name, user_id):
+        if not config.http_remote_hosted:
+            manual = self._sources.get(("manual", None, project_id))
+            if manual is not None and tool_name in manual.tools:
+                return manual
+            if tool_name in self._project_tools.get(project_id, {}):
+                return None  # Compatibility with existing internal descriptor fixtures.
+        kind = "http" if config.transport_mode.lower() == "http" else "stdio"
+        transport_project = self._transport_project_id(project_id)
+        catalog = self._sources.get((kind, user_id if kind == "http" else None, transport_project))
+        if catalog is not None:
+            return catalog
+        return self._sources.get(("global", None, "shared"))
+
+    async def _send_custom(self, guard, unity_instance, tool_name, params, user_id):
+        if guard is not None and not guard.current():
+            return custom_catalog_changed()
+        options = {"user_id": user_id}
+        if guard is not None:
+            options["_catalog_guard"] = guard
+        return await send_with_unity_instance(
+            async_send_command_with_retry, unity_instance, tool_name, params, **options
+        )
 
     async def execute_tool(
         self,
@@ -193,6 +348,7 @@ class CustomToolService:
         user_id: str | None = None,
         *,
         omit_nulls: bool = False,
+        _expected_contract: str | None = None,
     ) -> MCPResponse:
         params = params or {}
         logger.info("Executing custom tool")
@@ -207,6 +363,15 @@ class CustomToolService:
                 success=False,
                 message=f"Tool '{tool_name}' not found for project {project_id}",
             )
+
+        if _expected_contract is not None and self._wire_contract(definition) != _expected_contract:
+            return custom_catalog_changed("custom_tool_schema_changed")
+        catalog = self._definition_catalog(project_id, tool_name, user_id)
+        if catalog is not None and catalog.tools.get(tool_name) != definition:
+            return custom_catalog_changed()
+        guard = (
+            _CatalogAdmission(self, catalog, project_id, user_id) if catalog is not None else None
+        )
 
         try:
             inputs = self._get_input_model(definition)
@@ -223,13 +388,7 @@ class CustomToolService:
             )
 
         if not definition.requires_polling:
-            response = await send_with_unity_instance(
-                async_send_command_with_retry,
-                unity_instance,
-                tool_name,
-                params,
-                user_id=user_id,
-            )
+            response = await self._send_custom(guard, unity_instance, tool_name, params, user_id)
             result = self._normalize_response(response)
             logger.info("Custom tool completed (success=%s, polled=False)", result.success)
             return result
@@ -258,13 +417,7 @@ class CustomToolService:
                         unity_instance,
                         params,
                         await responses.fetch(
-                            send_with_unity_instance(
-                                async_send_command_with_retry,
-                                unity_instance,
-                                tool_name,
-                                params,
-                                user_id=user_id,
-                            ),
+                            self._send_custom(guard, unity_instance, tool_name, params, user_id),
                             timeout=timeout,
                         ),
                         definition.poll_action or "status",
@@ -272,6 +425,7 @@ class CustomToolService:
                         max_poll_seconds=timeout,
                         deadline=deadline,
                         responses=responses,
+                        catalog_guard=guard,
                     )
                 except asyncio.TimeoutError:
                     return self._poll_timeout(tool_name, None)
@@ -380,6 +534,7 @@ class CustomToolService:
         max_poll_seconds: int = 0,
         deadline: float | None = None,
         responses: ResponsePollLifetime | None = None,
+        catalog_guard=None,
     ) -> MCPResponse:
         async with (
             nullcontext(responses) if responses is not None else ResponsePollLifetime() as responses
@@ -406,6 +561,21 @@ class CustomToolService:
                 while True:
                     if time.monotonic() >= deadline:
                         break
+                    failure_data = (
+                        response.data
+                        if isinstance(response, MCPResponse)
+                        else response.get("data")
+                        if isinstance(response, dict)
+                        else None
+                    )
+                    if isinstance(failure_data, dict) and failure_data.get("reason") in {
+                        "custom_tool_catalog_changed",
+                        "custom_tool_schema_changed",
+                    }:
+                        return custom_catalog_changed(
+                            failure_data["reason"], poll_params.get("job_id")
+                        )
+                    failure_data = None
                     status, poll_interval = self._interpret_status(
                         response, poll_response=poll_response
                     )
@@ -416,6 +586,8 @@ class CustomToolService:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         break
+                    if catalog_guard is not None and not catalog_guard.current():
+                        return custom_catalog_changed(job_id=poll_params.get("job_id"))
 
                     await asyncio.sleep(min(poll_interval, remaining))
                     remaining = deadline - time.monotonic()
@@ -424,12 +596,8 @@ class CustomToolService:
 
                     try:
                         response = await responses.fetch(
-                            send_with_unity_instance(
-                                async_send_command_with_retry,
-                                unity_instance,
-                                tool_name,
-                                poll_params,
-                                user_id=user_id,
+                            self._send_custom(
+                                catalog_guard, unity_instance, tool_name, poll_params, user_id
                             ),
                             timeout=remaining,
                         )
@@ -459,7 +627,7 @@ class CustomToolService:
                 return self._poll_timeout(tool_name, response)
             finally:
                 # Cancelled tasks may retain their traceback after this frame exits.
-                response = None
+                response = failure_data = None
 
     def _interpret_status(self, response, *, poll_response: bool = False) -> tuple[str, float]:
         if response is None:
@@ -523,94 +691,312 @@ class CustomToolService:
         return {"message": str(response)}
 
     def _register_project_tools(
-        self,
-        project_id: str,
-        tools: list[ToolDefinitionModel],
-        project_hash: str | None = None,
+        self, project_id, tools, project_hash=None, *, replace=False
     ) -> tuple[list[str], list[str]]:
-        prepared = [(tool, self._prepare_global_tool(tool)) for tool in tools]
-        registered: list[str] = []
-        replaced: list[str] = []
-        project_tools = dict(self._project_tools.get(project_id, {}))
-        for tool in tools:
-            if tool.name in project_tools:
-                replaced.append(tool.name)
-            project_tools[tool.name] = tool
-            registered.append(tool.name)
-
-        if tools and not self._project_scoped_tools:
-            self._publish_global_tools(prepared)
-
-        # This synchronous boundary cannot interleave with another async registration.
-        # Publish service state only after all SDK mutations have succeeded.
-        if tools:
-            self._project_tools[project_id] = project_tools
-
-        if project_hash:
-            self._hash_to_project[project_hash.lower()] = project_id
-
+        previous = self._project_tools.get(project_id, {})
+        registered = [tool.name for tool in tools]
+        replaced = [name for name in registered if name in previous]
+        if tools or replace:
+            self.replace_project_catalog(
+                project_id,
+                tools,
+                kind="manual",
+                replace=replace,
+                publish_global=not self._project_scoped_tools,
+                project_hash=project_hash,
+            )
         return registered, replaced
 
     def register_global_tools(self, tools: list[ToolDefinitionModel]) -> None:
-        # Global custom tools are always registered, even when project-scoped tools
-        # are enabled. Project-scoped tools can override globals by name, but
-        # disabling globals entirely would break shared tooling that projects expect.
+        # Anonymous callers retain an additive shared catalog. Real transports
+        # publish source-owned snapshots through replace_project_catalog.
         if config.http_remote_hosted or not tools:
             return
-        prepared = [(tool, self._prepare_global_tool(tool)) for tool in tools]
-        self._publish_global_tools(prepared)
+        self.replace_project_catalog(
+            "shared", tools, kind="global", replace=False, publish_global=True
+        )
 
-    def _publish_global_tools(self, prepared: list[tuple[ToolDefinitionModel, Tool]]) -> None:
-        if config.http_remote_hosted:
-            return
-        builtin_names = self._get_builtin_tool_names()
-        global_tools = dict(self._global_tools)
-        additions: list[Tool] = []
-        for definition, tool in prepared:
-            if definition.name in builtin_names:
-                logger.info(
-                    "Skipping global custom tool registration for built-in tool '%s'",
-                    definition.name,
+    def catalog_revision(self, kind, project_id, user_id=None):
+        with self._catalog_lock:
+            catalog = self._sources.get((kind, user_id, project_id))
+            return catalog.revision if catalog is not None else 0
+
+    @staticmethod
+    def _wire_contract(definition):
+        aliases = {
+            "int": "integer",
+            "float": "number",
+            "double": "number",
+            "bool": "boolean",
+            "list": "array",
+            "dict": "object",
+        }
+        parameters = []
+        for parameter in definition.parameters:
+            kind = (parameter.type or "string").lower()
+            kind = aliases.get(kind, kind)
+            if kind not in {"integer", "number", "boolean", "array", "object"}:
+                kind = "string"
+            parameters.append(
+                (
+                    parameter.name,
+                    kind,
+                    parameter.required,
+                    parse_tool_parameter_default(parameter.default_value, parameter.type)
+                    if not parameter.required
+                    else None,
                 )
-                continue
-            existing = global_tools.get(definition.name)
-            if existing is not None:
-                if existing.model_dump() != definition.model_dump():
-                    logger.warning(
-                        "Custom tool '%s' already registered with a different schema; keeping existing definition.",
-                        definition.name,
+            )
+        return json.dumps(
+            {
+                "parameters": sorted(parameters, key=lambda row: row[0]),
+                "structured_output": bool(definition.structured_output),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+
+    def replace_project_catalog(
+        self,
+        project_id,
+        tools,
+        *,
+        kind="http",
+        generation=None,
+        user_id=None,
+        replace=True,
+        publish_global=True,
+        known=True,
+        project_hash=None,
+        visibility=None,
+        expected_revision=None,
+        withdraw=False,
+    ):
+        """Prepare and commit one bounded source without an async publication gap.
+
+        The optional visibility pair contains detached synchronous apply/rollback
+        closures owned by PluginHub. Callers holding registry locks must preserve
+        Hub -> registry -> this short publication lock order.
+        """
+        key = (kind, user_id, project_id)
+        with self._catalog_lock:
+            if self._publishing:
+                raise ValueError("Reentrant custom tool catalog publication")
+            self._publishing = True
+            try:
+                old = self._sources.get(key)
+                if expected_revision is not None and (
+                    (old.revision if old is not None else 0) != expected_revision
+                ):
+                    raise ValueError("Custom tool catalog changed during refresh")
+                base = (
+                    old.tools
+                    if old is not None
+                    else self._project_tools.get(project_id, {})
+                    if kind == "manual"
+                    else {}
+                )
+                definitions = {} if replace else dict(base)
+                incoming = {}
+                for raw in tools:
+                    definition = ToolDefinitionModel.model_validate(raw.model_dump())
+                    if definition.name in incoming:
+                        raise ValueError("Duplicate custom tool name in catalog")
+                    incoming[definition.name] = definition
+                definitions.update(incoming)
+                retire = withdraw or (kind == "manual" and replace and not definitions)
+                if old is None and not retire and len(self._sources) >= _MAX_CATALOG_SOURCES:
+                    raise ValueError("Custom tool catalog source limit reached")
+                if len(definitions) > _MAX_CATALOG_TOOLS:
+                    raise ValueError("Custom tool catalog exceeds 256 tools")
+                encoded = json.dumps(
+                    [tool.model_dump() for tool in definitions.values()],
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8")
+                if len(encoded) > _MAX_CATALOG_BYTES:
+                    raise ValueError("Custom tool catalog exceeds 512 KiB")
+                prepared = dict(old.prepared) if old is not None and not replace else {}
+                # Even a no-op advertisement must validate the complete incoming batch.
+                for name, definition in definitions.items():
+                    if name in incoming or name not in prepared:
+                        prepared[name] = self._prepare_global_tool(definition)
+                changed = (
+                    old is None
+                    or old.generation != generation
+                    or old.tools != definitions
+                    or old.known != known
+                    or old.publish_global != publish_global
+                    or (
+                        kind == "manual"
+                        and project_hash is not None
+                        and self._hash_to_project.get(project_hash.lower()) != project_id
                     )
-                continue
-            global_tools[definition.name] = definition
-            additions.append(tool)
+                )
+                if retire:
+                    changed = old is not None or (
+                        kind == "manual" and project_id in self._project_tools
+                    )
+                catalog = old
+                if retire:
+                    catalog = None
+                elif changed:
+                    catalog = _SourceCatalog(
+                        key=key,
+                        generation=generation,
+                        revision=old.revision + 1 if old is not None else 1,
+                        ordinal=old.ordinal if old is not None else self._next_source_ordinal,
+                        tools=definitions,
+                        prepared=prepared,
+                        publish_global=publish_global,
+                        known=known,
+                    )
+                sources = dict(self._sources)
+                if retire:
+                    sources.pop(key, None)
+                else:
+                    sources[key] = catalog
+                builtin_names = self._get_builtin_tool_names()
+                winners = {}
+                for source in sorted(sources.values(), key=lambda value: value.ordinal):
+                    if not source.publish_global or config.http_remote_hosted:
+                        continue
+                    for name, definition in source.tools.items():
+                        if name not in builtin_names or name in self._owned_tools:
+                            winners.setdefault(name, (source, definition))
+                owned = {}
+                global_tools = {}
+                global_owners = {}
+                provider = self._mcp._local_provider if winners or self._owned_tools else None
+                components = provider._components if provider is not None else {}
+                effective_owned = {
+                    name: tool
+                    for name, tool in self._owned_tools.items()
+                    if components.get(tool.key) is tool
+                }
+                for name, (source, definition) in winners.items():
+                    candidate = source.prepared[name]
+                    current = components.get(candidate.key)
+                    if current is not None and current is not effective_owned.get(name):
+                        # Withdrawal relinquishes a lost key. Other sources may
+                        # stay usable through execute_custom_tool, but cannot
+                        # replace a foreign SDK declaration as a side effect.
+                        if retire or source.key != key:
+                            continue
+                        raise ValueError("Custom tool component ownership changed")
+                    global_tools[name] = definition
+                    global_owners[name] = source.key
+                    if (
+                        self._global_owners.get(name) == source.key
+                        and self._global_tools.get(name) == definition
+                        and name in self._owned_tools
+                    ):
+                        owned[name] = self._owned_tools[name]
+                    else:
+                        owned[name] = source.prepared[name]
+                additions = [
+                    tool for name, tool in owned.items() if effective_owned.get(name) is not tool
+                ]
+                removals = [tool for name, tool in effective_owned.items() if name not in owned]
+                component_changed = bool(additions or removals)
+                if not changed and not component_changed and visibility is None:
+                    return {
+                        "changed": False,
+                        "global_component_changed": False,
+                        "revision": old.revision if old is not None else 0,
+                        "removed": [],
+                    }
+                project_tools = self._project_tools
+                hash_to_project = self._hash_to_project
+                if kind == "manual":
+                    if retire:
+                        project_tools = {
+                            project: rows
+                            for project, rows in project_tools.items()
+                            if project != project_id
+                        }
+                        hash_to_project = {
+                            alias: project
+                            for alias, project in hash_to_project.items()
+                            if project != project_id
+                        }
+                    else:
+                        project_tools = {**project_tools, project_id: definitions}
+                    if project_hash and not retire:
+                        hash_to_project = {
+                            **{
+                                alias: project
+                                for alias, project in hash_to_project.items()
+                                if project != project_id
+                            },
+                            project_hash.lower(): project_id,
+                        }
+                # FastMCP 4.1's local provider stores components by exact Tool.key;
+                # _remove_component mutates that map and has no separate cache.
+                # Keep this version-pinned rollback seam confined to owned keys.
+                missing = object()
+                delta = [(tool.key, tool, effective_owned.get(tool.name)) for tool in additions]
+                delta.extend((tool.key, None, tool) for tool in removals)
+                # A foreign replacement owns its key, even if our old declaration
+                # still exists. Never overwrite/remove it during reconciliation.
+                for component_key, _, previous_owned in delta:
+                    if components.get(component_key, missing) is not (
+                        previous_owned if previous_owned is not None else missing
+                    ):
+                        raise ValueError("Custom tool component ownership changed")
+                previous = {
+                    component_key: components.get(component_key, missing)
+                    for component_key, _, _ in delta
+                }
+                attempted = []
+                try:
+                    for tool in additions:
+                        attempted.append((tool.key, tool))
+                        if self._mcp.add_tool(tool) is not tool:
+                            raise ValueError("Custom tool replacement was not published")
+                    for tool in removals:
+                        attempted.append((tool.key, None))
+                        provider._remove_component(tool.key)
+                    if visibility is not None:
+                        visibility[0]()
+                except BaseException:
+                    if visibility is not None:
+                        visibility[1]()
+                    for component_key, published in reversed(attempted):
+                        if components.get(component_key, missing) is (
+                            published if published is not None else missing
+                        ):
+                            old_component = previous[component_key]
+                            if old_component is missing:
+                                components.pop(component_key, None)
+                            else:
+                                components[component_key] = old_component
+                    raise
+                self._sources = sources
+                self._global_tools = global_tools
+                self._global_owners = global_owners
+                self._owned_tools = owned
+                if old is None and not retire:
+                    self._next_source_ordinal += 1
+                self._project_tools = project_tools
+                self._hash_to_project = hash_to_project
+                return {
+                    "changed": changed or component_changed or visibility is not None,
+                    "global_component_changed": component_changed,
+                    "revision": catalog.revision
+                    if catalog is not None
+                    else old.revision + 1
+                    if old is not None
+                    else 0,
+                    "removed": sorted(set(base) - set(definitions)) if replace else [],
+                }
+            finally:
+                self._publishing = False
 
-        if not additions:
-            return
-
-        # FastMCP 4's local provider stores components by exact Tool.key. Its synchronous
-        # add_tool can insert before raising, so save every attempted key beforehand.
-        # Restore only components still owned by this batch, including the failing add.
-        components = self._mcp._local_provider._components
-        previous = {tool.key: components.get(tool.key) for tool in additions}
-        attempted: list[Tool] = []
-        published = False
-        try:
-            for tool in additions:
-                attempted.append(tool)
-                if self._mcp.add_tool(tool) is not tool:
-                    raise ValueError(f"Custom tool '{tool.name}' was not published")
-            published = True
-        finally:
-            if not published:
-                for tool in reversed(attempted):
-                    if components.get(tool.key) is tool:
-                        old_component = previous[tool.key]
-                        if old_component is None:
-                            del components[tool.key]
-                        else:
-                            components[tool.key] = old_component
-
-        self._global_tools = global_tools
+    def _publish_global_tools(self, prepared):
+        self.register_global_tools([definition for definition, _ in prepared])
 
     def _get_builtin_tool_names(self) -> set[str]:
         return {tool["name"] for tool in get_registered_tools()}
@@ -647,6 +1033,8 @@ class CustomToolService:
         )
 
     def _build_global_tool_handler(self, definition: ToolDefinitionModel):
+        expected_contract = self._wire_contract(definition)
+
         async def _handler(ctx: Context, **kwargs) -> MCPResponse:
             unity_instance = await get_unity_instance_from_context(ctx)
             if not unity_instance:
@@ -675,6 +1063,7 @@ class CustomToolService:
                 params,
                 user_id=user_id,
                 omit_nulls=True,
+                _expected_contract=expected_contract,
             )
 
         _handler.__name__ = f"custom_tool_{definition.name}"

@@ -121,7 +121,7 @@ def test_unregistered_and_hosted_plugins_do_not_publish_global_tools(tmp_path):
                 assert "private_custom" in (await registry.get_session("session")).tools
                 assert await mcp.list_tools() == []
                 assert service._global_tools == {}
-                notify.assert_not_awaited()
+                notify.assert_awaited_once_with(user_id="owner", project_hash="hash", session_id="session", catalog_revision=1)
 
             await PluginHub.shutdown()
 
