@@ -110,6 +110,99 @@ namespace MCPForUnityTests.EditMode.Tools
             return response["data"]["nodes"][0];
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DisabledNestedCanvasUsesEffectiveRootForGraphicAndContainer(bool rendererless)
+        {
+            var root = Root();
+            var nested = Child("DisabledNestedCanvas", root);
+            var nestedCanvas = nested.AddComponent<Canvas>();
+            nestedCanvas.enabled = false;
+            var child = Child("SnapshotTarget", nested);
+            var rect = (RectTransform)child.transform;
+            rect.anchoredPosition = new Vector2(17, 23);
+            rect.sizeDelta = new Vector2(31, 47);
+            var control = rendererless ? Child("NativeGraphicControl", nested) : child;
+            var image = Image(control);
+            Canvas.ForceUpdateCanvases();
+            Assert.That(image.GetType().GetProperty("canvas").GetValue(image), Is.SameAs(root.GetComponent<Canvas>()));
+            Assert.That(control.GetComponent<CanvasRenderer>().cull, Is.False);
+            var sources = new Dictionary<UnityEngine.Object, string>();
+            var dirty = new Dictionary<UnityEngine.Object, bool>();
+            foreach (var component in root.GetComponentsInChildren<Component>(true))
+            {
+                sources[component] = EditorJsonUtility.ToJson(component);
+                dirty[component] = EditorUtility.IsDirty(component);
+                sources[component.gameObject] = EditorJsonUtility.ToJson(component.gameObject);
+                dirty[component.gameObject] = EditorUtility.IsDirty(component.gameObject);
+            }
+            bool sceneDirty = root.scene.isDirty;
+            var previousSelection = Selection.objects;
+            try
+            {
+                Selection.activeGameObject = child;
+                var selection = Selection.objects;
+
+                var node = CapturedNode(child);
+
+                Assert.That(node["visible"].Value<bool>(), Is.True, "A disabled nested Canvas falls back to the enabled root Canvas.");
+                Assert.That(CapturedNode(nested)["visible"].Value<bool>(), Is.True, "Containers inherit eligibility from the nearest usable Canvas.");
+                Assert.That(node["geometry"]["anchored_position"].ToObject<float[]>(), Is.EqualTo(new[] { 17f, 23f }));
+                Assert.That(rect.sizeDelta, Is.EqualTo(new Vector2(31, 47)));
+                foreach (var source in sources)
+                {
+                    Assert.That(EditorJsonUtility.ToJson(source.Key), Is.EqualTo(source.Value), source.Key.name);
+                    Assert.That(EditorUtility.IsDirty(source.Key), Is.EqualTo(dirty[source.Key]), source.Key.name);
+                }
+                Assert.That(root.scene.isDirty, Is.EqualTo(sceneDirty));
+                Assert.That(Selection.objects, Is.EqualTo(selection));
+            }
+            finally
+            {
+                Selection.objects = previousSelection;
+            }
+        }
+
+        [TestCase(false, false, true, false, false)]
+        [TestCase(false, false, true, true, false)]
+        [TestCase(false, true, true, false, true)]
+        [TestCase(false, true, true, true, true)]
+        [TestCase(true, false, false, false, false)]
+        [TestCase(true, false, false, true, false)]
+        [TestCase(true, true, true, false, true)]
+        [TestCase(true, true, true, true, true)]
+        public void CanvasVisibilityRequiresUsableCanvasAndActiveHierarchy(
+            bool rootEnabled,
+            bool nestedEnabled,
+            bool targetActive,
+            bool rendererless,
+            bool expectedVisible
+        )
+        {
+            var root = Root();
+            var nested = Child("NestedCanvas", root);
+            var nestedCanvas = nested.AddComponent<Canvas>();
+            var child = Child("SnapshotTarget", nested);
+            var image = rendererless ? null : Image(child);
+            root.GetComponent<Canvas>().enabled = rootEnabled;
+            nestedCanvas.enabled = nestedEnabled;
+            child.SetActive(targetActive);
+            Canvas.ForceUpdateCanvases();
+            if (image != null && targetActive)
+            {
+                Assert.That(
+                    image.GetType().GetProperty("canvas").GetValue(image),
+                    Is.SameAs(nestedEnabled ? nestedCanvas : null),
+                    "The Graphic's effective Canvas is the native rendering evidence."
+                );
+            }
+
+            var node = CapturedNode(child);
+
+            Assert.That(node["active"].Value<bool>(), Is.EqualTo(targetActive));
+            Assert.That(node["visible"].Value<bool>(), Is.EqualTo(expectedVisible));
+        }
+
         [TestCase(0f)]
         [TestCase(0.25f)]
         [TestCase(1f)]
