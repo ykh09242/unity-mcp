@@ -565,3 +565,24 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
     # Then: the blocking transport shares the deadline and cannot send after return.
     assert sent == []
     assert data.partial is True
+
+
+@pytest.mark.asyncio
+async def test_doctor_projection_and_native_metadata_preserve_complete_capability_wire(command_hub):
+    # Existing consumers must see identical capabilities@1 before/after the new view.
+    from tests.http.test_doctor import doctor_server, observations, read_doctor
+
+    await install_native_replies(command_hub, native_observations())
+    async with Client(doctor_server(), mode="legacy", cache=False) as client:
+        await client.call_tool("select_fixture")
+        original = await read_capabilities(client)
+        await install_native_replies(command_hub, observations())
+        with_metadata = await read_capabilities(client)
+        await read_doctor(client)
+        following = await read_capabilities(client)
+    assert original == with_metadata == following
+    commands = [message for message in command_hub.sent if message["type"] == "execute"]
+    assert len(commands) == 20
+    assert sorted(message["name"] for message in commands) == sorted(
+        list(native_observations()) * 4
+    )
