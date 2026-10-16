@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -150,7 +151,42 @@ async def manage_ui(
     ]
     | None = None,
     # get_visual_tree
-    max_depth: Annotated[int, "Max depth to traverse visual tree (default 10)."] | None = None,
+    max_depth: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            le=24,
+            strict=True,
+            description="get_visual_tree inclusive depth: root is 0; default 10, maximum 24.",
+        ),
+    ] = None,
+    max_nodes: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=1000,
+            strict=True,
+            description="get_visual_tree emitted node budget, including root (default 200).",
+        ),
+    ] = None,
+    max_evaluations: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=20000,
+            strict=True,
+            description="get_visual_tree operation budget: node admissions, child fetches and class probes (default 5000). Not a time or scene-lookup bound.",
+        ),
+    ] = None,
+    max_characters: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=262144,
+            strict=True,
+            description="get_visual_tree shared copied UTF-16 string budget, including metadata (default 65536). Per-string limit 8192 and per-node class limit 64 also apply.",
+        ),
+    ] = None,
     # render_ui
     capture_id: Annotated[
         str,
@@ -262,6 +298,24 @@ async def manage_ui(
 ) -> dict[str, Any]:
     action_lower = action.lower()
 
+    if action_lower == "get_visual_tree":
+        for key, value, minimum, maximum in (
+            ("max_depth", max_depth, 0, 24),
+            ("max_nodes", max_nodes, 1, 1000),
+            ("max_evaluations", max_evaluations, 1, 20000),
+            ("max_characters", max_characters, 1, 262144),
+        ):
+            if value is not None and (type(value) is not int or not minimum <= value <= maximum):
+                return {
+                    "success": False,
+                    "message": f"{key} must be an integer from {minimum} to {maximum}.",
+                }
+        if target is not None and len(target) > 4096:
+            return {
+                "success": False,
+                "message": "get_visual_tree target must be at most 4096 characters.",
+            }
+
     if component_type is not None and component_type not in (
         "auto",
         "ui_document",
@@ -331,6 +385,12 @@ async def manage_ui(
         params_dict["settings"] = settings
     if max_depth is not None:
         params_dict["maxDepth"] = max_depth
+    if max_nodes is not None:
+        params_dict["maxNodes"] = max_nodes
+    if max_evaluations is not None:
+        params_dict["maxEvaluations"] = max_evaluations
+    if max_characters is not None:
+        params_dict["maxCharacters"] = max_characters
 
     # render_ui params
     if capture_id is not None:

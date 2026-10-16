@@ -86,3 +86,55 @@ A refusal applies no requested text, classes, styles, enabled state or tooltip c
 
 The legacy name-only path retains its existing behavior. UI capture request ownership,
 polling and cancellation are described separately in [UI_CAPTURE.md](UI_CAPTURE.md).
+
+## Read a bounded visual tree
+
+`get_visual_tree` reads the selected component's current content-container hierarchy,
+including duplicate names. It does not require a live panel, force layout, or apply the
+active/enabled mutation-selector requirements. Use an instance ID to avoid ambiguous
+GameObject names. Target selectors are limited to 4096 characters.
+
+```json
+{
+  "action": "get_visual_tree",
+  "target": "123",
+  "max_depth": 10,
+  "max_nodes": 200,
+  "max_evaluations": 5000,
+  "max_characters": 65536
+}
+```
+
+The example shows defaults. `max_depth` accepts 0 through 24, inclusive: the root is
+depth 0. `max_nodes` accepts 1 through 1000, `max_evaluations` 1 through 20000, and
+`max_characters` 1 through 262144. Omitted/null budgets use defaults; zero depth means
+root only. Invalid budgets refuse before target lookup. Depths above 24, previously
+unchecked, now refuse explicitly.
+
+Each node admission, child fetch, and class-enumerator probe consumes one evaluation;
+the terminating class probe counts too. Traversal does not precollect siblings or
+count skipped descendants. These counters bound this serializer's work, not elapsed
+time, shared scene/component lookup, or arbitrary Unity property getters.
+
+The character budget counts copied UTF-16 code units across node strings and envelope
+metadata, including GameObject/source-asset names and emitted color strings. Individual
+strings are limited to 8192 units and each node to 64 classes. Prefixes preserve valid
+surrogate pairs. A color is emitted whole or omitted; it is never clipped into an
+invalid hex value. Fixed keys, protocol labels and reason strings are constant overhead.
+
+`data.traversal` reports effective budgets, `returned_nodes`, `evaluations`, `characters`,
+`complete`, `truncated`, `tree_status`, `reasons`, and `metadata_truncated_fields`.
+Known reasons are `max_depth`, `max_nodes`, `max_evaluations`, `max_characters`,
+`per_string_limit`, and `class_limit`. Node `truncated_fields` identifies clipped or
+incomplete fields. Node `truncated=true` specifically means omitted children;
+`childCount` is the immediate child count and any returned `children` array is its
+ordered prefix. No recursive omitted-node total is claimed. Depth pruning continues
+later siblings; global node/work/character exhaustion stops new traversal. Local
+string/class caps can still permit other fields and later nodes.
+
+A ready root can be a partial stub if metadata used the character budget. An
+uninitialized root instead returns `tree=null`, `tree_status="not_initialized"`, zero
+node/evaluation counters and `complete=false`; unavailable data alone is not budget
+truncation. `complete=true` means a ready tree with no reported omissions. Truncated
+names/metadata are observations, not complete identity strings. Existing positional
+selectors and snapshot semantic IDs keep their separate contracts described above.

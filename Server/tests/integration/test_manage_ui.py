@@ -30,6 +30,80 @@ SAMPLE_USS = """.label {
 }"""
 
 
+class TestVisualTreeBudgets:
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("max_depth", -1),
+            ("max_depth", 25),
+            ("max_depth", True),
+            ("max_nodes", 0),
+            ("max_nodes", 1001),
+            ("max_nodes", 1.5),
+            ("max_evaluations", 0),
+            ("max_evaluations", 20001),
+            ("max_characters", 0),
+            ("max_characters", 262145),
+            ("max_characters", []),
+        ],
+    )
+    def test_invalid_budget_refuses_before_instance_or_dispatch(self, monkeypatch, key, value):
+        async def unexpected(*_args, **_kwargs):
+            raise AssertionError("invalid tree budget reached I/O")
+
+        monkeypatch.setattr(manage_ui_mod, "get_unity_instance_from_context", unexpected)
+        monkeypatch.setattr(manage_ui_mod, "send_with_unity_instance", unexpected)
+        response = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(), action="get_visual_tree", target="123", **{key: value}
+            )
+        )
+        assert response["success"] is False
+        assert key in response["message"]
+
+    def test_all_budgets_forward_zero_and_preserve_partial_evidence(self, monkeypatch):
+        sent = []
+        native = {
+            "success": True,
+            "data": {
+                "tree": {"truncated": True, "childCount": 8},
+                "traversal": {
+                    "returned_nodes": 1,
+                    "evaluations": 2,
+                    "characters": 9,
+                    "truncated": True,
+                    "complete": False,
+                    "reasons": ["max_depth"],
+                },
+            },
+        }
+
+        async def instance(_ctx):
+            return None
+
+        async def send(_func, _instance, _cmd, params, **_kwargs):
+            sent.append(params)
+            return native
+
+        monkeypatch.setattr(manage_ui_mod, "get_unity_instance_from_context", instance)
+        monkeypatch.setattr(manage_ui_mod, "send_with_unity_instance", send)
+        response = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="get_visual_tree",
+                target="123",
+                max_depth=0,
+                max_nodes=3,
+                max_evaluations=5,
+                max_characters=20,
+            )
+        )
+        assert response == native
+        assert {
+            k: sent[0][k] for k in ("maxDepth", "maxNodes", "maxEvaluations", "maxCharacters")
+        } == {"maxDepth": 0, "maxNodes": 3, "maxEvaluations": 5, "maxCharacters": 20}
+
+
 class TestManageUIPathValidation:
     """Tests for path validation logic."""
 
