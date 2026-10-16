@@ -230,17 +230,30 @@ class UiSnapshotV2(UiSnapshot):
         return self
 
 
-def validate_ui_snapshot(value, *, require_v2: bool = False) -> UiSnapshot | UiSnapshotV2:
+class UiEvidenceV3(UiEvidenceV2):
+    identity_method: Literal["explicit_path_map_v1"]
+
+
+class UiSnapshotV3(UiSnapshotV2):
+    schema_version: Annotated[int, Field(ge=3, le=3)]
+    evidence: UiEvidenceV3
+
+
+def validate_ui_snapshot(
+    value, *, expected_version: Literal[2, 3] | None = None
+) -> UiSnapshot | UiSnapshotV2 | UiSnapshotV3:
     """Dispatch exact versions without echoing native/file payloads in validation errors."""
     try:
         version = value.get("schema_version") if isinstance(value, dict) else None
-        if type(version) is not int or version not in (1, 2) or (require_v2 and version != 2):
+        if (
+            type(version) is not int
+            or version not in (1, 2, 3)
+            or (expected_version is not None and version != expected_version)
+        ):
             raise UiSnapshotError(
-                "Unsupported UI snapshot schema_version; live capture requires version 2"
+                "Unsupported UI snapshot schema_version for the requested identity mode"
             )
-        model = UiSnapshot if version == 1 else UiSnapshotV2
+        model = {1: UiSnapshot, 2: UiSnapshotV2, 3: UiSnapshotV3}[version]
         return model.model_validate_json(json.dumps(value, allow_nan=False))
     except (ValidationError, ValueError, TypeError):
-        raise UiSnapshotError(
-            "UI snapshot schema/privacy validation failed; live capture requires version 2"
-        ) from None
+        raise UiSnapshotError("UI snapshot schema/privacy/identity validation failed") from None

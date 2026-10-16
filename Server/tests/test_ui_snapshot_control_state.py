@@ -56,7 +56,7 @@ def snapshot_v2():
 def test_v2_state_is_strict_and_parseable(state):
     value = snapshot_v2()
     value["nodes"][0]["state"] = state
-    parsed = contracts.validate_ui_snapshot(value, require_v2=True)
+    parsed = contracts.validate_ui_snapshot(value, expected_version=2)
     assert parsed.schema_version == 2
     assert parsed.nodes[0].state.model_dump(exclude_none=True, mode="json") == state
 

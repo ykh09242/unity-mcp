@@ -8,9 +8,39 @@ import click
 from cli.utils.config import get_config
 from cli.utils.connection import handle_unity_errors, run_command
 from cli.utils.output import format_output
-from cli.utils.play_scenario_analysis_io import AnalysisError, safe_local_path, write_new
+from cli.utils.play_scenario_analysis_io import (
+    AnalysisError,
+    read_bytes,
+    safe_local_path,
+    write_new,
+)
 from cli.utils.play_scenario_ui import UiComparisonPolicy, compare_ui_snapshots
+from models.response_limits import bounded_json_text
 from models.ui_snapshots import validate_ui_snapshot
+from services.tools.capture_ui_snapshot import UiSnapshotRequest
+
+
+def _read_identity_map(source: Path):
+    """Read only the closed bounded wrapper; never echo an invalid ID/path payload."""
+    try:
+
+        def unique_object(pairs):
+            value = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError()
+                value[key] = item
+            return value
+
+        text = read_bytes(source, 256 * 1024).decode("utf-8-sig")
+        if bounded_json_text(text, max_bytes=256 * 1024, max_depth=8, max_nodes=10000) is None:
+            raise ValueError()
+        value = json.loads(text, object_pairs_hook=unique_object)
+        if not isinstance(value, dict) or set(value) != {"identity_map"}:
+            raise ValueError()
+        return value["identity_map"]
+    except (OSError, ValueError, TypeError):
+        raise AnalysisError("identity_map file is invalid or exceeds its 256 KiB bound") from None
 
 
 @click.command("capture-ui-snapshot")
@@ -18,23 +48,39 @@ from models.ui_snapshots import validate_ui_snapshot
 @click.option("--target", required=True, help="Unique scene hierarchy path or instance ID.")
 @click.option("--max-nodes", default=200, type=click.IntRange(1, 1000))
 @click.option("--output", required=True, type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--identity-map-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Optional bounded JSON object containing identity_map; emits v3 comparison IDs, not mutation handles.",
+)
 @handle_unity_errors
-def capture_ui_snapshot(framework: str, target: str, max_nodes: int, output: Path) -> None:
+def capture_ui_snapshot(
+    framework: str, target: str, max_nodes: int, output: Path, identity_map_file: Path | None
+) -> None:
     """Save a complete bounded UI tree to a new file; missing evidence fails capture."""
     config = get_config()
     try:
         path = safe_local_path(output)
         if path.exists():
             raise AnalysisError("Snapshot output already exists")
-        response = run_command(
-            "capture_ui_snapshot",
-            {"framework": framework, "target": target, "max_nodes": max_nodes},
-            config,
-        )
+        arguments = {"framework": framework, "target": target, "max_nodes": max_nodes}
+        if identity_map_file is not None:
+            arguments["identity_map"] = _read_identity_map(identity_map_file)
+            try:
+                arguments = UiSnapshotRequest(**arguments).model_dump(
+                    mode="json", exclude_none=True
+                )
+            except ValueError:
+                raise AnalysisError(
+                    "identity_map file or capture parameters are invalid or exceed supported bounds"
+                ) from None
+        response = run_command("capture_ui_snapshot", arguments, config)
         result = response.get("result", response)
         if result.get("success") is not True:
             raise AnalysisError("UI snapshot capture failed; native evidence is unavailable.")
-        snapshot = validate_ui_snapshot(result.get("data"), require_v2=True)
+        snapshot = validate_ui_snapshot(
+            result.get("data"), expected_version=3 if identity_map_file is not None else 2
+        )
         content = snapshot.model_dump_json(indent=2).encode("utf-8")
         if len(content) > 2 * 1024 * 1024:
             raise AnalysisError("Snapshot exceeds the 2 MiB saved artifact bound")

@@ -21,20 +21,22 @@ namespace MCPForUnity.Editor.Tools
                 int limit = p.GetInt("max_nodes") ?? 200;
                 if (limit < 1 || limit > 1000)
                     throw new ArgumentException("max_nodes must be within 1..1000.");
+                var identities = parameters.Property("identity_map") == null ? null : UISnapshotIdentityMap.Parse(parameters["identity_map"], limit);
                 var root = ManageUGUI.Resolve(p.GetRaw("target"), true);
                 string identity = Identity(root);
                 JArray nodes;
                 switch (framework)
                 {
                     case "ugui":
-                        nodes = UguiSnapshotCapture.Capture(root, limit);
+                        nodes = UguiSnapshotCapture.Capture(root, limit, identities);
                         break;
                     case "uitoolkit":
-                        nodes = UitoolkitSnapshotCapture.Capture(root, limit);
+                        nodes = UitoolkitSnapshotCapture.Capture(root, limit, identities);
                         break;
                     default:
                         throw new ArgumentException("framework must be ugui or uitoolkit.");
                 }
+                identities?.EnsureAllVisited();
                 if (Screen.width < 1 || Screen.height < 1 || Screen.width > 16384 || Screen.height > 16384)
                     throw new ArgumentException("Current Screen resolution is unavailable or outside the snapshot bound.");
                 var scenes = new List<string>();
@@ -50,7 +52,7 @@ namespace MCPForUnity.Editor.Tools
                     throw new ArgumentException("Loaded scenes exceed the bound or have ambiguous identities.");
                 var snapshot = new JObject
                 {
-                    ["schema_version"] = 2,
+                    ["schema_version"] = identities == null ? 2 : 3,
                     ["framework"] = framework,
                     ["mode"] = Application.isPlaying ? "play" : "edit",
                     ["scenes"] = new JArray(scenes.OrderBy(value => value, StringComparer.Ordinal)),
@@ -81,6 +83,13 @@ namespace MCPForUnity.Editor.Tools
                             : "UI Toolkit bounds use panel coordinates; ancestor display, visibility and opacity affect render eligibility, while clipping and overlapping elements remain untested."
                     ),
                 };
+                if (identities != null)
+                {
+                    snapshot["evidence"]["identity_method"] = "explicit_path_map_v1";
+                    ((JArray)snapshot["limitations"]).Add(
+                        "Explicit IDs are caller-maintained current-path associations, stable only under the same effective parent identity; stale logical associations cannot be detected."
+                    );
+                }
                 if (
                     snapshot
                         .Descendants()

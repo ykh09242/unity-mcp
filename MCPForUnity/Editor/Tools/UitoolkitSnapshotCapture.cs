@@ -144,12 +144,13 @@ namespace MCPForUnity.Editor.Tools
         {
             public VisualElement Element;
             public string Identity;
+            public string Path;
             public int NextChild;
             public float Alpha;
             public bool Displayed;
         }
 
-        internal static JArray Capture(GameObject go, int limit)
+        internal static JArray Capture(GameObject go, int limit, UISnapshotIdentityMap identities = null)
         {
             // Resolve the same version-aware live root used by manage_ui.get_visual_tree.
             var ui = UIComponentAdapter.Resolve(go, "auto");
@@ -169,12 +170,14 @@ namespace MCPForUnity.Editor.Tools
             string identity = CaptureUISnapshot.Identity(go);
             var nodes = new JArray();
             var stack = new Stack<Frame>();
+            var seen = identities == null ? null : new HashSet<string>(StringComparer.Ordinal) { identity };
             Add(root, identity, null, go.activeInHierarchy && Enabled(ui.Component), inheritedAlpha, nodes, inheritedDisplay);
             stack.Push(
                 new Frame
                 {
                     Element = root,
                     Identity = identity,
+                    Path = "",
                     Alpha = inheritedAlpha * root.resolvedStyle.opacity,
                     Displayed = inheritedDisplay && root.resolvedStyle.display != DisplayStyle.None,
                 }
@@ -189,23 +192,35 @@ namespace MCPForUnity.Editor.Tools
                 }
                 if (nodes.Count == limit || stack.Count >= 128 || parent.Element.childCount > 1000)
                     throw new ArgumentException("Snapshot overflow: visual tree exceeds max_nodes, depth or sibling bound.");
-                var child = parent.Element.ElementAt(parent.NextChild++);
-                string segment = Segment(child);
+                int childIndex = parent.NextChild++;
+                var child = parent.Element.ElementAt(childIndex);
+                string path = identities == null ? null : parent.Path + "/" + childIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                string segment = EffectiveSegment(child, path, identities);
                 int matches = 0;
                 for (int i = 0; i < parent.Element.childCount; i++)
-                    if (Segment(parent.Element.ElementAt(i)) == segment)
+                    if (
+                        EffectiveSegment(
+                            parent.Element.ElementAt(i),
+                            identities == null ? null : parent.Path + "/" + i.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            identities
+                        ) == segment
+                    )
                         matches++;
                 if (matches != 1)
                     throw new ArgumentException("UI Toolkit semantic identity is ambiguous; give same-type unnamed siblings unique names.");
                 string childIdentity = parent.Identity + "/" + segment;
                 if (childIdentity.Length > 4096)
                     throw new ArgumentException("Visual element identity exceeds 4096 characters.");
+                if (seen != null && !seen.Add(childIdentity))
+                    throw new ArgumentException("identity_map produced ambiguous snapshot identities.");
                 Add(child, childIdentity, parent.Identity, go.activeInHierarchy && Enabled(ui.Component), parent.Alpha, nodes, parent.Displayed);
+                identities?.MarkVisited(path);
                 stack.Push(
                     new Frame
                     {
                         Element = child,
                         Identity = childIdentity,
+                        Path = path,
                         Alpha = parent.Alpha * child.resolvedStyle.opacity,
                         Displayed = parent.Displayed && child.resolvedStyle.display != DisplayStyle.None,
                     }
@@ -213,6 +228,9 @@ namespace MCPForUnity.Editor.Tools
             }
             return nodes;
         }
+
+        private static string EffectiveSegment(VisualElement element, string path, UISnapshotIdentityMap identities) =>
+            identities != null && identities.TryGetSegment(path, out string segment) ? segment : Segment(element);
 
         internal static string Segment(VisualElement element)
         {
