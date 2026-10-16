@@ -99,6 +99,10 @@
       "description": "Get status of async test job"
     },
     {
+      "name": "get_tests",
+      "description": "List Unity tests with mode and name filtering and explicit pagination"
+    },
+    {
       "name": "import_model",
       "description": "Import 3D models from the Sketchfab marketplace into the project"
     },
