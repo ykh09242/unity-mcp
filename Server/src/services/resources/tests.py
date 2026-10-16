@@ -40,14 +40,14 @@ class GetTestsResponse(MCPResponse):
     name="get_tests",
     description="Provides the first page of Unity tests (default 50 items). "
     "For mode filtering, read mcpforunity://tests/{mode}. "
-    "This resource does not expose further pages.\n\nURI: mcpforunity://tests",
+    "Use the get_tests tool for name filtering and further pages.\n\nURI: mcpforunity://tests",
 )
 async def get_tests(ctx: Context) -> GetTestsResponse | MCPResponse:
     """Provides a paginated list of all Unity tests.
 
     Returns the first page of tests using Unity's default pagination (50 items).
     Use mcpforunity://tests/{mode} for mode filtering. This resource does not
-    expose name filtering or pagination controls.
+    expose name filtering or pagination controls; use the get_tests tool for those.
     """
     unity_instance = await get_unity_instance_from_context(ctx)
 
@@ -64,7 +64,7 @@ async def get_tests(ctx: Context) -> GetTestsResponse | MCPResponse:
     uri="mcpforunity://tests/{mode}",
     name="get_tests_for_mode",
     description="Provides the first page of tests for a specific mode (EditMode or PlayMode). "
-    "This resource does not expose name filtering or further pages.\n\nURI: mcpforunity://tests/{mode}",
+    "Use the get_tests tool for name filtering and further pages.\n\nURI: mcpforunity://tests/{mode}",
 )
 async def get_tests_for_mode(
     ctx: Context,
@@ -79,7 +79,7 @@ async def get_tests_for_mode(
         mode: The test mode to filter by (EditMode or PlayMode)
 
     Returns the first page of tests using Unity's default pagination (50 items).
-    This resource does not expose name filtering or pagination controls.
+    This resource does not expose name filtering or pagination controls; use the get_tests tool.
     """
     unity_instance = await get_unity_instance_from_context(ctx)
 

@@ -38,6 +38,7 @@ READ_ONLY = {
     "find_in_file",
     "get_sha",
     "get_test_job",
+    "get_tests",
     "manage_script_capabilities",
     "unity_docs",
     "unity_reflect",
