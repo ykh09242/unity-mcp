@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
@@ -28,6 +30,40 @@ namespace MCPForUnity.Editor.Tools
         private static readonly Dictionary<string, object> CompletedQueryResults = new();
         private static readonly Queue<string> CompletedQueryOrder = new();
         private const int MaxCompletedQueries = 10;
+
+        internal static Action ResolveInvoker = () => Client.Resolve();
+        internal static Func<JArray> ResolveSnapshotReader = ReadRegisteredResolveSnapshot;
+        internal static Func<JObject> ResolveReadinessReader = () =>
+            new JObject { ["is_compiling"] = EditorApplication.isCompiling, ["is_updating"] = EditorApplication.isUpdating };
+        internal static Func<long> ResolveClock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        internal static Func<bool> ResolveHasPendingRequests = () =>
+            PendingRequests.Count != 0 || PendingListRequests.Count != 0 || PendingSearchRequests.Count != 0 || PackageJobManager.HasRunningJobs();
+
+        [InitializeOnLoadMethod]
+        private static void SubscribePackageObservations()
+        {
+            Events.registeringPackages -= OnPackagesRegistering;
+            Events.registeringPackages += OnPackagesRegistering;
+            Events.registeredPackages -= OnPackagesRegistered;
+            Events.registeredPackages += OnPackagesRegistered;
+        }
+
+        private static void OnPackagesRegistering(PackageRegistrationEventArgs _) => RecordPackageRegistration("registering");
+
+        private static void OnPackagesRegistered(PackageRegistrationEventArgs _) => RecordPackageRegistration("registered");
+
+        internal static void RecordPackageRegistration(string phase)
+        {
+            // These events are global metadata, never a per-Resolve completion callback.
+            try
+            {
+                PackageJobManager.RecordResolveRegistration(phase, ResolveClock());
+            }
+            catch
+            {
+                McpLog.Warn("[ManagePackages] Package registration observation unavailable.");
+            }
+        }
 
         public static object HandleCommand(JObject @params)
         {
@@ -229,12 +265,15 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
-            var serialized = PackageJobManager.ToSerializable(job);
+            var serialized = job.Operation == "resolve" ? ResolveJobData(job) : PackageJobManager.ToSerializable(job);
             string message = job.Status switch
             {
                 PackageJobStatus.Running => $"Job {job.JobId} is still running ({job.Operation} '{job.Package}').",
                 PackageJobStatus.Succeeded => $"Job {job.JobId} succeeded ({job.Operation} '{job.Package}').",
+                PackageJobStatus.Failed when job.Operation == "resolve" =>
+                    $"Job {job.JobId}: Resolve invocation did not acknowledge; native completion remains unknown.",
                 PackageJobStatus.Failed => $"Job {job.JobId} failed ({job.Operation} '{job.Package}'): {job.Error}",
+                PackageJobStatus.Unknown => $"Job {job.JobId}: resolve completion is unknown. This does not establish idleness or safe retry.",
                 _ => $"Job {job.JobId}: {job.Status}",
             };
 
@@ -612,38 +651,163 @@ namespace MCPForUnity.Editor.Tools
         // === resolve_packages ===
         private static object ResolvePackages()
         {
+            if (ResolveHasPendingRequests())
+                return new ErrorResponse("Another owned package Client request has not retired.", new { reason = "known_client_operation_pending" });
+            if (!PackageJobManager.TryStartResolveJob(ResolveClock(), out var job))
+                return new ErrorResponse(
+                    "Could not store resolve intent in this Editor session; Resolve was not invoked.",
+                    new { reason = "persistence_failed" }
+                );
             try
             {
-                Client.Resolve();
-                return new SuccessResponse("Package resolution triggered. Unity will re-resolve all packages.");
+                ResolveInvoker();
             }
-            catch (Exception e)
+            catch
             {
-                return new ErrorResponse($"Failed to trigger package resolution: {e.Message}");
+                PackageJobManager.FinishResolveInvocation(job, false, ResolveClock());
+                return new ErrorResponse("Resolve invocation did not return normally; native completion remains unknown.", ResolveJobData(job));
             }
+            PackageJobManager.FinishResolveInvocation(job, true, ResolveClock());
+            return new SuccessResponse(
+                "Package resolution triggered; completion is unknown. This does not establish idleness or safe retry.",
+                ResolveJobData(job)
+            );
+        }
+
+        private static JObject ResolveJobData(PackageJob job)
+        {
+            var data = JObject.FromObject(PackageJobManager.ToSerializable(job));
+            data["observations"] = CaptureResolveObservations();
+            return data;
+        }
+
+        private sealed class ResolveSnapshotLimitException : Exception { }
+
+        private static JArray ReadRegisteredResolveSnapshot()
+        {
+            var packages = PackageInfo.GetAllRegisteredPackages();
+            if (packages == null)
+                return null;
+            if (packages.Length > 4096)
+                throw new ResolveSnapshotLimitException();
+            var rows = new JArray();
+            foreach (var package in packages)
+                rows.Add(
+                    package == null
+                        ? null
+                        : new JObject
+                        {
+                            ["name"] = package.name,
+                            ["version"] = package.version,
+                            ["source"] = package.source.ToString(),
+                        }
+                );
+            return rows;
+        }
+
+        private static JObject CaptureResolveSnapshot(long now)
+        {
+            var result = new JObject
+            {
+                ["status"] = "unavailable",
+                ["reason"] = "snapshot_unavailable",
+                ["observed_unix_ms"] = now,
+            };
+            try
+            {
+                var raw = ResolveSnapshotReader();
+                if (raw == null)
+                    return result;
+                if (raw.Count > 4096)
+                    throw new ResolveSnapshotLimitException();
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                var rows = new List<(string Name, string Version, string Source)>();
+                foreach (var token in raw)
+                {
+                    if (token is not JObject row)
+                        return result;
+                    string name = row["name"]?.Type == JTokenType.String ? (string)row["name"] : null;
+                    string version = row["version"]?.Type == JTokenType.String ? (string)row["version"] : null;
+                    string source = row["source"]?.Type == JTokenType.String ? (string)row["source"] : null;
+                    if (
+                        name == null
+                        || name.Length > 214
+                        || !Regex.IsMatch(name, @"\A[a-z0-9][a-z0-9._-]*\z")
+                        || version == null
+                        || version.Length > 80
+                        || !Regex.IsMatch(version, @"\A[0-9][0-9A-Za-z+_.-]*\z")
+                        || source is not ("Unknown" or "Registry" or "BuiltIn" or "Embedded" or "Local" or "LocalTarball" or "Git")
+                        || !names.Add(name)
+                    )
+                        return result;
+                    rows.Add((name, version, source));
+                }
+                var canonical = new StringBuilder();
+                foreach (var row in rows.OrderBy(row => row.Name, StringComparer.Ordinal))
+                {
+                    canonical.Append(row.Name).Append('\n').Append(row.Version).Append('\n').Append(row.Source).Append('\n');
+                    if (canonical.Length > 256 * 1024)
+                        throw new ResolveSnapshotLimitException();
+                }
+                byte[] bytes = Encoding.UTF8.GetBytes(canonical.ToString());
+                if (bytes.Length > 256 * 1024)
+                    throw new ResolveSnapshotLimitException();
+                using var sha = SHA256.Create();
+                result["status"] = "observed";
+                result["reason"] = "registered_metadata_only";
+                result["count"] = rows.Count;
+                result["digest"] = BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+            }
+            catch (ResolveSnapshotLimitException)
+            {
+                result["reason"] = "snapshot_limit";
+            }
+            catch { /* Do not expose package paths, URLs or native exception bodies. */ }
+            return result;
+        }
+
+        private static JObject CaptureResolveObservations()
+        {
+            long now = ResolveClock();
+            var readiness = new JObject { ["status"] = "unknown", ["observed_unix_ms"] = now };
+            try
+            {
+                var raw = ResolveReadinessReader();
+                bool? compiling = raw?["is_compiling"]?.Type == JTokenType.Boolean ? (bool?)raw["is_compiling"] : null;
+                bool? updating = raw?["is_updating"]?.Type == JTokenType.Boolean ? (bool?)raw["is_updating"] : null;
+                readiness["is_compiling"] = compiling;
+                readiness["is_updating"] = updating;
+                readiness["status"] =
+                    compiling == true || updating == true ? "blocked"
+                    : compiling == false && updating == false ? "idle"
+                    : "unknown";
+            }
+            catch { /* A failed global readiness observation cannot prove Resolve failed. */ }
+            return new JObject
+            {
+                ["scope"] = "editor_global",
+                ["completion_effect"] = "none",
+                ["installed_snapshot"] = CaptureResolveSnapshot(now),
+                ["readiness"] = readiness,
+                ["registration"] = PackageJobManager.ResolveRegistration?.DeepClone(),
+            };
         }
 
         // === ping ===
         private static object Ping()
         {
-            try
-            {
-                var allPackages = PackageInfo.GetAllRegisteredPackages();
-                return new SuccessResponse(
-                    "Package manager is available.",
-                    new
-                    {
-                        unity_version = Application.unityVersion,
-                        installed_package_count = allPackages.Length,
-                        is_compiling = EditorApplication.isCompiling,
-                        is_updating = EditorApplication.isUpdating,
-                    }
-                );
-            }
-            catch (Exception e)
-            {
-                return new ErrorResponse($"Package manager check failed: {e.Message}");
-            }
+            var observations = CaptureResolveObservations();
+            return new SuccessResponse(
+                "Package manager observations captured; this does not establish resolve completion or idleness.",
+                new
+                {
+                    unity_version = Application.unityVersion,
+                    installed_package_count = observations["installed_snapshot"]?["count"],
+                    is_compiling = observations["readiness"]?["is_compiling"],
+                    is_updating = observations["readiness"]?["is_updating"],
+                    observations,
+                }
+            );
         }
 
         // --- Helpers ---

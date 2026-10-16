@@ -164,8 +164,16 @@ def resolve():
     config = get_config()
     result = run_command("manage_packages", {"action": "resolve_packages"}, config)
     click.echo(format_output(result, config.format))
-    if result.get("success") and config.format != "json":
-        print_success("Package resolution triggered")
+    if config.format != "json":
+        if result.get("success"):
+            print_success("Package resolution triggered; completion is unknown")
+        job_id = (result.get("data") or {}).get("job_id")
+        if job_id:
+            print_info(f"Observe with: unity-mcp packages status {job_id}")
+        if result.get("success") or job_id:
+            print_info(
+                "Unknown does not establish idleness or safe retry. Receipts last only this Editor session."
+            )
 
 
 @packages.command("list-registries")

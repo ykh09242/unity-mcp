@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.PackageManager;
 using PackageInfo = UnityEditor.PackageManager.PackageInfo;
@@ -15,6 +16,7 @@ namespace MCPForUnity.Editor.Services
         Running,
         Succeeded,
         Failed,
+        Unknown,
     }
 
     internal sealed class PackageJob
@@ -29,6 +31,7 @@ namespace MCPForUnity.Editor.Services
         public string Error { get; set; }
         public string ResultVersion { get; set; }
         public string ResultName { get; set; }
+        public JObject Resolve { get; set; }
     }
 
     internal static class PackageRecoveryIdentity
@@ -112,6 +115,10 @@ namespace MCPForUnity.Editor.Services
         private static readonly object LockObj = new();
         private static readonly Dictionary<string, PackageJob> Jobs = new();
 
+        internal static Func<string> SessionReader = () => SessionState.GetString(SessionKeyJobs, string.Empty);
+        internal static Action<string> SessionWriter = value => SessionState.SetString(SessionKeyJobs, value);
+        internal static JObject ResolveRegistration = null;
+
         static PackageJobManager()
         {
             TryRestoreFromSessionState();
@@ -120,6 +127,9 @@ namespace MCPForUnity.Editor.Services
         private sealed class PersistedState
         {
             public List<PersistedJob> jobs { get; set; }
+
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+            public JToken resolve_registration { get; set; }
         }
 
         private sealed class PersistedJob
@@ -134,6 +144,9 @@ namespace MCPForUnity.Editor.Services
             public string error { get; set; }
             public string result_version { get; set; }
             public string result_name { get; set; }
+
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+            public JToken resolve { get; set; }
         }
 
         private static PackageJobStatus ParseStatus(string status)
@@ -145,6 +158,7 @@ namespace MCPForUnity.Editor.Services
             {
                 "succeeded" => PackageJobStatus.Succeeded,
                 "failed" => PackageJobStatus.Failed,
+                "unknown" => PackageJobStatus.Unknown,
                 _ => PackageJobStatus.Running,
             };
         }
@@ -153,7 +167,7 @@ namespace MCPForUnity.Editor.Services
         {
             try
             {
-                string json = SessionState.GetString(SessionKeyJobs, string.Empty);
+                string json = SessionReader();
                 if (string.IsNullOrWhiteSpace(json))
                     return;
 
@@ -164,6 +178,7 @@ namespace MCPForUnity.Editor.Services
                 lock (LockObj)
                 {
                     Jobs.Clear();
+                    ResolveRegistration = NormalizeRegistration(state.resolve_registration as JObject);
                     long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     PackageInfo[] recoveryPackages = null;
 
@@ -184,7 +199,11 @@ namespace MCPForUnity.Editor.Services
                             Error = pj.error,
                             ResultVersion = pj.result_version,
                             ResultName = pj.result_name,
+                            Resolve = pj.operation == "resolve" ? NormalizeResolve(pj.resolve as JObject) : null,
                         };
+
+                        if (job.Operation == "resolve" && job.Status == PackageJobStatus.Succeeded)
+                            job.Status = PackageJobStatus.Unknown;
 
                         // Domain reload recovery for running jobs
                         if (job.Status == PackageJobStatus.Running)
@@ -210,6 +229,13 @@ namespace MCPForUnity.Editor.Services
 
         private static void TryRecoverJobWithSnapshot(PackageJob job, long nowMs, ref PackageInfo[] recoveryPackages)
         {
+            if (job.Operation == "resolve")
+            {
+                job.Status = PackageJobStatus.Unknown;
+                job.FinishedUnixMs = job.LastUpdateUnixMs = nowMs;
+                job.Resolve = ResolveEvidence("unknown", "trigger_state_unknown");
+                return;
+            }
             try
             {
                 string packageName = ExtractPackageName(job.Package);
@@ -295,7 +321,9 @@ namespace MCPForUnity.Editor.Services
             return packageIdentifier;
         }
 
-        internal static void PersistToSessionState()
+        internal static void PersistToSessionState() => TryPersistToSessionState();
+
+        private static bool TryPersistToSessionState()
         {
             try
             {
@@ -329,18 +357,122 @@ namespace MCPForUnity.Editor.Services
                             error = j.Error,
                             result_version = j.ResultVersion,
                             result_name = j.ResultName,
+                            resolve = j.Resolve,
                         })
                         .ToList();
 
-                    snapshot = new PersistedState { jobs = jobs };
+                    snapshot = new PersistedState { jobs = jobs, resolve_registration = ResolveRegistration };
                 }
 
-                SessionState.SetString(SessionKeyJobs, JsonConvert.SerializeObject(snapshot));
+                SessionWriter(JsonConvert.SerializeObject(snapshot));
+                return true;
             }
             catch (Exception ex)
             {
                 McpLog.Warn($"[PackageJobManager] Failed to persist SessionState: {ex.Message}");
+                return false;
             }
+        }
+
+        internal static JObject ResolveEvidence(string trigger, string reason) =>
+            new JObject
+            {
+                ["trigger_state"] = trigger,
+                ["triggered"] = trigger == "triggered" ? new JValue(true) : JValue.CreateNull(),
+                ["completion"] = "unknown",
+                ["reason"] = reason,
+                ["persistence_scope"] = "editor_session",
+            };
+
+        private static JObject NormalizeResolve(JObject raw)
+        {
+            string state = raw?["trigger_state"]?.Type == JTokenType.String ? (string)raw["trigger_state"] : null;
+            return state switch
+            {
+                "triggered" => ResolveEvidence("triggered", "completion_unobservable"),
+                "failed" => ResolveEvidence("failed", "trigger_failed"),
+                _ => ResolveEvidence("unknown", "trigger_state_unknown"),
+            };
+        }
+
+        private static JObject NormalizeRegistration(JObject raw)
+        {
+            string phase = raw?["phase"]?.Type == JTokenType.String ? (string)raw["phase"] : null;
+            if ((phase != "registering" && phase != "registered") || raw?["observed_unix_ms"]?.Type != JTokenType.Integer)
+                return null;
+            if (!long.TryParse(raw["observed_unix_ms"].ToString(), out long time) || time < 0)
+                return null;
+            long sequence = long.TryParse(raw["sequence"]?.ToString(), out long parsed) && parsed >= 0 ? parsed : 0;
+            return new JObject
+            {
+                ["phase"] = phase,
+                ["observed_unix_ms"] = time,
+                ["sequence"] = sequence,
+                ["scope"] = "editor_global",
+            };
+        }
+
+        internal static bool HasRunningJobs()
+        {
+            lock (LockObj)
+                return Jobs.Values.Any(job => job.Status == PackageJobStatus.Running);
+        }
+
+        internal static void RecordResolveRegistration(string phase, long time)
+        {
+            lock (LockObj)
+            {
+                if (!Jobs.Values.Any(job => job.Operation == "resolve"))
+                    return;
+                long previous = long.TryParse(ResolveRegistration?["sequence"]?.ToString(), out long parsed) && parsed >= 0 ? parsed : 0;
+                ResolveRegistration = NormalizeRegistration(
+                    new JObject
+                    {
+                        ["phase"] = phase,
+                        ["observed_unix_ms"] = time,
+                        ["sequence"] = previous < long.MaxValue ? previous + 1 : previous,
+                    }
+                );
+            }
+            PersistToSessionState();
+        }
+
+        internal static bool TryStartResolveJob(long now, out PackageJob job)
+        {
+            job = new PackageJob
+            {
+                JobId = Guid.NewGuid().ToString("N"),
+                Operation = "resolve",
+                Status = PackageJobStatus.Running,
+                StartedUnixMs = now,
+                LastUpdateUnixMs = now,
+                Resolve = ResolveEvidence("requested", "trigger_state_unknown"),
+            };
+            Dictionary<string, PackageJob> previous;
+            lock (LockObj)
+            {
+                previous = new Dictionary<string, PackageJob>(Jobs);
+                Jobs.Add(job.JobId, job);
+            }
+            if (TryPersistToSessionState())
+                return true;
+            lock (LockObj)
+            {
+                Jobs.Clear();
+                foreach (var entry in previous)
+                    Jobs.Add(entry.Key, entry.Value);
+            }
+            job = null;
+            return false;
+        }
+
+        internal static void FinishResolveInvocation(PackageJob job, bool acknowledged, long now)
+        {
+            job.Status = acknowledged ? PackageJobStatus.Unknown : PackageJobStatus.Failed;
+            job.FinishedUnixMs = job.LastUpdateUnixMs = now;
+            job.Resolve = ResolveEvidence(acknowledged ? "triggered" : "failed", acknowledged ? "completion_unobservable" : "trigger_failed");
+            // If this update fails, the session intent remains ambiguous after reload. Never repeat it.
+            PersistToSessionState();
         }
 
         public static string StartJob(string operation, string package)
@@ -375,7 +507,7 @@ namespace MCPForUnity.Editor.Services
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             lock (LockObj)
             {
-                if (!Jobs.TryGetValue(jobId, out var job))
+                if (!Jobs.TryGetValue(jobId, out var job) || job.Operation == "resolve")
                     return;
 
                 job.Status = success ? PackageJobStatus.Succeeded : PackageJobStatus.Failed;
@@ -413,7 +545,7 @@ namespace MCPForUnity.Editor.Services
             if (job == null)
                 return null;
 
-            return new
+            var result = new
             {
                 job_id = job.JobId,
                 status = job.Status.ToString().ToLowerInvariant(),
@@ -426,6 +558,11 @@ namespace MCPForUnity.Editor.Services
                 result_version = job.ResultVersion,
                 result_name = job.ResultName,
             };
+            if (job.Operation != "resolve")
+                return result;
+            var resolve = JObject.FromObject(result);
+            resolve["resolve"] = job.Resolve?.DeepClone() ?? ResolveEvidence("unknown", "trigger_state_unknown");
+            return resolve;
         }
     }
 }

@@ -380,3 +380,25 @@ class TestRegistryCLICommands:
         params = mock_run.call_args.args[1]
         assert params["action"] == "remove_registry"
         assert params["name"] == "OpenUPM"
+
+
+@pytest.mark.parametrize("action", ["resolve_packages", "status"])
+def test_resolve_unknown_completion_is_forwarded_without_followup(action):
+    from services.tools.manage_packages import manage_packages
+
+    receipt = {
+        "success": True,
+        "data": {
+            "job_id": "resolve-owned",
+            "status": "unknown",
+            "resolve": {"trigger_state": "triggered", "completion": "unknown"},
+        },
+    }
+    with patch(
+        "services.tools.manage_packages._send_packages_command", new_callable=AsyncMock
+    ) as send:
+        send.return_value = receipt
+        result = asyncio.run(manage_packages(MagicMock(), action=action, job_id="resolve-owned"))
+    assert result is receipt
+    send.assert_awaited_once()
+    assert send.await_args.args[1] == {"action": action, "job_id": "resolve-owned"}
