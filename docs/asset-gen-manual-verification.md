@@ -23,8 +23,9 @@ never deletes generated assets or output files.
 - [ ] Ensure the optional GLB importer is available as described below.
 - [ ] `generate_model(provider=tripo, mode=text, prompt="a low-poly oak tree", format=glb)`.
 - [ ] Poll `generate_model(action=status, job_id=<id>)` until it reports done.
-- [ ] Confirm a GLB appears under `Assets/Generated/Models/`, status reports a `.glb` asset path,
-      and the imported model has usable geometry and materials.
+- [ ] Confirm a GLB appears under `Assets/Generated/Models/` and the returned asset has
+      usable geometry and materials. Normalization may return a prefab variant referencing
+      the GLB; follow the [model normalization checks](model-normalization.md).
 - [ ] Repeat with `texture=false` and `model=v3.1-20260211`; confirm the request produces
       geometry without textures. The adapter sends both `texture=false` and `pbr=false`.
 - [ ] Request `format=fbx`, `format=obj`, or a nonblank `tier`: confirm a synchronous
@@ -47,7 +48,10 @@ Direct `import_model_file` responses and terminal model job status include
 
 - `saved`: bytes exist on disk; no registered GUID has been observed.
 - `registered`: a GUID exists, but usable model geometry has not been established.
-- `usable`: the final imported hierarchy passed the geometry check.
+- `usable`: the final imported hierarchy passed the geometry check and any requested normalization.
+
+See [model size normalization](model-normalization.md) for preference priority,
+nonpositive targets, transformed bounds and retained-source prefab variants.
 
 An import failure can retain staged bytes and return `asset_path`, `asset_guid`,
 `model_import_stage` and `model_import_error_code` for repair. The original local

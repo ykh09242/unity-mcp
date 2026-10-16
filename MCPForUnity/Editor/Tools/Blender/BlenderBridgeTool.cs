@@ -18,6 +18,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace MCPForUnity.Editor.Tools.Blender
 {
@@ -242,7 +243,7 @@ namespace MCPForUnity.Editor.Tools.Blender
 
         // ------------------------------------------------------------ import_model
 
-        /// <summary>Exports from Blender, imports through the shared pipeline, then places and normalizes the instance.</summary>
+        /// <summary>Exports from Blender, imports through the shared normalization policy, then places the resulting asset.</summary>
         private static async Task<object> ImportModelAsync(ToolParams p, int timeout)
         {
             string fmt = (p.Get("format") ?? "glb").Trim().ToLowerInvariant();
@@ -310,7 +311,7 @@ namespace MCPForUnity.Editor.Tools.Blender
                 Directory.Delete(Path.GetDirectoryName(stagedExport));
             }
             if (!(importResult.Value<bool?>("success") ?? false))
-                return new ErrorResponse($"Import failed: {importResult["error"] ?? importResult["message"]}");
+                return MapImportFailure(importResult);
 
             string assetPath = importResult["data"]?["asset_path"]?.ToString();
             var data = new JObject
@@ -326,33 +327,19 @@ namespace MCPForUnity.Editor.Tools.Blender
             if (!place || string.IsNullOrEmpty(assetPath))
                 return export.Preserve(new SuccessResponse($"Imported {assetPath} (not placed).", data));
 
+            string sourceAssetPath = NormalizedModelVariant.ResolveSourceAssetPath(assetPath);
             if (fmt == "fbx" && autoAnimate)
-                ConfigureFbxClipLooping(assetPath);
+                ConfigureFbxClipLooping(sourceAssetPath);
 
-            // 3. Place in the open scene and normalize size from measured bounds. Blender exports
-            // commonly land far off scale, so measuring the placed instance beats trusting the importer.
-            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
-            if (prefab == null)
+            // 3. Place the pipeline's verified output. AutoNormalize and nonpositive targets must
+            // have identical meaning with or without placement; never rescale a second time here.
+            GameObject go = PlaceImportedModel(assetPath, name, position, SceneManager.GetActiveScene());
+            if (go == null)
             {
                 data["note"] = "Asset has no GameObject root to instantiate.";
                 return export.Preserve(new SuccessResponse($"Imported {assetPath} but could not instantiate it.", data));
             }
-
-            GameObject go = PrefabUtility.InstantiatePrefab(prefab) as GameObject ?? UnityEngine.Object.Instantiate(prefab);
-            go.name = name;
             Undo.RegisterCreatedObjectUndo(go, "Import from Blender");
-            go.transform.position = position;
-
-            float scaleFactor = 1f;
-            if (target > 0f && TryGetWorldBounds(go, out Bounds b0))
-            {
-                float maxDim = Mathf.Max(b0.size.x, Mathf.Max(b0.size.y, b0.size.z));
-                if (maxDim > 1e-4f)
-                {
-                    scaleFactor = target / maxDim;
-                    go.transform.localScale *= scaleFactor;
-                }
-            }
 
             EditorSceneManager.MarkSceneDirty(go.scene);
             Selection.activeGameObject = go;
@@ -360,7 +347,7 @@ namespace MCPForUnity.Editor.Tools.Blender
             data["placed"] = true;
             data["game_object"] = go.name;
             data["scene"] = go.scene.name;
-            data["scale_factor_applied"] = scaleFactor;
+            data["scale_factor_applied"] = 1f; // Placement applied no additional scale.
             if (TryGetWorldBounds(go, out Bounds b1))
             {
                 data["bounds_size"] = new JArray(b1.size.x, b1.size.y, b1.size.z);
@@ -513,7 +500,10 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         {
             if (!autoAnimate)
                 return null;
-            clips = (clips ?? AssetDatabase.LoadAllAssetRepresentationsAtPath(assetPath).OfType<AnimationClip>().ToArray())
+            clips = (
+                clips
+                ?? AssetDatabase.LoadAllAssetRepresentationsAtPath(NormalizedModelVariant.ResolveSourceAssetPath(assetPath)).OfType<AnimationClip>().ToArray()
+            )
                 .Where(c => c != null && !c.name.StartsWith("__preview__", StringComparison.Ordinal))
                 .ToArray();
             if (clips.Length == 0)
@@ -1303,20 +1293,28 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             }
         }
 
-        /// <summary>World-space bounds over every renderer in the hierarchy; false when it has none.</summary>
-        private static bool TryGetWorldBounds(GameObject go, out Bounds bounds)
+        internal static object MapImportFailure(JObject response) =>
+            new ErrorResponse($"Import failed: {response["error"] ?? response["message"]}", response["data"]?.DeepClone());
+
+        internal static GameObject PlaceImportedModel(string assetPath, string name, Vector3 position, Scene destinationScene)
         {
-            var renderers = go.GetComponentsInChildren<Renderer>(true);
-            if (renderers.Length == 0)
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+            if (prefab == null)
+                return null;
+            var go = PrefabUtility.InstantiatePrefab(prefab, destinationScene) as GameObject;
+            if (go == null)
             {
-                bounds = default;
-                return false;
+                go = UnityEngine.Object.Instantiate(prefab);
+                SceneManager.MoveGameObjectToScene(go, destinationScene);
             }
-            bounds = renderers[0].bounds;
-            for (int i = 1; i < renderers.Length; i++)
-                bounds.Encapsulate(renderers[i].bounds);
-            return true;
+            go.name = name;
+            go.transform.position = position;
+            return go;
         }
+
+        /// <summary>World-space default-pose mesh envelope, using the same bounded measurement as import.</summary>
+        private static bool TryGetWorldBounds(GameObject go, out Bounds bounds) =>
+            ModelHierarchyBounds.TryMeasure(go, go.transform.localToWorldMatrix, out bounds, out _);
 
         /// <summary>Trims and caps a string for inclusion in messages.</summary>
         private static string Truncate(string s, int max)

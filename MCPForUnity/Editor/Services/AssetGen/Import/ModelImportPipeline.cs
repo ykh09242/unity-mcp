@@ -46,7 +46,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             ".dds",
         };
 
-        public static AssetGenJob ImportInto(AssetGenJob job, string localFilePath)
+        public static AssetGenJob ImportInto(AssetGenJob job, string localFilePath) => ImportInto(job, localFilePath, AssetGenPrefs.AutoNormalize);
+
+        // Capture policy once per import. The explicit overload lets native fixtures avoid global preference writes.
+        internal static AssetGenJob ImportInto(AssetGenJob job, string localFilePath, bool autoNormalize)
         {
             if (job == null)
                 return null;
@@ -65,12 +68,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (!File.Exists(AssetGenPaths.ToAbsolute(rel)))
                     return Fail(job, "Model file was not found on disk.", "model_file_missing");
                 RecordSavedFile(job, rel);
+                if (!ModelHierarchyBounds.IsFinite(job.TargetSize))
+                    return Fail(job, "target_size must be finite. Zero or a negative value preserves the imported scale.", "invalid_target_size");
 
                 string ext = Path.GetExtension(rel).ToLowerInvariant();
                 if (ext == ".zip")
-                    return ImportArchive(job, rel);
+                    return ImportArchive(job, rel, autoNormalize);
 
-                return ImportModelFile(job, rel, ext);
+                return ImportModelFile(job, rel, ext, autoNormalize);
             }
             catch (Exception e)
             {
@@ -94,7 +99,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             job.ModelImportStage = string.IsNullOrEmpty(job.AssetGuid) ? "saved" : "registered";
         }
 
-        private static AssetGenJob ImportModelFile(AssetGenJob job, string rel, string ext, bool importAsset = true)
+        private static AssetGenJob ImportModelFile(AssetGenJob job, string rel, string ext, bool autoNormalize, bool importAsset = true)
         {
             RecordSavedFile(job, rel);
             if (importAsset)
@@ -111,6 +116,9 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (!VerifyImportedModel(job, rel, ext))
                     return job;
             }
+
+            if (autoNormalize && job.TargetSize > 0f && !Normalize(job, rel, ext))
+                return job;
 
             job.ModelImportStage = "usable";
             job.ModelImportErrorCode = null;
@@ -238,7 +246,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         /// after the archive, import it, then locate the first model file inside and import that.
         /// FBX/OBJ are preferred over glTF; glTF still needs an active compatible importer.
         /// </summary>
-        private static AssetGenJob ImportArchive(AssetGenJob job, string zipRel)
+        private static AssetGenJob ImportArchive(AssetGenJob job, string zipRel, bool autoNormalize)
         {
             string zipAbs = AssetGenPaths.ToAbsolute(zipRel);
             if (!File.Exists(zipAbs))
@@ -276,7 +284,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 folderRel,
                 ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport
             );
-            ImportModelFile(job, modelRel, Path.GetExtension(modelRel).ToLowerInvariant(), importAsset: false);
+            ImportModelFile(job, modelRel, Path.GetExtension(modelRel).ToLowerInvariant(), autoNormalize, importAsset: false);
             folders.Complete();
             return job;
         }
@@ -313,24 +321,96 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         {
             if (!(AssetImporter.GetAtPath(rel) is ModelImporter importer))
                 return;
-            importer.useFileScale = true;
+            var animation = ParseAnimationType(job?.AnimationType);
+            if (importer.materialImportMode == ModelImporterMaterialImportMode.ImportStandard && importer.animationType == animation)
+                return;
+            // Preserve the existing unit conversion. Measuring in one unit policy and then disabling
+            // fileScale invalidates the target/measured ratio, even if globalScale is adjusted correctly.
             importer.materialImportMode = ModelImporterMaterialImportMode.ImportStandard;
-            importer.animationType = ParseAnimationType(job?.AnimationType);
-
-            if (AssetGenPrefs.AutoNormalize && job.TargetSize > 0f)
-            {
-                float maxDim = ComputeMaxDimension(rel);
-                if (maxDim > 0.0001f)
-                {
-                    float scale = job.TargetSize / maxDim;
-                    if (scale > 0f && Math.Abs(scale - 1f) > 0.01f)
-                    {
-                        importer.useFileScale = false;
-                        importer.globalScale = Mathf.Clamp(importer.globalScale * scale, 0.0001f, 1_000_000f);
-                    }
-                }
-            }
+            importer.animationType = animation;
             importer.SaveAndReimport();
+        }
+
+        private static bool Normalize(AssetGenJob job, string rel, string ext)
+        {
+            if (!TryDimension(job, rel, out float before))
+                return false;
+            if (WithinTarget(before, job.TargetSize))
+                return true;
+            float factor = job.TargetSize / before;
+            if (!ModelHierarchyBounds.IsFinite(factor) || factor <= 0f)
+            {
+                Fail(job, "The requested target size cannot be represented by a finite model scale.", "target_size_out_of_range");
+                return false;
+            }
+            try
+            {
+                if (AssetImporter.GetAtPath(rel) is ModelImporter importer)
+                {
+                    float adjusted = importer.globalScale * factor;
+                    if (!ModelHierarchyBounds.IsFinite(adjusted) || adjusted < .0001f || adjusted > 1000000f)
+                    {
+                        Fail(
+                            job,
+                            "The requested target size exceeds the supported importer scale range; the saved model was retained.",
+                            "target_size_out_of_range"
+                        );
+                        return false;
+                    }
+                    importer.globalScale = adjusted;
+                    importer.SaveAndReimport();
+                }
+                else
+                {
+                    rel = NormalizedModelVariant.Create(rel, factor);
+                    ext = ".prefab";
+                }
+                RecordSavedFile(job, rel);
+                if (!VerifyImportedModel(job, rel, ext) || !TryDimension(job, rel, out float after))
+                    return false;
+                if (!WithinTarget(after, job.TargetSize))
+                {
+                    Fail(
+                        job,
+                        "The retained model did not reach target_size after normalization. Inspect its importer and transforms.",
+                        "target_size_not_achieved"
+                    );
+                    return false;
+                }
+                return true;
+            }
+            catch (ModelNormalizationException error)
+            {
+                if (error.SavedAssetPath != null)
+                    RecordSavedFile(job, error.SavedAssetPath);
+                Fail(job, SecretRedactor.Scrub(error.Message), error.ErrorCode);
+                return false;
+            }
+        }
+
+        private static bool WithinTarget(float measured, float target) => Math.Abs(measured - target) <= Mathf.Max(.00001f, target * .001f);
+
+        private static bool TryDimension(AssetGenJob job, string rel, out float dimension)
+        {
+            dimension = 0f;
+            var model = AssetDatabase.LoadAssetAtPath<GameObject>(rel);
+            string error = "normalization_invalid_bounds";
+            if (model == null || !ModelHierarchyBounds.TryMeasure(model, ModelHierarchyBounds.RootMatrix(model), out Bounds bounds, out error))
+            {
+                Fail(
+                    job,
+                    "The complete model bounds could not be measured safely. Simplify or repair the retained hierarchy, or keep its imported scale.",
+                    error
+                );
+                return false;
+            }
+            dimension = Mathf.Max(bounds.size.x, Mathf.Max(bounds.size.y, bounds.size.z));
+            if (!ModelHierarchyBounds.IsFinite(dimension) || dimension <= .000001f)
+            {
+                Fail(job, "The model has no finite nonzero size to normalize; the saved asset was retained.", "normalization_invalid_bounds");
+                return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -352,51 +432,6 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     return ModelImporterAnimationType.Legacy;
                 default:
                     return ModelImporterAnimationType.None;
-            }
-        }
-
-        private static float ComputeMaxDimension(string rel)
-        {
-            try
-            {
-                var go = AssetDatabase.LoadAssetAtPath<GameObject>(rel);
-                if (go == null)
-                    return 0f;
-
-                bool any = false;
-                Bounds acc = new Bounds(Vector3.zero, Vector3.zero);
-                foreach (var mf in go.GetComponentsInChildren<MeshFilter>(true))
-                {
-                    if (mf.sharedMesh == null)
-                        continue;
-                    if (!any)
-                    {
-                        acc = mf.sharedMesh.bounds;
-                        any = true;
-                    }
-                    else
-                        acc.Encapsulate(mf.sharedMesh.bounds);
-                }
-                foreach (var smr in go.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-                {
-                    if (smr.sharedMesh == null)
-                        continue;
-                    if (!any)
-                    {
-                        acc = smr.sharedMesh.bounds;
-                        any = true;
-                    }
-                    else
-                        acc.Encapsulate(smr.sharedMesh.bounds);
-                }
-                if (!any)
-                    return 0f;
-                Vector3 s = acc.size;
-                return Mathf.Max(s.x, Mathf.Max(s.y, s.z));
-            }
-            catch
-            {
-                return 0f;
             }
         }
 
