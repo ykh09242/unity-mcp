@@ -178,3 +178,93 @@ def test_gameobject_resources_registered_sdk_contracts(tmp_path):
 
 def test_gameobject_reads_top_level_raw_cli_contracts(tmp_path):
     assert "CLI_SUMMARY" in _run(CLI_PROGRAM, tmp_path)
+
+
+SELECTION_READ_PROGRAM = r"""
+import copy
+import json
+import anyio
+from fastmcp import Client, FastMCP
+from fastmcp.exceptions import ResourceError
+from fastmcp.server.middleware import Middleware
+from mcp.shared.exceptions import MCPError
+from services.resources import register_all_resources
+from core.config import config
+from transport.plugin_hub import PluginHub
+
+config.transport_mode = "http"
+config.http_remote_hosted = False
+requests = []
+options = []
+raise_transport = False
+reply = {"success": False, "error": "unknown_command", "data": {"reason": "unsupported_selection"}}
+async def send(instance, command, params, **kwargs):
+    requests.append((instance, command, copy.deepcopy(params)))
+    options.append(copy.deepcopy(kwargs))
+    if raise_transport:
+        raise TimeoutError("Controlled selected-command response loss")
+    return copy.deepcopy(reply)
+PluginHub.send_command_for_instance = staticmethod(send)
+class State(Middleware):
+    async def on_read_resource(self, context, call_next):
+        await context.fastmcp_context.set_state("unity_instance", "Project@fixture")
+        return await call_next(context)
+server = FastMCP("selected-component-read-contract")
+server.add_middleware(State())
+register_all_resources(server)
+uri = "mcpforunity://scene/gameobject/-321/component/UnityEngine.AudioSource"
+base = {"instanceID": -321, "componentName": "UnityEngine.AudioSource"}
+async def main():
+    global raise_transport
+    for mode in ("2026-07-28", "legacy"):
+        async with Client(server, mode=mode) as client:
+            reply.clear()
+            reply.update({"success": False, "error": "unknown_command", "data": {"reason": "unsupported_selection"}})
+            templates = [str(item.uri_template) for item in await client.list_resource_templates()]
+            assert any("component_instance_id" in item and "strict_selection" in item for item in templates), (mode, templates)
+            for query, extra, command in (
+                ("", {}, "get_gameobject_component"),
+                ("?strict_selection=false", {}, "get_gameobject_component"),
+                ("?component_index=0", {"componentIndex": 0}, "get_gameobject_component_selected"),
+                ("?component_index=1", {"componentIndex": 1}, "get_gameobject_component_selected"),
+                ("?component_index=00000000001", {"componentIndex": 1}, "get_gameobject_component_selected"),
+                ("?component_instance_id=-00000000432", {"componentInstanceID": -432}, "get_gameobject_component_selected"),
+                ("?component_instance_id=-432", {"componentInstanceID": -432}, "get_gameobject_component_selected"),
+                ("?strict_selection=true", {"strictSelection": True}, "get_gameobject_component_selected"),
+                ("?strict_selection=true&component_index=1", {"strictSelection": True, "componentIndex": 1}, "get_gameobject_component_selected"),
+            ):
+                before = len(requests)
+                actual = json.loads((await client.read_resource(uri + query))[0].text)
+                assert requests[before:] == [("Project@fixture", command, {**base, **extra})], (mode, query, requests[before:])
+                assert actual["success"] is False and actual["error"] == "unknown_command" and actual["data"] == reply["data"], actual
+                if command.endswith("_selected"):
+                    assert options[-1]["retry_on_reload"] is False
+            for query in ("?component_index=-1", "?component_index=true", "?component_index=1.5", "?component_index=2147483648", "?component_index=null", "?component_instance_id=0", "?component_instance_id=false", "?component_instance_id=2147483648", "?component_index=0&component_instance_id=12", "?strict_selection=1", "?strict_selection=null"):
+                before = len(requests)
+                try:
+                    actual = json.loads((await client.read_resource(uri + query))[0].text)
+                except (ResourceError, MCPError):
+                    actual = {"success": False}
+                assert actual["success"] is False, (mode, query, actual)
+                assert requests[before:] == [], (mode, query, requests[before:])
+            reply.clear()
+            reply.update({"success": True, "data": {"selection": {"contractVersion": 1, "gameObjectInstanceID": -321, "componentInstanceID": -432, "componentIndex": 1}, "component": {"instanceID": -432, "enabled": False, "volume": 0, "clip": None}}})
+            before = len(requests)
+            actual = json.loads((await client.read_resource(uri + "?component_instance_id=-432"))[0].text)
+            assert actual["success"] is True and actual["data"] == reply["data"], (mode, actual)
+            assert len(requests[before:]) == 1
+            raise_transport = True
+            try:
+                before = len(requests)
+                actual = json.loads((await client.read_resource(uri + "?component_index=1"))[0].text)
+                assert actual["success"] is False
+                assert len(requests[before:]) == 1
+            finally:
+                raise_transport = False
+    print("SELECTION_READ_PASS")
+anyio.run(main)
+"""
+
+
+def test_component_selection_resource_uri_routes_without_legacy_fallback(tmp_path):
+    assert "SELECTION_READ_PASS" in _run(SELECTION_READ_PROGRAM, tmp_path)

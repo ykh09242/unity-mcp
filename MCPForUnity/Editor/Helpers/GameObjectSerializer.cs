@@ -565,6 +565,12 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 // --- End Skip Transform Properties ---
 
+                // These legacy AudioSource getters log native errors instead of returning supported values.
+                if (componentType == typeof(AudioSource) && (propName == "minVolume" || propName == "maxVolume" || propName == "rolloffFactor"))
+                {
+                    skipProperty = true;
+                }
+
                 // --- Skip Collider properties that cause native crashes via PhysX ---
                 if (typeof(Collider).IsAssignableFrom(componentType) && propName == "GeometryHolder")
                 {

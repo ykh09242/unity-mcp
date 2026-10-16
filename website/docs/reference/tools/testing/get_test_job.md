@@ -22,6 +22,8 @@ Polls an async Unity test job by job_id.
 | `include_failed_tests` | `bool` | — | Include details for failed/skipped tests only (default: false) |
 | `include_details` | `bool` | — | Include details for all tests (default: false) |
 | `wait_timeout` | `int \| None` | — | If set, wait up to this many seconds for tests to complete before returning. Reduces polling frequency and avoids client-side loop detection. Recommended: 30-60 seconds. Returns immediately if tests complete sooner. |
+| `page_size` | `int \| None` | — | Opt-in terminal detail page size; requires a detail flag. |
+| `cursor` | `str \| None` | — | Opaque next_cursor from a result page |
 
 ## Returns
 

@@ -524,6 +524,16 @@ dependency paths instead of applying npm's suggested breaking downgrade automati
 The checked deployment uses these packages during site generation and publishes static files;
 repository and plugin glob configuration remain inputs to review.
 
+## Release evidence attribution
+
+The [fork release guide](../../website/docs/contributing/releases.md) defines two small tables for component inputs and actual capability evidence. Validate a prepared fork release body with `tools/check_release_evidence.py`; it reads local committed inputs and saved records without starting jobs, fetching history or publishing a release. This adds no dedicated CI workflow.
+
+The Unity package commit, its selected immutable server archive and its independent skill revision can differ. A workflow's API head SHA is retained separately from the full actual checkout SHA printed by its checkout step; PR merge tests and earlier receiving commits do not automatically verify the release target. Executed CI checkout and execution roles must use the identical complete saved job log, so a checkout snippet cannot be grafted onto another execution. A trigger head differing from a legitimately tested PR merge commit is not itself a refusal; the actual execution checkout controls attribution. Source maps containing only selected local files are historical-only because matching entries do not prove that required sources, tests, metadata or configuration were included.
+
+Keep compilation, package preparation and native execution distinct. A successful parent workflow or prepared dependency cache cannot turn skipped native jobs into passes. A native passed row requires actual coherent NUnit records, a matching Editor invocation/log and a successful applicable runner, including positive passing cases and no failed, skipped or inconclusive cases. A passing family inside a failed combined batch remains historical factual evidence with aggregate disclosure.
+
+The checker accepts only its documented GitHub Actions, pytest/JUnit, Unity/NUnit and historical local-native formats. Unsupported manual/live executions retain their original evidence in ordinary release prose outside the checked block; they must not be relabelled as not-run. Human review still owns whether the selected tests substantiate a capability and whether public evidence remains available. No release or tag is authorized by a successful notes check.
+
 ## Reference material
 
 - [Unity alpha releases](https://unity.com/releases/editor/alpha)

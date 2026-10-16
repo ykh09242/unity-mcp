@@ -17,7 +17,7 @@ Inspect Unity's live C# API via reflection. Use this to verify that classes, met
 Actions:
 - get_type: Member summary (names only) for a class. Requires class_name.
 - get_member: Full signature detail for one member. Requires class_name + member_name.
-- search: Type name search across loaded assemblies. Requires query. Optional scope.
+- search: Ranked public type search across loaded assemblies. Requires query. Optional scope, assembly, type_kind, page_size (default 25, maximum 100), cursor. Repeat the same inputs with next_cursor within five minutes; reload/catalog changes require restarting. complete=false reports assemblies that could not be enumerated. scope retains its assembly-name heuristics; assembly is an additional case-insensitive filter. Cursor continuation requires the original assembly spelling exactly, including case.
 
 ## Parameters
 
@@ -28,6 +28,10 @@ Actions:
 | `member_name` | `str \| None` | — | Method, property, or field name to inspect. |
 | `query` | `str \| None` | — | Search query for type name search. |
 | `scope` | `str \| None` | — | Assembly scope for search: unity, packages, project, all. |
+| `page_size` | `int \| None` | — | Search page size 1..100; omitted uses 25. Repeat the same value for cursor continuation. |
+| `cursor` | `str \| None` | — | Opaque next_cursor from the same Editor/catalog and identical search inputs. Maximum 1024 ASCII characters; expires five minutes after the first page. |
+| `assembly` | `str \| None` | — | Search filter: exact simple or full assembly identity, case insensitive; intersects scope. Maximum 256 characters. With cursor, repeat the original spelling exactly, including case. |
+| `type_kind` | `str \| None` | — | Search filter: class, interface, struct, enum, or delegate. Delegates are excluded from the class filter. |
 
 ## Returns
 

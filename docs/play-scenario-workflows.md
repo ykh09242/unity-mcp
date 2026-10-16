@@ -200,7 +200,7 @@ with exact hierarchy names. Duplicate roots/siblings are ambiguous and fail capt
 paths are preferred; unsaved scene-name identities carry an explicit limitation. Give UI Toolkit
 siblings unique names when unnamed elements of the same type would otherwise be ambiguous.
 
-New live captures use snapshot schema version 2 and require matching updated native plugin and
+Default live captures use snapshot schema version 2 and require matching updated native plugin and
 server versions. Each node adds a closed `state` object. Supported built-in controls expose Toggle
 Booleans; Slider/SliderInt numeric value and range; Dropdown/TMP_Dropdown/DropdownField indices;
 at most 64 sorted ListView selection indices; input read-only/password/redacted flags; and scroll
@@ -378,3 +378,44 @@ Successful apply uses one named native Undo group. Failure attempts compensating
 recorded native component state and reports `rollback_verified` and any `rollback_error`. This is
 not a transaction over arbitrary callbacks, external effects, filesystem contents or dirty flags.
 Keep scene save/review explicit; preview and Undo are not evidence that a game scenario passed.
+
+
+## Compare repeated UI rows with explicit item IDs
+
+Use `capture_ui_snapshot(identity_map=[{"element_path":"/0","id":"item-A"}, ...])`
+to opt into schema version3 for either uGUI or Toolkit. The map is caller data for
+this request, not a persistent registry. Current paths select Transform children for
+uGUI and snapshot/content-container children for Toolkit; the root is not assignable.
+Provide stable nonsecret item IDs and update their path associations after reorder or
+rebinding. Valid stale logical associations cannot be detected. Same-key recreation
+under the same effective ancestor path retains comparison identity; reparenting or
+root identity changes can change it.
+
+The CLI accepts a local file such as `row-ids.json`:
+
+```json
+{"identity_map":[{"element_path":"/0","id":"item-A"},{"element_path":"/1","id":"item-B"}]}
+```
+
+```sh
+unity-mcp --instance "MyProject@<hash>" play-scenario capture-ui-snapshot \
+  --framework uitoolkit --target "123" --identity-map-file row-ids.json --output current.json
+```
+
+Replace123 with the current target's actual ID/path. The file is a closed object,
+at most256KiB, checked before dispatch. Map assignments are1-999 entries and no more
+than `max_nodes - 1`; total path/ID characters are at most65536. Each non-root path has
+at most127 canonical indices0-999 and512 characters. IDs are1-128 ASCII letters,
+digits, period, underscore, colon or hyphen, compared exactly. Null/empty maps,
+duplicate IDs/paths, unknown fields, nonexistent paths and remaining ambiguity refuse.
+The reader also bounds JSON depth/nodes before decoding. Existing output files are
+preserved; a failed capture or wrong-version response produces no new artifact.
+
+Omitting the map preserves schema2 and existing ambiguity refusal. Mapped captures
+use reserved `@id:` segments and version3 identity evidence. Their state/privacy fields
+remain version2-compatible, but v2/v3 comparisons refuse instead of guessing matches.
+The comparator matches exact mapped IDs: reorder can report sibling/geometry changes
+without false added/removed rows, and rebinding to a different item reports removed
+and added identities. These IDs are comparison evidence, not editing handles.
+See [UI Toolkit target semantics](UI_TOOLKIT_TARGETS.md) for partial-map and selector
+limitations. Never use editable contents or credentials as explicit IDs.

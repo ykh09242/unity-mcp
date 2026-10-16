@@ -30,7 +30,8 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "- preview: Fetch model metadata (name, thumbnail URLs, license, vertex/face counts) "
         "for a uid before import.\n"
         "- import: Download + import a model by uid. Returns { job_id } immediately; poll "
-        "with the status action. Params: uid, target_size, name, output_folder.\n"
+        "with the status action. Params: uid, target_size, name, output_folder. "
+        "target_size applies only when Auto-Normalize Imported Models is enabled; finite zero or negative values preserve imported scale. Successful normalization of a model without ModelImporter may return a prefab variant while retaining its source model.\n"
         "- status: Poll an async import job by job_id -> { state, progress, assetPath?, error? }.\n"
         "- cancel: Cancel an in-flight import by job_id.\n"
         "- list_providers: List configured marketplace providers (no key values)."
@@ -52,7 +53,11 @@ async def import_model(
     count: Annotated[int, "Maximum number of search results."] | None = None,
     cursor: Annotated[str, "Pagination cursor for search."] | None = None,
     uid: Annotated[str, "Sketchfab model uid for preview/import."] | None = None,
-    target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."]
+    target_size: Annotated[
+        float,
+        "Largest default-pose mesh-bounds dimension in meters when Auto-Normalize Imported Models is enabled; "
+        "finite zero/negative values preserve scale. Omitted defaults to 1. Normalized glTF may return a prefab variant.",
+    ]
     | None = None,
     name: Annotated[str, "Base name for the imported asset."] | None = None,
     output_folder: Annotated[str, "Destination folder under Assets/ for the import."] | None = None,

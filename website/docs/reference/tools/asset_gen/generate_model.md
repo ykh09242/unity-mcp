@@ -15,7 +15,7 @@ description: "Generate 3D models with AI providers (Tripo, Meshy, fal) and impor
 Generate 3D models with AI providers (Tripo, Meshy, fal) and import them into the Unity project. Bring-your-own-key: provider keys live in the editor's secure store and never cross the bridge.
 
 ACTIONS:
-- generate: Submit a generation job (text->3D or image->3D). Returns { job_id } immediately; poll with the status action. Params: provider, mode (text|image), prompt, image_path|image_url, format (glb|fbx|obj|usdz), target_size, texture, tier, model, name, output_folder. Tripo supports GLB generation only; omit tier. Tripo texture=false requires v3.0-20250812, v3.1-20260211, or P1-20260311. Other formats require a separate conversion workflow, which this tool does not submit.
+- generate: Submit a generation job (text->3D or image->3D). Returns { job_id } immediately; poll with the status action. Params: provider, mode (text|image), prompt, image_path|image_url, format (glb|fbx|obj|usdz), target_size, texture, tier, model, name, output_folder. Tripo supports GLB generation only; omit tier. Tripo texture=false requires v3.0-20250812, v3.1-20260211, or P1-20260311. Other formats require a separate conversion workflow, which this tool does not submit. target_size applies only when Auto-Normalize Imported Models is enabled; finite zero or negative values preserve imported scale. Successful normalization of a model without ModelImporter may return a prefab variant while retaining its source model.
 - status: Poll an async job by job_id -> { state, progress, assetPath?, error? }.
 - cancel: Cancel an in-flight job by job_id.
 - list_providers: List configured 3D providers and capabilities (no key values).
@@ -33,7 +33,7 @@ ACTIONS:
 | `image_path` | `str \| None` | — | Path to a source image for image->3D. |
 | `image_url` | `str \| None` | — | URL of a source image for image->3D. |
 | `format` | `str \| None` | — | Output model format: glb, fbx, obj, or usdz, subject to provider support. Tripo supports glb only. |
-| `target_size` | `float \| None` | — | Normalize the largest dimension to this size (meters). |
+| `target_size` | `float \| None` | — | Largest default-pose mesh-bounds dimension in meters when Auto-Normalize Imported Models is enabled; finite zero/negative values preserve scale. Omitted defaults to 1. Normalized glTF may return a prefab variant. |
 | `texture` | `bool \| None` | — | Whether to generate textures. Tripo texture=false requires v3.0-20250812, v3.1-20260211, or P1-20260311. |
 | `tier` | `str \| None` | — | Provider quality/cost tier. Omit for Tripo; nonblank values are unsupported. |
 | `model` | `str \| None` | — | Provider model id/version (e.g. Tripo v3.1, Meshy meshy-6). Omit for the GUI-selected default. |

@@ -35,6 +35,8 @@ from utils.module_discovery import discover_modules
 READ_ONLY = {
     "capture_ui_snapshot",  # Reads UI state; preflight does not refresh project assets.
     "debug_request_context",
+    # Completed-result cache only; no job retirement or project/Editor settings mutation.
+    "export_test_job",
     "find_in_file",
     "get_sha",
     "get_test_job",

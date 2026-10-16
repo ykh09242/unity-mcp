@@ -99,6 +99,33 @@ namespace MCPForUnityTests.Editor.AssetGen
                 OutputFolder = TestFolder,
             };
 
+        [TestCase(0f, false)]
+        [TestCase(-2f, false)]
+        [TestCase(2f, false)]
+        [TestCase(0f, true)]
+        [TestCase(-2f, true)]
+        [TestCase(2f, true)]
+        public void ModelTargetSize_PreservesNonpositiveAndPositiveRequests(float target, bool marketplace)
+        {
+            const string sketchfabEnv = "MCPFORUNITY_SKETCHFAB_API_KEY";
+            // QA clears child key variables before this synthetic-key fixture; no actual value is read.
+            Environment.SetEnvironmentVariable(sketchfabEnv, "owned-normalization-sketchfab-key");
+            try
+            {
+                ModelGenRequest request = Req();
+                request.TargetSize = target;
+                AssetGenJob job = marketplace
+                    ? AssetGenJobManager.StartMarketplaceImport("owned-model", target, "owned-target", TestFolder)
+                    : AssetGenJobManager.StartModelGeneration(request);
+                Assert.AreEqual(target, job.TargetSize);
+                Assert.IsEmpty(_fake.RecordedRequests, "Creating the job must not call a real provider or dispatch before its controlled pump.");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(sketchfabEnv, null);
+            }
+        }
+
         private static AudioGenRequest AudioReq() =>
             new AudioGenRequest
             {

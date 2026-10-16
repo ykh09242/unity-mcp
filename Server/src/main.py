@@ -36,6 +36,10 @@ from core.local_auth import local_auth_token, local_auth_token_path
 from transport.local_auth_middleware import LocalControlAuthMiddleware
 from transport.local_server_lifecycle import request_local_shutdown
 from transport.remote_auth_middleware import RemoteControlAuthMiddleware
+from transport.catalog_subscriptions import (
+    CatalogSubscriptionLifetimeMiddleware,
+    install_catalog_subscriptions,
+)
 from transport.mcp_version_middleware import McpVersionMiddleware
 from transport.request_body_limit_middleware import (
     MAX_HTTP_REQUEST_BYTES,
@@ -52,7 +56,7 @@ from functools import partial
 import sys
 
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 import os
 import threading
 import time
@@ -337,10 +341,12 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
             )
 
         # Yield shared state for lifespan consumers (e.g., middleware)
-        yield {
-            "pool": _unity_connection_pool,
-            "plugin_registry": _plugin_registry,
-        }
+        subscriptions = getattr(server, "_catalog_subscriptions", None)
+        async with subscriptions.lifespan() if subscriptions is not None else nullcontext():
+            yield {
+                "pool": _unity_connection_pool,
+                "plugin_registry": _plugin_registry,
+            }
     finally:
         for timer in telemetry_timers:
             timer.cancel()
@@ -547,6 +553,7 @@ class UnityMCP(FastMCP):
         # add_middleware prepends: authenticate before inspecting or reading bodies.
         if app.state.transport_type == "streamable-http":
             app.add_middleware(McpVersionMiddleware, path=app.state.path)
+            app.add_middleware(CatalogSubscriptionLifetimeMiddleware)
         app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_HTTP_REQUEST_BYTES)
         app.add_middleware(ResponseRetentionMiddleware)
         if not config.http_remote_hosted:
@@ -571,6 +578,7 @@ def create_mcp_server(
         ),
     )
     mcp.add_middleware(ResponseLimitMiddleware())
+    install_catalog_subscriptions(mcp, remote_hosted=config.http_remote_hosted)
 
     global custom_tool_service
     custom_tool_service = CustomToolService(mcp, project_scoped_tools=project_scoped_tools)

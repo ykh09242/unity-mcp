@@ -134,7 +134,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
             var job = NewJob("model", provider, "generate");
             job.Format = string.IsNullOrEmpty(req.Format) ? "glb" : req.Format;
-            job.TargetSize = req.TargetSize <= 0 ? 1f : req.TargetSize;
+            job.TargetSize = req.TargetSize;
 
             if (!TryResolveKey(provider, job, out string apiKey))
                 return job;
@@ -266,7 +266,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             outputFolder = AssetGenPaths.ResolveOutputFolder(outputFolder, "Sketchfab");
             var adapter = AssetGenProviders.Marketplace("sketchfab"); // throws NotSupported if unimplemented
             var job = NewJob("marketplace", "sketchfab", "import");
-            job.TargetSize = targetSize <= 0 ? 1f : targetSize;
+            job.TargetSize = targetSize;
             if (!TryResolveKey("sketchfab", job, out string apiKey))
                 return job;
             var transport = TransportOverrideForTests ?? new UnityWebRequestTransport();

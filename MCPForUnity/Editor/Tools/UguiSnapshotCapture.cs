@@ -156,12 +156,14 @@ namespace MCPForUnity.Editor.Tools
             return value;
         }
 
-        internal static JArray Capture(GameObject root, int limit)
+        internal static JArray Capture(GameObject root, int limit, UISnapshotIdentityMap identities = null)
         {
             if (!(root.transform is RectTransform) || root.GetComponentInParent<Canvas>(true) == null)
                 throw new ArgumentException("uGUI snapshot requires a RectTransform beneath a Canvas.");
             var privacy = CaptureInputPrivacy();
             var nodes = new JArray();
+            var mappedNodes = identities == null ? null : new Dictionary<Transform, (string Path, string Identity, int Depth)>();
+            var seen = identities == null ? null : new HashSet<string>(StringComparer.Ordinal);
             Type graphicType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Graphic");
             Type selectableType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Selectable");
             Type maskType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Mask");
@@ -169,6 +171,49 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (nodes.Count == limit)
                     throw new ArgumentException("Snapshot overflow: hierarchy exceeds max_nodes; incomplete evidence cannot be saved.");
+                string identity,
+                    parentIdentity = null,
+                    path = null;
+                if (identities == null)
+                {
+                    identity = CaptureUISnapshot.Identity(go);
+                    if (go != root)
+                        parentIdentity = CaptureUISnapshot.Identity(go.transform.parent.gameObject);
+                }
+                else if (go == root)
+                {
+                    identity = CaptureUISnapshot.Identity(root);
+                    path = "";
+                    mappedNodes.Add(go.transform, (path, identity, 1));
+                    seen.Add(identity);
+                }
+                else
+                {
+                    var parent = mappedNodes[go.transform.parent];
+                    if (parent.Depth >= 128 || go.transform.parent.childCount > 1000)
+                        throw new ArgumentException("Snapshot overflow: hierarchy exceeds the identity depth or sibling bound.");
+                    path = parent.Path + "/" + go.transform.GetSiblingIndex().ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    string segment = EffectiveSegment(go.transform, path, identities);
+                    int matches = 0;
+                    for (int i = 0; i < go.transform.parent.childCount; i++)
+                        if (
+                            EffectiveSegment(
+                                go.transform.parent.GetChild(i),
+                                parent.Path + "/" + i.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                identities
+                            ) == segment
+                        )
+                            matches++;
+                    if (matches != 1)
+                        throw new ArgumentException("Hierarchy contains ambiguous effective sibling identities.");
+                    identity = parent.Identity + "/" + segment;
+                    if (identity.Length > 4096)
+                        throw new ArgumentException("Hierarchy identity exceeds 4096 characters.");
+                    if (!seen.Add(identity))
+                        throw new ArgumentException("identity_map produced ambiguous snapshot identities.");
+                    parentIdentity = parent.Identity;
+                    mappedNodes.Add(go.transform, (path, identity, parent.Depth + 1));
+                }
                 var components = go.GetComponents<Component>().Where(item => item != null).ToArray();
                 if (components.Length > 64)
                     throw new ArgumentException("UI node exceeds the component bound.");
@@ -228,8 +273,8 @@ namespace MCPForUnity.Editor.Tools
                 nodes.Add(
                     new JObject
                     {
-                        ["id"] = CaptureUISnapshot.Identity(go),
-                        ["parent"] = go == root ? null : CaptureUISnapshot.Identity(go.transform.parent.gameObject),
+                        ["id"] = identity,
+                        ["parent"] = parentIdentity,
                         ["sibling_index"] = go == root ? 0 : go.transform.GetSiblingIndex(),
                         ["type"] = go.transform.GetType().FullName,
                         ["components"] = new JArray(components.Select(item => item.GetType().FullName).OrderBy(item => item, StringComparer.Ordinal)),
@@ -247,8 +292,19 @@ namespace MCPForUnity.Editor.Tools
                         ["geometry"] = geometry,
                     }
                 );
+                identities?.MarkVisited(path);
             }
             return nodes;
+        }
+
+        private static string EffectiveSegment(Transform element, string path, UISnapshotIdentityMap identities)
+        {
+            if (identities.TryGetSegment(path, out string segment))
+                return segment;
+            string name = element.name;
+            if (name.Length > 1024)
+                throw new ArgumentException("Hierarchy identity exceeds the name bound.");
+            return Uri.EscapeDataString(name);
         }
 
         private static float GroupAlpha(Transform target)

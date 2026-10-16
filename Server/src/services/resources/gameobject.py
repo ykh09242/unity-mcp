@@ -8,6 +8,7 @@ These resources provide read-only access to:
 """
 
 from typing import Annotated, Any
+import re
 from pydantic import BaseModel
 from fastmcp import Context
 
@@ -95,10 +96,15 @@ async def get_gameobject_api_docs(_ctx: Context) -> MCPResponse:
                     "include_properties": "Include full property data (default: true)",
                 },
             },
-            "mcpforunity://scene/gameobject/{instance_id}/component/{component_name}": {
-                "description": "Get a single component by type name with full properties",
-                "example": "mcpforunity://scene/gameobject/-81840/component/Camera",
-                "note": "Use the component type name (e.g., 'Camera', 'Rigidbody', 'Transform')",
+            "mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection}": {
+                "description": "Read one live component. Bare URIs preserve legacy case-insensitive first match; selectors or strict_selection=true require a compatible Editor and never fall back.",
+                "example": "mcpforunity://scene/gameobject/-81840/component/UnityEngine.AudioSource?component_index=1",
+                "parameters": {
+                    "component_index": "Zero-based index within GetComponents(requested type), including derived types; not the mixed list index.",
+                    "component_instance_id": "Nonzero live component instanceID from /components. Mutually exclusive with component_index.",
+                    "strict_selection": "true requires exactly one component when no selector is supplied; default false.",
+                },
+                "note": "Selected reads use canonical, case-sensitive type names, matching manage_components. IDs and indices are ephemeral; rediscover after reload, removal or reordering.",
             },
         },
         "related_tools": {
@@ -281,26 +287,109 @@ class SingleComponentResponse(MCPResponse):
     data: SingleComponentData | None = None
 
 
+def _component_selector_integer(
+    value: str | None, name: str, *, allow_negative: bool
+) -> tuple[int | None, MCPResponse | None]:
+    """Parse URI decimal selectors without bool/float coercion or silent fallback."""
+    if value is None:
+        return None, None
+    if type(value) is not str or re.fullmatch(r"[+-]?[0-9]+", value.strip()) is None:
+        return None, MCPResponse(
+            success=False,
+            error="invalid_selection",
+            message=f"{name} must be a decimal Int32 integer.",
+        )
+    # Bound significant digits before conversion; leading zeroes do not change Int32 value.
+    text = value.strip()
+    digits = text.lstrip("+-").lstrip("0") or "0"
+    if len(digits) > 10:
+        return None, MCPResponse(
+            success=False, error="invalid_selection", message=f"{name} is outside the Int32 range."
+        )
+    number = int(digits) * (-1 if text.startswith("-") else 1)
+    if (
+        not -2147483648 <= number <= 2147483647
+        or (not allow_negative and number < 0)
+        or (allow_negative and number == 0)
+    ):
+        return None, MCPResponse(
+            success=False,
+            error="invalid_selection",
+            message=f"{name} is outside its supported range.",
+        )
+    return number, None
+
+
 @mcp_for_unity_resource(
-    uri="mcpforunity://scene/gameobject/{instance_id}/component/{component_name}",
+    uri="mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection}",
     name="gameobject_component",
-    description="Get a specific component on a GameObject by type name. Returns the fully serialized component with all properties.\n\nURI: mcpforunity://scene/gameobject/{instance_id}/component/{component_name}",
+    description="Get a component on a GameObject. The bare URI preserves legacy case-insensitive first-match reads. Optional component_index or component_instance_id selects one live component; strict_selection=true requires uniqueness. Selected reads use the same canonical, case-sensitive component type as manage_components. Indices are zero-based within GetComponents(requested type), not the mixed component list. Prefer the component instanceID from /components; IDs and indices are ephemeral. Unsupported Editors fail without falling back.",
 )
 async def get_gameobject_component(
-    ctx: Context, instance_id: str, component_name: str
+    ctx: Context,
+    instance_id: str,
+    component_name: str,
+    component_index: str | None = None,
+    component_instance_id: str | None = None,
+    strict_selection: str | bool = False,
 ) -> MCPResponse:
-    """Get a specific component on a GameObject."""
-    unity_instance = await get_unity_instance_from_context(ctx)
-
+    """Read an exact live component when selectors are supplied; preserve the bare URI."""
+    if type(strict_selection) is str:
+        if strict_selection not in {"true", "false"}:
+            return MCPResponse(
+                success=False,
+                error="invalid_selection",
+                message="strict_selection must be true or false.",
+            )
+        strict = strict_selection == "true"
+    elif type(strict_selection) is bool:
+        strict = strict_selection
+    else:
+        return MCPResponse(
+            success=False,
+            error="invalid_selection",
+            message="strict_selection must be true or false.",
+        )
+    index, error = _component_selector_integer(
+        component_index, "component_index", allow_negative=False
+    )
+    if error:
+        return error
+    component_id, error = _component_selector_integer(
+        component_instance_id, "component_instance_id", allow_negative=True
+    )
+    if error:
+        return error
+    if index is not None and component_id is not None:
+        return MCPResponse(
+            success=False,
+            error="invalid_selection",
+            message="Use either component_index or component_instance_id, not both.",
+        )
+    selected = strict or index is not None or component_id is not None
     id_int, error = _validate_instance_id(instance_id)
     if error:
         return error
-
+    if selected and (id_int == 0 or not -2147483648 <= id_int <= 2147483647):
+        return MCPResponse(
+            success=False,
+            error="invalid_target",
+            message="instance_id must be a nonzero Int32 integer.",
+        )
+    params: dict[str, Any] = {"instanceID": id_int, "componentName": component_name}
+    if index is not None:
+        params["componentIndex"] = index
+    if component_id is not None:
+        params["componentInstanceID"] = component_id
+    if strict:
+        params["strictSelection"] = True
+    unity_instance = await get_unity_instance_from_context(ctx)
     response = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
-        "get_gameobject_component",
-        {"instanceID": id_int, "componentName": component_name},
+        "get_gameobject_component_selected" if selected else "get_gameobject_component",
+        params,
+        retry_on_reload=not selected,
     )
 
     return _normalize_response(response)

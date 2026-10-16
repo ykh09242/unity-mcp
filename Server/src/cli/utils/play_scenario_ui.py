@@ -7,7 +7,13 @@ from pathlib import Path
 from pydantic import JsonValue
 
 from cli.utils.play_scenario_analysis_io import AnalysisError, read_json
-from models.ui_snapshots import UiGeometry, UiSnapshot, UiSnapshotV2, validate_ui_snapshot
+from models.ui_snapshots import (
+    UiGeometry,
+    UiSnapshot,
+    UiSnapshotV2,
+    UiSnapshotV3,
+    validate_ui_snapshot,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +28,7 @@ class UiComparisonPolicy:
             raise AnalysisError("Geometry tolerance must be finite and within 0..10000")
 
 
-def load_ui_snapshot(path: Path) -> UiSnapshot | UiSnapshotV2:
+def load_ui_snapshot(path: Path) -> UiSnapshot | UiSnapshotV2 | UiSnapshotV3:
     """Parse one bounded saved snapshot; reject duplicate JSON keys before modeling."""
     # read_json shares duplicate-key and numeric checks with native scenario reports.
     raw = read_json(path)

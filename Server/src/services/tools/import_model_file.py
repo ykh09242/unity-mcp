@@ -35,7 +35,9 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "a hierarchy containing indexed mesh geometry. This does not certify materials, rigs or rendering. "
         "Failed imports may retain staged bytes and return asset_path, asset_guid, model_import_stage "
         "('saved' for bytes on disk or 'registered' for a GUID without usable geometry), and "
-        "model_import_error_code. The original source is preserved. A missing active glTF importer "
+        "model_import_error_code. The original source is preserved. "
+        "target_size applies only when Auto-Normalize Imported Models is enabled; finite zero or negative values preserve imported scale. Successful normalization of a model without ModelImporter may return a prefab variant while retaining its source model. "
+        "A missing active glTF importer "
         "is 'missing_gltf_importer'; an active importer that produces no usable model is 'unusable_model'. "
         "Inspect the retained output and Console, repair or re-export, then reimport.\n\n"
         "animation_type (FBX/OBJ only): pass 'generic' or 'humanoid' for a rigged/animated mesh so "
@@ -76,7 +78,11 @@ async def import_model_file(
         "Destination under Assets/. Dependency bundles use a fresh folder; partial or failed imports may retain output for repair.",
     ]
     | None = None,
-    target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."]
+    target_size: Annotated[
+        float,
+        "Largest default-pose mesh-bounds dimension in meters when Auto-Normalize Imported Models is enabled; "
+        "finite zero/negative values preserve scale. Omitted defaults to 1. Normalized glTF may return a prefab variant.",
+    ]
     | None = None,
     animation_type: Annotated[
         Literal["none", "generic", "humanoid", "legacy"],

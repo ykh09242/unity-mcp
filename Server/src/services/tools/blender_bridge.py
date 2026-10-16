@@ -33,8 +33,10 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "- run_python(code): execute Python inside Blender; returns stdout.\n"
         "- import_model: export from Blender (object_names with their children, or selection_only, "
         "else the whole scene) as glb (default; keeps PBR, emission, animation) or fbx, import it "
-        "through the shared model pipeline, place it in the open scene at position, and scale it so "
-        "its largest dimension equals target_size meters (0 keeps the imported scale). Set "
+        "through the shared model pipeline and place the resulting asset in the open scene at position. "
+        "target_size sets the largest default-pose mesh-bounds dimension only when Auto-Normalize Imported Models "
+        "is enabled; finite zero/negative values preserve imported scale. Placement applies no second scale. "
+        "Normalized glTF can return a prefab variant that retains the original imported model. Set "
         "apply_modifiers=false for rigs / shape keys. animation_type applies to FBX only. "
         "auto_animate (default true) creates a looping AnimatorController for imported clips so the "
         "model actually moves; save_prefab stores the placed instance as a prefab; ensure_bloom adds a "
@@ -91,7 +93,8 @@ async def blender_bridge(
     | None = None,
     target_size: Annotated[
         float,
-        "import_model: final size in meters of the largest dimension; 0 keeps the imported scale.",
+        "import_model: largest default-pose mesh-bounds dimension in meters when Auto-Normalize Imported Models is enabled; "
+        "finite zero/negative values preserve scale. Omitted defaults to 0. Placement adds no scaling.",
     ]
     | None = None,
     position: Annotated[

@@ -43,6 +43,8 @@ namespace MCPForUnityTests.Editor.Services
         private bool _guardEnabled;
         private int _guardOptions;
         private byte[] _marker;
+        private object _originalResultStore;
+        private string _resultRoot;
 
         private static FieldInfo ManagerField(string name) => typeof(TestJobManager).GetField(name, PrivateStatic);
 
@@ -67,6 +69,10 @@ namespace MCPForUnityTests.Editor.Services
             _guardEnabled = SessionState.GetBool(GuardPrefix + "OriginalEnabled", false);
             _guardOptions = SessionState.GetInt(GuardPrefix + "OriginalOptions", 0);
             _marker = File.Exists(MarkerPath) ? File.ReadAllBytes(MarkerPath) : null;
+            _originalResultStore = ManagerField("ResultStoreOverride").GetValue(null);
+            _resultRoot = Path.Combine(Path.GetTempPath(), "mcp-reload-results-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_resultRoot);
+            ManagerField("ResultStoreOverride").SetValue(null, TestJobResultStoreTests.NewStore(_resultRoot));
             _jobs.Clear();
             ManagerField("_currentJobId").SetValue(null, null);
             ServiceField.SetValue(null, null);
@@ -77,6 +83,9 @@ namespace MCPForUnityTests.Editor.Services
         [TearDown]
         public void TearDown()
         {
+            ManagerField("ResultStoreOverride").SetValue(null, _originalResultStore);
+            if (Directory.Exists(_resultRoot))
+                Directory.Delete(_resultRoot, true);
             // Do not reset the whole service locator: the outer Editor test run may own it.
             (ServiceField.GetValue(null) as IDisposable)?.Dispose();
             ServiceField.SetValue(null, _originalService);
@@ -103,7 +112,7 @@ namespace MCPForUnityTests.Editor.Services
                 File.WriteAllBytes(MarkerPath, _marker);
         }
 
-        private TestJob AddJob(string id = "lifecycle-job")
+        private TestJob AddJob(string id = "1234567890abcdef1234567890abcdef")
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var job = new TestJob
@@ -456,6 +465,75 @@ namespace MCPForUnityTests.Editor.Services
                     EditorPrefs.DeleteKey("InteractionMode");
                 typeof(TestRunnerNoThrottle).GetMethod("ForceEditorToApplyInteractionPrefs", PrivateStatic).Invoke(null, null);
             }
+        }
+
+        [Test]
+        public void Capture_NodeVisitCapCountsEmptyGroupsAndPreservesRootSummary()
+        {
+            var groups = Enumerable.Range(0, 50001).Select(index => new ResultStub("Empty" + index, "Passed") { IsSuite = true }).ToArray();
+            var result = TestRunResult.Create(ResultStub.Suite(groups), Array.Empty<ITestResultAdaptor>());
+            Assert.AreEqual("traversal_limit", result.Availability);
+            Assert.AreEqual(50001, result.Passed);
+            Assert.AreEqual(0, result.Results.Count);
+        }
+
+        [Test]
+        public void Capture_DepthCapPreservesAuthoritativeRootSummary()
+        {
+            ITestResultAdaptor root = new ResultStub("Leaf", "Failed");
+            for (int depth = 0; depth < 130; depth++)
+                root = ResultStub.Suite(root);
+            var result = TestRunResult.Create(root, Array.Empty<ITestResultAdaptor>());
+            Assert.AreEqual("traversal_limit", result.Availability);
+            Assert.AreEqual(1, result.Failed);
+            Assert.AreEqual(0, result.Results.Count);
+        }
+
+        [Test]
+        public void Capture_StoreFactoryFailureKeepsExactRootSummary()
+        {
+            var result = TestRunResult.Create(
+                ResultStub.Suite(new ResultStub("Leaf", "Failed")),
+                Array.Empty<ITestResultAdaptor>(),
+                () => throw new IOException("synthetic store failure"),
+                "1234567890abcdef1234567890abcdef",
+                "EditMode"
+            );
+            Assert.AreEqual("write_failed", result.Availability);
+            Assert.AreEqual(1, result.Failed);
+            Assert.AreEqual(0, result.Results.Count);
+        }
+
+        [Test]
+        public void Capture_PortableWindowsPathAdmissionKeepsExactRootSummary()
+        {
+            if (Path.DirectorySeparatorChar != '\\')
+                return;
+            string longRoot = Path.Combine(_resultRoot, new string('x', 120));
+            var result = TestRunResult.Create(
+                ResultStub.Suite(new ResultStub("Leaf", "Failed")),
+                Array.Empty<ITestResultAdaptor>(),
+                () => new TestJobResultStore(longRoot, TestJobResultStoreTests.SessionId),
+                TestJobResultStoreTests.JobId,
+                "EditMode"
+            );
+            Assert.AreEqual("path_limit_exceeded", result.Availability);
+            Assert.AreEqual(1, result.Failed);
+            Assert.AreEqual(0, result.Results.Count);
+        }
+
+        [Test]
+        public void RecoveredRunFinished_DoesNotInvokePollingInitializationTimeout()
+        {
+            var job = AddJob();
+            job.StartedUnixMs = 1;
+            job.InitTimeoutMs = 1;
+            job.TotalTests = null;
+            var service = RestoreCallbacks();
+            service.RunFinished(ResultStub.Suite(new ResultStub("Fixture.Completed", "Passed")));
+            Assert.AreEqual(TestJobStatus.Succeeded, job.Status);
+            Assert.IsNull(job.Error);
+            Assert.AreEqual(1, job.Result.Passed);
         }
 
         private sealed class ResultStub : ITestResultAdaptor

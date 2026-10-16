@@ -51,8 +51,8 @@ a new element at the same position becomes that path's target. An optional
 
 ## Reuse a snapshot semantic ID
 
-Copy the chosen `nodes[].id` from `capture_ui_snapshot` with `framework="uitoolkit"`
-into `element_id`, keeping the same target GameObject. Descendant ID segments reuse the
+Copy the chosen `nodes[].id` from default `capture_ui_snapshot` with
+`framework="uitoolkit"` and no `identity_map` (schema version 2) into `element_id`, keeping the same target GameObject. Descendant ID segments reuse the
 snapshot's URI-escaped `name:` or fallback `type:` encoding. Copy the ID exactly; do not
 construct a CSS selector or decode/re-escape its segments.
 
@@ -138,3 +138,50 @@ node/evaluation counters and `complete=false`; unavailable data alone is not bud
 truncation. `complete=true` means a ready tree with no reported omissions. Truncated
 names/metadata are observations, not complete identity strings. Existing positional
 selectors and snapshot semantic IDs keep their separate contracts described above.
+
+
+## Explicit identities for repeated snapshot rows
+
+`capture_ui_snapshot` accepts an optional per-capture `identity_map` for uGUI and
+UI Toolkit. It associates current child paths with caller-supplied, nonsecret item IDs:
+
+```json
+{
+  "framework": "uitoolkit",
+  "target": "123",
+  "identity_map": [
+    {"element_path": "/0", "id": "item-A"},
+    {"element_path": "/1", "id": "item-B"}
+  ]
+}
+```
+
+Replace123 with the current target's actual ID/path. A mapped segment uses `@id:`;
+map IDs use1-128 ASCII letters, digits, period, underscore, colon or hyphen and are
+case-sensitive. Paths use current snapshot/content-container child order for Toolkit
+and Transform child order for uGUI. They have1-127 canonical indices0-999, at most512
+characters; empty/root paths are unsupported. At most999 assignments, no more than
+`max_nodes - 1`, and65536 total path/ID characters are allowed. Duplicate paths or
+IDs, unused paths and remaining ambiguity fail the complete capture. Explicit null
+or empty maps refuse; omission preserves semantic capture and ambiguity refusal.
+
+Two same-name rows with distinct assigned IDs are valid. One assigned row can coexist
+with one same-name unmapped row because their effective segments differ. Two unmapped
+duplicate siblings still refuse even when another sibling is assigned.
+
+The caller must update associations when rows reorder or rebind. If B moves to index0,
+submit `/0 -> item-B`. Recreating the same item under the same effective parent can
+keep its ID. A valid stale map cannot be detected automatically. IDs remain scoped to
+the semantic root and effective ancestor path; reparenting/root changes can invalidate
+them. Only realized rows are captured; logical offscreen items are not enumerated.
+Sibling order, geometry and state changes remain real diffs even when item IDs match.
+Do not use input contents, credentials or personal data as IDs. Input text privacy is
+unchanged; the map does not read native input values, userData or viewDataKey.
+
+Mapped captures use schema version3 with `identity_method="explicit_path_map_v1"`,
+retaining version2 typed/private control state. Compare v3 with v3; mixed versions
+refuse. IDs containing mapped segments are comparison identities and are unsupported
+by `manage_ui.element_id`; they do not become mutation/object handles. The root or a
+wholly unmapped semantic branch may still resolve through the unchanged semantic
+selector. Use a default semantic capture for editing IDs, or the independent current
+`element_path` mutation selector.

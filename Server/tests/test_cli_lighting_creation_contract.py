@@ -9,6 +9,12 @@ from cli.commands.lighting import lighting
 from cli.utils.config import CLIConfig
 
 
+@pytest.fixture(autouse=True)
+def isolated_cli_config(monkeypatch):
+    """The error decorator reads shared config independently of the command getter."""
+    monkeypatch.setattr("cli.utils.config._config", CLIConfig(format="json"))
+
+
 @pytest.mark.parametrize("created_id", [-204, 204])
 def test_light_creation_configures_returned_id_instead_of_colliding_name(created_id):
     calls = []

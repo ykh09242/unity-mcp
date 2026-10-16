@@ -29,7 +29,8 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "prompt, image_path|image_url, format (glb|fbx|obj|usdz), target_size, texture, "
         "tier, model, name, output_folder. Tripo supports GLB generation only; omit tier. "
         "Tripo texture=false requires v3.0-20250812, v3.1-20260211, or P1-20260311. "
-        "Other formats require a separate conversion workflow, which this tool does not submit.\n"
+        "Other formats require a separate conversion workflow, which this tool does not submit. "
+        "target_size applies only when Auto-Normalize Imported Models is enabled; finite zero or negative values preserve imported scale. Successful normalization of a model without ModelImporter may return a prefab variant while retaining its source model.\n"
         "- status: Poll an async job by job_id -> { state, progress, assetPath?, error? }.\n"
         "- cancel: Cancel an in-flight job by job_id.\n"
         "- list_providers: List configured 3D providers and capabilities (no key values).\n"
@@ -60,7 +61,11 @@ async def generate_model(
         "Output model format: glb, fbx, obj, or usdz, subject to provider support. Tripo supports glb only.",
     ]
     | None = None,
-    target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."]
+    target_size: Annotated[
+        float,
+        "Largest default-pose mesh-bounds dimension in meters when Auto-Normalize Imported Models is enabled; "
+        "finite zero/negative values preserve scale. Omitted defaults to 1. Normalized glTF may return a prefab variant.",
+    ]
     | None = None,
     texture: Annotated[
         bool,

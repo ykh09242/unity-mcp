@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -242,14 +243,86 @@ namespace MCPForUnity.Editor.Resources.Scene
     ///
     /// URI: unity://scene/gameobject/{instanceID}/component/{componentName}
     /// </summary>
+    [McpForUnityResource("get_gameobject_component_selected")]
+    public static class GameObjectComponentSelectedResource
+    {
+        public static object HandleCommand(JObject parameters) => GameObjectComponentResource.HandleSelected(parameters);
+    }
+
     [McpForUnityResource("get_gameobject_component")]
     public static class GameObjectComponentResource
     {
+        internal static object HandleSelected(JObject parameters)
+        {
+            try
+            {
+                if (!MCPServiceLocator.ResourceDiscovery.IsResourceEnabled("get_gameobject_component"))
+                    return new ComponentSelection.Failure(
+                        "resource_disabled",
+                        "Resource 'get_gameobject_component' is disabled in the Unity Editor."
+                    ).Response();
+                if (parameters == null)
+                    return new ComponentSelection.Failure("invalid_selection", "Parameters cannot be null.").Response();
+                ComponentSelection.ValidateSelectors(parameters, out int? index, out int? componentId);
+                JToken target = ComponentSelection.Alias(parameters, "instanceID", "instance_id");
+                if (target != null && parameters["id"] != null && !JToken.DeepEquals(target, parameters["id"]))
+                    throw new ComponentSelection.Failure("invalid_selection", "Conflicting GameObject ID aliases.");
+                target = target ?? parameters["id"];
+                if (
+                    target == null
+                    || (target.Type != JTokenType.Integer && target.Type != JTokenType.String)
+                    || !int.TryParse(target.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int targetId)
+                    || targetId == 0
+                )
+                    throw new ComponentSelection.Failure("invalid_target", "instanceID must be a nonzero Int32 GameObject ID.");
+                JToken name = ComponentSelection.Alias(parameters, "componentName", "component_name");
+                if (name != null && parameters["component"] != null && !JToken.DeepEquals(name, parameters["component"]))
+                    throw new ComponentSelection.Failure("invalid_selection", "Conflicting component type aliases.");
+                name = name ?? parameters["component"];
+                if (name?.Type != JTokenType.String)
+                    throw new ComponentSelection.Failure("invalid_component_type", "componentName must be a canonical component type name.");
+                ComponentSelection.BeforeTargetLookupForTests?.Invoke();
+                var go = GameObjectLookup.FindById(targetId);
+                ComponentSelection.Result selection = ComponentSelection.Resolve(go, name.ToString(), index, componentId);
+                JObject description = selection.Describe();
+                return new
+                {
+                    success = true,
+                    data = new
+                    {
+                        gameObjectID = targetId,
+                        gameObjectName = go.name,
+                        component = GameObjectSerializer.GetComponentData(selection.Component),
+                        selection = description,
+                    },
+                };
+            }
+            catch (ComponentSelection.Failure failure)
+            {
+                return failure.Response();
+            }
+            catch (Exception exception)
+            {
+                McpLog.Error($"[GameObjectComponentResource] Error getting selected component: {exception}");
+                return new ErrorResponse($"Error getting component: {exception.Message}");
+            }
+        }
+
         public static object HandleCommand(JObject @params)
         {
             if (@params == null)
             {
                 return new ErrorResponse("Parameters cannot be null.");
+            }
+
+            try
+            {
+                if (ComponentSelection.IsRequested(@params, true))
+                    return HandleSelected(@params);
+            }
+            catch (ComponentSelection.Failure failure)
+            {
+                return failure.Response();
             }
 
             var idToken = @params["instanceID"] ?? @params["instance_id"] ?? @params["id"];
