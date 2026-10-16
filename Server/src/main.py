@@ -36,6 +36,7 @@ from core.local_auth import local_auth_token, local_auth_token_path
 from transport.local_auth_middleware import LocalControlAuthMiddleware
 from transport.local_server_lifecycle import request_local_shutdown
 from transport.remote_auth_middleware import RemoteControlAuthMiddleware
+from transport.mcp_version_middleware import McpVersionMiddleware
 from transport.request_body_limit_middleware import (
     MAX_HTTP_REQUEST_BYTES,
     RequestBodyLimitMiddleware,
@@ -544,6 +545,8 @@ class UnityMCP(FastMCP):
             session_idle_timeout=session_idle_timeout,
         )
         # add_middleware prepends: authenticate before inspecting or reading bodies.
+        if app.state.transport_type == "streamable-http":
+            app.add_middleware(McpVersionMiddleware, path=app.state.path)
         app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_HTTP_REQUEST_BYTES)
         app.add_middleware(ResponseRetentionMiddleware)
         if not config.http_remote_hosted:

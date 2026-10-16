@@ -27,6 +27,11 @@ def running_server(tmp_path):
     token_path = tmp_path / "launch-token"
     env = {
         **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            filter(
+                None, (str(Path(__file__).resolve().parents[2] / "src"), os.getenv("PYTHONPATH"))
+            )
+        ),
         "DISABLE_TELEMETRY": "1",
         "UNITY_MCP_SKIP_STARTUP_CONNECT": "1",
         "UNITY_MCP_HTTP_REMOTE_HOSTED": "false",
