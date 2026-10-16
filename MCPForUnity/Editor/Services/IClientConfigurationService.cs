@@ -33,11 +33,18 @@ namespace MCPForUnity.Editor.Services
         IReadOnlyList<IMcpClientConfigurator> GetAllClients();
     }
 
-    /// <summary>
-    /// Summary of configuration results for multiple clients
-    /// </summary>
+    /// <summary>Optional selective retry support; existing client service implementations remain compatible.</summary>
+    public interface IClientConfigurationRetryService
+    {
+        ClientConfigurationRetryResult RetryFailedClients(ClientConfigurationAttempt attempt);
+        void DiscardConfigurationAttempt();
+    }
+
+    /// <summary>Summary of configuration results for multiple clients.</summary>
     public class ClientConfigurationSummary
     {
+        public ClientConfigurationAttempt Attempt { get; internal set; }
+
         /// <summary>
         /// Number of clients successfully configured
         /// </summary>

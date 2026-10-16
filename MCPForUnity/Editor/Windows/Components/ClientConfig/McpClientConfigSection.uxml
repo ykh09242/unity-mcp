@@ -4,6 +4,8 @@
         <ui:Label text="Client Configuration" class="section-title" />
         <ui:VisualElement class="section-content">
             <ui:Button name="configure-all-button" text="Configure All Detected Clients" class="primary-button" />
+            <ui:Button name="retry-failed-button" text="Retry Failed Clients" enabled="false" class="action-button" />
+            <ui:Label name="retry-status" text="Uses current settings; successful clients are not changed." class="status-text" />
             <ui:Foldout name="client-details-foldout" text="Per-client setup" value="true" class="client-details-foldout">
                 <ui:VisualElement class="setting-row">
                     <ui:Label text="Client:" class="setting-label" />
