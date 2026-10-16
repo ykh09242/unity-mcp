@@ -21,11 +21,6 @@ on:
       - .github/workflows/**
       - .github/actions/**
       - .github/actionlint.yaml
-      - '!tools/feature_program*.py'
-      - '!tools/feature_program_web/**'
-      - '!tools/tests/test_feature_program*.py'
-      - '!.github/workflows/work-program-python.yml'
-      - '!.github/workflows/work-program-web.yml'
 
 permissions:
   contents: read

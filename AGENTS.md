@@ -21,6 +21,8 @@ Use the existing Python environment and relevant checks. `tools/lint_python.py` 
 
 ## Task coordination
 
-Use the task conversation, scoped commits/PRs, relevant tests and CI for ordinary development. Keep one short handoff under ignored `.work/handoffs/` when continuity is needed. Reuse completed checks when their inputs have not changed; do not require registry updates, evidence packets, dashboard availability or management-tool repairs before implementing, reviewing or merging core changes.
+Use the applicable installed Superpowers skills for general workflow: `superpowers:writing-plans`, `superpowers:executing-plans`, `superpowers:requesting-code-review`, `superpowers:verification-before-completion` and `superpowers:finishing-a-development-branch`. Preserve existing user authorization and task scope; do not add redundant approval or tracking steps. Keep checks proportionate and reuse evidence whose inputs are unchanged.
 
-The [feature program tool](docs/development/feature-program-tool.md) and [directing workflow](docs/development/work-program-workflow.md) are optional. Use them only when the user explicitly selects that workflow for the current task; existing local programs do not activate it. When selected, use its commands to change program state and follow relocation markers. Preserve private records in ignored `.work/programs/`; never force-add them. Keep transient status out of this guide.
+- For authorized squash delivery, inspect review status and applicable CI for the exact PR head and base immediately before merging. Then inspect applicable beta CI for the actual receiving commit.
+- Delete completed branches and worktrees when the user requests it, preserving work the user wants to retain.
+- For compaction or transfer, update one short ignored handoff under `.work/handoffs/` with the actual repository/worktree, branch and commit, changed paths, checks and results, unresolved work, and next action. Resume without repeating completed work; keep temporary status out of this guide and never force-add private notes.

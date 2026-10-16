@@ -11,8 +11,7 @@ working-tree changes. Formatting does not replace correctness lint, tests or com
 | --- | --- | --- |
 | Python | Ruff **0.17.0**, root `ruff.toml` | Python 3.11 syntax, 100 columns, 4 spaces, double quotes, LF |
 | C# | Local CSharpier **1.3.0**, `.config/dotnet-tools.json`, root `.editorconfig` | 160 columns, 4 spaces, Allman braces, LF; preserve compact comment-only catches |
-| Dashboard JS / TS / JSX / TSX / CSS / HTML / JSON / YAML | Package-local Prettier **3.9.10** in `tools/feature_program_web/`, root `.editorconfig` | 100 columns, 2 spaces, LF; JS/TS single quotes and semicolons; JSON double quotes |
-| Other JS / TS / JSX / CSS / HTML / JSON / YAML | Root `.editorconfig`, existing file conventions | 2 spaces, LF; JS uses single quotes and semicolons; JSON uses double quotes |
+| JS / TS / JSX / TSX / CSS / HTML / JSON / YAML | Root `.editorconfig`, existing file conventions | 2 spaces, LF; JS uses single quotes and semicolons; JSON uses double quotes |
 | Shell / PowerShell | Root `.editorconfig`, existing file conventions | Shell 2 spaces; PowerShell 4 spaces; LF |
 | Windows batch / command scripts | Root `.editorconfig` | 2 spaces, CRLF |
 
@@ -26,12 +25,10 @@ strings or other content merely to enforce it. Keep literal payloads, fixtures, 
 shell heredocs and PowerShell here-strings intact. Never run a generic whitespace rewrite
 over source files. Markdown hard-break spaces are preserved by EditorConfig.
 
-The dashboard package pins Prettier in its manifest and lockfile, with local
-`.prettierrc.json` and `.prettierignore`. The runner delegates only eligible authored files
-inside that package to its installed formatter. Other JavaScript-family files, shell and
-PowerShell remain **EditorConfig/manual-only**; the runner does not rewrite or certify their
-syntax formatting. Do not install or add unrelated website dependencies to format a change.
-If another formatter is introduced, pin it and update this document and the runner together.
+JavaScript-family files, shell and PowerShell remain **EditorConfig/manual-only**;
+the runner does not rewrite or certify their syntax formatting. Do not install or add
+unrelated website dependencies to format a change. If another formatter is introduced,
+pin it and update this document and the runner together.
 
 `.gitattributes` sets text line endings for script/config extensions (LF, except Windows
 batch files). It does not format source. Do not renormalize unrelated files as part of an
@@ -80,21 +77,6 @@ CSharpier is resolved through the repository's local dotnet tool manifest, with 
 verified too. Checks and writes never fetch packages or restore the dotnet tool; uv may
 prepare its tool environment from the local cache. A missing tool produces a setup error
 before any selected file is formatted.
-
-For dashboard development, install its locked Node dependencies explicitly:
-
-```sh
-npm ci --prefix tools/feature_program_web
-npm run format:check --prefix tools/feature_program_web
-npm run format --prefix tools/feature_program_web
-```
-
-Use a Node version supported by the package's `engines` field. The canonical Python runner
-checks the exact package pin, lockfile and installed Prettier version before running it.
-It never installs or fetches dependencies during a formatting command. Generated browser
-assets, lockfiles and `node_modules` are excluded; regenerate browser assets with the package
-build after changing source. Frontend CI runs formatting, type checks, behavior tests and a
-reproducible build. Serving the committed local browser assets does not require Node.
 
 See the primary [Ruff formatter documentation](https://docs.astral.sh/ruff/formatter/),
 [uv tool guide](https://docs.astral.sh/uv/guides/tools/), and CSharpier
@@ -150,7 +132,4 @@ the formatting scope. Exclusion checks run before file contents are read.
 Regenerate tool references using `tools/generate_docs_reference.py`; do not hand-format
 `website/docs/reference/`. Review formatter diffs for literal-content changes. Run relevant
 tests after source changes and `tools/lint_python.py` when correctness lint is needed.
-The lint runner defaults to core code and shared tools. The optional management tool is
-checked separately with `tools/lint_python.py --scope work-program`; `--scope all` explicitly
-checks both. Dashboard or management-tool checks are not prerequisites for unrelated core work.
 Do not launch Unity or install optional Unity packages just to validate formatting.
