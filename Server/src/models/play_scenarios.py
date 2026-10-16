@@ -62,6 +62,7 @@ def normalize_native_definition(value: JsonValue) -> JsonValue:
         "stable_for_ms",
         "state_id",
         "state_equals",
+        "state_compare",
         "performance",
         "screenshot",
         "input",
@@ -109,12 +110,85 @@ ScenarioScalar = (
 )
 
 
+ScenarioNumber = (
+    Annotated[int, Field(strict=True, ge=-(2**63), le=2**63 - 1)]
+    | Annotated[float, Field(strict=True, allow_inf_nan=False)]
+)
+
+
+class PlayScenarioNumericCondition(BaseModel):
+    """One finite numeric predicate, preserving exact int64 and binary64 operands."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    operator: Literal["gte", "lte", "range", "approximately"]
+    value: ScenarioNumber | None = Field(default=None, exclude_if=lambda value: value is None)
+    min: ScenarioNumber | None = Field(default=None, exclude_if=lambda value: value is None)
+    max: ScenarioNumber | None = Field(default=None, exclude_if=lambda value: value is None)
+    absolute_tolerance: ScenarioNumber | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    relative_tolerance: ScenarioNumber | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator(
+        "value", "min", "max", "absolute_tolerance", "relative_tolerance", mode="before"
+    )
+    @classmethod
+    def check_number(cls, value: JsonValue) -> JsonValue:
+        """Reject coercion, especially bool and overflowing integers parsed as floats."""
+        if type(value) not in (int, float):
+            raise ValueError("Numeric operands must be signed 64-bit integers or finite numbers")
+        if isinstance(value, int) and not -(2**63) <= value <= 2**63 - 1:
+            raise ValueError("Numeric integers must fit signed 64 bits")
+        return value
+
+    @model_validator(mode="after")
+    def check_operands(self) -> "PlayScenarioNumericCondition":
+        """Validate field presence before comparing exact mixed integer/float bounds."""
+        operands = self.model_fields_set - {"operator"}
+        if self.operator in ("gte", "lte"):
+            if operands != {"value"}:
+                raise ValueError("gte/lte accept only operator and value")
+        elif self.operator == "range":
+            if operands != {"min", "max"}:
+                raise ValueError("range accepts only operator, min and max")
+            # Python compares int/float without rounding the integer to binary64.
+            if self.min > self.max:
+                raise ValueError("Numeric range min must not exceed max")
+        else:
+            tolerances = {"absolute_tolerance", "relative_tolerance"}
+            if (
+                "value" not in operands
+                or not operands & tolerances
+                or operands - ({"value"} | tolerances)
+            ):
+                raise ValueError(
+                    "approximately requires value and at least one tolerance, without range bounds"
+                )
+            if any(getattr(self, field) < 0 for field in operands & tolerances):
+                raise ValueError("Numeric tolerances must be finite and nonnegative")
+        return self
+
+
 class PlayScenarioPropertyCondition(BaseModel):
     """Compare one serialized component property with an exact finite JSON scalar."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     path: Annotated[str, Field(strict=True, min_length=1, max_length=256)]
-    equals: ScenarioScalar
+    equals: ScenarioScalar | None = Field(default=None, exclude_if=lambda value: value is None)
+    compare: PlayScenarioNumericCondition | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def check_comparison(self) -> "PlayScenarioPropertyCondition":
+        """Require exactly one authored, non-null equality or numeric comparison."""
+        if len(self.model_fields_set & {"equals", "compare"}) != 1 or (
+            self.equals is None and self.compare is None
+        ):
+            raise ValueError("Property requires exactly one non-null equals or compare")
+        return self
 
     @field_validator("equals", mode="before")
     @classmethod
@@ -302,6 +376,9 @@ class ScenarioStep(BaseModel):
     reset_ids: Annotated[list[TargetId], Field(min_length=1, max_length=16)] | None = None
     state_id: TargetId | None = None
     state_equals: ScenarioScalar | None = None
+    state_compare: PlayScenarioNumericCondition | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     click_mode: Literal["direct", "raycast"] | None = None
     timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=120)] = 30
     count: Annotated[int, Field(strict=True, ge=0, le=10000)] | None = None
@@ -374,16 +451,21 @@ class ScenarioStep(BaseModel):
                     "timeout_seconds",
                     "state_id",
                     "state_equals",
+                    "state_compare",
                     "stable_for_ms",
                     "performance",
                     "screenshot",
                 }:
                     raise ValueError(
-                        "wait_state accepts only name, action, timeout_seconds, state_id, state_equals and stable_for_ms"
+                        "wait_state accepts only name, action, timeout_seconds, state_id, one equality or comparison and stable_for_ms"
                     )
-                if self.state_id is None or self.state_equals is None:
+                if (
+                    self.state_id is None
+                    or len(self.model_fields_set & {"state_equals", "state_compare"}) != 1
+                    or (self.state_equals is None and self.state_compare is None)
+                ):
                     raise ValueError(
-                        "wait_state requires state_id and a non-null scalar state_equals"
+                        "wait_state requires state_id and exactly one non-null state_equals or state_compare"
                     )
             case "load_scene" | "wait_scene" | "click_ui" | "wait_object" | "input":
                 if "reset_ids" in self.model_fields_set:
@@ -391,8 +473,12 @@ class ScenarioStep(BaseModel):
                     raise ValueError(message)
             case unreachable:
                 assert_never(unreachable)
-        if self.action != "wait_state" and self.model_fields_set & {"state_id", "state_equals"}:
-            raise ValueError("state_id and state_equals are only valid for wait_state")
+        if self.action != "wait_state" and self.model_fields_set & {
+            "state_id",
+            "state_equals",
+            "state_compare",
+        }:
+            raise ValueError("State selectors and comparisons are only valid for wait_state")
         object_fields = {"count", "active", "component", "property"}
         optional_fields = object_fields | {
             "stable_for_ms",

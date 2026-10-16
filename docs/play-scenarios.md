@@ -167,6 +167,55 @@ late logs before cleanup. Its default is 250 ms; even zero retains the final eva
 This is a bounded observation window, not proof that arbitrary asynchronous work has finished. Prefer
 an explicit initialized-property condition for game readiness.
 
+### Numeric state and serialized-property conditions
+
+Use `state_compare` instead of `state_equals` to wait for numeric progress that can cross a
+threshold between observations. For example:
+
+```json
+{
+  "name": "progress reached",
+  "action": "wait_state",
+  "state_id": "load.progress",
+  "state_compare": { "operator": "gte", "value": 0.5 },
+  "timeout_seconds": 30
+}
+```
+
+Exactly one equality or numeric comparison is required. Existing `state_equals` and
+`property.equals` retain their existing type and equality behavior. Editor serialized numeric
+fields accept the same predicate as `property: { "path": "progress", "compare": { ... } }`;
+exactly one of `equals` or `compare` is required, including when an extra key is explicitly null.
+Player serialized-property inspection remains unsupported; use a state provider for Player parity.
+
+| Operator | Required operands | Condition |
+| --- | --- | --- |
+| `gte` | `value` | Actual is greater than or equal to value. |
+| `lte` | `value` | Actual is less than or equal to value. |
+| `range` | `min`, `max` | Actual is within both inclusive bounds; min must not exceed max. |
+| `approximately` | `value` and at least one of `absolute_tolerance`, `relative_tolerance` | Absolute error is at most the larger of absolute tolerance and relative tolerance times the absolute target value. |
+
+For `approximately`, an omitted tolerance is zero. Tolerances are finite, nonnegative numbers;
+`relative_tolerance: 0.01` means one percent of the target magnitude. At target zero only absolute
+tolerance contributes. The exact rule is
+`abs(actual - value) <= max(absolute_tolerance, relative_tolerance * abs(value))`.
+An explicit zero tolerance requires exact numeric equality. Unknown fields/operators, null,
+strings, booleans and action-incompatible comparison fields are rejected.
+
+Operands are signed 64-bit JSON integers or finite binary64 JSON numbers. NaN, either infinity
+and integer tokens outside signed 64-bit range are rejected. Mixed integer/number comparison,
+subtraction and tolerance multiplication preserve exact mathematical values of these operands;
+large integers are never rounded into doubles, and intermediate overflow/underflow cannot create
+false matches. A floating JSON literal means its parsed binary64 value, not an arbitrary-precision
+decimal. New numeric comparisons promote a serialized float's actual binary32 value exactly:
+`0.1f` differs from JSON `0.1` with zero tolerance, while existing float `property.equals` keeps its
+original float-conversion behavior. Numeric predicates on boolean/string state values remain
+unmet; incompatible serialized fields and nonfinite actual field values fail explicitly.
+
+Numeric observations use the same readiness, timeout, provider identity and `stable_for_ms`
+rules as equality. A false sample resets stability, and changes between polls are not observed.
+Failure diagnostics retain the predicate and actual scalar; no reflected getter is invoked.
+
 ## Run, cancel and inspect
 
 ```sh

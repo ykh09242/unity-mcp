@@ -11,6 +11,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private PlayScenarioResetRegistry.Snapshot _resetSnapshot;
         private PlayScenarioStateRegistry.Snapshot _stateSnapshot;
         private PlayScenarioStateValue _stateExpected;
+        private PlayScenarioNumericCondition.Predicate _stateNumeric;
         private string _stateExpectedText;
         private bool _queryBudgetExceeded;
         private string _lastObservation;
@@ -68,8 +69,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (firstPoll)
             {
-                _stateExpected = PlayScenarioStateValue.FromJson(step.StateEquals);
-                _stateExpectedText = Bounded(_stateExpected.JsonText(), 2048);
+                if (step.StateCompare != null)
+                {
+                    _stateNumeric = step.StateCompare.Compile();
+                    _stateExpectedText = Bounded(step.StateCompare.Description(), 2048);
+                }
+                else
+                {
+                    _stateExpected = PlayScenarioStateValue.FromJson(step.StateEquals);
+                    _stateExpectedText = Bounded(_stateExpected.JsonText(), 2048);
+                }
                 _stateSnapshot = PlayScenarioStateRegistry.Resolve(step.StateId);
             }
             if (_stateSnapshot == null)
@@ -101,7 +110,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     }
                 );
             }
-            bool equal = actual.Matches(_stateExpected);
+            bool equal = _stateNumeric == null ? actual.Matches(_stateExpected) : _stateNumeric.Matches(actual);
             string actualText = actual.JsonText();
             string observation = Bounded("State " + step.StateId + ": " + actualText + "; expected: " + expected + ".", 2048);
             return new PlayScenarioObservation(
@@ -124,6 +133,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             _stateSnapshot = null;
             _stateExpected = default;
+            _stateNumeric = null;
             _stateExpectedText = null;
         }
 

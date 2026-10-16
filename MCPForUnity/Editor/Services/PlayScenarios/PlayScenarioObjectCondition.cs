@@ -63,6 +63,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 JToken expected = step.Property.Equals;
                 if (string.IsNullOrWhiteSpace(path) || path.Length > 256 || path.Any(char.IsControl))
                     throw new ArgumentException("property.path must be a bounded exact serialized property path.");
+                if (step.Property.Compare != null)
+                {
+                    if (expected != null)
+                        throw new ArgumentException("Exactly one property.equals or property.compare is required.");
+                    step.Property.Compare.Compile();
+                    return componentType;
+                }
                 if (
                     expected == null
                     || (
@@ -253,18 +260,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (step.Property == null)
                 return new PlayScenarioObservation(true, counts + " Required component exists.");
             bool equal = ReadScalar(component, step.Property, out JToken actual);
-            string propertyDetail =
-                " Serialized property "
-                + step.Property.Path
-                + ": "
-                + actual.ToString(Formatting.None)
-                + "; expected: "
-                + step.Property.Equals.ToString(Formatting.None)
-                + ".";
+            string expectation = step.Property.Compare == null ? step.Property.Equals.ToString(Formatting.None) : step.Property.Compare.Description();
+            string propertyDetail = " Serialized property " + step.Property.Path + ": " + actual.ToString(Formatting.None) + "; expected: " + expectation + ".";
             string detail = PlayScenarioEngine.Bounded(counts + propertyDetail, 2048);
             return equal
                 ? new PlayScenarioObservation(true, detail)
-                : Pending(step, detail, "property_mismatch", step.Property.Equals.ToString(Formatting.None), actual.ToString(Formatting.None));
+                : Pending(step, detail, "property_mismatch", expectation, actual.ToString(Formatting.None));
         }
 
         private static PlayScenarioObservation Pending(PlayScenarioStep step, string detail, string code, string expected, string actual) =>
@@ -290,6 +291,23 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (property == null)
                 throw new ArgumentException("Serialized property was not found: " + condition.Path + ". Reflection getters are unsupported.");
             JToken expected = condition.Equals;
+            if (condition.Compare != null)
+            {
+                PlayScenarioStateValue scalar;
+                switch (property.propertyType)
+                {
+                    case SerializedPropertyType.Integer:
+                        scalar = PlayScenarioStateValue.FromInteger(property.longValue);
+                        break;
+                    case SerializedPropertyType.Float:
+                        scalar = PlayScenarioStateValue.FromNumber(property.type == "float" ? (double)property.floatValue : property.doubleValue);
+                        break;
+                    default:
+                        throw new ArgumentException("Numeric comparison requires an integer or float serialized property; reflected getters are unsupported.");
+                }
+                actual = scalar.Kind == PlayScenarioStateValueKind.Integer ? new JValue(scalar.IntegerValue) : new JValue(scalar.NumberValue);
+                return condition.Compare.Compile().Matches(scalar);
+            }
             switch (property.propertyType)
             {
                 case SerializedPropertyType.Boolean:
