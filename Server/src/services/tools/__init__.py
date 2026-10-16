@@ -245,6 +245,7 @@ async def sync_tool_visibility_from_unity(
                         current,
                         prepared,
                         registry._sessions,
+                        known=extended or known_empty,
                         generation=current.session_id,
                     )
                     scope = dict(
@@ -255,22 +256,41 @@ async def sync_tool_visibility_from_unity(
                         + int(not current.tools_known or current.tools != prepared),
                     )
 
-                if extended or not tools:
-                    await registry.register_tools_for_session(
-                        session_id,
-                        enabled_models,
-                        _publish=publish,
-                    )
-                else:
-                    plan = PluginHub._prepare_server_tool_visibility(enabled_tools)
-                    PluginHub._commit_server_tool_visibility(plan)
-                    outcome = {"changed": plan is not None}
-                    scope = dict(
-                        user_id=session.user_id,
-                        project_hash=session.project_hash,
-                        session_id=session.session_id,
-                        catalog_revision=session.tools_revision,
-                    )
+                if not extended and tools:
+                    # Old-format states carry toggles, not replacement schemas.
+                    # Preserve known/omitted descriptors and admit new names
+                    # only when the server already knows the Unity built-in.
+                    unity_builtins = {
+                        entry["unity_target"]
+                        for entry in get_registered_tools()
+                        if entry.get("unity_target")
+                    }
+                    toggled = dict(session.tools)
+                    for raw in tools:
+                        name = raw["name"]
+                        if not raw.get("enabled", True):
+                            toggled.pop(name, None)
+                        elif name not in toggled and name in unity_builtins:
+                            toggled[name] = ToolDefinitionModel(name=name)
+                    enabled_models = list(toggled.values())
+                    if (
+                        len(enabled_models) > 256
+                        or len(
+                            json.dumps(
+                                [tool.model_dump() for tool in enabled_models],
+                                ensure_ascii=False,
+                                allow_nan=False,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        )
+                        > 512 * 1024
+                    ):
+                        raise ValueError("Unity catalog exceeds supported bounds")
+                await registry.register_tools_for_session(
+                    session_id,
+                    enabled_models,
+                    _publish=publish,
+                )
             if notify:
                 await PluginHub._notify_committed_catalog(outcome, scope)
         else:
