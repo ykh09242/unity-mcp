@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Tools.Fixtures;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -517,7 +518,7 @@ namespace MCPForUnityTests.Editor.Tools
             AssetDatabase.CreateAsset(original, _path);
             AssetDatabase.SaveAssets();
             string guid = AssetDatabase.AssetPathToGUID(_path);
-            var reference = referenceKind == "guid" ? new JObject { ["guid"] = guid } : new JObject { ["instanceID"] = original.GetInstanceID() };
+            var reference = referenceKind == "guid" ? new JObject { ["guid"] = guid } : new JObject { ["instanceID"] = original.GetInstanceIDCompat() };
             var request = ReplaceTypeRequest();
             request["typeName"] = typeof(ScriptableObjectContractDefinition).FullName;
             request["patches"] = new JArray(

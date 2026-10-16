@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Xml;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -767,7 +768,7 @@ namespace MCPForUnityTests.Editor.Tools
             new JObject
             {
                 ["action"] = "modify_visual_element",
-                ["target"] = go.GetInstanceID().ToString(),
+                ["target"] = go.GetInstanceIDCompat().ToString(),
                 ["element_name"] = "shared",
                 ["text"] = "changed",
                 ["add_classes"] = new JArray("changed"),
