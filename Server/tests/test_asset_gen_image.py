@@ -4,6 +4,11 @@ Pass-through tool: NO API keys, NO file bytes. Unity transport fully mocked.
 """
 
 import asyncio
+import os
+from pathlib import Path
+import subprocess
+import sys
+import textwrap
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from click.testing import CliRunner
@@ -96,12 +101,50 @@ class TestGenerateImageRouting:
         assert _sent_command(sent) == COMMAND
         assert _sent_params(sent)["action"] == "generate"
 
-    def test_remove_background_routes(self):
-        _, sent = _call_tool(action="remove_background", image_path="Assets/x.png")
-        params = _sent_params(sent)
-        assert params["action"] == "remove_background"
-        assert params["imagePath"] == "Assets/x.png"
-        assert "image_path" not in params
+    @pytest.mark.parametrize("action", ["remove_background", "REMOVE_BACKGROUND"])
+    def test_remove_background_rejected_before_resolution_transport_or_files(
+        self, action, tmp_path
+    ):
+        source = tmp_path / "original.png"
+        original = b"unchanged source fixture"
+        source.write_bytes(original)
+        output = tmp_path / "must-not-create"
+        with (
+            patch.object(
+                generate_image_module,
+                "get_unity_instance_from_context",
+                new=AsyncMock(
+                    side_effect=AssertionError("unsupported requests must not resolve Unity")
+                ),
+            ) as resolve,
+            patch.object(
+                generate_image_module,
+                "send_with_unity_instance",
+                new=AsyncMock(side_effect=AssertionError("unsupported requests must not dispatch")),
+            ) as send,
+        ):
+            response = asyncio.run(
+                generate_image(
+                    MagicMock(),
+                    action=action,
+                    provider="fal",
+                    image_path=str(source),
+                    output_folder=str(output),
+                )
+            )
+
+        assert response["success"] is False
+        assert "unsupported" in response["error"].lower()
+        assert response["data"] == {
+            "reason": "unsupported_capability",
+            "capability": "remove_background",
+            "supported": False,
+        }
+        assert "job_id" not in response.get("data", {})
+        resolve.assert_not_awaited()
+        send.assert_not_awaited()
+        assert source.read_bytes() == original
+        assert not output.exists()
 
     def test_status_and_job_id_mapping(self):
         _, sent = _call_tool(action="status", job_id="j5")
@@ -169,6 +212,65 @@ class TestGenerateImageRouting:
                 result = asyncio.run(generate_image(ctx, action="status", job_id="j"))
         assert result["success"] is False
         assert "42" in result["message"]
+
+
+def test_sdk_discovery_excludes_background_removal_and_validation_prevents_dispatch():
+    code = textwrap.dedent("""
+        import asyncio, importlib
+        from fastmcp import Client, FastMCP
+        from services.registry import get_registered_tools
+        module = importlib.import_module("services.tools.generate_image")
+        sent = []
+        resolutions = []
+        async def instance(ctx):
+            resolutions.append(True)
+            return None
+        async def send(fn, instance, command, params):
+            sent.append((command, params))
+            return {"success": True, "data": {"job_id": "fixture-image"}}
+        module.get_unity_instance_from_context = instance
+        module.send_with_unity_instance = send
+        server = FastMCP("image-capabilities")
+        metadata = next(tool for tool in get_registered_tools() if tool["name"] == "generate_image")
+        server.tool(name="generate_image", description=metadata["description"])(module.generate_image)
+        async def main():
+            for protocol in ("2026-07-28", "legacy"):
+                async with Client(server, mode=protocol) as client:
+                    tool = next(tool for tool in await client.list_tools() if tool.name == "generate_image")
+                    assert set(tool.input_schema["properties"]["action"]["enum"]) == {
+                        "generate", "status", "cancel", "list_providers", "list_models", "refresh_models"
+                    }
+                    assert "unsupported" in tool.description.lower()
+                    before = len(sent), len(resolutions)
+                    rejected = await client.call_tool("generate_image", {
+                        "action": "remove_background", "image_path": "Assets/original.png"
+                    }, raise_on_error=False)
+                    assert rejected.is_error
+                    assert (len(sent), len(resolutions)) == before
+                    result = await client.call_tool("generate_image", {
+                        "action": "generate", "prompt": "fixture", "transparent": True
+                    })
+                    assert result.structured_content == {"success": True, "data": {"job_id": "fixture-image"}}
+                    assert sent[-1] == ("generate_image", {
+                        "action": "generate", "prompt": "fixture", "transparent": True
+                    })
+            assert len(sent) == len(resolutions) == 2
+            print("image capability discovery and SDK rejection passed")
+        asyncio.run(main())
+    """)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={
+            **os.environ,
+            "UNITY_MCP_DISABLE_TELEMETRY": "true",
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "image capability discovery and SDK rejection passed" in result.stdout
 
 
 class TestGenerateImageCLI:

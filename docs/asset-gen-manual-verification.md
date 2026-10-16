@@ -44,6 +44,25 @@ never deletes generated assets or output files.
 - [ ] Confirm a PNG sprite under `Assets/Generated/Images/` with **alpha** preserved
       and **correct sRGB** color.
 
+## Image background removal availability
+
+Background removal is unsupported in this version. Image provider capabilities
+advertise `text` and `image` generation modes; `remove_background` is excluded from
+the supported action enum and native supported-action list.
+
+Existing direct Python/native calls using `action=remove_background` receive an
+explicit failure with `data.reason=unsupported_capability`,
+`data.capability=remove_background` and `data.supported=false`. Python rejects the
+request before Unity instance resolution or transport dispatch; native rejection
+precedes provider lookup, job creation and output writes. Source images are not
+modified. MCP SDK clients reject the removed action during enum validation before
+dispatch; that validation error is separate from the direct-call error envelope.
+
+Use `generate` for supported text-to-image or image-to-image work. The
+`transparent` option only controls Unity's `TextureImporter.alphaIsTransparency`
+flag. It preserves available alpha during import and does not generate or remove
+a background. It does not enable the unsupported operation.
+
 ## OpenRouter (2D image)
 
 - [ ] Enter the OpenRouter key.

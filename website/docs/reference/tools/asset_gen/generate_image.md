@@ -16,18 +16,19 @@ Generate 2D images with AI providers (fal.ai, OpenRouter) and import them as tex
 
 ACTIONS:
 - generate: Submit an image job (text->image or image->image). Returns { job_id }; poll with the status action. Params: provider, mode (text|image), prompt, image_path|image_url, model, transparent, width, height, name, output_folder.
-- remove_background: Unsupported in this version; returns an error instead of a job_id.
 - status: Poll an async job by job_id -> { state, progress, assetPath?, error? }.
 - cancel: Cancel an in-flight job by job_id.
 - list_providers: List configured image providers and capabilities (no key values).
 - list_models: Search/paginate live fal and OpenRouter models, modes and freshness.
 - refresh_models: Force discovery. Repeat list_models while catalogs[].refreshing is true.
 
+Background removal is unsupported. Legacy direct remove_background requests return an unsupported_capability error without submitting a job. The transparent option only sets the Unity texture import flag; it does not remove backgrounds.
+
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['generate', 'remove_background', 'status', 'cancel', 'list_providers', 'list_models', 'refresh_models']` | yes | Action to perform. |
+| `action` | `Literal['generate', 'status', 'cancel', 'list_providers', 'list_models', 'refresh_models']` | yes | Action to perform. |
 | `provider` | `str \| None` | — | Provider id (fal, openrouter). |
 | `mode` | `str \| None` | — | Generation mode: text or image. |
 | `prompt` | `str \| None` | — | Text prompt for text->image. |
