@@ -220,6 +220,152 @@ def test_session_build_change_partitions_counts_without_intermittency(tmp_path):
     assert sum(group.counts["failed"] for group in result.groups) == 1
 
 
+def test_session_environment_survives_report_eviction(tmp_path):
+    from cli.utils.play_scenario_player_session import _append_record, _compact_reproduction
+
+    directory = _session(tmp_path / "session", ("passed", "passed"))
+    path = directory / "outcomes.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    environments = []
+    for row, operating_system, backend in zip(rows, ("Windows 11", "Linux"), ("mono", "il2cpp")):
+        environment = dict(
+            schema_version=1,
+            operating_system=operating_system,
+            platform="WindowsPlayer" if backend == "mono" else "LinuxPlayer",
+            architecture="x64",
+            scripting_backend=backend,
+            build_mode="release",
+            runtime_version="runtime-1",
+        )
+        environments.append(environment)
+        child = directory / "runs" / row["job_id"]
+        child.mkdir(parents=True)
+        reproduction = dict(environment=environment, unity_version="6000.0", package_version="1.0")
+        _write(child / "run.json", dict(reproduction=reproduction, full_details="retained report"))
+        row.update(_compact_reproduction(reproduction))
+        assert json.loads((child / "run.json").read_text())["reproduction"] == reproduction
+        (child / "run.json").unlink()
+        child.rmdir()
+    with path.open("wb") as stream:
+        for row in rows:
+            _append_record(stream, row)
+    result = analyze_history((directory / "session.json",))
+    assert result.status == "analyzed", result.unsupported_inputs
+    assert len(result.groups) == 2
+    assert [group.compatibility["environment"] for group in result.groups] == environments
+    assert all(group.compatible_history for group in result.groups)
+    assert all(group.counts["passed"] == 1 for group in result.groups)
+
+
+@pytest.mark.parametrize("damage", ["oversized", "unicode", "nested", "unknown_fields"])
+def test_optional_session_environment_cannot_destroy_later_outcomes(tmp_path, damage):
+    from cli.utils.play_scenario_player_session import (
+        _append_record,
+        _bound_record_environment,
+        _compact_reproduction,
+    )
+
+    directory = _session(tmp_path / "session", ("passed", "passed"))
+    path = directory / "outcomes.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    environment = dict(
+        schema_version=1,
+        operating_system="Windows",
+        platform="WindowsPlayer",
+        architecture="x64",
+        scripting_backend="mono",
+        build_mode="release",
+        runtime_version="v1",
+    )
+    if damage == "oversized":
+        environment["operating_system"] = "x" * 10000
+    elif damage == "unicode":
+        environment["operating_system"] = "한" * 256
+        rows[0]["client_error"] = "x" * 2048
+    elif damage == "nested":
+        environment["operating_system"] = {"path": "private"}
+    else:
+        environment["private_path"] = "x" * 10000
+    reproduction = dict(environment=environment, unity_version="6000.0", package_version="1.0")
+    rows[0].update(_compact_reproduction(reproduction))
+    _bound_record_environment(rows[0])
+    if damage in {"oversized", "nested", "unicode"}:
+        assert rows[0].get("environment") is None
+    else:
+        assert rows[0]["environment"]["operating_system"] == "Windows"
+    with path.open("wb") as stream:
+        for row in rows:
+            _append_record(stream, row)
+    assert all(len(line) <= 4096 for line in path.read_bytes().splitlines(keepends=True))
+    assert b"private_path" not in path.read_bytes()
+    result = analyze_history((directory / "session.json",))
+    assert result.status == "analyzed", result.unsupported_inputs
+    assert sum(group.counts["passed"] for group in result.groups) == 2
+    legacy = next(group for group in result.groups if group.outcomes[-1].sequence == 2)
+    assert legacy.compatibility["environment"] is None
+    assert not legacy.compatible_history
+
+
+def test_near_cap_legacy_outcome_keeps_following_record_during_recovery(tmp_path):
+    from cli.utils.play_scenario_player_session import _append_record
+    from cli.utils.play_scenario_session_recovery import _Outcome, recover_player_session
+
+    directory = _session(tmp_path / "session", ("passed", "passed"))
+    path = directory / "outcomes.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    # Include the old model's default fields, then fill a valid bounded failure preview
+    # so the pre-change normalized row is exactly the accepted 4096-byte boundary.
+    row = _Outcome.model_validate(rows[0]).model_dump(mode="json")
+    for key in ("environment", "unity_version", "package_version"):
+        row.pop(key)
+    row["artifact_directory"] = None
+    row["client_error"] = "x" * 2048
+    row["build_source_revision"] = "x" * 128
+    row["payload_verification"] = "x" * 128
+    row["failure"] = dict(code="X" * 128, stage="main", message="", iteration=1, step_index=0)
+    encoded_size = len(json.dumps(row, ensure_ascii=True, separators=(",", ":")).encode()) + 1
+    assert 0 <= 4096 - encoded_size <= 512
+    row["failure"]["message"] = "x" * (4096 - encoded_size)
+    rows[0] = row
+    with path.open("wb") as stream:
+        for entry in rows:
+            _append_record(stream, entry)
+    assert len(path.read_bytes().splitlines(keepends=True)[0]) == 4096
+    result = analyze_history((directory / "session.json",))
+    assert result.status == "analyzed", result.unsupported_inputs
+    assert sum(group.counts["passed"] for group in result.groups) == 2
+    summary, recovered, _code = recover_player_session(directory, tmp_path / "recovered")
+    assert summary["outcomes_recorded"] == 2
+    assert len((recovered / "outcomes.jsonl").read_bytes().splitlines()) == 2
+    assert all(
+        len(line) <= 4096
+        for line in (recovered / "outcomes.jsonl").read_bytes().splitlines(keepends=True)
+    )
+
+
+@pytest.mark.parametrize(
+    "environment", [{"schema_version": 99}, {"schema_version": 1, "platform": []}]
+)
+def test_malformed_optional_environment_on_read_keeps_following_outcome(tmp_path, environment):
+    from cli.utils.play_scenario_player_session import _append_record
+    from cli.utils.play_scenario_session_recovery import recover_player_session
+
+    directory = _session(tmp_path / "session", ("passed", "passed"))
+    path = directory / "outcomes.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0].update(environment=environment, unity_version={"untrusted": "value"})
+    with path.open("wb") as stream:
+        for row in rows:
+            _append_record(stream, row)
+    result = analyze_history((directory / "session.json",))
+    assert result.status == "analyzed", result.unsupported_inputs
+    assert result.groups[0].counts["passed"] == 2
+    assert result.groups[0].compatibility["environment"] is None
+    summary, recovered, _code = recover_player_session(directory, tmp_path / "recovered")
+    assert summary["outcomes_recorded"] == 2
+    assert len((recovered / "outcomes.jsonl").read_bytes().splitlines()) == 2
+
+
 @pytest.mark.parametrize(
     "damage", ["journal_hash", "torn", "duplicate_key", "infinity", "forced_exit", "client_counts"]
 )

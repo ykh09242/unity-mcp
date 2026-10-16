@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 
 from models.play_scenarios import JobId, PlayScenarioCommand
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from cli.utils.play_scenario_soak_environment import ENVIRONMENT_FIELDS, RecordedEnvironment
 from cli.utils.play_scenario_player import PlayerLaunchError, PlayerRunOptions, run_player
 from cli.utils.play_scenario_player_payload import PlayerPayloadError
 from cli.utils.play_scenario_iterations import (
@@ -226,6 +227,39 @@ def _compact_failure_text(value: str) -> str:
         else:
             upper = middle - 1
     return value[:lower]
+
+
+def _compact_reproduction(reproduction: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """Retain only already-recorded environment facts; malformed optional facts stay unknown."""
+    snapshot = None
+    raw = reproduction.get("environment")
+    if isinstance(raw, dict):
+        try:
+            snapshot = RecordedEnvironment.model_validate(
+                {key: raw.get(key) for key in ("schema_version", *ENVIRONMENT_FIELDS)}
+            ).model_dump(mode="json")
+        except ValueError:
+            # Environment evidence is optional and must not erase a valid completion row.
+            snapshot = None
+    result: dict[str, JsonValue] = {"environment": snapshot}
+    for key in ("unity_version", "package_version"):
+        value = reproduction.get(key)
+        result[key] = (
+            value
+            if isinstance(value, str)
+            and 0 < len(json.dumps(value, ensure_ascii=True)) <= 128
+            and not any(ord(character) < 32 for character in value)
+            else None
+        )
+    return result
+
+
+def _bound_record_environment(record: dict[str, JsonValue]) -> None:
+    """Drop optional attribution if its exact escaped bytes exhaust the fixed journal row."""
+    encoded = json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    if len(encoded) + 1 > OUTCOME_LIMIT:
+        for key in ("environment", "unity_version", "package_version"):
+            record.pop(key, None)
 
 
 def _compact_failure(report: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
@@ -526,6 +560,7 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                             else "legacy_steps"
                         )
                         record["failure"] = _compact_failure(outcome.report)
+                        record.update(_compact_reproduction(outcome.report["reproduction"]))
                         if outcome.report.get("report_error"):
                             summary["session_error"] = (
                                 summary["session_error"] or "session_child_artifact_failed"
@@ -603,6 +638,7 @@ def run_player_session(options: PlayerSessionOptions) -> tuple[dict[str, JsonVal
                     ):
                         summary["status"] = "timed_out"
                         stopped = True
+                    _bound_record_environment(record)
                     failed = record["exit_code"] != 0
                     if failed:
                         exit_code = 130 if record["exit_code"] == 130 else max(1, exit_code)
