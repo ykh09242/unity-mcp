@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 
@@ -23,6 +27,37 @@ namespace MCPForUnity.Editor.Tools
         private static readonly Dictionary<Type, MethodInfo[]> ExtensionMethodMetadataCache = new();
         private static Dictionary<string, Type[]> _extensionCacheGeneration;
         private static bool _hasDynamicExtensionProviders;
+        private static Assembly[] _catalogAssemblies;
+        private static string _catalogGeneration = Guid.NewGuid().ToString("N");
+        private static readonly byte[] CursorKey = NewCursorKey();
+        private static readonly List<JObject> EnumerationWarnings = new();
+        private static int _enumerationWarningCount;
+        private static Func<Assembly[]> _assemblyEnumerator = UnityAssembliesCompat.GetLoadedAssemblies;
+        private static Func<DateTimeOffset> _searchClock = () => DateTimeOffset.UtcNow;
+        private static int _pageByteLimit = 256 * 1024;
+        private static int _publicTypeLimit = 100000;
+        private static int _searchMatchLimit = 50000;
+        private static double _workBudgetSeconds = 2;
+
+        private sealed class SearchFailure : Exception
+        {
+            public SearchFailure(string code)
+                : base(code) { }
+        }
+
+        private static byte[] NewCursorKey()
+        {
+            var key = new byte[32];
+            using var random = RandomNumberGenerator.Create();
+            random.GetBytes(key);
+            return key;
+        }
+
+        private static void CheckSearchBudget(Stopwatch budget)
+        {
+            if (budget != null && budget.Elapsed.TotalSeconds > _workBudgetSeconds)
+                throw new SearchFailure("search_budget_exceeded");
+        }
 
         private static readonly string[] NamespacePrefixes =
         {
@@ -75,6 +110,10 @@ namespace MCPForUnity.Editor.Tools
             lock (CacheLock)
             {
                 _assemblyTypeCache = null;
+                _catalogAssemblies = null;
+                _catalogGeneration = Guid.NewGuid().ToString("N");
+                EnumerationWarnings.Clear();
+                _enumerationWarningCount = 0;
                 _extensionCacheGeneration = null;
                 _hasDynamicExtensionProviders = false;
                 ExtensionMethodCache.Clear();
@@ -82,25 +121,70 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static Dictionary<string, Type[]> GetAssemblyTypeCache()
+        private static bool SameAssemblies(Assembly[] left, Assembly[] right) =>
+            left != null && left.Length == right.Length && left.All(a => right.Any(b => ReferenceEquals(a, b)));
+
+        private static void WarnEnumeration(Assembly assembly, string reason)
+        {
+            _enumerationWarningCount++;
+            if (EnumerationWarnings.Count < 16)
+                EnumerationWarnings.Add(new JObject { ["assembly"] = assembly.FullName, ["reason"] = reason });
+        }
+
+        private static Dictionary<string, Type[]> GetAssemblyTypeCache(bool detectChanges = false, Stopwatch budget = null)
         {
             lock (CacheLock)
             {
-                if (_assemblyTypeCache != null)
+                if (_assemblyTypeCache != null && !detectChanges)
                     return _assemblyTypeCache;
-
-                _assemblyTypeCache = new Dictionary<string, Type[]>();
-                foreach (var asm in UnityAssembliesCompat.GetLoadedAssemblies())
+                var loaded = _assemblyEnumerator();
+                if (_assemblyTypeCache != null && SameAssemblies(_catalogAssemblies, loaded))
+                    return _assemblyTypeCache;
+                InvalidateCache();
+                var cache = new Dictionary<string, Type[]>();
+                int publicCount = 0;
+                foreach (var asm in loaded)
                 {
+                    CheckSearchBudget(budget);
+                    if (asm.IsDynamic)
+                    {
+                        WarnEnumeration(asm, "dynamic_builder_unsupported");
+                        continue;
+                    }
+                    Type[] types;
                     try
                     {
-                        _assemblyTypeCache[asm.FullName] = asm.GetExportedTypes();
+                        types = asm.GetExportedTypes();
                     }
-                    catch
+                    catch (ReflectionTypeLoadException error)
                     {
-                        // Some assemblies throw on GetExportedTypes
+                        types = error.Types.Where(t => t != null && t.IsVisible).ToArray();
+                        WarnEnumeration(asm, "partial_type_load");
                     }
+                    catch (Exception)
+                    {
+                        WarnEnumeration(asm, "exported_types_unavailable");
+                        continue;
+                    }
+                    publicCount += types.Length;
+                    if (publicCount > _publicTypeLimit)
+                        throw new SearchFailure("search_limit_exceeded");
+                    string key = asm.FullName + "|" + asm.ManifestModule.ModuleVersionId.ToString("N");
+                    if (cache.ContainsKey(key))
+                    {
+                        WarnEnumeration(asm, "duplicate_assembly_identity");
+                        continue;
+                    }
+                    cache[key] = types;
                 }
+                CheckSearchBudget(budget);
+                if (!SameAssemblies(loaded, _assemblyEnumerator()))
+                {
+                    InvalidateCache();
+                    throw new SearchFailure("catalog_changed");
+                }
+                _catalogAssemblies = loaded;
+                _assemblyTypeCache = cache;
                 return _assemblyTypeCache;
             }
         }
@@ -123,6 +207,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                if (action != "search" && new[] { "page_size", "cursor", "assembly", "type_kind" }.Any(p.Has))
+                    return new ErrorResponse("search_parameters_require_search");
                 switch (action)
                 {
                     case "get_type":
@@ -134,6 +220,10 @@ namespace MCPForUnity.Editor.Tools
                     default:
                         return new ErrorResponse($"Unknown action: '{action}'. Supported actions: get_type, get_member, search.");
                 }
+            }
+            catch (SearchFailure ex)
+            {
+                return new ErrorResponse(ex.Message, new { hint = "Restart search without a cursor; narrow query or filters for work limits." });
             }
             catch (Exception ex)
             {
@@ -432,81 +522,250 @@ namespace MCPForUnity.Editor.Tools
         }
 
         // === search ===
+        private static string SearchString(ToolParams p, string name, bool required = false)
+        {
+            var token = p.GetRaw(name);
+            if (token == null && !required)
+                return null;
+            if (token == null || token.Type != JTokenType.String || string.IsNullOrWhiteSpace((string)token))
+                throw new SearchFailure("invalid_" + name);
+            return (string)token;
+        }
+
+        private static string TypeKind(Type type)
+        {
+            if (type.IsEnum)
+                return "enum";
+            if (type.IsInterface)
+                return "interface";
+            if (type.IsValueType)
+                return "struct";
+            if (typeof(Delegate).IsAssignableFrom(type))
+                return "delegate";
+            return "class";
+        }
+
+        private static string Encode(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        private static byte[] Decode(string value) =>
+            Convert.FromBase64String(value.Replace('-', '+').Replace('_', '/') + new string('=', (4 - value.Length % 4) % 4));
+
+        private static byte[] Sign(byte[] bytes)
+        {
+            using var hmac = new HMACSHA256(CursorKey);
+            return hmac.ComputeHash(bytes);
+        }
+
+        private static string SearchFingerprint(string query, string scope, string assembly, string kind, int size)
+        {
+            var canonical = new JArray(query.ToLowerInvariant(), scope, assembly, kind, size).ToString(Formatting.None);
+            using var hash = SHA256.Create();
+            return Encode(hash.ComputeHash(Encoding.UTF8.GetBytes(canonical)));
+        }
+
+        private static string MakeCursor(string generation, string fingerprint, int offset, long issued)
+        {
+            var payload = new JObject
+            {
+                ["v"] = 1,
+                ["g"] = generation,
+                ["q"] = fingerprint,
+                ["o"] = offset,
+                ["i"] = issued,
+            };
+            byte[] bytes = Encoding.UTF8.GetBytes(payload.ToString(Formatting.None));
+            return Encode(bytes) + "." + Encode(Sign(bytes));
+        }
+
+        private static (int offset, long issued) ReadCursor(string cursor, string generation, string fingerprint, long now)
+        {
+            try
+            {
+                var pieces = cursor.Split('.');
+                if (pieces.Length != 2)
+                    throw new SearchFailure("invalid_cursor");
+                byte[] bytes = Decode(pieces[0]);
+                var payload = JObject.Parse(
+                    new UTF8Encoding(false, true).GetString(bytes),
+                    new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error }
+                );
+                if (
+                    payload.Count != 5
+                    || payload["v"]?.Type != JTokenType.Integer
+                    || (int)payload["v"] != 1
+                    || payload["g"]?.Type != JTokenType.String
+                    || payload["q"]?.Type != JTokenType.String
+                    || payload["o"]?.Type != JTokenType.Integer
+                    || payload["i"]?.Type != JTokenType.Integer
+                )
+                    throw new SearchFailure("invalid_cursor");
+                if ((string)payload["g"] != generation)
+                    throw new SearchFailure("stale_cursor");
+                byte[] supplied = Decode(pieces[1]);
+                byte[] expected = Sign(bytes);
+                int difference = supplied.Length ^ expected.Length;
+                for (int i = 0; i < expected.Length; i++)
+                    difference |= expected[i] ^ (i < supplied.Length ? supplied[i] : 0);
+                if (difference != 0)
+                    throw new SearchFailure("invalid_cursor");
+                if ((string)payload["q"] != fingerprint)
+                    throw new SearchFailure("cursor_mismatch");
+                long issued = (long)payload["i"];
+                if (issued > now + 60)
+                    throw new SearchFailure("invalid_cursor");
+                if (now - issued >= 300)
+                    throw new SearchFailure("cursor_expired");
+                int offset = checked((int)(long)payload["o"]);
+                if (offset <= 0)
+                    throw new SearchFailure("invalid_cursor");
+                return (offset, issued);
+            }
+            catch (Exception error) when (error is FormatException || error is JsonException || error is OverflowException || error is ArgumentException)
+            {
+                throw new SearchFailure("invalid_cursor");
+            }
+        }
+
         private static object SearchTypes(ToolParams p)
         {
-            var queryResult = p.GetRequired("query", "'query' parameter is required for search.");
-            if (!queryResult.IsSuccess)
-                return new ErrorResponse(queryResult.ErrorMessage);
-
-            string query = queryResult.Value;
-            string scope = p.Get("scope", "unity").ToLowerInvariant();
-
-            if (scope != "unity" && scope != "packages" && scope != "project" && scope != "all")
+            string query = SearchString(p, "query", true);
+            string scope = (SearchString(p, "scope") ?? "unity").ToLowerInvariant();
+            string assembly = SearchString(p, "assembly");
+            string kind = SearchString(p, "type_kind");
+            string cursor = SearchString(p, "cursor");
+            if (query.Length > 256 || assembly?.Length > 256)
+                throw new SearchFailure("search_input_limit_exceeded");
+            if (cursor != null && (cursor.Length > 1024 || cursor.Any(c => c > 127)))
+                throw new SearchFailure("invalid_cursor");
+            if (!new[] { "unity", "packages", "project", "all" }.Contains(scope))
+                throw new SearchFailure("invalid_scope");
+            if (kind != null && !new[] { "class", "interface", "struct", "enum", "delegate" }.Contains(kind))
+                throw new SearchFailure("invalid_type_kind");
+            int size = 25;
+            var sizeToken = p.GetRaw("page_size");
+            if (sizeToken != null)
             {
-                return new ErrorResponse($"Invalid scope: '{scope}'. Supported: unity, packages, project, all.");
+                if (sizeToken.Type != JTokenType.Integer || !int.TryParse(sizeToken.ToString(), out size) || size < 1 || size > 100)
+                    throw new SearchFailure("invalid_page_size");
             }
-
-            var cache = GetAssemblyTypeCache();
+            var budget = Stopwatch.StartNew();
+            var cache = GetAssemblyTypeCache(true, budget);
+            string generation = _catalogGeneration;
+            string fingerprint = SearchFingerprint(query, scope, assembly, kind, size);
+            long now = _searchClock().ToUnixTimeSeconds();
+            var position = cursor == null ? (offset: 0, issued: now) : ReadCursor(cursor, generation, fingerprint, now);
             string queryLower = query.ToLowerInvariant();
-
-            var candidates = new List<(Type type, int rank)>();
-
-            foreach (var kvp in cache)
+            var candidates = new List<(Type type, int rank, string identity, string module)>();
+            int scanned = 0;
+            foreach (var entry in cache)
             {
-                var asm = kvp.Value.Length > 0 ? kvp.Value[0].Assembly : null;
-                if (asm == null)
-                    continue;
-
-                string asmName = asm.GetName().Name;
-                if (!MatchesScope(asmName, scope))
-                    continue;
-
-                foreach (var t in kvp.Value)
+                CheckSearchBudget(budget);
+                foreach (var type in entry.Value)
                 {
-                    string name = t.Name;
-                    if (name == null)
+                    if (++scanned % 128 == 0)
+                        CheckSearchBudget(budget);
+                    var asm = type.Assembly;
+                    string shortAssembly = asm.GetName().Name;
+                    if (
+                        !MatchesScope(shortAssembly, scope)
+                        || (
+                            assembly != null
+                            && !string.Equals(assembly, shortAssembly, StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(assembly, asm.FullName, StringComparison.OrdinalIgnoreCase)
+                        )
+                        || (kind != null && TypeKind(type) != kind)
+                    )
                         continue;
-
-                    string nameLower = name.ToLowerInvariant();
-                    string fullNameLower = t.FullName?.ToLowerInvariant() ?? nameLower;
-
-                    if (nameLower == queryLower || fullNameLower == queryLower)
-                        candidates.Add((t, 0)); // Exact match
-                    else if (nameLower.StartsWith(queryLower))
-                        candidates.Add((t, 1)); // Starts with
-                    else if (nameLower.Contains(queryLower) || fullNameLower.Contains(queryLower))
-                        candidates.Add((t, 2)); // Contains
+                    string name = type.Name.ToLowerInvariant();
+                    string fullName = type.FullName?.ToLowerInvariant() ?? name;
+                    int rank =
+                        name == queryLower || fullName == queryLower ? 0
+                        : name.StartsWith(queryLower, StringComparison.Ordinal) ? 1
+                        : name.Contains(queryLower) || fullName.Contains(queryLower) ? 2
+                        : -1;
+                    if (rank < 0)
+                        continue;
+                    candidates.Add((type, rank, asm.FullName, type.Module.ModuleVersionId.ToString("N")));
+                    if (candidates.Count > _searchMatchLimit)
+                        throw new SearchFailure("search_limit_exceeded");
                 }
             }
-
-            var results = candidates
+            CheckSearchBudget(budget);
+            var ordered = candidates
                 .OrderBy(c => c.rank)
-                .ThenBy(c => c.type.FullName)
-                .Take(25)
-                .Select(c => new
-                {
-                    name = c.type.Name,
-                    full_name = c.type.FullName,
-                    @namespace = c.type.Namespace,
-                    assembly = c.type.Assembly.GetName().Name,
-                    is_class = c.type.IsClass,
-                    is_enum = c.type.IsEnum,
-                    is_interface = c.type.IsInterface,
-                    is_struct = c.type.IsValueType && !c.type.IsEnum,
-                })
+                .ThenBy(c => c.type.FullName, StringComparer.Ordinal)
+                .ThenBy(c => c.identity, StringComparer.Ordinal)
+                .ThenBy(c => c.module, StringComparer.Ordinal)
                 .ToArray();
+            CheckSearchBudget(budget);
+            if (position.offset > 0 && position.offset >= ordered.Length)
+                throw new SearchFailure("invalid_cursor");
+            var rows = new JArray();
+            var data = new JObject
+            {
+                ["query"] = query,
+                ["scope"] = scope,
+                ["count"] = 0,
+                ["results"] = rows,
+                ["total_count"] = ordered.Length,
+                ["page_size"] = size,
+                ["catalog_generation"] = generation,
+                ["complete"] = _enumerationWarningCount == 0,
+                ["enumeration_warnings"] = new JArray(EnumerationWarnings.Select(w => w.DeepClone())),
+                ["enumeration_warning_count"] = _enumerationWarningCount,
+                ["enumeration_warnings_truncated"] = _enumerationWarningCount > EnumerationWarnings.Count,
+            };
+            var response = new SuccessResponse($"Found type(s) matching '{query}' (scope: {scope}).", data);
+            int maximum = Math.Min(size, ordered.Length - position.offset);
+            for (int index = 0; index < maximum; index++)
+            {
+                CheckSearchBudget(budget);
+                var candidate = ordered[position.offset + index];
+                var type = candidate.type;
+                rows.Add(
+                    new JObject
+                    {
+                        ["name"] = type.Name,
+                        ["full_name"] = type.FullName,
+                        ["namespace"] = type.Namespace,
+                        ["assembly"] = type.Assembly.GetName().Name,
+                        ["assembly_full_name"] = candidate.identity,
+                        ["module_version_id"] = candidate.module,
+                        ["rank"] = candidate.rank,
+                        ["type_kind"] = TypeKind(type),
+                        ["is_class"] = type.IsClass,
+                        ["is_enum"] = type.IsEnum,
+                        ["is_interface"] = type.IsInterface,
+                        ["is_struct"] = type.IsValueType && !type.IsEnum,
+                    }
+                );
+                UpdatePagePosition(data, rows.Count, ordered.Length, position.offset, size, generation, fingerprint, position.issued);
+                if (Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(response)) <= _pageByteLimit)
+                    continue;
+                rows.RemoveAt(rows.Count - 1);
+                if (rows.Count == 0)
+                    throw new SearchFailure("result_too_large");
+                break;
+            }
+            UpdatePagePosition(data, rows.Count, ordered.Length, position.offset, size, generation, fingerprint, position.issued);
+            if (Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(response)) > _pageByteLimit)
+                throw new SearchFailure("result_too_large");
+            CheckSearchBudget(budget);
+            if (generation != _catalogGeneration || !SameAssemblies(_catalogAssemblies, _assemblyEnumerator()))
+            {
+                InvalidateCache();
+                throw new SearchFailure("catalog_changed");
+            }
+            return response;
+        }
 
-            return new SuccessResponse(
-                $"Found {results.Length} type(s) matching '{query}' (scope: {scope}).",
-                new
-                {
-                    query,
-                    scope,
-                    count = results.Length,
-                    results,
-                    truncated = candidates.Count > 25,
-                }
-            );
+        private static void UpdatePagePosition(JObject data, int count, int total, int offset, int size, string generation, string fingerprint, long issued)
+        {
+            data["count"] = count;
+            data["truncated"] = total > count;
+            bool more = offset + count < total;
+            data["has_more"] = more;
+            data["next_cursor"] = more ? MakeCursor(generation, fingerprint, offset + count, issued) : null;
         }
 
         // --- Type Resolution ---

@@ -254,3 +254,63 @@ def test_non_dict_response_wrapped(monkeypatch):
     )
     assert result["success"] is False
     assert "unexpected string response" in result["message"]
+
+
+@pytest.mark.parametrize("size", [0, 101, True, 1.5, "7"])
+def test_paging_scalar_errors_refuse_before_transport(mock_unity, size):
+    result = asyncio.run(
+        unity_reflect(SimpleNamespace(), action="search", query="Fixture", page_size=size)
+    )
+    assert result["success"] is False
+    assert "tool_name" not in mock_unity
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"assembly": ""},
+        {"assembly": "a" * 257},
+        {"type_kind": "unknown"},
+        {"cursor": "x" * 1025},
+        {"cursor": "cursor\u2603"},
+    ],
+)
+def test_paging_filters_are_bounded_before_transport(mock_unity, options):
+    result = asyncio.run(
+        unity_reflect(SimpleNamespace(), action="search", query="Fixture", **options)
+    )
+    assert result["success"] is False
+    assert "tool_name" not in mock_unity
+
+
+def test_paging_parameters_forward_exactly(mock_unity):
+    result = asyncio.run(
+        unity_reflect(
+            SimpleNamespace(),
+            action="search",
+            query="Fixture",
+            scope="all",
+            page_size=7,
+            cursor="opaque",
+            assembly="Fixture.Assembly",
+            type_kind="struct",
+        )
+    )
+    assert result["success"]
+    assert mock_unity["params"] == {
+        "action": "search",
+        "query": "Fixture",
+        "scope": "all",
+        "page_size": 7,
+        "cursor": "opaque",
+        "assembly": "Fixture.Assembly",
+        "type_kind": "struct",
+    }
+
+
+def test_new_search_options_do_not_leak_to_type_lookup(mock_unity):
+    result = asyncio.run(
+        unity_reflect(SimpleNamespace(), action="get_type", class_name="Camera", page_size=7)
+    )
+    assert result["success"] is False
+    assert "tool_name" not in mock_unity
