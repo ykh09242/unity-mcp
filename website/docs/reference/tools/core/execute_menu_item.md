@@ -1,7 +1,7 @@
 ---
 title: execute_menu_item
 sidebar_label: execute_menu_item
-description: "Execute a Unity menu item by path."
+description: "Inspect menu existence/availability evidence or invoke a menu by exact path."
 ---
 
 # `execute_menu_item`
@@ -12,13 +12,16 @@ description: "Execute a Unity menu item by path."
 
 ## Description
 
-Execute a Unity menu item by path.
+Inspect menu existence/availability evidence or invoke a menu by exact path. Default execution reports invocation only; arbitrary completion and modal handling are not guaranteed. Only Window/General/Console supports console_window_open observation. CONTEXT execution is unsupported and File/Quit is blocked. Inspection and observation require native support; unsupported peers refuse without falling back to execution.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `menu_path` | `str \| None` | — | Menu path for 'execute' or 'exists' (e.g., 'File/Save Project') |
+| `menu_path` | `str \| None` | — | Exact menu path, maximum 1024 UTF-16 characters/4096 UTF-8 bytes; no NUL/newlines. |
+| `action` | `Literal['execute', 'inspect', 'exists'] \| None` | — | Default execute; inspect (or exists alias) does not invoke the command. |
+| `wait_for` | `Literal['none', 'console_window_open'] \| None` | — | Optional allowlisted window-presence observation, not general menu completion. |
+| `timeout_ms` | `int \| None` | — | Observation ceiling, default 2000ms; permitted only with a supported wait_for. |
 
 ## Returns
 

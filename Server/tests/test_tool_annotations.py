@@ -38,6 +38,8 @@ READ_ONLY = {
     # Completed-result cache only; no job retirement or project/Editor settings mutation.
     "export_test_job",
     "find_in_file",
+    # Read-only compilation ledger query; never refreshes or dispatches compilation.
+    "get_compile_job",
     "get_sha",
     "get_test_job",
     "get_tests",
