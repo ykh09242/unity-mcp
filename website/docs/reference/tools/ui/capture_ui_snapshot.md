@@ -12,7 +12,7 @@ description: "Capture a bounded complete semantic scene UI snapshot for ugui or 
 
 ## Description
 
-Capture a bounded complete semantic scene UI snapshot for ugui or uitoolkit. Returns stable hierarchy identities, text, active/render eligibility/interactable state, current bounds and renderer-cull evidence where available. Does not write files or change resolution/layout. Ambiguous identities, overflow and unavailable live UI trees fail. Actual occlusion, pixel visibility and event delivery are not proven.
+Capture a bounded complete semantic scene UI snapshot for ugui or uitoolkit. Returns stable hierarchy identities, text, active/render eligibility/interactable state, current bounds and renderer-cull evidence where available. Does not write files or change resolution/layout. Ambiguous identities, overflow and unavailable live UI trees fail. Actual occlusion, pixel visibility and event delivery are not proven. New captures use schema version 2 with fixed typed control states. Recognized editable input contents and owned text renderers are omitted before text access; ordinary labels remain. Native inventory allocation/time is separate from managed processing bounds. Use matching updated plugin/server versions; legacy v1 is supported only for offline comparison.
 
 ## Parameters
 
