@@ -3,7 +3,7 @@ Defines the import_model_file tool: import a local 3D model file (already within
 e.g. exported from Blender) into the Unity project.
 
 Thin pass-through: NO API keys and NO file bytes cross the bridge. The C# side copies
-the file under Assets/ and runs the shared model-import pipeline. Success requires an
+the model and supported local dependencies under Assets/ and runs the shared model-import pipeline. Success requires an
 imported hierarchy with indexed mesh geometry. Failed imports can retain staged files
 and return their path, GUID, import stage and error code; the original source is preserved.
 """
@@ -42,8 +42,18 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "Unity surfaces its AnimationClips; omitted or 'none' imports no rig (this is the usual "
         "cause of a rigged FBX importing with zero clips); 'legacy' selects Unity's legacy Animation "
         "system (rarely needed). glTF/GLB ignore it — the selected glTF importer handles animation.\n\n"
-        "For multi-file exports (a text .gltf with an external .bin, or an .obj with a sibling "
-        ".mtl/textures), zip them and pass the .zip — a bare .gltf/.obj is copied without its sidecars."
+        "Core text glTF buffer/image sidecars and OBJ same-directory MTL files with simple PNG/JPEG "
+        "texture maps are copied together into a fresh bundle folder, preserving relative paths and "
+        "the original model basename. name labels that folder; a single-file import keeps its flat "
+        "asset name. Dependencies must stay below the source directory without parent traversal, "
+        "links, absolute/network paths or executable files. Limits include 256 files and 512 MiB "
+        "combined file/embedded-data bytes. Unsupported text glTF extensions and MTL options or "
+        "ambiguous filenames fail before staging; no reference is silently dropped.\n\n"
+        "dependency_bundle reports inspection, stage ('not_staged', 'partial', 'staged'), paths and "
+        "copy counts. Partial output can remain after a write failure; staged does not mean usable. "
+        "GLB core external resources are rejected: export core text glTF with its files or a "
+        "self-contained GLB. Embedded GLB extensions are preserved with explicitly limited inspection. "
+        "FBX dependencies are not scanned; ZIP keeps its existing archive import behavior."
     ),
     annotations=ToolAnnotations(
         title="Import Model File",
@@ -56,9 +66,14 @@ async def import_model_file(
         str,
         "Assets-relative or absolute-within-Assets model file path (.fbx/.obj/.glb/.gltf/.zip).",
     ],
-    name: Annotated[str, "Base name for the imported asset."] | None = None,
+    name: Annotated[
+        str,
+        "Asset base name for a single file; folder name for a dependency bundle, whose model basename is preserved.",
+    ]
+    | None = None,
     output_folder: Annotated[
-        str, "Destination under Assets/. Failed imports may retain staged output here for repair."
+        str,
+        "Destination under Assets/. Dependency bundles use a fresh folder; partial or failed imports may retain output for repair.",
     ]
     | None = None,
     target_size: Annotated[float, "Normalize the largest dimension to this size (meters)."]

@@ -147,7 +147,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TestCase(true)]
         public void CorruptModel_PreservesSourceAndStagedEvidenceWithoutSuccess(bool archive)
         {
-            const string contents = "owned invalid model bytes";
+            const string contents = "o OwnedInvalidModel\nv 0 0 0\n";
             string source = _sourceFolder + "/corrupt.obj";
             File.WriteAllText(source, contents);
             if (archive)
