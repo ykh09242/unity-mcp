@@ -1,5 +1,6 @@
 """Custom-tool registration reads stable built-in declarations once per batch."""
 
+import asyncio
 from unittest.mock import Mock
 
 from fastmcp import FastMCP
@@ -22,9 +23,7 @@ def test_project_registration_reads_builtin_inventory_once_per_batch(monkeypatch
         ToolDefinitionModel(name="builtin"),
     ]
     inventory = Mock(return_value=[{"name": "builtin"}])
-    register = Mock()
     monkeypatch.setattr(custom_tools, "get_registered_tools", inventory)
-    monkeypatch.setattr(service, "_register_global_tool", register)
 
     registered, replaced = service._register_project_tools("project", tools, project_hash="HASH")
 
@@ -32,14 +31,20 @@ def test_project_registration_reads_builtin_inventory_once_per_batch(monkeypatch
     assert replaced == ["fixture_one"]
     assert service._project_tools["project"] == {tool.name: tool for tool in tools}
     assert service.get_project_id_for_hash("hash") == "project"
-    assert [call.args[0] for call in register.call_args_list] == tools[:2]
+    assert {tool.name for tool in asyncio.run(service._mcp.list_tools())} == {
+        "fixture_one",
+        "fixture_two",
+    }
     inventory.assert_called_once()
 
     # The next registration observes newly added built-ins instead of a stale cache.
-    register.reset_mock()
     inventory.return_value = [{"name": "fixture_two"}]
     service._register_project_tools("project", tools)
-    assert [call.args[0] for call in register.call_args_list] == [tools[0], tools[2]]
+    assert {tool.name for tool in asyncio.run(service._mcp.list_tools())} == {
+        "fixture_one",
+        "fixture_two",
+        "builtin",
+    }
     assert inventory.call_count == 2
     service._register_project_tools("project", [])
     assert inventory.call_count == 2

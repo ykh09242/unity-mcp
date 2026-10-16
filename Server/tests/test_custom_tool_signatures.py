@@ -2,27 +2,16 @@ import inspect
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from fastmcp import FastMCP
 
 import services.custom_tool_service as module
 from models.models import MCPResponse, ToolDefinitionModel, ToolParameterModel
 from services.custom_tool_service import CustomToolService
 
 
-def test_custom_tool_registration_accepts_mixed_required_parameter_order(monkeypatch):
-    service = object.__new__(CustomToolService)
-    service._global_tools = {}
-    service._mcp = Mock()
-    registered = []
-
-    def tool(**kwargs):
-        def register(handler):
-            inspect.signature(handler).bind(Mock(), required="target")
-            registered.append(kwargs["name"])
-            return handler
-
-        return register
-
-    service._mcp.tool = tool
+@pytest.mark.asyncio
+async def test_custom_tool_registration_accepts_mixed_required_parameter_order(monkeypatch):
+    service = CustomToolService(FastMCP("mixed-required-parameters"))
     monkeypatch.setattr(service, "_get_builtin_tool_names", lambda: set())
     definition = ToolDefinitionModel(
         name="build",
@@ -34,7 +23,9 @@ def test_custom_tool_registration_accepts_mixed_required_parameter_order(monkeyp
 
     service.register_global_tools([definition])
 
-    assert registered == ["build"]
+    tools = await service._mcp.list_tools()
+    assert [tool.name for tool in tools] == ["build"]
+    assert tools[0].parameters["required"] == ["required"]
     assert service._global_tools["build"] is definition
 
 

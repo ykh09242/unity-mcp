@@ -12,6 +12,7 @@ from contextlib import nullcontext
 from typing import Annotated, Optional
 
 from fastmcp import Context, FastMCP
+from fastmcp.tools import Tool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -129,9 +130,15 @@ class CustomToolService:
                     status_code=400,
                 )
 
-            registered, replaced = self._register_project_tools(
-                payload.project_id, payload.tools, project_hash=payload.project_hash
-            )
+            try:
+                registered, replaced = self._register_project_tools(
+                    payload.project_id, payload.tools, project_hash=payload.project_hash
+                )
+            except ValueError:
+                return JSONResponse(
+                    {"success": False, "error": "Invalid custom tool registration"},
+                    status_code=400,
+                )
 
             message = f"Registered {len(registered)} tool(s)"
             if replaced:
@@ -520,17 +527,23 @@ class CustomToolService:
         tools: list[ToolDefinitionModel],
         project_hash: str | None = None,
     ) -> tuple[list[str], list[str]]:
+        prepared = [(tool, self._prepare_global_tool(tool)) for tool in tools]
         registered: list[str] = []
         replaced: list[str] = []
+        project_tools = dict(self._project_tools.get(project_id, {}))
         for tool in tools:
-            if self._is_registered(project_id, tool.name):
+            if tool.name in project_tools:
                 replaced.append(tool.name)
-            self._register_tool(project_id, tool)
+            project_tools[tool.name] = tool
             registered.append(tool.name)
 
         if tools and not self._project_scoped_tools:
-            # Built-in declarations are stable during this synchronous batch.
-            self.register_global_tools(tools)
+            self._publish_global_tools(prepared)
+
+        # This synchronous boundary cannot interleave with another async registration.
+        # Publish service state only after all SDK mutations have succeeded.
+        if tools:
+            self._project_tools[project_id] = project_tools
 
         if project_hash:
             self._hash_to_project[project_hash.lower()] = project_id
@@ -541,64 +554,96 @@ class CustomToolService:
         # Global custom tools are always registered, even when project-scoped tools
         # are enabled. Project-scoped tools can override globals by name, but
         # disabling globals entirely would break shared tooling that projects expect.
+        if config.http_remote_hosted or not tools:
+            return
+        prepared = [(tool, self._prepare_global_tool(tool)) for tool in tools]
+        self._publish_global_tools(prepared)
+
+    def _publish_global_tools(self, prepared: list[tuple[ToolDefinitionModel, Tool]]) -> None:
+        if config.http_remote_hosted:
+            return
         builtin_names = self._get_builtin_tool_names()
-        for tool in tools:
-            if tool.name in builtin_names:
+        global_tools = dict(self._global_tools)
+        additions: list[Tool] = []
+        for definition, tool in prepared:
+            if definition.name in builtin_names:
                 logger.info(
                     "Skipping global custom tool registration for built-in tool '%s'",
-                    tool.name,
+                    definition.name,
                 )
                 continue
-            self._register_global_tool(tool)
+            existing = global_tools.get(definition.name)
+            if existing is not None:
+                if existing.model_dump() != definition.model_dump():
+                    logger.warning(
+                        "Custom tool '%s' already registered with a different schema; keeping existing definition.",
+                        definition.name,
+                    )
+                continue
+            global_tools[definition.name] = definition
+            additions.append(tool)
+
+        if not additions:
+            return
+
+        # FastMCP 4's local provider stores components by exact Tool.key. Its synchronous
+        # add_tool can insert before raising, so save every attempted key beforehand.
+        # Restore only components still owned by this batch, including the failing add.
+        components = self._mcp._local_provider._components
+        previous = {tool.key: components.get(tool.key) for tool in additions}
+        attempted: list[Tool] = []
+        published = False
+        try:
+            for tool in additions:
+                attempted.append(tool)
+                if self._mcp.add_tool(tool) is not tool:
+                    raise ValueError(f"Custom tool '{tool.name}' was not published")
+            published = True
+        finally:
+            if not published:
+                for tool in reversed(attempted):
+                    if components.get(tool.key) is tool:
+                        old_component = previous[tool.key]
+                        if old_component is None:
+                            del components[tool.key]
+                        else:
+                            components[tool.key] = old_component
+
+        self._global_tools = global_tools
 
     def _get_builtin_tool_names(self) -> set[str]:
         return {tool["name"] for tool in get_registered_tools()}
 
     def _register_global_tool(self, definition: ToolDefinitionModel) -> None:
-        if config.http_remote_hosted:
-            return
-        existing = self._global_tools.get(definition.name)
-        if existing:
-            if existing.model_dump() != definition.model_dump():
-                logger.warning(
-                    "Custom tool '%s' already registered with a different schema; keeping existing definition.",
-                    definition.name,
+        self.register_global_tools([definition])
+
+    def _prepare_global_tool(self, definition: ToolDefinitionModel) -> Tool:
+        """Generate the runtime validator and SDK schema without publishing a tool."""
+        self._get_input_model(definition).model_json_schema()
+        handler = self._build_global_tool_handler(definition)
+        tool_handler = handler
+        if not definition.structured_output:
+            from fastmcp.tools import ToolResult
+            from mcp.types import TextContent
+
+            @functools.wraps(handler)
+            async def content_only_handler(*args, **kwargs):
+                response = await handler(*args, **kwargs)
+                return ToolResult(
+                    content=[TextContent(type="text", text=response.model_dump_json())]
                 )
-            return
 
-        try:
-            handler = self._build_global_tool_handler(definition)
-            tool_handler = handler
-            if not definition.structured_output:
-                from fastmcp.tools import ToolResult
-                from mcp.types import TextContent
-
-                @functools.wraps(handler)
-                async def content_only_handler(*args, **kwargs):
-                    response = await handler(*args, **kwargs)
-                    return ToolResult(
-                        content=[TextContent(type="text", text=response.model_dump_json())]
-                    )
-
-                tool_handler = content_only_handler
-            wrapped = log_execution(definition.name, "Tool")(tool_handler)
-            wrapped = telemetry_tool(definition.name)(wrapped)
-            # Python 3.14 wraps copies __annotate__, not dynamically assigned annotations.
-            wrapped.__annotations__ = dict(handler.__annotations__)
-            wrapped = self._mcp.tool(
-                name=definition.name,
-                description=definition.description,
-                **({"output_schema": None} if not definition.structured_output else {}),
-            )(wrapped)
-        except Exception as exc:  # pragma: no cover - defensive against tool conflicts
-            logger.warning(
-                "Failed to register custom tool '%s' globally: %s",
-                definition.name,
-                type(exc).__name__,
-            )
-            return
-
-        self._global_tools[definition.name] = definition
+            tool_handler = content_only_handler
+        wrapped = log_execution(definition.name, "Tool")(tool_handler)
+        wrapped = telemetry_tool(definition.name)(wrapped)
+        # Python 3.14 wraps copies __annotate__, not dynamically assigned annotations.
+        wrapped.__annotations__ = dict(handler.__annotations__)
+        return Tool.from_function(
+            wrapped,
+            name=definition.name,
+            description=definition.description,
+            **({"output_schema": None} if not definition.structured_output else {}),
+        )
 
     def _build_global_tool_handler(self, definition: ToolDefinitionModel):
         async def _handler(ctx: Context, **kwargs) -> MCPResponse:
