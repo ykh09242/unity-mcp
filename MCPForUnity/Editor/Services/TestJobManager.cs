@@ -72,7 +72,7 @@ namespace MCPForUnity.Editor.Services
         private static readonly Dictionary<string, TestJob> Jobs = new();
         private static string _currentJobId;
         private static long _lastPersistUnixMs;
-        private static TestJobResultStore ResultStoreOverride;
+        private static TestJobResultStore ResultStoreOverride = null;
         private static TestJobResultStore _resultStore;
         internal static TestJobResultStore ResultStore
         {
