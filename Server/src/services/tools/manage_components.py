@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal, Optional
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import Field, StrictBool, StrictInt
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -27,6 +27,9 @@ _VALUE_DEFAULT = Field(default_factory=lambda: _VALUE_OMITTED)
         "Actions: add, remove, set_property. Requires target (instance ID or name) and component_type. "
         "For READING component data, use the mcpforunity://scene/gameobject/{id}/components resource "
         "or mcpforunity://scene/gameobject/{id}/component/{name} for a single component. "
+        "Set strict_selection=true to require a unique target and component, or select a component_instance_id. "
+        "Name/path uniqueness includes inactive objects in the active scene/current prefab stage; IDs can address other loaded scenes. "
+        "These opt-in requests require a compatible Editor package and never fall back to first match. "
         "For creating/deleting GameObjects themselves, use manage_gameobject instead."
     ),
     annotations=ToolAnnotations(
@@ -68,10 +71,19 @@ async def manage_components(
         Optional[int],
         Field(
             description=(
-                "Zero-based index to select which component when multiple of the same type exist. "
-                "Use the components resource to discover indices. If omitted, targets the first instance."
+                "Zero-based index within GetComponents(requested type), including derived types; not the mixed components-resource list index. "
+                "Legacy omission selects the first instance. strict_selection=true instead requires uniqueness."
             )
         ),
+    ] = None,
+    strict_selection: Annotated[
+        StrictBool,
+        "Require one GameObject and, for remove/set_property, one component unless an index or component ID selects it. Default preserves legacy first match.",
+    ] = False,
+    component_instance_id: Annotated[
+        StrictInt | None,
+        Field(ge=-2147483648, le=2147483647),
+        "Nonzero live component instanceID from the components resource. Requires the selected target and type to match; cannot be combined with component_index or add.",
     ] = None,
 ) -> dict[str, Any]:
     """
@@ -88,6 +100,34 @@ async def manage_components(
     - Set single property: action="set_property", target="Enemy", component_type="Rigidbody", property="mass", value=5.0
     - Set multiple properties: action="set_property", target="Enemy", component_type="Rigidbody", properties={"mass": 5.0, "useGravity": false}
     """
+    if type(strict_selection) is not bool:
+        return {"success": False, "message": "strict_selection must be a boolean."}
+    if component_instance_id is not None and (
+        type(component_instance_id) is not int
+        or component_instance_id == 0
+        or not -2147483648 <= component_instance_id <= 2147483647
+    ):
+        return {
+            "success": False,
+            "message": "component_instance_id must be a nonzero Int32 integer.",
+        }
+    selected = strict_selection or component_instance_id is not None
+    if selected:
+        if component_index is not None and (
+            type(component_index) is not int or not 0 <= component_index <= 2147483647
+        ):
+            return {
+                "success": False,
+                "message": "component_index must be a nonnegative Int32 integer.",
+            }
+        if component_index is not None and component_instance_id is not None:
+            return {
+                "success": False,
+                "message": "Use either component_index or component_instance_id, not both.",
+            }
+        if action == "add" and (component_index is not None or component_instance_id is not None):
+            return {"success": False, "message": "add cannot select an existing component."}
+
     if action not in {"add", "remove", "set_property"}:
         return {
             "success": False,
@@ -153,6 +193,11 @@ async def manage_components(
         if component_index is not None:
             params["componentIndex"] = component_index
 
+        if strict_selection:
+            params["strictSelection"] = True
+        if component_instance_id is not None:
+            params["componentInstanceID"] = component_instance_id
+
         if action == "set_property":
             if property:
                 params["property"] = property
@@ -166,8 +211,9 @@ async def manage_components(
         response = await send_with_unity_instance(
             async_send_command_with_retry,
             unity_instance,
-            "manage_components",
+            "manage_components_selected" if selected else "manage_components",
             params,
+            retry_on_reload=not selected,
         )
 
         if isinstance(response, dict) and response.get("success"):

@@ -1,6 +1,7 @@
 """Fresh registered SDK and central CLI contracts; native results stay opaque."""
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -11,6 +12,7 @@ def _run(program, tmp_path):
         "APPDATA": str(tmp_path),
         "XDG_DATA_HOME": str(tmp_path),
         "UNITY_MCP_DISABLE_TELEMETRY": "true",
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
     }
     env.pop("PYTEST_CURRENT_TEST", None)
     result = subprocess.run(
@@ -420,3 +422,106 @@ def test_component_asset_cli_requests_json_and_failures(tmp_path):
 
 def test_component_asset_registered_sdk_falsey_values_and_selectors(tmp_path):
     assert "fresh component/asset SDK checks=" in _run(SDK_PROGRAM, tmp_path)
+
+
+SELECTION_SDK_PROGRAM = r"""
+import copy
+import anyio
+from fastmcp import Client, FastMCP
+from fastmcp.server.middleware import Middleware
+from services.tools import register_all_tools
+from core.config import config
+from transport.plugin_hub import PluginHub
+
+config.transport_mode = "http"
+config.http_remote_hosted = False
+requests = []
+options = []
+raise_transport = False
+reply = {"success": False, "error": "unknown_command", "data": {"reason": "unsupported_selection"}}
+async def send(instance, command, params, **kwargs):
+    requests.append((instance, command, copy.deepcopy(params)))
+    options.append(copy.deepcopy(kwargs))
+    if command == "get_editor_state":
+        return {"success": True, "data": {"compilation": {"is_compiling": False}}}
+    if command == "get_project_info":
+        return {"success": True, "data": {}}
+    if raise_transport:
+        raise TimeoutError("Controlled selected-command response loss")
+    return copy.deepcopy(reply)
+PluginHub.send_command_for_instance = staticmethod(send)
+class State(Middleware):
+    async def on_call_tool(self, context, call_next):
+        await context.fastmcp_context.set_state("unity_instance", "Project@fixture")
+        return await call_next(context)
+server = FastMCP("component-selection-contract")
+server.add_middleware(State())
+register_all_tools(server)
+base = {"action": "set_property", "target": -321, "component_type": "UnityEngine.AudioSource", "property": "volume", "value": 0}
+wire = {"action": "set_property", "target": -321, "componentType": "UnityEngine.AudioSource", "property": "volume", "value": 0}
+async def main():
+    global raise_transport
+    for mode in ("2026-07-28", "legacy"):
+        async with Client(server, mode=mode) as client:
+            reply.clear()
+            reply.update({"success": False, "error": "unknown_command", "data": {"reason": "unsupported_selection"}})
+            schema = {tool.name: tool.input_schema for tool in await client.list_tools()}["manage_components"]
+            assert "strict_selection" in schema["properties"], mode + " missing strict schema"
+            assert "component_instance_id" in schema["properties"], mode + " missing component ID schema"
+            for extra, expected, command in (
+                ({}, {}, "manage_components"),
+                ({"strict_selection": False}, {}, "manage_components"),
+                ({"component_index": 1}, {"componentIndex": 1}, "manage_components"),
+                ({"strict_selection": True}, {"strictSelection": True}, "manage_components_selected"),
+                ({"strict_selection": True, "component_index": 0}, {"strictSelection": True, "componentIndex": 0}, "manage_components_selected"),
+                ({"component_instance_id": -432}, {"componentInstanceID": -432}, "manage_components_selected"),
+                ({"component_instance_id": None}, {}, "manage_components"),
+            ):
+                before = len(requests)
+                result = await client.call_tool("manage_components", {**base, **extra})
+                actual = requests[before:]
+                domain = [entry for entry in actual if entry[1].startswith("manage_components")]
+                assert domain == [("Project@fixture", command, {**wire, **expected})], (mode, extra, domain)
+                assert result.structured_content == reply, (mode, extra, result)
+                if command.endswith("_selected"):
+                    assert options[-1]["retry_on_reload"] is False
+                assert any(entry[1] == "get_editor_state" for entry in actual), "preflight must remain real"
+            for extra in (
+                *[{"strict_selection": value} for value in (None, 0, 1, "true")],
+                *[{"component_instance_id": value} for value in (True, False, 1.0, "12", 0, 2147483648, -2147483649)],
+                {"strict_selection": True, "component_index": -1},
+                {"component_instance_id": 12, "component_index": 0},
+            ):
+                before = len(requests)
+                result = await client.call_tool("manage_components", {**base, **extra}, raise_on_error=False)
+                assert result.is_error or result.structured_content.get("success") is False, (mode, extra)
+                assert requests[before:] == [], (mode, extra, requests[before:])
+            for selector in ({"component_instance_id": 12}, {"component_index": 0}):
+                before = len(requests)
+                result = await client.call_tool("manage_components", {"action": "add", "target": -321, "component_type": "AudioSource", "strict_selection": True, **selector}, raise_on_error=False)
+                assert result.is_error or result.structured_content.get("success") is False
+                assert requests[before:] == []
+            selection = {"contractVersion": 1, "gameObjectInstanceID": -321, "componentInstanceID": -432, "componentIndex": 1}
+            for success in (False, True):
+                reply.clear()
+                reply.update({"success": success, "data": {"selection": selection, "errors": ["later property failed"] if not success else [], "zero": 0, "disabled": False, "optional": None}})
+                before = len(requests)
+                result = await client.call_tool("manage_components", {**base, "component_instance_id": -432})
+                assert result.structured_content["success"] is success
+                assert result.structured_content["data"] == reply["data"], (mode, success, result)
+                assert len([entry for entry in requests[before:] if entry[1].startswith("manage_components")]) == 1
+            raise_transport = True
+            try:
+                before = len(requests)
+                result = await client.call_tool("manage_components", {**base, "strict_selection": True})
+                assert result.structured_content["success"] is False
+                assert len([entry for entry in requests[before:] if entry[1].startswith("manage_components")]) == 1
+            finally:
+                raise_transport = False
+    print("SELECTION_SDK_PASS")
+anyio.run(main)
+"""
+
+
+def test_component_selection_registered_sdk_routes_without_legacy_fallback(tmp_path):
+    assert "SELECTION_SDK_PASS" in _run(SELECTION_SDK_PROGRAM, tmp_path)

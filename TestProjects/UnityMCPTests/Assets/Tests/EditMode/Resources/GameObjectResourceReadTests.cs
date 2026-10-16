@@ -10,6 +10,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Resources
@@ -379,6 +380,77 @@ namespace MCPForUnityTests.Editor.Resources
             Assert.AreEqual(JTokenType.Null, data["nextCursor"].Type);
             Assert.IsFalse(data.Value<bool>("hasMore"));
             Assert.AreEqual(0, _first.GetterCalls + _second.GetterCalls);
+        }
+
+        [Test]
+        public void StrictComponentReadRejectsAmbiguityBeforeCallingGetters()
+        {
+            var request = Parameters();
+            request["componentName"] = typeof(ResourceReadCounter).FullName;
+            request["strict_selection"] = true;
+            var response = Json(GameObjectComponentResource.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("ambiguous_component", response.Value<string>("code"));
+            Assert.AreEqual(0, _first.GetterCalls + _second.GetterCalls);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SelectedComponentReadCallsOnlySelectedGetters(bool byId)
+        {
+            var request = Parameters();
+            request["componentName"] = typeof(ResourceReadCounter).FullName;
+            request[byId ? "component_instance_id" : "component_index"] = byId ? _second.GetInstanceIDCompat() : 1;
+            var response = Json(GameObjectComponentResource.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(_second.GetInstanceIDCompat(), response.SelectToken("data.component.instanceID").Value<int>());
+            Assert.AreEqual(0, _first.GetterCalls);
+            Assert.AreEqual(1, _second.GetterCalls);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AudioSourceReadOmitsUnsupportedGettersAndPreservesSelectedValues(bool selected)
+        {
+            var clip = AudioClip.Create("OwnedResourceReadClip", 32, 1, 8000, false);
+            try
+            {
+                var firstAudio = _owned.AddComponent<AudioSource>();
+                var secondAudio = _owned.AddComponent<AudioSource>();
+                firstAudio.clip = clip;
+                secondAudio.clip = clip;
+                firstAudio.volume = 0.23f;
+                firstAudio.mute = false;
+                secondAudio.volume = 0.79f;
+                secondAudio.mute = true;
+                var expected = selected ? secondAudio : firstAudio;
+                var request = Parameters();
+                request["componentName"] = typeof(AudioSource).FullName;
+                if (selected)
+                    request["component_index"] = 1;
+
+                var response = Json(GameObjectComponentResource.HandleCommand(request));
+                LogAssert.NoUnexpectedReceived();
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                var component = response["data"]["component"];
+                Assert.AreEqual(expected.GetInstanceIDCompat(), component.Value<int>("instanceID"));
+                Assert.AreEqual(typeof(AudioSource).FullName, component.Value<string>("typeName"));
+                var properties = (JObject)component["properties"];
+                Assert.AreEqual(expected.volume, properties.Value<float>("volume"), 0.0001f);
+                Assert.AreEqual(expected.mute, properties.Value<bool>("mute"));
+                Assert.AreEqual(clip.GetInstanceIDCompat(), properties.SelectToken("clip.instanceID").Value<int>());
+                foreach (var unsupported in new[] { "minVolume", "maxVolume", "rolloffFactor" })
+                    Assert.IsNull(properties.Property(unsupported), unsupported);
+                if (selected)
+                    Assert.AreEqual(expected.GetInstanceIDCompat(), response.SelectToken("data.selection.componentInstanceID").Value<int>());
+                else
+                    Assert.IsNull(response.SelectToken("data.selection"));
+                Assert.AreEqual(0, _first.GetterCalls + _second.GetterCalls);
+            }
+            finally
+            {
+                Object.DestroyImmediate(clip);
+            }
         }
 
         [Test]

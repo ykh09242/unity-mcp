@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -18,6 +19,12 @@ namespace MCPForUnity.Editor.Tools
     /// This is a focused tool for component lifecycle operations.
     /// For reading component data, use the unity://scene/gameobject/{id}/components resource.
     /// </summary>
+    [McpForUnityTool("manage_components_selected", AutoRegister = false)]
+    public static class ManageComponentsSelected
+    {
+        public static object HandleCommand(JObject parameters) => ManageComponents.HandleSelected(parameters);
+    }
+
     [McpForUnityTool("manage_components")]
     public static class ManageComponents
     {
@@ -31,6 +38,16 @@ namespace MCPForUnity.Editor.Tools
             if (@params == null)
             {
                 return new ErrorResponse("Parameters cannot be null.");
+            }
+
+            try
+            {
+                if (ComponentSelection.IsRequested(@params, false))
+                    return HandleSelected(@params);
+            }
+            catch (ComponentSelection.Failure failure)
+            {
+                return failure.Response();
             }
 
             string action = ParamCoercion.CoerceString(@params["action"], null)?.ToLowerInvariant();
@@ -69,11 +86,113 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
+        internal static object HandleSelected(JObject parameters)
+        {
+            try
+            {
+                if (!MCPServiceLocator.ToolDiscovery.IsToolEnabled("manage_components"))
+                    return new ComponentSelection.Failure("tool_disabled", "Tool 'manage_components' is disabled in the Unity Editor.").Response();
+                if (parameters == null)
+                    return new ComponentSelection.Failure("invalid_selection", "Parameters cannot be null.").Response();
+                ComponentSelection.ValidateSelectors(parameters, out int? index, out int? componentId);
+                JToken actionToken = parameters["action"];
+                if (actionToken?.Type != JTokenType.String)
+                    throw new ComponentSelection.Failure("invalid_selection", "action must be add, remove or set_property.");
+                string action = actionToken.ToString().ToLowerInvariant();
+                if (action != "add" && action != "remove" && action != "set_property")
+                    throw new ComponentSelection.Failure("invalid_selection", "action must be add, remove or set_property.");
+                if (action == "add" && (index.HasValue || componentId.HasValue))
+                    throw new ComponentSelection.Failure("invalid_selection", "add creates a new component and cannot select an existing component.");
+                JToken typeToken = ComponentSelection.Alias(parameters, "componentType", "component_type");
+                if (typeToken?.Type != JTokenType.String)
+                    throw new ComponentSelection.Failure("invalid_component_type", "component_type must be a canonical component type name.");
+                string typeName = typeToken.ToString();
+                ComponentSelection.BeforeTargetLookupForTests?.Invoke();
+                GameObject target = FindUniqueTarget(parameters);
+                Type addType = action == "add" ? ComponentSelection.ResolveType(typeName) : null;
+                ComponentSelection.Result selection = action == "add" ? null : ComponentSelection.Resolve(target, typeName, index, componentId);
+                JObject description = selection?.Describe();
+                object raw = action switch
+                {
+                    "add" => AddComponent(parameters, parameters["target"], null, target, addType),
+                    "remove" => RemoveComponent(parameters, parameters["target"], null, selection),
+                    _ => SetProperty(parameters, parameters["target"], null, selection),
+                };
+                JObject response = JObject.FromObject(raw);
+                if (description != null)
+                {
+                    var data = response["data"] as JObject ?? new JObject();
+                    data["selection"] = description;
+                    response["data"] = data;
+                }
+                return response;
+            }
+            catch (ComponentSelection.Failure failure)
+            {
+                return failure.Response();
+            }
+            catch (ArgumentException exception)
+            {
+                return new ErrorResponse(exception.Message);
+            }
+            catch (Exception exception)
+            {
+                McpLog.Error($"[ManageComponents] Selected operation failed: {exception}");
+                return new ErrorResponse($"Internal error processing selected component operation: {exception.Message}");
+            }
+        }
+
+        private static GameObject FindUniqueTarget(JObject parameters)
+        {
+            JToken target = parameters["target"];
+            if (
+                target == null
+                || (target.Type != JTokenType.Integer && target.Type != JTokenType.String)
+                || string.IsNullOrWhiteSpace(target.ToString())
+                || target.ToString().Length > 1024
+            )
+                throw new ComponentSelection.Failure("invalid_target", "target must be an Int32 ID or a name/path of at most 1024 characters.");
+            bool numeric = int.TryParse(target.ToString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out _);
+            if (target.Type == JTokenType.Integer && !numeric)
+                throw new ComponentSelection.Failure("invalid_target", "target ID is outside the Int32 range.");
+            JToken methodToken = ComponentSelection.Alias(parameters, "searchMethod", "search_method");
+            if (methodToken != null && methodToken.Type != JTokenType.Null && methodToken.Type != JTokenType.String)
+                throw new ComponentSelection.Failure("invalid_selection", "search_method must be by_id, by_name or by_path.");
+            string text = target.ToString().Trim();
+            string digits = text.StartsWith("+", StringComparison.Ordinal) || text.StartsWith("-", StringComparison.Ordinal) ? text.Substring(1) : text;
+            bool numericText = digits.Length > 0 && digits.All(character => character >= '0' && character <= '9');
+            string method =
+                ComponentSelection.HasValue(methodToken) ? methodToken.ToString().ToLowerInvariant()
+                : numericText ? "by_id"
+                : "by_name";
+            if (method != "by_id" && method != "by_name" && method != "by_path")
+                throw new ComponentSelection.Failure("invalid_selection", "search_method must be by_id, by_name or by_path.");
+            if (method == "by_id" && !numeric)
+                throw new ComponentSelection.Failure("invalid_target", "by_id requires an Int32 instance ID.");
+            var matches = GameObjectLookup.SearchGameObjects(method, target.ToString(), true, 2);
+            if (matches.Count == 0)
+                throw new ComponentSelection.Failure("target_not_found", "No GameObject matches the selected target.");
+            if (matches.Count != 1)
+                throw new ComponentSelection.Failure(
+                    "ambiguous_target",
+                    "Target is ambiguous within the active scene/current prefab stage; use an instance ID or unique path.",
+                    new JObject
+                    {
+                        ["matchCountLowerBound"] = 2,
+                        ["countExact"] = false,
+                        ["instanceIDs"] = new JArray(matches),
+                    }
+                );
+            GameObject resolved = GameObjectLookup.FindById(matches[0]);
+            ComponentSelection.EnsureTarget(resolved);
+            return resolved;
+        }
+
         #region Action Implementations
 
-        private static object AddComponent(JObject @params, JToken targetToken, string searchMethod)
+        private static object AddComponent(JObject @params, JToken targetToken, string searchMethod, GameObject selectedTarget = null, Type selectedType = null)
         {
-            GameObject targetGo = FindTarget(targetToken, searchMethod);
+            GameObject targetGo = selectedTarget != null ? selectedTarget : FindTarget(targetToken, searchMethod);
             if (targetGo == null)
             {
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
@@ -86,7 +205,7 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Resolve component type using unified type resolver
-            Type type = UnityTypeResolver.ResolveComponent(componentTypeName);
+            Type type = selectedType ?? UnityTypeResolver.ResolveComponent(componentTypeName);
             if (type == null)
             {
                 return new ErrorResponse($"Component type '{componentTypeName}' not found. Use a fully-qualified name if needed.");
@@ -109,6 +228,12 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(error ?? $"Failed to add component '{componentTypeName}'.");
             }
 
+            // Capture the new identity before property callbacks can alter the component list.
+            JObject createdSelection =
+                selectedType == null
+                    ? null
+                    : new ComponentSelection.Result(targetGo, newComponent, type, Array.IndexOf(targetGo.GetComponents(type), newComponent)).Describe();
+
             // When adding VFX-related components (ParticleSystem, LineRenderer, TrailRenderer),
             // ensure the renderer has a material compatible with the active render pipeline.
             // Without this, newly added ParticleSystems in URP/HDRP projects get Unity's default
@@ -129,7 +254,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (propertyErrors.Count > 0)
             {
-                return new ErrorResponse(
+                object failure = new ErrorResponse(
                     $"Component '{componentTypeName}' added to '{targetGo.name}', but some properties failed to set.",
                     new
                     {
@@ -140,9 +265,10 @@ namespace MCPForUnity.Editor.Tools
                         errors = propertyErrors,
                     }
                 );
+                return WithSelection(failure, createdSelection);
             }
 
-            return new
+            object success = new
             {
                 success = true,
                 message = $"Component '{componentTypeName}' added to '{targetGo.name}'.",
@@ -153,11 +279,23 @@ namespace MCPForUnity.Editor.Tools
                     componentInstanceID = newComponent.GetInstanceIDCompat(),
                 },
             };
+            return WithSelection(success, createdSelection);
         }
 
-        private static object RemoveComponent(JObject @params, JToken targetToken, string searchMethod)
+        private static object WithSelection(object response, JObject selection)
         {
-            GameObject targetGo = FindTarget(targetToken, searchMethod);
+            if (selection == null)
+                return response;
+            JObject json = JObject.FromObject(response);
+            var data = json["data"] as JObject ?? new JObject();
+            data["selection"] = selection;
+            json["data"] = data;
+            return json;
+        }
+
+        private static object RemoveComponent(JObject @params, JToken targetToken, string searchMethod, ComponentSelection.Result selection = null)
+        {
+            GameObject targetGo = selection != null ? selection.Target : FindTarget(targetToken, searchMethod);
             if (targetGo == null)
             {
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
@@ -170,14 +308,14 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Resolve component type using unified type resolver
-            Type type = UnityTypeResolver.ResolveComponent(componentTypeName);
+            Type type = selection != null ? selection.RequestedType : UnityTypeResolver.ResolveComponent(componentTypeName);
             if (type == null)
             {
                 return new ErrorResponse($"Component type '{componentTypeName}' not found.");
             }
 
             JToken componentIndexToken = @params["componentIndex"] ?? @params["component_index"];
-            int? componentIndex = ParamCoercion.CoerceIntNullable(componentIndexToken);
+            int? componentIndex = selection != null ? selection.Index : ParamCoercion.CoerceIntNullable(componentIndexToken);
             if (
                 !componentIndex.HasValue
                 && componentIndexToken != null
@@ -187,14 +325,15 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("'component_index' must be a valid integer when supplied.");
             if (componentIndex.HasValue)
             {
-                var components = targetGo.GetComponents(type);
-                if (componentIndex.Value < 0 || componentIndex.Value >= components.Length)
+                var components = selection == null ? targetGo.GetComponents(type) : null;
+                if (selection == null && (componentIndex.Value < 0 || componentIndex.Value >= components.Length))
                     return new ErrorResponse(
                         $"component_index {componentIndex.Value} out of range. Found {components.Length} '{componentTypeName}' component(s)."
                     );
-                if (components[componentIndex.Value] is Transform)
+                Component selected = selection != null ? selection.Component : components[componentIndex.Value];
+                if (selected is Transform)
                     return new ErrorResponse("Cannot remove Transform or RectTransform components.");
-                Undo.DestroyObjectImmediate(components[componentIndex.Value]);
+                Undo.DestroyObjectImmediate(selected);
                 EditorUtility.SetDirty(targetGo);
                 MarkOwningSceneDirty(targetGo);
                 return new
@@ -223,9 +362,9 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 
-        private static object SetProperty(JObject @params, JToken targetToken, string searchMethod)
+        private static object SetProperty(JObject @params, JToken targetToken, string searchMethod, ComponentSelection.Result selection = null)
         {
-            GameObject targetGo = FindTarget(targetToken, searchMethod);
+            GameObject targetGo = selection != null ? selection.Target : FindTarget(targetToken, searchMethod);
             if (targetGo == null)
             {
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
@@ -238,7 +377,7 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Resolve component type using unified type resolver
-            Type type = UnityTypeResolver.ResolveComponent(componentType);
+            Type type = selection != null ? selection.RequestedType : UnityTypeResolver.ResolveComponent(componentType);
             if (type == null)
             {
                 return new ErrorResponse($"Component type '{componentType}' not found.");
@@ -254,7 +393,11 @@ namespace MCPForUnity.Editor.Tools
             )
                 return new ErrorResponse("'component_index' must be a valid integer when supplied.");
             Component component;
-            if (componentIndex.HasValue)
+            if (selection != null)
+            {
+                component = selection.Component;
+            }
+            else if (componentIndex.HasValue)
             {
                 var components = targetGo.GetComponents(type);
                 if (componentIndex.Value < 0 || componentIndex.Value >= components.Length)
