@@ -532,19 +532,24 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                     installSkillsButton.SetEnabled(true);
                     installSkillsButton.text = "Install Skills";
 
+                    string summary = SkillSyncService.DescribeResult(result);
                     if (result.Success)
                     {
-                        bool noChanges = result.Added == 0 && result.Updated == 0 && result.Deleted == 0;
-                        string summary = noChanges
-                            ? "Skills are already up to date."
-                            : $"Added: {result.Added}, Updated: {result.Updated}, Deleted: {result.Deleted}";
-                        McpLog.Info($"SkillSync complete: {summary} ({installPath})");
-                        EditorUtility.DisplayDialog("Install Skills", $"{summary}\n\nInstalled at: {installPath}", "OK");
+                        bool needsAttention = result.Conflicts.Length > 0 || !string.IsNullOrEmpty(result.RecoveryPath);
+                        if (needsAttention)
+                            McpLog.Warn($"SkillSync: {summary} ({installPath})");
+                        else
+                            McpLog.Info($"SkillSync: {summary} ({installPath})");
+                        EditorUtility.DisplayDialog(
+                            needsAttention ? "Skills synced with retained changes" : "Install Skills",
+                            $"{summary}\n\nInstalled at: {installPath}",
+                            "OK"
+                        );
                     }
                     else
                     {
-                        McpLog.Error($"SkillSync failed: {result.Error}");
-                        EditorUtility.DisplayDialog("Install Skills Failed", result.Error, "OK");
+                        McpLog.Error($"SkillSync failed: {summary}");
+                        EditorUtility.DisplayDialog(result.PartialApplication ? "Skill sync requires recovery" : "Install Skills Failed", summary, "OK");
                     }
                 }
             );
