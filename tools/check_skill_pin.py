@@ -12,6 +12,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import stat
 import subprocess
 from typing import Final
 
@@ -19,6 +20,22 @@ from typing import Final
 ROOT: Final = Path(__file__).resolve().parents[1]
 SKILLS: Final = (".claude/skills/unity-mcp-skill", "unity-mcp-skill")
 REVISION: Final = re.compile(r"[0-9a-fA-F]{40}\Z")
+
+
+def assert_unlinked_skill_path(repo: Path, path: Path) -> None:
+    """Refuse links/reparse points at every source component below the trusted repo.
+
+    Check lexical parents before descending; resolving first would follow the very
+    link being rejected. This is a build-time check, not a race-free filesystem API.
+    """
+    current = repo
+    for part in path.relative_to(repo).parts:
+        if part == "..":
+            raise ValueError("Skill source escapes its repository")
+        current = current / part
+        attributes = current.lstat()
+        if stat.S_ISLNK(attributes.st_mode) or getattr(attributes, "st_file_attributes", 0) & 0x400:
+            raise ValueError("Skill source contains a linked/reparse entry")
 
 
 def _git(repo: Path, *arguments: str) -> subprocess.CompletedProcess[bytes]:
@@ -69,6 +86,11 @@ def check_pin(repo: Path, *, verify_git: bool = False) -> list[str]:
         return ["mcpSkillRevision must declare a nonzero full 40-hex verified skill commit."]
     if not verify_git:
         return []
+    try:
+        for folder in SKILLS:
+            assert_unlinked_skill_path(repo, repo / folder)
+    except (OSError, ValueError) as error:
+        return [str(error)]
     commit = _git(repo, "cat-file", "-t", revision)
     if commit.returncode or commit.stdout.strip() != b"commit":
         return [
@@ -94,6 +116,40 @@ def check_pin(repo: Path, *, verify_git: bool = False) -> list[str]:
             if relative not in expected or current.get(relative) != expected[relative]:
                 issues.append(f"Skill pin does not match intended content: {folder}/{relative}")
     return issues
+
+
+def verified_skill_snapshot(repo: Path) -> tuple[str, dict[str, bytes]]:
+    """Return raw pinned blobs after the existing explicit local-history/mirror check.
+
+    Comparison still permits checkout CRLF; returned bytes are the committed blobs,
+    not the comparison's newline-normalized representation. Never fetch history.
+    """
+    # Before check_pin traverses or reads a mirror, validate its full root chain.
+    for folder in SKILLS:
+        assert_unlinked_skill_path(repo, repo / folder)
+    issues = check_pin(repo, verify_git=True)
+    if issues:
+        raise ValueError("; ".join(issues))
+    revision = json.loads((repo / "MCPForUnity/package.json").read_text(encoding="utf-8"))[
+        "mcpSkillRevision"
+    ]
+    expected, _ = _committed_files(repo, revision, SKILLS[0])
+    if len(expected) > 512:
+        raise ValueError("Skill exceeds the 512-file interoperability limit")
+    files: dict[str, bytes] = {}
+    total = 0
+    for relative in sorted(expected):
+        for folder in SKILLS:
+            path = repo / folder / relative
+            assert_unlinked_skill_path(repo, path)
+        blob = _git(repo, "show", f"{revision}:{SKILLS[0]}/{relative}")
+        if blob.returncode:
+            raise ValueError("Cannot read verified skill blob")
+        total += len(blob.stdout)
+        if total > 16 * 1024 * 1024:
+            raise ValueError("Skill exceeds the 16 MiB interoperability limit")
+        files[relative] = blob.stdout
+    return revision.lower(), files
 
 
 def main() -> int:

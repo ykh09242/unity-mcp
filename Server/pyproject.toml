@@ -75,6 +75,9 @@ where = ["src"]
 [tool.setuptools.package-dir]
 "" = "src"
 
+[tool.setuptools.package-data]
+services = ["skills_bundle.json"]
+
 [tool.setuptools]
 py-modules = ["main"]
 
