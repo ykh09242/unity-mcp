@@ -50,7 +50,7 @@ namespace MCPForUnity.Editor.Tools
                     throw new ArgumentException("Loaded scenes exceed the bound or have ambiguous identities.");
                 var snapshot = new JObject
                 {
-                    ["schema_version"] = 1,
+                    ["schema_version"] = 2,
                     ["framework"] = framework,
                     ["mode"] = Application.isPlaying ? "play" : "edit",
                     ["scenes"] = new JArray(scenes.OrderBy(value => value, StringComparer.Ordinal)),
@@ -63,6 +63,8 @@ namespace MCPForUnity.Editor.Tools
                         ["interaction_method"] = "component_state",
                         ["occlusion_status"] = framework == "ugui" ? "renderer_cull_only" : "unavailable",
                         ["layout_status"] = "current",
+                        ["control_state_method"] = "typed_allowlist_v1",
+                        ["input_privacy"] = "recognized_input_ownership_v1",
                     },
                     ["complete"] = true,
                     ["max_nodes"] = limit,
@@ -72,6 +74,8 @@ namespace MCPForUnity.Editor.Tools
                         "Interactable state does not prove raycast reachability or event delivery.",
                         "Geometry uses current layout; Screen resolution is observed without resizing or forcing layout.",
                         "Unsaved scene identities use the scene name; saved scene paths are preferred for durable comparisons.",
+                        "Recognized input contents and owned renderers are omitted before text access; redacted content changes cannot be compared. Unrelated script-copied secrets are not identified.",
+                        "Selection indices are current positions, not persistent item identities. Native input inventories may allocate before managed processing bounds are checked.",
                         framework == "ugui"
                             ? "uGUI bounds are world XY axis-aligned bounds, not camera-projected screen rectangles; renderer cull is partial evidence only."
                             : "UI Toolkit bounds use panel coordinates; ancestor display, visibility and opacity affect render eligibility, while clipping and overlapping elements remain untested."

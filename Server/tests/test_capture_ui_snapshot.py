@@ -9,6 +9,7 @@ import pytest
 
 from cli.commands.play_scenario_ui import capture_ui_snapshot as capture_command
 from services.tools.capture_ui_snapshot import capture_ui_snapshot
+from .test_ui_snapshot_control_state import snapshot_v2
 
 
 @pytest.mark.asyncio
@@ -33,7 +34,7 @@ async def test_capture_dispatches_one_read_when_request_is_valid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given
-    transport = AsyncMock(return_value={"success": True, "data": {"complete": True}})
+    transport = AsyncMock(return_value={"success": True, "data": snapshot_v2()})
     monkeypatch.setattr("services.tools.capture_ui_snapshot.send_with_unity_instance", transport)
     monkeypatch.setattr(
         "services.tools.capture_ui_snapshot.get_unity_instance_from_context",

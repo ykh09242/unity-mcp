@@ -218,12 +218,19 @@ def test_capture_saves_complete_parseable_evidence_when_native_response_is_valid
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Given
+    native = snapshot()
+    native["schema_version"] = 2
+    native["evidence"].update(
+        control_state_method="typed_allowlist_v1", input_privacy="recognized_input_ownership_v1"
+    )
+    for item in native["nodes"]:
+        item["state"] = {}
     monkeypatch.setattr(
         "cli.commands.play_scenario_ui.get_config", lambda: type("Config", (), {"format": "json"})()
     )
     monkeypatch.setattr(
         "cli.commands.play_scenario_ui.run_command",
-        lambda *_args: {"result": {"success": True, "data": snapshot()}},
+        lambda *_args: {"result": {"success": True, "data": native}},
     )
     group = click.Group()
     register_ui_commands(group)

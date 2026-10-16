@@ -200,11 +200,41 @@ with exact hierarchy names. Duplicate roots/siblings are ambiguous and fail capt
 paths are preferred; unsaved scene-name identities carry an explicit limitation. Give UI Toolkit
 siblings unique names when unnamed elements of the same type would otherwise be ambiguous.
 
+New live captures use snapshot schema version 2 and require matching updated native plugin and
+server versions. Each node adds a closed `state` object. Supported built-in controls expose Toggle
+Booleans; Slider/SliderInt numeric value and range; Dropdown/TMP_Dropdown/DropdownField indices;
+at most 64 sorted ListView selection indices; input read-only/password/redacted flags; and scroll
+position. uGUI scroll positions use normalized coordinates; UI Toolkit uses panel-point offsets.
+Unsupported/custom controls have empty state. No generic property dump, option/data-source text,
+selected object or input string value is included in typed state.
+
+Ordinary label/button text remains available. Recognized editable input contents, including ordinary
+non-password fields, and directly owned text/placeholder renderers are omitted **before text
+getters**. Redacted input nodes require `text=null`; no value, mask, length, hash, caret or selection
+range is collected. Changing only redacted contents intentionally produces no content diff. This
+does not identify secrets that application scripts copy into unrelated labels, names or metadata.
+The other UI read tools have separate contracts; this is a semantic-snapshot privacy guarantee.
+
+uGUI privacy preflight inventories loaded InputField/TMP_InputField owners, including inactive
+owners and renderers outside the selected subtree. It processes at most 4,096 total entries and
+retains at most 4,096 owner IDs and 8,192 renderer IDs. An incomplete inventory refuses the whole
+capture before text publication. The native inventory call can allocate its result before these
+managed caps are checked; neither native allocation nor elapsed time is bounded by those counts.
+UI Toolkit uses physical input ancestry/native input-role evidence for privacy while preserving
+the existing content-container order for snapshot identities. Invalid state, more than 64 selected
+indices or unavailable privacy evidence produces no comparable partial tree or saved artifact.
+
 uGUI geometry is a world-XY axis-aligned bounding box, not projected screen pixels. UI Toolkit uses
 panel points from `worldBound` and requires a built, attached root with finite positive layout.
 Comparison requires matching framework, mode, loaded-scene set, target, resolution and evidence
 method. It reports added/removed nodes and changes in text, state, classes/components, sibling order
 and geometry. `--geometry-tolerance` is 0-10,000 in the snapshot's declared geometry space.
+
+Offline version-1/version-1 comparisons remain supported. Version-2/version-2 comparisons report
+a control-only change as `fields: ["state"]`; numeric control values are exact and are not covered
+by geometry tolerance. Mixed snapshot versions are `not_comparable` (exit 2), with no automatic
+state upgrade or privacy claim for legacy files. The comparison report itself retains schema
+version 1. Existing legacy artifacts are neither rewritten nor retrospectively certified private.
 
 These are semantic/layout diagnostics. `visible` describes render eligibility, and component state
 does not prove input reachability or event delivery. uGUI renderer culling is partial evidence;

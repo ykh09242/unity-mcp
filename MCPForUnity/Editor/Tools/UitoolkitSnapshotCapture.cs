@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -10,6 +11,135 @@ namespace MCPForUnity.Editor.Tools
 {
     internal static class UitoolkitSnapshotCapture
     {
+        internal static Action<VisualElement> InputPrivacyForTests;
+
+        private static bool InputOwned(VisualElement element)
+        {
+            try
+            {
+                InputPrivacyForTests?.Invoke(element);
+                int depth = 0;
+                for (var current = element; current != null; current = current.parent)
+                {
+                    if (depth++ == 128)
+                        throw new ArgumentException();
+                    int types = 0;
+                    for (var type = current.GetType(); type != null; type = type.BaseType)
+                    {
+                        if (types++ == 32)
+                            throw new ArgumentException();
+                        if ((type.FullName ?? "").StartsWith("UnityEngine.UIElements.TextInputBaseField`1", StringComparison.Ordinal))
+                            return true;
+                    }
+                }
+                // Newer native input internals use an owned TextElement rather than a
+                // specialized TextInput subtype. Read its role metadata, never its text.
+                if (element is TextElement)
+                {
+                    const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+                    var member = typeof(TextElement).GetField("isInputField", flags);
+                    if (member != null && member.FieldType == typeof(bool))
+                        return (bool)member.GetValue(element);
+                    var property = typeof(TextElement).GetProperty("isInputField", flags);
+                    if (property != null && property.PropertyType == typeof(bool))
+                        return (bool)property.GetValue(element);
+                    // Older engines represent the input itself as a TextElement subtype,
+                    // already recognized by the type walk above. Establish that layout.
+                    var input = typeof(TextField).BaseType.GetNestedType("TextInputBase", BindingFlags.Public | BindingFlags.NonPublic);
+                    if (input != null && typeof(TextElement).IsAssignableFrom(input))
+                        return false;
+                    throw new ArgumentException();
+                }
+                return false;
+            }
+            catch
+            {
+                throw new ArgumentException("Input privacy evidence is unavailable; snapshot refused.");
+            }
+        }
+
+        private static float Number(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value))
+                throw new ArgumentException("UI control state is unavailable or non-finite.");
+            return value;
+        }
+
+        private static JObject State(VisualElement element)
+        {
+            var state = new JObject();
+            var type = element.GetType();
+            if (type == typeof(Toggle))
+                state["toggle"] = new JObject { ["value"] = ((Toggle)element).value };
+            else if (type == typeof(Slider))
+            {
+                var slider = (Slider)element;
+                state["slider"] = new JObject
+                {
+                    ["kind"] = "float",
+                    ["value"] = Number(slider.value),
+                    ["low"] = Number(slider.lowValue),
+                    ["high"] = Number(slider.highValue),
+                    ["whole_numbers"] = false,
+                };
+            }
+            else if (type == typeof(SliderInt))
+            {
+                var slider = (SliderInt)element;
+                state["slider"] = new JObject
+                {
+                    ["kind"] = "integer",
+                    ["value"] = slider.value,
+                    ["low"] = slider.lowValue,
+                    ["high"] = slider.highValue,
+                };
+            }
+            else if (type == typeof(DropdownField))
+                state["selection"] = new JObject { ["kind"] = "index", ["index"] = ((DropdownField)element).index };
+            else if (type == typeof(ListView))
+            {
+                var list = (ListView)element;
+                var indices = new List<int>();
+                using (var values = list.selectedIndices.GetEnumerator())
+                    while (values.MoveNext())
+                    {
+                        if (indices.Count == 64 || values.Current < 0)
+                            throw new ArgumentException("UI selection exceeds the index bound or is invalid.");
+                        indices.Add(values.Current);
+                    }
+                indices.Sort();
+                if (indices.Distinct().Count() != indices.Count)
+                    throw new ArgumentException("UI selection contains duplicate indices.");
+                string selection =
+                    list.selectionType == SelectionType.None ? "none"
+                    : list.selectionType == SelectionType.Single ? "single"
+                    : list.selectionType == SelectionType.Multiple ? "multiple"
+                    : throw new ArgumentException("UI selection type is unavailable.");
+                state["selection"] = new JObject
+                {
+                    ["kind"] = "indices",
+                    ["selection_type"] = selection,
+                    ["indices"] = new JArray(indices),
+                };
+            }
+            else if (type == typeof(TextField))
+            {
+                var field = (TextField)element;
+                state["input"] = new JObject
+                {
+                    ["redacted"] = true,
+                    ["read_only"] = field.isReadOnly,
+                    ["password"] = field.isPasswordField,
+                };
+            }
+            else if (type == typeof(ScrollView))
+            {
+                var position = ((ScrollView)element).scrollOffset;
+                state["scroll"] = new JObject { ["kind"] = "panel_points", ["position"] = new JArray(Number(position.x), Number(position.y)) };
+            }
+            return state;
+        }
+
         private sealed class Frame
         {
             public VisualElement Element;
@@ -99,7 +229,9 @@ namespace MCPForUnity.Editor.Tools
 
         private static void Add(VisualElement element, string identity, string parent, bool active, float inheritedAlpha, JArray nodes, bool inheritedDisplay)
         {
-            string text = element is TextElement textElement ? textElement.text : null;
+            bool inputOwned = InputOwned(element);
+            var state = State(element);
+            string text = !inputOwned && element is TextElement textElement ? textElement.text : null;
             var classes = element.GetClasses().OrderBy(value => value, StringComparer.Ordinal).ToArray();
             if ((text != null && text.Length > 8192) || classes.Length > 64 || classes.Any(value => value.Length == 0 || value.Length > 4096))
                 throw new ArgumentException("Visual element text/classes exceed the snapshot bound.");
@@ -115,7 +247,8 @@ namespace MCPForUnity.Editor.Tools
                     ["type"] = element.GetType().FullName,
                     ["components"] = new JArray(),
                     ["classes"] = new JArray(classes),
-                    ["text"] = text,
+                    ["text"] = text == null ? JValue.CreateNull() : new JValue(text),
+                    ["state"] = state,
                     ["active"] = active,
                     ["visible"] = active && inheritedDisplay && Eligible(element) && alpha > 0 && element.worldBound.width > 0 && element.worldBound.height > 0,
                     ["interactable"] = active && element.enabledInHierarchy,

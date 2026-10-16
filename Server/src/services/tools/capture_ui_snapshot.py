@@ -7,6 +7,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt, ValidationError
 
 from models.models import MCPResponse
+from models.ui_snapshots import validate_ui_snapshot
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
@@ -31,6 +32,10 @@ class UiSnapshotRequest(BaseModel):
         "current bounds and renderer-cull evidence where available. Does not write files or change "
         "resolution/layout. Ambiguous identities, overflow and unavailable live UI trees fail. "
         "Actual occlusion, pixel visibility and event delivery are not proven."
+        " New captures use schema version 2 with fixed typed control states. Recognized editable "
+        "input contents and owned text renderers are omitted before text access; ordinary labels "
+        "remain. Native inventory allocation/time is separate from managed processing bounds. "
+        "Use matching updated plugin/server versions; legacy v1 is supported only for offline comparison."
     ),
     annotations=ToolAnnotations(
         title="Capture UI Snapshot", readOnlyHint=True, destructiveHint=False
@@ -62,5 +67,18 @@ async def capture_ui_snapshot(
         request.model_dump(mode="json"),
     )
     if isinstance(response, MCPResponse):
-        return response.model_dump(exclude_none=True)
+        response = response.model_dump(exclude_none=True)
+    if not isinstance(response, dict) or response.get("success") is not True:
+        return {
+            "success": False,
+            "error": "UI snapshot capture failed; native evidence is unavailable.",
+        }
+    if isinstance(response, dict) and response.get("success") is True:
+        try:
+            validate_ui_snapshot(response.get("data"), require_v2=True)
+        except ValueError:
+            return {
+                "success": False,
+                "error": "UI snapshot schema/privacy validation failed; live capture requires version 2.",
+            }
     return response
