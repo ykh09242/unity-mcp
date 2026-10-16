@@ -339,12 +339,56 @@ namespace MCPForUnityTests.Editor.Tools
             GameObject target = Create("OnlySecond", _secondScene);
             var query = Query("all_loaded", "by_id", target.GetInstanceIDCompat().ToString());
             JObject first = Search(query);
-            CollectionAssert.Contains(((JArray)first["sceneHandles"]).Values<int>(), _firstScene.handle);
-            CollectionAssert.Contains(((JArray)first["sceneHandles"]).Values<int>(), _secondScene.handle);
+#if UNITY_6000_4_OR_NEWER
+            CollectionAssert.Contains(((JArray)first["sceneHandles"]).Values<ulong>(), _firstScene.handle.GetRawData());
+            CollectionAssert.Contains(((JArray)first["sceneHandles"]).Values<ulong>(), _secondScene.handle.GetRawData());
+#else
+            CollectionAssert.Contains(((JArray)first["sceneHandles"]).Values<int>(), (int)_firstScene.handle);
+            CollectionAssert.Contains(((JArray)first["sceneHandles"]).Values<int>(), (int)_secondScene.handle);
+#endif
             Assert.IsTrue(first.Value<bool>("hasMore"));
             Assert.AreEqual("root_enumeration_budget", first.Value<string>("stopReason"));
             CollectionAssert.AreEqual(new[] { target.GetInstanceIDCompat() }, ReadAll(query));
         }
+
+        [Test]
+        public void SelectedSceneIdentityRetainsTheNativeHandleType()
+        {
+            Type info = SearchHelper.GetNestedType("SceneInfo", System.Reflection.BindingFlags.NonPublic);
+            var handle = info.GetField("Handle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.AreEqual(_firstScene.handle.GetType(), handle.FieldType, "Cursor identity must retain Unity's complete native scene handle.");
+        }
+
+#if UNITY_6000_4_OR_NEWER
+        [Test]
+        public void SceneIdentityAndWirePreserveDistinctHighHandleBits()
+        {
+            const ulong firstRaw = 0x000000010000002AUL;
+            const ulong secondRaw = 0xF00000010000002AUL;
+            SceneHandle first = SceneHandle.FromRawData(firstRaw);
+            SceneHandle second = SceneHandle.FromRawData(secondRaw);
+            Type info = SearchHelper.GetNestedType("SceneInfo", System.Reflection.BindingFlags.NonPublic);
+            var handle = info.GetField("Handle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            object firstInfo = Activator.CreateInstance(info);
+            object secondInfo = Activator.CreateInstance(info);
+            handle.SetValue(firstInfo, first);
+            handle.SetValue(secondInfo, second);
+            Array left = Array.CreateInstance(info, 1);
+            Array right = Array.CreateInstance(info, 1);
+            left.SetValue(firstInfo, 0);
+            right.SetValue(secondInfo, 0);
+            var sameScenes = SearchHelper.GetMethod("SameScenes", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            Assert.IsTrue((bool)sameScenes.Invoke(null, new object[] { left, left }));
+            Assert.IsFalse((bool)sameScenes.Invoke(null, new object[] { left, right }), "Matching low 32 bits must not alias cursor scene identity.");
+            var describe = SearchHelper.GetMethod("DescribeSceneHandle", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            foreach (SceneHandle native in new[] { first, second })
+            {
+                var value = (JValue)describe.Invoke(null, new object[] { native });
+                Assert.AreEqual(JTokenType.Integer, value.Type);
+                Assert.AreEqual(native.GetRawData(), JToken.Parse(value.ToString(Newtonsoft.Json.Formatting.None)).Value<ulong>());
+            }
+        }
+#endif
 
         [Test]
         public void PreviewScenesAreExcludedWithoutSubstitutingActiveScene()
@@ -561,7 +605,7 @@ namespace MCPForUnityTests.Editor.Tools
                 state.GetType().GetField("Observations", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(state);
             object last = observations.GetValue(observations.Length - 1);
             int id = (int)last.GetType().GetField("Id", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(last);
-            GameObject go = UnityEditor.EditorUtility.InstanceIDToObject(id) as GameObject;
+            GameObject go = UnityObjectIdCompat.InstanceIDToObjectCompat(id) as GameObject;
             Assert.IsNotNull(go);
             go.name = "Changed frontier";
             EditorUtility.SetDirty(go);

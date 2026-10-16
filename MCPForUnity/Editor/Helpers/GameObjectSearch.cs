@@ -11,6 +11,11 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+#if UNITY_6000_3_OR_NEWER
+using SearchSceneHandle = UnityEngine.SceneManagement.SceneHandle;
+#else
+using SearchSceneHandle = System.Int32;
+#endif
 
 namespace MCPForUnity.Editor.Helpers
 {
@@ -30,8 +35,8 @@ namespace MCPForUnity.Editor.Helpers
         private static int _epoch;
 
         // Native tests observe real operations; these never replace traversal or Unity calls.
-        private static Action BeforeRootEnumerationForTests;
-        private static Action<int> TraversalStepForTests;
+        private static Action BeforeRootEnumerationForTests = null;
+        private static Action<int> TraversalStepForTests = null;
 
         static GameObjectSearch()
         {
@@ -83,7 +88,7 @@ namespace MCPForUnity.Editor.Helpers
 
         private struct SceneInfo
         {
-            internal int Handle;
+            internal SearchSceneHandle Handle;
             internal int ManagerIndex;
             internal int Roots;
         }
@@ -290,7 +295,7 @@ namespace MCPForUnity.Editor.Helpers
                     ["scanComplete"] = complete,
                     ["matchedSoFar"] = state.Matched,
                     ["sceneScope"] = query.Scope,
-                    ["sceneHandles"] = new JArray(scenes.Select(item => item.Handle)),
+                    ["sceneHandles"] = new JArray(scenes.Select(item => DescribeSceneHandle(item.Handle))),
                     ["maxDepth"] = query.Depth,
                     ["depthLimited"] = state.DepthLimited,
                     ["consistency"] = "stable_source_required",
@@ -646,6 +651,16 @@ namespace MCPForUnity.Editor.Helpers
                     Roots = roots,
                 }
             );
+        }
+
+        private static JValue DescribeSceneHandle(SearchSceneHandle handle)
+        {
+#if UNITY_6000_4_OR_NEWER
+            return new JValue(handle.GetRawData());
+#else
+            // 6000.3 has the opaque native type but only the legacy integer wire API.
+            return new JValue((int)handle);
+#endif
         }
 
         private static bool SameScenes(SceneInfo[] left, SceneInfo[] right)
