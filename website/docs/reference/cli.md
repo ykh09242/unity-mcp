@@ -8,7 +8,7 @@ description: Distinguish the server executable from the local HTTP CLI, inspect 
 
 # CLI Reference
 
-This page is authored, not the generated MCP tool schema. Follow [CLI setup](../guides/cli.md) before using the shorter commands below.
+This page is authored, not the generated MCP tool schema. Follow [CLI setup](../guides/cli.md) before using the shorter commands below. See the [generated command reference](./cli-commands.md) for registered command paths, options and defaults. Authored CLI examples are checked against the same Click command tree without executing callbacks.
 
 ## Two different executables
 

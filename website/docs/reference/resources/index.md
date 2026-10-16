@@ -84,7 +84,7 @@ URI: mcpforunity://scene/gameobject/{instance_id}
 
 **Parameters:**
 
-- `instance_id` (`str`, required) — 
+- `instance_id` (`str`, required)
 
 ## `gameobject_api`
 
@@ -96,7 +96,7 @@ URI: mcpforunity://scene/gameobject-api
 
 **Parameters:**
 
-- `_ctx` (`Context`, required) — 
+- `_ctx` (`Context`, required)
 
 ## `gameobject_children`
 
@@ -112,16 +112,17 @@ Read bounded direct child IDs in sibling order plus object metadata. page_size d
 
 ## `gameobject_component`
 
-**URI:** `mcpforunity://scene/gameobject/{instance_id}/component/{component_name}`
+**URI:** `mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection}`
 
-Get a specific component on a GameObject by type name. Returns the fully serialized component with all properties.
-
-URI: mcpforunity://scene/gameobject/{instance_id}/component/{component_name}
+Get a component on a GameObject. The bare URI preserves legacy case-insensitive first-match reads. Optional component_index or component_instance_id selects one live component; strict_selection=true requires uniqueness. Selected reads use the same canonical, case-sensitive component type as manage_components. Indices are zero-based within GetComponents(requested type), not the mixed component list. Prefer the component instanceID from /components; IDs and indices are ephemeral. Unsupported Editors fail without falling back.
 
 **Parameters:**
 
-- `instance_id` (`str`, required) — 
-- `component_name` (`str`, required) — 
+- `instance_id` (`str`, required)
+- `component_name` (`str`, required)
+- `component_index` (`str | None`, optional)
+- `component_instance_id` (`str | None`, optional)
+- `strict_selection` (`str | bool`, optional)
 
 ## `gameobject_components`
 
@@ -133,10 +134,10 @@ URI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,i
 
 **Parameters:**
 
-- `instance_id` (`str`, required) — 
-- `page_size` (`int`, optional) — 
-- `cursor` (`int`, optional) — 
-- `include_properties` (`bool`, optional) — 
+- `instance_id` (`str`, required)
+- `page_size` (`int`, optional)
+- `cursor` (`int`, optional)
+- `include_properties` (`bool`, optional)
 
 ## `get_tests`
 
@@ -178,7 +179,7 @@ URI: mcpforunity://prefab-api
 
 **Parameters:**
 
-- `_ctx` (`Context`, required) — 
+- `_ctx` (`Context`, required)
 
 ## `prefab_hierarchy`
 
@@ -190,7 +191,7 @@ URI: mcpforunity://prefab/{encoded_path}/hierarchy
 
 **Parameters:**
 
-- `encoded_path` (`str`, required) — 
+- `encoded_path` (`str`, required)
 
 ## `prefab_info`
 
@@ -202,7 +203,7 @@ URI: mcpforunity://prefab/{encoded_path}
 
 **Parameters:**
 
-- `encoded_path` (`str`, required) — 
+- `encoded_path` (`str`, required)
 
 ## `project_capabilities`
 

@@ -440,8 +440,8 @@ def render_resources_catalog(resources: list[dict[str, Any]]) -> str:
             param_lines = ["", "**Parameters:**", ""]
             for p in params:
                 req = "required" if p.required else "optional"
-                d = p.description or ""
-                param_lines.append(f"- `{p.name}` (`{p.type_str}`, {req}) — {d}")
+                suffix = f" — {p.description}" if p.description else ""
+                param_lines.append(f"- `{p.name}` (`{p.type_str}`, {req}){suffix}")
             param_block = "\n".join(param_lines)
         else:
             param_block = ""

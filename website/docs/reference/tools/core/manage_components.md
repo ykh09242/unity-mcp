@@ -12,7 +12,7 @@ description: "Add, remove, or set properties on components attached to GameObjec
 
 ## Description
 
-Add, remove, or set properties on components attached to GameObjects. Actions: add, remove, set_property. Requires target (instance ID or name) and component_type. For READING component data, use the mcpforunity://scene/gameobject/{id}/components resource or mcpforunity://scene/gameobject/{id}/component/{name} for a single component. For creating/deleting GameObjects themselves, use manage_gameobject instead.
+Add, remove, or set properties on components attached to GameObjects. Actions: add, remove, set_property. Requires target (instance ID or name) and component_type. For READING component data, use the mcpforunity://scene/gameobject/{id}/components resource or mcpforunity://scene/gameobject/{id}/component/{name} for a single component. Set strict_selection=true to require a unique target and component, or select a component_instance_id. Name/path uniqueness includes inactive objects in the active scene/current prefab stage; IDs can address other loaded scenes. These opt-in requests require a compatible Editor package and never fall back to first match. For creating/deleting GameObjects themselves, use manage_gameobject instead.
 
 ## Parameters
 
@@ -25,7 +25,9 @@ Add, remove, or set properties on components attached to GameObjects. Actions: a
 | `property` | `str \| None` | — | Property name to set (for set_property action) |
 | `value` | `str \| int \| float \| bool \| dict[Any] \| list[Any] \| None` | — | Value to set (required with property for set_property). Null clears an object reference. For object references: instance ID (int), asset path (string), or {"guid": "..."} / {"path": "..."}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"} or {"guid": "...", "fileID": <id>}. Single-sprite textures auto-resolve. |
 | `properties` | `dict[str, Any] \| str \| None` | — | Dictionary of property names to values. Example: {"mass": 5.0, "useGravity": false} |
-| `component_index` | `int \| None` | — | Zero-based index to select which component when multiple of the same type exist. Use the components resource to discover indices. If omitted, targets the first instance. |
+| `component_index` | `int \| None` | — | Zero-based index within GetComponents(requested type), including derived types; not the mixed components-resource list index. Legacy omission selects the first instance. strict_selection=true instead requires uniqueness. |
+| `strict_selection` | `bool` | — | Require one GameObject and, for remove/set_property, one component unless an index or component ID selects it. Default preserves legacy first match. |
+| `component_instance_id` | `int \| None` | — | Nonzero live component instanceID from the components resource. Requires the selected target and type to match; cannot be combined with component_index or add. |
 
 ## Returns
 
