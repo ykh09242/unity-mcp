@@ -1329,6 +1329,15 @@ Cancel readiness monitoring without stopping Play Mode.
 | job_id | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp editor cancel-test`
+
+Request native cancellation; accepted intent is not confirmed termination.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| job_id | text | required | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp editor console`
 
 Read or clear the Unity console. Examples: unity-mcp editor console unity-mcp editor console --type error --count 20 unity-mcp editor console --filter "NullReference" --stacktrace unity-mcp editor console --clear
@@ -1498,6 +1507,7 @@ Run Unity tests. Examples: unity-mcp editor tests unity-mcp editor tests --mode 
 | --mode / -m | choice: EditMode, PlayMode | optional | nargs=1 | "EditMode" | — | Test mode to run. |
 | --async | boolean | optional | nargs=1, flag | — | — | Run asynchronously and return job ID for polling. |
 | --wait / -w | integer | optional | nargs=1 | — | — | Wait up to N seconds for completion (default: no wait). |
+| --run-timeout-ms | integer range: [1..600000] | optional | nargs=1 | — | — | Opt-in native job deadline; requires supported native control. |
 | --details | boolean | optional | nargs=1, flag | — | — | Include detailed results for all tests. |
 | --failed-only | boolean | optional | nargs=1, flag | — | — | Include details for failed/skipped tests only. |
 | --clear-stuck | boolean | optional | nargs=1, flag | — | — | Clear an orphaned running job that is blocking new runs, instead of starting a run. |
@@ -3970,10 +3980,20 @@ Quickly create a sprite texture. Examples: unity-mcp texture sprite Assets/Sprit
 
 ## `unity-mcp tool`
 
-Tool management - list custom tools for the active Unity project.
+List project tools or inspect a named server-advertised tool.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp tool describe`
+
+Describe NAME for this CLI connection; hidden-tool causes may be unknown.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| name | text | required | nargs=1 | — | — |  |
+| --protocol | choice: auto, legacy | optional | nargs=1 | "auto" | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp tool list`
@@ -3982,6 +4002,16 @@ List custom tools registered for the active Unity project.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp tool schema`
+
+Print NAME's complete schema receipt as JSON, regardless of --format. Project-declared metadata is distinct from an advertised callable schema.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| name | text | required | nargs=1 | — | — |  |
+| --protocol | choice: auto, legacy | optional | nargs=1 | "auto" | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp ui`

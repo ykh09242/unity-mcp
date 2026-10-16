@@ -19,7 +19,7 @@ QUERY (read-only):
 - search_packages: Search Unity registry by keyword
 - get_package_info: Get details about a specific installed package
 - ping: Check package manager availability
-- status: Poll async job status (job_id required for list/search; optional for add/remove/embed)
+- status: Poll async job status (job_id required for list/search; optional for add/remove/embed/resolve)
 
 INSTALL/REMOVE:
 - add_package: Install a package (name, name@version, git URL, or file: path)
@@ -32,7 +32,8 @@ REGISTRIES:
 
 UTILITY:
 - embed_package: Copy package to local Packages/ for editing
-- resolve_packages: Force re-resolution of all packages
+- resolve_packages: Trigger re-resolution; completion stays unknown (void Unity API).
+  Session-only job observations do not prove idleness or safe retry; status never repeats Resolve.
 
 ## Parameters
 
