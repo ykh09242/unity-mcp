@@ -14,6 +14,7 @@ from hashlib import sha256
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass
 from contextvars import ContextVar
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from collections.abc import Callable
 
@@ -172,11 +173,14 @@ class _HttpRequestBudget:
     started_at: float
     budget: _CommandBudget
     scope: asyncio.Timeout
+    hard_expires_at: float | None = None
 
     def extend(self, timeout_s: float) -> None:
         # A tool may transform arguments or discover an existing long-job policy.
         # Account for that policy from request entry, never from this later phase.
         expires_at = self.started_at + timeout_s
+        if self.hard_expires_at is not None:
+            expires_at = min(expires_at, self.hard_expires_at)
         if expires_at > self.budget.expires_at and not self.scope.expired():
             self.budget.expires_at = expires_at
             self.scope.reschedule(expires_at)
@@ -198,6 +202,64 @@ class _HttpRequestBudget:
 http_request_budget: ContextVar[_HttpRequestBudget | None] = ContextVar(
     "http_request_budget", default=None
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CommandEvidenceSnapshot:
+    """Copy bounded scalar evidence; never retain the originating request budget."""
+
+    phase: str
+    session_id: str | None
+    command_id: str | None
+    dispatched: bool
+    command: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class HttpBudgetSnapshot:
+    started_at: float
+    expires_at: float
+    evidence: CommandEvidenceSnapshot
+
+
+def capture_http_request_budget() -> HttpBudgetSnapshot | None:
+    request = http_request_budget.get()
+    if request is None:
+        return None
+    evidence = request.budget.execution_evidence()
+    return HttpBudgetSnapshot(
+        request.started_at,
+        request.budget.expires_at,
+        CommandEvidenceSnapshot(
+            evidence.phase,
+            evidence.session_id,
+            evidence.command_id,
+            evidence.dispatched,
+            evidence.command,
+        ),
+    )
+
+
+@contextmanager
+def detached_http_request_budget(snapshot: HttpBudgetSnapshot, scope: asyncio.Timeout):
+    """Own a new budget whose live evidence changes but original ceiling cannot."""
+    evidence = snapshot.evidence
+    budget = _CommandBudget(
+        snapshot.expires_at,
+        phase=evidence.phase,
+        session_id=evidence.session_id,
+        command_id=evidence.command_id,
+        dispatched=evidence.dispatched,
+        command=evidence.command,
+    )
+    owned = _HttpRequestBudget(
+        snapshot.started_at, budget, scope, hard_expires_at=snapshot.expires_at
+    )
+    token = http_request_budget.set(owned)
+    try:
+        yield owned
+    finally:
+        http_request_budget.reset(token)
 
 
 def extend_http_request_deadline(timeout_s: float) -> None:

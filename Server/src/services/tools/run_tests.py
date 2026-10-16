@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import AsyncExitStack
 from collections import OrderedDict
 from dataclasses import dataclass
 from itertools import count
@@ -19,12 +18,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.config import config
 from models import MCPResponse
-from models.response_lifetime import ResponsePollLifetime
-from models.response_limits import response_limit_error
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
-from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
+from services.tools.shared_tool_reads import SharedToolReads
+from services.tools.test_job_wait import wait_for_test_job
 import transport.unity_transport as unity_transport
 from transport.legacy.unity_connection import get_authenticated_stdio_generation
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -538,122 +536,24 @@ async def get_test_job(
             unity_instance,
             "get_test_job",
             params,
+            **({"user_id": user_id} if config.http_remote_hosted else {}),
         )
         if wait_timeout and isinstance(response, MCPResponse):
             response = response.model_dump()
         return response, observation_order
 
-    # If wait_timeout is specified, poll server-side until complete or timeout
+    # Both ordinary execution and Tasks use this same existing wait loop.
     if wait_timeout and wait_timeout > 0 and page_size is None:
-        http_session = (
-            await ctx.get_state("unity_session_id")
-            if config.transport_mode.lower() == "http"
-            else await get_authenticated_stdio_generation(unity_instance)
+        return await wait_for_test_job(
+            ctx,
+            unity_instance,
+            user_id,
+            job_id,
+            include_failed_tests,
+            include_details,
+            wait_timeout,
+            _fetch_status,
         )
-        deadline = asyncio.get_event_loop().time() + wait_timeout
-        poll_interval = 2.0  # Poll Unity every 2 seconds
-        response = None
-        # The selected instance and authenticated owner must match. An absent
-        # selection may route through caller context, so those reads stay private.
-        poll_key = (
-            (
-                config.transport_mode,
-                user_id,
-                unity_instance,
-                http_session,
-                job_id,
-                bool(include_failed_tests),
-                bool(include_details),
-            )
-            if unity_instance
-            and (not config.http_remote_hosted or isinstance(user_id, str) and bool(user_id))
-            and (isinstance(http_session, str) and bool(http_session))
-            else None
-        )
-        async with ResponsePollLifetime() as responses, AsyncExitStack() as leases:
-            shared_read = await leases.enter_async_context(_job_status_reads.session(poll_key))
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    if response is None:
-                        return MCPResponse(
-                            success=False,
-                            error="wait_timeout expired before a test job status was received",
-                        )
-                    return GetTestJobResponse.model_validate(response)
-                try:
-                    if config.transport_mode.lower() != "http":
-                        current_generation = await get_authenticated_stdio_generation(
-                            unity_instance
-                        )
-                        if current_generation != http_session:
-                            await leases.aclose()
-                            http_session = current_generation
-                            poll_key = (
-                                (
-                                    config.transport_mode,
-                                    user_id,
-                                    unity_instance,
-                                    http_session,
-                                    job_id,
-                                    bool(include_failed_tests),
-                                    bool(include_details),
-                                )
-                                if unity_instance and http_session
-                                else None
-                            )
-                            shared_read = await leases.enter_async_context(
-                                _job_status_reads.session(poll_key)
-                            )
-                    response, observation_order = await responses.fetch(
-                        shared_read.fetch(_fetch_status), remaining
-                    )
-                except SharedReadCapacityError:
-                    return MCPResponse(**response_limit_error("result_capacity"))
-                except asyncio.TimeoutError:
-                    if response is None:
-                        return MCPResponse(
-                            success=False,
-                            error="wait_timeout expired before a test job status was received",
-                        )
-                    return GetTestJobResponse.model_validate(response)
-
-                if isinstance(response, MCPResponse):
-                    return response
-                if not isinstance(response, dict):
-                    return MCPResponse(success=False, error=str(response))
-
-                if not response.get("success", True):
-                    return MCPResponse(**response)
-
-                # Check if tests are done
-                data = response.get("data", {})
-                status = data.get("status", "")
-                try:
-                    await asyncio.wait_for(
-                        _update_job_nudge(
-                            unity_instance,
-                            user_id,
-                            job_id,
-                            data,
-                            wait=True,
-                            observation_order=observation_order,
-                        ),
-                        timeout=max(0.0, deadline - asyncio.get_event_loop().time()),
-                    )
-                except asyncio.TimeoutError:
-                    return GetTestJobResponse(**response)
-                if status in ("succeeded", "failed", "cancelled"):
-                    return GetTestJobResponse(**response)
-
-                # Check timeout
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    # Timeout reached, return current status
-                    return GetTestJobResponse(**response)
-
-                # Wait before next poll (but don't exceed remaining time)
-                await asyncio.sleep(min(poll_interval, remaining))
 
     # No wait_timeout - return immediately (original behavior)
     response, observation_order = await _fetch_status()
