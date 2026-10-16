@@ -37,7 +37,7 @@ from models.response_limits import (
     ResponseOwner,
     response_owner,
 )
-from transport.plugin_registry import PluginRegistry
+from transport.plugin_registry import PluginRegistry, ToolSettingsConflict
 from transport.tool_list_notifier import ToolListNotifier
 from transport.charge_ledger import ChargeLedger
 from transport.json_decoder import decode_json
@@ -64,6 +64,9 @@ from transport.models import (
     PingMessage,
     RegisterMessage,
     RegisterToolsMessage,
+    ToolSettingsCorrelation,
+    ToolSettingsResult,
+    TOOL_SETTINGS_CAPABILITY,
     PongMessage,
     CommandResultMessage,
     ResultStartMessage,
@@ -381,6 +384,7 @@ class PluginHub(WebSocketEndpoint):
             LARGE_RESULT_CAPABILITY,
             COMPRESSION_CAPABILITY,
             CANCELLATION_CAPABILITY,
+            TOOL_SETTINGS_CAPABILITY,
         }
     )
     _editor_states: ClassVar[EditorStateStore] = EditorStateStore()
@@ -863,7 +867,7 @@ class PluginHub(WebSocketEndpoint):
             if message_type == "register":
                 await self._handle_register(websocket, RegisterMessage(**data))
             elif message_type == "register_tools":
-                await self._handle_register_tools(websocket, RegisterToolsMessage(**data))
+                await self._handle_register_tools_frame(websocket, data)
             elif message_type == "pong":
                 await self._handle_pong(websocket, PongMessage(**data))
             elif message_type == "command_result":
@@ -1711,6 +1715,53 @@ class PluginHub(WebSocketEndpoint):
         else:
             logger.info("Plugin registered: %r (%r)", project_name, project_hash)
 
+    async def _handle_register_tools_frame(self, websocket: WebSocket, data: dict) -> None:
+        correlation = None
+        if TOOL_SETTINGS_CAPABILITY in getattr(websocket.state, "plugin_features", ()):
+            try:
+                correlation = ToolSettingsCorrelation.model_validate(data)
+            except ValueError:
+                await websocket.close(code=4400, reason="Invalid tool settings correlation")
+                return
+        try:
+            payload = RegisterToolsMessage.model_validate(data)
+        except ValueError:
+            if correlation is None:
+                raise
+            await self._send_tool_settings_result(
+                websocket, correlation, "rejected", reason="invalid_catalog"
+            )
+            return
+        await self._handle_register_tools(websocket, payload)
+
+    async def _send_tool_settings_result(
+        self, websocket, correlation, status, *, committed=None, reason=None
+    ) -> None:
+        cls = type(self)
+        if cls._lock is None or cls._registry is None:
+            return
+        async with cls._lock:
+            session_id = getattr(websocket.state, "plugin_session_id", None)
+            if cls._connections.get(session_id) is not websocket:
+                return
+            session = await cls._registry.get_session(session_id)
+            if session is None:
+                return
+            revision, count = committed or (session.tools_revision, len(session.tools))
+            result = ToolSettingsResult(
+                **correlation.model_dump(),
+                session_id=session_id,
+                status=status,
+                catalog_revision=revision,
+                enabled_tool_count=count,
+                reason=reason,
+            )
+        try:
+            await websocket.send_json(result.model_dump(exclude_none=True))
+        except Exception as error:
+            # Publication already committed, or this is a refusal. Neither is undone by a lost receipt.
+            logger.warning("Tool settings receipt send failed (%s)", type(error).__name__)
+
     async def _handle_register_tools(
         self, websocket: WebSocket, payload: RegisterToolsMessage
     ) -> None:
@@ -1720,38 +1771,79 @@ class PluginHub(WebSocketEndpoint):
         if registry is None or lock is None:
             return
 
-        if len(payload.model_dump_json().encode("utf-8")) > 512 * 1024:
+        correlation = None
+        if TOOL_SETTINGS_CAPABILITY in getattr(websocket.state, "plugin_features", ()):
+            correlation = ToolSettingsCorrelation.model_validate(payload.model_dump())
+        excluded_receipt_fields = (
+            {"settings_epoch", "desired_revision"} if correlation is None else None
+        )
+        if (
+            len(payload.model_dump_json(exclude=excluded_receipt_fields).encode("utf-8"))
+            > 512 * 1024
+        ):
+            if correlation is not None:
+                await self._send_tool_settings_result(
+                    websocket, correlation, "rejected", reason="invalid_catalog"
+                )
+                return
             await websocket.close(code=4400, reason="Tool registration exceeds size limit")
             return
 
         outcome = None
         scope = None
-        async with lock:
-            session_id = next(
-                (sid for sid, ws in cls._connections.items() if ws is websocket), None
+        committed = None
+        try:
+            async with lock:
+                session_id = next(
+                    (sid for sid, ws in cls._connections.items() if ws is websocket), None
+                )
+                if not session_id:
+                    logger.warning("Received register_tools from unknown connection")
+                    return
+
+                def publish(session, prepared):
+                    nonlocal outcome, scope, committed
+                    outcome = cls._publish_session_catalog(
+                        session,
+                        prepared,
+                        registry._sessions,
+                        generation=session.session_id,
+                    )
+                    revision = session.tools_revision + int(
+                        not session.tools_known or session.tools != prepared
+                    )
+                    committed = (revision, len(prepared))
+                    scope = dict(
+                        user_id=session.user_id,
+                        project_hash=session.project_hash,
+                        session_id=session.session_id,
+                        catalog_revision=revision,
+                    )
+
+                await registry.register_tools_for_session(
+                    session_id,
+                    payload.tools,
+                    _publish=publish,
+                    **(
+                        {"_settings": (correlation.settings_epoch, correlation.desired_revision)}
+                        if correlation is not None
+                        else {}
+                    ),
+                )
+        except Exception as error:
+            if correlation is None:
+                raise
+            reason = str(error) if isinstance(error, ToolSettingsConflict) else "publication_failed"
+            await self._send_tool_settings_result(websocket, correlation, "rejected", reason=reason)
+            return
+        if correlation is not None:
+            await self._send_tool_settings_result(
+                websocket, correlation, "applied", committed=committed
             )
-            if not session_id:
-                logger.warning("Received register_tools from unknown connection")
-                return
-
-            def publish(session, prepared):
-                nonlocal outcome, scope
-                outcome = cls._publish_session_catalog(
-                    session,
-                    prepared,
-                    registry._sessions,
-                    generation=session.session_id,
-                )
-                scope = dict(
-                    user_id=session.user_id,
-                    project_hash=session.project_hash,
-                    session_id=session.session_id,
-                    catalog_revision=session.tools_revision
-                    + int(not session.tools_known or session.tools != prepared),
-                )
-
-            await registry.register_tools_for_session(session_id, payload.tools, _publish=publish)
-        await cls._notify_committed_catalog(outcome, scope)
+        try:
+            await cls._notify_committed_catalog(outcome, scope)
+        except Exception as error:
+            logger.warning("Committed catalog notification failed (%s)", type(error).__name__)
 
     @classmethod
     async def _refresh_server_tool_visibility(cls) -> None:

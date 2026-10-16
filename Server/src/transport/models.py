@@ -1,8 +1,27 @@
 from typing import Annotated, Any, Literal
-from pydantic import BaseModel, Field, StrictInt, field_validator
+from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
 from models.models import ToolDefinitionModel
 
 PluginCapability = Annotated[str, Field(max_length=64)]
+TOOL_SETTINGS_CAPABILITY = "tool_settings_ack_v1"
+ToolSettingsEpoch = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{32}$", max_length=32)]
+ToolSettingsRevision = Annotated[StrictInt, Field(ge=1, le=9007199254740991)]
+
+
+class ToolSettingsCorrelation(BaseModel):
+    settings_epoch: ToolSettingsEpoch
+    desired_revision: ToolSettingsRevision
+
+
+class ToolSettingsResult(ToolSettingsCorrelation):
+    type: Literal["tool_settings_result"] = "tool_settings_result"
+    session_id: str
+    status: Literal["applied", "rejected"]
+    catalog_revision: Annotated[StrictInt, Field(ge=0, le=9007199254740991)]
+    enabled_tool_count: Annotated[StrictInt, Field(ge=0, le=256)]
+    reason: Annotated[str, Field(max_length=512)] | None = None
+    message: Annotated[str, Field(max_length=512)] | None = None
+
 
 # Outgoing (Server -> Plugin)
 
@@ -65,6 +84,8 @@ class RegisterMessage(BaseModel):
 class RegisterToolsMessage(BaseModel):
     type: str = "register_tools"
     tools: list[ToolDefinitionModel] = Field(max_length=256)
+    settings_epoch: ToolSettingsEpoch | None = None
+    desired_revision: ToolSettingsRevision | None = None
 
 
 class PongMessage(BaseModel):

@@ -23,7 +23,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
     /// Handles registration, keep-alives, and command dispatch back into Unity via
     /// <see cref="TransportCommandDispatcher"/>.
     /// </summary>
-    public class WebSocketTransportClient : IMcpTransportClient, IDisposable
+    public class WebSocketTransportClient : IMcpTransportClient, IToolSettingsStatusSource, IDisposable
     {
         private const string TransportDisplayName = "websocket";
         private static readonly TimeSpan[] ReconnectSchedule =
@@ -48,6 +48,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private Task _receiveTask;
         private Task _keepAliveTask;
         private Task _registrationTask;
+        private ToolSettingsRegistration _toolSettingsRegistration;
+        private ToolSettingsState _toolSettingsState;
+        private bool _toolSettingsNegotiated;
         private ConnectionCommandWork _commandWork;
         private Task _forcedCommandSettlement = Task.CompletedTask;
         private IDisposable _statePublisher;
@@ -128,7 +131,19 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             _toolDiscoveryService = toolDiscoveryService;
             _ownedConnection = options;
+            _toolSettingsState = options == null ? ToolSettingsState.Current : new ToolSettingsState();
         }
+
+        public ToolSettingsStatus Status => _toolSettingsState.Status;
+        public event Action StatusChanged
+        {
+            add => _toolSettingsState.StatusChanged += value;
+            remove => _toolSettingsState.StatusChanged -= value;
+        }
+
+        public void NotifyToolSettingsChanged() => _toolSettingsState.NotifyToolSettingsChanged();
+
+        public Task RetryToolSettingsAsync() => _toolSettingsState.RetryToolSettingsAsync();
 
         public bool IsConnected => _isConnected;
         public string TransportName => TransportDisplayName;
@@ -288,6 +303,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 _receiveTask = null;
                 _keepAliveTask = null;
                 _registrationTask = null;
+                _toolSettingsRegistration = null;
+                _toolSettingsNegotiated = false;
                 _commandWork = null;
                 _statePublisher = null;
                 _largeResultNegotiated = false;
@@ -308,6 +325,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (settlement != null)
                 _ = SettleForcedCommandsAsync(previousSettlement, loops.Commands, settlement);
             loops.Publisher?.Dispose();
+            loops.ToolSettings?.Dispose();
             try
             {
                 socket?.Abort();
@@ -462,6 +480,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                 var socket = new ClientWebSocket();
                 socket.Options.KeepAliveInterval = _socketKeepAliveInterval;
+                if (_ownedConnection != null)
+                {
+                    socket.Options.Proxy = null;
+                }
 
                 // Add API key header if configured (for remote-hosted mode)
                 if (!string.IsNullOrEmpty(_apiKey))
@@ -552,6 +574,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             public Task Receive;
             public Task KeepAlive;
             public Task Registration;
+            public ToolSettingsRegistration ToolSettings;
             public ConnectionCommandWork Commands;
             public IDisposable Publisher;
         }
@@ -564,6 +587,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 Receive = _receiveTask,
                 KeepAlive = _keepAliveTask,
                 Registration = _registrationTask,
+                ToolSettings = _toolSettingsRegistration,
                 Commands = _commandWork,
                 Publisher = _statePublisher,
             };
@@ -611,6 +635,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch { }
             }
             loops.Publisher?.Dispose();
+            loops.ToolSettings?.Dispose();
+            if (loops.ToolSettings != null)
+            {
+                Interlocked.CompareExchange(ref _toolSettingsRegistration, null, loops.ToolSettings);
+                if (awaitTasks)
+                    await loops.ToolSettings.Completion.ConfigureAwait(false);
+            }
             if (loops.Publisher != null)
                 Interlocked.CompareExchange(ref _statePublisher, null, loops.Publisher);
             if (awaitTasks && loops.Commands != null)
@@ -796,6 +827,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 case "registered":
                     await HandleRegisteredAsync(payload, token).ConfigureAwait(false);
                     break;
+                case "tool_settings_result":
+                    lock (_ownershipLock)
+                    {
+                        if (!IsCurrentConnectionToken(token) || !_toolSettingsNegotiated)
+                            break;
+                        if (_toolSettingsRegistration != null)
+                            _toolSettingsRegistration.HandleReceipt(payload);
+                        else
+                            _toolSettingsState.AcceptReceipt(_connectionCts, payload);
+                    }
+                    break;
                 case "execute":
                     await HandleExecuteAsync(payload, token).ConfigureAwait(false);
                     break;
@@ -851,6 +893,19 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     if (!IsCurrentConnectionToken(token))
                         return Task.CompletedTask;
                     _sessionId = newSessionId;
+                    _toolSettingsNegotiated = HasCapability(payload, ToolSettingsState.Capability);
+                    _toolSettingsRegistration?.Dispose();
+                    // A linked work token propagates cancellation; the connection token remains the ownership identity.
+                    _toolSettingsRegistration = new ToolSettingsRegistration(
+                        _toolSettingsState,
+                        _connectionCts,
+                        newSessionId,
+                        _toolSettingsNegotiated,
+                        workToken => CaptureToolSettingsForOwnerOnMainThreadAsync(token, workToken),
+                        (frame, workToken) => SendStateAsync(frame, token, workToken),
+                        token,
+                        TimeSpan.FromSeconds(5)
+                    );
                     _largeResultNegotiated = HasCapability(payload, LargeResultWriter.Capability);
                     _compressionNegotiated = _largeResultNegotiated && HasCapability(payload, LargeResultWriter.CompressionCapability);
                     _commandCancellationNegotiated = HasCapability(payload, ConnectionCommandWork.CancellationCapability);
@@ -926,15 +981,58 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             if (_toolDiscoveryService == null)
                 return;
-
-            token.ThrowIfCancellationRequested();
-            var tools = await GetEnabledToolsOnMainThreadAsync(token).ConfigureAwait(false);
-            token.ThrowIfCancellationRequested();
-            McpLog.Info($"[WebSocket] Preparing to register {tools.Count} tool(s) with the bridge.", false);
-            var payload = BuildToolsRegistration(tools);
-            await SendJsonAsync(payload, token).ConfigureAwait(false);
-            McpLog.Info($"[WebSocket] Sent {tools.Count} tools registration", false);
+            ToolSettingsRegistration registration;
+            lock (_ownershipLock)
+            {
+                if (!IsCurrentConnectionToken(token))
+                    throw new OperationCanceledException(token);
+                registration = _toolSettingsRegistration;
+            }
+            if (registration != null)
+                await registration.RequestAsync().ConfigureAwait(false);
         }
+
+        private Task<ToolSettingsSnapshot> CaptureToolSettingsOnMainThreadAsync(CancellationToken token) =>
+            CaptureToolSettingsForOwnerOnMainThreadAsync(token, token);
+
+        private Task<ToolSettingsSnapshot> CaptureToolSettingsForOwnerOnMainThreadAsync(CancellationToken ownerToken, CancellationToken workToken) =>
+            TransportCommandDispatcher.RunOnMainThreadAsync(
+                () =>
+                {
+                    workToken.ThrowIfCancellationRequested();
+                    lock (_ownershipLock)
+                        if (!IsCurrentConnectionToken(ownerToken))
+                            throw new OperationCanceledException(ownerToken);
+                    try
+                    {
+                        var enabled = new List<ToolMetadata>();
+                        var enablement = new JObject();
+                        foreach (var tool in _toolDiscoveryService.DiscoverAllTools())
+                        {
+                            bool active = _toolDiscoveryService.IsToolEnabled(tool.Name);
+                            enablement[tool.Name] = active;
+                            if (active)
+                                enabled.Add(tool);
+                        }
+                        var complete = BuildToolsRegistration(enabled);
+                        lock (_ownershipLock)
+                        {
+                            workToken.ThrowIfCancellationRequested();
+                            if (!IsCurrentConnectionToken(ownerToken))
+                                throw new OperationCanceledException(ownerToken);
+                            return _toolSettingsState.Capture((JArray)complete["tools"], enablement);
+                        }
+                    }
+                    catch (Exception error) when (!(error is OperationCanceledException))
+                    {
+                        lock (_ownershipLock)
+                            if (!workToken.IsCancellationRequested && IsCurrentConnectionToken(ownerToken))
+                                _toolSettingsState.PreparationFailed(ToolSettingsState.CaptureFailureMessage(error.GetBaseException().GetType().Name));
+                        throw;
+                    }
+                },
+                workToken
+            );
 
         private static JObject BuildToolsRegistration(IReadOnlyList<ToolMetadata> tools)
         {
@@ -996,7 +1094,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     token = _connectionCts.Token;
                 }
                 await SendRegisterToolsAsync(token).ConfigureAwait(false);
-                McpLog.Info("[WebSocket] Tool reregistration completed", false);
+                McpLog.Info("[WebSocket] Tool registration attempt settled; consult its acknowledgement status.", false);
             }
             catch (System.OperationCanceledException)
             {
@@ -1196,6 +1294,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     EditorStatePublisher.Capability,
                     LargeResultWriter.Capability,
                     ConnectionCommandWork.CancellationCapability,
+                    ToolSettingsState.Capability,
                     LargeResultWriter.CompressionCapability
                 ),
             };

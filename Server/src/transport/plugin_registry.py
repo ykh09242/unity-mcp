@@ -11,6 +11,10 @@ from core.config import config
 from models.models import ToolDefinitionModel
 
 
+class ToolSettingsConflict(ValueError):
+    """A client revision cannot replace the current live session's intent."""
+
+
 @dataclass(slots=True)
 class PluginSession:
     """Represents a single Unity plugin connection."""
@@ -24,6 +28,8 @@ class PluginSession:
     tools: dict[str, ToolDefinitionModel] = field(default_factory=dict)
     tools_revision: int = 0
     tools_known: bool = False
+    settings_epoch: str | None = None
+    desired_revision: int = 0
     project_id: str | None = None
     # Full path to project root (for focus nudging)
     project_path: str | None = None
@@ -201,7 +207,7 @@ class PluginRegistry:
             return False
 
     async def register_tools_for_session(
-        self, session_id: str, tools: list[ToolDefinitionModel], *, _publish=None
+        self, session_id: str, tools: list[ToolDefinitionModel], *, _publish=None, _settings=None
     ) -> bool:
         """Register tools for a specific session."""
         prepared = {}
@@ -219,7 +225,18 @@ class PluginRegistry:
                 else None
             )
             if session is None or current != session_id:
+                if _settings is not None:
+                    raise ToolSettingsConflict("stale_session")
                 return False
+            if _settings is not None:
+                epoch, revision = _settings
+                if session.settings_epoch is not None:
+                    if session.settings_epoch != epoch:
+                        raise ToolSettingsConflict("epoch_mismatch")
+                    if revision < session.desired_revision:
+                        raise ToolSettingsConflict("stale_revision")
+                    if revision == session.desired_revision and session.tools != prepared:
+                        raise ToolSettingsConflict("revision_conflict")
             changed = not session.tools_known or session.tools != prepared
             if _publish is not None:
                 _publish(session, prepared)
@@ -228,6 +245,8 @@ class PluginRegistry:
                 session.tools_known = True
                 session.tools_revision += 1
                 self.notify_changed()
+            if _settings is not None:
+                session.settings_epoch, session.desired_revision = _settings
             return changed
 
     async def get_catalog_snapshot(self, project_hash, user_id=None):
