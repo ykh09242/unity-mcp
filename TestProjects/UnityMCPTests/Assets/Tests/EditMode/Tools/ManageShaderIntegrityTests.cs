@@ -1,11 +1,15 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Text;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.Rendering;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -289,6 +293,161 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual("Assets/Shaders/" + shaderName + ".shader", (string)response["data"]["path"]);
             Assert.AreEqual("// default shader", (string)response["data"]["contents"]);
         }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SavedShaderReportsObservedDiagnosticsAndRetainsSourceAndGuid(bool invalid)
+        {
+            // Given an owned valid imported shader and a requested replacement revision.
+            var create = Request("create");
+            create["contents"] = ValidShader();
+            var created = JObject.FromObject(ManageShader.HandleCommand(create));
+            Assert.IsTrue(created.Value<bool>("success"), created.ToString());
+            string path = assetRoot + "/" + shaderName + ".shader";
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            string source = invalid
+                ? "Shader \"" + shaderName + "\" { SubShader { Pass { DefinitelyInvalidSyntax } } }\r\n// Preserve source 한글"
+                : ValidShader() + "\r\n// Preserve source 한글";
+            var update = Request("update");
+            update["contents"] = source;
+
+            // When the handler saves and synchronously imports the requested shader.
+            bool previousIgnore = LogAssert.ignoreFailingMessages;
+            JObject response;
+            try
+            {
+                LogAssert.ignoreFailingMessages = invalid;
+                response = JObject.FromObject(ManageShader.HandleCommand(update));
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previousIgnore;
+            }
+
+            // Then saving is distinct from compiler observations and source/GUID survive errors.
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new UTF8Encoding(false).GetBytes(source), File.ReadAllBytes(ShaderPath));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            Assert.IsTrue(response["data"].Value<bool>("saved"));
+            Assert.IsTrue(response["data"].Value<bool>("imported"));
+            var diagnostics = response["data"]["compilation"];
+            Assert.IsNotNull(diagnostics, "Import success must include the actual compiler observation.");
+            Assert.AreEqual(invalid, diagnostics.Value<bool>("has_errors"));
+            Assert.IsFalse(diagnostics.Value<bool>("all_variants_checked"));
+            Assert.IsFalse(diagnostics.Value<bool>("all_platforms_checked"));
+            Assert.AreEqual(EditorUserBuildSettings.activeBuildTarget.ToString(), diagnostics.Value<string>("active_build_target"));
+            if (invalid)
+            {
+                Assert.AreEqual("errors_reported", diagnostics.Value<string>("status"));
+                Assert.Greater(diagnostics.Value<int>("error_count"), 0);
+                var error = diagnostics["messages"].First(message => message.Value<string>("severity") == "error");
+                Assert.IsNotEmpty(error.Value<string>("message"));
+                Assert.IsNotNull(error["file"]);
+                Assert.IsNotNull(error["line"]);
+                Assert.IsNotNull(error["platform"]);
+                StringAssert.Contains("errors", response.Value<string>("message").ToLowerInvariant());
+            }
+            else
+                Assert.That(diagnostics.Value<string>("status"), Is.EqualTo("no_errors_reported").Or.EqualTo("pending"));
+        }
+
+        [Test]
+        public void CreatedShaderReportsSaveImportAndObservationLimits()
+        {
+            // Given a valid ShaderLab source.
+            var request = Request("create");
+            request["contents"] = ValidShader();
+
+            // When the shader is created through the production tool.
+            var response = JObject.FromObject(ManageShader.HandleCommand(request));
+
+            // Then the create path reports saving/importing without claiming all variants compiled.
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(response["data"].Value<bool>("saved"));
+            Assert.IsTrue(response["data"].Value<bool>("imported"));
+            Assert.IsNotNull(response["data"]["compilation"]);
+            Assert.IsFalse(response["data"]["compilation"].Value<bool>("all_variants_checked"));
+            Assert.IsNotEmpty(response["data"]["compilation"].Value<string>("limitations"));
+        }
+
+        [Test]
+        public void DiagnosticBoundsRetainFullSeverityCountsAndPendingIsExplicit()
+        {
+            // Given more observed messages than the response limit, including a late error.
+            var messages = Enumerable.Range(0, 150).Select(_ => new ShaderMessage(new string('x', 6000), ShaderCompilerMessageSeverity.Warning)).ToList();
+            messages.Add(new ShaderMessage("late observed error", ShaderCompilerMessageSeverity.Error));
+            var builder = typeof(ManageShader).GetMethod("BuildCompilationEvidence", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(builder);
+
+            // When the production evidence builder bounds serialized diagnostic output.
+            var report = JObject.FromObject(builder.Invoke(null, new object[] { messages.ToArray(), false, true, null }));
+            var pending = JObject.FromObject(builder.Invoke(null, new object[] { Array.Empty<ShaderMessage>(), false, true, null }));
+            var unavailable = JObject.FromObject(builder.Invoke(null, new object[] { Array.Empty<ShaderMessage>(), false, false, "Owned unavailable query" }));
+
+            // Then truncation never hides an observed error or invents completed compilation.
+            Assert.AreEqual("errors_reported", report.Value<string>("status"));
+            Assert.AreEqual(1, report.Value<int>("error_count"));
+            Assert.AreEqual(150, report.Value<int>("warning_count"));
+            Assert.AreEqual(151, report.Value<int>("total_messages"));
+            Assert.IsTrue(report.Value<bool>("truncated"));
+            Assert.LessOrEqual(((JArray)report["messages"]).Count, 100);
+            Assert.IsTrue(report["messages"].All(message => message.Value<string>("message").Length <= 2048));
+            Assert.AreEqual("pending", pending.Value<string>("status"));
+            Assert.AreEqual("unavailable", unavailable.Value<string>("status"));
+            Assert.AreEqual(JTokenType.Null, unavailable["has_errors"].Type);
+        }
+
+        [Test]
+        public void ObservedPlatformCompilerErrorPreservesPlatformMetadata()
+        {
+            // Given a native D3D11 compiler and a diagnostic specific to that backend.
+            if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Direct3D11)
+                Assert.Ignore("The platform-specific fixture requires an active native D3D11 device.");
+            var request = Request("create");
+            request["contents"] =
+                "Shader \""
+                + shaderName
+                + "\" { SubShader { Pass { HLSLPROGRAM\n"
+                + "#pragma vertex vert\n#pragma fragment frag\n"
+                + "float4 vert(float4 p : POSITION) : SV_POSITION { return p; }\n"
+                + "float4 frag() : SV_Target {\n#if defined(SHADER_API_D3D11)\n#error SPEC02_PLATFORM_DIAGNOSTIC\n#endif\nreturn 1; }\n"
+                + "ENDHLSL } } }";
+            string path = assetRoot + "/" + shaderName + ".shader";
+            bool previousIgnore = LogAssert.ignoreFailingMessages;
+            Material material = null;
+            try
+            {
+                LogAssert.ignoreFailingMessages = true;
+                var response = JObject.FromObject(ManageShader.HandleCommand(request));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
+                Assert.IsNotNull(shader);
+                material = new Material(shader);
+                // Only the fixture requests native pass compilation; the tool reports observations.
+                ShaderUtil.CompilePass(material, 0, true);
+                var observed = ShaderUtil.GetShaderMessages(shader).Where(message => message.platform != ShaderCompilerPlatform.None).ToArray();
+                if (observed.Length == 0)
+                    Assert.Ignore("This Editor did not expose platform-tagged diagnostics after native pass compilation.");
+
+                // When the production diagnostic collector reads those observed compiler messages.
+                var collector = typeof(ManageShader).GetMethod("CollectCompilationEvidence", BindingFlags.Static | BindingFlags.NonPublic);
+                Assert.IsNotNull(collector);
+                var evidence = JObject.FromObject(collector.Invoke(null, new object[] { path }));
+
+                // Then the actual backend tag and error severity survive serialization.
+                Assert.AreEqual("errors_reported", evidence.Value<string>("status"));
+                Assert.That(evidence["messages"].Values<string>("platform"), Does.Contain(observed[0].platform.ToString()));
+                Assert.That(evidence["messages"].Values<string>("severity"), Does.Contain("error"));
+            }
+            finally
+            {
+                if (material != null)
+                    UnityEngine.Object.DestroyImmediate(material);
+                LogAssert.ignoreFailingMessages = previousIgnore;
+            }
+        }
+
+        private string ValidShader() => "Shader \"" + shaderName + "\" { SubShader { Pass {} } }";
 
         private string RootShaderPath => Path.Combine(Application.dataPath, shaderName + ".shader");
         private string SiblingShaderPath => Path.Combine(Application.dataPath, "Shaders", shaderName + ".shader");

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -6,6 +7,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
+using UnityEditor.Rendering;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools
@@ -179,6 +181,8 @@ namespace MCPForUnity.Editor.Tools
                 contents = GenerateDefaultShaderContent(name);
             }
 
+            bool saved = false;
+            bool imported = false;
             try
             {
                 // Validate before preparing directories or opening a file, which could truncate existing content.
@@ -187,14 +191,24 @@ namespace MCPForUnity.Editor.Tools
                 folders.EnsureParentDirectory(relativePath);
                 fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
                 File.WriteAllText(fullPath, contents, StrictUtf8);
+                saved = true;
                 AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport);
-                var response = new SuccessResponse($"Shader '{name}.shader' created successfully at '{relativePath}'.", new { path = relativePath });
+                imported = true;
+                var response = ShaderWriteResponse(relativePath, "created");
                 folders.Complete();
                 return response;
             }
             catch (Exception e)
             {
-                return new ErrorResponse($"Failed to create shader '{relativePath}': {e.Message}");
+                return new ErrorResponse(
+                    $"Failed to create shader '{relativePath}': {e.Message}",
+                    new
+                    {
+                        path = relativePath,
+                        saved,
+                        imported,
+                    }
+                );
             }
         }
 
@@ -272,17 +286,136 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Content is required for the 'update' action.");
             }
 
+            bool saved = false;
+            bool imported = false;
             try
             {
                 StrictUtf8.GetByteCount(contents);
                 File.WriteAllText(fullPath, contents, StrictUtf8);
+                saved = true;
                 AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport);
-                return new SuccessResponse($"Shader '{Path.GetFileName(relativePath)}' updated successfully.", new { path = relativePath });
+                imported = true;
+                return ShaderWriteResponse(relativePath, "updated");
             }
             catch (Exception e)
             {
-                return new ErrorResponse($"Failed to update shader '{relativePath}': {e.Message}");
+                return new ErrorResponse(
+                    $"Failed to update shader '{relativePath}': {e.Message}",
+                    new
+                    {
+                        path = relativePath,
+                        saved,
+                        imported,
+                    }
+                );
             }
+        }
+
+        private static object ShaderWriteResponse(string relativePath, string operation)
+        {
+            var compilation = CollectCompilationEvidence(relativePath);
+            string status = (string)compilation["status"];
+            string observation =
+                status == "errors_reported" ? "Unity reported shader compilation errors."
+                : status == "pending" ? "Asynchronous shader compilation is pending in the Editor."
+                : status == "unavailable" ? "Shader compilation diagnostics are unavailable."
+                : "No shader compilation errors were reported at the time of observation.";
+            // Success describes saving/importing. Diagnostic errors retain the source for repair.
+            return new SuccessResponse(
+                $"Shader '{Path.GetFileName(relativePath)}' {operation}, saved and imported. {observation}",
+                new
+                {
+                    path = relativePath,
+                    saved = true,
+                    imported = true,
+                    compilation,
+                }
+            );
+        }
+
+        internal static Dictionary<string, object> CollectCompilationEvidence(string relativePath)
+        {
+            try
+            {
+                var shader = AssetDatabase.LoadAssetAtPath<Shader>(relativePath);
+                if (shader == null)
+                    return BuildCompilationEvidence(Array.Empty<ShaderMessage>(), false, false, "Unity did not expose an imported Shader object.");
+                // These APIs report observed messages, not exhaustive variant/platform compilation.
+                // ShaderHasError also fetches Unity's cached compiler messages in supported Editors.
+                bool hasErrors = ShaderUtil.ShaderHasError(shader);
+                return BuildCompilationEvidence(ShaderUtil.GetShaderMessages(shader), hasErrors, ShaderUtil.anythingCompiling, null);
+            }
+            catch (Exception ex)
+            {
+                return BuildCompilationEvidence(Array.Empty<ShaderMessage>(), false, false, ex.GetBaseException().Message);
+            }
+        }
+
+        internal static Dictionary<string, object> BuildCompilationEvidence(
+            ShaderMessage[] messages,
+            bool shaderHasError,
+            bool globallyCompiling,
+            string unavailableReason
+        )
+        {
+            const int messageLimit = 100;
+            const int textLimit = 2048;
+            const int fileLimit = 512;
+            int errors = messages.Count(message => message.severity == ShaderCompilerMessageSeverity.Error);
+            int warnings = messages.Count(message => message.severity == ShaderCompilerMessageSeverity.Warning);
+            bool hasErrors = shaderHasError || errors > 0;
+            bool truncated = messages.Length > messageLimit;
+
+            string Bound(string value, int limit)
+            {
+                if (value == null)
+                    return "";
+                if (value.Length <= limit)
+                    return value;
+                truncated = true;
+                if (char.IsHighSurrogate(value[limit - 1]))
+                    limit--;
+                return value.Substring(0, limit);
+            }
+
+            // Prioritize actual errors before bounding the payload, while counting all observations.
+            var diagnostics = messages
+                .OrderBy(message => message.severity == ShaderCompilerMessageSeverity.Error ? 0 : 1)
+                .Take(messageLimit)
+                .Select(message => new
+                {
+                    severity = message.severity.ToString().ToLowerInvariant(),
+                    message = Bound(message.message, textLimit),
+                    message_details = Bound(message.messageDetails, textLimit),
+                    file = Bound(message.file, fileLimit),
+                    line = message.line,
+                    platform = message.platform.ToString(),
+                })
+                .ToArray();
+            string boundedReason = Bound(unavailableReason, textLimit);
+            return new Dictionary<string, object>
+            {
+                ["status"] =
+                    unavailableReason != null ? "unavailable"
+                    : hasErrors ? "errors_reported"
+                    : globallyCompiling ? "pending"
+                    : "no_errors_reported",
+                ["has_errors"] = unavailableReason == null ? (object)hasErrors : null,
+                ["global_compilation_pending"] = unavailableReason == null ? (object)globallyCompiling : null,
+                ["scope"] = "observed_shader_messages",
+                ["active_build_target"] = EditorUserBuildSettings.activeBuildTarget.ToString(),
+                ["all_variants_checked"] = false,
+                ["all_platforms_checked"] = false,
+                ["error_count"] = unavailableReason == null ? (object)errors : null,
+                ["warning_count"] = unavailableReason == null ? (object)warnings : null,
+                ["total_messages"] = unavailableReason == null ? (object)messages.Length : null,
+                ["returned_messages"] = diagnostics.Length,
+                ["messages"] = diagnostics,
+                ["truncated"] = truncated,
+                ["unavailable_reason"] = boundedReason,
+                ["limitations"] =
+                    "Only Unity's currently reported messages are observed after synchronous asset import. Other variants/platforms may remain uncompiled; absence of errors is not proof of compilation. Pending compilation is an Editor-wide signal and may belong to another shader.",
+            };
         }
 
         private static object DeleteShader(string fullPath, string relativePath)
