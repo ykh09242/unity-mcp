@@ -1,5 +1,10 @@
 # Feature program coordination tool
 
+This is an optional management tool, not a prerequisite for Unity MCP development.
+Use it only when the user selects it for the current task. Existing program records,
+unfinished tool work and dashboard failures do not block core implementation, review,
+CI or delivery. Ordinary work uses the task conversation, scoped PRs and relevant checks.
+
 `tools/feature_program.py` keeps a reviewed feature backlog, ownership, evidence and recovery
 checkpoints on disk. It uses the Python standard library and performs no GitHub, agent,
 network or Unity operations. Use the existing Python environment described in
@@ -1784,15 +1789,15 @@ See [CI validation](ci-validation.md#assessing-recorded-ci-for-delivery) and the
 python -m pytest tools/tests/test_feature_program.py tools/tests/test_feature_program_coordination.py tools/tests/test_feature_program_questions.py tools/tests/test_feature_program_authoring.py tools/tests/test_feature_program_web.py -q
 python -m pytest tools/tests/test_feature_program_verification.py tools/tests/test_feature_program_verification_integration.py tools/tests/test_feature_program_delivery.py -q
 python tools/format_scripts.py --check
-python tools/lint_python.py
+python tools/lint_python.py --scope work-program
 npm run format:check --prefix tools/feature_program_web
 npm run typecheck --prefix tools/feature_program_web
 npm test --prefix tools/feature_program_web
 npm run build --prefix tools/feature_program_web
 ```
 
-The existing Python Tests workflow discovers the tool's tests through `tools/tests/` on
-matching pushes and pull requests. Verify the actual workflow result; local success alone
+The Work Program Python workflow runs the tool's tests on matching pushes and pull
+requests. Verify the actual workflow result; local success alone
 does not establish CI success. The Work Program Web workflow checks frontend formatting,
 types, behavior and regenerated assets. See [formatting setup](../FORMATTING.md) for the
 supported Node environment and a clean `npm ci` install. Generated bundles are committed with

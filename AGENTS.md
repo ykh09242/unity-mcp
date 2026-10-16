@@ -19,6 +19,8 @@ Read the ancestor workspace guidance and any guide on the target file's ancestor
 
 Use the existing Python environment and relevant checks. `tools/lint_python.py` runs correctness lint; formatting does not replace it. Compilation is distinct from native Unity execution. Do not launch Unity, install optional packages, or mutate sibling projects merely to verify formatting or documentation.
 
-## Feature program coordination
+## Task coordination
 
-Use [the feature program tool guide](docs/development/feature-program-tool.md) and [the directing workflow](docs/development/work-program-workflow.md) for durable task coordination. Select the intended program under the ignored `.work/programs/` directory and follow its recovery entrypoint before resuming. Keep session handoffs under `.work/handoffs/`. Explicit legacy program paths remain supported; follow relocation markers instead of creating a second active copy. Keep personal plans, source reports, agent/session information and execution evidence in the ignored local program directory; never force-add them. Use the program tool for state changes, and keep transient status out of this guide.
+Use the task conversation, scoped commits/PRs, relevant tests and CI for ordinary development. Keep one short handoff under ignored `.work/handoffs/` when continuity is needed. Reuse completed checks when their inputs have not changed; do not require registry updates, evidence packets, dashboard availability or management-tool repairs before implementing, reviewing or merging core changes.
+
+The [feature program tool](docs/development/feature-program-tool.md) and [directing workflow](docs/development/work-program-workflow.md) are optional. Use them only when the user explicitly selects that workflow for the current task; existing local programs do not activate it. When selected, use its commands to change program state and follow relocation markers. Preserve private records in ignored `.work/programs/`; never force-add them. Keep transient status out of this guide.

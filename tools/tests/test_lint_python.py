@@ -45,9 +45,9 @@ def lint_project(tmp_path: Path) -> Path:
     return project
 
 
-def run_lint(project: Path) -> subprocess.CompletedProcess[str]:
+def run_lint(project: Path, *options: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(project / "tools" / "lint_python.py")],
+        [sys.executable, str(project / "tools" / "lint_python.py"), *options],
         cwd=project.parent,
         capture_output=True,
         text=True,
@@ -118,7 +118,7 @@ def test_both_lint_groups_overlap_and_retain_all_diagnostics(monkeypatch, capsys
         )
 
     monkeypatch.setattr(lint_python.subprocess, "run", complete)
-    assert lint_python.main() == int(any(codes))
+    assert lint_python.main([]) == int(any(codes))
     output = capsys.readouterr()
     for directory in (lint_python.SERVER, lint_python.ROOT):
         assert f"{directory.name}: stdout diagnostic" in output.out
@@ -140,8 +140,28 @@ def test_lint_launch_error_still_reports_other_group(monkeypatch, capsys, failed
         )
 
     monkeypatch.setattr(lint_python.subprocess, "run", complete)
-    assert lint_python.main() == 1
+    assert lint_python.main([]) == 1
     output = capsys.readouterr()
     assert "other group completed" in output.out
     assert "other group diagnostic" in output.err
     assert "fixture launch failed" in output.err
+
+
+@pytest.mark.parametrize(
+    "relative", ["tools/feature_program.py", "tools/tests/test_feature_program.py"]
+)
+def test_management_errors_are_isolated_from_core_lint(lint_project, relative):
+    (lint_project / relative).write_text("RESULT = missing_name\n", encoding="utf-8")
+    core = run_lint(lint_project)
+    assert core.returncode == 0, core.stdout + core.stderr
+    management = run_lint(lint_project, "--scope", "work-program")
+    assert management.returncode != 0
+    assert "undefined-variable" in management.stdout
+
+
+def test_management_scope_does_not_run_unrelated_core_lint(lint_project):
+    (lint_project / "tools/feature_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+    for relative in ("Server/src/server_module.py", "tools/helper.py"):
+        (lint_project / relative).write_text("VALUE = missing_name\n", encoding="utf-8")
+    result = run_lint(lint_project, "--scope", "work-program")
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -1,0 +1,72 @@
+name: Work Program Python
+
+on:
+  pull_request:
+    branches: [main, beta]
+    paths:
+      - tools/feature_program*.py
+      - tools/tests/test_feature_program*.py
+      - tools/lint_python.py
+      - Server/pyproject.toml
+      - Server/uv.lock
+      - .github/workflows/work-program-python.yml
+  push:
+    branches: [beta]
+    paths:
+      - tools/feature_program*.py
+      - tools/tests/test_feature_program*.py
+      - tools/lint_python.py
+      - Server/pyproject.toml
+      - Server/uv.lock
+      - .github/workflows/work-program-python.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: work-program-python-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Work program tests (${{ matrix.python-version }})
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
+    env:
+      PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python-version == '3.15' && 'true' || 'false' }}
+      PYTHONPATH: ${{ github.workspace }}/tools
+    defaults:
+      run:
+        working-directory: Server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.13.0'
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-suffix: work-program-python-${{ matrix.python-version }}
+          cache-dependency-glob: |
+            Server/pyproject.toml
+            Server/uv.lock
+      - name: Install locked test environment
+        run: uv sync --python "${{ matrix.python-version }}" --locked --extra dev
+      - name: Lint management tool only
+        if: matrix.python-version == '3.15'
+        run: uv run --python "${{ matrix.python-version }}" --locked --extra dev python ../tools/lint_python.py --scope work-program
+      - name: Run management tool tests
+        run: uv run --python "${{ matrix.python-version }}" --locked --extra dev python -m pytest "$GITHUB_WORKSPACE"/tools/tests/test_feature_program*.py -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --junitxml=work-program-results.xml
+      - name: Upload management test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: work-program-tests-${{ matrix.python-version }}
+          path: Server/work-program-results.xml
+          retention-days: 7

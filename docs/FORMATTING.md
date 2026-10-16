@@ -150,4 +150,7 @@ the formatting scope. Exclusion checks run before file contents are read.
 Regenerate tool references using `tools/generate_docs_reference.py`; do not hand-format
 `website/docs/reference/`. Review formatter diffs for literal-content changes. Run relevant
 tests after source changes and `tools/lint_python.py` when correctness lint is needed.
+The lint runner defaults to core code and shared tools. The optional management tool is
+checked separately with `tools/lint_python.py --scope work-program`; `--scope all` explicitly
+checks both. Dashboard or management-tool checks are not prerequisites for unrelated core work.
 Do not launch Unity or install optional Unity packages just to validate formatting.

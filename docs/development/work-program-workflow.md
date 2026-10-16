@@ -1,5 +1,11 @@
 # Directing a work program
 
+This workflow applies only when the user explicitly selects a work program for the
+current task. It is not the default development or merge procedure. Existing programs
+do not reactivate it. For ordinary work, keep a short task list or handoff, assign owned
+paths when delegating, and use scoped PR review, relevant tests and CI. Do not repair or
+complete this management system as a prerequisite for core-project improvements.
+
 A work program turns a human objective into scoped tasks, evidence and reviewable PRs.
 The final director is accountable for the result. A local registry preserves decisions
 between sessions; it does not grant permissions, authenticate people or run agents by itself.

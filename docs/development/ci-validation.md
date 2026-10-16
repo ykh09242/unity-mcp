@@ -3,6 +3,30 @@
 The workflows validate the server, repository tools and Unity package independently.
 Compilation checks API compatibility; licensed Editor tests exercise runtime behavior.
 
+Core development uses scoped PR review and the applicable GitHub checks. It does not
+require a work-program registry, evidence packet or dashboard. The recorded-delivery
+procedures below apply only when that optional workflow is explicitly selected.
+
+## Separate management-tool checks
+
+Default Python CI and `tools/lint_python.py` cover the server and shared repository tools,
+excluding `tools/feature_program*.py` and `tools/tests/test_feature_program*.py`.
+`Work Program Python` validates those management modules separately on Python 3.11-3.15
+when their files or shared Python configuration change. `Work Program Web` retains its
+own frontend checks. Management-only changes do not trigger core Python or fork-beta
+validation; mixed changes retain every applicable check. Do not configure a path-filtered
+management check as a repository-wide required check for unrelated core PRs.
+
+From the repository root, explicitly check the optional management tool when needed:
+
+```sh
+python tools/lint_python.py --scope work-program
+python -m pytest tools/tests/test_feature_program*.py -q
+```
+
+`python tools/lint_python.py --scope all` retains the combined lint scope for an explicit
+repository-wide check. These commands neither start the dashboard nor read private programs.
+
 ## Default license-free mode
 
 CI defaults to license-free validation. Registered Unity secrets do not enable native
@@ -11,7 +35,7 @@ Editor tests by themselves. Keep the repository Actions variable
 
 | Check | What runs without a license |
 | --- | --- |
-| Python 3.11–3.15 | Server and repository tool test suites, plus correctness lint |
+| Python 3.11–3.15 | Server and shared repository tool test suites, plus correctness lint |
 | Windows, Linux and macOS bootstrap | Cold/offline server bootstrap checks |
 | Unity version matrix | Runtime, Editor and test assembly compilation for Windows, macOS and Linux defines |
 | Optional packages | Pinned Cinemachine, ProBuilder and graphics dependency preparation and integrity checks |
@@ -53,7 +77,7 @@ mismatched capture must not resurrect an older success. Missing attempt or timin
 stays unknown. Provider creation-to-update intervals are qualified observations, not pure
 execution duration or director idle time; overlapping workflow times are not additive.
 
-The work program's [provider preparation](feature-program-tool.md#frozen-provider-delivery-inputs)
+When the optional work-program workflow is selected, its [provider preparation](feature-program-tool.md#frozen-provider-delivery-inputs)
 assesses explicit frozen local captures and prepares individual task-bound inputs. It does
 not authenticate remote facts, start a workflow or authorize merge. The director still
 inspects actual current PR jobs and receiving-beta jobs, refreshes head/base/review/checks
@@ -133,8 +157,8 @@ To inspect local test durations, run from `Server/`:
 ```sh
 uv run --python 3.14 --locked --extra dev pytest tests/ -q -W error --tb=short --durations=20
 uv run --python 3.14 --locked --extra dev pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
-uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -q -W error --tb=short --durations=20
-uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
+uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ --ignore-glob='*/test_feature_program*.py' -q -W error --tb=short --durations=20
+uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ --ignore-glob='*/test_feature_program*.py' -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
 ```
 
 Keep test-node selection and failure behavior intact when optimizing. Deadline tests can use a

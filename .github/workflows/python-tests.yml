@@ -14,6 +14,11 @@ on:
       - manifest.json
       - unity-mcp-skill/**
       - .claude/skills/**
+      - '!tools/feature_program*.py'
+      - '!tools/feature_program_web/**'
+      - '!tools/tests/test_feature_program*.py'
+      - '!.github/workflows/work-program-python.yml'
+      - '!.github/workflows/work-program-web.yml'
   workflow_dispatch: {}
   workflow_call:
     inputs:
@@ -176,7 +181,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" --ignore-glob='*/test_feature_program*.py' -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1

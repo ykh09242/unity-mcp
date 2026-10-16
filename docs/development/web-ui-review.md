@@ -1,5 +1,8 @@
 # Reviewing dashboard interfaces
 
+This procedure is specific to the optional work-program dashboard. It does not require
+core Unity MCP changes to use the management tool, create program records or run dashboard QA.
+
 Use this procedure to turn relevant design guidance into observable behavior and review the
 interface people actually use. It complements the [feature program tool guide](feature-program-tool.md)
 and [annotated resource catalog](web-ui-resources.md). It does not confer execution authority,
