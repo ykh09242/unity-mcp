@@ -10,6 +10,7 @@ import sys
 import time
 import uuid
 import weakref
+from hashlib import sha256
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass
 from contextvars import ContextVar
@@ -23,6 +24,7 @@ from starlette.websockets import WebSocket, WebSocketState
 from core.config import config
 from core.constants import API_KEY_HEADER
 from models.models import MCPResponse
+from models.capabilities import CapabilityConnection
 from models.response_limits import (
     MAX_RESPONSE_BYTES,
     MAX_RESPONSE_DEPTH,
@@ -854,6 +856,97 @@ class PluginHub(WebSocketEndpoint):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    @classmethod
+    async def get_capability_snapshot(
+        cls, unity_instance: str | None, user_id: str | None = None
+    ) -> CapabilityConnection:
+        """Observe one live tenant-owned generation without dispatching a command."""
+        known = cls.CAPABILITIES.intersection(
+            {"editor_state_v1", "large_result_v1", "large_result_gzip_v1", "command_cancel_v1"}
+        )
+        base = {"transport": "http", "server_advertised": sorted(known)}
+        if config.http_remote_hosted and not user_id:
+            return CapabilityConnection(**base, status="auth_required", next_action="authenticate")
+        lock, registry = cls._lock, cls._registry
+        if lock is None or registry is None:
+            return CapabilityConnection(**base, status="unavailable", next_action="connect_unity")
+        try:
+            session_id = await cls._resolve_session_id(
+                unity_instance, user_id=user_id, retry_on_reload=False
+            )
+        except InstanceSelectionRequiredError:
+            return CapabilityConnection(
+                **base, status="selection_required", next_action="select_instance"
+            )
+        except NoUnitySessionError:
+            return CapabilityConnection(**base, status="unavailable", next_action="connect_unity")
+        async with lock:
+            session = await registry.get_session(session_id)
+            websocket = cls._connections.get(session_id)
+            if session is not None:
+                current_session = await registry.get_session_id_by_hash(
+                    session.project_hash, user_id=user_id
+                )
+            else:
+                current_session = None
+            if (
+                cls._lock is not lock
+                or cls._registry is not registry
+                or session is None
+                or session.user_id != user_id
+                or current_session != session_id
+                or websocket is None
+                or websocket.client_state != WebSocketState.CONNECTED
+                or websocket.application_state != WebSocketState.CONNECTED
+                or not getattr(websocket.state, "plugin_registered", False)
+                or getattr(websocket.state, "plugin_session_id", None) != session_id
+                or getattr(websocket.state, "user_id", None) != user_id
+            ):
+                return CapabilityConnection(**base, status="unavailable", next_action="retry_later")
+            generation = getattr(websocket.state, "plugin_generation", None)
+            if not isinstance(generation, str) or not generation or len(generation) > 128:
+                return CapabilityConnection(**base, status="unknown", next_action="reconnect_unity")
+            features = getattr(websocket.state, "plugin_features", None)
+            negotiated = (
+                sorted(known.intersection(features))
+                if isinstance(features, (set, frozenset))
+                else None
+            )
+            user_count = session_count = total_bytes = user_bytes = session_bytes = 0
+            for entry in cls._pending.values():
+                size = entry.get("payload_bytes", 0)
+                total_bytes += size
+                if entry.get("user_id") == user_id:
+                    user_count += 1
+                    user_bytes += size
+                if entry.get("session_id") == session_id:
+                    session_count += 1
+                    session_bytes += size
+            available = (
+                len(cls._pending) < cls.MAX_PENDING_COMMANDS
+                and user_count < cls.MAX_PENDING_PER_USER
+                and session_count < cls.MAX_PENDING_PER_SESSION
+                and total_bytes < cls.MAX_PENDING_PAYLOAD_BYTES
+                and user_bytes < cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
+                and session_bytes < cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION
+                and cls._has_result_capacity({"user_id": user_id, "session_id": session_id}, 1)
+            )
+            return CapabilityConnection(
+                **base,
+                status="connected",
+                instance_id=f"{session.project_name}@{session.project_hash}",
+                project_hash=session.project_hash,
+                generation=sha256(
+                    f"{id(websocket)}:{session_id}:{generation}".encode()
+                ).hexdigest(),
+                negotiated=negotiated,
+                admission_available=available,
+                pending_commands=session_count,
+                tenant_pending_commands=user_count,
+                reason=None if available else "command_capacity",
+                next_action="none" if available else "retry_later",
+            )
+
     @classmethod
     async def get_cached_editor_state(
         cls,

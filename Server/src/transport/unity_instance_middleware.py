@@ -11,6 +11,7 @@ import asyncio
 import logging
 import time
 
+import anyio
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.exceptions import ValidationError
 from fastmcp.tools.base import ToolResult
@@ -383,6 +384,7 @@ class UnityInstanceMiddleware(Middleware):
         context: MiddlewareContext,
         *,
         authenticated_user_id: str | None = None,
+        allow_reconnect: bool = True,
     ) -> None:
         """Inject active Unity instance and user_id into context if available."""
         ctx = context.fastmcp_context
@@ -450,7 +452,7 @@ class UnityInstanceMiddleware(Middleware):
                         user_id=user_id,
                         # The actual tool controls reconnect policy. Preflight
                         # validates its current route under the request budget.
-                        retry_on_reload=http_request_budget.get() is None,
+                        retry_on_reload=allow_reconnect and http_request_budget.get() is None,
                     )
                 except (
                     ConnectionError,
@@ -605,6 +607,13 @@ class UnityInstanceMiddleware(Middleware):
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into resource context if available."""
+        if str(getattr(context.message, "uri", "")) == "mcpforunity://capabilities":
+            from services.capabilities import capability_read_scope
+
+            with capability_read_scope() as deadline:
+                with anyio.move_on_at(deadline):
+                    await self._inject_unity_instance(context, allow_reconnect=False)
+                return await call_next(context)
         await self._inject_unity_instance(context)
         return await call_next(context)
 
