@@ -13,7 +13,9 @@ namespace MCPForUnity.Editor.Tools.AssetGen
     /// Import a local 3D model file already within Assets (e.g. exported from Blender/Maya) into the
     /// Unity project. DCC-agnostic and key-free: the file is copied under Assets/ and run through
     /// the shared ModelImportPipeline (glTFast/FBX/OBJ/zip handling, scale-normalize, material
-    /// settings). Placement into the scene is the caller's job (kept single-purpose).
+    /// settings). A failed import can retain the staged file; response evidence distinguishes saved
+    /// bytes, registered GUID, and usable mesh hierarchy. The original source is preserved.
+    /// Usable does not certify materials, rigs or rendering. Placement into the scene is the caller's job.
     /// </summary>
     [McpForUnityTool("import_model_file", AutoRegister = false, Group = "asset_gen")]
     public static class ImportModelFile
@@ -38,8 +40,6 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 string ext = Path.GetExtension(srcAbs).ToLowerInvariant();
                 if (Array.IndexOf(SupportedExt, ext) < 0)
                     return new ErrorResponse($"Unsupported model extension '{ext}'. Supported: .fbx, .obj, .glb, .gltf, .zip.");
-                if ((ext == ".glb" || ext == ".gltf") && !ModelImportPipeline.IsGltfastAvailable())
-                    return new ErrorResponse("GLB import requires glTFast. Install it from the MCP for Unity → Dependencies tab, or choose FBX output.");
 
                 string baseName = p.Get("name");
                 if (string.IsNullOrWhiteSpace(baseName))
@@ -50,9 +50,26 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 AssetGenJob result = ModelImportPipeline.ImportInto(job, destRel);
 
                 if (result == null || result.State == AssetGenJobState.Failed)
-                    return new ErrorResponse(result?.Error ?? "Import failed.");
+                    return new ErrorResponse(
+                        result?.Error ?? "Import failed.",
+                        new
+                        {
+                            asset_path = result?.AssetPath,
+                            asset_guid = result?.AssetGuid,
+                            model_import_stage = result?.ModelImportStage,
+                            model_import_error_code = result?.ModelImportErrorCode,
+                        }
+                    );
 
-                return new SuccessResponse($"Imported model: {result.AssetPath}", new { asset_path = result.AssetPath, asset_guid = result.AssetGuid });
+                return new SuccessResponse(
+                    $"Imported usable model: {result.AssetPath}",
+                    new
+                    {
+                        asset_path = result.AssetPath,
+                        asset_guid = result.AssetGuid,
+                        model_import_stage = result.ModelImportStage,
+                    }
+                );
             }
             catch (Exception e)
             {

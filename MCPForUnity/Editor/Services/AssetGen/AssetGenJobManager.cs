@@ -41,6 +41,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
         public string AnimationType; // FBX/OBJ rig mode: null/none | generic | humanoid | legacy
         public string AssetPath;
         public string AssetGuid;
+
+        // Model evidence only: saved bytes, registered GUID, or a hierarchy with indexed mesh geometry.
+        // Null means this job has not reached model import; usable does not certify materials, rigs or rendering.
+        public string ModelImportStage;
+        public string ModelImportErrorCode;
         public string Error;
     }
 

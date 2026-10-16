@@ -12,11 +12,11 @@ description: "Import a local 3D model file that already exists within the Unity 
 
 ## Description
 
-Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project. The file is copied under Assets/ and run through Unity's model-import pipeline (scale-normalize, material settings; glTF requires glTFast). Carries no API keys and no file bytes over the bridge.
+Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project. The file is copied under Assets/ and run through Unity's model-import pipeline (scale-normalize, material settings; glTF needs an active compatible importer such as glTFast). Carries no API keys and no file bytes over the bridge.
 
-Params: source_path (Assets-relative path, or an absolute path physically within this Unity project's Assets, to a .fbx/.obj/.glb/.gltf/.zip; traversal and symbolic links/junctions are rejected), name, output_folder (under Assets/), target_size, animation_type. Returns { asset_path, asset_guid }.
+Params: source_path (Assets-relative path, or an absolute path physically within this Unity project's Assets, to a .fbx/.obj/.glb/.gltf/.zip; traversal and symbolic links/junctions are rejected), name, output_folder (under Assets/), target_size, animation_type. Success returns { asset_path, asset_guid, model_import_stage: 'usable' } after Unity loads a hierarchy containing indexed mesh geometry. This does not certify materials, rigs or rendering. Failed imports may retain staged bytes and return asset_path, asset_guid, model_import_stage ('saved' for bytes on disk or 'registered' for a GUID without usable geometry), and model_import_error_code. The original source is preserved. A missing active glTF importer is 'missing_gltf_importer'; an active importer that produces no usable model is 'unusable_model'. Inspect the retained output and Console, repair or re-export, then reimport.
 
-animation_type (FBX/OBJ only): pass 'generic' or 'humanoid' for a rigged/animated mesh so Unity surfaces its AnimationClips; omitted or 'none' imports no rig (this is the usual cause of a rigged FBX importing with zero clips); 'legacy' selects Unity's legacy Animation system (rarely needed). glTF/GLB ignore it — glTFast imports animation itself.
+animation_type (FBX/OBJ only): pass 'generic' or 'humanoid' for a rigged/animated mesh so Unity surfaces its AnimationClips; omitted or 'none' imports no rig (this is the usual cause of a rigged FBX importing with zero clips); 'legacy' selects Unity's legacy Animation system (rarely needed). glTF/GLB ignore it — the selected glTF importer handles animation.
 
 For multi-file exports (a text .gltf with an external .bin, or an .obj with a sibling .mtl/textures), zip them and pass the .zip — a bare .gltf/.obj is copied without its sidecars.
 
@@ -26,7 +26,7 @@ For multi-file exports (a text .gltf with an external .bin, or an .obj with a si
 |------|------|----------|-------------|
 | `source_path` | `str` | yes | Assets-relative or absolute-within-Assets model file path (.fbx/.obj/.glb/.gltf/.zip). |
 | `name` | `str \| None` | — | Base name for the imported asset. |
-| `output_folder` | `str \| None` | — | Destination folder under Assets/ for the import. |
+| `output_folder` | `str \| None` | — | Destination under Assets/. Failed imports may retain staged output here for repair. |
 | `target_size` | `float \| None` | — | Normalize the largest dimension to this size (meters). |
 | `animation_type` | `Literal['none', 'generic', 'humanoid', 'legacy'] \| None` | — | FBX/OBJ only: rig/animation import mode. 'generic' or 'humanoid' surface the model's AnimationClips; 'legacy' selects Unity's legacy Animation system (rarely needed); omitted or 'none' imports no rig. Ignored for glTF/GLB. |
 

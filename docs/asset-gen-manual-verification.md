@@ -1,8 +1,9 @@
 # AI Asset Generation — Manual Verification Checklist
 
-The `asset_gen` tools call real third-party APIs and write real files into a licensed
-Unity Editor, so they **cannot be covered headlessly**. Run this checklist by hand with
-genuine provider keys and an interactive Editor before shipping.
+Live provider behavior requires genuine provider keys and a licensed interactive
+Unity Editor. Run the provider sections below manually before shipping. Isolated
+native tests cover local model import with tiny owned OBJ fixtures and fake provider
+transports; those tests do not verify live services or optional glTF import success.
 
 Job status metadata retains the 100 most recently finished jobs (done, failed, or
 canceled), plus every active job. This history survives an unrelated domain reload;
@@ -35,11 +36,47 @@ supported here for `v3.0-20250812`, `v3.1-20260211`, and `P1-20260311`. Other fo
 Tripo's separate conversion task; this integration does not submit it. A GLB container
 check before saving does not establish usable mesh content or installed importer support.
 
+## Model import evidence
+
+A model is `usable` only after Unity loads a GameObject hierarchy containing a
+MeshFilter or SkinnedMeshRenderer with vertices and an indexed primitive. This is
+basic geometry evidence, not a guarantee of materials, rigs, topology quality or rendering.
+
+Direct `import_model_file` responses and terminal model job status include
+`data.model_import_stage`:
+
+- `saved`: bytes exist on disk; no registered GUID has been observed.
+- `registered`: a GUID exists, but usable model geometry has not been established.
+- `usable`: the final imported hierarchy passed the geometry check.
+
+An import failure can retain staged bytes and return `asset_path`, `asset_guid`,
+`model_import_stage` and `model_import_error_code` for repair. The original local
+source is preserved. A failed import does not claim placement or a usable derived asset.
+A corrupt model can have a GUID and still fail with `unusable_model`.
+If bounded hierarchy/mesh inspection cannot finish, `model_validation_limit` means
+unverified rather than usable; simplify or split the retained model and reimport.
+
+- [ ] Import a tiny valid OBJ with `import_model_file` and confirm success,
+      `model_import_stage=usable`, a loadable hierarchy and actual mesh geometry.
+- [ ] Import corrupt OBJ bytes directly and from a ZIP. Confirm failure with retained
+      staged path/GUID and `registered` evidence; confirm original source bytes are unchanged.
+- [ ] Repair or re-export the model, inspect Unity's Console, and reimport; do not use
+      a saved file or GUID alone as proof that import succeeded.
+
 ## glTFast / GLB
 
 - [ ] Install **glTFast** from the **Dependencies** tab.
 - [ ] `generate_model(provider=tripo, mode=text, prompt="...", format=glb)`, poll status.
-- [ ] Confirm the GLB imports correctly (no missing-importer error).
+- [ ] Confirm the GLB imports correctly and reports `model_import_stage=usable`.
+- [ ] In a project without an active glTF importer, import a valid GLB container and
+      confirm `missing_gltf_importer`, retained staged output and no success claim.
+- [ ] With an active importer, try a model that imports without usable geometry:
+      confirm `unusable_model` and an instruction to inspect/repair/reimport.
+
+Importer availability is determined from the importer Unity actually selected and
+the resulting model, not just a runtime assembly being loaded. A compatible alternate
+importer can supply usable geometry. A valid downloaded GLB container alone does not
+establish importer availability or usable model content.
 
 ## Automatic model discovery
 

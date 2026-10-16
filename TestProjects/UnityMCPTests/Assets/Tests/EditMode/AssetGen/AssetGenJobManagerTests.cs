@@ -7,10 +7,13 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
+using MCPForUnity.Editor.Tools.AssetGen;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.AssetGen
 {
@@ -246,6 +249,74 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsNotNull(download, "Artifacts must select the restricted download transport.");
             Assert.AreEqual("tripo", download.DownloadProvider);
             Assert.IsEmpty(download.Headers, "Provider API credentials must not be sent to the artifact host.");
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void Model_RealImport_PreservesUsableOrFailedEvidenceThroughStatus(bool valid)
+        {
+            const string meshyEnv = "MCPFORUNITY_MESHY_API_KEY";
+            string previousKey = Environment.GetEnvironmentVariable(meshyEnv);
+            bool previousLogs = LogAssert.ignoreFailingMessages;
+            try
+            {
+                Environment.SetEnvironmentVariable(meshyEnv, "owned-meshy-test-key");
+                AssetGenJobManager.ImportOverrideForTests = null;
+                if (!valid)
+                    LogAssert.ignoreFailingMessages = true; // Invalid owned OBJ produces a native diagnostic.
+                byte[] bytes = System.Text.Encoding.UTF8.GetBytes(valid ? ModelImportPipelineTests.TriangleObj : "not a model");
+                _fake.Handler = spec =>
+                {
+                    if (spec.Method == "POST")
+                        return Json("{\"result\":\"owned-job\"}");
+                    if (spec.DownloadProvider == null)
+                        return Json("{\"status\":\"SUCCEEDED\",\"model_urls\":{\"obj\":\"https://assets.meshy.ai/model.obj\"}}");
+                    return new HttpResult
+                    {
+                        Status = 200,
+                        IsSuccess = true,
+                        Body = bytes,
+                    };
+                };
+                var request = Req();
+                request.Provider = "meshy";
+                request.Format = "obj";
+                request.Texture = false;
+                AssetGenJob job = AssetGenJobManager.StartModelGeneration(request);
+                Pump(job.JobId);
+
+                Assert.AreEqual(valid ? AssetGenJobState.Done : AssetGenJobState.Failed, job.State, job.Error);
+                Assert.AreSame(job, AssetGenJobManager.GetJob(job.JobId));
+                Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId), "Import result must remain terminal.");
+                Assert.IsNotEmpty(job.AssetGuid);
+                Assert.AreEqual(AssetDatabase.AssetPathToGUID(job.AssetPath), job.AssetGuid);
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(job.AssetPath));
+                JObject persisted = JObject.Parse(SessionState.GetString("MCPForUnity.AssetGen.Job." + job.JobId, ""));
+                Assert.AreEqual(valid ? "usable" : "registered", (string)persisted["ModelImportStage"]);
+                if (!valid)
+                    Assert.AreEqual("unusable_model", (string)persisted["ModelImportErrorCode"]);
+                var parameters = new JObject { ["action"] = "status", ["job_id"] = job.JobId };
+                JObject status = JObject.FromObject(GenerateModel.HandleCommand(parameters));
+                Assert.AreEqual(valid, (bool)status["success"], status.ToString());
+                Assert.AreEqual(valid ? "done" : "failed", (string)status["data"]["state"]);
+                Assert.AreEqual(valid ? "usable" : "registered", (string)status["data"]["model_import_stage"]);
+                Assert.AreEqual(job.AssetPath, (string)status["data"]["asset_path"]);
+                Assert.AreEqual(job.AssetGuid, (string)status["data"]["asset_guid"]);
+                if (!valid)
+                    Assert.AreEqual("unusable_model", (string)status["data"]["model_import_error_code"]);
+
+                // Marketplace polling must retain the same failed/successful import evidence.
+                JObject marketplace = JObject.FromObject(ImportModel.HandleCommand(parameters).GetAwaiter().GetResult());
+                Assert.AreEqual(valid, (bool)marketplace["success"], marketplace.ToString());
+                Assert.AreEqual(job.AssetPath, (string)marketplace["data"]["asset_path"]);
+                Assert.AreEqual(valid ? "usable" : "registered", (string)marketplace["data"]["model_import_stage"]);
+                Assert.AreEqual(3, _fake.RecordedRequests.Count, "No recovery resubmission or external request is needed.");
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previousLogs;
+                Environment.SetEnvironmentVariable(meshyEnv, previousKey);
+            }
         }
 
         [Test]
