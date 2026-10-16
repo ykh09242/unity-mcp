@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading;
 using MCPForUnity.Editor.Tools.Prefabs;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -377,6 +380,284 @@ namespace MCPForUnityTests.Editor.Tools
         #endregion
 
         #region UPDATE Tests (ModifyContents)
+
+        private string CreatePagingPrefab(int width, int depth = 0, int nameLength = 9)
+        {
+            string path = TempDirectory + "/Paging.prefab";
+            var root = new GameObject("PagingRoot");
+            try
+            {
+                for (int i = 0; i < width; i++)
+                    new GameObject(new string('x', nameLength)).transform.SetParent(root.transform, false);
+                Transform parent = root.transform;
+                for (int i = 0; i < depth; i++)
+                {
+                    var child = new GameObject("Depth" + i);
+                    child.transform.SetParent(parent, false);
+                    parent = child.transform;
+                }
+                PrefabUtility.SaveAsPrefabAsset(root, path);
+                return path;
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        private static JObject ReadHierarchyPage(string path, int size = 50, string cursor = null, int depth = 64)
+        {
+            return ToJObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get_hierarchy",
+                        ["prefabPath"] = path,
+                        ["page_size"] = size,
+                        ["max_depth"] = depth,
+                        ["cursor"] = cursor,
+                    }
+                )
+            );
+        }
+
+        [Test]
+        public void HierarchyPaging_WideStablePrefabHasOrderedUniqueContinuationAndUnloads()
+        {
+            string path = CreatePagingPrefab(603);
+            int scenesBefore = UnityEngine.SceneManagement.SceneManager.sceneCount;
+            int previewsBefore = EditorSceneManager.previewSceneCount;
+            var keys = new List<string>();
+            string cursor = null;
+            int pages = 0;
+            do
+            {
+                var response = ReadHierarchyPage(path, 37, cursor);
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                var data = (JObject)response["data"];
+                var items = (JArray)data["items"];
+                Assert.LessOrEqual(items.Count, 37);
+                Assert.LessOrEqual(data.Value<int>("work_used"), data.Value<int>("work_limit"));
+                Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(response.ToString(Newtonsoft.Json.Formatting.None)), 262144);
+                keys.AddRange(items.Select(item => item.Value<string>("hierarchyKey")));
+                cursor = data.Value<string>("next_cursor");
+                if (cursor != null)
+                {
+                    Assert.IsFalse(data.Value<bool>("total_known"));
+                    Assert.AreEqual(JTokenType.Null, data["total"].Type);
+                }
+                else
+                    Assert.AreEqual(604, data.Value<int>("total"));
+                Assert.AreEqual(scenesBefore, UnityEngine.SceneManagement.SceneManager.sceneCount);
+                Assert.AreEqual(previewsBefore, EditorSceneManager.previewSceneCount);
+                Assert.Less(++pages, 30);
+            } while (cursor != null);
+            Assert.AreEqual(604, keys.Count);
+            Assert.AreEqual(keys.Count, keys.Distinct().Count());
+            CollectionAssert.AreEqual(new[] { "0", "0/0", "0/1" }, keys.Take(3));
+            Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage());
+        }
+
+        [Test]
+        public void HierarchyPaging_DeepScopeAndOutputAreExplicitlyBounded()
+        {
+            string path = CreatePagingPrefab(0, 150);
+            var data = (JObject)ReadHierarchyPage(path, 500, depth: 12)["data"];
+            Assert.AreEqual(13, ((JArray)data["items"]).Count);
+            Assert.IsTrue(data.Value<bool>("depth_limited"));
+            Assert.AreEqual(12, data.Value<int>("max_depth"));
+            Assert.IsNull(data.Value<string>("next_cursor"));
+            path = CreatePagingPrefab(200, nameLength: 4096);
+            var response = ReadHierarchyPage(path, 500);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(response.ToString(Newtonsoft.Json.Formatting.None)), 262144);
+            Assert.IsTrue(response["data"].Value<bool>("metadata_truncated"));
+        }
+
+        [TestCase("page_size", "0")]
+        [TestCase("page_size", "501")]
+        [TestCase("page_size", "1.5")]
+        [TestCase("page_size", "true")]
+        [TestCase("max_depth", "-1")]
+        [TestCase("max_depth", "129")]
+        [TestCase("cursor", "123")]
+        public void HierarchyPaging_InvalidOptionsAreRejectedWithoutLoading(string key, string json)
+        {
+            string path = CreatePagingPrefab(1);
+            int count = UnityEngine.SceneManagement.SceneManager.sceneCount;
+            var response = ToJObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get_hierarchy",
+                        ["prefabPath"] = path,
+                        [key] = JToken.Parse(json),
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(count, UnityEngine.SceneManagement.SceneManager.sceneCount);
+        }
+
+        [Test]
+        public void HierarchyPaging_CursorRejectsChangedOptionsAndSavedSource()
+        {
+            string path = CreatePagingPrefab(8);
+            string cursor = ReadHierarchyPage(path, 2)["data"].Value<string>("next_cursor");
+            Assert.IsNotEmpty(cursor);
+            Assert.IsFalse(ReadHierarchyPage(path, 3, cursor).Value<bool>("success"));
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                contents.transform.GetChild(0).name = "Changed";
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+            var response = ReadHierarchyPage(path, 2, cursor);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("stale_cursor", response.ToString());
+        }
+
+        [Test]
+        public void HierarchyPaging_CancellationIsCheckedAfterWorkHasStarted()
+        {
+            var helper = typeof(ManagePrefabs).Assembly.GetType("MCPForUnity.Editor.Helpers.HierarchyPaging", true);
+            var type = helper.GetNestedType("Budget", BindingFlags.NonPublic);
+            using var cancellation = new CancellationTokenSource();
+            var budget = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, null, new object[] { cancellation.Token }, null);
+            var spend = type.GetMethod("Spend", BindingFlags.Instance | BindingFlags.NonPublic);
+            spend.Invoke(budget, new object[] { 1 });
+            cancellation.Cancel();
+            var exception = Assert.Throws<TargetInvocationException>(() => spend.Invoke(budget, new object[] { 1 }));
+            Assert.IsInstanceOf<OperationCanceledException>(exception.InnerException);
+            Assert.AreEqual(1, type.GetField("Used", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(budget));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void HierarchyPaging_LoadedScopeUnloadsAfterCancellationOrReadFailure(bool cancel)
+        {
+            string path = CreatePagingPrefab(603);
+            var helper = typeof(ManagePrefabs).Assembly.GetType("MCPForUnity.Editor.Helpers.HierarchyPaging", true);
+            var flags = BindingFlags.Static | BindingFlags.NonPublic;
+            var options = helper.GetMethod("Parse", flags).Invoke(null, new object[] { new JObject(), false });
+            var state = helper.GetMethod("Resume", flags).Invoke(null, new object[] { options, "prefab:" + path, "owned-revision" });
+            var build = typeof(ManagePrefabs).GetMethod("BuildHierarchyPage", flags);
+            var lifecycle = typeof(ManagePrefabs).GetMethod("ReadLoadedPrefab", flags);
+            int scenes = UnityEngine.SceneManagement.SceneManager.sceneCount;
+            int previews = EditorSceneManager.previewSceneCount;
+            using var cancellation = new CancellationTokenSource();
+            bool observedLoadedPreview = false;
+            Func<GameObject, object> read = contents =>
+            {
+                observedLoadedPreview = EditorSceneManager.IsPreviewScene(contents.scene) && EditorSceneManager.previewSceneCount > previews;
+                if (!cancel)
+                    throw new InvalidOperationException("Owned read failure after native load.");
+                cancellation.Cancel();
+                try
+                {
+                    return build.Invoke(null, new object[] { contents.transform, path, options, state, cancellation.Token });
+                }
+                catch (TargetInvocationException exception)
+                {
+                    throw exception.InnerException ?? exception;
+                }
+            };
+            var failure = Assert.Throws<TargetInvocationException>(() => lifecycle.Invoke(null, new object[] { path, read }));
+            Assert.IsTrue(observedLoadedPreview, "The actual read scope must contain a loaded prefab preview before failure/cancellation.");
+            if (cancel)
+                Assert.IsInstanceOf<OperationCanceledException>(failure.InnerException);
+            else
+                Assert.IsInstanceOf<InvalidOperationException>(failure.InnerException);
+            Assert.AreEqual(scenes, UnityEngine.SceneManagement.SceneManager.sceneCount);
+            Assert.AreEqual(previews, EditorSceneManager.previewSceneCount);
+            Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage());
+        }
+
+        [Test]
+        public void HierarchyPaging_TokenOverloadPreservesSuccessAndRejectsPreCancelledWork()
+        {
+            string path = CreatePagingPrefab(1);
+            var request = new JObject { ["action"] = "get_hierarchy", ["prefabPath"] = path };
+            var response = ToJObject(ManagePrefabs.HandleCommand(request, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(2, ((JArray)response["data"]["items"]).Count);
+            int previews = EditorSceneManager.previewSceneCount;
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            Assert.Throws<OperationCanceledException>(() => ManagePrefabs.HandleCommand(request, cancellation.Token));
+            Assert.AreEqual(previews, EditorSceneManager.previewSceneCount);
+        }
+
+        [Test]
+        public void HierarchyPaging_DeepContinuationResumesAfterWorkLimitWithoutOmissions()
+        {
+            string path = CreatePagingPrefab(0, 150);
+            string cursor = null;
+            var keys = new List<string>();
+            bool workLimited = false;
+            int pages = 0;
+            int previews = EditorSceneManager.previewSceneCount;
+            do
+            {
+                var response = ReadHierarchyPage(path, 500, cursor, 128);
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                var data = (JObject)response["data"];
+                var items = (JArray)data["items"];
+                Assert.Greater(items.Count, 0, "Every continuation must make progress.");
+                Assert.LessOrEqual(data.Value<int>("work_used"), 4096);
+                Assert.AreEqual(1409, data.Value<int>("hierarchy_key_limit"));
+                Assert.AreEqual(512, data.Value<int>("string_limit"));
+                foreach (var item in items)
+                    Assert.LessOrEqual(item.Value<string>("hierarchyKey").Length, data.Value<int>("hierarchy_key_limit"));
+                workLimited |= data.Value<bool>("work_limited");
+                keys.AddRange(items.Select(item => item.Value<string>("hierarchyKey")));
+                cursor = data.Value<string>("next_cursor");
+                if (cursor == null)
+                {
+                    Assert.AreEqual(129, data.Value<int>("total"));
+                    Assert.IsTrue(data.Value<bool>("depth_limited"));
+                }
+                Assert.AreEqual(previews, EditorSceneManager.previewSceneCount);
+                Assert.Less(++pages, 30);
+            } while (cursor != null);
+            Assert.IsTrue(workLimited);
+            Assert.AreEqual(129, keys.Count);
+            Assert.AreEqual(129, keys.Distinct().Count());
+            Assert.AreEqual(1409, ("0" + string.Concat(Enumerable.Repeat("/" + int.MaxValue, 128))).Length);
+            for (int i = 0; i < keys.Count; i++)
+                Assert.AreEqual("0" + string.Concat(Enumerable.Repeat("/0", i)), keys[i]);
+        }
+
+        [Test]
+        public void HierarchyPaging_OutputLimitedContinuationMakesProgressAndUnloads()
+        {
+            string path = CreatePagingPrefab(400, nameLength: 4096);
+            string cursor = null;
+            var keys = new List<string>();
+            bool outputLimited = false;
+            int previews = EditorSceneManager.previewSceneCount;
+            int pages = 0;
+            do
+            {
+                var response = ReadHierarchyPage(path, 500, cursor);
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                var data = (JObject)response["data"];
+                Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(response.ToString(Newtonsoft.Json.Formatting.None)), 262144);
+                Assert.Greater(((JArray)data["items"]).Count, 0);
+                outputLimited |= data.Value<bool>("output_limited");
+                keys.AddRange(((JArray)data["items"]).Select(item => item.Value<string>("hierarchyKey")));
+                cursor = data.Value<string>("next_cursor");
+                Assert.AreEqual(previews, EditorSceneManager.previewSceneCount);
+                Assert.Less(++pages, 10);
+            } while (cursor != null);
+            Assert.IsTrue(outputLimited);
+            Assert.AreEqual(401, keys.Count);
+            Assert.AreEqual(401, keys.Distinct().Count());
+        }
 
         [Test]
         public void ModifyContents_ModifiesTransformWithoutOpeningStage()

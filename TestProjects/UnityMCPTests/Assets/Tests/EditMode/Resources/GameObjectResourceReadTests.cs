@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using MCPForUnity.Editor.Resources.Scene;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
@@ -132,6 +134,171 @@ namespace MCPForUnityTests.Editor.Resources
             Assert.AreEqual(-1f, data.SelectToken("transform.position.y").Value<float>());
             Assert.IsInstanceOf<JObject>(data.SelectToken("transform.position"));
             Assert.AreEqual(0, _first.GetterCalls + _second.GetterCalls);
+        }
+
+        private GameObject AddPagingChild(string name = "Duplicate")
+        {
+            var child = new GameObject(name);
+            child.transform.SetParent(_owned.transform, false);
+            return child;
+        }
+
+        private JObject ReadChildrenPage(int pageSize = 50, string cursor = null)
+        {
+            var request = Parameters();
+            request["children_page_size"] = pageSize;
+            request["children_cursor"] = cursor;
+            return Json(GameObjectResource.HandleCommand(request));
+        }
+
+        [Test]
+        public void ChildrenPaging_WideStableSourceHasExactOrderedScalarIds()
+        {
+            var expected = new List<int>();
+            for (int i = 0; i < 613; i++)
+                expected.Add(AddPagingChild().GetInstanceIDCompat());
+            var seen = new List<int>();
+            string cursor = null;
+            int pages = 0;
+            do
+            {
+                var response = ReadChildrenPage(41, cursor);
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                var data = (JObject)response["data"];
+                var children = (JArray)data["children"];
+                Assert.LessOrEqual(children.Count, 41);
+                Assert.AreEqual(613, data.Value<int>("childrenTotal"));
+                Assert.AreEqual("live_indices", data.Value<string>("childrenConsistency"));
+                Assert.IsNotEmpty(data.Value<string>("childrenRestartAdvice"));
+                seen.AddRange(children.Values<int>());
+                cursor = data.Value<string>("childrenNextCursor");
+                Assert.AreEqual(cursor != null, data.Value<bool>("childrenTruncated"));
+                Assert.Less(++pages, 30);
+            } while (cursor != null);
+            CollectionAssert.AreEqual(expected, seen);
+            Assert.AreEqual(seen.Count, seen.Distinct().Count());
+            Assert.AreEqual(0, _first.GetterCalls + _second.GetterCalls);
+        }
+
+        [TestCase("reorder")]
+        [TestCase("reparent")]
+        [TestCase("replace")]
+        [TestCase("rename")]
+        public void ChildrenPaging_ImmediateObservedMutationRejectsCursor(string mutation)
+        {
+            for (int i = 0; i < 6; i++)
+                AddPagingChild("Child" + i);
+            string cursor = ReadChildrenPage(2)["data"].Value<string>("childrenNextCursor");
+            Assert.IsNotEmpty(cursor);
+            Transform first = _owned.transform.GetChild(0);
+            if (mutation == "reorder")
+                first.SetSiblingIndex(1);
+            else if (mutation == "rename")
+                first.name = "RenamedImmediately";
+            else if (mutation == "replace")
+            {
+                Object.DestroyImmediate(first.gameObject);
+                AddPagingChild("Replacement").transform.SetSiblingIndex(0);
+            }
+            else
+            {
+                first.SetParent(_owned.transform.GetChild(1), false);
+                AddPagingChild("Replacement");
+            }
+            var response = ReadChildrenPage(2, cursor);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("stale_cursor", response.ToString());
+        }
+
+        [Test]
+        public void ChildrenPaging_CursorIsBoundToTargetAndOptions()
+        {
+            for (int i = 0; i < 6; i++)
+                AddPagingChild();
+            string cursor = ReadChildrenPage(2)["data"].Value<string>("childrenNextCursor");
+            Assert.IsNotEmpty(cursor);
+            Assert.IsFalse(ReadChildrenPage(3, cursor).Value<bool>("success"));
+            var other = AddPagingChild("OtherTarget");
+            var request = new JObject
+            {
+                ["instanceID"] = other.GetInstanceIDCompat(),
+                ["children_page_size"] = 2,
+                ["children_cursor"] = cursor,
+            };
+            Assert.IsFalse(Json(GameObjectResource.HandleCommand(request)).Value<bool>("success"));
+        }
+
+        [TestCase("children_page_size", "0")]
+        [TestCase("children_page_size", "501")]
+        [TestCase("children_page_size", "1.5")]
+        [TestCase("children_page_size", "true")]
+        [TestCase("children_cursor", "123")]
+        public void ChildrenPaging_InvalidOptionsAreRejected(string key, string json)
+        {
+            var request = Parameters();
+            request[key] = JToken.Parse(json);
+            Assert.IsFalse(Json(GameObjectResource.HandleCommand(request)).Value<bool>("success"));
+            Assert.AreEqual(0, _first.GetterCalls + _second.GetterCalls);
+        }
+
+        [Test]
+        public void ChildrenPaging_ComponentMetadataIsBoundedWithoutCallingGetters()
+        {
+            for (int i = 0; i < 80; i++)
+                _owned.AddComponent<ResourceReadCounter>();
+            for (int i = 0; i < 70; i++)
+                AddPagingChild();
+            var response = Json(GameObjectResource.HandleCommand(Parameters()));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var data = (JObject)response["data"];
+            Assert.AreEqual(50, ((JArray)data["children"]).Count);
+            Assert.AreEqual(64, ((JArray)data["componentTypes"]).Count);
+            Assert.AreEqual(83, data.Value<int>("componentCount"));
+            Assert.IsTrue(data.Value<bool>("componentTypesTruncated"));
+            Assert.IsTrue(data.Value<bool>("metadataTruncated"));
+            Assert.LessOrEqual(data.Value<int>("workUsed"), data.Value<int>("workLimit"));
+            Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(response.ToString(Formatting.None)), 262144);
+            Assert.AreEqual(0, _owned.GetComponents<ResourceReadCounter>().Sum(component => component.GetterCalls));
+        }
+
+        [Test]
+        public void ChildrenPaging_ExpiredCursorIsRejectedAndCacheIsBounded()
+        {
+            for (int i = 0; i < 4; i++)
+                AddPagingChild();
+            var helper = typeof(GameObjectResource).Assembly.GetType("MCPForUnity.Editor.Helpers.HierarchyPaging", true);
+            var states = (System.Collections.IDictionary)
+                helper.GetField("States", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic).GetValue(null);
+            string cursor = ReadChildrenPage(2)["data"].Value<string>("childrenNextCursor");
+            var state = states[cursor];
+            state
+                .GetType()
+                .GetField("Expires", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .SetValue(state, EditorApplication.timeSinceStartup - 1);
+            Assert.IsFalse(ReadChildrenPage(2, cursor).Value<bool>("success"));
+            for (int i = 0; i < 40; i++)
+                Assert.IsNotEmpty(ReadChildrenPage(2)["data"].Value<string>("childrenNextCursor"));
+            Assert.LessOrEqual(states.Count, 32);
+        }
+
+        [Test]
+        public void ChildrenPaging_BoundedPathDoesNotSplitUnicodeSurrogatePair()
+        {
+            _owned.name = new string('x', 510);
+            var child = AddPagingChild("\U0001F600");
+            var response = Json(GameObjectResource.HandleCommand(new JObject { ["instanceID"] = child.GetInstanceIDCompat() }));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            string path = response["data"].Value<string>("path");
+            Assert.LessOrEqual(path.Length, 512);
+            Assert.IsTrue(response["data"].Value<bool>("metadataTruncated"));
+            for (int i = 0; i < path.Length; i++)
+                if (char.IsHighSurrogate(path[i]))
+                {
+                    Assert.Less(i + 1, path.Length);
+                    Assert.IsTrue(char.IsLowSurrogate(path[++i]));
+                }
+                else
+                    Assert.IsFalse(char.IsLowSurrogate(path[i]));
         }
 
         [TestCase("instanceID")]
