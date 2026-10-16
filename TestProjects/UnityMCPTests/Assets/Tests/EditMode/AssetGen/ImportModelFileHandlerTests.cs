@@ -9,6 +9,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.AssetGen
 {
@@ -86,7 +87,7 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         [TestCase(".glb")]
         [TestCase(".gltf")]
-        public void MissingGltfast_DoesNotStageDirectModel(string extension)
+        public void MissingGltfImporter_RetainsStagedEvidenceAndOriginalSource(string extension)
         {
             var availability = typeof(ModelImportPipeline).GetField("_gltfastAvailable", BindingFlags.Static | BindingFlags.NonPublic);
             Assert.IsNotNull(availability);
@@ -95,15 +96,25 @@ namespace MCPForUnityTests.Editor.AssetGen
             string absoluteOutput = Path.Combine(Path.GetDirectoryName(Application.dataPath), outputFolder);
             string source = _sourceFolder + "/source" + extension;
             string absoluteSource = Path.Combine(Path.GetDirectoryName(Application.dataPath), source);
-            File.WriteAllBytes(absoluteSource, new byte[] { 0 });
+            byte[] bytes =
+                extension == ".glb" ? ModelImportPipelineTests.ContainerOnlyGlb() : System.Text.Encoding.UTF8.GetBytes("{\"asset\":{\"version\":\"2.0\"}}");
+            File.WriteAllBytes(absoluteSource, bytes);
             try
             {
                 availability.SetValue(null, false);
                 JObject response = Call(new JObject { ["sourcePath"] = source, ["outputFolder"] = outputFolder });
+                string retained = (string)response["data"]?["asset_path"];
+                Assert.IsNotNull(retained, response.ToString());
+                if (AssetImporter.GetAtPath(retained)?.GetType() != typeof(AssetImporter))
+                    Assert.Ignore("This fixture exercises projects without an active glTF importer.");
                 Assert.AreEqual(false, (bool)response["success"]);
                 StringAssert.Contains("glTFast", (string)response["error"]);
-                Assert.IsFalse(Directory.Exists(absoluteOutput), "rejected input must not create a staging folder");
-                Assert.IsTrue(File.Exists(absoluteSource), "source must remain intact");
+                Assert.AreEqual("registered", (string)response["data"]["model_import_stage"]);
+                Assert.AreEqual("missing_gltf_importer", (string)response["data"]["model_import_error_code"]);
+                Assert.IsNotEmpty((string)response["data"]["asset_guid"]);
+                Assert.IsTrue(Directory.Exists(absoluteOutput), "failed import preserves staged bytes for repair");
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(absoluteSource), "source must remain intact");
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(retained));
             }
             finally
             {
@@ -128,6 +139,49 @@ namespace MCPForUnityTests.Editor.AssetGen
             StringAssert.StartsWith(TestFolder, assetPath);
             Assert.IsFalse(string.IsNullOrEmpty((string)resp["data"]["asset_guid"]));
             Assert.IsTrue(File.Exists(assetPath), "imported file should exist under Assets");
+            Assert.AreEqual("usable", (string)resp["data"]["model_import_stage"]);
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(assetPath)?.GetComponentInChildren<MeshFilter>(true)?.sharedMesh);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CorruptModel_PreservesSourceAndStagedEvidenceWithoutSuccess(bool archive)
+        {
+            const string contents = "owned invalid model bytes";
+            string source = _sourceFolder + "/corrupt.obj";
+            File.WriteAllText(source, contents);
+            if (archive)
+                source = WriteArchive("corrupt", "nested/corrupt.obj", contents);
+            byte[] before = File.ReadAllBytes(source);
+            bool previousLogs = LogAssert.ignoreFailingMessages;
+            JObject response;
+            try
+            {
+                LogAssert.ignoreFailingMessages = true;
+                response = Call(
+                    new JObject
+                    {
+                        ["sourcePath"] = source,
+                        ["name"] = "retained",
+                        ["outputFolder"] = TestFolder,
+                    }
+                );
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = previousLogs;
+            }
+
+            Assert.AreEqual(false, (bool)response["success"], response.ToString());
+            Assert.AreEqual("registered", (string)response["data"]["model_import_stage"]);
+            Assert.AreEqual("unusable_model", (string)response["data"]["model_import_error_code"]);
+            string retained = (string)response["data"]["asset_path"];
+            Assert.AreNotEqual(source, retained, "Failure evidence must identify the staged output, not relabel the source.");
+            Assert.AreEqual(contents, File.ReadAllText(retained));
+            Assert.IsNotEmpty((string)response["data"]["asset_guid"]);
+            Assert.AreEqual(AssetDatabase.AssetPathToGUID(retained), (string)response["data"]["asset_guid"]);
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(source), "Failed staged import must never delete or rewrite user input.");
+            Assert.IsNull(response["data"]["instance_id"], "Import must not claim scene placement.");
         }
 
         private string WriteArchive(string name, string entryName, string contents)

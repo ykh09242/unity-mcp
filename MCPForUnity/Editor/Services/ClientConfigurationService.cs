@@ -13,33 +13,46 @@ namespace MCPForUnity.Editor.Services
     public class ClientConfigurationService : IClientConfigurationService
     {
         private readonly List<IMcpClientConfigurator> configurators;
+        private readonly Func<bool> getUseHttpTransport;
+        private readonly Action<bool> setUseHttpTransport;
+        private readonly Action prepareLocalServer;
+        private readonly Action<string> logTransportChange;
 
         public ClientConfigurationService()
+            : this(
+                McpClientRegistry.All,
+                () => EditorConfigurationCache.Instance.UseHttpTransport,
+                value => EditorConfigurationCache.Instance.SetUseHttpTransport(value),
+                PrepareLocalServer,
+                message => McpLog.Info(message)
+            ) { }
+
+        internal ClientConfigurationService(
+            IEnumerable<IMcpClientConfigurator> configurators,
+            Func<bool> getUseHttpTransport,
+            Action<bool> setUseHttpTransport,
+            Action prepareLocalServer,
+            Action<string> logTransportChange
+        )
         {
-            configurators = McpClientRegistry.All.ToList();
+            this.configurators = configurators.ToList();
+            this.getUseHttpTransport = getUseHttpTransport;
+            this.setUseHttpTransport = setUseHttpTransport;
+            this.prepareLocalServer = prepareLocalServer;
+            this.logTransportChange = logTransportChange;
         }
 
         public IReadOnlyList<IMcpClientConfigurator> GetAllClients() => configurators;
 
         public void ConfigureClient(IMcpClientConfigurator configurator)
         {
-            // When using a local server path, clean stale build artifacts first.
-            // This prevents old deleted .py files from being picked up by Python's auto-discovery.
-            if (AssetPathUtility.IsLocalServerPath())
-            {
-                AssetPathUtility.CleanLocalServerBuildArtifacts();
-            }
-
+            prepareLocalServer();
             ConfigureWithTransportCoercion(configurator);
         }
 
         public ClientConfigurationSummary ConfigureAllDetectedClients()
         {
-            // When using a local server path, clean stale build artifacts once before configuring all clients.
-            if (AssetPathUtility.IsLocalServerPath())
-            {
-                AssetPathUtility.CleanLocalServerBuildArtifacts();
-            }
+            prepareLocalServer();
 
             var summary = new ClientConfigurationSummary();
             foreach (var configurator in configurators)
@@ -67,9 +80,16 @@ namespace MCPForUnity.Editor.Services
             return summary;
         }
 
-        private static void ConfigureWithTransportCoercion(IMcpClientConfigurator configurator)
+        private static void PrepareLocalServer()
         {
-            bool originalHttp = EditorConfigurationCache.Instance.UseHttpTransport;
+            // Clean stale build artifacts so deleted modules cannot be auto-discovered.
+            if (AssetPathUtility.IsLocalServerPath())
+                AssetPathUtility.CleanLocalServerBuildArtifacts();
+        }
+
+        private void ConfigureWithTransportCoercion(IMcpClientConfigurator configurator)
+        {
+            bool originalHttp = getUseHttpTransport();
             try
             {
                 CoerceTransportFor(configurator);
@@ -77,7 +97,7 @@ namespace MCPForUnity.Editor.Services
             }
             finally
             {
-                EditorConfigurationCache.Instance.SetUseHttpTransport(originalHttp);
+                setUseHttpTransport(originalHttp);
             }
         }
 
@@ -88,13 +108,13 @@ namespace MCPForUnity.Editor.Services
             return current != previous;
         }
 
-        private static void CoerceTransportFor(IMcpClientConfigurator configurator)
+        private void CoerceTransportFor(IMcpClientConfigurator configurator)
         {
             var supported = configurator.SupportedTransports;
             if (supported == null || supported.Count == 0)
                 return;
 
-            bool currentlyHttp = EditorConfigurationCache.Instance.UseHttpTransport;
+            bool currentlyHttp = getUseHttpTransport();
             var requested = currentlyHttp ? ConfiguredTransport.Http : ConfiguredTransport.Stdio;
 
             // Accept any HTTP variant (Http, HttpRemote) when the user wants HTTP — a client that
@@ -108,10 +128,10 @@ namespace MCPForUnity.Editor.Services
             // configurator's declared order when more than one option remains.
             ConfiguredTransport chosen = PickFallback(supported, requested);
             bool needHttp = IsHttpVariant(chosen);
-            if (EditorConfigurationCache.Instance.UseHttpTransport != needHttp)
+            if (getUseHttpTransport() != needHttp)
             {
-                EditorConfigurationCache.Instance.SetUseHttpTransport(needHttp);
-                McpLog.Info($"[{configurator.DisplayName}] auto-selected {chosen} transport (client does not support {requested}).");
+                setUseHttpTransport(needHttp);
+                logTransportChange($"[{configurator.DisplayName}] auto-selected {chosen} transport (client does not support {requested}).");
             }
         }
 

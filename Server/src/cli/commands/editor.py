@@ -4,6 +4,7 @@ import sys
 import time
 from uuid import uuid4
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any, assert_never
 
 from pydantic import ValidationError
@@ -738,7 +739,9 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
 
 @editor.command("custom-tool")
 @click.argument("tool_name")
-@click.option("--params", "-p", default="{}", help="Tool parameters as JSON.")
+@click.option(
+    "--params", "-p", default="{}", help="Tool parameters as JSON. Accepts @file or -/@- stdin."
+)
 @handle_unity_errors
 def custom_tool(tool_name: str, params: str):
     """Execute a custom Unity tool.
@@ -750,6 +753,8 @@ def custom_tool(tool_name: str, params: str):
         unity-mcp editor custom-tool "MyCustomTool"
         unity-mcp editor custom-tool "BuildPipeline" --params '{"target": "Android"}'
     """
+    params = admit_json_inputs(params=params)["params"]
+
     config = get_config()
 
     params_dict = parse_json_dict_or_exit(params, "params")

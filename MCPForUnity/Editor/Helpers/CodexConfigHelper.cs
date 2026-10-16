@@ -172,6 +172,182 @@ namespace MCPForUnity.Editor.Helpers
             return TryParseCodexServer(toml, out command, out args, out _);
         }
 
+        internal static string RemoveCodexServerBlock(string document)
+        {
+            if (string.IsNullOrWhiteSpace(document))
+                return document;
+            var expected = TryParseToml(document) ?? throw new FormatException("Existing Codex configuration is invalid TOML; it was not changed.");
+            bool found = false;
+            foreach (string container in new[] { "mcp_servers", "mcpServers" })
+            {
+                if (!expected.TryGetNode(container, out var node))
+                    continue;
+                if (node is not TomlTable servers)
+                    throw new FormatException($"Codex {container} must be a table; configuration was not changed.");
+                if (!servers.TryGetNode("unityMCP", out var owned))
+                    continue;
+                if (owned is not TomlTable)
+                    throw new FormatException($"Codex {container}.unityMCP must be a table; configuration was not changed.");
+                // Explicit unregister owns this exact reserved entry, including its customized
+                // fields. Custom server names and shared token files are never owned by it.
+                servers.Delete("unityMCP");
+                if (!servers.Keys.Any())
+                    expected.Delete(container);
+                found = true;
+            }
+            if (!found)
+                return document;
+
+            var removals = new List<(int start, int length)>();
+            var context = new List<string>();
+            foreach (var range in TomlStatements(document))
+            {
+                string statement = document.Substring(range.start, range.length);
+                string trimmed = statement.TrimStart();
+                if (trimmed.Length == 0 || trimmed.StartsWith("#", StringComparison.Ordinal))
+                    continue;
+                List<string> path;
+                if (trimmed[0] == '[')
+                {
+                    path = TomlKeyPath(statement, true);
+                    context = path;
+                }
+                else
+                {
+                    int separator = KeySeparator(statement);
+                    path = new List<string>(context);
+                    path.AddRange(TomlKeyPath(statement.Substring(0, separator) + " = 0", false));
+                }
+                if (path.Count >= 2 && (path[0] == "mcp_servers" || path[0] == "mcpServers") && path[1] == "unityMCP")
+                    removals.Add(range);
+            }
+            string updated = document;
+            foreach (var range in removals.OrderByDescending(range => range.start))
+                updated = updated.Remove(range.start, range.length);
+            var actual = TryParseToml(updated) ?? (string.IsNullOrWhiteSpace(updated) ? new TomlTable() : null);
+            if (actual != null)
+                foreach (string container in new[] { "mcp_servers", "mcpServers" })
+                    if (actual.TryGetNode(container, out var node) && node is TomlTable empty && !empty.Keys.Any())
+                        actual.Delete(container);
+            if (actual == null || !SameToml(expected, actual))
+                throw new FormatException(
+                    "Codex unityMCP uses a TOML layout that cannot be removed without changing neighboring settings. "
+                        + "Remove only that entry manually or expand it into [mcp_servers.unityMCP]; configuration was not changed."
+                );
+            return updated;
+        }
+
+        private static bool SameToml(TomlNode left, TomlNode right)
+        {
+            if (left is TomlTable table && right is TomlTable other)
+            {
+                var keys = table.Keys.ToArray();
+                var otherKeys = other.Keys.ToArray();
+                return keys.OrderBy(key => key).SequenceEqual(otherKeys.OrderBy(key => key)) && keys.All(key => SameToml(table[key], other[key]));
+            }
+            if (left is TomlArray array && right is TomlArray otherArray)
+                return array.ChildrenCount == otherArray.ChildrenCount
+                    && Enumerable.Range(0, array.ChildrenCount).All(index => SameToml(array[index], otherArray[index]));
+            return left.GetType() == right.GetType() && left.ToInlineToml() == right.ToInlineToml();
+        }
+
+        private static List<string> TomlKeyPath(string statement, bool header)
+        {
+            var parsed = TryParseToml(statement) ?? throw new FormatException("Codex TOML entry could not be located safely; configuration was not changed.");
+            var path = new List<string>();
+            TomlNode node = parsed;
+            while (node is TomlTable table && table.Keys.Count() == 1)
+            {
+                string key = table.Keys.Single();
+                path.Add(key);
+                node = table[key];
+                if (header && node is TomlArray array && array.IsTableArray && array.ChildrenCount == 1)
+                    node = array[0];
+            }
+            return path;
+        }
+
+        private static int KeySeparator(string statement)
+        {
+            char quote = '\0';
+            for (int i = 0; i < statement.Length; i++)
+            {
+                char c = statement[i];
+                if (quote == '"' && c == '\\')
+                    i++;
+                else if (quote != '\0' && c == quote)
+                    quote = '\0';
+                else if (quote == '\0' && (c == '"' || c == '\''))
+                    quote = c;
+                else if (quote == '\0' && c == '=')
+                    return i;
+            }
+            throw new FormatException("Codex TOML key could not be located safely; configuration was not changed.");
+        }
+
+        private static IEnumerable<(int start, int length)> TomlStatements(string document)
+        {
+            int start = 0,
+                depth = 0;
+            char quote = '\0';
+            bool multiline = false,
+                comment = false;
+            for (int i = 0; i < document.Length; i++)
+            {
+                char c = document[i];
+                if (comment)
+                {
+                    if (c != '\n')
+                        continue;
+                    comment = false;
+                }
+                else if (quote != '\0')
+                {
+                    if (quote == '"' && c == '\\')
+                    {
+                        i++;
+                        continue;
+                    }
+                    if (c != quote)
+                        continue;
+                    if (!multiline)
+                        quote = '\0';
+                    else if (i + 2 < document.Length && document[i + 1] == quote && document[i + 2] == quote)
+                    {
+                        i += 2;
+                        // Tommy accepts up to two content quotes next to a closing triple.
+                        // Consume the full run so a fourth quote cannot open another string
+                        // and absorb a following standalone comment into this statement.
+                        for (int extra = 0; extra < 2 && i + 1 < document.Length && document[i + 1] == quote; extra++)
+                            i++;
+                        quote = '\0';
+                        multiline = false;
+                    }
+                    continue;
+                }
+                else if (c == '#')
+                    comment = true;
+                else if (c == '"' || c == '\'')
+                {
+                    quote = c;
+                    multiline = i + 2 < document.Length && document[i + 1] == c && document[i + 2] == c;
+                    if (multiline)
+                        i += 2;
+                }
+                else if (c == '[' || c == '{')
+                    depth++;
+                else if (c == ']' || c == '}')
+                    depth--;
+                if (c == '\n' && depth == 0 && quote == '\0')
+                {
+                    yield return (start, i + 1 - start);
+                    start = i + 1;
+                }
+            }
+            if (start < document.Length)
+                yield return (start, document.Length - start);
+        }
+
         public static bool TryParseCodexServer(string toml, out string command, out string[] args, out string url)
         {
             command = null;

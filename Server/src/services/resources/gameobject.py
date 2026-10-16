@@ -7,7 +7,7 @@ These resources provide read-only access to:
 - Single component on a GameObject (mcpforunity://scene/gameobject/{id}/component/{name})
 """
 
-from typing import Any
+from typing import Annotated, Any
 from pydantic import BaseModel
 from fastmcp import Context
 
@@ -80,6 +80,12 @@ async def get_gameobject_api_docs(_ctx: Context) -> MCPResponse:
                     "children",
                 ],
             },
+            "mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}": {
+                "description": "Bounded direct child IDs in sibling order, plus object metadata. Default page size 50, maximum 500.",
+                "example": "mcpforunity://scene/gameobject/-81840/children?page_size=25",
+                "consistency": "Live indices: stable sources page exactly. Restart after any hierarchy edit; bounded observed-change checks cannot detect every same-frame mutation.",
+                "cursor": "Opaque editor-session cursor, expires after 30 seconds. Keep target/page_size unchanged; stale cursors require restart.",
+            },
             "mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}": {
                 "description": "Get all components with full property serialization (paginated)",
                 "example": "mcpforunity://scene/gameobject/-81840/components?page_size=10&cursor=0&include_properties=false",
@@ -129,6 +135,12 @@ class GameObjectData(BaseModel):
     transform: TransformData = TransformData()
     parent: int | None = None
     children: list[int] = []
+    childrenTotal: int = 0
+    childrenPageSize: int = 50
+    childrenNextCursor: str | None = None
+    childrenTruncated: bool = False
+    childrenConsistency: str = "live_indices"
+    childrenRestartAdvice: str = "Restart after any hierarchy edit."
     componentTypes: list[str] = []
     path: str = ""
 
@@ -144,7 +156,7 @@ class GameObjectResponse(MCPResponse):
 @mcp_for_unity_resource(
     uri="mcpforunity://scene/gameobject/{instance_id}",
     name="gameobject",
-    description="Get detailed information about a single GameObject by instance ID. Returns name, tag, layer, active state, transform data, parent/children IDs, and component type list (no full component properties).\n\nURI: mcpforunity://scene/gameobject/{instance_id}",
+    description="Get bounded GameObject metadata by instance ID: scalar transforms, parent, first 50 child IDs and up to 64 component type names. Follow childrenNextCursor via /children?page_size=50&cursor=... . Children use live sibling indices; restart after any hierarchy edit.\n\nURI: mcpforunity://scene/gameobject/{instance_id}",
 )
 async def get_gameobject(ctx: Context, instance_id: str) -> MCPResponse:
     """Get GameObject data by instance ID."""
@@ -158,6 +170,46 @@ async def get_gameobject(ctx: Context, instance_id: str) -> MCPResponse:
         async_send_command_with_retry, unity_instance, "get_gameobject", {"instanceID": id_int}
     )
 
+    return _normalize_response(response)
+
+
+@mcp_for_unity_resource(
+    uri="mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}",
+    name="gameobject_children",
+    description="Read bounded direct child IDs in sibling order plus object metadata. page_size defaults to 50 (1-500). Reuse childrenNextCursor with identical target/page_size within 30 seconds. Stable sources page exactly; live-index cursors perform bounded observed-change checks, so restart after any hierarchy edit. Cursors expire on reload or eviction.",
+)
+async def get_gameobject_children(
+    ctx: Context,
+    instance_id: Annotated[str, "Scene GameObject instance ID returned by find_gameobjects."],
+    page_size: Annotated[int, "Direct child IDs per page, from 1 to 500; default 50."] = 50,
+    cursor: Annotated[
+        str | None,
+        "Opaque childrenNextCursor from the preceding page; omit to start. Keep the same target and page_size.",
+    ] = None,
+) -> MCPResponse:
+    """Continue the bounded child-ID page returned by the ordinary object resource."""
+    id_int, error = _validate_instance_id(instance_id)
+    if error:
+        return error
+    if type(page_size) is not int or not 1 <= page_size <= 500:
+        return MCPResponse(success=False, error="page_size must be an integer between 1 and 500.")
+    if cursor is not None and (
+        type(cursor) is not str
+        or len(cursor) != 32
+        or any(c not in "0123456789abcdef" for c in cursor)
+    ):
+        return MCPResponse(
+            success=False,
+            error="stale_cursor",
+            message="Use an opaque child cursor or restart the read.",
+        )
+    params: dict[str, Any] = {"instanceID": id_int, "children_page_size": page_size}
+    if cursor is not None:
+        params["children_cursor"] = cursor
+    unity_instance = await get_unity_instance_from_context(ctx)
+    response = await send_with_unity_instance(
+        async_send_command_with_retry, unity_instance, "get_gameobject", params
+    )
     return _normalize_response(response)
 
 

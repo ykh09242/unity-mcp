@@ -11,12 +11,21 @@ import asyncio
 import logging
 import time
 
+import anyio
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.exceptions import ValidationError
+from fastmcp.tools.base import ToolResult
 
 from core.config import config
 from services.registry import get_registered_tools
-from transport.plugin_hub import PluginHub, _ConnectionReadIdentity
+from transport.plugin_hub import (
+    NoUnitySessionError,
+    PluginHub,
+    _CommandBudget,
+    _ConnectionReadIdentity,
+    _HttpRequestBudget,
+    http_request_budget,
+)
 from transport.tool_input_validation import validate_tool_arguments
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -375,6 +384,7 @@ class UnityInstanceMiddleware(Middleware):
         context: MiddlewareContext,
         *,
         authenticated_user_id: str | None = None,
+        allow_reconnect: bool = True,
     ) -> None:
         """Inject active Unity instance and user_id into context if available."""
         ctx = context.fastmcp_context
@@ -438,9 +448,19 @@ class UnityInstanceMiddleware(Middleware):
                     # For stdio, we just need the instance ID.
                     # Pass user_id for remote-hosted mode session isolation
                     session_id = await PluginHub._resolve_session_id(
-                        active_instance, user_id=user_id
+                        active_instance,
+                        user_id=user_id,
+                        # The actual tool controls reconnect policy. Preflight
+                        # validates its current route under the request budget.
+                        retry_on_reload=allow_reconnect and http_request_budget.get() is None,
                     )
-                except (ConnectionError, ValueError, KeyError, TimeoutError) as exc:
+                except (
+                    ConnectionError,
+                    ValueError,
+                    KeyError,
+                    TimeoutError,
+                    NoUnitySessionError,
+                ) as exc:
                     # If resolution fails, it means the Unity instance is not reachable via HTTP/WS.
                     # If we are in stdio mode, this might still be fine if the user is just setting state?
                     # But usually if PluginHub is configured, we expect it to work.
@@ -480,6 +500,7 @@ class UnityInstanceMiddleware(Middleware):
         server = getattr(ctx, "fastmcp", None)
         name = getattr(context.message, "name", None)
         arguments = getattr(context.message, "arguments", None)
+        tool = None
         if server is not None and hasattr(type(server), "get_tool") and isinstance(name, str):
             tool = await server.get_tool(name)
             if tool is not None:
@@ -496,6 +517,49 @@ class UnityInstanceMiddleware(Middleware):
                 validate_tool_arguments(
                     tool, supplied, strict=True if server.strict_input_validation else None
                 )
+        # Authentication and SDK schema validation precede the execution clock.
+        # Selection, tenant membership and the tool's transport work share it.
+        from transport.unity_transport import _is_http_transport
+
+        if not _is_http_transport() or not PluginHub.is_configured():
+            return await self._call_selected_tool(context, call_next, user_id)
+        self._refresh_tool_visibility_metadata_from_registry()
+        command = self._tool_alias_to_unity_target.get(name, name)
+        schema = getattr(tool, "parameters", {}) or {}
+        params = {
+            key: value["default"]
+            for key, value in schema.get("properties", {}).items()
+            if "default" in value
+        }
+        params.update(arguments or {})
+        if name == "execute_custom_tool":
+            command = params.get("tool_name", name)
+            params = params.get("parameters") or {}
+        if command == "manage_play_scenario" and params.get("action") in {"run", "suite_run"}:
+            # The command model supplies these defaults at its wire boundary.
+            if params.get("timeout_seconds") is None:
+                params["timeout_seconds"] = 300
+        timeout_s = PluginHub._command_timeouts(command, params)[1]
+        if command == "refresh_unity" and params.get("wait_for_ready", True):
+            from services.tools.refresh_unity import REFRESH_READY_TIMEOUT_SECONDS
+
+            timeout_s = max(timeout_s, REFRESH_READY_TIMEOUT_SECONDS)
+        started_at = asyncio.get_running_loop().time()
+        budget = _CommandBudget(started_at + timeout_s)
+        scope = asyncio.timeout_at(budget.expires_at)
+        token = http_request_budget.set(_HttpRequestBudget(started_at, budget, scope))
+        try:
+            async with scope:
+                return await self._call_selected_tool(context, call_next, user_id)
+        except TimeoutError:
+            if not scope.expired():
+                raise
+            return ToolResult(structured_content=budget.timeout_response(command), is_error=True)
+        finally:
+            http_request_budget.reset(token)
+
+    async def _call_selected_tool(self, context: MiddlewareContext, call_next, user_id):
+        ctx = context.fastmcp_context
         await self._inject_unity_instance(context, authenticated_user_id=user_id)
         if config.http_remote_hosted:
             session_id = await ctx.get_state("unity_session_id")
@@ -543,6 +607,13 @@ class UnityInstanceMiddleware(Middleware):
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into resource context if available."""
+        if str(getattr(context.message, "uri", "")) == "mcpforunity://capabilities":
+            from services.capabilities import capability_read_scope
+
+            with capability_read_scope() as deadline:
+                with anyio.move_on_at(deadline):
+                    await self._inject_unity_instance(context, allow_reconnect=False)
+                return await call_next(context)
         await self._inject_unity_instance(context)
         return await call_next(context)
 

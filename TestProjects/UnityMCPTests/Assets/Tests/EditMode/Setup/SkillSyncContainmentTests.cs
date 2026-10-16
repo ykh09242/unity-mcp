@@ -36,6 +36,7 @@ namespace MCPForUnityTests.Editor.Setup
         [TearDown]
         public void TearDown()
         {
+            SkillSyncService.BeforeFileOperation = null;
             // Unlink each known fixture before any recursive cleanup.
             foreach (var link in _links.AsEnumerable().Reverse())
             {
@@ -174,6 +175,41 @@ namespace MCPForUnityTests.Editor.Setup
             Assert.IsFalse(File.Exists(Path.Combine(_outside, "guide.md")));
         }
 
+        [TestCase("install")]
+        [TestCase("rollback_restore")]
+        public void ApplyPlan_ParentLinkSwapAtMutationOrRollbackRetainsBackup(string swapPhase)
+        {
+            string references = Path.Combine(_install, "references");
+            Directory.CreateDirectory(references);
+            File.WriteAllText(Path.Combine(references, "guide.md"), "old guide");
+            var remote = new Dictionary<string, string>
+            {
+                ["SKILL.md"] = Hash(Encoding.UTF8.GetBytes("old")),
+                ["references/guide.md"] = Hash(Encoding.UTF8.GetBytes("new guide")),
+            };
+            object plan = Plan(remote);
+            SkillSyncService.BeforeFileOperation = (phase, path) =>
+            {
+                if (path != "references/guide.md")
+                    return;
+                if (phase == swapPhase)
+                {
+                    Directory.Move(references, Path.Combine(_root, "saved-references"));
+                    Link(references, _outside, true);
+                }
+                if (swapPhase == "rollback_restore" && phase == "install")
+                    throw new IOException("owned failure before restore link swap");
+            };
+            var error = Assert.Catch<IOException>(() => Apply(plan, remote, _ => Encoding.UTF8.GetBytes("new guide")));
+            Assert.That(error.Message, Does.Contain("Recovery required"));
+            Assert.AreEqual("outside sentinel", File.ReadAllText(Path.Combine(_outside, "sentinel.md")));
+            Assert.IsFalse(File.Exists(Path.Combine(_outside, "guide.md")));
+            Assert.AreEqual("old", File.ReadAllText(Path.Combine(_install, "SKILL.md")));
+            string recovery = Directory.GetDirectories(_root, ".unity-mcp-sync-*").Single();
+            Assert.That(Directory.GetFiles(recovery).Select(File.ReadAllText), Does.Contain("old guide"));
+            Assert.That(File.ReadAllText(Path.Combine(recovery, "recovery.json")), Does.Contain("references/guide.md"));
+        }
+
         [Test]
         public void ResolveInstallPath_LinkedAncestor_Rejects()
         {
@@ -191,7 +227,7 @@ namespace MCPForUnityTests.Editor.Setup
         }
 
         [Test]
-        public void ApplyPlan_CaseOnlyRename_UsesDetectedVolumeComparison()
+        public void ApplyPlan_CaseOnlyRename_PreservesLocalSpellingWithoutFilesystemProbe()
         {
             File.WriteAllText(Path.Combine(_install, "Foo.md"), "old case file");
             var remote = new Dictionary<string, string>
@@ -201,11 +237,13 @@ namespace MCPForUnityTests.Editor.Setup
             };
             var comparison = (StringComparison)Invoke("GetPathComparison", _install);
             var comparer = (StringComparer)Invoke("GetPathComparer", comparison);
-            object plan = Invoke("BuildPlan", remote, Invoke("ListFiles", _install), comparer);
+            object plan = Plan(remote);
+            var conflicts = (List<string>)plan.GetType().GetProperty("Conflicts").GetValue(plan);
+            CollectionAssert.Contains(conflicts, "foo.md");
             var method = typeof(SkillSyncService)
                 .GetMethods(Internal)
                 .Single(m => m.Name == "ApplyPlan" && m.GetParameters()[0].ParameterType == typeof(string));
-            Func<string, byte[]> download = _ => Encoding.UTF8.GetBytes("new case file");
+            Func<string, byte[]> download = _ => throw new AssertionException("A conflicting case-only path must not download.");
             try
             {
                 method.Invoke(null, new object[] { _install, plan, remote, comparison, download, null });
@@ -214,7 +252,7 @@ namespace MCPForUnityTests.Editor.Setup
             {
                 throw e.InnerException ?? e;
             }
-            Assert.AreEqual("new case file", File.ReadAllText(Path.Combine(_install, "foo.md")));
+            Assert.AreEqual("old case file", File.ReadAllText(Path.Combine(_install, "Foo.md")));
             Assert.IsFalse(Directory.EnumerateFiles(_install, ".mcp-case-probe-*").Any());
         }
 
@@ -238,7 +276,12 @@ namespace MCPForUnityTests.Editor.Setup
             Assert.Throws<InvalidOperationException>(() => Invoke("ListFiles", _install));
         }
 
-        private object Plan(Dictionary<string, string> remote) => Invoke("BuildPlan", remote, Invoke("ListFiles", _install), StringComparer.Ordinal);
+        private object Plan(Dictionary<string, string> remote)
+        {
+            var files = (Dictionary<string, string>)Invoke("ListFiles", _install);
+            var baseline = files.ToDictionary(file => file.Key, file => SkillSyncService.ComputeGitBlobSha1(file.Value));
+            return Invoke("BuildPlanWithBaseline", remote, files, baseline, StringComparer.OrdinalIgnoreCase);
+        }
 
         private void Apply(object plan, Dictionary<string, string> remote, Func<string, byte[]> download)
         {

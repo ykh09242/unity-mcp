@@ -1,7 +1,9 @@
+using System;
 using System.Text;
 using System.Threading;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.AssetGen
@@ -200,6 +202,92 @@ namespace MCPForUnityTests.Editor.AssetGen
             };
 
             Assert.Throws<System.Exception>(() => adapter.SubmitAsync(req, "k", new FakeHttpTransport(), CancellationToken.None).GetAwaiter().GetResult());
+        }
+
+        [TestCase("fbx", null, true, null)]
+        [TestCase("obj", null, true, null)]
+        [TestCase("glb", "premium", true, null)]
+        [TestCase("glb", null, false, "v1.4-20240625")]
+        [TestCase("glb", null, false, "unverified-model")]
+        public void Contract_UnsupportedOptionsNeverSubmit(string format, string tier, bool texture, string model)
+        {
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"code\":0,\"data\":{\"task_id\":\"fixture\"}}") };
+            var req = new ModelGenRequest
+            {
+                Mode = "text",
+                Prompt = "fixture",
+                Format = format,
+                Tier = tier,
+                Texture = texture,
+                Model = model,
+            };
+            Assert.Throws<NotSupportedException>(() =>
+                new TripoAdapter().SubmitAsync(req, "fixture-key", http, CancellationToken.None).GetAwaiter().GetResult()
+            );
+            Assert.AreEqual(0, http.RecordedRequests.Count);
+        }
+
+        [TestCase("text", true, null)]
+        [TestCase("text", false, null)]
+        [TestCase("image", false, "v3.0-20250812")]
+        [TestCase("image", false, "P1-20260311")]
+        public void Contract_TextureAndPbrAreMappedTogether(string mode, bool texture, string model)
+        {
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"code\":0,\"data\":{\"task_id\":\"fixture\"}}") };
+            new TripoAdapter()
+                .SubmitAsync(
+                    new ModelGenRequest
+                    {
+                        Mode = mode,
+                        Prompt = "fixture",
+                        ImageUrl = "https://fixture.invalid/in.png",
+                        Texture = texture,
+                        Model = model,
+                    },
+                    "fixture-key",
+                    http,
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
+            JObject body = JObject.Parse(Encoding.UTF8.GetString(http.RecordedRequests[0].Body));
+            Assert.AreEqual(texture, (bool?)body["texture"]);
+            Assert.AreEqual(texture, (bool?)body["pbr"]);
+            Assert.IsNull(body["tier"]);
+        }
+
+        [TestCase("https://fixture.invalid/model.GLB?signature=secret.fbx", ProviderPollState.Succeeded, "glb")]
+        [TestCase("https://fixture.invalid/download?id=model.glb", ProviderPollState.Succeeded, null)]
+        [TestCase("https://fixture.invalid/model.fbx?signature=secret.glb", ProviderPollState.Failed, null)]
+        [TestCase("https://fixture.invalid/model.obj", ProviderPollState.Failed, null)]
+        public void Contract_PollUsesActualUrlPathFormat(string url, ProviderPollState state, string extension)
+        {
+            var payload = new JObject
+            {
+                ["code"] = 0,
+                ["data"] = new JObject
+                {
+                    ["status"] = "success",
+                    ["output"] = new JObject { ["model"] = url },
+                },
+            };
+            var http = new FakeHttpTransport { Handler = _ => Json(payload.ToString()) };
+            ProviderPollResult result = new TripoAdapter().PollAsync("fixture", "fixture-key", http, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(state, result.State);
+            Assert.AreEqual(extension, result.ResultExt);
+            if (state == ProviderPollState.Failed)
+                StringAssert.DoesNotContain(url, result.Error);
+        }
+
+        [Test]
+        public void Contract_UndocumentedOutputIsNotAFormatFallback()
+        {
+            var http = new FakeHttpTransport
+            {
+                Handler = _ => Json("{\"code\":0,\"data\":{\"status\":\"success\",\"output\":{\"download_url\":\"https://fixture.invalid/model.glb\"}}}"),
+            };
+            var result = new TripoAdapter().PollAsync("fixture", "k", http, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(ProviderPollState.Failed, result.State);
         }
     }
 }

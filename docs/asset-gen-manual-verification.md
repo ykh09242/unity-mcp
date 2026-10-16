@@ -1,8 +1,9 @@
 # AI Asset Generation — Manual Verification Checklist
 
-The `asset_gen` tools call real third-party APIs and write real files into a licensed
-Unity Editor, so they **cannot be covered headlessly**. Run this checklist by hand with
-genuine provider keys and an interactive Editor before shipping.
+Live provider behavior requires genuine provider keys and a licensed interactive
+Unity Editor. Run the provider sections below manually before shipping. Isolated
+native tests cover local model import with tiny owned OBJ fixtures and fake provider
+transports; those tests do not verify live services or optional glTF import success.
 
 Job status metadata retains the 100 most recently finished jobs (done, failed, or
 canceled), plus every active job. This history survives an unrelated domain reload;
@@ -19,16 +20,63 @@ never deletes generated assets or output files.
 ## Tripo (default 3D, text→3D)
 
 - [ ] Enter the Tripo key in the **Asset Gen** tab.
-- [ ] `generate_model(provider=tripo, mode=text, prompt="a low-poly oak tree", format=fbx)`.
+- [ ] Ensure the optional GLB importer is available as described below.
+- [ ] `generate_model(provider=tripo, mode=text, prompt="a low-poly oak tree", format=glb)`.
 - [ ] Poll `generate_model(action=status, job_id=<id>)` until it reports done.
-- [ ] Confirm an FBX appears under `Assets/Generated/Models/`.
-- [ ] Confirm it imports cleanly **with materials**.
+- [ ] Confirm a GLB appears under `Assets/Generated/Models/`, status reports a `.glb` asset path,
+      and the imported model has usable geometry and materials.
+- [ ] Repeat with `texture=false` and `model=v3.1-20260211`; confirm the request produces
+      geometry without textures. The adapter sends both `texture=false` and `pbr=false`.
+- [ ] Request `format=fbx`, `format=obj`, or a nonblank `tier`: confirm a synchronous
+      unsupported-option error, no job ID, no provider submission, and no output file.
+- [ ] Request `texture=false` with `model=v1.4-20240625`: confirm the same early rejection.
+
+Tripo generation defaults to GLB with textures and no tier. Geometry-only generation is
+supported here for `v3.0-20250812`, `v3.1-20260211`, and `P1-20260311`. Other formats need
+Tripo's separate conversion task; this integration does not submit it. A GLB container
+check before saving does not establish usable mesh content or installed importer support.
+
+## Model import evidence
+
+A model is `usable` only after Unity loads a GameObject hierarchy containing a
+MeshFilter or SkinnedMeshRenderer with vertices and an indexed primitive. This is
+basic geometry evidence, not a guarantee of materials, rigs, topology quality or rendering.
+
+Direct `import_model_file` responses and terminal model job status include
+`data.model_import_stage`:
+
+- `saved`: bytes exist on disk; no registered GUID has been observed.
+- `registered`: a GUID exists, but usable model geometry has not been established.
+- `usable`: the final imported hierarchy passed the geometry check.
+
+An import failure can retain staged bytes and return `asset_path`, `asset_guid`,
+`model_import_stage` and `model_import_error_code` for repair. The original local
+source is preserved. A failed import does not claim placement or a usable derived asset.
+A corrupt model can have a GUID and still fail with `unusable_model`.
+If bounded hierarchy/mesh inspection cannot finish, `model_validation_limit` means
+unverified rather than usable; simplify or split the retained model and reimport.
+
+- [ ] Import a tiny valid OBJ with `import_model_file` and confirm success,
+      `model_import_stage=usable`, a loadable hierarchy and actual mesh geometry.
+- [ ] Import corrupt OBJ bytes directly and from a ZIP. Confirm failure with retained
+      staged path/GUID and `registered` evidence; confirm original source bytes are unchanged.
+- [ ] Repair or re-export the model, inspect Unity's Console, and reimport; do not use
+      a saved file or GUID alone as proof that import succeeded.
 
 ## glTFast / GLB
 
 - [ ] Install **glTFast** from the **Dependencies** tab.
 - [ ] `generate_model(provider=tripo, mode=text, prompt="...", format=glb)`, poll status.
-- [ ] Confirm the GLB imports correctly (no missing-importer error).
+- [ ] Confirm the GLB imports correctly and reports `model_import_stage=usable`.
+- [ ] In a project without an active glTF importer, import a valid GLB container and
+      confirm `missing_gltf_importer`, retained staged output and no success claim.
+- [ ] With an active importer, try a model that imports without usable geometry:
+      confirm `unusable_model` and an instruction to inspect/repair/reimport.
+
+Importer availability is determined from the importer Unity actually selected and
+the resulting model, not just a runtime assembly being loaded. A compatible alternate
+importer can supply usable geometry. A valid downloaded GLB container alone does not
+establish importer availability or usable model content.
 
 ## Automatic model discovery
 
@@ -43,6 +91,25 @@ never deletes generated assets or output files.
 - [ ] `generate_image(provider=fal, prompt="a pixel-art coin", transparent=true)`.
 - [ ] Confirm a PNG sprite under `Assets/Generated/Images/` with **alpha** preserved
       and **correct sRGB** color.
+
+## Image background removal availability
+
+Background removal is unsupported in this version. Image provider capabilities
+advertise `text` and `image` generation modes; `remove_background` is excluded from
+the supported action enum and native supported-action list.
+
+Existing direct Python/native calls using `action=remove_background` receive an
+explicit failure with `data.reason=unsupported_capability`,
+`data.capability=remove_background` and `data.supported=false`. Python rejects the
+request before Unity instance resolution or transport dispatch; native rejection
+precedes provider lookup, job creation and output writes. Source images are not
+modified. MCP SDK clients reject the removed action during enum validation before
+dispatch; that validation error is separate from the direct-call error envelope.
+
+Use `generate` for supported text-to-image or image-to-image work. The
+`transparent` option only controls Unity's `TextureImporter.alphaIsTransparency`
+flag. It preserves available alpha during import and does not generate or remove
+a background. It does not enable the unsupported operation.
 
 ## OpenRouter (2D image)
 

@@ -1,7 +1,9 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Tools.Graphics;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -9,6 +11,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.TestTools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -720,10 +723,13 @@ namespace MCPForUnityTests.Editor.Tools
         // Stats Actions
         // =====================================================================
 
-        [Test]
-        public void StatsGet_ReturnsCounters()
+        [UnityTest]
+        public IEnumerator StatsGet_ReturnsCounters()
         {
-            var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "stats_get" }));
+            var pending = (Task<object>)ManageGraphics.HandleCommand(new JObject { ["action"] = "stats_get" });
+            while (!pending.IsCompleted)
+                yield return null;
+            var result = ToJObject(pending.GetAwaiter().GetResult());
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNotNull(result["data"]["draw_calls"]);
             Assert.IsNotNull(result["data"]["batches"]);

@@ -29,7 +29,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_material`](./manage_material.md)** — Manages Unity materials (set properties, colors, shaders, etc).
 - **[`manage_packages`](./manage_packages.md)** — Manage Unity packages: query, install, remove, embed, and configure registries.
 - **[`manage_physics`](./manage_physics.md)** — Manage physics settings, collision matrix, materials, joints, queries, and validation.
-- **[`manage_prefabs`](./manage_prefabs.md)** — Manages Unity Prefab assets.
+- **[`manage_prefabs`](./manage_prefabs.md)** — Manages Unity Prefab assets. get_hierarchy returns bounded sibling-index depth-first pages: page_size defaults to 50 (1-500), max_depth defaults to 64 (0-128, root depth 0), and cursor continues the identical revision/options.
 - **[`manage_recording`](./manage_recording.md)** — Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. start returns job_id immediately; poll status explicitly or stop to finalize.
 - **[`manage_scene`](./manage_scene.md)** — Performs CRUD operations on Unity scenes.
 - **[`manage_scene_edits`](./manage_scene_edits.md)** — Preview or apply 1-64 allowlisted native Transform, BoxCollider, SphereCollider, or Rigidbody serialized property edits in a stable Edit-mode scene.

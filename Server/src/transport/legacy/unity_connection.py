@@ -1424,6 +1424,7 @@ async def async_send_command_with_retry(
     max_retries: int | None = None,
     retry_ms: int | None = None,
     retry_on_reload: bool = True,
+    _deadline: float | None = None,
 ) -> dict[str, Any] | MCPResponse:
     """Admit one blocking command worker per actual connection and event loop.
 
@@ -1439,6 +1440,7 @@ async def async_send_command_with_retry(
         max_retries: Maximum number of retries for reload states
         retry_ms: Delay between retries in milliseconds
         retry_on_reload: If False, don't retry when Unity is reloading
+        _deadline: Optional absolute monotonic caller ceiling; may only shorten the policy
 
     Returns:
         Response dictionary or MCPResponse on error
@@ -1448,7 +1450,15 @@ async def async_send_command_with_retry(
 
         if loop is None:
             loop = asyncio.get_running_loop()
-        deadline = _command_deadline(command_type, params)
+        policy_deadline = _command_deadline(command_type, params)
+        # A bounded read may shorten the existing policy, never restart or extend it.
+        deadline = (
+            min(policy_deadline, _deadline)
+            if policy_deadline is not None and _deadline is not None
+            else _deadline
+            if _deadline is not None
+            else policy_deadline
+        )
         selection = loop.run_in_executor(None, get_unity_connection, instance_id)
         selection.add_done_callback(_consume_async_exception)
         if deadline is None:

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -314,7 +315,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 var importSettingsToken = @params["importSettings"];
                 var spriteSettingsToken = @params["spriteSettings"];
-                Action<TextureImporter> applySettings =
+                PreparedTextureImport applySettings =
                     importSettingsToken != null
                         ? PrepareTextureImporterSettings(importSettingsToken)
                         : (asSprite || spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null);
@@ -387,7 +388,9 @@ namespace MCPForUnity.Editor.Tools
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
-                ApplyPreparedImportSettings(fullPath, applySettings);
+                var importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                if (importReport?.Value<string>("error") != null)
+                    return ImportSettingsResponse(fullPath, importReport, true);
 
                 foreach (var warning in warnings)
                 {
@@ -395,14 +398,18 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 var response = new SuccessResponse(
-                    $"Texture created at '{fullPath}' ({width}x{height})" + (asSprite ? " as sprite" : ""),
+                    $"Texture created at '{fullPath}' ({width}x{height})"
+                        + (asSprite ? " as sprite" : "")
+                        + (importReport?["rejected"]?.HasValues == true ? ". Some importer settings were rejected; see import_settings." : ""),
                     new
                     {
                         path = fullPath,
+                        source_saved = true,
                         width,
                         height,
-                        asSprite = asSprite || spriteSettingsToken != null || (importSettingsToken?["textureType"]?.ToString() == "Sprite"),
+                        asSprite = (AssetImporter.GetAtPath(fullPath) as TextureImporter)?.textureType == TextureImporterType.Sprite,
                         warnings = warnings.Count > 0 ? warnings : null,
+                        import_settings = importReport,
                     }
                 );
                 folders.Complete();
@@ -468,7 +475,7 @@ namespace MCPForUnity.Editor.Tools
                         return validationError;
                 }
 
-                Action<TextureImporter> applySettings = null;
+                PreparedTextureImport applySettings = null;
                 if (hasImportSettings)
                 {
                     var preparationError = PrepareImportSettingsParams(@params, out applySettings);
@@ -479,8 +486,8 @@ namespace MCPForUnity.Editor.Tools
                 // Fast path: only import settings, no pixel changes
                 if (setPixelsToken == null && hasImportSettings)
                 {
-                    ApplyPreparedImportSettings(fullPath, applySettings);
-                    return new SuccessResponse($"Texture modified: {fullPath}");
+                    var report = ApplyPreparedImportSettings(fullPath, applySettings);
+                    return ImportSettingsResponse(fullPath, report, false);
                 }
 
                 // Pixel modification path
@@ -557,12 +564,8 @@ namespace MCPForUnity.Editor.Tools
                     AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
                 }
 
-                if (hasImportSettings)
-                {
-                    ApplyPreparedImportSettings(fullPath, applySettings);
-                }
-
-                return new SuccessResponse($"Texture modified: {fullPath}");
+                var importReport = hasImportSettings ? ApplyPreparedImportSettings(fullPath, applySettings) : null;
+                return ImportSettingsResponse(fullPath, importReport, setPixelsToken != null);
             }
             catch (Exception e)
             {
@@ -619,7 +622,15 @@ namespace MCPForUnity.Editor.Tools
             string gradientType = @params["gradientType"]?.ToString() ?? "linear";
             float angle = @params["gradientAngle"]?.ReadScalar<float?>() ?? 0f;
 
-            var palette = TextureOps.ParsePalette(@params["palette"] as JArray);
+            List<Color32> palette;
+            try
+            {
+                palette = TextureOps.ParsePalette(@params["palette"] as JArray);
+            }
+            catch (ArgumentException ex)
+            {
+                return new ErrorResponse($"Invalid gradient palette: {ex.Message}");
+            }
             if (palette == null || palette.Count < 2)
             {
                 // Default gradient palette
@@ -657,7 +668,9 @@ namespace MCPForUnity.Editor.Tools
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
                 // Configure as sprite if requested
-                ApplyPreparedImportSettings(fullPath, applySettings);
+                var importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                if (importReport?.Value<string>("error") != null)
+                    return ImportSettingsResponse(fullPath, importReport, true);
 
                 foreach (var warning in warnings)
                 {
@@ -671,7 +684,9 @@ namespace MCPForUnity.Editor.Tools
                         path = fullPath,
                         width,
                         height,
+                        import_settings = importReport,
                         gradientType,
+                        source_saved = true,
                         warnings = warnings.Count > 0 ? warnings : null,
                     }
                 );
@@ -709,7 +724,15 @@ namespace MCPForUnity.Editor.Tools
             if (octaves > MaxNoiseWork / totalPixels)
                 return new ErrorResponse($"Noise workload exceeds max {MaxNoiseWork} (got {width}x{height}x{octaves}).");
 
-            var palette = TextureOps.ParsePalette(@params["palette"] as JArray);
+            List<Color32> palette;
+            try
+            {
+                palette = TextureOps.ParsePalette(@params["palette"] as JArray);
+            }
+            catch (ArgumentException ex)
+            {
+                return new ErrorResponse($"Invalid noise palette: {ex.Message}");
+            }
             if (palette == null || palette.Count < 2)
             {
                 palette = new List<Color32> { new Color32(0, 0, 0, 255), new Color32(255, 255, 255, 255) };
@@ -738,7 +761,9 @@ namespace MCPForUnity.Editor.Tools
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
                 // Configure as sprite if requested
-                ApplyPreparedImportSettings(fullPath, applySettings);
+                var importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                if (importReport?.Value<string>("error") != null)
+                    return ImportSettingsResponse(fullPath, importReport, true);
 
                 foreach (var warning in warnings)
                 {
@@ -752,7 +777,9 @@ namespace MCPForUnity.Editor.Tools
                         path = fullPath,
                         width,
                         height,
+                        import_settings = importReport,
                         noiseScale = scale,
+                        source_saved = true,
                         octaves,
                         warnings = warnings.Count > 0 ? warnings : null,
                     }
@@ -977,7 +1004,7 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static object PrepareImportSettingsParams(JObject @params, out Action<TextureImporter> apply)
+        private static object PrepareImportSettingsParams(JObject @params, out PreparedTextureImport apply)
         {
             apply = null;
             JToken importSettingsToken = @params["import_settings"] ?? @params["importSettings"];
@@ -1024,9 +1051,8 @@ namespace MCPForUnity.Editor.Tools
                 var error = PrepareImportSettingsParams(@params, out var applySettings);
                 if (error != null)
                     return error;
-                ApplyPreparedImportSettings(fullPath, applySettings);
-
-                return new SuccessResponse($"Import settings updated for: {fullPath}", new { path = fullPath });
+                var report = ApplyPreparedImportSettings(fullPath, applySettings);
+                return ImportSettingsResponse(fullPath, report, false);
             }
             catch (Exception e)
             {
@@ -1036,54 +1062,30 @@ namespace MCPForUnity.Editor.Tools
 
         // Prepare conversions before any file/importer changes. Native setter/import failures
         // can still leave applied changes; this is not a rollback transaction.
-        private static void ApplyPreparedImportSettings(string path, Action<TextureImporter> apply)
+        private static JObject ApplyPreparedImportSettings(string path, PreparedTextureImport apply)
         {
             if (apply == null)
-                return;
+                return null;
             var importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null)
                 throw new InvalidOperationException($"Could not get TextureImporter for {path}");
-            apply(importer);
+            return apply.Apply(importer, path);
         }
 
-        private static Action<TextureImporter> PrepareSpriteSettings(JToken spriteSettings)
+        private static PreparedTextureImport PrepareSpriteSettings(JToken spriteSettings)
         {
-            var setters = new List<Action<TextureImporter>>
-            {
-                importer => importer.textureType = TextureImporterType.Sprite,
-                importer => importer.spriteImportMode = SpriteImportMode.Single,
-            };
-
-            if (spriteSettings != null && spriteSettings.Type == JTokenType.Object)
-            {
-                var settings = spriteSettings as JObject;
-
-                // Pivot
-                var pivotToken = settings["pivot"];
-                if (pivotToken is JArray pivotArray && pivotArray.Count >= 2)
-                {
-                    var pivot = new Vector2(pivotArray[0].ReadScalar<float>(), pivotArray[1].ReadScalar<float>());
-                    setters.Add(importer => importer.spritePivot = pivot);
-                }
-
-                // Pixels per unit
-                var ppuToken = settings["pixelsPerUnit"];
-                if (ppuToken != null)
-                {
-                    float pixelsPerUnit = ppuToken.ReadScalar<float>();
-                    setters.Add(importer => importer.spritePixelsPerUnit = pixelsPerUnit);
-                }
-            }
-
-            return importer =>
-            {
-                foreach (var set in setters)
-                    set(importer);
-                importer.SaveAndReimport();
-            };
+            var settings = new JObject { ["textureType"] = "Sprite", ["spriteImportMode"] = "Single" };
+            if (spriteSettings is JObject sprite)
+                foreach (var property in sprite.Properties())
+                    settings[
+                        property.Name == "pivot" ? "spritePivot"
+                        : property.Name == "pixelsPerUnit" ? "spritePixelsPerUnit"
+                        : property.Name
+                    ] = property.Value.DeepClone();
+            return PrepareTextureImporterSettings(settings);
         }
 
-        private static Action<TextureImporter> PrepareTextureImporterSettings(JToken importSettings)
+        private static Action<TextureImporter> PrepareTextureImporterSetters(JToken importSettings)
         {
             if (importSettings == null || importSettings.Type != JTokenType.Object)
             {
@@ -1310,8 +1312,6 @@ namespace MCPForUnity.Editor.Tools
                         importerSettings.spriteExtrude = extrude.Value;
                     importer.SetTextureSettings(importerSettings);
                 }
-
-                importer.SaveAndReimport();
             };
         }
 
@@ -1319,20 +1319,394 @@ namespace MCPForUnity.Editor.Tools
             where T : struct
         {
             // Try exact match first
-            if (Enum.TryParse<T>(value, true, out result))
+            if (Enum.TryParse<T>(value, true, out result) && Enum.IsDefined(typeof(T), result))
             {
                 return true;
             }
 
             // Try without common prefixes/suffixes
             string cleanValue = value.Replace("_", "").Replace("-", "");
-            if (Enum.TryParse<T>(cleanValue, true, out result))
+            if (value.Any(char.IsLetter) && Enum.TryParse<T>(cleanValue, true, out result) && Enum.IsDefined(typeof(T), result))
             {
                 return true;
             }
 
             result = default;
             return false;
+        }
+
+        private static object ImportSettingsResponse(string path, JObject report, bool sourceSaved)
+        {
+            var data = new
+            {
+                path,
+                source_saved = sourceSaved,
+                import_settings = report,
+            };
+            if (report?.Value<string>("error") is string error)
+                return new ErrorResponse($"Texture importer update failed: {error}", data);
+            if (report?.Value<string>("status") == "rejected" && !sourceSaved && !(report.Value<bool?>("legacy_no_op") ?? false))
+                return new ErrorResponse("No requested importer settings were accepted.", data);
+            return new SuccessResponse(
+                $"Texture processed: {path}" + (report?["rejected"]?.HasValues == true ? ". Some importer settings were rejected; see import_settings." : ""),
+                data
+            );
+        }
+
+        private static PreparedTextureImport PrepareTextureImporterSettings(JToken token)
+        {
+            if (!(token is JObject settings))
+                throw new ArgumentException("Import settings must be an object.");
+            // Preserve the established all-or-nothing scalar conversion preflight.
+            PrepareTextureImporterSetters(settings);
+            return new PreparedTextureImport(settings);
+        }
+
+        private sealed class PreparedTextureImport
+        {
+            private static readonly HashSet<string> GlobalFields = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "textureType",
+                "textureShape",
+                "sRGBTexture",
+                "alphaSource",
+                "alphaIsTransparency",
+                "isReadable",
+                "mipmapEnabled",
+                "mipmapFilter",
+                "wrapMode",
+                "wrapModeU",
+                "wrapModeV",
+                "filterMode",
+                "anisoLevel",
+                "maxTextureSize",
+                "textureCompression",
+                "crunchedCompression",
+                "compressionQuality",
+                "spriteImportMode",
+                "spritePixelsPerUnit",
+                "spritePivot",
+                "spriteMeshType",
+                "spriteExtrude",
+            };
+            private static readonly Dictionary<string, BuildTarget> Platforms = new Dictionary<string, BuildTarget>(StringComparer.Ordinal)
+            {
+                ["Standalone"] = BuildTarget.StandaloneWindows64,
+                ["Android"] = BuildTarget.Android,
+                ["iPhone"] = BuildTarget.iOS,
+                ["WebGL"] = BuildTarget.WebGL,
+            };
+            private static readonly HashSet<string> PlatformFields = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "overridden",
+                "maxTextureSize",
+                "format",
+                "textureCompression",
+                "compressionQuality",
+                "crunchedCompression",
+                "allowsAlphaSplitting",
+            };
+            private readonly JObject requested;
+            private readonly JObject accepted = new JObject();
+            private readonly JObject rejected = new JObject();
+            private readonly Dictionary<string, JObject> platformSettings = new Dictionary<string, JObject>(StringComparer.Ordinal);
+            private readonly Action<TextureImporter> setGlobal;
+            private bool legacyNoOp;
+
+            internal PreparedTextureImport(JObject settings)
+            {
+                requested = (JObject)settings.DeepClone();
+                foreach (var property in settings.Properties())
+                {
+                    if (property.Name == "platformSettings")
+                    {
+                        PreparePlatforms(property.Value);
+                        continue;
+                    }
+                    if (!GlobalFields.Contains(property.Name))
+                    {
+                        rejected[property.Name] = "Unknown or unsupported texture importer setting.";
+                        continue;
+                    }
+                    if (property.Name == "spritePivot" && property.Value is JArray shortPivot && shortPivot.Count < 2)
+                    {
+                        rejected[property.Name] = "Incomplete pivot was retained as a legacy no-op; no pivot was applied.";
+                        legacyNoOp = true;
+                        continue;
+                    }
+                    var owner =
+                        property.Name == "spriteMeshType" || property.Name == "spriteExtrude" ? typeof(TextureImporterSettings) : typeof(TextureImporter);
+                    var member = owner.GetProperty(property.Name);
+                    if (member == null || !member.CanRead || !member.CanWrite)
+                    {
+                        rejected[property.Name] = "This Editor does not expose the requested setting.";
+                        continue;
+                    }
+                    var value = ConvertSetting(property.Value, member.PropertyType, property.Name, out string reason);
+                    if (reason != null)
+                        rejected[property.Name] = reason;
+                    else
+                        accepted[property.Name] = value;
+                }
+                setGlobal = PrepareTextureImporterSetters(accepted);
+            }
+
+            private void PreparePlatforms(JToken token)
+            {
+                if (!(token is JObject platforms))
+                    throw new ArgumentException("platformSettings must be an object keyed by platform name.");
+                foreach (var platform in platforms.Properties())
+                {
+                    string prefix = "platformSettings." + platform.Name;
+                    if (!Platforms.ContainsKey(platform.Name))
+                    {
+                        rejected[prefix] = "Unsupported platform name. Supported importer profiles: Standalone, Android, iPhone, WebGL.";
+                        continue;
+                    }
+                    if (!(platform.Value is JObject values))
+                        throw new ArgumentException(prefix + " must be an object.");
+                    var prepared = new JObject();
+                    platformSettings.Add(platform.Name, prepared);
+                    foreach (var property in values.Properties())
+                    {
+                        string key = prefix + "." + property.Name;
+                        var member = typeof(TextureImporterPlatformSettings).GetProperty(property.Name);
+                        if (!PlatformFields.Contains(property.Name) || member == null || !member.CanRead || !member.CanWrite)
+                        {
+                            rejected[key] = "Unknown platform setting or unsupported by this Editor.";
+                            continue;
+                        }
+                        var value = ConvertSetting(property.Value, member.PropertyType, property.Name, out string reason);
+                        if (reason != null)
+                            rejected[key] = reason;
+                        else
+                            prepared[property.Name] = value;
+                    }
+                }
+            }
+
+            private static JToken ConvertSetting(JToken token, Type type, string key, out string reason)
+            {
+                reason = null;
+                if (token == null || token.Type == JTokenType.Null)
+                    throw new ArgumentException($"'{key}' cannot be null.");
+                if (type.IsEnum)
+                {
+                    string text = token.Type == JTokenType.String || token.Type == JTokenType.Integer ? token.ToString() : "";
+                    bool parsed = Enum.TryParse(type, text, true, out object value) && Enum.IsDefined(type, value);
+                    if (!parsed && token.Type == JTokenType.String && text.Any(char.IsLetter))
+                        parsed = Enum.TryParse(type, text.Replace("_", "").Replace("-", ""), true, out value) && Enum.IsDefined(type, value);
+                    if (!parsed)
+                    {
+                        reason = "Unknown or unsupported enum value for this Editor.";
+                        return null;
+                    }
+                    return new JValue(value.ToString());
+                }
+                if (type == typeof(bool))
+                    return new JValue(token.ReadScalar<bool>());
+                if (type == typeof(int) || type == typeof(uint))
+                {
+                    int value = token.ReadScalar<int>();
+                    bool valid =
+                        key == "anisoLevel" ? value >= 0 && value <= 16
+                        : key == "compressionQuality" ? value >= 0 && value <= 100
+                        : key == "maxTextureSize" ? value >= 32 && value <= 16384 && (value & (value - 1)) == 0
+                        : key == "spriteExtrude" ? value >= 0 && value <= 32
+                        : true;
+                    if (!valid)
+                        throw new ArgumentException($"'{key}' is outside its supported range.");
+                    return new JValue(value);
+                }
+                if (type == typeof(float))
+                {
+                    float value = token.ReadScalar<float>();
+                    if (float.IsNaN(value) || float.IsInfinity(value) || (key == "spritePixelsPerUnit" && value <= 0))
+                        throw new ArgumentException($"'{key}' must be a finite positive number.");
+                    return new JValue(value);
+                }
+                if (type == typeof(Vector2))
+                {
+                    if (!(token is JArray array) || array.Count < 2)
+                        throw new ArgumentException($"'{key}' must contain two normalized coordinates.");
+                    float x = array[0].ReadScalar<float>(),
+                        y = array[1].ReadScalar<float>();
+                    if (float.IsNaN(x) || float.IsNaN(y) || x < 0 || x > 1 || y < 0 || y > 1)
+                        throw new ArgumentException($"'{key}' coordinates must be finite values between zero and one.");
+                    return new JArray(x, y);
+                }
+                reason = "Unsupported setting type in this Editor.";
+                return null;
+            }
+
+            private static JToken ReadValue(object owner, string key)
+            {
+                var member = owner.GetType().GetProperty(key);
+                if (member == null)
+                    return JValue.CreateNull();
+                object value = member.GetValue(owner);
+                if (value is Enum)
+                    return new JValue(value.ToString());
+                if (value is Vector2 vector)
+                    return new JArray(vector.x, vector.y);
+                return value == null ? JValue.CreateNull() : JToken.FromObject(value);
+            }
+
+            private JObject Snapshot(TextureImporter importer, bool effective)
+            {
+                var snapshot = new JObject();
+                var sprite = new TextureImporterSettings();
+                importer.ReadTextureSettings(sprite);
+                foreach (string key in GlobalFields)
+                    snapshot[key] = ReadValue(key == "spriteMeshType" || key == "spriteExtrude" ? (object)sprite : importer, key);
+                var platforms = new JObject();
+                foreach (string name in platformSettings.Keys)
+                {
+                    var stored = importer.GetPlatformTextureSettings(name);
+                    var source = effective && !stored.overridden ? importer.GetDefaultPlatformTextureSettings() : stored;
+                    var values = new JObject();
+                    foreach (string key in PlatformFields)
+                        values[key] = key == "overridden" ? new JValue(stored.overridden) : ReadValue(source, key);
+                    platforms[name] = values;
+                }
+                snapshot["platformSettings"] = platforms;
+                return snapshot;
+            }
+
+            internal JObject Apply(TextureImporter importer, string path)
+            {
+                // Validate format/type compatibility before assigning any native importer values.
+                var type =
+                    accepted["textureType"] != null
+                        ? (TextureImporterType)Enum.Parse(typeof(TextureImporterType), accepted.Value<string>("textureType"))
+                        : importer.textureType;
+                foreach (var platform in platformSettings)
+                {
+                    if (platform.Value["format"] == null)
+                        continue;
+                    var format = (TextureImporterFormat)Enum.Parse(typeof(TextureImporterFormat), platform.Value.Value<string>("format"));
+                    if (!TextureImporter.IsPlatformTextureFormatValid(type, Platforms[platform.Key], format))
+                    {
+                        rejected["platformSettings." + platform.Key + ".format"] = "The format is not supported for this texture type and platform.";
+                        platform.Value.Remove("format");
+                    }
+                }
+                var before = Snapshot(importer, false);
+                bool changes =
+                    accepted.Properties().Any(property => !JToken.DeepEquals(before[property.Name], property.Value))
+                    || platformSettings.Any(platform =>
+                        platform.Value.Properties().Any(property => !JToken.DeepEquals(before["platformSettings"][platform.Key][property.Name], property.Value))
+                    );
+                string failure = null;
+                bool reimported = false;
+                try
+                {
+                    if (changes)
+                    {
+                        setGlobal(importer);
+                        foreach (var platform in platformSettings)
+                        {
+                            if (!platform.Value.HasValues)
+                                continue;
+                            var native = importer.GetPlatformTextureSettings(platform.Key);
+                            foreach (var property in platform.Value.Properties())
+                            {
+                                var member = typeof(TextureImporterPlatformSettings).GetProperty(property.Name);
+                                object value = member.PropertyType.IsEnum
+                                    ? Enum.Parse(member.PropertyType, property.Value.ToString())
+                                    : property.Value.ToObject(member.PropertyType);
+                                member.SetValue(native, value);
+                            }
+                            importer.SetPlatformTextureSettings(native);
+                        }
+                        importer.SaveAndReimport();
+                        reimported = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failure = ex.GetBaseException().Message;
+                }
+                var fresh = AssetImporter.GetAtPath(path) as TextureImporter;
+                if (fresh == null)
+                    throw new InvalidOperationException("Texture importer is unavailable after applying settings.");
+                var storedAfter = Snapshot(fresh, false);
+                var effectiveAfter = Snapshot(fresh, true);
+                var applied = new JObject();
+                foreach (var property in accepted.Properties())
+                    applied[property.Name] = storedAfter[property.Name].DeepClone();
+                var appliedPlatforms = new JObject();
+                foreach (var platform in platformSettings)
+                {
+                    var values = new JObject();
+                    foreach (var property in platform.Value.Properties())
+                        values[property.Name] = storedAfter["platformSettings"][platform.Key][property.Name].DeepClone();
+                    appliedPlatforms[platform.Key] = values;
+                }
+                applied["platformSettings"] = appliedPlatforms;
+                var overrides = new JObject();
+                foreach (string name in platformSettings.Keys)
+                    overrides[name] = new JObject
+                    {
+                        ["stored"] = storedAfter["platformSettings"][name].DeepClone(),
+                        ["effective"] = effectiveAfter["platformSettings"][name].DeepClone(),
+                        ["automatic_format"] = fresh.GetAutomaticFormat(name).ToString(),
+                    };
+                bool changed = !JToken.DeepEquals(before, storedAfter);
+                var outcomes = new JObject();
+                foreach (var property in accepted.Properties())
+                    outcomes[property.Name] = new JObject
+                    {
+                        ["status"] =
+                            JToken.DeepEquals(before[property.Name], storedAfter[property.Name]) ? "unchanged"
+                            : JToken.DeepEquals(property.Value, storedAfter[property.Name]) ? "applied"
+                            : "adjusted",
+                        ["requested"] = requested[property.Name]?.DeepClone(),
+                        ["effective"] = effectiveAfter[property.Name].DeepClone(),
+                    };
+                foreach (var property in rejected.Properties())
+                    outcomes[property.Name] = new JObject { ["status"] = "rejected", ["reason"] = property.Value.DeepClone() };
+                foreach (var platform in platformSettings)
+                foreach (var property in platform.Value.Properties())
+                {
+                    var beforeValue = before["platformSettings"][platform.Key][property.Name];
+                    var storedValue = storedAfter["platformSettings"][platform.Key][property.Name];
+                    var effectiveValue = effectiveAfter["platformSettings"][platform.Key][property.Name];
+                    outcomes["platformSettings." + platform.Key + "." + property.Name] = new JObject
+                    {
+                        ["status"] =
+                            !JToken.DeepEquals(storedValue, effectiveValue) ? "inactive_override"
+                            : JToken.DeepEquals(beforeValue, storedValue) ? "unchanged"
+                            : JToken.DeepEquals(property.Value, storedValue) ? "applied"
+                            : "adjusted",
+                        ["requested"] = property.Value.DeepClone(),
+                        ["stored"] = storedValue.DeepClone(),
+                        ["effective"] = effectiveValue.DeepClone(),
+                    };
+                }
+                int acceptedCount = accepted.Count + platformSettings.Sum(platform => platform.Value.Count);
+                return new JObject
+                {
+                    ["requested"] = requested.DeepClone(),
+                    ["applied"] = applied,
+                    ["effective"] = effectiveAfter,
+                    ["rejected"] = rejected.DeepClone(),
+                    ["changed"] = changed,
+                    ["reimported"] = reimported,
+                    ["persisted"] = failure == null,
+                    ["per_setting"] = outcomes,
+                    ["platform_overrides"] = overrides,
+                    ["legacy_no_op"] = legacyNoOp,
+                    ["status"] =
+                        failure != null ? "failed"
+                        : acceptedCount == 0 && rejected.HasValues ? "rejected"
+                        : rejected.HasValues ? "partial"
+                        : changed ? "applied"
+                        : "unchanged",
+                    ["error"] = failure,
+                    ["limitations"] = "Effective values are importer readbacks; platform output has not been built or validated on a target device.",
+                };
+            }
         }
 
         private static bool AssetExists(string path)

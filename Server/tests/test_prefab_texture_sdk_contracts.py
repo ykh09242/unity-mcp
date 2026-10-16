@@ -69,6 +69,12 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
             {"import_settings": {"sprite_pivot": ["bad", 0]}},
             {"import_settings": {"sprite_pivot": [None, 0]}},
             {"import_settings": {"sprite_pixels_per_unit": "bad"}},
+            {"import_settings": {"readable": True, "isReadable": False}},
+            {"import_settings": {"readable": True, "aniso_level": None}},
+            {"import_settings": {"isReadable": None, "maxTextureSize": 64}},
+            {"import_settings": {"platform_settings": None}},
+            {"import_settings": {"platform_settings": {"Standalone": []}}},
+            {"import_settings": {"platform_settings": {"Standalone": {"overridden": True}}, "platformSettings": {"Standalone": {"overridden": False}}}},
         ]
         enum_fields = ("texture_type", "texture_shape", "alpha_source", "wrap_mode", "wrap_mode_u", "wrap_mode_v", "filter_mode", "mipmap_filter", "compression", "sprite_mode", "sprite_mesh_type")
         invalid_texture += [{"import_settings": {field: value}} for field in enum_fields for value in ([], {})]
@@ -88,6 +94,9 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
             global compiling, reply
             for mode in ("2026-07-28", "legacy"):
                 async with Client(server, mode=mode) as client:
+                    texture_schema = next(tool for tool in await client.list_tools() if tool.name == "manage_texture").input_schema
+                    importer_description = texture_schema["properties"]["import_settings"].get("description", "")
+                    check("platform_settings" in importer_description and "explicit null" in importer_description, "published platform/null importer description")
                     for i, args in enumerate(invalid_texture):
                         await invalid(client, "manage_texture", {"action": "create", "path": "Assets/Fixture.png", **args}, mode + " texture " + str(i))
                     for i, args in enumerate(({"position": [1, 2]}, {"create_child": {"name": "Child", "scale": [1, 2]}})):
@@ -118,6 +127,19 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
                         if i == 3: check(wire["spriteSettings"] == {"pivot": [0.0,0.0],"pixelsPerUnit": 100.0}, "sprite numeric controls")
                         if i == 4: check("spriteSettings" not in wire, "false leaves sprite mode disabled")
                         if i == 5: check(wire["spriteSettings"] == {}, "null optional sprite number omitted")
+                    for alias in ("platform_settings", "platformSettings"):
+                        for key in counts: counts[key] = 0
+                        platforms = {"Standalone": {"overridden": False,"maxTextureSize": 64,"format": "RGBA32"}, "FutureConsole": {"futureField": None}}
+                        reply = {"success": True, "data": {"path": "Assets/Fixture.png", "import_settings": {"status": "partial", "changed": False, "applied": {"isReadable": False}, "effective": {"platformSettings": {"Standalone": {"overridden": False,"maxTextureSize": 2048}}}, "rejected": {"platformSettings.FutureConsole": "Unsupported platform", "unrecognizedSetting": "Unknown setting"}}}}
+                        result = await client.call_tool("manage_texture", {"action": "set_import_settings", "path": "Assets/Fixture.png", "import_settings": {"readable": False, "unrecognizedSetting": None, alias: platforms}})
+                        wire = sent[-1][1]
+                        check(wire["importSettings"] == {"isReadable": False, "unrecognizedSetting": None, "platformSettings": platforms}, "platform aliases and unknown mixed fields reach native " + alias)
+                        check(wire["action"] == "set_import_settings" and wire["width"] == wire["height"] == 64, "platform publication preserves action/defaults")
+                        response = dict(result.structured_content)
+                        response.pop("_debug_params", None)
+                        check(response == reply, "actual native partial/effective report survives SDK " + alias)
+                        check(counts == {"state": 1,"refresh": 1,"preflight": 1,"send": 1}, "platform publication preserves preflight")
+                    reply = {"success": True,"data": {"count": 0,"modified": False,"reference": None}}
                     for payload in (
                         {"action": "create_from_gameobject", "prefab_path": "Assets/Fixture.prefab", "target": "0", "allow_overwrite": False, "search_inactive": False, "unlink_if_instance": False},
                         {"action": "create_from_gameobject", "prefab_path": "Assets/Fixture.prefab", "name": "NameAlias"},
@@ -146,6 +168,7 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
         asyncio.run(main())
     """)
     env = {name: value for name, value in os.environ.items() if name != "PYTEST_CURRENT_TEST"}
+    env["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     result = subprocess.run(
         [sys.executable, "-B", "-c", code], env=env, capture_output=True, text=True, timeout=60

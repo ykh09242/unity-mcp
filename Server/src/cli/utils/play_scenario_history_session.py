@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from cli.utils.play_scenario_analysis_io import AnalysisError, read_bytes
 from cli.utils.play_scenario_history_models import HistoryEvidence, HistoryOutcome
 from cli.utils.play_scenario_iterations import STATE_KEYS, zero_iteration_counts
+from cli.utils.play_scenario_soak_environment import ENVIRONMENT_FIELDS
 from cli.utils.play_scenario_player_session import OUTCOME_FILE_LIMIT, OUTCOME_LIMIT, SUMMARY_LIMIT
 from cli.utils.play_scenario_query_compare import (
     _check_depth,
@@ -151,7 +152,9 @@ def read_session_history(source: Path) -> tuple[HistoryEvidence, ...]:
             "build_id": row.build_id,
             "build_source_revision": row.build_source_revision,
             "payload_hash": row.payload_hash,
-            "environment": None,
+            "environment": row.environment.model_dump(mode="json") if row.environment else None,
+            "unity_version": row.unity_version,
+            "package_version": row.package_version,
             "mode": row.mode,
         }
         key = json.dumps(attribution, sort_keys=True)
@@ -200,6 +203,27 @@ def read_session_history(source: Path) -> tuple[HistoryEvidence, ...]:
             partitions[key] = []
     result = []
     for key, rows in partitions.items():
+        attribution = compatibility[key]
+        environment = attribution.get("environment")
+        known = bool(
+            isinstance(environment, dict)
+            and all(
+                environment.get(field) is not None
+                and str(environment[field]).strip().lower() not in {"", "unknown", "unavailable"}
+                for field in ENVIRONMENT_FIELDS
+            )
+            and all(
+                attribution.get(field)
+                and str(attribution[field]).strip().lower() not in {"", "unknown", "unavailable"}
+                for field in (
+                    "definition_hash",
+                    "build_id",
+                    "payload_hash",
+                    "unity_version",
+                    "package_version",
+                )
+            )
+        )
         counts = zero_iteration_counts()
         for row in rows:
             for state, value in row.counts.items():
@@ -226,12 +250,15 @@ def read_session_history(source: Path) -> tuple[HistoryEvidence, ...]:
                 mode,
                 parent.status,
                 compatibility[key],
-                False,
+                known,
                 complete,
                 counts,
                 tuple(rows),
-                (
-                    "Session journal lacks per-child environment; no cross-source compatibility is inferred.",
+                ()
+                if known
+                else (
+                    "Session journal environment or identity is unavailable or incomplete; "
+                    "no cross-source compatibility is inferred.",
                 ),
             )
         )

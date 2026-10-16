@@ -29,7 +29,15 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     case "generate":
                         return Generate(p);
                     case "remove_background":
-                        return new ErrorResponse("remove_background is not implemented in this version.");
+                        return new ErrorResponse(
+                            "Background removal is unsupported in this version. 'transparent' only sets the Unity texture import flag and does not remove backgrounds.",
+                            new
+                            {
+                                reason = "unsupported_capability",
+                                capability = "remove_background",
+                                supported = false,
+                            }
+                        );
                     case "status":
                         return AssetGenToolHelpers.Status(p, "Image", 2.0);
                     case "cancel":
@@ -44,7 +52,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         return new ErrorResponse("'action' parameter is required.");
                     default:
                         return new ErrorResponse(
-                            $"Unknown action: '{action}'. Supported: generate, remove_background, status, cancel, list_providers, list_models, refresh_models."
+                            $"Unknown action: '{action}'. Supported: generate, status, cancel, list_providers, list_models, refresh_models."
                         );
                 }
             }

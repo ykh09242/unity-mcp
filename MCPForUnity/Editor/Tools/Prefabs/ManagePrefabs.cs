@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -45,6 +47,18 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
         public static object HandleCommand(JObject @params)
         {
+            return HandleCommandCore(@params, CancellationToken.None);
+        }
+
+        public static Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken)
+        {
+            // CommandRegistry invokes this on its existing Unity main-thread dispatcher.
+            return Task.FromResult(HandleCommandCore(@params, cancellationToken));
+        }
+
+        private static object HandleCommandCore(JObject @params, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             if (@params == null)
             {
                 return new ErrorResponse("Parameters cannot be null.");
@@ -79,7 +93,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     case ACTION_GET_INFO:
                         return GetInfo(@params);
                     case ACTION_GET_HIERARCHY:
-                        return GetHierarchy(@params);
+                        return GetHierarchy(@params, cancellationToken);
                     case ACTION_MODIFY_CONTENTS:
                         return ModifyContents(@params);
                     case ACTION_OPEN_PREFAB_STAGE:
@@ -97,6 +111,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     default:
                         return new ErrorResponse($"Unknown action: '{action}'. Valid actions are: {SupportedActions}.");
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (ArgumentException e) when (action == ACTION_GET_HIERARCHY)
+            {
+                return new ErrorResponse(e.Message);
             }
             catch (Exception e)
             {
@@ -718,8 +740,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// Gets the hierarchical structure of a prefab asset.
         /// Returns all objects in the prefab for full client-side filtering and search.
         /// </summary>
-        private static object GetHierarchy(JObject @params)
+        private static object GetHierarchy(JObject @params, CancellationToken cancellationToken)
         {
+            var options = HierarchyPaging.Parse(@params);
             string prefabPath = @params["prefabPath"]?.ToString() ?? @params["path"]?.ToString();
             if (string.IsNullOrEmpty(prefabPath))
             {
@@ -732,7 +755,28 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return new ErrorResponse($"Invalid prefab path '{prefabPath}'. Path traversal sequences are not allowed.");
             }
 
-            // Load prefab contents in background (without opening stage UI)
+            if (sanitizedPath.Length > HierarchyPaging.StringLimit)
+                return new ErrorResponse("Prefab path exceeds the hierarchy metadata string limit.");
+            string revision = GetHierarchyRevision(sanitizedPath);
+            var state = HierarchyPaging.Resume(options, "prefab:" + sanitizedPath, revision);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ReadLoadedPrefab(
+                sanitizedPath,
+                prefabContents =>
+                {
+                    var data = BuildHierarchyPage(prefabContents.transform, sanitizedPath, options, state, cancellationToken);
+                    if (revision != GetHierarchyRevision(sanitizedPath))
+                        return new ErrorResponse("stale_cursor: prefab source changed during the read; restart.");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return new SuccessResponse("Successfully retrieved a bounded prefab hierarchy page.", data);
+                }
+            );
+        }
+
+        private static object ReadLoadedPrefab(string sanitizedPath, Func<GameObject, object> read)
+        {
+            // Unity's synchronous native load reads the full asset; the managed traversal and
+            // response budgets below cannot preempt this operation. Never retain its scene.
             GameObject prefabContents = PrefabUtility.LoadPrefabContents(sanitizedPath);
             if (prefabContents == null)
             {
@@ -741,24 +785,27 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             try
             {
-                // Build complete hierarchy items (no pagination)
-                var allItems = BuildHierarchyItems(prefabContents.transform, sanitizedPath);
-
-                return new SuccessResponse(
-                    $"Successfully retrieved prefab hierarchy. Found {allItems.Count} objects.",
-                    new
-                    {
-                        prefabPath = sanitizedPath,
-                        total = allItems.Count,
-                        items = allItems,
-                    }
-                );
+                return read(prefabContents);
             }
             finally
             {
                 // Always unload prefab contents to free memory
                 PrefabUtility.UnloadPrefabContents(prefabContents);
             }
+        }
+
+        private static string GetHierarchyRevision(string path)
+        {
+            var file = new FileInfo(AssetPathUtility.GetFullAssetPath(path));
+            if (!file.Exists || !path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Prefab asset does not exist at the requested path.");
+            return AssetDatabase.AssetPathToGUID(path)
+                + ":"
+                + AssetDatabase.GetAssetDependencyHash(path)
+                + ":"
+                + file.Length
+                + ":"
+                + file.LastWriteTimeUtc.Ticks;
         }
 
         #endregion
@@ -1552,96 +1599,148 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         #region Hierarchy Builder
 
         /// <summary>
-        /// Builds a flat list of hierarchy items from a transform root.
+        /// Builds one bounded preorder page without retaining loaded prefab objects.
         /// </summary>
         /// <param name="root">The root transform of the prefab.</param>
         /// <param name="mainPrefabPath">Asset path of the main prefab.</param>
-        /// <returns>List of hierarchy items with prefab information.</returns>
-        private static List<object> BuildHierarchyItems(Transform root, string mainPrefabPath)
-        {
-            var items = new List<object>();
-            var mainRootAssetPath = new Lazy<string>(() => AssetDatabase.GetAssetPath(root.gameObject));
-            BuildHierarchyItemsRecursive(root, root, mainPrefabPath, "", items, 0, null, mainRootAssetPath);
-            return items;
-        }
-
-        /// <summary>
-        /// Recursively builds hierarchy items.
-        /// </summary>
-        /// <param name="transform">Current transform being processed.</param>
-        /// <param name="mainPrefabRoot">Root transform of the main prefab asset.</param>
-        /// <param name="mainPrefabPath">Asset path of the main prefab.</param>
-        /// <param name="parentPath">Parent path for building full hierarchy path.</param>
-        /// <param name="items">List to accumulate hierarchy items.</param>
-        /// <param name="ancestorNestingDepth">Nested prefab roots already visited above this node, excluding the main root.</param>
-        /// <param name="nearestNestedParentPath">Source path of the nearest nested ancestor, including a null source path.</param>
-        /// <param name="mainRootAssetPath">Request-local lookup of the actual main root asset path, used only for first-level nested roots.</param>
-        private static void BuildHierarchyItemsRecursive(
-            Transform transform,
-            Transform mainPrefabRoot,
+        /// <returns>Bounded hierarchy items, scope limits and continuation metadata.</returns>
+        private static JObject BuildHierarchyPage(
+            Transform root,
             string mainPrefabPath,
-            string parentPath,
-            List<object> items,
-            int ancestorNestingDepth,
-            string nearestNestedParentPath,
-            Lazy<string> mainRootAssetPath
+            HierarchyPaging.Options options,
+            HierarchyPaging.State state,
+            CancellationToken cancellationToken
         )
         {
-            if (transform == null)
-                return;
-
-            string name = transform.gameObject.name;
-            string path = string.IsNullOrEmpty(parentPath) ? name : $"{parentPath}/{name}";
-            int instanceId = transform.gameObject.GetInstanceIDCompat();
-            bool activeSelf = transform.gameObject.activeSelf;
-            int childCount = transform.childCount;
-            var componentTypes = PrefabUtilityHelper.GetComponentTypeNames(transform.gameObject);
-
-            // Prefab information
-            bool isNestedPrefab = PrefabUtility.IsAnyPrefabInstanceRoot(transform.gameObject);
-            bool isPrefabRoot = transform == mainPrefabRoot;
-            // This read-only traversal already visited every ancestor; carry their prefab metadata forward.
-            int nestingDepth =
-                isPrefabRoot ? 0
-                : isNestedPrefab ? ancestorNestingDepth + 1
-                : -1;
-            string parentPrefabPath = isNestedPrefab && !isPrefabRoot ? (ancestorNestingDepth > 0 ? nearestNestedParentPath : mainRootAssetPath.Value) : null;
-            string nestedPrefabPath = isNestedPrefab ? PrefabUtilityHelper.GetNestedPrefabPath(transform.gameObject) : null;
-
-            var item = new
+            var budget = new HierarchyPaging.Budget(cancellationToken);
+            var items = new JArray();
+            int bytes = 0;
+            bool outputLimited = false;
+            var indices = new List<int>(state.NextPath);
+            var ancestors = new List<Transform> { root };
+            Transform current = root;
+            foreach (int index in indices)
             {
-                name = name,
-                instanceId = instanceId,
-                path = path,
-                activeSelf = activeSelf,
-                childCount = childCount,
-                componentTypes = componentTypes,
-                prefab = new
-                {
-                    isRoot = isPrefabRoot,
-                    isNestedRoot = isNestedPrefab,
-                    nestingDepth = nestingDepth,
-                    assetPath = isNestedPrefab ? nestedPrefabPath : mainPrefabPath,
-                    parentPath = parentPrefabPath,
-                },
-            };
-
-            items.Add(item);
-
-            // Recursively process children
-            foreach (Transform child in transform)
-            {
-                BuildHierarchyItemsRecursive(
-                    child,
-                    mainPrefabRoot,
-                    mainPrefabPath,
-                    path,
-                    items,
-                    nestingDepth >= 0 ? nestingDepth : ancestorNestingDepth,
-                    isNestedPrefab && !isPrefabRoot ? nestedPrefabPath : nearestNestedParentPath,
-                    mainRootAssetPath
-                );
+                budget.Spend();
+                if (index < 0 || index >= current.childCount)
+                    throw new ArgumentException("stale_cursor: prefab hierarchy changed; restart.");
+                current = current.GetChild(index);
+                ancestors.Add(current);
             }
+            while (current != null && items.Count < options.PageSize && budget.Used <= HierarchyPaging.WorkLimit - 512)
+            {
+                budget.Spend();
+                var go = current.gameObject;
+                string path = HierarchyPaging.ObjectPath(current, budget);
+                var types = HierarchyPaging.ComponentNames(go, budget, true, out int componentCount);
+                int nestingDepth = 0;
+                string nearestNestedPath = null;
+                for (int i = 1; i < ancestors.Count - 1; i++)
+                {
+                    budget.Spend();
+                    if (PrefabUtility.IsAnyPrefabInstanceRoot(ancestors[i].gameObject))
+                    {
+                        nestingDepth++;
+                        nearestNestedPath = budget.Text(PrefabUtilityHelper.GetNestedPrefabPath(ancestors[i].gameObject));
+                    }
+                }
+                bool nested = PrefabUtility.IsAnyPrefabInstanceRoot(go);
+                bool isRoot = current == root;
+                string nestedPath = nested ? budget.Text(PrefabUtilityHelper.GetNestedPrefabPath(go)) : null;
+                var item = new JObject
+                {
+                    ["name"] = budget.Text(go.name),
+                    ["path"] = path,
+                    ["hierarchyKey"] = indices.Count == 0 ? "0" : "0/" + string.Join("/", indices),
+                    ["instanceId"] = go.GetInstanceIDCompat(),
+                    ["activeSelf"] = go.activeSelf,
+                    ["childCount"] = current.childCount,
+                    ["componentTypes"] = JArray.FromObject(types),
+                    ["componentCount"] = componentCount,
+                    ["componentTypesTruncated"] = componentCount > HierarchyPaging.ComponentLimit,
+                    ["prefab"] = new JObject
+                    {
+                        ["isRoot"] = isRoot,
+                        ["isNestedRoot"] = nested,
+                        ["nestingDepth"] =
+                            isRoot ? 0
+                            : nested ? nestingDepth + 1
+                            : -1,
+                        ["assetPath"] = nested ? nestedPath : budget.Text(mainPrefabPath),
+                        ["parentPath"] =
+                            nested && !isRoot
+                                ? nestingDepth > 0
+                                    ? nearestNestedPath
+                                    : budget.Text(AssetDatabase.GetAssetPath(root.gameObject))
+                                : null,
+                    },
+                };
+                int itemBytes = HierarchyPaging.CompactBytes(item) + 1;
+                if (bytes + itemBytes > HierarchyPaging.OutputLimit - 8192)
+                {
+                    outputLimited = true;
+                    break;
+                }
+                items.Add(item);
+                bytes += itemBytes;
+                state.Count++;
+                if (current.childCount > 0 && indices.Count < options.Depth)
+                {
+                    budget.Spend();
+                    indices.Add(0);
+                    current = current.GetChild(0);
+                    ancestors.Add(current);
+                    continue;
+                }
+                state.DepthLimited |= current.childCount > 0 && indices.Count == options.Depth;
+                current = null;
+                while (indices.Count > 0)
+                {
+                    budget.Spend();
+                    int last = indices.Count - 1;
+                    Transform parent = ancestors[last];
+                    int next = indices[last] + 1;
+                    ancestors.RemoveAt(ancestors.Count - 1);
+                    if (next < parent.childCount)
+                    {
+                        indices[last] = next;
+                        current = parent.GetChild(next);
+                        ancestors.Add(current);
+                        break;
+                    }
+                    indices.RemoveAt(last);
+                }
+            }
+            budget.Token.ThrowIfCancellationRequested();
+            state.NextPath = indices.ToArray();
+            return new JObject
+            {
+                ["prefabPath"] = mainPrefabPath,
+                ["items"] = items,
+                ["total"] = current == null ? new JValue(state.Count) : JValue.CreateNull(),
+                ["total_known"] = current == null,
+                ["next_cursor"] = current != null ? HierarchyPaging.Save(state) : null,
+                ["truncated"] = current != null,
+                ["depth_limited"] = state.DepthLimited,
+                ["max_depth"] = options.Depth,
+                ["page_size"] = options.PageSize,
+                ["work_used"] = budget.Used,
+                ["work_limit"] = HierarchyPaging.WorkLimit,
+                ["work_limited"] = current != null && !outputLimited && items.Count < options.PageSize,
+                ["output_limit_bytes"] = HierarchyPaging.OutputLimit,
+                ["output_limited"] = outputLimited,
+                ["metadata_truncated"] = budget.Truncated,
+                ["component_type_limit"] = HierarchyPaging.ComponentLimit,
+                ["string_limit"] = HierarchyPaging.StringLimit,
+                ["hierarchy_key_limit"] = 1 + HierarchyPaging.MaxDepth * 11,
+                ["cursor_ttl_seconds"] = 30,
+                ["ordering"] = "depth_first_preorder_sibling_index",
+                ["consistency"] = "prefab_revision_bound",
+                ["scope"] = "Root and descendants through max_depth, inclusive; deeper descendants are excluded.",
+                ["instance_id_lifetime"] = "Prefab contents IDs belong to this load only; use hierarchyKey across pages.",
+                ["native_load_limitation"] =
+                    "Unity LoadPrefabContents synchronously loads the full asset before bounded managed traversal; it cannot be preempted by these limits.",
+            };
         }
 
         #endregion

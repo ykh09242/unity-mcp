@@ -35,7 +35,9 @@ def test_subaction_extracted_from_keyword(monkeypatch):
 
     captured = {}
 
-    def fake_record_tool_usage(tool_name, success, duration_ms, error, sub_action=None):
+    def fake_record_tool_usage(
+        tool_name, success, duration_ms, error, sub_action=None, *, outcome=None
+    ):
         captured["tool_name"] = tool_name
         captured["success"] = success
         captured["error"] = error
@@ -65,7 +67,9 @@ def test_subaction_extracted_from_positionals(monkeypatch):
 
     captured = {}
 
-    def fake_record_tool_usage(tool_name, success, duration_ms, error, sub_action=None):
+    def fake_record_tool_usage(
+        tool_name, success, duration_ms, error, sub_action=None, *, outcome=None
+    ):
         captured["tool_name"] = tool_name
         captured["sub_action"] = sub_action
 
@@ -89,7 +93,9 @@ def test_subaction_none_when_not_present(monkeypatch):
 
     captured = {}
 
-    def fake_record_tool_usage(tool_name, success, duration_ms, error, sub_action=None):
+    def fake_record_tool_usage(
+        tool_name, success, duration_ms, error, sub_action=None, *, outcome=None
+    ):
         captured["tool_name"] = tool_name
         captured["sub_action"] = sub_action
 

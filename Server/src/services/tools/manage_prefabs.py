@@ -28,6 +28,11 @@ REQUIRED_PARAMS = {
 @mcp_for_unity_tool(
     description=(
         "Manages Unity Prefab assets. "
+        "get_hierarchy returns bounded sibling-index depth-first pages: page_size defaults to 50 (1-500), "
+        "max_depth defaults to 64 (0-128, root depth 0), and cursor continues the identical revision/options. "
+        "Deeper descendants are excluded from that depth scope. Partial totals are unknown. "
+        "Pages also bound managed work, metadata and output bytes. Native LoadPrefabContents still loads the full asset synchronously. "
+        "Cursors expire after 30 seconds and editor reload; restart after source changes. Prefab instance IDs belong to one load; hierarchyKey identifies sibling paths across pages. "
         "Actions: get_info, get_hierarchy, create_from_gameobject, modify_contents, open_prefab_stage, save_prefab_stage, close_prefab_stage. "
         "create_from_gameobject accepts a scene/stage instance ID, unique name or full hierarchy path. "
         "Its response includes rootObjectName/rootObjectPath from the saved prefab; use these for subsequent prefab edits, or omit target to edit its root. "
@@ -141,10 +146,34 @@ async def manage_prefabs(
     ]
     | None = None,
     offset: Annotated[int, "list_overrides offset, zero or greater."] = 0,
-    page_size: Annotated[int, "list_overrides page size, 1-500."] = 100,
+    page_size: Annotated[
+        int, "Page size 1-500. get_hierarchy defaults to 50; list_overrides defaults to 100."
+    ]
+    | None = None,
+    cursor: Annotated[str, "get_hierarchy opaque cursor; keep identical page_size/max_depth."]
+    | None = None,
+    max_depth: Annotated[
+        int, "get_hierarchy inclusive depth scope, root=0; default 64, maximum 128."
+    ] = 64,
 ) -> dict[str, Any]:
     if action not in {*REQUIRED_PARAMS, "save_prefab_stage", "close_prefab_stage"}:
         return {"success": False, "message": f"Unknown prefab action: '{action}'."}
+    page_size = (50 if action == "get_hierarchy" else 100) if page_size is None else page_size
+    if action == "get_hierarchy":
+        if type(page_size) is not int or not 1 <= page_size <= 500:
+            return {"success": False, "message": "page_size must be an integer between 1 and 500."}
+        if type(max_depth) is not int or not 0 <= max_depth <= 128:
+            return {"success": False, "message": "max_depth must be an integer between 0 and 128."}
+        if cursor is not None and (
+            type(cursor) is not str
+            or len(cursor) != 32
+            or any(c not in "0123456789abcdef" for c in cursor)
+        ):
+            return {
+                "success": False,
+                "error": "stale_cursor",
+                "message": "Use an opaque hierarchy cursor or restart the read.",
+            }
     # Back-compat: map 'name' → 'target' for create_from_gameobject (Unity accepts both)
     if action == "create_from_gameobject" and target is None and name is not None:
         target = name
@@ -220,6 +249,10 @@ async def manage_prefabs(
     try:
         # Build parameters dictionary
         params: dict[str, Any] = {"action": action}
+        if action == "get_hierarchy":
+            params.update(page_size=page_size, max_depth=max_depth)
+            if cursor is not None:
+                params["cursor"] = cursor
 
         # Handle prefab path parameter
         if prefab_path:

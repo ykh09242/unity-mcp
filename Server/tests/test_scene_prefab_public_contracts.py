@@ -1,14 +1,19 @@
 """Fresh public scene/prefab boundaries; engine outcomes are opaque fixtures."""
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import textwrap
 
 
 def _run(program, tmp_path):
+    source_root = str(Path(__file__).resolve().parents[1] / "src")
     env = {
         **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            part for part in (source_root, os.environ.get("PYTHONPATH")) if part
+        ),
         "APPDATA": str(tmp_path),
         "XDG_DATA_HOME": str(tmp_path),
         "UNITY_MCP_DISABLE_TELEMETRY": "true",
@@ -318,8 +323,11 @@ prefab_cases = [
       'createChild': {'name': 'New', 'scale': [0, 0, 0]}}),
 ]
 for action in ('open_prefab_stage', 'get_info', 'get_hierarchy'):
+    expected = {'action': action, 'prefabPath': 'Assets/Fixture.prefab'}
+    if action == 'get_hierarchy':
+        expected.update(page_size=50, max_depth=64)
     prefab_cases.append(({'action': action, 'prefab_path': 'Assets/Fixture.prefab'},
-                         {'action': action, 'prefabPath': 'Assets/Fixture.prefab'}))
+                         expected))
 for action in ('save_prefab_stage', 'close_prefab_stage'):
     prefab_cases.append(({'action': action}, {'action': action}))
 for target in (-19340, '-19340', 'McpProbeCube', 'Parent/McpProbeCube', '/Parent/McpProbeCube', 0):

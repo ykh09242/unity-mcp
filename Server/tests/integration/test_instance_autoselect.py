@@ -1,11 +1,7 @@
 import pytest
 
-# Load the real transport before fixtures replace PluginHub, so its cached
-# imports cannot retain a fake hub after fixture teardown.
-import transport.unity_transport
-from transport.plugin_hub import _ConnectionReadIdentity
-import sys
-import types
+import transport.legacy.unity_connection as unity_connection
+import transport.unity_instance_middleware as instance_middleware
 from types import SimpleNamespace
 
 from .test_helpers import DummyContext
@@ -19,8 +15,6 @@ class DummyMiddlewareContext:
 
 @pytest.mark.asyncio
 async def test_auto_selects_single_instance_via_pluginhub(monkeypatch):
-    plugin_hub = types.ModuleType("transport.plugin_hub")
-
     class PluginHub:
         @classmethod
         def is_configured(cls) -> bool:
@@ -30,17 +24,14 @@ async def test_auto_selects_single_instance_via_pluginhub(monkeypatch):
         async def get_sessions(cls):
             raise AssertionError("get_sessions should be stubbed in test")
 
-    plugin_hub.PluginHub = PluginHub
-    plugin_hub._ConnectionReadIdentity = _ConnectionReadIdentity
-    monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub)
-    monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
+    monkeypatch.setattr(instance_middleware, "PluginHub", PluginHub)
 
     from transport.unity_instance_middleware import (
         UnityInstanceMiddleware,
         PluginHub as ImportedPluginHub,
     )
 
-    assert ImportedPluginHub is plugin_hub.PluginHub
+    assert ImportedPluginHub is PluginHub
 
     monkeypatch.setattr(config, "transport_mode", "http")
 
@@ -59,7 +50,7 @@ async def test_auto_selects_single_instance_via_pluginhub(monkeypatch):
             }
         )
 
-    monkeypatch.setattr(plugin_hub.PluginHub, "get_sessions", fake_get_sessions)
+    monkeypatch.setattr(PluginHub, "get_sessions", fake_get_sessions)
 
     selected = await middleware._maybe_autoselect_instance(ctx)
 
@@ -75,24 +66,19 @@ async def test_auto_selects_single_instance_via_pluginhub(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auto_selects_single_instance_via_stdio(monkeypatch):
-    plugin_hub = types.ModuleType("transport.plugin_hub")
-
     class PluginHub:
         @classmethod
         def is_configured(cls) -> bool:
             return False
 
-    plugin_hub.PluginHub = PluginHub
-    plugin_hub._ConnectionReadIdentity = _ConnectionReadIdentity
-    monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub)
-    monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
+    monkeypatch.setattr(instance_middleware, "PluginHub", PluginHub)
 
     from transport.unity_instance_middleware import (
         UnityInstanceMiddleware,
         PluginHub as ImportedPluginHub,
     )
 
-    assert ImportedPluginHub is plugin_hub.PluginHub
+    assert ImportedPluginHub is PluginHub
 
     monkeypatch.setattr(config, "transport_mode", "stdio")
 
@@ -106,9 +92,7 @@ async def test_auto_selects_single_instance_via_stdio(monkeypatch):
             assert force_refresh is True
             return [SimpleNamespace(id="UnityMCPTests@cc8756d4")]
 
-    unity_connection = types.ModuleType("transport.legacy.unity_connection")
-    unity_connection.get_unity_connection_pool = lambda: PoolStub()
-    monkeypatch.setitem(sys.modules, "transport.legacy.unity_connection", unity_connection)
+    monkeypatch.setattr(unity_connection, "get_unity_connection_pool", lambda: PoolStub())
 
     selected = await middleware._maybe_autoselect_instance(ctx)
 
@@ -122,24 +106,19 @@ async def test_auto_selects_single_instance_via_stdio(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auto_select_handles_stdio_errors(monkeypatch):
-    plugin_hub = types.ModuleType("transport.plugin_hub")
-
     class PluginHub:
         @classmethod
         def is_configured(cls) -> bool:
             return False
 
-    plugin_hub.PluginHub = PluginHub
-    plugin_hub._ConnectionReadIdentity = _ConnectionReadIdentity
-    monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub)
-    monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
+    monkeypatch.setattr(instance_middleware, "PluginHub", PluginHub)
 
     from transport.unity_instance_middleware import (
         UnityInstanceMiddleware,
         PluginHub as ImportedPluginHub,
     )
 
-    assert ImportedPluginHub is plugin_hub.PluginHub
+    assert ImportedPluginHub is PluginHub
 
     middleware = UnityInstanceMiddleware()
     ctx = DummyContext()
@@ -149,9 +128,7 @@ async def test_auto_select_handles_stdio_errors(monkeypatch):
         def discover_all_instances(self, force_refresh=False):
             raise ConnectionError("stdio unavailable")
 
-    unity_connection = types.ModuleType("transport.legacy.unity_connection")
-    unity_connection.get_unity_connection_pool = lambda: PoolStub()
-    monkeypatch.setitem(sys.modules, "transport.legacy.unity_connection", unity_connection)
+    monkeypatch.setattr(unity_connection, "get_unity_connection_pool", lambda: PoolStub())
 
     selected = await middleware._maybe_autoselect_instance(ctx)
 

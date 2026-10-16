@@ -965,13 +965,106 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        // Play-mode coroutine capture state.  Only one capture is in-flight at a
-        // time; concurrent render_ui calls while a capture is pending are rejected
-        // with an explicit error.
+        // One request owns the Play-mode capture and its completed texture until retrieval, cancellation or expiry.
         private static Texture2D s_pendingCaptureTex;
         private static bool s_pendingCaptureDone;
         private static bool s_pendingCaptureStarted;
         private static int s_pendingCaptureGeneration;
+        private static PendingUICapture s_pendingCaptureRequest;
+        private static ScreenshotCapturer s_pendingCapturer;
+        private static double s_pendingCaptureExpiresAt;
+        private const double PendingCaptureRetentionSeconds = 30;
+
+        // Retain the existing mixed-key precedence for both initial rendering and owner validation.
+        private static bool ReadRenderIncludeImage(ToolParams p) => p.GetBool("include_image") || p.GetBool("includeImage");
+
+        private static int ReadRenderMaxResolution(ToolParams p) => p.GetInt("max_resolution") ?? p.GetInt("maxResolution") ?? 640;
+
+        private static string ReadRenderFileName(ToolParams p) => p.Get("file_name") ?? p.Get("fileName");
+
+        private static string ReadRenderOutputFolder(ToolParams p) => p.Get("output_folder") ?? p.Get("outputFolder");
+
+        private sealed class PendingUICapture
+        {
+            internal readonly string Id = Guid.NewGuid().ToString("N");
+            internal readonly string Target;
+            internal readonly int TargetId;
+            internal readonly string SourceAsset;
+            internal readonly string ComponentKind;
+            internal readonly int Width;
+            internal readonly int Height;
+            internal readonly bool IncludeImage;
+            internal readonly int MaxResolution;
+            internal readonly string FileName;
+            internal readonly string Folder;
+            internal readonly string FullPath;
+            internal readonly string ProjectPath;
+
+            internal PendingUICapture(JObject parameters, UIComponentAdapter ui, Type componentType, string folderSpec)
+            {
+                var p = new ToolParams(parameters);
+                Target = p.Get("target");
+                TargetId = ui == null ? 0 : ui.Component.gameObject.GetInstanceIDCompat();
+                SourceAsset = NormalizeSource(p.Get("path"));
+                ComponentKind = ui?.Kind ?? (componentType == typeof(UIDocument) ? "ui_document" : "panel_renderer");
+                Width = p.GetInt("width") ?? 1920;
+                Height = p.GetInt("height") ?? 1080;
+                IncludeImage = ReadRenderIncludeImage(p);
+                MaxResolution = ReadRenderMaxResolution(p);
+                if (MaxResolution == 0)
+                    MaxResolution = 640;
+                FileName = NormalizeName(ReadRenderFileName(p));
+                var output = ScreenshotUtility.PrepareCaptureResult(
+                    FileName ?? $"ui-render-{DateTime.Now:yyyyMMdd-HHmmss}-{Id}.png",
+                    1,
+                    true,
+                    folderSpec,
+                    false
+                );
+                FullPath = output.FullPath;
+                ProjectPath = output.ProjectRelativePath;
+                Folder = Path.GetDirectoryName(FullPath).Replace('\\', '/');
+            }
+
+            internal bool Matches(ToolParams p)
+            {
+                if (p.Get("target") is string target)
+                {
+                    var go = ObjectResolver.Resolve(new JObject { ["find"] = target }, typeof(GameObject)) as GameObject;
+                    if (go == null || go.GetInstanceIDCompat() != TargetId)
+                        return false;
+                }
+                if (p.Get("path") is string source && NormalizeSource(source) != SourceAsset)
+                    return false;
+                if (p.Get("component_type") is string kind && kind != "auto" && kind != ComponentKind)
+                    return false;
+                if (p.Has("width") && p.GetInt("width") != Width || p.Has("height") && p.GetInt("height") != Height)
+                    return false;
+                if (p.Has("include_image") && ReadRenderIncludeImage(p) != IncludeImage)
+                    return false;
+                int maxResolution = ReadRenderMaxResolution(p);
+                if (p.Has("max_resolution") && (maxResolution == 0 ? 640 : maxResolution) != MaxResolution)
+                    return false;
+                if (ReadRenderFileName(p) is string name && NormalizeName(name) != FileName)
+                    return false;
+                if (ReadRenderOutputFolder(p) is string folder)
+                {
+                    string normalized = ScreenshotUtility.ResolveFolderAbsolute(ScreenshotPreferences.Resolve(folder)).Replace('\\', '/');
+                    var comparison = Application.platform == RuntimePlatform.WindowsEditor ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                    if (!string.Equals(normalized, Folder, comparison))
+                        return false;
+                }
+                return true;
+            }
+
+            private static string NormalizeName(string name) =>
+                string.IsNullOrWhiteSpace(name) ? null
+                : name.Trim().EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? name.Trim()
+                : name.Trim() + ".png";
+
+            private static string NormalizeSource(string path) =>
+                path == null ? null : AssetPathUtility.GetContainedAssetPath(path) ?? throw new ArgumentException("Invalid UXML path.");
+        }
 
         private static void CleanupPendingCapture()
         {
@@ -980,17 +1073,32 @@ namespace MCPForUnity.Editor.Tools
             {
                 s_pendingCaptureGeneration++;
             }
+            EditorApplication.update -= ExpirePendingCapture;
+            var capturer = s_pendingCapturer;
+            s_pendingCapturer = null;
+            if (capturer != null)
+                UnityEngine.Object.DestroyImmediate(capturer.gameObject);
             if (s_pendingCaptureTex != null)
                 UnityEngine.Object.DestroyImmediate(s_pendingCaptureTex);
             s_pendingCaptureTex = null;
             s_pendingCaptureDone = s_pendingCaptureStarted = false;
+            s_pendingCaptureRequest = null;
+            s_pendingCaptureExpiresAt = 0;
         }
 
         private static int BeginPendingCapture()
         {
             CleanupPendingCapture();
             s_pendingCaptureStarted = true;
+            s_pendingCaptureExpiresAt = EditorApplication.timeSinceStartup + PendingCaptureRetentionSeconds;
+            EditorApplication.update += ExpirePendingCapture;
             return s_pendingCaptureGeneration;
+        }
+
+        private static void ExpirePendingCapture()
+        {
+            if ((s_pendingCaptureStarted || s_pendingCaptureDone) && EditorApplication.timeSinceStartup >= s_pendingCaptureExpiresAt)
+                CleanupPendingCapture();
         }
 
         private static void CompletePendingCapture(int generation, Texture2D texture)
@@ -1002,22 +1110,151 @@ namespace MCPForUnity.Editor.Tools
                 return;
             }
             s_pendingCaptureTex = texture;
+            s_pendingCapturer = null;
             s_pendingCaptureDone = true;
             s_pendingCaptureStarted = false;
+            s_pendingCaptureExpiresAt = EditorApplication.timeSinceStartup + PendingCaptureRetentionSeconds;
+        }
+
+        private static object PendingCaptureResponse(PendingUICapture request) =>
+            new SuccessResponse(
+                "Play-mode Game view capture is pending. Resume using the returned capture_id.",
+                new Dictionary<string, object>
+                {
+                    { "pending", true },
+                    { "capture_id", request.Id },
+                    { "componentType", request.ComponentKind },
+                    { "gameObject", request.Target ?? request.SourceAsset },
+                    { "capture_source", "game_view" },
+                    { "expires_in_seconds", Math.Max(0, s_pendingCaptureExpiresAt - EditorApplication.timeSinceStartup) },
+                    {
+                        "note",
+                        "Poll render_ui with capture_id; cancel with capture_id and cancel_capture=true. Omitting capture_id starts a separate request."
+                    },
+                }
+            );
+
+        private static object ResumePendingCapture(JObject parameters, string captureId)
+        {
+            var request = s_pendingCaptureRequest;
+            if (!Application.isPlaying || request == null || !string.Equals(request.Id, captureId, StringComparison.Ordinal))
+                return new ErrorResponse("No live Play-mode capture matches capture_id. Start a new render_ui request.", new { reason = "capture_not_found" });
+            ExpirePendingCapture();
+            if (s_pendingCaptureRequest == null)
+                return new ErrorResponse("The Play-mode capture expired. Start a new render_ui request.", new { reason = "capture_expired" });
+            var p = new ToolParams(parameters);
+            if (!request.Matches(p))
+                return new ErrorResponse(
+                    "Capture settings differ from the originating request. Resume with capture_id only.",
+                    new { reason = "capture_settings_mismatch" }
+                );
+            if (p.GetBool("cancel_capture"))
+            {
+                CleanupPendingCapture();
+                return new SuccessResponse("Cancelled the owned Play-mode capture.", new { capture_id = request.Id, cancelled = true });
+            }
+            if (!s_pendingCaptureDone)
+                return PendingCaptureResponse(request);
+            var texture = s_pendingCaptureTex;
+            s_pendingCaptureTex = null;
+            CleanupPendingCapture();
+            if (texture == null)
+                return new ErrorResponse("Play-mode screenshot timed out or captured nothing. Keep the Game view visible and the editor unpaused.");
+            return SavePendingCapture(request, texture);
+        }
+
+        private static object SavePendingCapture(PendingUICapture request, Texture2D texture)
+        {
+            int width = texture.width;
+            int height = texture.height;
+            byte[] png;
+            try
+            {
+                ScreenshotUtility.ValidateFrameDimensions(width, height);
+                png = texture.EncodeToPNG();
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(texture);
+            }
+            ScreenshotFileUtility.WriteCaptureBytes(request.FullPath, png);
+            if (ScreenshotUtility.IsUnderAssets(request.ProjectPath))
+                AssetDatabase.ImportAsset(request.ProjectPath, ImportAssetOptions.ForceSynchronousImport);
+            var data = new Dictionary<string, object>
+            {
+                { "capture_id", request.Id },
+                { "capture_source", "game_view" },
+                { "path", request.ProjectPath },
+                { "fullPath", request.FullPath },
+                { "width", width },
+                { "height", height },
+                { "hasContent", true },
+                { "componentType", request.ComponentKind },
+            };
+            if (!string.IsNullOrEmpty(request.Target))
+                data["gameObject"] = request.Target;
+            if (!string.IsNullOrEmpty(request.SourceAsset))
+                data["sourceAsset"] = request.SourceAsset;
+            if (request.IncludeImage)
+            {
+                Texture2D full = null;
+                Texture2D downscaled = null;
+                try
+                {
+                    if (width > request.MaxResolution || height > request.MaxResolution)
+                    {
+                        full = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                        full.LoadImage(png);
+                        downscaled = ScreenshotUtility.DownscaleTexture(full, request.MaxResolution);
+                        data["imageBase64"] = Convert.ToBase64String(downscaled.EncodeToPNG());
+                        data["imageWidth"] = downscaled.width;
+                        data["imageHeight"] = downscaled.height;
+                    }
+                    else
+                    {
+                        data["imageBase64"] = Convert.ToBase64String(png);
+                        data["imageWidth"] = width;
+                        data["imageHeight"] = height;
+                    }
+                }
+                finally
+                {
+                    if (downscaled != null)
+                        UnityEngine.Object.DestroyImmediate(downscaled);
+                    if (full != null)
+                        UnityEngine.Object.DestroyImmediate(full);
+                }
+            }
+            return new SuccessResponse($"UI render saved to '{request.ProjectPath}'.", data);
         }
 
         private static object RenderUI(JObject @params)
         {
             var p = new ToolParams(@params);
 
+            string captureId = p.Get("capture_id");
+            if (captureId != null)
+                return ResumePendingCapture(@params, captureId);
+            if (p.GetBool("cancel_capture"))
+                return new ErrorResponse("cancel_capture requires the owning capture_id.");
+            if (Application.isPlaying)
+            {
+                ExpirePendingCapture();
+                if (s_pendingCaptureRequest != null)
+                    return new ErrorResponse(
+                        "Another request owns the Play-mode capture. Its caller must resume or cancel using capture_id, or wait for expiry.",
+                        new { retry_after_ms = 100, reason = s_pendingCaptureDone ? "capture_result_pending" : "capture_in_progress" }
+                    );
+            }
+
             string target = p.Get("target");
             string uxmlPath = p.Get("path");
             int width = p.GetInt("width") ?? 1920;
             int height = p.GetInt("height") ?? 1080;
-            bool includeImage = p.GetBool("include_image") || p.GetBool("includeImage");
-            int maxResolution = p.GetInt("max_resolution") ?? p.GetInt("maxResolution") ?? 640;
-            string fileName = p.Get("file_name") ?? p.Get("fileName");
-            string outputFolderOverride = p.Get("output_folder") ?? p.Get("outputFolder");
+            bool includeImage = ReadRenderIncludeImage(p);
+            int maxResolution = ReadRenderMaxResolution(p);
+            string fileName = ReadRenderFileName(p);
+            string outputFolderOverride = ReadRenderOutputFolder(p);
             try
             {
                 ScreenshotUtility.ValidateFrameDimensions(width, height);
@@ -1056,9 +1293,9 @@ namespace MCPForUnity.Editor.Tools
             string resolvedFolderSpec = ScreenshotPreferences.Resolve(outputFolderOverride);
             try
             {
-                ScreenshotUtility.ResolveFolderAbsolute(resolvedFolderSpec);
-                // Validate caller-supplied names before rendering or scheduling a capture.
-                ScreenshotUtility.PrepareCaptureResult(fileName, 1, true, resolvedFolderSpec, false);
+                // Play-mode output is resolved once when its immutable request is created below.
+                if (!Application.isPlaying)
+                    ScreenshotUtility.PrepareCaptureResult(fileName, 1, true, resolvedFolderSpec, false);
             }
             catch (InvalidOperationException ex)
             {
@@ -1070,134 +1307,23 @@ namespace MCPForUnity.Editor.Tools
             // so the RT is always blank in a synchronous tool call.  In play mode we
             // dispatch a WaitForEndOfFrame coroutine that uses ScreenCapture, which
             // captures the fully-composited game view (including UI Toolkit overlays).
-            // First call: queues the capture and returns "pending".
-            // Second call: result is ready – save PNG and return data.
+            // Each start returns an operation ID; only that ID may poll or cancel its result.
             if (Application.isPlaying)
             {
-                // Build the output paths (used by both the pending and ready branches)
-                string resolvedPlayName = string.IsNullOrWhiteSpace(fileName) ? $"ui-render-{DateTime.Now:yyyyMMdd-HHmmss}.png" : fileName.Trim();
-                if (!resolvedPlayName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-                    resolvedPlayName += ".png";
-
-                string playFullPath = ScreenshotUtility.PrepareCaptureResult(resolvedPlayName, 1, true, resolvedFolderSpec, false).FullPath;
-                string playProjectRelPath = ScreenshotUtility.ToProjectRelativePath(playFullPath);
-
-                if (s_pendingCaptureDone && s_pendingCaptureTex == null)
-                {
-                    s_pendingCaptureDone = false;
-                    s_pendingCaptureStarted = false;
-                    return new ErrorResponse("Play-mode screenshot timed out or captured nothing. Keep the Game view visible and the editor unpaused.");
-                }
-
-                // ── Case 1: capture is ready ──────────────────────────────────────
-                if (s_pendingCaptureDone && s_pendingCaptureTex != null)
-                {
-                    var captureTex = s_pendingCaptureTex;
-                    s_pendingCaptureDone = false;
-                    s_pendingCaptureTex = null;
-
-                    int captureW = captureTex.width;
-                    int captureH = captureTex.height;
-                    byte[] capturePng;
-                    try
-                    {
-                        ScreenshotUtility.ValidateFrameDimensions(captureW, captureH);
-                        capturePng = captureTex.EncodeToPNG();
-                    }
-                    finally
-                    {
-                        UnityEngine.Object.DestroyImmediate(captureTex);
-                    }
-
-                    ScreenshotFileUtility.WriteCaptureBytes(playFullPath, capturePng);
-                    if (ScreenshotUtility.IsUnderAssets(playProjectRelPath))
-                        AssetDatabase.ImportAsset(playProjectRelPath, ImportAssetOptions.ForceSynchronousImport);
-
-                    var playData = new Dictionary<string, object>
-                    {
-                        { "path", playProjectRelPath },
-                        { "fullPath", playFullPath },
-                        { "width", captureW },
-                        { "height", captureH },
-                        { "hasContent", true },
-                    };
-
-                    if (!string.IsNullOrEmpty(target))
-                        playData["gameObject"] = target;
-                    if (targetUI != null)
-                        playData["componentType"] = targetUI.Kind;
-                    if (!string.IsNullOrEmpty(uxmlPath))
-                        playData["sourceAsset"] = uxmlPath;
-
-                    if (includeImage)
-                    {
-                        int targetMax = maxResolution > 0 ? maxResolution : 640;
-                        Texture2D downscaled = null;
-                        Texture2D fullTex = null;
-                        try
-                        {
-                            if (captureW > targetMax || captureH > targetMax)
-                            {
-                                fullTex = new Texture2D(captureW, captureH, TextureFormat.RGBA32, false);
-                                fullTex.LoadImage(capturePng);
-                                downscaled = ScreenshotUtility.DownscaleTexture(fullTex, targetMax);
-                                playData["imageBase64"] = Convert.ToBase64String(downscaled.EncodeToPNG());
-                                playData["imageWidth"] = downscaled.width;
-                                playData["imageHeight"] = downscaled.height;
-                            }
-                            else
-                            {
-                                playData["imageBase64"] = Convert.ToBase64String(capturePng);
-                                playData["imageWidth"] = captureW;
-                                playData["imageHeight"] = captureH;
-                            }
-                        }
-                        finally
-                        {
-                            if (downscaled != null)
-                                UnityEngine.Object.DestroyImmediate(downscaled);
-                            if (fullTex != null)
-                                UnityEngine.Object.DestroyImmediate(fullTex);
-                        }
-                    }
-
-                    return new SuccessResponse($"UI render saved to '{playProjectRelPath}'.", playData);
-                }
-
-                // ── Case 2: start a new capture ───────────────────────────────────
-                // Only one capture in flight at a time.  If one is already pending,
-                // reject rather than silently overwriting the state.
-                if (s_pendingCaptureStarted)
-                {
-                    return new ErrorResponse(
-                        "Cannot capture: another capture is already in progress.",
-                        new { retry_after_ms = 100, reason = "capture_in_progress" }
-                    );
-                }
-
+                var request = new PendingUICapture(@params, targetUI, renderComponentType, resolvedFolderSpec);
                 int captureGeneration = BeginPendingCapture();
+                s_pendingCaptureRequest = request;
                 try
                 {
-                    ScreenshotCapturer.Begin(1, tex => CompletePendingCapture(captureGeneration, tex));
+                    s_pendingCapturer = ScreenshotCapturer.Begin(1, texture => CompletePendingCapture(captureGeneration, texture));
                 }
                 catch
                 {
                     CleanupPendingCapture();
                     throw;
                 }
-
-                return new SuccessResponse(
-                    "Play-mode screenshot capture queued (WaitForEndOfFrame). Call render_ui again to retrieve the rendered image.",
-                    new Dictionary<string, object>
-                    {
-                        { "pending", true },
-                        { "componentType", renderComponentType == typeof(UIDocument) ? "ui_document" : "panel_renderer" },
-                        { "gameObject", (object)target ?? uxmlPath },
-                        { "note", "A screen capture was scheduled for the end of this frame. Call render_ui once more to get the result." },
-                    }
-                );
+                return PendingCaptureResponse(request);
             }
-            // ── End play-mode branch ────────────────────────────────────────────────
 
             // Resolve the scene component or create a temporary component for the asset.
             UIComponentAdapter ui = targetUI;
@@ -1745,7 +1871,9 @@ namespace MCPForUnity.Editor.Tools
                 return targetError;
 
             string elementName = p.Get("element_name") ?? p.Get("elementName");
-            if (string.IsNullOrEmpty(elementName))
+            bool explicitSelector = p.Has("element_path") || p.Has("element_id");
+            bool strictName = p.GetBool("strict_name");
+            if (!explicitSelector && string.IsNullOrEmpty(elementName))
             {
                 return new ErrorResponse("'element_name' parameter is required.");
             }
@@ -1758,6 +1886,10 @@ namespace MCPForUnity.Editor.Tools
             }
 
             var ui = UIComponentAdapter.Resolve(go, p.Get("component_type"));
+            if ((explicitSelector || strictName) && (!go.activeInHierarchy || (ui.Component is Behaviour behaviour && !behaviour.isActiveAndEnabled)))
+                return new ErrorResponse("Strict or explicit visual element selection requires an active GameObject and enabled UI component.");
+            if (p.Has("element_id"))
+                RequireCanonicalSnapshotComponent(go, ui);
             var root = ui.Root;
             if (root == null)
             {
@@ -1766,13 +1898,17 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
 
-            // Find the target element by name
-            var element = root.Q(elementName);
+            // Preserve legacy first-match queries unless the caller requests a safer selector.
+            var element =
+                explicitSelector ? ResolveExplicitVisualElement(p, go, ui, root, elementName)
+                : strictName ? ResolveUniqueVisualElement(root, elementName)
+                : root.Q(elementName);
             if (element == null)
             {
                 return new ErrorResponse($"Visual element with name '{elementName}' not found in the visual tree.");
             }
 
+            elementName = element.name;
             string text = p.Get("text");
             if (text != null && element is not TextElement)
                 return new ErrorResponse($"Element '{elementName}' ({element.GetType().Name}) does not support text content.");
@@ -1891,6 +2027,127 @@ namespace MCPForUnity.Editor.Tools
                 responseData["skipped"] = skipped;
 
             return new SuccessResponse($"Modified element '{elementName}' on {go.name}: {string.Join(", ", applied)}", responseData);
+        }
+
+        private static void RequireCanonicalSnapshotComponent(GameObject go, UIComponentAdapter ui)
+        {
+            if (ui.Component != UIComponentAdapter.Resolve(go, "auto").Component)
+                throw new ArgumentException("element_id requires the snapshot's auto-selected UI component. Use element_path for a different component_type.");
+        }
+
+        private static VisualElement ResolveExplicitVisualElement(
+            ToolParams parameters,
+            GameObject go,
+            UIComponentAdapter ui,
+            VisualElement root,
+            string nameGuard
+        )
+        {
+            bool byPath = parameters.Has("element_path");
+            if (byPath && parameters.Has("element_id"))
+                throw new ArgumentException("Provide only one of element_path and element_id.");
+            if (!byPath)
+                RequireCanonicalSnapshotComponent(go, ui);
+            string key = byPath ? "element_path" : "element_id";
+            JToken token = parameters.GetRaw(key);
+            if (token?.Type != JTokenType.String)
+                throw new ArgumentException($"'{key}' must be a string.");
+            string value = token.Value<string>();
+            if (value.Length > 4096)
+                throw new ArgumentException("Visual element selector exceeds the 4096 character bound.");
+            string suffix = value;
+            if (!byPath)
+            {
+                string rootId = CaptureUISnapshot.Identity(go);
+                if (value == rootId)
+                    suffix = "";
+                else if (value.StartsWith(rootId + "/", StringComparison.Ordinal))
+                    suffix = value.Substring(rootId.Length);
+                else
+                    throw new ArgumentException("element_id does not belong to the selected UI root's snapshot identity.");
+            }
+            if (suffix.Length != 0 && suffix[0] != '/')
+                throw new ArgumentException("element_path must be empty for the root or start with '/'.");
+            string[] segments = suffix.Length == 0 ? Array.Empty<string>() : suffix.Substring(1).Split('/');
+            if (segments.Length >= 128)
+                throw new ArgumentException("Visual element selector exceeds the 128 level bound, including the root.");
+            VisualElement element = root;
+            int examined = 0;
+            foreach (string segment in segments)
+            {
+                // This is the snapshot's content-container enumeration, not control internals.
+                if (element.childCount > 1000)
+                    throw new ArgumentException("Visual element selector exceeds the 1000 sibling bound.");
+                if (byPath)
+                {
+                    if (
+                        segment.Length == 0
+                        || (segment.Length > 1 && segment[0] == '0')
+                        || segment.Any(c => c < '0' || c > '9')
+                        || !int.TryParse(segment, NumberStyles.None, CultureInfo.InvariantCulture, out int index)
+                    )
+                        throw new ArgumentException("element_path requires canonical zero-based decimal child indices, for example '/0/1'.");
+                    if (index >= element.childCount)
+                        throw new ArgumentException("element_path does not exist in the selected UI root.");
+                    element = element.ElementAt(index);
+                }
+                else
+                {
+                    VisualElement match = null;
+                    for (int i = 0; i < element.childCount; i++)
+                    {
+                        if (++examined > 10000)
+                            throw new ArgumentException("Visual element selector exceeds the 10000 node work bound.");
+                        VisualElement candidate = element.ElementAt(i);
+                        if (UitoolkitSnapshotCapture.Segment(candidate) != segment)
+                            continue;
+                        if (match != null)
+                            throw new ArgumentException("element_id is ambiguous among the selected root's snapshot siblings.");
+                        match = candidate;
+                    }
+                    element = match ?? throw new ArgumentException("element_id is stale or missing in the selected UI root.");
+                }
+            }
+            if (nameGuard != null && element.name != nameGuard)
+                throw new ArgumentException("element_name does not match the explicit selector's element.");
+            // Bind the resolved managed element to this actual engine root; never search globally.
+            VisualElement ancestor = element;
+            for (int depth = 0; ancestor != null && depth < 128; depth++, ancestor = ancestor.hierarchy.parent)
+                if (ReferenceEquals(ancestor, root))
+                    return element;
+            throw new ArgumentException("Explicit element is outside the selected root or exceeds the 128 ancestor bound.");
+        }
+
+        private static VisualElement ResolveUniqueVisualElement(VisualElement root, string name)
+        {
+            VisualElement match = null;
+            var stack = new Stack<(VisualElement element, int nextChild)>();
+            stack.Push((root, 0));
+            int examined = 0;
+            while (stack.Count > 0)
+            {
+                var frame = stack.Pop();
+                if (frame.nextChild == 0)
+                {
+                    if (++examined > 10000 || stack.Count >= 128 || frame.element.hierarchy.childCount > 1000)
+                        throw new ArgumentException("Strict name selection exceeds the 10000 node, 128 level or 1000 sibling bound.");
+                    // UQuery includes the root and physical control internals. A content-container
+                    // scan could miss a second match and incorrectly claim the name is unique.
+                    if (frame.element.name == name)
+                    {
+                        if (match != null)
+                            throw new ArgumentException("Visual element name is ambiguous; use element_path or element_id.");
+                        match = frame.element;
+                    }
+                }
+                if (frame.nextChild < frame.element.hierarchy.childCount)
+                {
+                    VisualElement child = frame.element.hierarchy[frame.nextChild++];
+                    stack.Push(frame);
+                    stack.Push((child, 0));
+                }
+            }
+            return match;
         }
 
         private static List<Action<VisualElement>> PrepareInlineStyles(JObject styleObj, List<string> modifications)

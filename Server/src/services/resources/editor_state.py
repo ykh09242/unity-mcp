@@ -323,12 +323,16 @@ async def get_editor_state(ctx: Context) -> MCPResponse:
     return await _read_editor_state(ctx, require_fresh=False)
 
 
-async def get_editor_state_authoritative(ctx: Context) -> MCPResponse:
+async def get_editor_state_authoritative(
+    ctx: Context, *, command_deadline: float | None = None
+) -> MCPResponse:
     """Read through the editor RPC for strict preflight and mutation workflows."""
-    return await _read_editor_state(ctx, require_fresh=True)
+    return await _read_editor_state(ctx, require_fresh=True, command_deadline=command_deadline)
 
 
-async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPResponse:
+async def _read_editor_state(
+    ctx: Context, *, require_fresh: bool, command_deadline: float | None = None
+) -> MCPResponse:
     unity_instance = await get_unity_instance_from_context(ctx)
 
     response = None
@@ -360,6 +364,10 @@ async def _read_editor_state(ctx: Context, *, require_fresh: bool) -> MCPRespons
                 read_options["editor_state_read_mode"] = (
                     "authoritative" if require_fresh else "ordinary"
                 )
+            elif command_deadline is not None:
+                read_options["_deadline"] = command_deadline
+            if command_deadline is not None:
+                read_options["retry_on_reload"] = False
             value = await unity_transport.send_with_unity_instance(
                 async_send_command_with_retry,
                 unity_instance,

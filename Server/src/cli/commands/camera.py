@@ -1,6 +1,7 @@
 """Camera CLI commands for managing Unity Camera + Cinemachine."""
 
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
 
 from cli.utils.config import get_config
@@ -278,7 +279,7 @@ def set_priority(target, search_method, priority):
 @click.argument("target")
 @click.option("--search-method", "-s", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
 @click.option("--body-type", default=None, help="Body component type to swap to.")
-@click.option("--props", default=None, help="Body properties as JSON.")
+@click.option("--props", default=None, help="Body properties as JSON. Accepts @file or -/@- stdin.")
 @handle_unity_errors
 def set_body(target, search_method, body_type, props):
     """Configure Body component on CinemachineCamera.
@@ -288,6 +289,8 @@ def set_body(target, search_method, body_type, props):
         unity-mcp camera set-body "CM Camera" --body-type CinemachineFollow
         unity-mcp camera set-body "CM Camera" --props '{"cameraDistance": 5.0}'
     """
+    props = admit_json_inputs(props=props)["props"]
+
     config = get_config()
     properties: dict[str, Any] = {}
     if body_type:
@@ -311,7 +314,7 @@ def set_body(target, search_method, body_type, props):
 @click.argument("target")
 @click.option("--search-method", "-s", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
 @click.option("--aim-type", default=None, help="Aim component type to swap to.")
-@click.option("--props", default=None, help="Aim properties as JSON.")
+@click.option("--props", default=None, help="Aim properties as JSON. Accepts @file or -/@- stdin.")
 @handle_unity_errors
 def set_aim(target, search_method, aim_type, props):
     """Configure Aim component on CinemachineCamera.
@@ -320,6 +323,8 @@ def set_aim(target, search_method, aim_type, props):
     Examples:
         unity-mcp camera set-aim "CM Camera" --aim-type CinemachineHardLookAt
     """
+    props = admit_json_inputs(props=props)["props"]
+
     config = get_config()
     properties: dict[str, Any] = {}
     if aim_type:
@@ -380,7 +385,9 @@ def set_noise(target, search_method, amplitude, frequency):
 @click.argument("target")
 @click.argument("extension_type")
 @click.option("--search-method", "-s", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
-@click.option("--props", default=None, help="Extension properties as JSON.")
+@click.option(
+    "--props", default=None, help="Extension properties as JSON. Accepts @file or -/@- stdin."
+)
 @handle_unity_errors
 def add_extension(target, extension_type, search_method, props):
     """Add extension to CinemachineCamera.
@@ -390,6 +397,8 @@ def add_extension(target, extension_type, search_method, props):
         unity-mcp camera add-extension "CM Camera" CinemachineDeoccluder
         unity-mcp camera add-extension "CM Camera" CinemachineImpulseListener
     """
+    props = admit_json_inputs(props=props)["props"]
+
     config = get_config()
     properties: dict[str, Any] = {"extensionType": extension_type}
     if props is not None:

@@ -6,6 +6,7 @@ import sys
 from typing import Any, Optional
 
 import click
+from cli.utils.parsers import admit_json_inputs
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
@@ -169,7 +170,7 @@ def delete(path: str, force: bool):
     "--edits",
     "-e",
     required=True,
-    help="Edits as JSON array of {startLine, startCol, endLine, endCol, newText}.",
+    help="Edits as JSON array of {startLine, startCol, endLine, endCol, newText}. Accepts @file or -/@- stdin.",
 )
 @handle_unity_errors
 def edit(path: str, edits: str):
@@ -179,6 +180,8 @@ def edit(path: str, edits: str):
     Examples:
         unity-mcp script edit "Assets/Scripts/Player.cs" --edits '[{"startLine": 10, "startCol": 1, "endLine": 10, "endCol": 20, "newText": "// Modified"}]'
     """
+    edits = admit_json_inputs(edits=edits)["edits"]
+
     config = get_config()
 
     edits_list = parse_json_list_or_exit(edits, "edits")

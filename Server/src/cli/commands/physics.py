@@ -3,6 +3,7 @@ import math
 import struct
 
 import click
+from cli.utils.parsers import admit_json_inputs
 
 from cli.utils.connection import handle_unity_errors, run_command, get_config
 from cli.utils.output import format_output
@@ -107,7 +108,13 @@ def get_settings(dimension):
 @click.argument("value")
 @handle_unity_errors
 def set_settings(dimension, key, value):
-    """Set a physics setting (key value)."""
+    """Set a physics setting (key value).
+
+    Gravity JSON accepts @file or -/@- stdin.
+    """
+    if key.lower() == "gravity":
+        value = admit_json_inputs(value=value)["value"]
+
     config = get_config()
     if key.lower() == "gravity":
         try:

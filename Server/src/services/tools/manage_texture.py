@@ -3,11 +3,13 @@ Defines the manage_texture tool for procedural texture generation in Unity.
 """
 
 import base64
+from copy import deepcopy
 import json
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -269,6 +271,32 @@ _SPRITE_MESH_TYPES = {"full_rect": "FullRect", "tight": "Tight"}
 
 _MIPMAP_FILTERS = {"box": "BoxFilter", "kaiser": "KaiserFilter"}
 
+_IMPORT_FIELD_NAMES: Final = {
+    "texture_type": "textureType",
+    "texture_shape": "textureShape",
+    "srgb": "sRGBTexture",
+    "alpha_source": "alphaSource",
+    "alpha_is_transparency": "alphaIsTransparency",
+    "readable": "isReadable",
+    "generate_mipmaps": "mipmapEnabled",
+    "mipmap_filter": "mipmapFilter",
+    "wrap_mode": "wrapMode",
+    "wrap_mode_u": "wrapModeU",
+    "wrap_mode_v": "wrapModeV",
+    "filter_mode": "filterMode",
+    "aniso_level": "anisoLevel",
+    "max_texture_size": "maxTextureSize",
+    "compression": "textureCompression",
+    "compression_crunched": "crunchedCompression",
+    "compression_quality": "compressionQuality",
+    "sprite_mode": "spriteImportMode",
+    "sprite_pixels_per_unit": "spritePixelsPerUnit",
+    "sprite_pivot": "spritePivot",
+    "sprite_mesh_type": "spriteMeshType",
+    "sprite_extrude": "spriteExtrude",
+    "platform_settings": "platformSettings",
+}
+
 
 def _normalize_bool_setting(value: Any, name: str) -> tuple[bool | None, str | None]:
     """
@@ -287,7 +315,7 @@ def _normalize_bool_setting(value: Any, name: str) -> tuple[bool | None, str | N
 def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
     """
     Normalize TextureImporter settings.
-    Converts snake_case keys to camelCase and validates enum values.
+    Converts documented keys, retaining other native fields for explicit outcome reporting.
     Returns (settings, error_message).
     """
     if value is None:
@@ -300,6 +328,24 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
         return None, f"import_settings must be a dict, got {type(value).__name__}"
 
     result = {}
+
+    if "platform_settings" in value or "platformSettings" in value:
+        if "platform_settings" in value and "platformSettings" in value:
+            if json.dumps(value["platform_settings"], sort_keys=True) != json.dumps(
+                value["platformSettings"], sort_keys=True
+            ):
+                return None, "Conflicting platform_settings and platformSettings aliases."
+        platforms = value.get("platform_settings", value.get("platformSettings"))
+        if not isinstance(platforms, dict) or any(
+            not isinstance(settings, dict) for settings in platforms.values()
+        ):
+            return None, "platform_settings must be an object of platform-name objects."
+        # Backend names, supported fields, values and version support remain native decisions.
+        result["platformSettings"] = deepcopy(platforms)
+
+    for key, raw in value.items():
+        if raw is None and (key in _IMPORT_FIELD_NAMES or key in _IMPORT_FIELD_NAMES.values()):
+            return None, f"import_settings.{key} cannot be null; omit the setting to preserve it."
 
     # Texture type
     if "texture_type" in value:
@@ -488,6 +534,20 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
                 return None, f"sprite_extrude must be 0-32, got {extrude}"
             result["spriteExtrude"] = extrude
 
+    for key, raw in value.items():
+        if key in _IMPORT_FIELD_NAMES or key == "platformSettings":
+            continue
+        public_alias = next(
+            (public for public, native in _IMPORT_FIELD_NAMES.items() if native == key), None
+        )
+        collides = key in result or (public_alias is not None and public_alias in value)
+        if collides:
+            if json.dumps(result.get(key), sort_keys=True) != json.dumps(raw, sort_keys=True):
+                return None, f"Conflicting importer aliases for '{key}'."
+            continue
+        # Preserve unknown fields alongside valid changes so native can report partial rejection.
+        result[key] = deepcopy(raw)
+
     return result, None
 
 
@@ -585,17 +645,29 @@ async def manage_texture(
     | None = None,
     # TextureImporter settings
     import_settings: Annotated[
-        dict,
-        "TextureImporter settings dict. Keys: texture_type (default/normal_map/sprite/etc), "
-        "texture_shape (2d/cube), srgb (bool), alpha_source (none/from_input/from_gray_scale), "
-        "alpha_is_transparency (bool), readable (bool), generate_mipmaps (bool), "
-        "wrap_mode/wrap_mode_u/wrap_mode_v (repeat/clamp/mirror/mirror_once), "
-        "filter_mode (point/bilinear/trilinear), aniso_level (0-16), max_texture_size (32-16384), "
-        "compression (none/low_quality/normal_quality/high_quality), compression_quality (0-100), "
-        "sprite_mode (single/multiple/polygon), sprite_pixels_per_unit, sprite_pivot, "
-        "sprite_mesh_type (full_rect/tight), sprite_extrude (0-32)",
-    ]
-    | None = None,
+        dict | None,
+        Field(
+            description=(
+                "TextureImporter settings dict. Keys: texture_type (default/normal_map/sprite/etc), "
+                "texture_shape (2d/cube), srgb (bool), alpha_source (none/from_input/from_gray_scale), "
+                "alpha_is_transparency (bool), readable (bool), generate_mipmaps (bool), "
+                "wrap_mode/wrap_mode_u/wrap_mode_v (repeat/clamp/mirror/mirror_once), "
+                "filter_mode (point/bilinear/trilinear), aniso_level (0-16), max_texture_size (32-16384), "
+                "compression (none/low_quality/normal_quality/high_quality), compression_quality (0-100), "
+                "sprite_mode (single/multiple/polygon), sprite_pixels_per_unit, sprite_pivot, "
+                "sprite_mesh_type (full_rect/tight), sprite_extrude (0-32). "
+                "platform_settings (alias platformSettings) is {platformName: {overridden: bool, "
+                "maxTextureSize: int, format: Unity TextureImporterFormat name, "
+                "textureCompression: Unity TextureImporterCompression name, compressionQuality: int, "
+                "crunchedCompression: bool, allowsAlphaSplitting: bool}}. "
+                "Native platform profiles: Standalone, Android, iPhone, WebGL. Nested keys use native "
+                "camelCase. Native reports accepted/rejected settings and stored/effective readbacks; "
+                "unknown fields are forwarded for explicit partial outcomes, conflicting aliases reject "
+                "before Editor IO. Omit settings to preserve them; explicit null is invalid for "
+                "recognized importer fields. Effective importer settings do not validate a target build."
+            )
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     # --- Normalize parameters ---
     if not path:

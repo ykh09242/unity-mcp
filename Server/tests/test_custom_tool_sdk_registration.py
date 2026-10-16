@@ -62,7 +62,7 @@ def test_dynamic_custom_tool_registers_and_executes_through_real_sdk():
     """)
 
 
-def test_invalid_custom_parameter_names_do_not_abort_following_registrations():
+def test_invalid_custom_parameter_names_reject_batch_without_publishing_following_tools():
     run_sdk_regression("""
         import asyncio, sys
         sys.path.insert(0, "src")
@@ -77,7 +77,16 @@ def test_invalid_custom_parameter_names_do_not_abort_following_registrations():
                 ToolParameterModel(name=name) for name in names
             ]) for i, names in enumerate([["ctx"], ["unity_instance"], ["value", "value"], ["class"], ["bad-name"]])]
             valid = ToolDefinitionModel(name="valid_empty")
-            service.register_global_tools(definitions + [valid])
+            for definition in definitions:
+                try:
+                    service.register_global_tools([valid, definition])
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError("Invalid custom signature was accepted")
+                assert await mcp.list_tools() == []
+                assert service._global_tools == {}
+            service.register_global_tools([valid])
             assert [tool.name for tool in await mcp.list_tools()] == ["valid_empty"]
             assert list(service._global_tools) == ["valid_empty"]
         asyncio.run(scenario())

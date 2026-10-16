@@ -3,6 +3,7 @@
 import sys
 import json
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
 
 from cli.utils.config import get_config
@@ -104,7 +105,11 @@ def batch_inline(commands_json: str, parallel: bool, fail_fast: bool):
             {"tool": "manage_gameobject", "params": {"action": "create", "name": "A", "primitiveType": "Cube"}},
             {"tool": "manage_gameobject", "params": {"action": "create", "name": "B", "primitiveType": "Sphere"}}
         ]'
+
+    JSON input also accepts @file or -/@- stdin.
     """
+    commands_json = admit_json_inputs(commands_json=commands_json)["commands_json"]
+
     config = get_config()
 
     commands = parse_json_list_or_exit(commands_json, "commands")

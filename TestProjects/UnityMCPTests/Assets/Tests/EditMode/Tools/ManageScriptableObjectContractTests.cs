@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Tools.Fixtures;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -15,10 +16,14 @@ namespace MCPForUnityTests.Editor.Tools
         private string _root;
         private string _path;
         private ScriptableObjectContractDefinition _asset;
+        private string[] _replacementEntries;
+
+        private static string[] ReplacementEntries() => Directory.GetFileSystemEntries(Application.dataPath, "__mcp_so_replacement_*");
 
         [SetUp]
         public void SetUp()
         {
+            _replacementEntries = ReplacementEntries();
             string folder = "__scriptable_object_contract_" + Guid.NewGuid().ToString("N");
             _root = "Assets/" + folder;
             AssetDatabase.CreateFolder("Assets", folder);
@@ -32,10 +37,14 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
+            ManageScriptableObject.BeforeReplacementOperation = null;
             if (_asset != null)
                 Undo.ClearUndo(_asset);
             if (!string.IsNullOrEmpty(_root) && AssetDatabase.IsValidFolder(_root))
                 AssetDatabase.DeleteAsset(_root);
+            foreach (string directory in Directory.GetDirectories(Application.dataPath, "__mcp_so_replacement_*"))
+                if (Array.IndexOf(_replacementEntries, directory) < 0)
+                    AssetDatabase.DeleteAsset("Assets/" + Path.GetFileName(directory));
         }
 
         private JObject Modify(JObject patch, bool dryRun = false) =>
@@ -372,6 +381,306 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.AreEqual(new[] { 7, 8 }, _asset.items);
             if (shape == "invalidproperty")
                 Assert.IsFalse(response["data"]["patchResults"][0].Value<bool>("ok"));
+        }
+
+        private JObject ReplaceTypeRequest() =>
+            new JObject
+            {
+                ["action"] = "create",
+                ["typeName"] = typeof(ManageScriptableObjectTestDefinition).FullName,
+                ["folderPath"] = _root,
+                ["assetName"] = "Existing",
+                ["overwrite"] = true,
+                ["patches"] = new JArray(new JObject { ["path"] = "displayName", ["value"] = "Replacement" }),
+            };
+
+        [TestCase("create", false)]
+        [TestCase("create", true)]
+        [TestCase("stage_save", true)]
+        [TestCase("stage_import", true)]
+        [TestCase("final_save", false)]
+        [TestCase("final_save", true)]
+        [TestCase("final_import", false)]
+        [TestCase("final_import", true)]
+        public void Create_DifferentTypeFailurePreservesOriginal(string phase, bool dirty)
+        {
+            var holder = ScriptableObject.CreateInstance<ScriptableObjectContractDefinition>();
+            holder.objectReference = _asset;
+            string holderPath = _root + "/Holder.asset";
+            AssetDatabase.CreateAsset(holder, holderPath);
+            AssetDatabase.SaveAssets();
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            string fullPath = Path.Combine(Application.dataPath, _path.Substring("Assets/".Length));
+            byte[] bytes = File.ReadAllBytes(fullPath);
+            byte[] meta = File.ReadAllBytes(fullPath + ".meta");
+            byte[] holderBytes = File.ReadAllBytes(Path.Combine(Application.dataPath, holderPath.Substring("Assets/".Length)));
+            string[] entries = Directory.GetFileSystemEntries(Path.GetDirectoryName(fullPath), "*", SearchOption.AllDirectories);
+            if (dirty)
+            {
+                _asset.intValue = 4321;
+                _asset.objectReference = _asset;
+                _asset.nested.objectReference = holder;
+                EditorUtility.SetDirty(_asset);
+            }
+            bool injected = false;
+            ManageScriptableObject.BeforeReplacementOperation = operation =>
+            {
+                if (operation == phase)
+                {
+                    injected = true;
+                    throw new IOException("Injected replacement " + phase + " failure.");
+                }
+            };
+
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(ReplaceTypeRequest()));
+
+            Assert.IsTrue(injected, "The native replacement did not reach the requested failure boundary.");
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("asset_create_failed", response.Value<string>("error"));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            Assert.IsTrue(_asset != null, "The original loaded object was destroyed.");
+            Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path));
+            Assert.AreSame(_asset, holder.objectReference);
+            Assert.AreEqual(dirty ? 4321 : 99, _asset.intValue);
+            Assert.AreEqual(dirty, EditorUtility.IsDirty(_asset));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(fullPath));
+            CollectionAssert.AreEqual(meta, File.ReadAllBytes(fullPath + ".meta"));
+            CollectionAssert.AreEqual(holderBytes, File.ReadAllBytes(Path.Combine(Application.dataPath, holderPath.Substring("Assets/".Length))));
+            CollectionAssert.AreEquivalent(entries, Directory.GetFileSystemEntries(Path.GetDirectoryName(fullPath), "*", SearchOption.AllDirectories));
+            CollectionAssert.AreEquivalent(_replacementEntries, ReplacementEntries());
+            AssetDatabase.ImportAsset(holderPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(holderPath).objectReference);
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path));
+            Assert.AreEqual(dirty ? 4321 : 99, _asset.intValue, "Refreshing after rollback must retain unsaved values.");
+            Assert.AreEqual(dirty, EditorUtility.IsDirty(_asset), "Refreshing after rollback must retain dirty state.");
+            if (dirty)
+            {
+                Assert.AreSame(_asset, _asset.objectReference, "Dirty self references must still point to the original object.");
+                Assert.AreSame(holder, _asset.nested.objectReference, "Dirty external references must survive snapshot cleanup.");
+            }
+        }
+
+        [Test]
+        public void Create_DifferentTypeFailureRestoresDirtySubassetsAndCrossReferences()
+        {
+            var child = ScriptableObject.CreateInstance<ScriptableObjectContractDefinition>();
+            child.name = "Child";
+            child.intValue = 17;
+            AssetDatabase.AddObjectToAsset(child, _asset);
+            AssetDatabase.SaveAssets();
+            string fullPath = Path.Combine(Application.dataPath, _path.Substring("Assets/".Length));
+            byte[] bytes = File.ReadAllBytes(fullPath);
+            byte[] meta = File.ReadAllBytes(fullPath + ".meta");
+            _asset.intValue = 4321;
+            _asset.objectReference = _asset;
+            _asset.nested.objectReference = child;
+            child.intValue = 8765;
+            child.objectReference = _asset;
+            child.nested.objectReference = child;
+            EditorUtility.SetDirty(_asset);
+            EditorUtility.SetDirty(child);
+            ManageScriptableObject.BeforeReplacementOperation = phase =>
+            {
+                if (phase == "final_import")
+                    throw new IOException("Injected failure with dirty original subassets.");
+            };
+
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(ReplaceTypeRequest()));
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(response["data"].Value<bool>("originalRestored"), response.ToString());
+            Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path));
+            CollectionAssert.Contains(AssetDatabase.LoadAllAssetsAtPath(_path), child);
+            Assert.AreEqual(4321, _asset.intValue);
+            Assert.AreEqual(8765, child.intValue);
+            Assert.IsTrue(EditorUtility.IsDirty(_asset));
+            Assert.IsTrue(EditorUtility.IsDirty(child));
+            Assert.AreSame(_asset, _asset.objectReference);
+            Assert.AreSame(child, _asset.nested.objectReference);
+            Assert.AreSame(_asset, child.objectReference);
+            Assert.AreSame(child, child.nested.objectReference);
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(fullPath));
+            CollectionAssert.AreEqual(meta, File.ReadAllBytes(fullPath + ".meta"));
+        }
+
+        [TestCase("guid", false, false)]
+        [TestCase("instanceID", false, false)]
+        [TestCase("guid", false, true)]
+        [TestCase("instanceID", false, true)]
+        [TestCase("guid", true, false)]
+        [TestCase("instanceID", true, false)]
+        public void Create_DifferentTypeRejectsRetainedOriginalReferences(string referenceKind, bool nested, bool failAfterPatching)
+        {
+            AssetDatabase.DeleteAsset(_path);
+            var original = ScriptableObject.CreateInstance<ManageScriptableObjectTestDefinition>();
+            AssetDatabase.CreateAsset(original, _path);
+            AssetDatabase.SaveAssets();
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            var reference = referenceKind == "guid" ? new JObject { ["guid"] = guid } : new JObject { ["instanceID"] = original.GetInstanceIDCompat() };
+            var request = ReplaceTypeRequest();
+            request["typeName"] = typeof(ScriptableObjectContractDefinition).FullName;
+            request["patches"] = new JArray(
+                nested
+                    ? new JObject
+                    {
+                        ["path"] = "nested",
+                        ["value"] = new JObject { ["objectReference"] = reference, ["text"] = "Valid sibling" },
+                    }
+                    : new JObject { ["path"] = "objectReference", ["ref"] = reference },
+                new JObject { ["path"] = "intValue", ["value"] = 321 }
+            );
+            bool rejectedBeforeCommit = false;
+            ManageScriptableObject.BeforeReplacementOperation = phase =>
+            {
+                if (phase != "final_import")
+                    return;
+                var candidate = AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path);
+                rejectedBeforeCommit = (nested ? candidate.nested.objectReference : candidate.objectReference) == null;
+                if (failAfterPatching)
+                    throw new IOException("Injected failure after reference patch validation.");
+            };
+
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(request));
+
+            Assert.IsTrue(rejectedBeforeCommit, "A candidate cannot retain a reference to the original that will be deleted on commit.");
+            if (failAfterPatching)
+            {
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(response["data"].Value<bool>("originalRestored"), response.ToString());
+                Assert.AreSame(original, AssetDatabase.LoadAssetAtPath<ManageScriptableObjectTestDefinition>(_path));
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+                return;
+            }
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(
+                nested,
+                response["data"]["patchResults"][0].Value<bool>("ok"),
+                "A nested mapping keeps its valid sibling; a direct rejected reference fails."
+            );
+            Assert.IsTrue(response["data"]["patchResults"][1].Value<bool>("ok"));
+            var replacement = AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path);
+            Assert.AreEqual(321, replacement.intValue);
+            if (nested)
+                Assert.AreEqual("Valid sibling", replacement.nested.text);
+            using var serialized = new SerializedObject(replacement);
+#if UNITY_6000_4_OR_NEWER
+            Assert.AreEqual(default(EntityId), serialized.FindProperty(nested ? "nested.objectReference" : "objectReference").objectReferenceEntityIdValue);
+#else
+            Assert.AreEqual(0, serialized.FindProperty(nested ? "nested.objectReference" : "objectReference").objectReferenceInstanceIDValue);
+#endif
+        }
+
+        [Test]
+        public void Create_DifferentTypeSuccessKeepsReplacementGuidContractAndPatches()
+        {
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            string directory = Path.Combine(Application.dataPath, _root.Substring("Assets/".Length));
+            string[] entries = Directory.GetFileSystemEntries(directory, "*", SearchOption.AllDirectories);
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(ReplaceTypeRequest()));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            string replacementGuid = AssetDatabase.AssetPathToGUID(_path);
+            Assert.IsNotEmpty(replacementGuid);
+            Assert.AreNotEqual(guid, replacementGuid);
+            Assert.AreEqual(replacementGuid, response["data"].Value<string>("guid"));
+            var replacement = AssetDatabase.LoadAssetAtPath<ManageScriptableObjectTestDefinition>(_path);
+            Assert.IsNotNull(replacement);
+            Assert.AreEqual("Existing", replacement.name);
+            Assert.AreEqual("Replacement", replacement.DisplayName);
+            Assert.IsFalse(EditorUtility.IsDirty(replacement));
+            Assert.IsTrue(_asset == null, "The replaced object should be removed only after a successful replacement.");
+            CollectionAssert.AreEquivalent(entries, Directory.GetFileSystemEntries(directory, "*", SearchOption.AllDirectories));
+            CollectionAssert.AreEquivalent(_replacementEntries, ReplacementEntries());
+        }
+
+        [Test]
+        public void Create_DifferentTypeSuccessDoesNotSaveUnrelatedDirtyAssets()
+        {
+            var unrelated = ScriptableObject.CreateInstance<ScriptableObjectContractDefinition>();
+            string path = _root + "/Unrelated.asset";
+            AssetDatabase.CreateAsset(unrelated, path);
+            AssetDatabase.SaveAssets();
+            string fullPath = Path.Combine(Application.dataPath, path.Substring("Assets/".Length));
+            byte[] bytes = File.ReadAllBytes(fullPath);
+            unrelated.intValue = 1234;
+            EditorUtility.SetDirty(unrelated);
+
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(ReplaceTypeRequest()));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(EditorUtility.IsDirty(unrelated));
+            Assert.AreEqual(1234, unrelated.intValue);
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(fullPath));
+        }
+
+        [Test]
+        public void Create_DifferentTypePartialStageFailureCleansUnregisteredFiles()
+        {
+            string directory = Path.Combine(Application.dataPath, _root.Substring("Assets/".Length));
+            string[] entries = Directory.GetFileSystemEntries(directory, "*", SearchOption.AllDirectories);
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            ManageScriptableObject.BeforeReplacementOperation = phase =>
+            {
+                if (phase != "create")
+                    return;
+                string staging = Array.Find(
+                    Directory.GetDirectories(Application.dataPath, "__mcp_so_replacement_*"),
+                    path => Array.IndexOf(_replacementEntries, path) < 0
+                );
+                string partial = Path.Combine(staging, "new", "Existing.asset");
+                File.WriteAllText(partial, "partial native asset output");
+                File.WriteAllText(partial + ".meta", "partial native metadata");
+                throw new IOException("Injected failure after partial file output.");
+            };
+
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(ReplaceTypeRequest()));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(response["data"].Value<bool>("originalRestored"), response.ToString());
+            Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(_path));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(_path));
+            CollectionAssert.AreEquivalent(entries, Directory.GetFileSystemEntries(directory, "*", SearchOption.AllDirectories));
+            CollectionAssert.AreEquivalent(_replacementEntries, ReplacementEntries());
+        }
+
+        [Test]
+        public void Create_DifferentTypeBlockedRollbackReportsRetainedOriginal()
+        {
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            string fullPath = Path.Combine(Application.dataPath, _path.Substring("Assets/".Length));
+            byte[] bytes = File.ReadAllBytes(fullPath);
+            byte[] meta = File.ReadAllBytes(fullPath + ".meta");
+            _asset.intValue = 4321;
+            EditorUtility.SetDirty(_asset);
+            ManageScriptableObject.BeforeReplacementOperation = phase =>
+            {
+                if (phase == "final_import" || phase == "rollback_restore")
+                    throw new IOException("Injected blocked " + phase + ".");
+            };
+
+            var response = JObject.FromObject(ManageScriptableObject.HandleCommand(ReplaceTypeRequest()));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(response["data"].Value<bool>("originalRestored"));
+            string recoveryPath = response["data"].Value<string>("recoveryPath");
+            Assert.IsNotEmpty(recoveryPath, response.ToString());
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(recoveryPath));
+            Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(recoveryPath));
+            Assert.AreEqual(4321, _asset.intValue);
+            Assert.IsTrue(EditorUtility.IsDirty(_asset));
+            string recoveryFullPath = Path.Combine(Application.dataPath, recoveryPath.Substring("Assets/".Length));
+            Assert.IsTrue(File.Exists(recoveryFullPath), response.ToString());
+            Assert.IsTrue(File.Exists(recoveryFullPath + ".meta"), response.ToString());
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(recoveryFullPath));
+            CollectionAssert.AreEqual(meta, File.ReadAllBytes(recoveryFullPath + ".meta"));
+            Assert.That(response["data"].Value<string>("rollbackError"), Does.Contain("rollback_restore"));
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            Assert.AreSame(_asset, AssetDatabase.LoadAssetAtPath<ScriptableObjectContractDefinition>(recoveryPath));
+            Assert.AreEqual(4321, _asset.intValue);
+            Assert.IsTrue(EditorUtility.IsDirty(_asset));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(recoveryFullPath));
+            CollectionAssert.AreEqual(meta, File.ReadAllBytes(recoveryFullPath + ".meta"));
         }
 
         [TestCase("missing")]

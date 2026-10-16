@@ -5,6 +5,7 @@ import re
 import struct
 import sys
 import click
+from cli.utils.parsers import admit_json_inputs, json_input_diagnostic
 from typing import Optional, Any
 
 from cli.utils.config import get_config
@@ -393,8 +394,13 @@ def texture():
     ),
     help="Pattern type",
 )
-@click.option("--palette", help="Color palette for pattern (JSON array of colors)")
-@click.option("--import-settings", help="TextureImporter settings (JSON)")
+@click.option(
+    "--palette",
+    help="Color palette for pattern (JSON array of colors) Accepts @file or -/@- stdin.",
+)
+@click.option(
+    "--import-settings", help="TextureImporter settings (JSON) Accepts @file or -/@- stdin."
+)
 @handle_unity_errors
 def create(
     path: str,
@@ -414,6 +420,10 @@ def create(
         unity-mcp texture create Assets/Check.png --pattern checkerboard
         unity-mcp texture create Assets/UI.png --import-settings '{"texture_type": "sprite"}'
     """
+    json_inputs = admit_json_inputs(palette=palette, import_settings=import_settings)
+    palette = json_inputs["palette"]
+    import_settings = json_inputs["import_settings"]
+
     config = get_config()
     if image_path:
         if color or pattern or palette:
@@ -452,13 +462,18 @@ def create(
         try:
             params["palette"] = _normalize_palette(palette, "palette")
         except ValueError as e:
-            raise click.BadParameter(str(e), param_hint="--palette") from e
+            raise click.BadParameter(
+                json_input_diagnostic(palette, "palette", e), param_hint="--palette"
+            ) from e
 
     if import_settings is not None:
         try:
             params["importSettings"] = _normalize_import_settings(import_settings)
         except ValueError as e:
-            raise click.BadParameter(str(e), param_hint="--import-settings") from e
+            raise click.BadParameter(
+                json_input_diagnostic(import_settings, "import-settings", e),
+                param_hint="--import-settings",
+            ) from e
 
     if image_path:
         params["imagePath"] = image_path
@@ -481,7 +496,7 @@ def create(
     help="Pattern type (defaults to checkerboard if no color specified)",
 )
 @click.option("--ppu", default=100.0, help="Pixels Per Unit")
-@click.option("--pivot", help="Pivot as [x,y] (default: [0.5, 0.5])")
+@click.option("--pivot", help="Pivot as [x,y] (default: [0.5, 0.5]) Accepts @file or -/@- stdin.")
 @handle_unity_errors
 def sprite(
     path: str,
@@ -501,6 +516,8 @@ def sprite(
         unity-mcp texture sprite Assets/Sprites/Coin.png --pattern dots
         unity-mcp texture sprite Assets/Sprites/Solid.png --color '[0,255,0]'
     """
+    pivot = admit_json_inputs(pivot=pivot)["pivot"]
+
     config = get_config()
     if image_path:
         if color or pattern:
@@ -636,7 +653,9 @@ def _apply_import_flags_to_params(
 
 @texture.command("modify")
 @click.argument("path")
-@click.option("--set-pixels", default=None, help="Modification args as JSON")
+@click.option(
+    "--set-pixels", default=None, help="Modification args as JSON Accepts @file or -/@- stdin."
+)
 @click.option("--texture-type", type=click.Choice(list(_TEXTURE_TYPES.keys())), help="Texture type")
 @click.option(
     "--sprite-mode", type=click.Choice(list(_SPRITE_MODES.keys())), help="Sprite import mode"
@@ -679,6 +698,8 @@ def modify(
         unity-mcp texture modify Assets/UI/icon.png --as-sprite
         unity-mcp texture modify Assets/UI/bg.png --texture-type sprite --max-size 2048
     """
+    set_pixels = admit_json_inputs(set_pixels=set_pixels)["set_pixels"]
+
     config = get_config()
 
     params: dict[str, Any] = {"action": "modify", "path": path}
@@ -700,7 +721,9 @@ def modify(
         try:
             params["setPixels"] = _normalize_set_pixels(set_pixels)
         except ValueError as e:
-            raise click.BadParameter(str(e), param_hint="--set-pixels") from e
+            raise click.BadParameter(
+                json_input_diagnostic(set_pixels, "set-pixels", e), param_hint="--set-pixels"
+            ) from e
     elif not has_import:
         print_error("At least one of --set-pixels or an import-setting flag must be provided")
         sys.exit(1)

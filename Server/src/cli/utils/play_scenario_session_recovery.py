@@ -11,7 +11,17 @@ import time
 from typing import Annotated, Final, Generic, Literal, TypeVar
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
+from cli.utils.play_scenario_soak_environment import RecordedEnvironment
 
 from cli.utils.play_scenario_iterations import (
     ATTEMPTED_KEYS,
@@ -25,6 +35,8 @@ from cli.utils.play_scenario_player_session import (
     OUTCOME_LIMIT,
     SUMMARY_LIMIT,
     _append_record,
+    _bound_record_environment,
+    _compact_reproduction,
     _summary_file,
     _write_session_junit,
 )
@@ -147,6 +159,19 @@ class _Outcome(BaseModel):
     build_source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
     payload_hash: Annotated[str, Field(strict=True, max_length=64)] | None = None
     payload_verification: Annotated[str, Field(strict=True, max_length=128)] | None = None
+    environment: RecordedEnvironment | None = None
+    unity_version: Annotated[str, Field(strict=True, max_length=128)] | None = None
+    package_version: Annotated[str, Field(strict=True, max_length=128)] | None = None
+
+    @field_validator("environment", "unity_version", "package_version", mode="before")
+    @classmethod
+    def optional_attribution(
+        cls, value: JsonValue | RecordedEnvironment, info: ValidationInfo
+    ) -> JsonValue | RecordedEnvironment:
+        """Optional attribution never invalidates mandatory completion evidence."""
+        if info.field_name == "environment" and isinstance(value, RecordedEnvironment):
+            return value
+        return _compact_reproduction({info.field_name: value}).get(info.field_name)
 
     @model_validator(mode="after")
     def valid_evidence(self) -> "_Outcome":
@@ -345,7 +370,10 @@ class _Projection:
 
 def _project_outcome(header: _Header, row: _Outcome, sequence: int) -> _Projection:
     """Normalize original and historical outcome identity without following native artifacts."""
-    record = row.model_dump(mode="json")
+    optional = {"environment", "unity_version", "package_version"}
+    record = row.model_dump(
+        mode="json", exclude={key for key in optional if getattr(row, key) is None}
+    )
     record.update(schema_version=2, session_id=header.session_id, sequence=sequence)
     record["artifact_directory"] = None
     if row.failure is not None:
@@ -364,6 +392,7 @@ def _project_outcome(header: _Header, row: _Outcome, sequence: int) -> _Projecti
             record["exit_code"] = 1
             record["client_error"] = row.client_error or "recovery_legacy_iteration_unknown"
     record["iteration_counts"] = counts
+    _bound_record_environment(record)
     return _Projection(record, counts)
 
 

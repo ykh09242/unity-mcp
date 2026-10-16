@@ -25,6 +25,7 @@ namespace MCPForUnity.Editor.Setup
         private string _installDir;
         private Vector2 _scroll;
         private volatile bool _isRunning;
+        private SkillSyncService.SyncPreview _preview;
         private readonly ConcurrentQueue<string> _pendingLogs = new();
         private readonly StringBuilder _logBuilder = new(4096);
 
@@ -63,10 +64,11 @@ namespace MCPForUnity.Editor.Setup
         private void OnGUI()
         {
             FlushPendingLogs();
-            EditorGUILayout.HelpBox("Sync Unity MCP Skill to the latest on the selected branch and output the changed file list.", MessageType.Info);
+            EditorGUILayout.HelpBox("Preview upstream changes, then apply safe changes while preserving local edits and additions.", MessageType.Info);
             EditorGUILayout.Space(4f);
 
             EditorGUILayout.LabelField("Config", EditorStyles.boldLabel);
+            EditorGUI.BeginChangeCheck();
             using (new EditorGUI.DisabledScope(_isRunning))
             {
                 _repoUrl = EditorGUILayout.TextField("Repo URL", _repoUrl);
@@ -95,18 +97,20 @@ namespace MCPForUnity.Editor.Setup
 
                 _installDir = EditorGUILayout.TextField("Install Dir", _installDir);
             }
+            if (EditorGUI.EndChangeCheck())
+                _preview = null;
 
             EditorGUILayout.Space(8f);
             EditorGUILayout.BeginHorizontal();
             using (new EditorGUI.DisabledScope(_isRunning))
             {
-                if (GUILayout.Button($"Sync Latest ({_targetBranch})", GUILayout.Height(32f)))
-                {
-                    AppendLineImmediate("Sync task queued...");
-                    AppendLineImmediate("Will use GitHub API to read the remote directory tree and perform incremental sync (no repository clone).");
-                    RunSyncLatest();
-                }
+                if (GUILayout.Button($"Preview ({_targetBranch})", GUILayout.Height(32f)))
+                    RunPreview();
             }
+
+            using (new EditorGUI.DisabledScope(_isRunning || _preview == null))
+                if (GUILayout.Button("Apply safe changes", GUILayout.Height(32f)))
+                    RunApply();
 
             if (GUILayout.Button("Clear Log", GUILayout.Width(100f), GUILayout.Height(32f)))
             {
@@ -114,6 +118,12 @@ namespace MCPForUnity.Editor.Setup
                 while (_pendingLogs.TryDequeue(out _)) { }
             }
             EditorGUILayout.EndHorizontal();
+            if (_preview != null)
+                EditorGUILayout.HelpBox(
+                    $"Preview: +{_preview.Added.Count} ~{_preview.Updated.Count} -{_preview.Deleted.Count}. "
+                        + $"Local preserved: {_preview.Preserved.Count}. Conflicts retained: {_preview.Conflicts.Count}. See the file list below.",
+                    _preview.Conflicts.Count > 0 ? MessageType.Warning : MessageType.Info
+                );
 
             EditorGUILayout.Space(8f);
             EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
@@ -131,30 +141,47 @@ namespace MCPForUnity.Editor.Setup
             }
         }
 
-        private void RunSyncLatest()
+        private void RunPreview()
         {
             if (_isRunning)
-            {
                 return;
-            }
-
             _isRunning = true;
-            SkillSyncService.SyncAsync(
+            _preview = null;
+            SkillSyncService.PreviewAsync(
                 _repoUrl,
                 _installDir,
                 _targetBranch,
                 line => _pendingLogs.Enqueue($"[{DateTime.Now:HH:mm:ss}] {SanitizeLogLine(line)}"),
+                preview =>
+                {
+                    if (this == null)
+                        return;
+                    _isRunning = false;
+                    _preview = preview.Success ? preview : null;
+                    if (!preview.Success)
+                        AppendLineImmediate("[ERROR] " + preview.Error);
+                    Repaint();
+                }
+            );
+        }
+
+        private void RunApply()
+        {
+            if (_isRunning || _preview == null)
+                return;
+            var preview = _preview;
+            _preview = null;
+            _isRunning = true;
+            SkillSyncService.ApplyAsync(
+                preview,
+                line => _pendingLogs.Enqueue($"[{DateTime.Now:HH:mm:ss}] {SanitizeLogLine(line)}"),
                 result =>
                 {
+                    if (this == null)
+                        return;
                     _isRunning = false;
-                    if (result.Success)
-                    {
-                        _pendingLogs.Enqueue($"[{DateTime.Now:HH:mm:ss}] Sync complete: +{result.Added} ~{result.Updated} -{result.Deleted}");
-                    }
-                    else
-                    {
-                        _pendingLogs.Enqueue($"[{DateTime.Now:HH:mm:ss}] [ERROR] {result.Error}");
-                    }
+                    AppendLineImmediate(SkillSyncService.DescribeResult(result));
+                    Repaint();
                 }
             );
         }

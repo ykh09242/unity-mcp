@@ -28,12 +28,14 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "poll with the status action. Params: "
         "provider, mode (text|image), prompt, image_path|image_url, model, transparent, "
         "width, height, name, output_folder.\n"
-        "- remove_background: Unsupported in this version; returns an error instead of a job_id.\n"
         "- status: Poll an async job by job_id -> { state, progress, assetPath?, error? }.\n"
         "- cancel: Cancel an in-flight job by job_id.\n"
         "- list_providers: List configured image providers and capabilities (no key values).\n"
         "- list_models: Search/paginate live fal and OpenRouter models, modes and freshness.\n"
-        "- refresh_models: Force discovery. Repeat list_models while catalogs[].refreshing is true."
+        "- refresh_models: Force discovery. Repeat list_models while catalogs[].refreshing is true.\n\n"
+        "Background removal is unsupported. Legacy direct remove_background requests return "
+        "an unsupported_capability error without submitting a job. The transparent option "
+        "only sets the Unity texture import flag; it does not remove backgrounds."
     ),
     annotations=ToolAnnotations(
         title="Generate Image",
@@ -45,7 +47,6 @@ async def generate_image(
     action: Annotated[
         Literal[
             "generate",
-            "remove_background",
             "status",
             "cancel",
             "list_providers",
@@ -79,10 +80,23 @@ async def generate_image(
     limit: Annotated[int, "Model page size (1..200; default 50)."] | None = None,
     offset: Annotated[int, "Model page offset (default 0)."] | None = None,
 ) -> dict[str, Any]:
+    action_lower = action.lower()
+    if action_lower == "remove_background":
+        return {
+            "success": False,
+            "error": "Background removal is unsupported in this version. 'transparent' only "
+            "sets the Unity texture import flag and does not remove backgrounds.",
+            "data": {
+                "reason": "unsupported_capability",
+                "capability": "remove_background",
+                "supported": False,
+            },
+        }
+
     unity_instance = await get_unity_instance_from_context(ctx)
 
     params_dict = {
-        "action": action.lower(),
+        "action": action_lower,
         "provider": provider,
         "mode": mode,
         "prompt": prompt,

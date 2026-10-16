@@ -61,7 +61,13 @@ namespace MCPForUnity.Editor.Tools
                 geometry["local_scale"] = new JArray(go.transform.localScale.x, go.transform.localScale.y, go.transform.localScale.z);
                 geometry["local_position"] = new JArray(go.transform.localPosition.x, go.transform.localPosition.y, go.transform.localPosition.z);
                 geometry["local_rotation"] = new JArray(go.transform.localEulerAngles.x, go.transform.localEulerAngles.y, go.transform.localEulerAngles.z);
-                bool canvasEnabled = go.GetComponentsInParent<Canvas>(true).All(item => item.enabled);
+                // Graphics know their effective Canvas, including fallback past a disabled nested Canvas.
+                // Containers describe eligibility beneath the nearest usable Canvas; they have no rendered pixels of their own.
+                var canvas =
+                    graphic == null
+                        ? go.GetComponentsInParent<Canvas>(true).FirstOrDefault(item => item.isActiveAndEnabled)
+                        : graphicType.GetProperty("canvas")?.GetValue(graphic) as Canvas;
+                bool canvasEnabled = canvas != null && canvas.isActiveAndEnabled;
                 bool visible =
                     go.activeInHierarchy
                     && canvasEnabled

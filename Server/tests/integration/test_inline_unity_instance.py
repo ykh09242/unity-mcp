@@ -7,16 +7,11 @@ When a tool call includes unity_instance in its arguments, the middleware:
   3. Sets it in request-scoped state for that call only (does NOT persist to session)
 """
 
-import sys
-import types
 from types import SimpleNamespace
 
 import pytest
 
-# Load the real transport before fixtures replace PluginHub, so its cached
-# imports cannot retain a fake hub after fixture teardown.
-import transport.unity_transport
-from transport.plugin_hub import _ConnectionReadIdentity
+import transport.unity_instance_middleware as instance_middleware
 
 from .test_helpers import DummyContext
 from core.config import config
@@ -49,8 +44,6 @@ def _make_middleware(
     sessions: dict of session_id -> SimpleNamespace(project=..., hash=...)
     pool_instances: list of SimpleNamespace(id=..., hash=...)
     """
-    plugin_hub_mod = types.ModuleType("transport.plugin_hub")
-
     _sessions = sessions or {}
     _configured = plugin_hub_configured
 
@@ -67,10 +60,9 @@ def _make_middleware(
         async def _resolve_session_id(cls, instance, user_id=None):
             return None
 
-    plugin_hub_mod.PluginHub = FakePluginHub
-    plugin_hub_mod._ConnectionReadIdentity = _ConnectionReadIdentity
-    monkeypatch.setitem(sys.modules, "transport.plugin_hub", plugin_hub_mod)
-    monkeypatch.delitem(sys.modules, "transport.unity_instance_middleware", raising=False)
+    # Patch the consumed dependency, retaining real exception/deadline contracts
+    # and allowing monkeypatch to restore the existing module after each test.
+    monkeypatch.setattr(instance_middleware, "PluginHub", FakePluginHub)
 
     from transport.unity_instance_middleware import UnityInstanceMiddleware
 

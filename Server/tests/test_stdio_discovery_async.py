@@ -121,6 +121,64 @@ async def test_cancelled_autoselect_does_not_persist_late_discovery(
     assert ctx.state == {}, "Cancelled discovery persisted a session selection"
 
 
+@pytest.fixture
+def public_selection(local_discovery, monkeypatch):
+    import services.tools.set_active_instance as selection_tool
+
+    pool, _, middleware, _ = local_discovery
+    monkeypatch.setattr(selection_tool, "get_unity_connection_pool", lambda: pool)
+    monkeypatch.setattr(selection_tool, "get_unity_instance_middleware", lambda: middleware)
+    monkeypatch.setattr(selection_tool, "is_sessionless", lambda _: False)
+    return selection_tool.set_active_instance
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selector", ["Main@deadbeef", "dead", "6400"])
+async def test_public_selection_keeps_event_loop_responsive(
+    local_discovery, public_selection, monkeypatch, selector
+):
+    pool, target, middleware, ctx = local_discovery
+    started, _, release, threads = gated_discovery(monkeypatch, target)
+    request = asyncio.create_task(public_selection(ctx, selector))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        assert len(threads) == 1 and threads[0] != threading.get_ident()
+        assert not request.done()
+        assert ctx.state == {}
+    finally:
+        release.set()
+        result = await request
+
+    assert result["success"] is True
+    assert result["data"]["instance"] == target.id
+    assert await middleware.get_active_instance(ctx) == target.id
+    assert ctx.thread_ids == [threading.get_ident()]
+    assert pool._connections == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selector", ["Main@deadbeef", "dead", "6400"])
+async def test_cancelled_public_selection_does_not_persist_late_discovery(
+    local_discovery, public_selection, monkeypatch, selector
+):
+    _, target, _, ctx = local_discovery
+    started, completed, release, _ = gated_discovery(monkeypatch, target)
+    request = asyncio.create_task(public_selection(ctx, selector))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        assert not request.done(), "Public discovery blocked the MCP event loop"
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+    finally:
+        release.set()
+        await asyncio.wait_for(completed.wait(), 2)
+        if not request.done():
+            await request
+
+    assert ctx.state == {}
+
+
 @pytest.mark.asyncio
 async def test_missing_exact_selection_fallback_stays_off_event_loop(
     local_discovery,
@@ -156,7 +214,14 @@ async def test_late_autoselect_preserves_explicit_public_tool_selection(
     other = SimpleNamespace(id="Other@cafebabe", hash="cafebabe", name="Other", port=6401)
     started, _, release, _ = gated_discovery(monkeypatch, target)
     original_discovery = PortDiscovery.discover_all_unity_instances
+    original_select = middleware._select_if_unset
+    explicit_selected = asyncio.Event()
     scans = 0
+
+    async def select_after_explicit_write(context, candidate):
+        # Keep automatic selection late even when both discoveries run off-loop.
+        await explicit_selected.wait()
+        return await original_select(context, candidate)
 
     def changing_inventory():
         nonlocal scans
@@ -170,6 +235,7 @@ async def test_late_autoselect_preserves_explicit_public_tool_selection(
         return pool.discover_all_instances(force_refresh=force_refresh)
 
     monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", changing_inventory)
+    monkeypatch.setattr(middleware, "_select_if_unset", select_after_explicit_write)
     monkeypatch.setattr(
         selection_tool,
         "get_unity_connection_pool",
@@ -181,10 +247,12 @@ async def test_late_autoselect_preserves_explicit_public_tool_selection(
     try:
         await asyncio.wait_for(started.wait(), 2)
         result = await selection_tool.set_active_instance(ctx, other.id)
+        explicit_selected.set()
         assert result["success"] and result["data"]["instance"] == other.id
         assert await middleware.get_active_instance(ctx) == other.id
     finally:
         release.set()
+        explicit_selected.set()
         automatic_result = await automatic
     assert automatic_result == other.id
     assert await middleware.get_active_instance(ctx) == other.id

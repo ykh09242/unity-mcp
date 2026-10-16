@@ -25,10 +25,11 @@ UI Toolkit workflow:
    - auto (default) preserves existing UIDocument; new objects prefer PanelRenderer when available.
    - ui_document explicitly selects UIDocument; panel_renderer requires Unity 6.5+ API support.
 6. Use get_visual_tree to inspect the result
-7. Use modify_visual_element to change text, classes, or inline styles on live elements
+7. Use modify_visual_element to change text, classes, or inline styles on live elements. Legacy element_name selects the first match; strict_name=true requires uniqueness. Use element_path for current child indices or element_id from a snapshot for explicit selection. Explicit selectors never fall back to a name.
 8. Use render_ui to capture a visual preview for self-evaluation
    - In play mode: first call queues a WaitForEndOfFrame screen capture and returns pending=true;
-     call render_ui a second time to retrieve the saved PNG (hasContent will be true).
+     resume with capture_id from that response to retrieve the PNG. Cancel with that ID and cancel_capture=true.
+     ID-less calls always start separate requests, including identical settings; another live owner is rejected.
    - In editor mode: assigns a RenderTexture to PanelSettings (best-effort; may stay blank).
 9. Use detach_ui_document to remove the selected UI component from a GameObject
 10. Use delete to remove .uxml/.uss files
@@ -51,6 +52,8 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `reference_resolution` | `dict[str, int] \| None` | — | Reference resolution as {width, height}. Legacy shorthand; prefer using 'settings' dict. |
 | `settings` | `dict[str, Any] \| None` | — | Generic PanelSettings properties dict for create_panel_settings. Keys: scaleMode (ConstantPixelSize\|ConstantPhysicalSize\|ScaleWithScreenSize), referenceResolution ({width,height}), screenMatchMode (MatchWidthOrHeight\|ShrinkToFit\|ExpandToFill), match (0-1 float), referenceDpi, fallbackDpi, sortingOrder, targetDisplay, clearColor (bool), colorClearValue (#RRGGBB or {r,g,b,a}), clearDepthStencil, themeStyleSheet (asset path), dynamicAtlasSettings ({minAtlasSize,maxAtlasSize,maxSubTextureSize,activeFilters}). |
 | `max_depth` | `int \| None` | — | Max depth to traverse visual tree (default 10). |
+| `capture_id` | `str \| None` | — | Play-mode capture ID returned by render_ui. Supply this ID alone to poll the original request; optional target/output settings must match the start request. Omit to start a separate capture even with identical settings. Results expire after 30 seconds. |
+| `cancel_capture` | `bool \| None` | — | Cancel the Play-mode capture owned by capture_id (default false). For render_ui. |
 | `width` | `int \| None` | — | Render width in pixels, 1 to 8192 (default 1920). The frame may contain at most 33,554,432 pixels. For render_ui. |
 | `height` | `int \| None` | — | Render height in pixels, 1 to 8192 (default 1080). For render_ui. |
 | `include_image` | `bool \| None` | — | Return inline base64 PNG in the response (default false). For render_ui. |
@@ -61,7 +64,10 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `filter_type` | `str \| None` | — | Filter UI assets by type: 'uxml', 'uss', 'PanelSettings', or omit for all. For list. |
 | `page_size` | `int \| None` | — | Number of results per page: 1-1000 (default 50). For list. |
 | `page_number` | `int \| None` | — | Page number, 1-based (default 1). For list. |
-| `element_name` | `str \| None` | — | Name of the visual element to modify (the 'name' attribute in UXML). For modify_visual_element. |
+| `element_name` | `str \| None` | — | Visual element name. Legacy first match unless strict_name=true. Optional exact name guard with element_path or element_id. For modify_visual_element. |
+| `element_path` | `str` | — | Current snapshot/content-container child-index path, e.g. '/0/1'; empty string selects root. Zero-based decimal indices, no leading zeros. No persistent identity or replacement detection. Mutually exclusive with element_id; no name fallback. Omit when unused; explicit null is invalid. |
+| `element_id` | `str` | — | Exact current UI Toolkit snapshot node ID. Uses the snapshot's auto-selected UI component; use element_path for another component_type. Semantic path, not a persistent handle; same-path replacement is not detected. No name fallback. Omit when unused; null/empty invalid. |
+| `strict_name` | `bool \| None` | — | Require exactly one element_name match over the UQuery root and physical control internals. Default false keeps legacy first match. Active initialized UI required; bounded scan may refuse. Explicit selectors take precedence; element_name then guards the selected name. |
 | `text` | `str \| None` | — | New text content for Label/Button elements. For modify_visual_element. |
 | `add_classes` | `list[str] \| None` | — | USS class names to add to the element. For modify_visual_element. |
 | `remove_classes` | `list[str] \| None` | — | USS class names to remove from the element. For modify_visual_element. |

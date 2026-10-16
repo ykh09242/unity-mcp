@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
@@ -162,6 +164,38 @@ namespace MCPForUnity.Editor.Clients
             else
             {
                 throw new InvalidOperationException(result);
+            }
+        }
+
+        public override void Unregister()
+        {
+            string path = GetConfigPath();
+            try
+            {
+                if (File.Exists(path))
+                {
+                    byte[] original = File.ReadAllBytes(path);
+                    bool bom = original.Length >= 3 && original[0] == 0xef && original[1] == 0xbb && original[2] == 0xbf;
+                    int offset = bom ? 3 : 0;
+                    string document = new UTF8Encoding(false, true).GetString(original, offset, original.Length - offset);
+                    string updated = CodexConfigHelper.RemoveCodexServerBlock(document);
+                    if (updated != document)
+                    {
+                        // Preserve UTF-8 BOM and line endings; reject a concurrent edit rather
+                        // than replacing settings that were not part of the parsed snapshot.
+                        if (!original.SequenceEqual(File.ReadAllBytes(path)))
+                            throw new IOException("Codex configuration changed during unregister; retry after saving your edits.");
+                        McpConfigurationHelper.WriteAtomicFile(path, (bom ? "\ufeff" : "") + updated);
+                    }
+                }
+                client.SetStatus(McpStatus.NotConfigured);
+                client.configuredTransport = Models.ConfiguredTransport.Unknown;
+            }
+            catch (Exception ex)
+            {
+                // Token files belong to the shared endpoint and other client registrations.
+                // Unregister removes only the reserved unityMCP TOML entry.
+                throw new InvalidOperationException("Failed to unregister Codex unityMCP: " + ex.Message, ex);
             }
         }
 

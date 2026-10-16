@@ -162,11 +162,22 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             state = "done",
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
+                            model_import_stage = job.ModelImportStage,
                             progress = 1f,
                         }
                     );
                 case AssetGenJobState.Failed:
-                    return new ErrorResponse(job.Error ?? "Import failed.", new { state = "failed" });
+                    return new ErrorResponse(
+                        job.Error ?? "Import failed.",
+                        new
+                        {
+                            state = "failed",
+                            asset_path = job.AssetPath,
+                            asset_guid = job.AssetGuid,
+                            model_import_stage = job.ModelImportStage,
+                            model_import_error_code = job.ModelImportErrorCode,
+                        }
+                    );
                 case AssetGenJobState.Canceled:
                     return new SuccessResponse("Import canceled.", new { state = "canceled" });
                 default:

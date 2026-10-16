@@ -16,6 +16,55 @@
 
 ---
 
+## JSON files and stdin
+
+Explicit JSON arguments accept inline JSON, `@path/to/input.json`, or `-` / `@-`
+to read stdin. Quote the entire `@path` argument when the path contains spaces.
+For example, these forms avoid putting script text or JSON quoting rules into a
+PowerShell command line:
+
+```powershell
+unity-mcp raw manage_scene '@scene-params.json'
+unity-mcp script edit 'Assets/Scripts/Player.cs' --edits '@edits.json'
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+Get-Content -Raw -Encoding utf8 .\edits.json | unity-mcp script edit 'Assets/Scripts/Player.cs' --edits -
+```
+
+Files and redirected stdin must contain strict UTF-8 JSON. One leading UTF-8 BOM
+is accepted. Configure the shell's pipe encoding as UTF-8 when piping non-ASCII
+text; using `@file` reads the bytes directly and avoids shell pipe encoding.
+External inputs are read with a **4 MiB byte cap**, including the BOM; malformed
+JSON, invalid encoding, and non-finite numbers (`NaN`, `Infinity`) are rejected
+locally. Existing command limits, such as the script edit content budget and
+batch command count, still apply. Existing inline JSON compatibility repairs
+remain supported where they were previously available; files and stdin are not
+repaired.
+
+Only one JSON input may consume stdin per invocation. A command with multiple
+eligible options, such as `texture create --palette ... --import-settings ...`,
+checks them together before opening any input. Separate file inputs, or one
+file and one stdin input, may be combined. A raw external source must be its
+only params argument; do not combine `@file` or stdin with inline JSON tokens.
+Input errors go to stderr without echoing the payload, and no command is sent.
+
+Source expansion happens once at explicit JSON argument boundaries. Values
+inside JSON, including strings such as `"@other.json"`, remain data. A literal
+JSON string beginning with `@` is expressed as quoted JSON; ordinary object
+properties can contain `@` strings without any escaping beyond JSON quoting.
+
+Supported JSON inputs include raw params; script edits; batch inline commands;
+animation curve keys, transition conditions and raw params; asset/component/
+material properties; camera body/aim/extension props; custom-tool params;
+prefab child creation; ProBuilder params, points, edges and index selections;
+sprite clips; texture palettes, import settings, sprite pivots and set-pixels;
+VFX line positions/raw params; and physics gravity JSON.
+
+Mixed literal fields retain their current behavior: camera view-target names,
+texture hex colors, base64 pixels, and generic string/property values do not
+expand `@` markers. Existing `batch run FILE`, scenario/suite file or stdin
+commands, and scene-edit file workflows retain their established syntax and
+limits.
+
 ## Installation
 
 ### Prerequisites

@@ -68,7 +68,7 @@ async def test_server_shutdown_releases_plugin_commands_and_ping_tasks(lifecycle
         ws.close.assert_awaited_once()
         done, _ = await asyncio.wait({command}, timeout=0.2)
         assert command in done
-        assert command.result()["hint"] == "retry"
+        assert command.result()["hint"] == "inspect_state_before_retry"
     finally:
         if command is not None:
             command.cancel()

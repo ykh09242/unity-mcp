@@ -6,7 +6,9 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -19,14 +21,20 @@ from websockets.sync.client import connect
 from core.local_auth import LOCAL_AUTH_HEADER
 
 
-@pytest.fixture
-def running_server(tmp_path):
+@contextmanager
+def local_server_process(tmp_path: Path) -> Iterator[tuple[str, int, str]]:
+    """Start an isolated production server using the selected worktree's source."""
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     token_path = tmp_path / "launch-token"
     env = {
         **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            filter(
+                None, (str(Path(__file__).resolve().parents[2] / "src"), os.getenv("PYTHONPATH"))
+            )
+        ),
         "DISABLE_TELEMETRY": "1",
         "UNITY_MCP_SKIP_STARTUP_CONNECT": "1",
         "UNITY_MCP_HTTP_REMOTE_HOSTED": "false",
@@ -72,6 +80,13 @@ def running_server(tmp_path):
             finally:
                 process.terminate()
                 process.wait(timeout=10)
+
+
+@pytest.fixture
+def running_server(tmp_path):
+    """Keep the plugin registration scenario's server isolated to its test."""
+    with local_server_process(tmp_path) as server:
+        yield server
 
 
 @pytest.mark.asyncio

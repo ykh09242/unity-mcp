@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using Unity.Profiling;
@@ -12,8 +14,12 @@ using UProfiler = UnityEngine.Profiling.Profiler;
 
 namespace MCPForUnity.Editor.Tools.Graphics
 {
+    [InitializeOnLoad]
     internal static class RenderingStatsOps
     {
+        private static readonly int MainThreadId = Thread.CurrentThread.ManagedThreadId;
+        internal static int ActiveCaptureCount { get; private set; }
+
         private static readonly (string counterName, string jsonKey)[] COUNTER_MAP = new[]
         {
             ("Draw Calls Count", "draw_calls"),
@@ -37,21 +43,162 @@ namespace MCPForUnity.Editor.Tools.Graphics
         };
 
         // === stats_get ===
-        internal static object GetStats(JObject @params)
-        {
-            var stats = new Dictionary<string, object>();
+        internal static object GetStats(JObject @params) => GetStatsAsync(@params, CancellationToken.None);
 
-            foreach (var (counterName, jsonKey) in COUNTER_MAP)
+        internal static Task<object> GetStatsAsync(JObject @params, CancellationToken cancellationToken) =>
+            CaptureCountersAsync(ProfilerCategory.Render, COUNTER_MAP, cancellationToken);
+
+        internal static Task<object> CaptureCountersAsync(
+            ProfilerCategory category,
+            (string counterName, string jsonKey)[] counters,
+            CancellationToken cancellationToken
+        )
+        {
+            if (Thread.CurrentThread.ManagedThreadId != MainThreadId)
+                return Task.FromException<object>(new InvalidOperationException("Rendering counters must be captured on the Editor main thread."));
+            if (cancellationToken.IsCancellationRequested)
+                return Task.FromCanceled<object>(cancellationToken);
+
+            var completion = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var recorders = new List<ProfilerRecorder>();
+            var errors = new List<string>();
+            double deadline = EditorApplication.timeSinceStartup + 2;
+            int ticks = 0;
+            bool cleaned = false;
+
+            void Cleanup()
             {
-                using var recorder = ProfilerRecorder.StartNew(ProfilerCategory.Render, counterName);
-                stats[jsonKey] = recorder.Valid ? recorder.CurrentValue : 0;
+                if (cleaned)
+                    return;
+                cleaned = true;
+                EditorApplication.update -= Tick;
+                AssemblyReloadEvents.beforeAssemblyReload -= Abort;
+                EditorApplication.quitting -= Abort;
+                foreach (var recorder in recorders)
+                    recorder.Dispose();
+                recorders.Clear();
+                ActiveCaptureCount--;
             }
 
-            return new
+            void Abort()
             {
-                success = true,
-                message = "Rendering stats captured.",
-                data = stats,
+                Cleanup();
+                completion.TrySetCanceled();
+            }
+
+            void Tick()
+            {
+                // Tokens may be canceled on worker threads. Native access and disposal
+                // remain on this Editor update, before the task settles.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    Cleanup();
+                    completion.TrySetCanceled(cancellationToken);
+                    return;
+                }
+
+                try
+                {
+                    ticks++;
+                    bool awaitingSample = recorders.Any(recorder => recorder.Valid && recorder.Count == 0);
+                    bool boundedWait = ticks >= 30 || EditorApplication.timeSinceStartup >= deadline;
+                    if (ticks < 2 || (awaitingSample && !boundedWait))
+                    {
+                        EditorApplication.QueuePlayerLoopUpdate();
+                        return;
+                    }
+
+                    var stats = new Dictionary<string, object>();
+                    var evidence = new Dictionary<string, object>();
+                    int completedCounters = 0;
+                    for (int i = 0; i < recorders.Count; i++)
+                    {
+                        var recorder = recorders[i];
+                        bool supported = recorder.Valid;
+                        int count = supported ? recorder.Count : 0;
+                        long value = count > 0 ? recorder.GetSample(count - 1).Value : 0;
+                        var counter = DescribeCounter(supported, count, value, supported ? recorder.UnitType.ToString() : "Unknown", errors[i]);
+                        stats[counters[i].jsonKey] = counter["value"];
+                        evidence[counters[i].jsonKey] = counter;
+                        if ((bool)counter["valid"])
+                            completedCounters++;
+                    }
+                    stats["counter_status"] = evidence;
+                    bool partial = completedCounters < counters.Length;
+                    var result = new
+                    {
+                        success = true,
+                        message = partial ? "Rendering stats captured with unavailable counters. See counter_status." : "Rendering stats captured.",
+                        partial,
+                        status = completedCounters == 0 ? "unavailable"
+                        : partial ? "partial"
+                        : "complete",
+                        sampling = new
+                        {
+                            source = "completed_frame",
+                            editor_updates = ticks,
+                            completed_counters = completedCounters,
+                            requested_counters = counters.Length,
+                            bounded_wait = boundedWait && awaitingSample,
+                        },
+                        data = stats,
+                    };
+                    Cleanup();
+                    completion.TrySetResult(result);
+                }
+                catch (Exception ex)
+                {
+                    Cleanup();
+                    completion.TrySetException(ex);
+                }
+            }
+
+            ActiveCaptureCount++;
+            try
+            {
+                foreach (var (counterName, _) in counters)
+                {
+                    try
+                    {
+                        // Capacity one retains only the most recent completed frame.
+                        recorders.Add(ProfilerRecorder.StartNew(category, counterName, 1));
+                        errors.Add(null);
+                    }
+                    catch (Exception ex)
+                    {
+                        recorders.Add(default);
+                        errors.Add(ex.Message);
+                    }
+                }
+                AssemblyReloadEvents.beforeAssemblyReload += Abort;
+                EditorApplication.quitting += Abort;
+                EditorApplication.update += Tick;
+                EditorApplication.QueuePlayerLoopUpdate();
+            }
+            catch (Exception ex)
+            {
+                Cleanup();
+                completion.TrySetException(ex);
+            }
+            return completion.Task;
+        }
+
+        internal static Dictionary<string, object> DescribeCounter(bool supported, int sampleCount, long value, string unit, string error)
+        {
+            bool valid = supported && sampleCount > 0 && error == null;
+            return new Dictionary<string, object>
+            {
+                ["value"] = valid ? (object)value : null,
+                ["supported"] = supported,
+                ["valid"] = valid,
+                ["unit"] = unit,
+                ["sample_count"] = sampleCount,
+                ["status"] =
+                    error != null ? "invalid"
+                    : !supported ? "unsupported"
+                    : sampleCount == 0 ? "no_completed_sample"
+                    : "completed",
+                ["error"] = error,
             };
         }
 

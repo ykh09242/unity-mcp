@@ -2,6 +2,7 @@
 
 import sys
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
 
 from cli.utils.config import get_config
@@ -341,7 +342,7 @@ def clip_info(clip_path: str):
     "--keys",
     "-k",
     required=True,
-    help='Keyframes as JSON: [[0,0],[0.5,1],[1,0]] or [{"time":0,"value":0},...]',
+    help='Keyframes as JSON: [[0,0],[0.5,1],[1,0]] or [{"time":0,"value":0},...] Accepts @file or -/@- stdin.',
 )
 @handle_unity_errors
 def clip_add_curve(clip_path: str, property_path: str, component_type: str, keys: str):
@@ -353,6 +354,8 @@ def clip_add_curve(clip_path: str, property_path: str, component_type: str, keys
             --property "localPosition.y" --type Transform \\
             --keys "[[0,0],[0.5,2],[1,0]]"
     """
+    keys = admit_json_inputs(keys=keys)["keys"]
+
     config = get_config()
     keys_parsed = parse_json_list_or_exit(keys, "keys")
 
@@ -378,7 +381,12 @@ def clip_add_curve(clip_path: str, property_path: str, component_type: str, keys
     help="Property path (e.g. 'localPosition.x').",
 )
 @click.option("--type", "-t", "component_type", default="Transform", help="Component type name.")
-@click.option("--keys", "-k", required=True, help="Keyframes as JSON: [[0,0],[0.5,1],[1,0]]")
+@click.option(
+    "--keys",
+    "-k",
+    required=True,
+    help="Keyframes as JSON: [[0,0],[0.5,1],[1,0]] Accepts @file or -/@- stdin.",
+)
 @handle_unity_errors
 def clip_set_curve(clip_path: str, property_path: str, component_type: str, keys: str):
     """Replace all keyframes on a curve in an AnimationClip.
@@ -389,6 +397,8 @@ def clip_set_curve(clip_path: str, property_path: str, component_type: str, keys
             --property "localPosition.y" --type Transform \\
             --keys "[[0,0],[1,3]]"
     """
+    keys = admit_json_inputs(keys=keys)["keys"]
+
     config = get_config()
     keys_parsed = parse_json_list_or_exit(keys, "keys")
 
@@ -418,7 +428,7 @@ def clip_set_curve(clip_path: str, property_path: str, component_type: str, keys
     "--keys",
     "-k",
     required=True,
-    help='Vector3 keyframes as JSON: [{"time":0,"value":[0,1,0]},...]',
+    help='Vector3 keyframes as JSON: [{"time":0,"value":[0,1,0]},...] Accepts @file or -/@- stdin.',
 )
 @handle_unity_errors
 def clip_set_vector_curve(clip_path: str, vector_property: str, component_type: str, keys: str):
@@ -430,6 +440,8 @@ def clip_set_vector_curve(clip_path: str, vector_property: str, component_type: 
             --property "localPosition" \\
             --keys '[{"time":0,"value":[0,1,-10]},{"time":1,"value":[2,1,-10]}]'
     """
+    keys = admit_json_inputs(keys=keys)["keys"]
+
     config = get_config()
     keys_parsed = parse_json_list_or_exit(keys, "keys")
 
@@ -689,7 +701,7 @@ def controller_add_state(
     "--conditions",
     "-c",
     default=None,
-    help='Conditions as JSON: [{"parameter":"Speed","mode":"greater","threshold":0.1}]',
+    help='Conditions as JSON: [{"parameter":"Speed","mode":"greater","threshold":0.1}] Accepts @file or -/@- stdin.',
 )
 @click.option("--layer-index", default=0, type=int, help="Layer index.")
 @handle_unity_errors
@@ -710,6 +722,8 @@ def controller_add_transition(
             --no-exit-time --duration 0.25 \\
             --conditions '[{"parameter":"Speed","mode":"greater","threshold":0.1}]'
     """
+    conditions = admit_json_inputs(conditions=conditions)["conditions"]
+
     config = get_config()
     params: dict[str, Any] = {
         "action": "controller_add_transition",
@@ -1041,7 +1055,13 @@ def controller_add_blend_tree_child(
 @click.argument("action")
 @click.argument("target", required=False)
 @click.option("--clip-path", default=None, help="AnimationClip asset path.")
-@click.option("--params", "-p", "extra_params", default="{}", help="Additional parameters as JSON.")
+@click.option(
+    "--params",
+    "-p",
+    "extra_params",
+    default="{}",
+    help="Additional parameters as JSON. Accepts @file or -/@- stdin.",
+)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
 @handle_unity_errors
 def animation_raw(
@@ -1064,6 +1084,8 @@ def animation_raw(
         unity-mcp animation raw animator_play "Player" --params '{"stateName": "Walk"}'
         unity-mcp animation raw clip_create --clip-path "Assets/Anim/Test.anim" --params '{"length": 2.0, "loop": true}'
     """
+    extra_params = admit_json_inputs(extra_params=extra_params)["extra_params"]
+
     config = get_config()
     parsed = parse_json_dict_or_exit(extra_params, "params")
 

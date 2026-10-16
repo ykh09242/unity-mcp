@@ -78,7 +78,7 @@ URI: mcpforunity://editor/windows
 
 **URI:** `mcpforunity://scene/gameobject/{instance_id}`
 
-Get detailed information about a single GameObject by instance ID. Returns name, tag, layer, active state, transform data, parent/children IDs, and component type list (no full component properties).
+Get bounded GameObject metadata by instance ID: scalar transforms, parent, first 50 child IDs and up to 64 component type names. Follow childrenNextCursor via /children?page_size=50&cursor=... . Children use live sibling indices; restart after any hierarchy edit.
 
 URI: mcpforunity://scene/gameobject/{instance_id}
 
@@ -97,6 +97,18 @@ URI: mcpforunity://scene/gameobject-api
 **Parameters:**
 
 - `_ctx` (`Context`, required) — 
+
+## `gameobject_children`
+
+**URI:** `mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}`
+
+Read bounded direct child IDs in sibling order plus object metadata. page_size defaults to 50 (1-500). Reuse childrenNextCursor with identical target/page_size within 30 seconds. Stable sources page exactly; live-index cursors perform bounded observed-change checks, so restart after any hierarchy edit. Cursors expire on reload or eviction.
+
+**Parameters:**
+
+- `instance_id` (`str`, required) — Scene GameObject instance ID returned by find_gameobjects.
+- `page_size` (`int`, optional) — Direct child IDs per page, from 1 to 500; default 50.
+- `cursor` (`str | None`, optional) — Opaque childrenNextCursor from the preceding page; omit to start. Keep the same target and page_size.
 
 ## `gameobject_component`
 
@@ -130,7 +142,7 @@ URI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,i
 
 **URI:** `mcpforunity://tests`
 
-Provides the first page of Unity tests (default 50 items). For mode filtering, read mcpforunity://tests/{mode}. This resource does not expose further pages.
+Provides the first page of Unity tests (default 50 items). For mode filtering, read mcpforunity://tests/{mode}. Use the get_tests tool for name filtering and further pages.
 
 URI: mcpforunity://tests
 
@@ -139,7 +151,7 @@ URI: mcpforunity://tests
 
 **URI:** `mcpforunity://tests/{mode}`
 
-Provides the first page of tests for a specific mode (EditMode or PlayMode). This resource does not expose name filtering or further pages.
+Provides the first page of tests for a specific mode (EditMode or PlayMode). Use the get_tests tool for name filtering and further pages.
 
 URI: mcpforunity://tests/{mode}
 
@@ -191,6 +203,13 @@ URI: mcpforunity://prefab/{encoded_path}
 **Parameters:**
 
 - `encoded_path` (`str`, required) — 
+
+## `project_capabilities`
+
+**URI:** `mcpforunity://capabilities`
+
+Current selected project's supported features, bounded limits, connection generation and recovery actions. Package presence and scene/runtime readiness are distinct. Unknown means unobserved; Player readiness requires existing bundle preflight. One read budget includes resource selection; separately bounded transport cancellation grace is reported in limits. No completed query cache (TTL 0). URI: mcpforunity://capabilities
+
 
 ## `project_info`
 

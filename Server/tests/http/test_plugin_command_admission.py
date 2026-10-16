@@ -241,12 +241,10 @@ async def test_all_completion_paths_release_admission(admission_hub, monkeypatch
             await PluginHub._evict_connection("a", "test-stale")
         elif cleanup == "shutdown":
             await PluginHub.shutdown()
-        if cleanup == "timeout":
-            with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(task, 0.3)
-        else:
-            result = await asyncio.wait_for(task, 0.3)
-            assert result["success"] is (cleanup == "result")
+        result = await asyncio.wait_for(task, 0.3)
+        assert result["success"] is (cleanup == "result")
+        if cleanup != "result":
+            assert result["data"]["reason"] == "outcome_unknown"
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -284,8 +282,9 @@ async def test_level_cancellation_releases_pending_before_cleanup_await(admissio
 async def test_send_failure_releases_quota_for_the_next_command(admission_hub):
     socket = await register_socket(admission_hub, "a", "alice")
     socket.send_json.side_effect = RuntimeError("controlled socket failure")
-    with pytest.raises(RuntimeError, match="controlled socket failure"):
-        await PluginHub.send_command("a", "run_tests", {})
+    result = await PluginHub.send_command("a", "run_tests", {})
+    assert result["data"]["reason"] == "outcome_unknown"
+    assert "controlled socket failure" in result["error"]
     assert PluginHub._pending == {}
     socket.send_json.side_effect = None
     recovered = await start_command("a")
@@ -324,7 +323,7 @@ async def test_replacement_session_releases_old_user_payload_quota(admission_hub
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     try:
         await hub.on_receive(replacement, {"type": "register", "project_hash": "a"})
-        assert (await asyncio.wait_for(old, 0.3))["hint"] == "retry"
+        assert (await asyncio.wait_for(old, 0.3))["hint"] == "inspect_state_before_retry"
         assert PluginHub._pending == {}
         new_session = await admission_hub.get_session_id_by_hash("a", user_id="alice")
         assert new_session != "a"

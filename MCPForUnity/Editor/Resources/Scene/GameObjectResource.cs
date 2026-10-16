@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -47,13 +48,18 @@ namespace MCPForUnity.Editor.Resources.Scene
 
             try
             {
+                var options = HierarchyPaging.Parse(@params, true);
                 var go = GameObjectLookup.ResolveInstanceID(instanceID.Value) as GameObject;
                 if (go == null)
                 {
                     return new ErrorResponse($"GameObject with instance ID {instanceID} not found.");
                 }
 
-                return new { success = true, data = SerializeGameObject(go) };
+                return new { success = true, data = SerializeGameObject(go, options) };
+            }
+            catch (ArgumentException e)
+            {
+                return new ErrorResponse(e.Message);
             }
             catch (Exception e)
             {
@@ -68,48 +74,59 @@ namespace MCPForUnity.Editor.Resources.Scene
         /// </summary>
         public static object SerializeGameObject(GameObject go)
         {
+            return SerializeGameObject(go, HierarchyPaging.Parse(new JObject(), true));
+        }
+
+        private static object SerializeGameObject(GameObject go, HierarchyPaging.Options options)
+        {
             if (go == null)
                 return null;
 
             var transform = go.transform;
 
-            // Get component type names (not full serialization)
-            var componentTypes = go.GetComponents<Component>().Where(c => c != null).Select(c => c.GetType().Name).ToList();
-
-            // Get children instance IDs (not full serialization)
-            var childrenIds = new List<int>();
-            foreach (Transform child in transform)
-            {
-                childrenIds.Add(child.gameObject.GetInstanceIDCompat());
-            }
+            var budget = new HierarchyPaging.Budget(CancellationToken.None);
+            var children = HierarchyPaging.Children(go, options, budget);
+            var componentTypes = HierarchyPaging.ComponentNames(go, budget, false, out int componentCount);
 
             int layer = go.layer;
             var parent = transform.parent;
 
-            return new
-            {
-                instanceID = go.GetInstanceIDCompat(),
-                name = go.name,
-                tag = go.tag,
-                layer = layer,
-                layerName = LayerMask.LayerToName(layer),
-                active = go.activeSelf,
-                activeInHierarchy = go.activeInHierarchy,
-                isStatic = go.isStatic,
-                transform = new
+            var data = JObject.FromObject(
+                new
                 {
-                    position = SerializeVector3(transform.position),
-                    localPosition = SerializeVector3(transform.localPosition),
-                    rotation = SerializeVector3(transform.eulerAngles),
-                    localRotation = SerializeVector3(transform.localEulerAngles),
-                    scale = SerializeVector3(transform.localScale),
-                    lossyScale = SerializeVector3(transform.lossyScale),
-                },
-                parent = parent != null ? parent.gameObject.GetInstanceIDCompat() : (int?)null,
-                children = childrenIds,
-                componentTypes = componentTypes,
-                path = GameObjectLookup.GetGameObjectPath(go),
-            };
+                    instanceID = go.GetInstanceIDCompat(),
+                    name = budget.Text(go.name),
+                    tag = budget.Text(go.tag),
+                    layer = layer,
+                    layerName = budget.Text(LayerMask.LayerToName(layer)),
+                    active = go.activeSelf,
+                    activeInHierarchy = go.activeInHierarchy,
+                    isStatic = go.isStatic,
+                    transform = new
+                    {
+                        position = SerializeVector3(transform.position),
+                        localPosition = SerializeVector3(transform.localPosition),
+                        rotation = SerializeVector3(transform.eulerAngles),
+                        localRotation = SerializeVector3(transform.localEulerAngles),
+                        scale = SerializeVector3(transform.localScale),
+                        lossyScale = SerializeVector3(transform.lossyScale),
+                    },
+                    parent = parent != null ? parent.gameObject.GetInstanceIDCompat() : (int?)null,
+                    componentTypes = componentTypes,
+                    componentCount = componentCount,
+                    componentTypesTruncated = componentCount > HierarchyPaging.ComponentLimit,
+                    path = HierarchyPaging.ObjectPath(transform, budget),
+                }
+            );
+            data.Merge(children);
+            data["metadataTruncated"] = budget.Truncated;
+            data["workUsed"] = budget.Used;
+            data["workLimit"] = HierarchyPaging.WorkLimit;
+            data["outputLimitBytes"] = HierarchyPaging.OutputLimit;
+            data["componentTypeLimit"] = HierarchyPaging.ComponentLimit;
+            data["stringLimit"] = HierarchyPaging.StringLimit;
+            data["childrenCursorTtlSeconds"] = 30;
+            return data;
         }
 
         private static object SerializeVector3(Vector3 v)

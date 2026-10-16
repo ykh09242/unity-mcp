@@ -62,6 +62,93 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         private static JObject Call(JObject p) => JObject.Parse(JsonConvert.SerializeObject(GenerateImage.HandleCommand(p)));
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RemoveBackground_IsExplicitlyUnsupportedWithoutProviderJobsOrFileMutation(bool configured)
+        {
+            if (configured)
+                _store.Set("fal", "fixture-only");
+            var transport = new FakeHttpTransport();
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            const string source = TestFolder + "/original.png";
+            byte[] original = { 137, 80, 78, 71, 1, 2, 3, 4 };
+            WriteProjectFile(source, original);
+            string output = TestFolder + "/must-not-create";
+
+            JObject response = Call(
+                new JObject
+                {
+                    ["action"] = "remove_background",
+                    ["provider"] = "fal",
+                    ["image_path"] = source,
+                    ["output_folder"] = output,
+                }
+            );
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("unsupported", response.Value<string>("error").ToLowerInvariant());
+            Assert.AreEqual("unsupported_capability", response["data"]?.Value<string>("reason"));
+            Assert.AreEqual("remove_background", response["data"]?.Value<string>("capability"));
+            Assert.AreEqual(false, response["data"]?.Value<bool>("supported"));
+            Assert.IsNull(response["data"]?["job_id"]);
+            Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
+            Assert.AreEqual(0, transport.RecordedRequests.Count);
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(AssetGenPaths.ToAbsolute(source)));
+            Assert.IsFalse(Directory.Exists(AssetGenPaths.ToAbsolute(output)));
+        }
+
+        [Test]
+        public void UnknownAction_DoesNotAdvertiseUnsupportedBackgroundRemoval()
+        {
+            JObject response = Call(new JObject { ["action"] = "unknown" });
+
+            Assert.IsFalse(response.Value<bool>("success"));
+            StringAssert.Contains("Supported:", response.Value<string>("error"));
+            StringAssert.DoesNotContain("remove_background", response.Value<string>("error"));
+        }
+
+        [Test]
+        public void ImageProviderCapabilitiesAdvertiseOnlySupportedGenerationModes()
+        {
+            JObject response = Call(new JObject { ["action"] = "list_providers" });
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(2, ((JArray)response["data"]["providers"]).Count);
+            foreach (var provider in response["data"]["providers"])
+            {
+                CollectionAssert.AreEquivalent(new[] { "text", "image" }, provider["capabilities"].ToObject<string[]>());
+                CollectionAssert.DoesNotContain(provider["capabilities"].ToObject<string[]>(), "remove_background");
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Generate_ExplicitModelAndOutputStillSubmitWithTransparentOption(bool transparent)
+        {
+            _store.Set("fal", "fixture-only");
+            var transport = new FakeHttpTransport();
+            AssetGenJobManager.TransportOverrideForTests = transport;
+
+            JObject response = Call(
+                new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = "fal",
+                    ["model"] = FalAdapter.DefaultModel,
+                    ["mode"] = "text",
+                    ["prompt"] = "fixture",
+                    ["output_folder"] = TestFolder,
+                    ["transparent"] = transparent,
+                }
+            );
+
+            Assert.AreEqual("pending", response.Value<string>("_mcp_status"), response.ToString());
+            Assert.IsNotEmpty(response["data"].Value<string>("job_id"));
+            Assert.AreEqual(1, AssetGenJobManager.RecentJobs().Count);
+            AssetGenJobManager.TryAdvanceForTests(response["data"].Value<string>("job_id"));
+            Assert.AreEqual(1, transport.RecordedRequests.Count);
+        }
+
         [TestCase("image", false)]
         [TestCase("image", true)]
         [TestCase("audio", false)]

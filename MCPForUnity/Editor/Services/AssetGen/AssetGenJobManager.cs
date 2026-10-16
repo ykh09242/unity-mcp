@@ -41,6 +41,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
         public string AnimationType; // FBX/OBJ rig mode: null/none | generic | humanoid | legacy
         public string AssetPath;
         public string AssetGuid;
+
+        // Model evidence only: saved bytes, registered GUID, or a hierarchy with indexed mesh geometry.
+        // Null means this job has not reached model import; usable does not certify materials, rigs or rendering.
+        public string ModelImportStage;
+        public string ModelImportErrorCode;
         public string Error;
     }
 
@@ -655,6 +660,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     throw new Exception("Provider returned WebP, which this Unity image importer does not support. Choose a PNG/JPEG model.");
                 if (actual != null)
                     ext = actual;
+                r.Job.Format = ext;
+            }
+            if (r.Job.Kind == "model" && string.Equals(r.Job.Provider, "tripo", StringComparison.OrdinalIgnoreCase))
+            {
+                ext = TripoAdapter.ValidateModelBytes(bytes, r.OverrideExt);
                 r.Job.Format = ext;
             }
             string root = AssetGenPaths.ResolveOutputFolder(r.OutputFolder, r.Subfolder);

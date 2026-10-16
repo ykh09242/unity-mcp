@@ -45,6 +45,9 @@ def test_preflight_public_contract(case, tmp_path):
         env[key] = str(owned)
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     env["UNITY_MCP_TRANSPORT"] = "http"
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(Path(__file__).resolve().parents[1] / "src"), env.get("PYTHONPATH")))
+    )
     env.pop("PYTEST_CURRENT_TEST", None)
     child = subprocess.run(
         [sys.executable, "-B", __file__, case, str(owned)],
@@ -210,11 +213,16 @@ async def _scenario(case):
             assert response["success"] is False and response["error"] == "fixture refresh failure"
             assert commands.count("refresh_unity") == 1 and "run_tests" not in commands
         elif case == "refresh_exception_blocks":
-            assert (
-                response["success"] is False
-                and response["error"] == "fixture refresh transport exception"
-            )
-            assert response["hint"] == "retry"
+            # A generic dispatch exception cannot prove the refresh never ran.
+            # Preserve the diagnostic and block the requested tests without replay.
+            assert response["success"] is False
+            assert "fixture refresh transport exception" in response["error"]
+            assert response["hint"] == "inspect_state_before_retry"
+            assert response["data"] == {
+                "reason": "outcome_unknown",
+                "command": "refresh_unity",
+                "unity_instance": "Selected@fixture",
+            }
             assert commands.count("refresh_unity") == 1 and "run_tests" not in commands
         else:
             assert response["success"] is True and commands.count("run_tests") == 1

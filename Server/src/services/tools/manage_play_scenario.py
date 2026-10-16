@@ -27,10 +27,10 @@ class PlayScenarioResponse(TypedDict, total=False):
     """Preserve Unity job state, per-step results and bounded failure logs."""
 
     success: bool
-    message: str
-    error: str
+    message: str | None
+    error: str | None
     code: str
-    hint: str
+    hint: str | None
     data: JsonValue
 
 

@@ -98,8 +98,11 @@ def test_negotiated_cancel_uses_original_id_and_releases_partial_transfer(
         # When the caller abandons it or its original deadline expires.
         if reason == "cancel":
             task.cancel()
-        with pytest.raises(CancelledError if reason == "cancel" else TimeoutError):
-            task.result(timeout=2)
+        if reason == "cancel":
+            with pytest.raises(CancelledError):
+                task.result(timeout=2)
+        else:
+            assert task.result(timeout=2)["data"]["reason"] == "outcome_unknown"
         assert done.wait(2)
         # Then the wire receives exactly the same command ID and all accounting is free.
         assert receive(client, wire) == {"type": "cancel", "id": cid}
