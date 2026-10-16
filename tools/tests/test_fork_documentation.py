@@ -5,9 +5,16 @@ import json
 from pathlib import Path
 import re
 import shlex
+import sys
 from urllib.parse import unquote, urlsplit
 
 import pytest
+
+TOOLS = Path(__file__).resolve().parents[1]
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))
+
+from cli_reference import prepare_cli_reference
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -131,69 +138,10 @@ def test_upm_install_examples_select_the_fork_subdirectory_and_release() -> None
 
 
 def test_cli_examples_name_registered_commands_and_options() -> None:
-    # Given the actual Click decorators, without importing/launching the product.
-    main = ast.parse(_read(ROOT / "Server/src/cli/main.py"))
-    option_names = {
-        argument.value
-        for node in ast.walk(main)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "option"
-        for argument in node.args
-        if isinstance(argument, ast.Constant)
-        and isinstance(argument.value, str)
-        and argument.value.startswith("-")
-    }
-    root_commands = {
-        node.args[0].value
-        for node in ast.walk(main)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "command"
-        and node.args
-        and isinstance(node.args[0], ast.Constant)
-    }
-
-    # When parsing task-first command examples.
-    for relative in (
-        "website/docs/guides/cli.md",
-        "website/docs/guides/cli-examples.md",
-        "website/docs/reference/cli.md",
-        "website/docs/guides/multi-instance.md",
-    ):
-        for language, body in FENCES.findall(_read(ROOT / relative)):
-            if language != "bash":
-                continue
-            for line in body.splitlines():
-                words = shlex.split(line)
-                if not words or words[0] != "unity-mcp":
-                    continue
-                words.pop(0)
-                while words and words[0].startswith("-"):
-                    option = words.pop(0)
-                    assert option in option_names or option == "--help"
-                    if option != "--help":
-                        words.pop(0)
-                if not words:
-                    continue
-                group = words.pop(0)
-                if group in root_commands:
-                    continue
-                source = ROOT / f"Server/src/cli/commands/{group}.py"
-                assert source.is_file(), group
-                if words and words[0] != "--help":
-                    declared = ast.parse(_read(source))
-                    commands = {
-                        node.args[0].value
-                        for node in ast.walk(declared)
-                        if isinstance(node, ast.Call)
-                        and isinstance(node.func, ast.Attribute)
-                        and node.func.attr == "command"
-                        and node.args
-                        and isinstance(node.args[0], ast.Constant)
-                    }
-                    # Then the documented subcommand exists in its real command group.
-                    assert words[0] in commands, line
+    # Actual subordinate Click options, required arguments and scalar types are
+    # parsed in an isolated child. Root/group/leaf/parameter callbacks never run.
+    reference = prepare_cli_reference(ROOT)
+    assert reference.example_count > 0
 
 
 def test_authored_cli_inventory_matches_registered_groups() -> None:

@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Annotated, Union
 
 import pytest
@@ -14,6 +14,19 @@ if str(_TOOLS_DIR) not in sys.path:
 
 import generate_docs_reference as docs  # noqa: E402
 from generate_docs_reference import _annotation_description, _diff_trees, _render_type  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def isolated_cli_reference(tmp_path, monkeypatch):
+    """Synthetic MCP registry tests must not depend on the live CLI registry."""
+    output = tmp_path / "cli-commands.md"
+    output.write_text("Synthetic CLI reference.\n", encoding="utf-8")
+    monkeypatch.setattr(docs, "CLI_OUT", output)
+    monkeypatch.setattr(
+        docs,
+        "prepare_cli_reference",
+        lambda root: SimpleNamespace(markdown="Synthetic CLI reference.\n"),
+    )
 
 
 def test_pep604_and_typing_unions_render_bare_collections_consistently():
@@ -261,3 +274,33 @@ def test_generation_stops_before_writes_when_a_public_module_cannot_import(
     # Then: no catalogs or pages have been overwritten or pruned.
     assert sentinel.read_text(encoding="utf-8") == "Existing reference must stay intact.\n"
     assert not resources_root.exists()
+
+
+def test_cli_option_drift_participates_in_canonical_check(tmp_path, monkeypatch):
+    tools_root, resources_root = tmp_path / "tools", tmp_path / "resources"
+    monkeypatch.setattr(docs, "TOOLS_OUT", tools_root)
+    monkeypatch.setattr(docs, "RESOURCES_OUT", resources_root)
+    monkeypatch.setattr(docs, "load_registries", lambda: ([], []))
+    docs.generate(tools_root, resources_root)
+    assert docs.main(["--check"]) == 0
+    original = docs.CLI_OUT.read_bytes()
+    monkeypatch.setattr(
+        docs,
+        "prepare_cli_reference",
+        lambda root: SimpleNamespace(markdown="New subordinate --option.\n"),
+    )
+    assert docs.main(["--check"]) == 1
+    assert docs.CLI_OUT.read_bytes() == original
+
+
+def test_cli_import_failure_prevents_any_reference_writes(tmp_path, monkeypatch):
+    def fail(root):
+        raise ValueError("Incomplete advertised CLI command")
+
+    monkeypatch.setattr(docs, "prepare_cli_reference", fail)
+    monkeypatch.setattr(
+        docs, "generate", lambda: pytest.fail("No reference writes before CLI validation")
+    )
+    before = docs.CLI_OUT.read_bytes()
+    assert docs.main([]) == 1
+    assert docs.CLI_OUT.read_bytes() == before
