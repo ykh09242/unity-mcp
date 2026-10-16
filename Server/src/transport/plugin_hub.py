@@ -1880,6 +1880,14 @@ class PluginHub(WebSocketEndpoint):
         # remain available for the separately owned scoped modern publisher.
         if not config.http_remote_hosted:
             cls._catalog_notifications.publish(_active_mcp_sessions)
+        subscriptions = getattr(cls._mcp, "_catalog_subscriptions", None)
+        if subscriptions is not None:
+            subscriptions.publish(
+                user_id=user_id,
+                project_hash=project_hash,
+                session_id=session_id,
+                catalog_revision=catalog_revision,
+            )
 
     async def _handle_editor_state(self, websocket: WebSocket, data: dict[str, Any]) -> None:
         cls = type(self)
