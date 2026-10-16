@@ -12,7 +12,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import JsonValue
 
 from core.local_auth import LOCAL_AUTH_HEADER
-from tests.http.test_local_control_wire import running_server  # pylint: disable=unused-import
+from tests.http.test_local_control_wire import local_server_process
 
 MODERN_VERSION: Final = "2026-07-28"
 LEGACY_VERSION: Final = "2025-11-25"
@@ -21,10 +21,17 @@ CAPABILITIES_META: Final = "io.modelcontextprotocol/clientCapabilities"
 CLIENT_INFO_META: Final = "io.modelcontextprotocol/clientInfo"
 
 
+@pytest.fixture(scope="module")
+def protocol_server(tmp_path_factory):
+    """Share one server for read-only contracts; every client owns its protocol state."""
+    with local_server_process(tmp_path_factory.mktemp("mcp-protocol-wire")) as server:
+        yield server
+
+
 @pytest.fixture
-def protocol_http(running_server) -> Iterator[httpx.Client]:
-    """Reuse the production subprocess without exposing its token in test parameters."""
-    url, _, token = running_server
+def protocol_http(protocol_server) -> Iterator[httpx.Client]:
+    """Give each case fresh headers/connections while reusing the read-only server."""
+    url, _, token = protocol_server
     with httpx.Client(
         base_url=url,
         headers={LOCAL_AUTH_HEADER: token, "Accept": "application/json, text/event-stream"},
