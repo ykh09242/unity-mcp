@@ -18,8 +18,8 @@ Use list_models to discover current models; compatibility is checked before gene
 
 ACTIONS:
 - generate: Submit an audio job from a text prompt. Returns { job_id }; poll with the status action. Params: provider (fal), prompt, model, duration (seconds), name, output_folder.
-- status: Poll an async job by job_id -> { state, progress, assetPath?, error? }.
-- cancel: Cancel an in-flight job by job_id.
+- status: Poll an async job by job_id; includes recovery_state, recovery_code, provider_task_id and provider_phase. Recorded provider tasks can reconnect after a domain reload within the same Editor session and original 600-second budget. Unknown submission/import outcomes are not replayed; inspect retained output before retrying. Saved local output can resume without a provider key when its recorded file/metadata identity still matches. No recovery across Editor exit is promised.
+- cancel: Stop local job continuation by job_id; this does not guarantee provider-side cancellation or a refund.
 - list_providers: List configured audio providers and capabilities (no key values).
 - list_models: List models and freshness; refresh stale fal data in the background.
 - refresh_models: Force a fal refresh. Repeat list_models while catalogs[].refreshing is true.

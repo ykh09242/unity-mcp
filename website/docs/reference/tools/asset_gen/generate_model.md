@@ -16,8 +16,8 @@ Generate 3D models with AI providers (Tripo, Meshy, fal) and import them into th
 
 ACTIONS:
 - generate: Submit a generation job (text->3D or image->3D). Returns { job_id } immediately; poll with the status action. Params: provider, mode (text|image), prompt, image_path|image_url, format (glb|fbx|obj|usdz), target_size, texture, tier, model, name, output_folder. Tripo supports GLB generation only; omit tier. Tripo texture=false requires v3.0-20250812, v3.1-20260211, or P1-20260311. Other formats require a separate conversion workflow, which this tool does not submit. target_size applies only when Auto-Normalize Imported Models is enabled; finite zero or negative values preserve imported scale. Successful normalization of a model without ModelImporter may return a prefab variant while retaining its source model.
-- status: Poll an async job by job_id -> { state, progress, assetPath?, error? }.
-- cancel: Cancel an in-flight job by job_id.
+- status: Poll an async job by job_id; includes recovery_state, recovery_code, provider_task_id and provider_phase. Recorded provider tasks can reconnect after a domain reload within the same Editor session and original 600-second budget. Unknown submission/import outcomes are not replayed; inspect retained output before retrying. Saved local output can resume without a provider key when its recorded file/metadata identity still matches. No recovery across Editor exit is promised.
+- cancel: Stop local job continuation by job_id; this does not guarantee provider-side cancellation or a refund.
 - list_providers: List configured 3D providers and capabilities (no key values).
 - list_models: Search/paginate live fal 3D models and bundled Tripo/Meshy models.
 - refresh_models: Refresh fal discovery. Repeat list_models while catalogs[].refreshing is true.
