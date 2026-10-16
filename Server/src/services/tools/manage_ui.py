@@ -13,6 +13,8 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from models.ui_layout_diagnostics import validate_ui_layout_diagnostics
+
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation
@@ -43,8 +45,10 @@ def _canonical_ui_path(path: str) -> str:
     group="ui",
     description=(
         "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components). "
-        "Read-only actions: ping, read, get_visual_tree, list. "
+        "Read-only actions: ping, read, get_visual_tree, diagnose, list.  "
         "Modifying actions: create, update, delete, attach_ui_document, detach_ui_document, create_panel_settings, update_panel_settings, modify_visual_element.\n"
+        "diagnose observes bounded current-panel physical geometry/clipping/overflow/sibling-overlap candidates without text or layout updates. "
+        "Unknown/partial results are not a clean-layout assertion; diagnostic paths are not mutation/snapshot selectors.\n"
         "Visual actions: render_ui (captures UI panel to a PNG screenshot for self-evaluation).\n"
         "Structural actions: link_stylesheet (adds a Style src reference to a UXML file).\n\n"
         "UI Toolkit workflow:\n"
@@ -89,6 +93,7 @@ async def manage_ui(
             "create_panel_settings",
             "update_panel_settings",
             "get_visual_tree",
+            "diagnose",
             "render_ui",
             "link_stylesheet",
             "list",
@@ -157,7 +162,7 @@ async def manage_ui(
             ge=0,
             le=24,
             strict=True,
-            description="get_visual_tree inclusive depth: root is 0; default 10, maximum 24.",
+            description="get_visual_tree / diagnose inclusive depth: root is 0; default 10, maximum 24.",
         ),
     ] = None,
     max_nodes: Annotated[
@@ -166,7 +171,7 @@ async def manage_ui(
             ge=1,
             le=1000,
             strict=True,
-            description="get_visual_tree emitted node budget, including root (default 200).",
+            description="get_visual_tree / diagnose emitted node budget, including root (default 200).",
         ),
     ] = None,
     max_evaluations: Annotated[
@@ -175,7 +180,7 @@ async def manage_ui(
             ge=1,
             le=20000,
             strict=True,
-            description="get_visual_tree operation budget: node admissions, child fetches and class probes (default 5000). Not a time or scene-lookup bound.",
+            description="get_visual_tree operation budget: node admissions, child fetches and class probes; diagnose charges ancestors, admissions, child fetches, fixed style probes and pairs (default 5000). Not a time or scene-lookup bound.",
         ),
     ] = None,
     max_characters: Annotated[
@@ -184,7 +189,25 @@ async def manage_ui(
             ge=1,
             le=262144,
             strict=True,
-            description="get_visual_tree shared copied UTF-16 string budget, including metadata (default 65536). Per-string limit 8192 and per-node class limit 64 also apply.",
+            description="get_visual_tree / diagnose shared copied UTF-16 string budget including metadata (default 65536). get_visual_tree per-string limit 8192/class limit 64; diagnose name/type limit 256 and whole physical paths.",
+        ),
+    ] = None,
+    max_pairs: Annotated[
+        int | None,
+        Field(
+            strict=True,
+            ge=0,
+            le=20000,
+            description="diagnose physical sibling pairs examined before filters (default 2000); zero disables overlap and yields partial evidence.",
+        ),
+    ] = None,
+    max_findings: Annotated[
+        int | None,
+        Field(
+            strict=True,
+            ge=1,
+            le=2000,
+            description="diagnose retained candidate findings (default 200); reaching the cap reports partial coverage.",
         ),
     ] = None,
     # render_ui
@@ -298,7 +321,7 @@ async def manage_ui(
 ) -> dict[str, Any]:
     action_lower = action.lower()
 
-    if action_lower == "get_visual_tree":
+    if action_lower in ("get_visual_tree", "diagnose"):
         for key, value, minimum, maximum in (
             ("max_depth", max_depth, 0, 24),
             ("max_nodes", max_nodes, 1, 1000),
@@ -310,11 +333,64 @@ async def manage_ui(
                     "success": False,
                     "message": f"{key} must be an integer from {minimum} to {maximum}.",
                 }
-        if target is not None and len(target) > 4096:
+        if action_lower == "get_visual_tree" and target is not None and len(target) > 4096:
             return {
                 "success": False,
                 "message": "get_visual_tree target must be at most 4096 characters.",
             }
+
+    if action_lower == "diagnose":
+        for key, value, low, high in (
+            ("max_pairs", max_pairs, 0, 20000),
+            ("max_findings", max_findings, 1, 2000),
+        ):
+            if value is not None and (type(value) is not int or not low <= value <= high):
+                return {
+                    "success": False,
+                    "message": f"{key} must be an integer from {low} to {high}.",
+                }
+        if (
+            type(target) is not str
+            or not target.strip()
+            or len(target.encode("utf-16-le", errors="surrogatepass")) // 2 > 4096
+        ):
+            return {"success": False, "message": "invalid_diagnostics_target"}
+        unsupported = (
+            path,
+            contents,
+            source_asset,
+            panel_settings,
+            sort_order,
+            scale_mode,
+            reference_resolution,
+            settings,
+            capture_id,
+            cancel_capture,
+            width,
+            height,
+            include_image,
+            max_resolution,
+            screenshot_file_name,
+            output_folder,
+            stylesheet,
+            filter_type,
+            page_size,
+            page_number,
+            element_path,
+            element_id,
+            strict_name,
+            element_name,
+            text,
+            add_classes,
+            remove_classes,
+            toggle_classes,
+            style,
+            enabled,
+            visible,
+            tooltip,
+        )
+        if any(value is not None for value in unsupported):
+            return {"success": False, "message": "unsupported_diagnostics_parameter"}
 
     if component_type is not None and component_type not in (
         "auto",
@@ -391,6 +467,12 @@ async def manage_ui(
         params_dict["maxEvaluations"] = max_evaluations
     if max_characters is not None:
         params_dict["maxCharacters"] = max_characters
+
+    if action_lower == "diagnose":
+        if max_pairs is not None:
+            params_dict["maxPairs"] = max_pairs
+        if max_findings is not None:
+            params_dict["maxFindings"] = max_findings
 
     # render_ui params
     if capture_id is not None:
@@ -477,6 +559,41 @@ async def manage_ui(
             "manage_ui",
             params_dict,
         )
+
+    if action_lower == "diagnose":
+        try:
+            if type(result) is not dict or result.get("success") is not True:
+                code = result.get("error") if type(result) is dict else None
+                known = {
+                    "unsupported_ui_component",
+                    "unsupported_diagnostics_parameter",
+                    "invalid_diagnostics_target",
+                    "invalid_or_ambiguous_diagnostics_target",
+                    "diagnostics_artifact_limit",
+                }
+                return {
+                    "success": False,
+                    "message": code
+                    if type(code) is str and code in known
+                    else "diagnostics_unavailable",
+                }
+            data = validate_ui_layout_diagnostics(result.get("data"))
+            for key, value, fallback in (
+                ("max_depth", max_depth, 10),
+                ("max_nodes", max_nodes, 200),
+                ("max_evaluations", max_evaluations, 5000),
+                ("max_characters", max_characters, 65536),
+                ("max_pairs", max_pairs, 2000),
+                ("max_findings", max_findings, 200),
+            ):
+                if data["traversal"][key] != (fallback if value is None else value):
+                    raise ValueError("ignored diagnostic budget")
+            if component_type not in (None, "auto") and data["component_type"] != component_type:
+                raise ValueError("different diagnostic component")
+        except ValueError:
+            return {"success": False, "message": "unsupported_diagnostics_response"}
+        # Do not publish arbitrary old-peer envelope extras/messages or rejected source details.
+        return {"success": True, "data": data}
 
     if isinstance(result, dict):
         # Decode base64 contents in read responses

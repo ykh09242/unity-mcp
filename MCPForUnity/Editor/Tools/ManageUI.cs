@@ -88,6 +88,9 @@ namespace MCPForUnity.Editor.Tools
                     case "update_panel_settings":
                         return UpdatePanelSettings(@params);
 
+                    case "diagnose":
+                        return UitoolkitLayoutDiagnostics.Diagnose(@params);
+
                     case "get_visual_tree":
                         return GetVisualTree(@params);
 
