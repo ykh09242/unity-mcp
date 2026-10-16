@@ -43,6 +43,7 @@ import {
   TransferHistory,
 } from './history-ui';
 import { useSnapshot } from './useSnapshot';
+import { createDiagnostics } from './diagnostics';
 import type { SnapshotLoader } from './useSnapshot';
 import {
   QuestionForm,
@@ -1410,6 +1411,7 @@ function Dashboard({
   readonly answerSaver?: AnswerSaver;
 }) {
   const i18n = useI18n();
+  const [diagnostics] = useState(() => createDiagnostics());
   const {
     snapshot: rawSnapshot,
     observed,
@@ -1420,16 +1422,24 @@ function Dashboard({
     coordinateWrite,
     writePhase,
     holdAutomaticReads,
+    diagnosticCommit,
   } = useSnapshot(loader);
+  useLayoutEffect(() => {
+    if (diagnosticCommit && diagnosticCommit.snapshot === rawSnapshot && !busy && !error)
+      diagnosticCommit.span.mark('fresh_dom_committed');
+  }, [diagnosticCommit, rawSnapshot, busy, error]);
   const currentSession = useRef<{
     readonly nonce: string | null;
     readonly responsesEnabled: boolean;
   } | null>(null);
   const coordinatedSaver = useCallback<AnswerSaver>(
-    async (input, nonce, received) => {
+    async (input, nonce, received, diagnostic) => {
       let returnedReceipt: ReturnType<typeof parseAnswerReceipt> = null;
       const settled = await coordinateWrite(
-        () => (answerSaver || saveAnswer)(input, nonce),
+        () =>
+          diagnostic
+            ? (answerSaver || saveAnswer)(input, nonce, undefined, diagnostic)
+            : (answerSaver || saveAnswer)(input, nonce),
         (result) => {
           if (currentSession.current?.nonce !== nonce || !currentSession.current.responsesEnabled)
             return;
@@ -1439,6 +1449,7 @@ function Dashboard({
             received?.(receipt);
           }
         },
+        diagnostic,
       );
       if (!settled) return { ok: false, conflict: false };
       const freshQuestion = items(settled.snapshot?.questions)
@@ -2019,6 +2030,7 @@ function Dashboard({
               coordinatedSaver={coordinatedSaver}
               writePhase={writePhase}
               holdAutomaticReads={holdAutomaticReads}
+              diagnostics={diagnostics}
               refresh={refresh}
             />
           ) : (

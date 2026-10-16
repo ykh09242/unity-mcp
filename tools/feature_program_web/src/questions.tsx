@@ -1,6 +1,6 @@
 import { usePresentation } from './presentation-ui';
 import { useI18n } from './i18n';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuestionDraft, questionDraftKey, useQuestionDrafts } from './question-drafts';
 import { questionStage, questionStageLabel } from './question-state';
 import { navigationHash, defaultContext } from './navigation';
@@ -8,6 +8,7 @@ import type { WorkContext } from './navigation';
 import { items, record, string } from './model';
 import type { JsonRecord } from './model';
 import type { SnapshotWritePhase } from './useSnapshot';
+import type { DiagnosticSpan, Diagnostics } from './diagnostics';
 
 export type Session = { readonly responsesEnabled: boolean; readonly nonce: string | null };
 export type AnswerInput = {
@@ -31,6 +32,7 @@ export type AnswerSaver = (
   input: AnswerInput,
   nonce: string,
   received?: (receipt: AnswerReceipt) => void,
+  diagnostic?: DiagnosticSpan,
 ) => Promise<AnswerResult>;
 function validSavedAt(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 64) return false;
@@ -104,7 +106,8 @@ export const loadSession: SessionLoader = async (signal) => {
     nonce: typeof input.nonce === 'string' ? input.nonce : null,
   };
 };
-export const saveAnswer: AnswerSaver = async (input, nonce) => {
+export const saveAnswer: AnswerSaver = async (input, nonce, _received, diagnostic) => {
+  diagnostic?.mark('post_started');
   const response = await fetch('/api/questions/answer', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Work-Program-Nonce': nonce },
@@ -112,12 +115,17 @@ export const saveAnswer: AnswerSaver = async (input, nonce) => {
     body: JSON.stringify(input),
     signal: AbortSignal.timeout(12000),
   });
+  diagnostic?.mark('post_response', {
+    httpStatus: response.status,
+    serverTraceId: response.headers.get('X-Work-Program-Trace'),
+  });
   if (response.status !== 200) return { ok: false, conflict: response.status === 409 };
   // Normal 200 follows the locked durable save, final model closure and synchronous render.
   // Validate its actual receipt; never accept a transport acknowledgement as saved evidence.
   const body = await response.text();
   if (body.length > 64 * 1024) return { ok: false, conflict: false };
   const receipt = parseAnswerReceipt(JSON.parse(body), input);
+  if (receipt) diagnostic?.mark('receipt_validated', { httpStatus: 200 });
   return receipt ? { ok: true, conflict: false, receipt } : { ok: false, conflict: false };
 };
 export function useSession(loader: SessionLoader = loadSession) {
@@ -173,6 +181,7 @@ export function QuestionForm({
   coordinatedSaver,
   writePhase,
   holdAutomaticReads,
+  diagnostics,
   refresh,
   programId = 'standalone-question',
   context = defaultContext,
@@ -185,6 +194,7 @@ export function QuestionForm({
   readonly coordinatedSaver?: AnswerSaver;
   readonly writePhase?: SnapshotWritePhase | null;
   readonly holdAutomaticReads?: () => () => void;
+  readonly diagnostics?: Diagnostics;
   readonly refresh: (manual?: boolean, afterWrite?: boolean) => Promise<void>;
 }) {
   const i18n = useI18n();
@@ -225,6 +235,10 @@ export function QuestionForm({
     confirmed ||
     Boolean(localReceipt) ||
     (!coordinatedSaver && draft.phase === 'saved' && draft.version === Number(question.version));
+  useLayoutEffect(() => {
+    if (localReceipt && formRoot.current?.isConnected)
+      draft.diagnostic?.mark('receipt_dom_committed');
+  }, [localReceipt, draft.diagnostic]);
   const shownAnswer = localReceipt || recordedAnswer;
   const failure =
     !saved && (draft.phase === 'conflict' || draft.phase === 'unavailable') ? draft.phase : null;
@@ -280,6 +294,7 @@ export function QuestionForm({
         questionId: string(question.id),
         nonce: session.nonce,
         saver: coordinatedSaver || saver,
+        diagnostic: diagnostics?.start(),
       })
     ) {
       if (!coordinatedSaver) await refresh(false, true);

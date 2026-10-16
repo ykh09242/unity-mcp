@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import type { AnswerInput, AnswerSaver, AnswerReceipt } from './questions';
+import type { DiagnosticSpan } from './diagnostics';
 
 type DraftPhase = 'editing' | 'saving' | 'saved' | 'conflict' | 'unavailable';
 export type QuestionDraft = {
@@ -9,6 +10,7 @@ export type QuestionDraft = {
   readonly phase: DraftPhase;
   readonly submission: AnswerInput | null;
   readonly receipt?: AnswerReceipt;
+  readonly diagnostic?: DiagnosticSpan;
   readonly selection: { readonly start: number; readonly end: number } | null;
 };
 export const questionDraftKey = (program: string, question: string) =>
@@ -52,7 +54,12 @@ export function createQuestionDrafts() {
     },
     async submit(
       key: string,
-      request: { readonly questionId: string; readonly nonce: string; readonly saver: AnswerSaver },
+      request: {
+        readonly questionId: string;
+        readonly nonce: string;
+        readonly saver: AnswerSaver;
+        readonly diagnostic?: DiagnosticSpan;
+      },
     ) {
       const draft = drafts.get(key);
       if (
@@ -73,7 +80,7 @@ export function createQuestionDrafts() {
               answer: draft.answer,
               submission_id: crypto.randomUUID(),
             };
-      update(key, { phase: 'saving', submission });
+      update(key, { phase: 'saving', submission, diagnostic: request.diagnostic });
       try {
         const matchesCurrent = () => {
           const current = drafts.get(key);
@@ -90,10 +97,14 @@ export function createQuestionDrafts() {
             receipt.version === submission.version &&
             receipt.answer === submission.answer &&
             receipt.submission_id === submission.submission_id
-          )
+          ) {
             update(key, { receipt });
+            request.diagnostic?.mark('receipt_accepted');
+          }
         };
-        const result = await request.saver(submission, request.nonce, received);
+        const result = await (request.diagnostic
+          ? request.saver(submission, request.nonce, received, request.diagnostic)
+          : request.saver(submission, request.nonce, received));
         if (!matchesCurrent()) return false;
         if (result.receipt) received(result.receipt);
         update(key, { phase: result.ok ? 'saved' : result.conflict ? 'conflict' : 'unavailable' });

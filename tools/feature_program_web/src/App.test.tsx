@@ -801,3 +801,124 @@ describe('work program user outcomes', () => {
     },
   );
 });
+
+describe('opt-in actual receipt and fresh DOM diagnostics', () => {
+  it.each(['success', 'failure'] as const)(
+    'keeps a durable receipt separate from %s mandatory reconciliation',
+    async (outcome) => {
+      const meta = document.createElement('meta');
+      meta.name = 'work-program-diagnostics';
+      meta.content = '1';
+      document.head.append(meta);
+      const lines: string[] = [];
+      vi.spyOn(console, 'info').mockImplementation((line) => lines.push(String(line)));
+      const initial = {
+        ...fixture(),
+        questions: [
+          {
+            id: 'Q-observer',
+            version: 1,
+            status: 'open',
+            prompt: 'Choose the actual scope',
+            why: 'A focused diagnostic case',
+            requested_decision: 'Choose',
+            options: [],
+            answer: null,
+            acknowledgement: null,
+            outcome: null,
+          },
+        ],
+      };
+      let finishGet: ((value: Response) => void) | undefined;
+      let saved: Record<string, unknown> | undefined;
+      let getCalls = 0,
+        postCalls = 0;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (url === '/api/snapshot') {
+            getCalls += 1;
+            if (getCalls === 1) return new Response(JSON.stringify(initial), { status: 200 });
+            return new Promise<Response>((resolve) => {
+              finishGet = resolve;
+            });
+          }
+          if (url === '/api/questions/answer') {
+            postCalls += 1;
+            saved = {
+              ...JSON.parse(String(init?.body)),
+              saved_at: '2026-10-16T00:00:00Z',
+              channel: 'local_web',
+              provenance: 'unverified_local_human',
+              status: 'answered',
+            };
+            return new Response(JSON.stringify(saved), {
+              status: 200,
+              headers: { 'X-Work-Program-Trace': 'a'.repeat(16) },
+            });
+          }
+          throw new Error('Unexpected route');
+        }),
+      );
+      window.location.hash = '#question/Q-observer';
+      const view = render(
+        <App sessionLoader={async () => ({ responsesEnabled: true, nonce: 'private-nonce' })} />,
+      );
+      const events = () =>
+        lines.flatMap((line) => JSON.parse(line.slice('WORK_PROGRAM_TIMING_V1 '.length)).events);
+      try {
+        const user = userEvent.setup();
+        const input = await screen.findByRole('textbox', { name: 'Your answer' });
+        await user.type(input, 'private answer text');
+        await user.click(screen.getByRole('button', { name: 'Save answer' }));
+        await screen.findByRole('heading', { name: 'Your saved answer' });
+        await waitFor(() =>
+          expect(events().some((event) => event.phase === 'receipt_dom_committed')).toBe(true),
+        );
+        expect(
+          events().some((event) => event.phase === 'post_response' && event.http_status === 200),
+        ).toBe(true);
+        expect(events().some((event) => event.phase === 'fresh_dom_committed')).toBe(false);
+        expect(getCalls).toBe(2);
+        expect(postCalls).toBe(1);
+        await act(async () => {
+          finishGet?.(
+            outcome === 'failure'
+              ? new Response('{}', { status: 503 })
+              : new Response(
+                  JSON.stringify({
+                    ...initial,
+                    revision: 'two',
+                    questions: [{ ...initial.questions[0], status: 'answered', answer: saved }],
+                  }),
+                  { status: 200, headers: { 'X-Work-Program-Trace': 'b'.repeat(16) } },
+                ),
+          );
+        });
+        await waitFor(() =>
+          expect(events().some((event) => event.phase === 'mandatory_get_settled')).toBe(true),
+        );
+        if (outcome === 'success')
+          await waitFor(() =>
+            expect(events().some((event) => event.phase === 'fresh_dom_committed')).toBe(true),
+          );
+        else {
+          expect(events().some((event) => event.phase === 'fresh_dom_committed')).toBe(false);
+          expect(screen.getByText('Unavailable')).toBeDefined();
+          expect(screen.getByRole('heading', { name: 'Your saved answer' })).toBeDefined();
+        }
+        expect(postCalls).toBe(1);
+        expect(lines.join()).not.toMatch(
+          /private answer text|private-nonce|Q-observer|submission_id/u,
+        );
+        expect(events().map((event) => event.t_ms)).toEqual(
+          [...events().map((event) => event.t_ms)].sort((a, b) => a - b),
+        );
+      } finally {
+        view.unmount();
+        meta.remove();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+});

@@ -16,9 +16,13 @@ import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+from queue import Empty, Full, Queue
 import re
 import socket
 import secrets
+import sys
+from threading import Event, Lock, Thread
+from time import perf_counter
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -95,6 +99,87 @@ def matches_validator(value: str, etag: str) -> bool:
     return etag.removeprefix("W/") in tags
 
 
+class TimingObserver:
+    """Bounded best-effort telemetry; request threads never write to the sink."""
+
+    def __init__(self, sink: Callable[[str], None] | None = None):
+        self.clock_id = "server-" + secrets.token_hex(8)
+        self._sink = sink or (lambda line: print(line, file=sys.stderr, flush=True))
+        self._lock = Lock()
+        self._count = 0
+        self._dropped = 0
+        self._closed = Event()
+        self._queue: Queue[dict[str, str | int | float] | None] = Queue(maxsize=128)
+        self._worker = Thread(target=self._deliver, name="work-program-diagnostics", daemon=True)
+        try:
+            self._worker.start()
+        except RuntimeError:
+            self._closed.set()
+
+    def close(self) -> None:
+        """Stop accepting observations without waiting for a possibly stalled sink."""
+        self._closed.set()
+        try:
+            self._queue.put_nowait(None)
+        except Full:
+            pass
+
+    def _deliver(self) -> None:
+        while not self._closed.is_set():
+            try:
+                event = self._queue.get(timeout=0.1)
+            except Empty:
+                continue
+            if event is None:
+                return
+            with self._lock:
+                dropped = self._dropped
+            if dropped:
+                event["observation_status"] = "incomplete"
+                event["dropped_events"] = dropped
+            try:
+                self._sink("WORK_PROGRAM_TIMING_V1 " + json.dumps(event, separators=(",", ":")))
+            except (OSError, ValueError):
+                # Missing telemetry is never evidence of a completed response or publication.
+                self.close()
+                return
+
+    def emit(self, trace: str, phase: str, status: int | None = None) -> None:
+        if (
+            phase
+            not in {
+                "request_started",
+                "answer_started",
+                "answer_completed",
+                "snapshot_completed",
+                "response_started",
+                "response_written",
+                "response_disconnected",
+            }
+            or re.fullmatch(r"[a-f0-9]{16}", trace) is None
+            or (status is not None and (type(status) is not int or not 100 <= status <= 599))
+        ):
+            return
+        with self._lock:
+            if self._closed.is_set() or self._count >= 4096:
+                return
+            self._count += 1
+            event: dict[str, str | int | float] = {
+                "version": 1,
+                "domain": "server",
+                "clock_id": self.clock_id,
+                "request_id": trace,
+                "phase": phase,
+                "t_ms": perf_counter() * 1000,
+            }
+            if status is not None:
+                event["http_status"] = status
+            try:
+                self._queue.put_nowait(event)
+            except Full:
+                self._dropped += 1
+
+
 class DashboardServer(ThreadingHTTPServer):
     """Serve only packaged assets and the configured snapshot provider."""
 
@@ -106,6 +191,8 @@ class DashboardServer(ThreadingHTTPServer):
         port: int,
         snapshot: Callable[[], Json],
         answer: Callable[[str, int, str, str], Json] | None = None,
+        *,
+        diagnostics: bool = False,
     ):
         if host not in {"127.0.0.1", "::1", "localhost"}:
             raise ValueError("Dashboard binding must be loopback (127.0.0.1 or ::1)")
@@ -113,14 +200,21 @@ class DashboardServer(ThreadingHTTPServer):
             host = "127.0.0.1"
         if host == "::1":
             self.address_family = socket.AF_INET6
+        self.diagnostics: TimingObserver | None = None
         self.snapshot = snapshot
         self.answer = answer
         self.nonce = secrets.token_urlsafe(32)
         super().__init__((host, port), DashboardHandler)
+        self.diagnostics = TimingObserver() if diagnostics else None
         actual_port = self.server_address[1]
         authority = f"[{host}]:{actual_port}" if host == "::1" else f"{host}:{actual_port}"
         self.authorities = {authority, f"localhost:{actual_port}"}
         self.url = f"http://{authority}/"
+
+    def server_close(self) -> None:
+        if self.diagnostics is not None:
+            self.diagnostics.close()
+        super().server_close()
 
     def get_request(self):
         connection, address = super().get_request()
@@ -135,6 +229,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "LocalWorkProgram/1"
     sys_version = ""
 
+    def _timing(self, phase: str, status: int | None = None) -> None:
+        if self.server.diagnostics is not None:
+            if phase == "request_started" or not hasattr(self, "_trace"):
+                self._trace = secrets.token_hex(8)
+            self.server.diagnostics.emit(self._trace, phase, status)
+
     def log_message(self, _format: str, *_args) -> None:
         # Request paths and headers can contain private or attacker-controlled text.
         return
@@ -142,26 +242,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _response(
         self, code: int, body: bytes, content_type: str, head: bool = False, etag: str | None = None
     ) -> None:
-        self.send_response(code)
-        if code != 304:
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-        if etag is not None:
-            self.send_header("ETag", etag)
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        self.send_header("X-Frame-Options", "DENY")
-        self.send_header(
-            "Content-Security-Policy",
-            "default-src 'none'; script-src 'self'; style-src 'self'; "
-            "connect-src 'self'; img-src 'self'; font-src 'none'; "
-            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-        )
-        self.end_headers()
-        if not head and code != 304:
-            self.wfile.write(body)
+        self._timing("response_started", code)
+        try:
+            self.send_response(code)
+            if self.server.diagnostics is not None:
+                self.send_header("X-Work-Program-Trace", self._trace)
+            if code != 304:
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+            if etag is not None:
+                self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'none'; script-src 'self'; style-src 'self'; "
+                "connect-src 'self'; img-src 'self'; font-src 'none'; "
+                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            )
+            self.end_headers()
+            if not head and code != 304:
+                self.wfile.write(body)
+            self._timing("response_written", code)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self._timing("response_disconnected", code)
+            self.close_connection = True
 
     def _error(self, code: int, message: str, head: bool = False) -> None:
         self._response(
@@ -187,6 +295,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return self.headers.get("Sec-Fetch-Site", "none") in {"none", "same-origin"}
 
     def _read(self, head: bool = False) -> None:
+        self._timing("request_started")
         if not self._allowed():
             self._error(403, "Local same-origin requests only", head)
             return
@@ -207,6 +316,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 # Never reuse a prior snapshot: sources/evidence can drift independently
                 # of registry revision, including while a conditional request is made.
                 snapshot = self.server.snapshot()
+                self._timing("snapshot_completed")
                 body, etag = _snapshot_encoding(snapshot)
                 if len(body) > MAX_RESPONSE_BYTES:
                     raise ValueError("Snapshot response exceeds limit")
@@ -236,6 +346,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         filename, content_type = asset
         try:
             body = (ASSETS / filename).read_bytes()
+            if filename == "index.html" and self.server.diagnostics is not None:
+                body = body.replace(
+                    b"</head>", b'<meta name="work-program-diagnostics" content="1" /></head>', 1
+                )
         except OSError:
             self._error(503, "Dashboard asset unavailable", head)
             return
@@ -256,6 +370,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         """Accept only a bounded, same-origin answer to an existing director question."""
         self.close_connection = True
+        self._timing("request_started")
         if (
             self.path != "/api/questions/answer"
             or self.requestline.split()[1] != self.path
@@ -325,12 +440,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 or len(payload["submission_id"]) > 128
             ):
                 raise ValueError("Response field exceeds limit")
+            self._timing("answer_started")
             result = self.server.answer(
                 payload["question_id"],
                 payload["version"],
                 payload["answer"],
                 payload["submission_id"],
             )
+            self._timing("answer_completed")
         except feature_program.ProgramError as error:
             code = getattr(error, "code", None)
             self._error(
@@ -375,6 +492,7 @@ def create_server(
     execution_capture: str | None = None,
     evidence_preparation: str | None = None,
     batch_plan: str | None = None,
+    diagnostics: bool = False,
 ):
     """Create a server without reading or modifying the configured program."""
     repository = repo.resolve()
@@ -407,6 +525,7 @@ def create_server(
         )
         if responses
         else None,
+        diagnostics=diagnostics,
     )
 
 
@@ -417,6 +536,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--program-dir", type=Path, default=Path(".work/programs/default"))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="Emit bounded private timing diagnostics; disabled by default",
+    )
     parser.add_argument(
         "--read-only", action="store_true", help="Disable responses to director questions"
     )
@@ -445,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
             execution_capture=args.execution_capture,
             evidence_preparation=args.evidence_preparation,
             batch_plan=args.batch_plan,
+            diagnostics=args.diagnostics,
         ) as server:
             print(f"Local work-program dashboard: {server.url}", flush=True)
             print(

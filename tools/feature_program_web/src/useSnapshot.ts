@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { parseSnapshot, semanticSnapshotEqual } from './model';
 import type { Snapshot } from './model';
+import type { DiagnosticSpan } from './diagnostics';
 
-export type SnapshotLoader = (signal: AbortSignal, etag?: string) => Promise<unknown>;
+export type SnapshotLoader = (
+  signal: AbortSignal,
+  etag?: string,
+  diagnostic?: DiagnosticSpan,
+) => Promise<unknown>;
 export class SnapshotResponse {
   constructor(
     readonly status: 200 | 304,
@@ -19,12 +24,17 @@ export class SnapshotReadError extends Error {
     super(`Snapshot unavailable: ${reason}`);
   }
 }
-export const loadSnapshot: SnapshotLoader = async (signal, etag) => {
+export const loadSnapshot: SnapshotLoader = async (signal, etag, diagnostic) => {
+  diagnostic?.mark('mandatory_get_request_started');
   const response = await fetch('/api/snapshot', {
     signal,
     cache: 'no-store',
     credentials: 'same-origin',
     headers: etag ? { 'If-None-Match': etag } : undefined,
+  });
+  diagnostic?.mark('mandatory_get_response', {
+    httpStatus: response.status,
+    serverTraceId: response.headers.get('X-Work-Program-Trace'),
   });
   if (response.status === 304) return new SnapshotResponse(304, response.headers.get('ETag'));
   if (!response.ok) throw new SnapshotReadError('http', response.status);
@@ -53,6 +63,10 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
   const automaticLease = useRef<object | null>(null);
   const missedAutomatic = useRef(false);
   const [writePhase, setWritePhase] = useState<SnapshotWritePhase | null>(null);
+  const [diagnosticCommit, setDiagnosticCommit] = useState<{
+    readonly span: DiagnosticSpan;
+    readonly snapshot: Snapshot;
+  } | null>(null);
   const current = useRef<{
     readonly snapshot: Snapshot;
     readonly etag: string | null;
@@ -62,6 +76,7 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
       manual = false,
       afterWrite = false,
       reservation?: object,
+      diagnostic?: DiagnosticSpan,
     ): Promise<void> {
       // A reserved write owns its one final reconciliation; intermediate refresh intents coalesce.
       if (writeReservation.current && reservation !== writeReservation.current) return;
@@ -69,6 +84,7 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
         if (afterWrite) queuedAfterWrite.current = true;
         return;
       }
+      diagnostic?.mark('mandatory_get_started');
       const controller = new AbortController();
       pending.current = controller;
       let finishRead: (succeeded: boolean) => void = () => {};
@@ -87,7 +103,9 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
       setBusy(true);
       try {
         const response = await Promise.race([
-          loader(controller.signal, current.current?.etag || undefined),
+          diagnostic
+            ? loader(controller.signal, current.current?.etag || undefined, diagnostic)
+            : loader(controller.signal, current.current?.etag || undefined),
           cancellation,
         ]);
         if (!alive.current || controller.signal.aborted || pending.current !== controller) return;
@@ -120,6 +138,7 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
       } finally {
         clearTimeout(timeout);
         if (aborted) controller.signal.removeEventListener('abort', aborted);
+        diagnostic?.mark('mandatory_get_settled', { outcome: succeeded ? 'success' : 'failure' });
         finishRead(succeeded);
         if (pendingRead.current === completion) pendingRead.current = null;
         if (pending.current === controller) {
@@ -138,17 +157,24 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
     async <T>(
       operation: () => Promise<T>,
       completed?: (value: T) => void,
+      diagnostic?: DiagnosticSpan,
     ): Promise<CoordinatedWrite<T> | null> => {
       if (!alive.current || writeReservation.current) return null;
       const reservation = {};
       const programId = current.current?.snapshot.program_id;
       writeReservation.current = reservation;
+      diagnostic?.mark('reserved');
       missedAutomatic.current = false;
       const priorRead = pendingRead.current;
       setWritePhase(priorRead ? 'waiting-read' : 'writing');
       try {
         // A browser abort is not a server cancellation. Do not send after an unsuccessful drain.
-        if (priorRead && !(await priorRead)) return null;
+        if (priorRead) {
+          diagnostic?.mark('drain_started');
+          const drained = await priorRead;
+          diagnostic?.mark('drain_settled', { outcome: drained ? 'success' : 'failure' });
+          if (!drained) return null;
+        }
         if (
           !alive.current ||
           writeReservation.current !== reservation ||
@@ -180,13 +206,15 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
         }
         setWritePhase('reconciling');
         const beforeRead = successfulReads.current;
-        await refresh(false, false, reservation);
+        await refresh(false, false, reservation, diagnostic);
         if (
           !alive.current ||
           writeReservation.current !== reservation ||
           (programId !== undefined && current.current?.snapshot.program_id !== programId)
         )
           return null;
+        if (diagnostic && successfulReads.current > beforeRead && current.current)
+          setDiagnosticCommit({ span: diagnostic, snapshot: current.current.snapshot });
         return {
           outcome,
           snapshot: current.current?.snapshot || null,
@@ -195,8 +223,9 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
       } finally {
         if (writeReservation.current === reservation) {
           writeReservation.current = null;
+          diagnostic?.mark('write_released');
           if (alive.current) setWritePhase(null);
-        }
+        } else diagnostic?.mark('abandoned', { outcome: 'abandoned' });
       }
     },
     [refresh],
@@ -217,6 +246,7 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
   useEffect(() => {
     alive.current = true;
     setWritePhase(null);
+    setDiagnosticCommit(null);
     void refresh();
     const automatic = () => {
       if (document.hidden || writeReservation.current) return;
@@ -251,5 +281,6 @@ export function useSnapshot(loader: SnapshotLoader = loadSnapshot) {
     coordinateWrite,
     writePhase,
     holdAutomaticReads,
+    diagnosticCommit,
   };
 }

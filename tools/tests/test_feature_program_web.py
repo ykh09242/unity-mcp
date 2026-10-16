@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from threading import Thread
+from threading import Event, Thread
 
 import pytest
 
@@ -1189,3 +1189,254 @@ def test_prepared_conditional_http_rejects_corrupt_registry_instead_of_304(progr
         finally:
             path.write_bytes(original)
         assert request(server, headers={"If-None-Match": initial[1]["ETag"]})[0] == 304
+
+
+def test_optional_diagnostics_default_payload_and_html_are_unchanged():
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: {"tasks": []})) as server:
+        status, headers, body = request(server, "/")
+        assert status == 200
+        assert body == (web.ASSETS / "index.html").read_bytes()
+        assert "X-Work-Program-Trace" not in headers
+
+
+def test_optional_diagnostics_correlates_real_http_without_private_request_data():
+    lines = []
+    written = Event()
+
+    def sink(line):
+        lines.append(line)
+        if json.loads(line.split(" ", 1)[1])["phase"] == "response_written":
+            written.set()
+
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: {"tasks": []})) as server:
+        server.diagnostics = web.TimingObserver(sink)
+        status, headers, body = request(server, "/")
+        assert status == 200
+        assert b'<meta name="work-program-diagnostics" content="1"' in body
+        assert written.wait(1)
+        written.clear()
+        status, headers, body = request(server)
+        assert written.wait(1)
+        assert status == 200 and json.loads(body) == {"tasks": []}
+        trace = headers["X-Work-Program-Trace"]
+        events = [json.loads(line.split(" ", 1)[1]) for line in lines if trace in line]
+        assert [event["phase"] for event in events] == [
+            "request_started",
+            "snapshot_completed",
+            "response_started",
+            "response_written",
+        ]
+        assert len({event["clock_id"] for event in events}) == 1
+        assert all(type(event["t_ms"]) is float for event in events)
+        assert [event["t_ms"] for event in events] == sorted(event["t_ms"] for event in events)
+        assert set(events[-1]) == {
+            "version",
+            "domain",
+            "clock_id",
+            "request_id",
+            "phase",
+            "t_ms",
+            "http_status",
+        }
+        assert events[-1]["http_status"] == 200
+
+
+def test_diagnostic_sink_and_input_bounds_cannot_affect_the_response():
+    lines = []
+    observer = web.TimingObserver(lines.append)
+    try:
+        observer.emit("private question answer", "request_started")
+        observer.emit("a" * 16, "private nonce")
+        observer.emit("a" * 16, "response_started", True)
+        assert observer._queue.empty()
+        assert observer._count == 0
+        assert lines == []
+    finally:
+        observer.close()
+
+    def failed(_line):
+        raise OSError("diagnostic sink unavailable")
+
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: {"tasks": []})) as server:
+        server.diagnostics = web.TimingObserver(failed)
+        assert request(server)[0] == 200
+        assert server.diagnostics._closed.wait(1)
+        assert request(server)[0] == 200
+
+
+def test_answer_diagnostics_observe_completed_provider_and_keep_exact_receipt_private():
+    lines = []
+    completed = []
+    written = Event()
+
+    def answer(question, version, text, submission):
+        completed.append(True)
+        return {
+            "question_id": question,
+            "version": version,
+            "answer": text,
+            "submission_id": submission,
+            "saved_at": "2026-10-16T00:00:00Z",
+            "channel": "local_web",
+            "provenance": "unverified_local_human",
+            "status": "answered",
+        }
+
+    def sink(line):
+        event = json.loads(line.split(" ", 1)[1])
+        if event["phase"] == "answer_completed":
+            assert completed == [True]
+        lines.append(line)
+        if event["phase"] == "response_written":
+            written.set()
+
+    payload = {
+        "question_id": "private-question",
+        "version": 1,
+        "answer": "private-answer",
+        "submission_id": "private-submission",
+    }
+    with running(web.DashboardServer("127.0.0.1", 0, lambda: {}, answer)) as server:
+        server.diagnostics = web.TimingObserver(sink)
+        status, headers, body = post_answer(server, payload)
+        assert status == 200
+        assert written.wait(1)
+        result = json.loads(body)
+        assert set(result) == {
+            "question_id",
+            "version",
+            "answer",
+            "submission_id",
+            "saved_at",
+            "channel",
+            "provenance",
+            "status",
+        }
+        events = [json.loads(line.split(" ", 1)[1]) for line in lines]
+        assert [event["phase"] for event in events] == [
+            "request_started",
+            "answer_started",
+            "answer_completed",
+            "response_started",
+            "response_written",
+        ]
+        assert all(event["request_id"] == headers["X-Work-Program-Trace"] for event in events)
+        assert not any(
+            secret in "\n".join(lines)
+            for secret in [server.nonce, *payload.values()]
+            if isinstance(secret, str)
+        )
+
+
+def test_diagnostic_disconnect_does_not_attempt_a_second_response(monkeypatch):
+    lines = []
+    written = Event()
+
+    def sink(line):
+        lines.append(line)
+        if json.loads(line.split(" ", 1)[1])["phase"] == "response_disconnected":
+            written.set()
+
+    with web.DashboardServer("127.0.0.1", 0, lambda: {}) as server:
+        server.diagnostics = web.TimingObserver(sink)
+        handler = object.__new__(web.DashboardHandler)
+        handler.server = server
+        codes = []
+        monkeypatch.setattr(handler, "send_response", codes.append)
+        monkeypatch.setattr(handler, "send_header", lambda *_args: None)
+
+        def disconnected():
+            raise ConnectionAbortedError("peer disconnected")
+
+        monkeypatch.setattr(handler, "end_headers", disconnected)
+        handler._response(200, b"private-body", "application/json")
+        assert codes == [200]
+        assert handler.close_connection is True
+        assert written.wait(1)
+        assert json.loads(lines[-1].split(" ", 1)[1])["phase"] == "response_disconnected"
+        assert "private-body" not in "\n".join(lines)
+
+
+def test_blocked_diagnostic_sink_does_not_block_http_or_answer_provider():
+    # Given: diagnostic output is stalled, independently of the HTTP/provider paths.
+    entered = Event()
+    release = Event()
+    provider_called = Event()
+
+    def sink(_line):
+        entered.set()
+        release.wait()
+
+    def answer(question, version, text, submission):
+        provider_called.set()
+        return {
+            "question_id": question,
+            "version": version,
+            "answer": text,
+            "submission_id": submission,
+            "saved_at": "2026-10-16T00:00:00Z",
+            "channel": "local_web",
+            "provenance": "unverified_local_human",
+            "status": "answered",
+        }
+
+    observer = web.TimingObserver(sink)
+    seed = Thread(target=observer.emit, args=("a" * 16, "request_started"), daemon=True)
+    seed.start()
+    try:
+        assert entered.wait(1)
+        with running(web.DashboardServer("127.0.0.1", 0, lambda: {"tasks": []}, answer)) as server:
+            server.diagnostics = observer
+            # When: real GET and POST requests run while the sink remains blocked.
+            assert request(server)[0] == 200
+            payload = {"question_id": "q", "version": 1, "answer": "a", "submission_id": "s"}
+            status, _headers, body = post_answer(server, payload)
+            # Then: the provider and exact durable response complete before output resumes.
+            assert status == 200
+            assert provider_called.is_set()
+            assert json.loads(body)["submission_id"] == "s"
+            assert not release.is_set()
+    finally:
+        release.set()
+        seed.join(timeout=1)
+        assert not seed.is_alive()
+        observer.close()
+        observer._worker.join(timeout=1)
+        assert not observer._worker.is_alive()
+
+
+def test_diagnostic_queue_overflow_is_bounded_and_marks_lost_observations():
+    # Given: one sink call is blocked while further observations accumulate.
+    entered = Event()
+    release = Event()
+    incomplete = Event()
+    lines = []
+
+    def sink(line):
+        entered.set()
+        release.wait()
+        lines.append(line)
+        if json.loads(line.split(" ", 1)[1]).get("observation_status") == "incomplete":
+            incomplete.set()
+
+    observer = web.TimingObserver(sink)
+    try:
+        observer.emit("a" * 16, "request_started")
+        assert entered.wait(1)
+        # When: producers exceed the bounded queue and original per-observer event budget.
+        for _ in range(4100):
+            observer.emit("a" * 16, "response_written", 200)
+        assert observer._queue.qsize() == observer._queue.maxsize
+        assert observer._count == 4096
+        assert observer._dropped > 0
+        release.set()
+        assert incomplete.wait(1)
+        # Then: resumed output explicitly marks incompleteness, never fabricated completion.
+        events = [json.loads(line.split(" ", 1)[1]) for line in lines]
+        assert len(events) <= 4096
+        assert any(event.get("dropped_events", 0) > 0 for event in events)
+    finally:
+        release.set()
+        observer.close()
+        observer._worker.join(timeout=1)
+        assert not observer._worker.is_alive()

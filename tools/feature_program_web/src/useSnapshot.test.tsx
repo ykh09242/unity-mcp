@@ -785,3 +785,38 @@ describe('visible draft automatic-read deferral', () => {
     expect(next).toHaveBeenCalledTimes(2);
   });
 });
+
+it('does not expose a diagnostic DOM commit after the loader or program is replaced', async () => {
+  const marks: string[] = [];
+  const diagnostic = {
+    mark: (phase: string) => {
+      marks.push(phase);
+    },
+  };
+  let finish: ((value: unknown) => void) | undefined;
+  const first = vi
+    .fn()
+    .mockResolvedValueOnce(fixture())
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+  const second = vi.fn().mockResolvedValue({ ...fixture(), program_id: 'replacement' });
+  const hook = renderHook(({ loader }) => useSnapshot(loader), { initialProps: { loader: first } });
+  await act(async () => {});
+  let write: Promise<unknown> | undefined;
+  await act(async () => {
+    write = hook.result.current.coordinateWrite(async () => 'done', undefined, diagnostic);
+  });
+  expect(marks).toContain('mandatory_get_started');
+  hook.rerender({ loader: second });
+  await act(async () => {
+    finish?.(fixture());
+    await write;
+  });
+  expect(hook.result.current.snapshot?.program_id).toBe('replacement');
+  expect(hook.result.current.diagnosticCommit).toBeNull();
+  expect(marks).toContain('abandoned');
+});
