@@ -225,8 +225,10 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
 
         private class ExtensionBase
         {
+#pragma warning disable CS0414 // This private extension-data field is inspected through reflection.
             [JsonExtensionData]
             private Dictionary<string, object> _extra = null;
+#pragma warning restore CS0414
         }
 
         private class ExtensionDerived : ExtensionBase

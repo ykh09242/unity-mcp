@@ -229,7 +229,7 @@ class WaitJournal:
             self._writer.flush()
         self._writer.seek(0)
         if os.name == "nt":
-            import msvcrt
+            import msvcrt  # pylint: disable=import-error  # Windows-only standard library.
 
             msvcrt.locking(self._writer.fileno(), msvcrt.LK_NBLCK, 1)
         else:
