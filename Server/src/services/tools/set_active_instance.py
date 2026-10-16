@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated, Any
 from types import SimpleNamespace
 
@@ -56,7 +57,7 @@ async def set_active_instance(
             }
         port_int = int(value)
         pool = get_unity_connection_pool()
-        instances = pool.discover_all_instances(force_refresh=True)
+        instances = await asyncio.to_thread(pool.discover_all_instances, force_refresh=True)
         match = next((inst for inst in instances if getattr(inst, "port", None) == port_int), None)
         if match is None:
             available = (
@@ -102,7 +103,7 @@ async def set_active_instance(
             )
     else:
         pool = get_unity_connection_pool()
-        instances = pool.discover_all_instances(force_refresh=True)
+        instances = await asyncio.to_thread(pool.discover_all_instances, force_refresh=True)
 
     if not instances:
         return {
