@@ -154,11 +154,11 @@ async def test_command_timeout_includes_blocked_send(
     try:
         # When the deadline passes while the write remains blocked.
         done, _ = await asyncio.wait({command}, timeout=0.2)
-        # Then the command returns its existing retry response and releases state.
+        # Then the command returns its unknown-outcome response and releases state.
         assert command in done, "Command deadline must cover socket writes"
         result = command.result()
         assert result["success"] is False
-        assert result["hint"] == "retry"
+        assert result["hint"] == "inspect_state_before_retry"
         assert PluginHub._pending == {}
     finally:
         command.cancel()
@@ -183,9 +183,10 @@ async def test_failed_send_does_not_leave_unconsumed_future(isolated_hub: Plugin
     previous_handler = loop.get_exception_handler()
     loop.set_exception_handler(lambda _loop, context: observed.append(context))
     try:
-        # When the transport propagates the write failure.
-        with pytest.raises(OSError, match="socket write failed"):
-            await PluginHub.send_command("session", "manage_scene", {})
+        # When the transport cannot prove whether its write reached Unity.
+        result = await PluginHub.send_command("session", "manage_scene", {})
+        assert result["data"]["reason"] == "outcome_unknown"
+        assert "socket write failed" in result["error"]
         await asyncio.sleep(0)
         # Then there is no orphaned Future exception reported to the loop.
         assert PluginHub._pending == {}
@@ -221,7 +222,7 @@ async def test_disconnect_interrupts_blocked_command_write(isolated_hub: PluginR
         await hub.on_disconnect(ws, 1001)
         done, _ = await asyncio.wait({command}, timeout=0.2)
         assert command in done, "Disconnect must interrupt a blocked write immediately"
-        assert command.result()["hint"] == "retry"
+        assert command.result()["hint"] == "inspect_state_before_retry"
         assert stopped.is_set()
         assert PluginHub._pending == {}
     finally:

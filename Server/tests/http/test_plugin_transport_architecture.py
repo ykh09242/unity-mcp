@@ -284,8 +284,8 @@ def test_original_command_deadline_releases_partial_bytes_and_late_data_is_ignor
         barrier(client, wire, sid)
         assert PluginHub._raw_results
         # Await the actual command deadline, without delaying or polling manually.
-        with pytest.raises(TimeoutError):
-            task.result(timeout=2)
+        result = task.result(timeout=2)
+        assert result["data"]["reason"] == "outcome_unknown"
         assert PluginHub._raw_results == {}
         assert PluginHub._large_results.retained_bytes == 0
         for chunk in chunks[1:]:

@@ -5,7 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Awaitable, Callable, TypeVar
 
-from transport.plugin_hub import InstanceSelectionRequiredError, PluginHub
+from transport.plugin_hub import (
+    CommandNotDispatchedError,
+    InstanceSelectionRequiredError,
+    PluginHub,
+    command_outcome_unknown,
+)
 from core.config import config
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from models.models import MCPResponse
@@ -95,13 +100,25 @@ async def send_with_unity_instance(
                     },
                 ).model_dump()
             )
+        except CommandNotDispatchedError as exc:
+            return normalize_unity_response(
+                MCPResponse(
+                    success=False,
+                    error=str(exc),
+                    hint="retry",
+                    data={
+                        "reason": "command_not_dispatched",
+                        "command": command_type,
+                        "unity_instance": unity_instance,
+                    },
+                ).model_dump()
+            )
         except Exception as exc:
             # NOTE: asyncio.TimeoutError has an empty str() by default, which is confusing for clients.
             err = str(exc) or f"{type(exc).__name__}"
-            # Fail fast with a retry hint instead of hanging for COMMAND_TIMEOUT.
-            # The client can decide whether retrying is appropriate for the command.
+            # Unknown failures do not prove the command stayed on this server.
             return normalize_unity_response(
-                MCPResponse(success=False, error=err, hint="retry").model_dump()
+                command_outcome_unknown(command_type, err, unity_instance=unity_instance)
             )
 
     if unity_instance:

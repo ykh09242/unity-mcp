@@ -104,6 +104,23 @@ class PluginDisconnectedError(RuntimeError):
     """Raised when a plugin WebSocket disconnects while commands are in flight."""
 
 
+class CommandNotDispatchedError(RuntimeError):
+    """The command was refused before any attempt to write to its plugin."""
+
+
+def command_outcome_unknown(command: str, detail: str, **context: Any) -> dict[str, Any]:
+    """A lost transport reply is not evidence that Unity did not execute."""
+    return MCPResponse(
+        success=False,
+        error=(
+            f"Outcome of '{command}' is unknown: {detail}. "
+            "Inspect the target Unity state before retrying; the command may have executed."
+        ),
+        hint="inspect_state_before_retry",
+        data={"reason": "outcome_unknown", "command": command, **context},
+    ).model_dump()
+
+
 class NoUnitySessionError(RuntimeError):
     """Raised when no Unity plugins are available."""
 
@@ -895,10 +912,10 @@ class PluginHub(WebSocketEndpoint):
     ) -> dict[str, Any]:
         try:
             websocket = await cls._get_connection(session_id)
-        except RuntimeError:
+        except RuntimeError as exc:
             if _expected_read is not None:
                 return cls._unavailable_retry_response("read_invalidated")
-            raise
+            raise CommandNotDispatchedError(str(exc)) from exc
         registry = cls._registry
         session = await registry.get_session(session_id) if registry is not None else None
         # Admission follows the registered principal, never caller parameters.
@@ -941,14 +958,14 @@ class PluginHub(WebSocketEndpoint):
 
         lock = cls._lock
         if lock is None:
-            raise RuntimeError("PluginHub not configured")
+            raise CommandNotDispatchedError("PluginHub not configured")
 
         async with lock:
             # Disconnect can run between the initial lookup and this lock.
             if cls._connections.get(session_id) is not websocket:
                 if _expected_read is not None:
                     return cls._unavailable_retry_response("read_invalidated")
-                raise RuntimeError(f"Plugin session {session_id} not connected")
+                raise CommandNotDispatchedError(f"Plugin session {session_id} not connected")
             if _expected_read is not None and not cls._matches_read_identity(
                 websocket, user_id, _expected_read
             ):
@@ -1017,6 +1034,7 @@ class PluginHub(WebSocketEndpoint):
                 timeout=unity_timeout_s,
             )
             deadline = asyncio.get_running_loop().time() + server_wait_s
+            phase = "send"
             try:
                 send_task = asyncio.create_task(websocket.send_json(msg.model_dump()))
                 done, _ = await asyncio.wait(
@@ -1030,20 +1048,41 @@ class PluginHub(WebSocketEndpoint):
                 if send_task not in done:
                     raise asyncio.TimeoutError
                 send_task.result()
+                phase = "response"
                 remaining = max(0.0, deadline - asyncio.get_running_loop().time())
                 result = await asyncio.wait_for(future, timeout=remaining)
                 return result
-            except PluginDisconnectedError as exc:
-                return MCPResponse(success=False, error=str(exc), hint="retry").model_dump()
-            except asyncio.TimeoutError:
+            except asyncio.CancelledError:
+                # Preserve cancellation of the caller. Cancellation of just the
+                # socket writer is instead an uncertain transport outcome.
+                if asyncio.current_task().cancelling():
+                    raise
                 canceled = True
-                if command_type in cls._FAST_FAIL_COMMANDS:
-                    return MCPResponse(
-                        success=False,
-                        error=f"Unity did not respond to '{command_type}' within {server_wait_s:.1f}s; please retry",
-                        hint="retry",
-                    ).model_dump()
-                raise
+                return command_outcome_unknown(
+                    command_type,
+                    "socket write was cancelled",
+                    session_id=session_id,
+                    command_id=command_id,
+                    phase=phase,
+                    cause="send_cancelled",
+                )
+            except Exception as exc:
+                canceled = True
+                cause = (
+                    "timeout"
+                    if isinstance(exc, TimeoutError)
+                    else "disconnected"
+                    if isinstance(exc, PluginDisconnectedError)
+                    else "transport_error"
+                )
+                return command_outcome_unknown(
+                    command_type,
+                    str(exc) or type(exc).__name__,
+                    session_id=session_id,
+                    command_id=command_id,
+                    phase=phase,
+                    cause=cause,
+                )
         except asyncio.CancelledError:
             canceled = True
             raise
