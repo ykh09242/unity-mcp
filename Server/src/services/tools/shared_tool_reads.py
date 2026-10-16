@@ -81,8 +81,13 @@ class SharedRead(Generic[T]):
         self._flight: _ReadFlight[T] | None = None
         self.expiry_task: asyncio.Task[None] | None = None
 
-    async def fetch(self, factory: Callable[[], Coroutine[None, None, T]]) -> T:
-        """Share a fresh read, returning private data for caller-side observations."""
+    async def fetch(
+        self,
+        factory: Callable[[], Coroutine[None, None, T]],
+        *,
+        on_flight: Callable[[asyncio.Task], None] | None = None,
+    ) -> T:
+        """Share a fresh read and optionally observe the actual owning task."""
         flight = self._flight
         if flight is not None and flight.task.done() and not flight.task.cancelled():
             if (
@@ -100,6 +105,8 @@ class SharedRead(Generic[T]):
             flight.task.add_done_callback(self._finish_fetch)
         flight.references += 1
         try:
+            if on_flight is not None:
+                on_flight(flight.task)
             completed = await asyncio.shield(flight.task)
             consumer = response_owner.get()
             copy_owner = flight.owner.reserve_copy()

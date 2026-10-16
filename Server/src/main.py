@@ -14,7 +14,12 @@ from core.telemetry import (
 )
 from services.resources import register_all_resources
 from transport.plugin_registry import PluginRegistry
-from transport.plugin_hub import PluginHub
+from transport.plugin_hub import (
+    PluginHub,
+    _CommandBudget,
+    _HttpRequestBudget,
+    http_request_budget,
+)
 from transport.models import SessionDetails, SessionList
 from services.custom_tool_service import (
     CustomToolService,
@@ -619,9 +624,75 @@ def create_mcp_server(
                         {"success": False, "error": "Missing 'type' field"}, status_code=400
                     )
 
-                # Get available sessions
-                sessions = await PluginHub.get_sessions()
-                if not sessions.sessions:
+                policy_command = command_type
+                policy_params = params if isinstance(params, dict) else {}
+                if command_type == "execute_custom_tool":
+                    policy_command = (
+                        policy_params.get("tool_name") or policy_params.get("name") or command_type
+                    )
+                    policy_params = (
+                        policy_params.get("parameters") or policy_params.get("params") or {}
+                    )
+                    if not isinstance(policy_params, dict):
+                        policy_params = {}
+                started_at = asyncio.get_running_loop().time()
+                budget = _CommandBudget(
+                    started_at + PluginHub._command_timeouts(policy_command, policy_params)[1]
+                )
+                scope = asyncio.timeout_at(budget.expires_at)
+                token = http_request_budget.set(_HttpRequestBudget(started_at, budget, scope))
+                try:
+                    async with scope:
+                        return await _execute_cli_command(command_type, params, unity_instance)
+                except TimeoutError:
+                    if not scope.expired():
+                        raise
+                    return JSONResponse(bound_response(budget.timeout_response(policy_command)))
+                finally:
+                    http_request_budget.reset(token)
+
+            except Exception as e:
+                logger.error("CLI command failed (%s)", type(e).__name__)
+                return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+        async def _execute_cli_command(command_type, params, unity_instance) -> JSONResponse:
+            # Get available sessions
+            sessions = await PluginHub.get_sessions()
+            if not sessions.sessions:
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": "No Unity instances connected. Make sure Unity is running with MCP plugin.",
+                    },
+                    status_code=503,
+                )
+
+            # Find target session
+            session_id = None
+            session_details = None
+            if unity_instance:
+                session_id, session_details = _select_local_session(sessions, unity_instance)
+
+            # If a specific unity_instance was requested but not found, return an error
+            # (Check done here so execute_custom_tool can also validate the instance)
+            if unity_instance and not session_id:
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": f"Unity instance '{unity_instance}' not found",
+                    },
+                    status_code=404,
+                )
+
+            # If no specific unity_instance requested, use first available session
+            # (Must be done before execute_custom_tool check so all command types benefit)
+            if not session_id:
+                try:
+                    session_id = next(iter(sessions.sessions.keys()))
+                    session_details = sessions.sessions.get(session_id)
+                except StopIteration:
+                    # No sessions available - sessions.sessions is empty
+                    # This should not happen since we checked at line 378, but handle gracefully
                     return JSONResponse(
                         {
                             "success": False,
@@ -630,104 +701,70 @@ def create_mcp_server(
                         status_code=503,
                     )
 
-                # Find target session
-                session_id = None
-                session_details = None
-                if unity_instance:
-                    session_id, session_details = _select_local_session(sessions, unity_instance)
-
-                # If a specific unity_instance was requested but not found, return an error
-                # (Check done here so execute_custom_tool can also validate the instance)
-                if unity_instance and not session_id:
+            # Custom tool execution - must be checked BEFORE the final PluginHub.send_command call
+            # This applies to both cases: with or without explicit unity_instance
+            if command_type == "execute_custom_tool":
+                # session_id and session_details are already set above
+                if not session_id or not session_details:
                     return JSONResponse(
                         {
                             "success": False,
-                            "error": f"Unity instance '{unity_instance}' not found",
+                            "error": "No valid Unity session available for custom tool execution",
                         },
-                        status_code=404,
+                        status_code=503,
                     )
+                tool_name = None
+                tool_params = {}
+                if isinstance(params, dict):
+                    tool_name = params.get("tool_name") or params.get("name")
+                    tool_params = params.get("parameters") or params.get("params") or {}
 
-                # If no specific unity_instance requested, use first available session
-                # (Must be done before execute_custom_tool check so all command types benefit)
-                if not session_id:
-                    try:
-                        session_id = next(iter(sessions.sessions.keys()))
-                        session_details = sessions.sessions.get(session_id)
-                    except StopIteration:
-                        # No sessions available - sessions.sessions is empty
-                        # This should not happen since we checked at line 378, but handle gracefully
-                        return JSONResponse(
-                            {
-                                "success": False,
-                                "error": "No Unity instances connected. Make sure Unity is running with MCP plugin.",
-                            },
-                            status_code=503,
-                        )
-
-                # Custom tool execution - must be checked BEFORE the final PluginHub.send_command call
-                # This applies to both cases: with or without explicit unity_instance
-                if command_type == "execute_custom_tool":
-                    # session_id and session_details are already set above
-                    if not session_id or not session_details:
-                        return JSONResponse(
-                            {
-                                "success": False,
-                                "error": "No valid Unity session available for custom tool execution",
-                            },
-                            status_code=503,
-                        )
-                    tool_name = None
+                if not tool_name:
+                    return JSONResponse(
+                        {
+                            "success": False,
+                            "error": "Missing 'tool_name' for execute_custom_tool",
+                        },
+                        status_code=400,
+                    )
+                if tool_params is None:
                     tool_params = {}
-                    if isinstance(params, dict):
-                        tool_name = params.get("tool_name") or params.get("name")
-                        tool_params = params.get("parameters") or params.get("params") or {}
-
-                    if not tool_name:
-                        return JSONResponse(
-                            {
-                                "success": False,
-                                "error": "Missing 'tool_name' for execute_custom_tool",
-                            },
-                            status_code=400,
-                        )
-                    if tool_params is None:
-                        tool_params = {}
-                    if not isinstance(tool_params, dict):
-                        return JSONResponse(
-                            {"success": False, "error": "Tool parameters must be an object/dict"},
-                            status_code=400,
-                        )
-
-                    # Prefer a concrete hash for project-scoped tools.
-                    unity_instance_hint = unity_instance
-                    if session_details and session_details.hash:
-                        unity_instance_hint = session_details.hash
-
-                    project_id = await asyncio.to_thread(
-                        resolve_project_id_for_unity_instance, unity_instance_hint
+                if not isinstance(tool_params, dict):
+                    return JSONResponse(
+                        {"success": False, "error": "Tool parameters must be an object/dict"},
+                        status_code=400,
                     )
-                    if not project_id:
-                        return JSONResponse(
-                            {
-                                "success": False,
-                                "error": "Could not resolve project id for custom tool",
-                            },
-                            status_code=400,
-                        )
 
-                    service = CustomToolService.get_instance()
-                    result = await service.execute_tool(
-                        project_id, tool_name, unity_instance_hint, tool_params
+                # Prefer a concrete hash for project-scoped tools.
+                unity_instance_hint = unity_instance
+                if session_details and session_details.hash:
+                    unity_instance_hint = session_details.hash
+
+                project_id = await asyncio.to_thread(
+                    resolve_project_id_for_unity_instance, unity_instance_hint
+                )
+                if not project_id:
+                    return JSONResponse(
+                        {
+                            "success": False,
+                            "error": "Could not resolve project id for custom tool",
+                        },
+                        status_code=400,
                     )
-                    return JSONResponse(bound_response(result.model_dump()))
 
-                # Send command to Unity
-                result = await PluginHub.send_command(session_id, command_type, params)
-                return JSONResponse(bound_response(result))
+                service = CustomToolService.get_instance()
+                result = await service.execute_tool(
+                    project_id, tool_name, unity_instance_hint, tool_params
+                )
+                return JSONResponse(bound_response(result.model_dump()))
 
-            except Exception as e:
-                logger.error("CLI command failed (%s)", type(e).__name__)
-                return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+            # Send command to Unity
+            request_budget = http_request_budget.get()
+            budget = request_budget.command_budget(
+                command_type, PluginHub._command_timeouts(command_type, params)[1]
+            )
+            result = await PluginHub.send_command(session_id, command_type, params, _budget=budget)
+            return JSONResponse(bound_response(result))
 
         @mcp.custom_route("/api/instances", methods=["GET"])
         async def cli_instances_route(_: Request) -> JSONResponse:

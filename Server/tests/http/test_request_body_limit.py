@@ -356,7 +356,8 @@ def test_public_local_control_limit_and_normal_command(public_app, monkeypatch):
             )
             assert response.status_code == 200
             assert response.json() == {"success": True, "data": "fixture-result"}
-        dispatch.assert_awaited_once_with("fixture-session", "read_console", {})
+        dispatch.assert_awaited_once()
+        assert dispatch.await_args.args == ("fixture-session", "read_console", {})
 
     anyio.run(scenario)
 
@@ -432,7 +433,8 @@ def test_baseline_probe_public_valid_oversize(public_app, monkeypatch):
                     )
                     assert response.status_code == 200
                     assert response.json() == {"success": True, "data": "fixture-result"}
-                dispatch.assert_awaited_once_with("fixture-session", "read_console", {})
+                dispatch.assert_awaited_once()
+                assert dispatch.await_args.args == ("fixture-session", "read_console", {})
 
     anyio.run(scenario)
 

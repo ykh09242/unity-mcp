@@ -52,7 +52,8 @@ def test_command_routes_by_explicit_hash_with_duplicate_names(
     )
     # Then the hash selects its matching session, preserving bare-name selection.
     assert response.status_code == 200
-    dispatch.assert_awaited_once_with(expected, "manage_scene", {})
+    dispatch.assert_awaited_once()
+    assert dispatch.await_args.args == (expected, "manage_scene", {})
 
 
 def test_custom_tools_routes_by_explicit_hash_with_duplicate_names(
@@ -120,6 +121,7 @@ def test_bare_hash_takes_precedence_over_another_project_name(
     # Then hash matching wins across the full catalog before any name fallback.
     assert response.status_code == 200
     if route == "command":
-        dispatch.assert_awaited_once_with("second", "manage_scene", {})
+        dispatch.assert_awaited_once()
+        assert dispatch.await_args.args == ("second", "manage_scene", {})
     else:
         listing.assert_awaited_once_with("bbbb2222")

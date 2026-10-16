@@ -12,6 +12,7 @@ import uuid
 import weakref
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from collections.abc import Callable
 
@@ -125,6 +126,85 @@ class NoUnitySessionError(RuntimeError):
     """Raised when no Unity plugins are available."""
 
 
+@dataclass(slots=True)
+class _CommandBudget:
+    expires_at: float
+    phase: str = "session_selection"
+    session_id: str | None = None
+    command_id: str | None = None
+    dispatched: bool = False
+    command: str | None = None
+    active: _CommandBudget | None = None
+    prior_dispatch: _CommandBudget | None = None
+
+    def execution_evidence(self) -> _CommandBudget:
+        current = self.active.execution_evidence() if self.active is not None else self
+        return current if current.dispatched else self.prior_dispatch or current
+
+    def remaining(self) -> float:
+        return max(0.0, self.expires_at - asyncio.get_running_loop().time())
+
+    def timeout_response(self, command: str) -> dict[str, Any]:
+        evidence = self.execution_evidence()
+        if evidence is not self:
+            return evidence.timeout_response(command)
+        command = self.command or command
+        detail = f"total command deadline exceeded during {self.phase}"
+        context = {"phase": self.phase, "session_id": self.session_id}
+        if self.dispatched:
+            return command_outcome_unknown(
+                command, detail, **context, command_id=self.command_id, cause="timeout"
+            )
+        return MCPResponse(
+            success=False,
+            error=f"Unity command was not dispatched: {detail}",
+            hint="retry",
+            data={"reason": "command_deadline_exceeded", "command": command, **context},
+        ).model_dump()
+
+
+@dataclass(slots=True)
+class _HttpRequestBudget:
+    """One origin for HTTP selection, tool work and transport execution."""
+
+    started_at: float
+    budget: _CommandBudget
+    scope: asyncio.Timeout
+
+    def extend(self, timeout_s: float) -> None:
+        # A tool may transform arguments or discover an existing long-job policy.
+        # Account for that policy from request entry, never from this later phase.
+        expires_at = self.started_at + timeout_s
+        if expires_at > self.budget.expires_at and not self.scope.expired():
+            self.budget.expires_at = expires_at
+            self.scope.reschedule(expires_at)
+
+    def command_budget(self, command: str, timeout_s: float) -> _CommandBudget:
+        self.extend(timeout_s)
+        budget = _CommandBudget(
+            min(self.budget.expires_at, asyncio.get_running_loop().time() + timeout_s),
+            command=command,
+        )
+        previous = self.budget.execution_evidence()
+        if previous.dispatched:
+            # Keep one earlier dispatch, not an unbounded history of polling reads.
+            self.budget.prior_dispatch = previous
+        self.budget.active = budget
+        return budget
+
+
+http_request_budget: ContextVar[_HttpRequestBudget | None] = ContextVar(
+    "http_request_budget", default=None
+)
+
+
+def extend_http_request_deadline(timeout_s: float) -> None:
+    """Retain a tool's existing long-job policy without restarting its clock."""
+    request = http_request_budget.get()
+    if request is not None:
+        request.extend(timeout_s)
+
+
 @dataclass(frozen=True, slots=True)
 class _ConnectionReadIdentity:
     """Pin a read to one registered principal, socket and admission epoch."""
@@ -197,6 +277,9 @@ class PluginHub(WebSocketEndpoint):
     _last_pong: ClassVar[dict[str, float]] = {}
     # session_id -> ping task
     _ping_tasks: ClassVar[dict[str, asyncio.Task]] = {}
+    # Recovery callers may expire before eviction finishes. Keep one owned task
+    # per registry/session until completion, and drain it during shutdown.
+    _eviction_tasks: ClassVar[dict[tuple[int, str], asyncio.Task]] = {}
     CLOSE_TIMEOUT = 5.0
     CANCEL_TIMEOUT = 1.0
     # Bound both retained tasks and their request/model/JSON working set. These
@@ -238,6 +321,9 @@ class PluginHub(WebSocketEndpoint):
     # No completed-result TTL: only callers overlapping an actual RPC share it.
     _readiness_reads: ClassVar[SharedToolReads[dict[str, Any]]] = SharedToolReads()
     _ordinary_state_reads: ClassVar[SharedToolReads[dict[str, Any]]] = SharedToolReads()
+    _ordinary_state_flights: ClassVar[weakref.WeakKeyDictionary[asyncio.Task, _CommandBudget]] = (
+        weakref.WeakKeyDictionary()
+    )
     _NON_MUTATING_COMMANDS = frozenset({"ping", "get_editor_state", "get_test_job"})
     _large_results: ClassVar[LargeResultAssembler | None] = None
     _raw_results: ClassVar[ChargeLedger] = ChargeLedger()
@@ -554,6 +640,7 @@ class PluginHub(WebSocketEndpoint):
         if registry is not None:
             await registry.clear()
         await asyncio.gather(*(cls._close_websocket(ws) for ws in connections))
+        await asyncio.gather(*list(cls._eviction_tasks.values()), return_exceptions=True)
 
     @classmethod
     async def request_idle_shutdown(
@@ -902,26 +989,9 @@ class PluginHub(WebSocketEndpoint):
             owner.release()
 
     @classmethod
-    async def send_command(
-        cls,
-        session_id: str,
-        command_type: str,
-        params: dict[str, Any],
-        *,
-        _expected_read: _ConnectionReadIdentity | None = None,
-    ) -> dict[str, Any]:
-        try:
-            websocket = await cls._get_connection(session_id)
-        except RuntimeError as exc:
-            if _expected_read is not None:
-                return cls._unavailable_retry_response("read_invalidated")
-            raise CommandNotDispatchedError(str(exc)) from exc
-        registry = cls._registry
-        session = await registry.get_session(session_id) if registry is not None else None
-        # Admission follows the registered principal, never caller parameters.
-        user_id = session.user_id if session is not None else None
+    def _command_timeouts(cls, command_type: str, params: dict[str, Any]) -> tuple[float, float]:
         # Compute a per-command timeout:
-        # - fast-path commands: short timeout (encourage retry)
+        # - fast-path commands: short total execution budget
         # - long-running commands: allow caller to request a longer timeout via params
         unity_timeout_s = float(cls.COMMAND_TIMEOUT)
         server_wait_s = float(cls.COMMAND_TIMEOUT)
@@ -956,6 +1026,54 @@ class PluginHub(WebSocketEndpoint):
                 except Exception:
                     pass
 
+        return unity_timeout_s, server_wait_s
+
+    @classmethod
+    async def send_command(
+        cls,
+        session_id: str,
+        command_type: str,
+        params: dict[str, Any],
+        *,
+        _budget: _CommandBudget | None = None,
+        _expected_read: _ConnectionReadIdentity | None = None,
+    ) -> dict[str, Any]:
+        budget = _budget or _CommandBudget(
+            asyncio.get_running_loop().time() + cls._command_timeouts(command_type, params)[1]
+        )
+        budget.phase = "admission"
+        budget.dispatched = False
+        budget.command_id = None
+        budget.session_id = session_id
+        try:
+            async with asyncio.timeout_at(budget.expires_at):
+                return await cls._send_command(
+                    session_id, command_type, params, budget, _expected_read=_expected_read
+                )
+        except TimeoutError:
+            return budget.timeout_response(command_type)
+
+    @classmethod
+    async def _send_command(
+        cls,
+        session_id: str,
+        command_type: str,
+        params: dict[str, Any],
+        budget: _CommandBudget,
+        *,
+        _expected_read: _ConnectionReadIdentity | None = None,
+    ) -> dict[str, Any]:
+        try:
+            websocket = await cls._get_connection(session_id)
+        except RuntimeError as exc:
+            if _expected_read is not None:
+                return cls._unavailable_retry_response("read_invalidated")
+            raise CommandNotDispatchedError(str(exc)) from exc
+        registry = cls._registry
+        session = await registry.get_session(session_id) if registry is not None else None
+        # Admission follows the registered principal, never caller parameters.
+        user_id = session.user_id if session is not None else None
+        unity_timeout_s, _ = cls._command_timeouts(command_type, params)
         lock = cls._lock
         if lock is None:
             raise CommandNotDispatchedError("PluginHub not configured")
@@ -1033,13 +1151,19 @@ class PluginHub(WebSocketEndpoint):
                 params=params,
                 timeout=unity_timeout_s,
             )
-            deadline = asyncio.get_running_loop().time() + server_wait_s
-            phase = "send"
+            # Admission, serialization and all earlier phases spend this same budget.
+            payload = msg.model_dump()
+            if budget.remaining() <= 0:
+                raise TimeoutError
+            deadline = budget.expires_at
+            phase = budget.phase = "send"
+            budget.command_id = command_id
             try:
-                send_task = asyncio.create_task(websocket.send_json(msg.model_dump()))
+                budget.dispatched = True
+                send_task = asyncio.create_task(websocket.send_json(payload))
                 done, _ = await asyncio.wait(
                     {send_task, future},
-                    timeout=server_wait_s,
+                    timeout=budget.remaining(),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 # A disconnect must also interrupt a blocked socket write.
@@ -1048,7 +1172,7 @@ class PluginHub(WebSocketEndpoint):
                 if send_task not in done:
                     raise asyncio.TimeoutError
                 send_task.result()
-                phase = "response"
+                phase = budget.phase = "response"
                 remaining = max(0.0, deadline - asyncio.get_running_loop().time())
                 result = await asyncio.wait_for(future, timeout=remaining)
                 return result
@@ -1099,6 +1223,8 @@ class PluginHub(WebSocketEndpoint):
                 # A disconnect may finish the future while the socket write fails.
                 future.exception()
             try:
+                # Resource cleanup may use at most CANCEL_TIMEOUT beyond the
+                # execution deadline; it never grants more execution time.
                 with anyio.move_on_after(cls.CANCEL_TIMEOUT, shield=True):
                     if send_task is not None:
                         if not send_task.done():
@@ -1812,11 +1938,46 @@ class PluginHub(WebSocketEndpoint):
         return websocket
 
     @classmethod
-    async def _evict_connection(cls, session_id: str, reason: str) -> None:
+    async def _evict_connection(
+        cls,
+        session_id: str,
+        reason: str,
+        *,
+        detach_on_cancel: bool = False,
+        _expected: tuple[PluginRegistry | None, WebSocket | None] | None = None,
+    ) -> None:
+        if detach_on_cancel:
+            key = (id(cls._registry), session_id)
+            task = cls._eviction_tasks.get(key)
+            if task is None:
+                task = asyncio.create_task(
+                    cls._evict_connection(
+                        session_id,
+                        reason,
+                        _expected=(cls._registry, cls._connections.get(session_id)),
+                    )
+                )
+                cls._eviction_tasks[key] = task
+
+                def finished(completed: asyncio.Task) -> None:
+                    if cls._eviction_tasks.get(key) is completed:
+                        cls._eviction_tasks.pop(key, None)
+                    if not completed.cancelled() and completed.exception() is not None:
+                        logger.warning(
+                            "Owned plugin eviction failed", exc_info=completed.exception()
+                        )
+
+                task.add_done_callback(finished)
+            # The server, rather than an expired command, owns the remaining
+            # registry/socket cleanup. Shielding never extends the caller's budget.
+            await asyncio.shield(task)
+            return
         # Once routing disappears, only this task can finish registry/socket cleanup.
         # Keep ownership through explicit Task.cancel() and AnyIO level cancellation.
         cleanup = asyncio.create_task(
             cls._evict_connection_owned(session_id, asyncio.current_task())
+            if _expected is None
+            else cls._evict_connection_owned(session_id, asyncio.current_task(), expected=_expected)
         )
         cancellation: asyncio.CancelledError | None = None
         with anyio.CancelScope(shield=True):
@@ -1842,7 +2003,11 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     async def _evict_connection_owned(
-        cls, session_id: str, initiating_task: asyncio.Task | None
+        cls,
+        session_id: str,
+        initiating_task: asyncio.Task | None,
+        *,
+        expected: tuple[PluginRegistry | None, WebSocket | None] | None = None,
     ) -> bool:
         """Drop a stale session from in-memory maps and registry."""
         lock = cls._lock
@@ -1853,6 +2018,11 @@ class PluginHub(WebSocketEndpoint):
         ping_task: asyncio.Task | None = None
         pending_futures: list[asyncio.Future] = []
         async with lock:
+            if expected is not None and (
+                cls._registry is not expected[0]
+                or cls._connections.get(session_id) is not expected[1]
+            ):
+                return False
             registry = cls._registry
             websocket = cls._connections.pop(session_id, None)
             if websocket is not None:
@@ -1902,7 +2072,7 @@ class PluginHub(WebSocketEndpoint):
         try:
             websocket = await cls._get_connection(session_id)
         except RuntimeError:
-            await cls._evict_connection(session_id, "missing_websocket")
+            await cls._evict_connection(session_id, "missing_websocket", detach_on_cancel=True)
             return False
 
         if (
@@ -1917,7 +2087,7 @@ class PluginHub(WebSocketEndpoint):
             websocket.application_state,
             websocket.client_state,
         )
-        await cls._evict_connection(session_id, "stale_websocket_state")
+        await cls._evict_connection(session_id, "stale_websocket_state", detach_on_cancel=True)
         return False
 
     @staticmethod
@@ -2102,7 +2272,11 @@ class PluginHub(WebSocketEndpoint):
         *,
         editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
     ) -> dict[str, Any]:
-        """Send a command to a Unity instance.
+        """Send with one total execution budget, including recovery and admission.
+
+        The existing per-command policy selects the budget, including long jobs.
+        Cancellation cleanup may use up to CANCEL_TIMEOUT after it expires;
+        stale-session eviction remains server-owned and is drained on shutdown.
 
         Args:
             unity_instance: Target instance (Name@hash or hash)
@@ -2111,6 +2285,39 @@ class PluginHub(WebSocketEndpoint):
             user_id: User ID for session isolation in remote-hosted mode
             retry_on_reload: If False, do not wait for session reconnect on reload.
         """
+        timeout_s = cls._command_timeouts(command_type, params)[1]
+        request = http_request_budget.get()
+        budget = (
+            request.command_budget(command_type, timeout_s)
+            if request is not None
+            else _CommandBudget(asyncio.get_running_loop().time() + timeout_s, command=command_type)
+        )
+        try:
+            async with asyncio.timeout_at(budget.expires_at):
+                return await cls._send_command_for_instance(
+                    unity_instance,
+                    command_type,
+                    params,
+                    user_id,
+                    retry_on_reload,
+                    editor_state_read_mode=editor_state_read_mode,
+                    budget=budget,
+                )
+        except TimeoutError:
+            return budget.timeout_response(command_type)
+
+    @classmethod
+    async def _send_command_for_instance(
+        cls,
+        unity_instance: str | None,
+        command_type: str,
+        params: dict[str, Any],
+        user_id: str | None = None,
+        retry_on_reload: bool = True,
+        *,
+        budget: _CommandBudget,
+        editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
+    ) -> dict[str, Any]:
         try:
             session_id = await cls._resolve_session_id(
                 unity_instance,
@@ -2125,6 +2332,8 @@ class PluginHub(WebSocketEndpoint):
             )
             return cls._unavailable_retry_response("no_unity_session")
 
+        budget.session_id = session_id
+        budget.phase = "recovery"
         if not await cls._ensure_live_connection(session_id):
             if not retry_on_reload:
                 return cls._unavailable_retry_response("stale_connection")
@@ -2136,9 +2345,11 @@ class PluginHub(WebSocketEndpoint):
                 )
             except NoUnitySessionError:
                 return cls._unavailable_retry_response("no_unity_session")
+            budget.session_id = session_id
             if not await cls._ensure_live_connection(session_id):
                 return cls._unavailable_retry_response("stale_connection")
 
+        budget.phase = "readiness"
         share_state = (
             command_type == "get_editor_state"
             and not params
@@ -2187,18 +2398,31 @@ class PluginHub(WebSocketEndpoint):
                     ).model_dump()
 
         if share_state and identity is not None:
+
+            def observe_flight(task: asyncio.Task) -> None:
+                owner = cls._ordinary_state_flights.setdefault(task, budget)
+                if owner is not budget:
+                    budget.active = owner
+
             try:
                 async with cls._ordinary_state_reads.session(identity) as read:
                     return await read.fetch(
                         lambda: cls.send_command(
-                            session_id, command_type, params, _expected_read=identity
-                        )
+                            session_id,
+                            command_type,
+                            params,
+                            _expected_read=identity,
+                            _budget=budget,
+                        ),
+                        on_flight=observe_flight,
                     )
             except SharedReadCapacityError:
                 return response_limit_error("result_capacity")
         if identity is not None and command_type in cls._FAST_FAIL_COMMANDS:
-            return await cls.send_command(session_id, command_type, params, _expected_read=identity)
-        return await cls.send_command(session_id, command_type, params)
+            return await cls.send_command(
+                session_id, command_type, params, _expected_read=identity, _budget=budget
+            )
+        return await cls.send_command(session_id, command_type, params, _budget=budget)
 
     # ------------------------------------------------------------------
     # Blocking helpers for synchronous tool code

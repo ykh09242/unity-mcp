@@ -14,11 +14,14 @@ from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
+from transport.plugin_hub import extend_http_request_deadline
 import transport.legacy.unity_connection as _legacy_conn
 from services.state.external_changes_scanner import external_changes_scanner
 import services.resources.editor_state as editor_state
 
 logger = logging.getLogger(__name__)
+
+REFRESH_READY_TIMEOUT_SECONDS = 60.0
 
 # Blocking reasons that indicate Unity is actually busy (not just stale status).
 # Includes canonical editor_state advice reasons and the legacy asset_import reason.
@@ -43,6 +46,7 @@ async def wait_for_editor_ready(ctx: Context, timeout_s: float = 30.0) -> tuple[
     get_editor_state as "not ready yet" so the loop survives transient
     connection errors during domain reload.
     """
+    extend_http_request_deadline(timeout_s)
     if _in_pytest():
         return (True, 0.0)
 
@@ -275,8 +279,14 @@ async def refresh_unity(
     )
     if not response_dict.get("success", True):
         err = (response_dict.get("error") or response_dict.get("message") or "").lower()
+        outcome = response_dict.get("data")
+        deadline_after_dispatch = (
+            isinstance(outcome, dict)
+            and outcome.get("reason") == "outcome_unknown"
+            and outcome.get("cause") == "timeout"
+        )
         is_connection_lost = is_connection_lost_after_send(response_dict) or (
-            "timeout" in err and compile == "request"
+            (deadline_after_dispatch or "timeout" in err) and compile == "request"
         )
         # A rejected command never ran. Later readiness cannot prove refresh success.
         # Only an ambiguous lost response may recover, without replaying the write.
@@ -288,7 +298,9 @@ async def refresh_unity(
     # poll the canonical editor_state resource until ready or timeout.
     ready_confirmed = False
     if wait_for_ready:
-        ready_confirmed, _ = await wait_for_editor_ready(ctx, timeout_s=60.0)
+        ready_confirmed, _ = await wait_for_editor_ready(
+            ctx, timeout_s=REFRESH_READY_TIMEOUT_SECONDS
+        )
 
         # If we timed out without confirming readiness, log and return failure
         if not ready_confirmed:

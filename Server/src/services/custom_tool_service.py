@@ -32,7 +32,7 @@ from transport.legacy.unity_connection import (
     async_send_command_with_retry,
     get_unity_connection_pool,
 )
-from transport.plugin_hub import PluginHub
+from transport.plugin_hub import PluginHub, extend_http_request_deadline
 from services.tools import get_unity_instance_from_context
 from services.registry import get_registered_tools
 from services.registry.scalar_validation import strict_scalar_annotation
@@ -249,6 +249,7 @@ class CustomToolService:
 
         try:
             timeout = self._bounded_poll_seconds(definition.max_poll_seconds)
+            extend_http_request_deadline(timeout)
             deadline = time.monotonic() + timeout
             async with ResponsePollLifetime() as responses:
                 try:

@@ -86,7 +86,9 @@ async def main():
                 result = await client.call_tool(entry, arguments)
                 response = json.loads(result.content[0].text)
                 if case == "transport_timeout":
-                    passed = response == {"success": False, "message": None, "error": "TimeoutError", "data": None, "hint": "retry"}
+                    passed = (response.get("success") is False and response.get("hint") == "inspect_state_before_retry"
+                              and response.get("data") == {"reason": "outcome_unknown", "command": target, "unity_instance": "Selected@fixturehash"}
+                              and "TimeoutError" in response.get("error", "") and len(requests) == 1)
                 elif case == "selection_required":
                     passed = response.get("success") is False and response.get("hint") == "select_instance" and response.get("data") == {"reason": "instance_selection_required", "available_instances": ["OwnedA@a", "OwnedB@b"]}
                 elif case == "poll_error":

@@ -198,7 +198,8 @@ def test_authenticated_command_selects_requested_session(local_client, monkeypat
     )
     # Then only the intended session receives the operation.
     assert response.json() == {"success": True, "data": "intended-response"}
-    dispatch.assert_awaited_once_with("intended", "read_console", {"count": 1})
+    dispatch.assert_awaited_once()
+    assert dispatch.await_args.args == ("intended", "read_console", {"count": 1})
 
 
 def test_query_string_cannot_substitute_for_token_header(local_client):
