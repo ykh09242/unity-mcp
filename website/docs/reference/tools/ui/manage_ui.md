@@ -28,7 +28,8 @@ UI Toolkit workflow:
 7. Use modify_visual_element to change text, classes, or inline styles on live elements
 8. Use render_ui to capture a visual preview for self-evaluation
    - In play mode: first call queues a WaitForEndOfFrame screen capture and returns pending=true;
-     call render_ui a second time to retrieve the saved PNG (hasContent will be true).
+     resume with capture_id from that response to retrieve the PNG. Cancel with that ID and cancel_capture=true.
+     ID-less calls always start separate requests, including identical settings; another live owner is rejected.
    - In editor mode: assigns a RenderTexture to PanelSettings (best-effort; may stay blank).
 9. Use detach_ui_document to remove the selected UI component from a GameObject
 10. Use delete to remove .uxml/.uss files
@@ -51,6 +52,8 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `reference_resolution` | `dict[str, int] \| None` | — | Reference resolution as {width, height}. Legacy shorthand; prefer using 'settings' dict. |
 | `settings` | `dict[str, Any] \| None` | — | Generic PanelSettings properties dict for create_panel_settings. Keys: scaleMode (ConstantPixelSize\|ConstantPhysicalSize\|ScaleWithScreenSize), referenceResolution ({width,height}), screenMatchMode (MatchWidthOrHeight\|ShrinkToFit\|ExpandToFill), match (0-1 float), referenceDpi, fallbackDpi, sortingOrder, targetDisplay, clearColor (bool), colorClearValue (#RRGGBB or {r,g,b,a}), clearDepthStencil, themeStyleSheet (asset path), dynamicAtlasSettings ({minAtlasSize,maxAtlasSize,maxSubTextureSize,activeFilters}). |
 | `max_depth` | `int \| None` | — | Max depth to traverse visual tree (default 10). |
+| `capture_id` | `str \| None` | — | Play-mode capture ID returned by render_ui. Supply this ID alone to poll the original request; optional target/output settings must match the start request. Omit to start a separate capture even with identical settings. Results expire after 30 seconds. |
+| `cancel_capture` | `bool \| None` | — | Cancel the Play-mode capture owned by capture_id (default false). For render_ui. |
 | `width` | `int \| None` | — | Render width in pixels, 1 to 8192 (default 1920). The frame may contain at most 33,554,432 pixels. For render_ui. |
 | `height` | `int \| None` | — | Render height in pixels, 1 to 8192 (default 1080). For render_ui. |
 | `include_image` | `bool \| None` | — | Return inline base64 PNG in the response (default false). For render_ui. |

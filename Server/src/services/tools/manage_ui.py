@@ -58,7 +58,8 @@ def _canonical_ui_path(path: str) -> str:
         "7. Use modify_visual_element to change text, classes, or inline styles on live elements\n"
         "8. Use render_ui to capture a visual preview for self-evaluation\n"
         "   - In play mode: first call queues a WaitForEndOfFrame screen capture and returns pending=true;\n"
-        "     call render_ui a second time to retrieve the saved PNG (hasContent will be true).\n"
+        "     resume with capture_id from that response to retrieve the PNG. Cancel with that ID and cancel_capture=true.\n"
+        "     ID-less calls always start separate requests, including identical settings; another live owner is rejected.\n"
         "   - In editor mode: assigns a RenderTexture to PanelSettings (best-effort; may stay blank).\n"
         "9. Use detach_ui_document to remove the selected UI component from a GameObject\n"
         "10. Use delete to remove .uxml/.uss files\n\n"
@@ -148,6 +149,17 @@ async def manage_ui(
     # get_visual_tree
     max_depth: Annotated[int, "Max depth to traverse visual tree (default 10)."] | None = None,
     # render_ui
+    capture_id: Annotated[
+        str,
+        "Play-mode capture ID returned by render_ui. Supply this ID alone to poll the original "
+        "request; optional target/output settings must match the start request. Omit to start "
+        "a separate capture even with identical settings. Results expire after 30 seconds.",
+    ]
+    | None = None,
+    cancel_capture: Annotated[
+        bool, "Cancel the Play-mode capture owned by capture_id (default false). For render_ui."
+    ]
+    | None = None,
     width: Annotated[
         int,
         "Render width in pixels, 1 to 8192 (default 1920). "
@@ -299,6 +311,10 @@ async def manage_ui(
         params_dict["maxDepth"] = max_depth
 
     # render_ui params
+    if capture_id is not None:
+        params_dict["capture_id"] = capture_id
+    if cancel_capture is not None:
+        params_dict["cancel_capture"] = cancel_capture
     if width is not None:
         params_dict["width"] = width
     if height is not None:

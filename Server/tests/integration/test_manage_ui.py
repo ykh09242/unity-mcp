@@ -391,6 +391,46 @@ class TestManageUIReadResponse:
 class TestManageUIRenderUI:
     """Tests for render_ui action."""
 
+    @pytest.mark.parametrize("cancel_capture", [False, True])
+    def test_capture_resume_and_cancel_forward_opaque_id_without_start_settings(
+        self, monkeypatch, cancel_capture
+    ):
+        captured = []
+        capture_id = "aeac918628bd4a56844254c294d4ce28"
+
+        async def fake_send(_ctx, _instance, command, params, **_kwargs):
+            captured.append((command, params))
+            return {
+                "success": True,
+                "data": {"capture_id": capture_id, "cancelled": cancel_capture},
+            }
+
+        monkeypatch.setattr(manage_ui_mod, "send_mutation", fake_send)
+
+        response = run_async(
+            manage_ui_mod.manage_ui(
+                ctx=DummyContext(),
+                action="render_ui",
+                capture_id=capture_id,
+                cancel_capture=cancel_capture,
+            )
+        )
+
+        assert captured == [
+            (
+                "manage_ui",
+                {
+                    "action": "render_ui",
+                    "capture_id": capture_id,
+                    "cancel_capture": cancel_capture,
+                },
+            )
+        ]
+        assert response == {
+            "success": True,
+            "data": {"capture_id": capture_id, "cancelled": cancel_capture},
+        }
+
     def test_render_ui_routes_params(self, monkeypatch):
         captured = {}
 
