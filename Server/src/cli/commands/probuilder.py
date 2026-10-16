@@ -4,6 +4,7 @@ import json
 from typing import Any, Optional
 
 import click
+from cli.utils.parsers import admit_json_inputs
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
@@ -65,7 +66,12 @@ def probuilder():
 @click.option("--name", "-n", default=None, help="Name for the created GameObject.")
 @click.option("--position", nargs=3, type=float, default=None, help="Position X Y Z.")
 @click.option("--rotation", nargs=3, type=float, default=None, help="Rotation X Y Z (euler).")
-@click.option("--params", "-p", default="{}", help="Shape-specific parameters as JSON.")
+@click.option(
+    "--params",
+    "-p",
+    default="{}",
+    help="Shape-specific parameters as JSON. Accepts @file or -/@- stdin.",
+)
 @handle_unity_errors
 def create_shape(shape_type: str, name: Optional[str], position, rotation, params: str):
     """Create a ProBuilder shape with real dimensions.
@@ -96,6 +102,8 @@ def create_shape(shape_type: str, name: Optional[str], position, rotation, param
         unity-mcp probuilder create-shape Torus --name "MyTorus" --params '{"innerRadius": 0.2, "outerRadius": 1}'
         unity-mcp probuilder create-shape Stair --position 0 0 5 --params '{"steps": 10, "width": 2}'
     """
+    params = admit_json_inputs(params=params)["params"]
+
     config = get_config()
     extra = parse_json_dict_or_exit(params, "params")
 
@@ -118,7 +126,12 @@ def create_shape(shape_type: str, name: Optional[str], position, rotation, param
 
 
 @probuilder.command("create-poly")
-@click.option("--points", "-p", required=True, help="Points as JSON: [[x,y,z], ...]")
+@click.option(
+    "--points",
+    "-p",
+    required=True,
+    help="Points as JSON: [[x,y,z], ...] Accepts @file or -/@- stdin.",
+)
 @click.option("--height", "-h", type=float, default=1.0, help="Extrude height.")
 @click.option("--name", "-n", default=None, help="Name for the created GameObject.")
 @click.option("--flip-normals", is_flag=True, help="Flip face normals.")
@@ -130,6 +143,8 @@ def create_poly(points: str, height: float, name: Optional[str], flip_normals: b
     Examples:
         unity-mcp probuilder create-poly --points "[[0,0,0],[5,0,0],[5,0,5],[0,0,5]]" --height 3
     """
+    points = admit_json_inputs(points=points)["points"]
+
     config = get_config()
     points_list = parse_json_list_or_exit(points, "points")
 
@@ -156,7 +171,11 @@ def create_poly(points: str, height: float, name: Optional[str], flip_normals: b
 
 @probuilder.command("extrude-faces")
 @click.argument("target")
-@click.option("--faces", required=True, help="Face indices as JSON array, e.g. '[0,1,2]'.")
+@click.option(
+    "--faces",
+    required=True,
+    help="Face indices as JSON array, e.g. '[0,1,2]'. Accepts @file or -/@- stdin.",
+)
 @click.option("--distance", "-d", type=float, default=0.5, help="Extrusion distance.")
 @click.option(
     "--method",
@@ -176,6 +195,8 @@ def extrude_faces(
         unity-mcp probuilder extrude-faces "MyCube" --faces '[0]' --distance 1.0
         unity-mcp probuilder extrude-faces "MyCube" --faces '[0,1,2]' --method IndividualFaces
     """
+    faces = admit_json_inputs(faces=faces)["faces"]
+
     config = get_config()
     face_indices = parse_json_list_or_exit(faces, "faces")
 
@@ -200,7 +221,7 @@ def extrude_faces(
 @click.option(
     "--edges",
     required=True,
-    help='Edge indices as JSON array [0,1] or vertex pairs [{"a":0,"b":1}].',
+    help='Edge indices as JSON array [0,1] or vertex pairs [{"a":0,"b":1}]. Accepts @file or -/@- stdin.',
 )
 @click.option("--distance", "-d", type=float, default=0.5, help="Extrusion distance.")
 @click.option("--as-group/--no-group", default=True, help="Extrude as group.")
@@ -220,6 +241,8 @@ def extrude_edges(
         unity-mcp probuilder extrude-edges "MyCube" --edges '[0,1]' --distance 0.5
         unity-mcp probuilder extrude-edges "MyCube" --edges '[{"a":0,"b":1}]' --distance 1
     """
+    edges = admit_json_inputs(edges=edges)["edges"]
+
     config = get_config()
 
     request: dict[str, Any] = {
@@ -244,7 +267,7 @@ def extrude_edges(
 @click.option(
     "--edges",
     required=True,
-    help='Edge indices as JSON array [0,1] or vertex pairs [{"a":0,"b":1}].',
+    help='Edge indices as JSON array [0,1] or vertex pairs [{"a":0,"b":1}]. Accepts @file or -/@- stdin.',
 )
 @click.option("--amount", "-a", type=float, default=0.1, help="Bevel amount (0-1).")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
@@ -257,6 +280,8 @@ def bevel_edges(target: str, edges: str, amount: float, search_method: Optional[
         unity-mcp probuilder bevel-edges "MyCube" --edges '[0,1,2]' --amount 0.2
         unity-mcp probuilder bevel-edges "MyCube" --edges '[{"a":0,"b":1}]' --amount 0.15
     """
+    edges = admit_json_inputs(edges=edges)["edges"]
+
     config = get_config()
 
     request: dict[str, Any] = {
@@ -277,7 +302,11 @@ def bevel_edges(target: str, edges: str, amount: float, search_method: Optional[
 
 @probuilder.command("delete-faces")
 @click.argument("target")
-@click.option("--faces", required=True, help="Face indices as JSON array, e.g. '[0,1,2]'.")
+@click.option(
+    "--faces",
+    required=True,
+    help="Face indices as JSON array, e.g. '[0,1,2]'. Accepts @file or -/@- stdin.",
+)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
 def delete_faces(target: str, faces: str, search_method: Optional[str]):
@@ -287,6 +316,8 @@ def delete_faces(target: str, faces: str, search_method: Optional[str]):
     Examples:
         unity-mcp probuilder delete-faces "MyCube" --faces '[0,1]'
     """
+    faces = admit_json_inputs(faces=faces)["faces"]
+
     config = get_config()
     face_indices = parse_json_list_or_exit(faces, "faces")
 
@@ -309,7 +340,7 @@ def delete_faces(target: str, faces: str, search_method: Optional[str]):
 @click.option(
     "--faces",
     default=None,
-    help="Face indices as JSON array (optional, subdivides all if omitted).",
+    help="Face indices as JSON array (optional, subdivides all if omitted). Accepts @file or -/@- stdin.",
 )
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
@@ -321,6 +352,8 @@ def subdivide(target: str, faces: Optional[str], search_method: Optional[str]):
         unity-mcp probuilder subdivide "MyCube"
         unity-mcp probuilder subdivide "MyCube" --faces '[0,1]'
     """
+    faces = admit_json_inputs(faces=faces)["faces"]
+
     config = get_config()
 
     request: dict[str, Any] = {
@@ -349,7 +382,11 @@ def subdivide(target: str, faces: Optional[str], search_method: Optional[str]):
 @click.option(
     "--tolerance", type=float, default=0.7, help="Dot product tolerance for direction (0-1)."
 )
-@click.option("--grow-from", default=None, help="Face indices to grow selection from (JSON array).")
+@click.option(
+    "--grow-from",
+    default=None,
+    help="Face indices to grow selection from (JSON array). Accepts @file or -/@- stdin.",
+)
 @click.option("--grow-angle", type=float, default=-1, help="Max angle for grow selection (-1=any).")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
@@ -369,6 +406,8 @@ def select_faces(
         unity-mcp probuilder select-faces "MyCube" --direction forward --tolerance 0.9
         unity-mcp probuilder select-faces "MyCube" --grow-from '[0]' --grow-angle 45
     """
+    grow_from = admit_json_inputs(grow_from=grow_from)["grow_from"]
+
     config = get_config()
 
     request: dict[str, Any] = {
@@ -392,7 +431,11 @@ def select_faces(
 
 @probuilder.command("move-vertices")
 @click.argument("target")
-@click.option("--vertices", required=True, help="Vertex indices as JSON array, e.g. '[0,1,2]'.")
+@click.option(
+    "--vertices",
+    required=True,
+    help="Vertex indices as JSON array, e.g. '[0,1,2]'. Accepts @file or -/@- stdin.",
+)
 @click.option("--offset", nargs=3, type=float, required=True, help="Offset X Y Z.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
@@ -403,6 +446,8 @@ def move_vertices(target: str, vertices: str, offset, search_method: Optional[st
     Examples:
         unity-mcp probuilder move-vertices "MyCube" --vertices '[0,1,2,3]' --offset 0 1 0
     """
+    vertices = admit_json_inputs(vertices=vertices)["vertices"]
+
     config = get_config()
     vertex_indices = parse_json_list_or_exit(vertices, "vertices")
 
@@ -423,7 +468,9 @@ def move_vertices(target: str, vertices: str, offset, search_method: Optional[st
 
 @probuilder.command("weld-vertices")
 @click.argument("target")
-@click.option("--vertices", required=True, help="Vertex indices as JSON array.")
+@click.option(
+    "--vertices", required=True, help="Vertex indices as JSON array. Accepts @file or -/@- stdin."
+)
 @click.option("--radius", "-r", type=float, default=0.01, help="Neighbor radius for welding.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
@@ -434,6 +481,8 @@ def weld_vertices(target: str, vertices: str, radius: float, search_method: Opti
     Examples:
         unity-mcp probuilder weld-vertices "MyCube" --vertices '[0,1,2,3]' --radius 0.1
     """
+    vertices = admit_json_inputs(vertices=vertices)["vertices"]
+
     config = get_config()
     vertex_indices = parse_json_list_or_exit(vertices, "vertices")
 
@@ -454,7 +503,9 @@ def weld_vertices(target: str, vertices: str, radius: float, search_method: Opti
 
 @probuilder.command("set-material")
 @click.argument("target")
-@click.option("--faces", required=True, help="Face indices as JSON array.")
+@click.option(
+    "--faces", required=True, help="Face indices as JSON array. Accepts @file or -/@- stdin."
+)
 @click.option("--material", "-m", required=True, help="Material asset path.")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
@@ -465,6 +516,8 @@ def set_material(target: str, faces: str, material: str, search_method: Optional
     Examples:
         unity-mcp probuilder set-material "MyCube" --faces '[0,1]' --material "Assets/Materials/Red.mat"
     """
+    faces = admit_json_inputs(faces=faces)["faces"]
+
     config = get_config()
     face_indices = parse_json_list_or_exit(faces, "faces")
 
@@ -554,7 +607,11 @@ def auto_smooth(target: str, angle: float, search_method: Optional[str]):
 
 @probuilder.command("set-smoothing")
 @click.argument("target")
-@click.option("--faces", required=True, help="Face indices as JSON array, e.g. '[0,1,2]'.")
+@click.option(
+    "--faces",
+    required=True,
+    help="Face indices as JSON array, e.g. '[0,1,2]'. Accepts @file or -/@- stdin.",
+)
 @click.option("--group", type=int, required=True, help="Smoothing group (0=hard, 1+=smooth).")
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
@@ -566,6 +623,8 @@ def set_smoothing(target: str, faces: str, group: int, search_method: Optional[s
         unity-mcp probuilder set-smoothing "MyCube" --faces '[0,1,2]' --group 1
         unity-mcp probuilder set-smoothing "MyCube" --faces '[3,4,5]' --group 0
     """
+    faces = admit_json_inputs(faces=faces)["faces"]
+
     config = get_config()
     face_indices = parse_json_list_or_exit(faces, "faces")
 
@@ -711,7 +770,12 @@ def repair_mesh(target: str, search_method: Optional[str]):
 @probuilder.command("raw")
 @click.argument("action")
 @click.argument("target", required=False)
-@click.option("--params", "-p", default="{}", help="Additional parameters as JSON.")
+@click.option(
+    "--params",
+    "-p",
+    default="{}",
+    help="Additional parameters as JSON. Accepts @file or -/@- stdin.",
+)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @handle_unity_errors
 def pb_raw(action: str, target: Optional[str], params: str, search_method: Optional[str]):
@@ -742,6 +806,8 @@ def pb_raw(action: str, target: Optional[str], params: str, search_method: Optio
         unity-mcp probuilder raw insert_vertex "MyCube" --params '{"edge": {"a":0,"b":1}, "point": [0.5,0,0]}'
         unity-mcp probuilder raw set_pivot "MyCube" --params '{"position": [0, 0, 0]}'
     """
+    params = admit_json_inputs(params=params)["params"]
+
     config = get_config()
     extra = parse_json_dict_or_exit(params, "params")
 

@@ -1,6 +1,7 @@
 """Sprite CLI commands - slice sprite sheets and build 2D animation from them."""
 
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
 
 from cli.utils.config import get_config
@@ -121,7 +122,7 @@ def slice_sheet(
     "--clips",
     "clips",
     required=True,
-    help='JSON list: [{"name","start_frame","end_frame","fps","loop"}].',
+    help='JSON list: [{"name","start_frame","end_frame","fps","loop"}]. Accepts @file or -/@- stdin.',
 )
 @click.option(
     "--output-dir", default=None, help="Folder for the .anim assets (default: the sheet's folder)."
@@ -136,6 +137,8 @@ def setup_clips(path: str, clips: str, output_dir: Optional[str], overwrite: boo
         unity-mcp sprite setup-clips Assets/Sprites/hero.png \\
             --clips '[{"name": "walk", "start_frame": 0, "end_frame": 5}]'
     """
+    clips = admit_json_inputs(clips=clips)["clips"]
+
     config = get_config()
     result = run_command(
         "manage_sprite",
@@ -157,7 +160,7 @@ def setup_clips(path: str, clips: str, output_dir: Optional[str], overwrite: boo
     "--clips",
     "clips",
     required=True,
-    help='JSON list: [{"name", "path"}], where path is the .anim asset.',
+    help='JSON list: [{"name", "path"}], where path is the .anim asset. Accepts @file or -/@- stdin.',
 )
 @click.option("--overwrite", is_flag=True, help="Replace the .controller if it already exists.")
 @handle_unity_errors
@@ -169,6 +172,8 @@ def setup_controller(controller_path: str, clips: str, overwrite: bool):
         unity-mcp sprite setup-controller Assets/Animators/Hero.controller \\
             --clips '[{"name": "idle", "path": "Assets/Sprites/idle.anim"}]'
     """
+    clips = admit_json_inputs(clips=clips)["clips"]
+
     config = get_config()
     result = run_command(
         "manage_sprite",
@@ -208,7 +213,7 @@ def setup_controller(controller_path: str, clips: str, overwrite: bool):
     "--clips",
     "clips",
     default=None,
-    help='JSON list: [{"name","start_frame","end_frame","fps","loop"}].',
+    help='JSON list: [{"name","start_frame","end_frame","fps","loop"}]. Accepts @file or -/@- stdin.',
 )
 @click.option(
     "--animation-name",
@@ -269,6 +274,8 @@ def full_setup(
             --clips '[{"name": "idle", "start_frame": 0, "end_frame": 5}, {"name": "walk", "start_frame": 6, "end_frame": 11}]' \\
             --controller-path Assets/Animators/Hero.controller --add-to-scene --scene-target Hero
     """
+    clips = admit_json_inputs(clips=clips)["clips"]
+
     config = get_config()
     result = run_command(
         "manage_sprite",

@@ -3,6 +3,7 @@
 import sys
 import json
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
 
 from cli.utils.config import get_config
@@ -29,7 +30,10 @@ def component():
     help="How to find the target GameObject.",
 )
 @click.option(
-    "--properties", "-p", default=None, help="Initial properties as JSON (e.g., '{\"mass\": 5.0}')."
+    "--properties",
+    "-p",
+    default=None,
+    help="Initial properties as JSON (e.g., '{\"mass\": 5.0}'). Accepts @file or -/@- stdin.",
 )
 @handle_unity_errors
 def add(target: str, component_type: str, search_method: Optional[str], properties: Optional[str]):
@@ -41,6 +45,8 @@ def add(target: str, component_type: str, search_method: Optional[str], properti
         unity-mcp component add --search-method by_id -- -81840 BoxCollider
         unity-mcp component add "Enemy" Rigidbody --properties '{"mass": 5.0, "useGravity": true}'
     """
+    properties = admit_json_inputs(properties=properties)["properties"]
+
     config = get_config()
 
     params: dict[str, Any] = {
@@ -181,7 +187,7 @@ def set_property(
     "--properties",
     "-p",
     required=True,
-    help='Properties to set as JSON (e.g., \'{"mass": 5.0, "useGravity": false}\').',
+    help='Properties to set as JSON (e.g., \'{"mass": 5.0, "useGravity": false}\'). Accepts @file or -/@- stdin.',
 )
 @click.option(
     "--search-method",
@@ -212,6 +218,8 @@ def modify(
         unity-mcp component modify "Light" Light --properties '{"intensity": 2.0, "color": [1, 0, 0, 1]}'
         unity-mcp component modify "Player" BoxCollider --properties '{"size": [2,2,2]}' --component-index 1
     """
+    properties = admit_json_inputs(properties=properties)["properties"]
+
     config = get_config()
 
     props_dict = parse_json_dict_or_exit(properties, "properties")

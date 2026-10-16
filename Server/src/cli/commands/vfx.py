@@ -2,6 +2,7 @@
 
 import sys
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Tuple, Any
 
 from cli.utils.config import get_config
@@ -278,7 +279,10 @@ def line_info(target: str, search_method: Optional[str], component_index: Option
 @line.command("set-positions")
 @click.argument("target")
 @click.option(
-    "--positions", "-p", required=True, help="Positions as JSON array: [[0,0,0], [1,1,1], [2,0,0]]"
+    "--positions",
+    "-p",
+    required=True,
+    help="Positions as JSON array: [[0,0,0], [1,1,1], [2,0,0]] Accepts @file or -/@- stdin.",
 )
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @click.option(
@@ -298,6 +302,8 @@ def line_set_positions(
     Examples:
         unity-mcp vfx line set-positions "Line" --positions "[[0,0,0], [5,2,0], [10,0,0]]"
     """
+    positions = admit_json_inputs(positions=positions)["positions"]
+
     config = get_config()
 
     positions_list = parse_json_list_or_exit(positions, "positions")
@@ -531,7 +537,12 @@ def trail_clear(target: str, search_method: Optional[str], component_index: Opti
 @vfx.command("raw")
 @click.argument("action")
 @click.argument("target", required=False)
-@click.option("--params", "-p", default="{}", help="Additional parameters as JSON.")
+@click.option(
+    "--params",
+    "-p",
+    default="{}",
+    help="Additional parameters as JSON. Accepts @file or -/@- stdin.",
+)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_TAGGED, default=None)
 @click.option(
     "--component-index",
@@ -565,6 +576,8 @@ def vfx_raw(
         unity-mcp vfx raw line_create_arc "Arc" --params '{"radius": 3, "startAngle": 0, "endAngle": 180}'
         unity-mcp vfx raw vfx_send_event "Explosion" --params '{"eventName": "OnSpawn"}'
     """
+    params = admit_json_inputs(params=params)["params"]
+
     config = get_config()
 
     extra_params = parse_json_dict_or_exit(params, "params")

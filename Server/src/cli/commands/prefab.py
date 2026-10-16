@@ -3,6 +3,7 @@
 import json
 import sys
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
 
 from cli.utils.config import get_config
@@ -349,7 +350,7 @@ def _parse_property(prop_str: str) -> tuple[str, str, Any]:
     "--set-property", multiple=True, help="Property as 'Component.prop=value' (repeatable)"
 )
 @click.option("--delete-child", multiple=True, help="Child name/path to remove (repeatable)")
-@click.option("--create-child", help="JSON object for child creation")
+@click.option("--create-child", help="JSON object for child creation Accepts @file or -/@- stdin.")
 @handle_unity_errors
 def modify(
     path: str,
@@ -378,6 +379,8 @@ def modify(
         unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --set-property "Rigidbody.mass=5"
         unity-mcp prefab modify "Assets/Prefabs/Player.prefab" --create-child '{"name":"Spawn","primitive_type":"Sphere"}'
     """
+    create_child = admit_json_inputs(create_child=create_child)["create_child"]
+
     config = get_config()
 
     params: dict[str, Any] = {

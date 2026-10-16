@@ -3,6 +3,7 @@
 import sys
 import json
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any, Tuple
 
 from cli.utils.config import get_config
@@ -44,7 +45,12 @@ def info(path: str):
 @material.command("create")
 @click.argument("path")
 @click.option("--shader", "-s", default="Standard", help="Shader to use (default: Standard).")
-@click.option("--properties", "-p", default=None, help="Initial properties as JSON.")
+@click.option(
+    "--properties",
+    "-p",
+    default=None,
+    help="Initial properties as JSON. Accepts @file or -/@- stdin.",
+)
 @handle_unity_errors
 def create(path: str, shader: str, properties: Optional[str]):
     """Create a new material.
@@ -55,6 +61,8 @@ def create(path: str, shader: str, properties: Optional[str]):
         unity-mcp material create "Assets/Materials/Red.mat" --shader "Universal Render Pipeline/Lit"
         unity-mcp material create "Assets/Materials/Blue.mat" --properties '{"_Color": [0,0,1,1]}'
     """
+    properties = admit_json_inputs(properties=properties)["properties"]
+
     config = get_config()
 
     params: dict[str, Any] = {

@@ -3,6 +3,7 @@
 import sys
 import json
 import click
+from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
 
 from cli.utils.config import get_config
@@ -85,7 +86,12 @@ def info(path: str, preview: bool):
 @asset.command("create")
 @click.argument("path")
 @click.argument("asset_type")
-@click.option("--properties", "-p", default=None, help="Initial properties as JSON.")
+@click.option(
+    "--properties",
+    "-p",
+    default=None,
+    help="Initial properties as JSON. Accepts @file or -/@- stdin.",
+)
 @handle_unity_errors
 def create(path: str, asset_type: str, properties: Optional[str]):
     """Create a new asset.
@@ -96,6 +102,8 @@ def create(path: str, asset_type: str, properties: Optional[str]):
         unity-mcp asset create "Assets/NewFolder" Folder
         unity-mcp asset create "Assets/Materials/Custom.mat" Material --properties '{"color": [0,0,1,1]}'
     """
+    properties = admit_json_inputs(properties=properties)["properties"]
+
     config = get_config()
 
     params: dict[str, Any] = {
