@@ -1,4 +1,6 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 
@@ -7,6 +9,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
     [McpForUnityTool("manage_graphics", AutoRegister = false, Group = "core")]
     public static class ManageGraphics
     {
+        // The registry selects this cooperative overload. Direct callers of synchronous
+        // graphics actions retain the original one-argument response API.
+        public static Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.Equals(@params?.Value<string>("action"), "stats_get", StringComparison.OrdinalIgnoreCase))
+                return RenderingStatsOps.GetStatsAsync(@params, cancellationToken);
+            return Task.FromResult(HandleCommand(@params));
+        }
+
         public static object HandleCommand(JObject @params)
         {
             if (@params == null)
@@ -91,7 +103,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
                     // --- Stats actions (always available) ---
                     case "stats_get":
-                        return RenderingStatsOps.GetStats(@params);
+                        return RenderingStatsOps.GetStatsAsync(@params, CancellationToken.None);
                     case "stats_list_counters":
                         return RenderingStatsOps.ListCounters(@params);
                     case "stats_set_scene_debug":

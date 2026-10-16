@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -122,10 +123,19 @@ namespace MCPForUnity.Editor.Tools.Profiler
             int pageSize = Math.Max(1, Math.Min(p.GetInt("page_size") ?? 50, 500));
             int cursor = Math.Max(0, p.GetInt("cursor") ?? 0);
 
-            int totalEvents = GetEventCount();
+            if (!TryGetEventCount(out int totalEvents, out string countError))
+                return new ErrorResponse($"Frame Debugger event count is unavailable: {countError}");
             if (totalEvents == 0)
             {
-                return new SuccessResponse("Frame Debugger has no events. Is it enabled?", new { events = new List<object>(), total_events = 0 });
+                return new SuccessResponse(
+                    "Frame Debugger has no events. Is it enabled?",
+                    new
+                    {
+                        events = new List<object>(),
+                        total_events = 0,
+                        partial = false,
+                    }
+                );
             }
 
             // Try GetFrameEvents() for the event descriptor array (has type/name info)
@@ -169,9 +179,12 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 if (frameEvents != null && i < frameEvents.Length)
                 {
                     var desc = frameEvents.GetValue(i);
-                    var descType = desc.GetType();
-                    TryAddField(descType, desc, "type", entry, "event_type", "m_Type");
-                    TryAddField(descType, desc, "gameObjectInstanceID", entry);
+                    if (desc != null)
+                    {
+                        var descType = desc.GetType();
+                        TryAddField(descType, desc, "type", entry, "event_type", "m_Type");
+                        TryAddField(descType, desc, "gameObjectInstanceID", entry);
+                    }
                 }
 
                 // Get detailed event data
@@ -218,6 +231,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     catch { /* skip event data for this index */ }
                 }
 
+                DescribeEventCompleteness(entry);
                 events.Add(entry);
             }
 
@@ -227,7 +241,11 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 ["total_events"] = totalEvents,
                 ["page_size"] = pageSize,
                 ["cursor"] = cursor,
+                ["partial"] = events.Cast<Dictionary<string, object>>().Any(entry => (bool)entry["partial"]),
+                ["source"] = "editor_reflection",
             };
+            if ((bool)result["partial"])
+                result["limitations"] = "Some event members could not be extracted from this Editor. See each event's unavailable_fields.";
             if (end < totalEvents)
                 result["next_cursor"] = end;
 
@@ -247,14 +265,47 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
         private static int GetEventCount()
         {
+            if (TryGetEventCount(out int count, out string error))
+                return count;
+            throw new InvalidOperationException($"Frame Debugger event count is unavailable: {error}");
+        }
+
+        private static bool TryGetEventCount(out int count, out string error)
+        {
+            count = 0;
+            error = null;
             try
             {
-                return (int)EventCountProp.GetValue(null);
+                count = (int)EventCountProp.GetValue(null);
+                return true;
             }
-            catch
+            catch (Exception ex)
             {
-                return 0;
+                error = ex.GetBaseException().Message;
+                return false;
             }
+        }
+
+        internal static void DescribeEventCompleteness(Dictionary<string, object> entry)
+        {
+            var expectedFields = new[]
+            {
+                "name",
+                "event_type",
+                "gameObjectInstanceID",
+                "shaderName",
+                "passName",
+                "rtName",
+                "rtWidth",
+                "rtHeight",
+                "vertexCount",
+                "indexCount",
+                "instanceCount",
+                "meshName",
+            };
+            var unavailable = expectedFields.Where(field => !entry.TryGetValue(field, out object value) || value == null).ToArray();
+            entry["partial"] = unavailable.Length > 0;
+            entry["unavailable_fields"] = unavailable;
         }
 
         private static void TryAddField(Type type, object obj, string fieldName, Dictionary<string, object> dict, string outputKey = null, string alias = null)
