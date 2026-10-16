@@ -28,6 +28,9 @@ namespace MCPForUnity.Editor.Tools
         private const string CodeTargetNotFound = "target_not_found";
         private const string CodeAssetCreateFailed = "asset_create_failed";
 
+        // Narrow failure seam for native replacement regression tests.
+        internal static Action<string> BeforeReplacementOperation;
+
         // Growth limits do not prevent edits/shrinks of pre-existing larger arrays.
         private const int MaxArrayGrowthSize = 1_048_576;
         private const long MaxRequestArrayGrowth = 2_097_152;
@@ -185,7 +188,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(CodeTypeNotFound, new { message = $"ScriptableObject type not found: '{typeName}'", typeName });
             }
 
-            string finalPath = overwrite ? desiredPath : AssetDatabase.GenerateUniqueAssetPath(desiredPath);
+            string finalPath = desiredPath;
 
             try
             {
@@ -251,6 +254,8 @@ namespace MCPForUnity.Editor.Tools
             bool isNewAsset = true;
             try
             {
+                if (!overwrite)
+                    finalPath = AssetPathUtility.GetContainedAssetPath(AssetDatabase.GenerateUniqueAssetPath(desiredPath));
                 if (overwrite)
                 {
                     var existingAsset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(finalPath);
@@ -274,10 +279,11 @@ namespace MCPForUnity.Editor.Tools
                     }
                     else if (existingAsset != null)
                     {
-                        // Type mismatch or not a ScriptableObject - must delete and recreate to change type, losing GUID
-                        // (Or we could warn, but overwrite usually implies replacing)
-                        AssetPathUtility.GetFullAssetPath(finalPath);
-                        AssetDatabase.DeleteAsset(finalPath);
+                        // A successful type change still replaces the GUID, but a failed replacement
+                        // must retain the original asset, including its live unsaved state.
+                        object result = ReplaceScriptableObject(instance, existingAsset, finalPath, patchesToken as JArray);
+                        folders.Complete();
+                        return result;
                     }
                 }
 
@@ -330,6 +336,291 @@ namespace MCPForUnity.Editor.Tools
             );
             folders.Complete();
             return response;
+        }
+
+        private static object ReplaceScriptableObject(ScriptableObject replacement, ScriptableObject original, string finalPath, JArray patches)
+        {
+            // Keep temporary paths independent of the caller's folder depth. A sibling backup
+            // can exceed native/managed path limits even when the original path is readable.
+            string temporaryRoot = $"Assets/__mcp_so_replacement_{Guid.NewGuid():N}";
+            string stagePath = $"{temporaryRoot}/new/{Path.GetFileName(finalPath)}";
+            string backupPath = $"{temporaryRoot}/original/{Path.GetFileName(finalPath)}";
+            string originalGuid = AssetDatabase.AssetPathToGUID(finalPath, AssetPathToGUIDOptions.OnlyExistingAssets);
+            string replacementGuid = null;
+            bool stageCreationAttempted = false;
+            var dirtyOriginalStates = new List<(UnityEngine.Object target, UnityEngine.Object snapshot)>();
+            bool originalAtBackup = false;
+            bool originalMoveAttempted = false;
+            byte[] originalBytes = null;
+            byte[] originalMeta = null;
+            using var temporaryFolders = new AssetFolderScope();
+            try
+            {
+                GetReplacementFullPath(finalPath);
+                if (string.IsNullOrEmpty(originalGuid) || AssetDatabase.LoadAssetAtPath<ScriptableObject>(finalPath) != original)
+                    throw new IOException("The original asset changed before replacement began.");
+                foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(finalPath).Where(asset => asset != null && EditorUtility.IsDirty(asset)))
+                {
+                    UnityEngine.Object snapshot =
+                        asset is ScriptableObject ? ScriptableObject.CreateInstance(asset.GetType()) : UnityEngine.Object.Instantiate(asset);
+                    dirtyOriginalStates.Add((asset, snapshot));
+                    // Copy again even after Instantiate, so self/cross references point at the
+                    // original objects rather than any references remapped by cloning.
+                    EditorUtility.CopySerialized(asset, snapshot);
+                }
+                originalBytes = File.ReadAllBytes(GetReplacementFullPath(finalPath));
+                originalMeta = File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(finalPath + ".meta"));
+                EnsureReplacementDestinationEmpty(temporaryRoot);
+                temporaryFolders.EnsureParentDirectory(stagePath);
+                temporaryFolders.EnsureParentDirectory(backupPath);
+                EnsureReplacementDestinationEmpty(stagePath);
+                replacement.name = Path.GetFileNameWithoutExtension(finalPath);
+                stageCreationAttempted = true;
+                BeforeReplacementOperation?.Invoke("create");
+                GetReplacementFullPath(stagePath);
+                AssetDatabase.CreateAsset(replacement, stagePath);
+                replacementGuid = AssetDatabase.AssetPathToGUID(stagePath, AssetPathToGUIDOptions.OnlyExistingAssets);
+                if (!EditorUtility.IsPersistent(replacement) || AssetDatabase.GetAssetPath(replacement) != stagePath || string.IsNullOrEmpty(replacementGuid))
+                    throw new IOException($"Unity could not create the replacement at '{stagePath}'.");
+                replacement = SaveAndImportReplacement(replacement, stagePath, replacementGuid, "stage");
+
+                // Moving the original retains its loaded object and GUID. In particular, never save
+                // all assets here: the original may have unsaved data that must survive rollback.
+                originalMoveAttempted = true;
+                MoveReplacementAsset(finalPath, backupPath, originalGuid, () => originalAtBackup = true);
+                MoveReplacementAsset(stagePath, finalPath, replacementGuid);
+                object patchResults = null;
+                var warnings = new List<string>();
+                if (patches != null && patches.Count > 0)
+                {
+                    GetReplacementFullPath(finalPath);
+                    var patchApply = ApplyPatchesCore(replacement, patches, saveAssets: false, excludedReferencePath: backupPath);
+                    patchResults = patchApply.results;
+                    warnings.AddRange(patchApply.warnings);
+                }
+                replacement = SaveAndImportReplacement(replacement, finalPath, replacementGuid, "final");
+
+                // This is the destructive commit, after every replacement operation has succeeded.
+                // A cleanup failure must not falsely report that the validated replacement failed.
+                try
+                {
+                    DeleteReplacementAsset(backupPath, originalGuid);
+                }
+                catch (Exception cleanupError)
+                {
+                    warnings.Add($"Replacement saved; original backup cleanup failed at '{backupPath}': {cleanupError.Message}");
+                }
+                return new SuccessResponse(
+                    "ScriptableObject created.",
+                    new
+                    {
+                        guid = replacementGuid,
+                        path = finalPath,
+                        typeNameResolved = replacement.GetType().FullName,
+                        patchResults,
+                        warnings = warnings.Count > 0 ? warnings : null,
+                    }
+                );
+            }
+            catch (Exception error)
+            {
+                var rollbackErrors = new List<string>();
+                bool originalRestored = false;
+                string recoveryPath = null;
+                try
+                {
+                    GetReplacementFullPath(finalPath);
+                    string currentGuid = AssetDatabase.AssetPathToGUID(finalPath, AssetPathToGUIDOptions.OnlyExistingAssets);
+                    if (!string.IsNullOrEmpty(replacementGuid) && currentGuid == replacementGuid)
+                        DeleteReplacementAsset(finalPath, replacementGuid);
+                    if (originalAtBackup || ReplacementFileHasGuid(backupPath, originalGuid))
+                    {
+                        originalAtBackup = true;
+                        BeforeReplacementOperation?.Invoke("rollback_restore");
+                        MoveReplacementAsset(backupPath, finalPath, originalGuid, () => originalAtBackup = false);
+                    }
+                    originalRestored =
+                        AssetDatabase.AssetPathToGUID(finalPath, AssetPathToGUIDOptions.OnlyExistingAssets) == originalGuid
+                        && original != null
+                        && AssetDatabase.LoadAssetAtPath<ScriptableObject>(finalPath) == original;
+                    if (!originalRestored)
+                        throw new IOException("The original asset could not be restored to its original path.");
+                }
+                catch (Exception rollbackError)
+                {
+                    rollbackErrors.Add(rollbackError.Message);
+                    // Keep the original backup and its meta file available for manual recovery.
+                    recoveryPath = originalAtBackup ? backupPath : finalPath;
+                }
+                if (stageCreationAttempted)
+                {
+                    try
+                    {
+                        // CreateAsset can register the candidate and then throw from a callback.
+                        if (string.IsNullOrEmpty(replacementGuid) && replacement != null && AssetDatabase.GetAssetPath(replacement) == stagePath)
+                            replacementGuid = AssetDatabase.AssetPathToGUID(stagePath, AssetPathToGUIDOptions.OnlyExistingAssets);
+                        DeleteReplacementAsset(stagePath, replacementGuid, allowUnregistered: true);
+                    }
+                    catch (Exception cleanupError)
+                    {
+                        rollbackErrors.Add($"Replacement cleanup at '{stagePath}' failed: {cleanupError.Message}");
+                    }
+                }
+                // MoveAsset can serialize dirty data and clear dirty flags. Restore the saved
+                // bytes independently of the live unsaved values, even if the backup must remain.
+                if (originalBytes != null && originalMeta != null)
+                {
+                    try
+                    {
+                        string retainedPath = originalAtBackup ? backupPath : finalPath;
+                        string fullPath = GetReplacementFullPath(retainedPath);
+                        string metaPath = AssetPathUtility.GetFullAssetPath(retainedPath + ".meta");
+                        if (File.Exists(metaPath) && !ReplacementFileHasGuid(retainedPath, originalGuid))
+                            throw new IOException($"The original recovery path '{retainedPath}' is occupied by different metadata.");
+                        Directory.CreateDirectory(AssetPathUtility.GetFullAssetPath(Path.GetDirectoryName(retainedPath)?.Replace('\\', '/')));
+                        RestoreReplacementFile(fullPath, originalBytes);
+                        RestoreReplacementFile(metaPath, originalMeta);
+                        if (originalMoveAttempted)
+                            AssetDatabase.ImportAsset(retainedPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                        if (!ReplacementFileHasGuid(retainedPath, originalGuid) || !File.ReadAllBytes(fullPath).SequenceEqual(originalBytes))
+                            throw new IOException($"Original saved bytes were not retained at '{retainedPath}'.");
+                        if (original == null || AssetDatabase.LoadAssetAtPath<ScriptableObject>(retainedPath) != original)
+                            throw new IOException("Importing the original did not retain its loaded object identity.");
+                    }
+                    catch (Exception restoreError)
+                    {
+                        originalRestored = false;
+                        rollbackErrors.Add($"Restoring original saved bytes failed: {restoreError.Message}");
+                    }
+                }
+                foreach (var state in dirtyOriginalStates)
+                {
+                    try
+                    {
+                        if (state.target == null)
+                            throw new IOException("An original dirty object was lost during rollback.");
+                        EditorUtility.CopySerialized(state.snapshot, state.target);
+                        EditorUtility.SetDirty(state.target);
+                    }
+                    catch (Exception stateError)
+                    {
+                        originalRestored = false;
+                        rollbackErrors.Add($"Restoring original unsaved data failed: {stateError.Message}");
+                    }
+                }
+                return new ErrorResponse(
+                    CodeAssetCreateFailed,
+                    new
+                    {
+                        message = error.Message,
+                        path = finalPath,
+                        originalRestored,
+                        recoveryPath,
+                        rollbackError = rollbackErrors.Count > 0 ? string.Join(" ", rollbackErrors) : null,
+                    }
+                );
+            }
+            finally
+            {
+                foreach (var state in dirtyOriginalStates)
+                    if (state.snapshot != null)
+                        UnityEngine.Object.DestroyImmediate(state.snapshot);
+                if (replacement != null && !EditorUtility.IsPersistent(replacement))
+                    UnityEngine.Object.DestroyImmediate(replacement);
+            }
+        }
+
+        private static bool ReplacementFileHasGuid(string path, string guid)
+        {
+            string fullPath = GetReplacementFullPath(path);
+            return File.Exists(fullPath)
+                && File.Exists(fullPath + ".meta")
+                && Regex.IsMatch(File.ReadAllText(fullPath + ".meta"), @"(?m)^guid: *" + Regex.Escape(guid) + @"\r?$");
+        }
+
+        private static void RestoreReplacementFile(string fullPath, byte[] bytes)
+        {
+            if (!File.Exists(fullPath) || !File.ReadAllBytes(fullPath).SequenceEqual(bytes))
+                File.WriteAllBytes(fullPath, bytes);
+        }
+
+        private static ScriptableObject SaveAndImportReplacement(ScriptableObject asset, string path, string guid, string phase)
+        {
+            Type type = asset.GetType();
+            EditorUtility.SetDirty(asset);
+            BeforeReplacementOperation?.Invoke(phase + "_save");
+            GetReplacementFullPath(path);
+            // Only this branch uses targeted saving, which does not invoke OnWillSaveAssets.
+            // Saving the original backup or unrelated dirty assets would make rollback lossy.
+            AssetDatabase.SaveAssetIfDirty(asset);
+            if (EditorUtility.IsDirty(asset))
+                throw new IOException($"Unity did not save the replacement at '{path}'.");
+            BeforeReplacementOperation?.Invoke(phase + "_import");
+            GetReplacementFullPath(path);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            var imported = AssetDatabase.LoadAssetAtPath<ScriptableObject>(path);
+            if (imported == null || imported.GetType() != type || AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets) != guid)
+                throw new IOException($"Unity could not import the replacement at '{path}'.");
+            return imported;
+        }
+
+        private static string GetReplacementFullPath(string path)
+        {
+            // AssetDatabase operations touch both paths; neither may traverse a link or junction.
+            string fullPath = AssetPathUtility.GetFullAssetPath(path);
+            AssetPathUtility.GetFullAssetPath(path + ".meta");
+            return fullPath;
+        }
+
+        private static void EnsureReplacementDestinationEmpty(string path)
+        {
+            string fullPath = GetReplacementFullPath(path);
+            if (
+                File.Exists(fullPath)
+                || Directory.Exists(fullPath)
+                || File.Exists(fullPath + ".meta")
+                || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets))
+            )
+                throw new IOException($"The replacement destination '{path}' is already occupied.");
+        }
+
+        private static void MoveReplacementAsset(string source, string destination, string expectedGuid, Action moved = null)
+        {
+            GetReplacementFullPath(source);
+            EnsureReplacementDestinationEmpty(destination);
+            if (AssetDatabase.AssetPathToGUID(source, AssetPathToGUIDOptions.OnlyExistingAssets) != expectedGuid)
+                throw new IOException($"The asset at '{source}' changed during replacement.");
+            string error = AssetDatabase.MoveAsset(source, destination);
+            if (!string.IsNullOrEmpty(error))
+                throw new IOException(error);
+            moved?.Invoke();
+            if (AssetDatabase.AssetPathToGUID(destination, AssetPathToGUIDOptions.OnlyExistingAssets) != expectedGuid)
+                throw new IOException($"Unity did not move the expected asset to '{destination}'.");
+        }
+
+        private static void DeleteReplacementAsset(string path, string expectedGuid, bool allowUnregistered = false)
+        {
+            string fullPath = GetReplacementFullPath(path);
+            string currentGuid = AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets);
+            if (string.IsNullOrEmpty(currentGuid) && !File.Exists(fullPath) && !File.Exists(fullPath + ".meta"))
+                return;
+            if (!string.IsNullOrEmpty(currentGuid) && currentGuid != expectedGuid)
+                throw new IOException($"The asset at '{path}' changed during replacement cleanup.");
+            if (!string.IsNullOrEmpty(currentGuid))
+            {
+                if (!AssetDatabase.DeleteAsset(path))
+                    throw new IOException($"Unity could not delete the asset at '{path}'.");
+            }
+            else
+            {
+                // Only our unique staging path owns partial files from a failed CreateAsset.
+                if (!allowUnregistered)
+                    throw new IOException($"The asset at '{path}' is no longer registered; its files were retained.");
+                File.Delete(GetReplacementFullPath(path));
+                File.Delete(AssetPathUtility.GetFullAssetPath(path + ".meta"));
+            }
+            if (File.Exists(GetReplacementFullPath(path)) || File.Exists(AssetPathUtility.GetFullAssetPath(path + ".meta")))
+                throw new IOException($"Replacement cleanup left files at '{path}'.");
         }
 
         private static object HandleModify(JObject @params)
@@ -1151,7 +1442,12 @@ namespace MCPForUnity.Editor.Tools
         private static (List<object> results, List<string> warnings) ApplyPatches(UnityEngine.Object target, JArray patches) =>
             ApplyPatchesCore(target, patches, saveAssets: true);
 
-        private static (List<object> results, List<string> warnings) ApplyPatchesCore(UnityEngine.Object target, JArray patches, bool saveAssets)
+        private static (List<object> results, List<string> warnings) ApplyPatchesCore(
+            UnityEngine.Object target,
+            JArray patches,
+            bool saveAssets,
+            string excludedReferencePath = null
+        )
         {
             var warnings = new List<string>();
             var results = new List<object>(patches.Count);
@@ -1197,7 +1493,7 @@ namespace MCPForUnity.Editor.Tools
                     op = "set";
                 }
 
-                var patchResult = ApplyPatch(so, propertyPath, op, patchObj, out bool changed);
+                var patchResult = ApplyPatch(so, propertyPath, op, patchObj, out bool changed, excludedReferencePath);
                 anyChanged |= changed;
                 results.Add(patchResult);
 
@@ -1222,7 +1518,14 @@ namespace MCPForUnity.Editor.Tools
             return (results, warnings);
         }
 
-        private static object ApplyPatch(SerializedObject so, string propertyPath, string op, JObject patchObj, out bool changed)
+        private static object ApplyPatch(
+            SerializedObject so,
+            string propertyPath,
+            string op,
+            JObject patchObj,
+            out bool changed,
+            string excludedReferencePath = null
+        )
         {
             changed = false;
             try
@@ -1236,7 +1539,7 @@ namespace MCPForUnity.Editor.Tools
                     case "array_resize":
                         return ApplyArrayResize(so, normalizedPath, patchObj, out changed);
                     case "set":
-                        return ApplySet(so, normalizedPath, patchObj, out changed);
+                        return ApplySet(so, normalizedPath, patchObj, out changed, excludedReferencePath);
                     default:
                         return new
                         {
@@ -1479,7 +1782,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object ApplySet(SerializedObject so, string propertyPath, JObject patchObj, out bool changed)
+        private static object ApplySet(SerializedObject so, string propertyPath, JObject patchObj, out bool changed, string excludedReferencePath = null)
         {
             changed = false;
             if (propertyPath.EndsWith(".Array.size", StringComparison.Ordinal) && patchObj["value"] != null)
@@ -1571,7 +1874,7 @@ namespace MCPForUnity.Editor.Tools
                     };
                 }
 
-                if (!ComponentOps.SetObjectReference(prop, resolveToken, out string refError))
+                if (!TrySetObjectReference(prop, resolveToken, excludedReferencePath, out string refError))
                 {
                     return new
                     {
@@ -1608,7 +1911,7 @@ namespace MCPForUnity.Editor.Tools
                 };
             }
 
-            bool ok = TrySetValue(prop, valueToken, out string message);
+            bool ok = TrySetValue(prop, valueToken, out string message, excludedReferencePath);
             changed = ok;
             return new
             {
@@ -1620,9 +1923,24 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 
-        private static bool TrySetValue(SerializedProperty prop, JToken valueToken, out string message)
+        private static bool TrySetObjectReference(SerializedProperty property, JToken value, string excludedReferencePath, out string error)
         {
-            return TrySetValueRecursive(prop, valueToken, out message, 0);
+            int previousInstanceId = property.objectReferenceInstanceIDValue;
+            if (!ComponentOps.SetObjectReference(property, value, out error))
+                return false;
+            var resolved = property.objectReferenceValue;
+            if (excludedReferencePath != null && resolved != null && AssetDatabase.GetAssetPath(resolved) == excludedReferencePath)
+            {
+                property.objectReferenceInstanceIDValue = previousInstanceId;
+                error = "The reference targets the original asset that this type replacement will remove.";
+                return false;
+            }
+            return true;
+        }
+
+        private static bool TrySetValue(SerializedProperty prop, JToken valueToken, out string message, string excludedReferencePath = null)
+        {
+            return TrySetValueRecursive(prop, valueToken, out message, 0, excludedReferencePath);
         }
 
         /// <summary>
@@ -1632,7 +1950,7 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="valueToken">The JSON value</param>
         /// <param name="message">Output message describing the result</param>
         /// <param name="depth">Current recursion depth (for safety limits)</param>
-        private static bool TrySetValueRecursive(SerializedProperty prop, JToken valueToken, out string message, int depth)
+        private static bool TrySetValueRecursive(SerializedProperty prop, JToken valueToken, out string message, int depth, string excludedReferencePath = null)
         {
             // Container mappings retain valid children, but an entirely rejected child must
             // restore its staged subtree, including array capacity, before its siblings run.
@@ -1640,7 +1958,7 @@ namespace MCPForUnity.Editor.Tools
                 prop.isArray && prop.propertyType != SerializedPropertyType.String && valueToken is JArray
                 || prop.propertyType == SerializedPropertyType.Generic && !prop.isArray && valueToken is JObject;
             if (!isContainer)
-                return TrySetValueRecursiveCore(prop, valueToken, out message, depth);
+                return TrySetValueRecursiveCore(prop, valueToken, out message, depth, excludedReferencePath);
 
             var so = prop.serializedObject;
             string path = prop.propertyPath;
@@ -1649,7 +1967,7 @@ namespace MCPForUnity.Editor.Tools
             // Copy pending ancestors too, so newly grown elements exist in the checkpoint.
             using (var rootProperty = so.FindProperty(rootPath))
                 checkpoint.CopyFromSerializedProperty(rootProperty);
-            bool ok = TrySetValueRecursiveCore(prop, valueToken, out message, depth);
+            bool ok = TrySetValueRecursiveCore(prop, valueToken, out message, depth, excludedReferencePath);
             if (!ok)
             {
                 using var checkpointProperty = checkpoint.FindProperty(path);
@@ -1658,7 +1976,13 @@ namespace MCPForUnity.Editor.Tools
             return ok;
         }
 
-        private static bool TrySetValueRecursiveCore(SerializedProperty prop, JToken valueToken, out string message, int depth)
+        private static bool TrySetValueRecursiveCore(
+            SerializedProperty prop,
+            JToken valueToken,
+            out string message,
+            int depth,
+            string excludedReferencePath = null
+        )
         {
             message = null;
             const int MaxRecursionDepth = 20;
@@ -1702,7 +2026,7 @@ namespace MCPForUnity.Editor.Tools
                             continue;
                         }
 
-                        if (TrySetValueRecursive(elementProp, jArray[i], out string elemMessage, depth + 1))
+                        if (TrySetValueRecursive(elementProp, jArray[i], out string elemMessage, depth + 1, excludedReferencePath))
                         {
                             successCount++;
                         }
@@ -1740,7 +2064,7 @@ namespace MCPForUnity.Editor.Tools
                             continue;
                         }
 
-                        if (TrySetValueRecursive(childProp, kvp.Value, out string childMessage, depth + 1))
+                        if (TrySetValueRecursive(childProp, kvp.Value, out string childMessage, depth + 1, excludedReferencePath))
                         {
                             successCount++;
                         }
@@ -1763,7 +2087,7 @@ namespace MCPForUnity.Editor.Tools
                 // ObjectReference - delegate to shared handler
                 if (prop.propertyType == SerializedPropertyType.ObjectReference)
                 {
-                    if (!ComponentOps.SetObjectReference(prop, valueToken, out string refError))
+                    if (!TrySetObjectReference(prop, valueToken, excludedReferencePath, out string refError))
                     {
                         message = refError;
                         return false;

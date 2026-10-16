@@ -5,6 +5,7 @@ namespace MCPForUnityTests.Editor.Tools.Fixtures
     [System.Serializable]
     public struct ScriptableObjectContractNested
     {
+        public UnityEngine.Object objectReference;
         public int[] numbers;
         public string text;
     }
@@ -18,6 +19,7 @@ namespace MCPForUnityTests.Editor.Tools.Fixtures
 
     public class ScriptableObjectContractDefinition : ScriptableObject
     {
+        public UnityEngine.Object objectReference;
         public int intValue = 7;
         public long longValue = 7;
         public double doubleValue = 7;
