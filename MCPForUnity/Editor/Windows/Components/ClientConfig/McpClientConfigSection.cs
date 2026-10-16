@@ -516,15 +516,24 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             if (string.IsNullOrEmpty(installPath))
                 return;
 
-            string branch = MCPServiceLocator.Updates.GetGitUpdateBranch(AssetPathUtility.GetPackageVersion());
+            SkillSyncSource source;
+            try
+            {
+                source = SkillSyncSource.CaptureInstalled();
+            }
+            catch (Exception error)
+            {
+                EditorUtility.DisplayDialog("Install Skills Failed", error.Message, "OK");
+                return;
+            }
 
             isSkillSyncInProgress = true;
             installSkillsButton.SetEnabled(false);
             installSkillsButton.text = "Syncing...";
 
-            SkillSyncService.SyncAsync(
+            SkillSyncService.SyncSourceAsync(
+                source,
                 installPath,
-                branch,
                 null,
                 result =>
                 {

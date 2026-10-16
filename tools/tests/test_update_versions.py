@@ -163,7 +163,7 @@ def version_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     contents = {
         "PACKAGE_JSON": (
             "MCPForUnity/package.json",
-            json.dumps({"version": "3.2.1", "mcpServerSource": pin}),
+            json.dumps({"version": "3.2.1", "mcpServerSource": pin, "mcpSkillRevision": "c" * 40}),
         ),
         "MANIFEST_JSON": (
             "manifest.json",

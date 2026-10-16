@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -17,7 +18,7 @@ namespace MCPForUnity.Editor.Setup
     public static class SkillSyncService
     {
         private const string DefaultRepoUrl = "https://github.com/ykh09242/unity-mcp";
-        private const string SkillSubdir = ".claude/skills/unity-mcp-skill";
+        private const string SkillSubdir = SkillSyncSource.SkillSubdirectory;
         private const string SyncOwnershipMarker = ".unity-mcp-skill-sync";
         private const string LastSyncedCommitKeyPrefix = "UnityMcpSkillSync.LastSyncedCommit";
         private const string BaselineFile = ".unity-mcp-skill-sync-baseline.json";
@@ -25,6 +26,7 @@ namespace MCPForUnity.Editor.Setup
         private const int MaxBaselineBytes = 4 * 1024 * 1024;
         private static readonly object ApplyGate = new();
         internal static Action<string, string> BeforeFileOperation;
+        internal static Func<SkillSyncSource> InstalledSelectionReader = null;
         private const int MaxLocalEntries = 8192;
         private const int MaxLocalDepth = 64;
 
@@ -35,6 +37,7 @@ namespace MCPForUnity.Editor.Setup
             public int Updated { get; set; }
             public int Deleted { get; set; }
             public string CommitSha { get; set; }
+            public string SourceDescription { get; set; }
             public string Error { get; set; }
             public string[] Conflicts { get; set; } = Array.Empty<string>();
             public string[] Preserved { get; set; } = Array.Empty<string>();
@@ -48,9 +51,11 @@ namespace MCPForUnity.Editor.Setup
             internal readonly SyncPlan Plan;
             internal readonly string Repository;
             internal readonly string Branch;
+            internal readonly SkillSyncSource Source;
             internal readonly Dictionary<string, string> RemoteFiles;
             public string InstallPath { get; }
             public string CommitSha { get; }
+            public string SourceDescription => Source?.Description;
             public string Error { get; }
             public bool Success => Error == null;
             public ReadOnlyCollection<string> Added { get; }
@@ -64,10 +69,11 @@ namespace MCPForUnity.Editor.Setup
                 Error = error;
             }
 
-            internal SyncPreview(string repository, string branch, string installPath, RemoteSnapshot remote, SyncPlan plan)
+            internal SyncPreview(SkillSyncSource source, string installPath, RemoteSnapshot remote, SyncPlan plan)
             {
-                Repository = repository;
-                Branch = branch;
+                Source = source;
+                Repository = source.Repository;
+                Branch = source.Reference;
                 InstallPath = installPath;
                 CommitSha = remote.CommitSha;
                 RemoteFiles = new Dictionary<string, string>(remote.Files, StringComparer.Ordinal);
@@ -100,18 +106,50 @@ namespace MCPForUnity.Editor.Setup
             );
         }
 
+        public static void SyncSourceAsync(SkillSyncSource source, string installDir, Action<string> log, Action<SyncResult> onComplete)
+        {
+            PreviewSourceAsync(
+                source,
+                installDir,
+                log,
+                preview =>
+                {
+                    if (!preview.Success)
+                        onComplete?.Invoke(new SyncResult { Error = preview.Error });
+                    else
+                        ApplyAsync(preview, log, onComplete);
+                }
+            );
+        }
+
         public static void PreviewAsync(string repoUrl, string installDir, string branch, Action<string> log, Action<SyncPreview> onComplete)
+        {
+            try
+            {
+                PreviewSourceAsync(SkillSyncSource.Latest(repoUrl, branch), installDir, log, onComplete);
+            }
+            catch (Exception error)
+            {
+                EditorApplication.delayCall += () => onComplete?.Invoke(new SyncPreview(error.Message));
+            }
+        }
+
+        public static void PreviewSourceAsync(SkillSyncSource source, string installDir, Action<string> log, Action<SyncPreview> onComplete)
         {
             Task.Run(() =>
             {
                 SyncPreview preview;
                 try
                 {
-                    if (!TryParseGitHubRepository(repoUrl, out var repository))
-                        throw new InvalidOperationException("Repo URL is not a recognized GitHub repository URL.");
+                    if (source == null)
+                        throw new InvalidOperationException("An explicit skill source is required.");
+                    if (source.IsPackagePinned)
+                        source.RequireCurrentSelection(ReadInstalledOnMainThread());
                     var installPath = ResolveAndValidateInstallPath(installDir);
                     ListFiles(installPath); // Reject linked roots before any remote request.
-                    preview = CreatePreview(repoUrl, installPath, branch, FetchRemoteSnapshot(repository, branch, SkillSubdir, log));
+                    using var client = CreateGitHubClient();
+                    preview = CreateSourcePreview(source, installPath, FetchSourceSnapshot(client, source, log));
+                    log?.Invoke(preview.SourceDescription + "; resolved commit " + preview.CommitSha);
                     LogPlanDetails(preview.Plan, log);
                 }
                 catch (Exception error)
@@ -132,9 +170,10 @@ namespace MCPForUnity.Editor.Setup
                     if (preview == null || !preview.Success || !TryParseGitHubRepository("https://github.com/" + preview.Repository, out var repository))
                         throw new InvalidOperationException("A successful skill preview is required.");
                     using var client = CreateGitHubClient();
-                    result = ApplyPreview(
+                    result = ApplySourcePreview(
                         preview,
-                        () => FetchRemoteSnapshot(repository, preview.Branch, SkillSubdir, log),
+                        ReadInstalledOnMainThread,
+                        () => FetchSourceSnapshot(client, preview.Source, log),
                         (path, limit) => DownloadBytes(client, BuildRawFileUrl(repository, preview.CommitSha, CombineRemotePath(SkillSubdir, path)), limit),
                         log
                     );
@@ -154,9 +193,15 @@ namespace MCPForUnity.Editor.Setup
 
         internal static SyncPreview CreatePreview(string repoUrl, string installDir, string branch, RemoteSnapshot remote)
         {
-            if (!TryParseGitHubRepository(repoUrl, out var repository) || string.IsNullOrWhiteSpace(branch))
-                throw new InvalidOperationException("A repository and branch are required.");
-            string source = repository.Owner.ToLowerInvariant() + "/" + repository.Repo.ToLowerInvariant();
+            return CreateSourcePreview(SkillSyncSource.Latest(repoUrl, branch), installDir, remote);
+        }
+
+        internal static SyncPreview CreateSourcePreview(SkillSyncSource selection, string installDir, RemoteSnapshot remote)
+        {
+            if (selection == null || selection.IsPackagePinned && selection.Revision != remote.CommitSha)
+                throw new InvalidOperationException("The skill snapshot does not match the selected package revision.");
+            string source = selection.Repository;
+            string branch = selection.Reference;
             string root = ResolveAndValidateInstallPath(installDir);
             var local = ListFiles(root);
             if (!IsBlobHash(remote.CommitSha) || remote.SubdirPath != SkillSubdir)
@@ -177,9 +222,11 @@ namespace MCPForUnity.Editor.Setup
             plan.ExpectedMetadata = MetadataSnapshot(root);
             var next = new BaselineDocument
             {
-                version = 1,
+                version = 2,
                 repository = source,
                 branch = branch,
+                selection = selection.IsPackagePinned ? "package" : "latest",
+                packageVersion = selection.PackageVersion,
                 subdir = SkillSubdir,
                 commit = remote.CommitSha,
                 files = plan
@@ -190,14 +237,68 @@ namespace MCPForUnity.Editor.Setup
             plan.Metadata[BaselineFile] = Encoding.UTF8.GetBytes(JsonUtility.ToJson(next, true));
             if (!markerExists)
                 plan.Metadata[SyncOwnershipMarker] = Encoding.UTF8.GetBytes(MarkerContents);
-            return new SyncPreview(source, branch, root, remote, plan);
+            return new SyncPreview(selection, root, remote, plan);
+        }
+
+        internal static SyncResult ApplySourcePreview(
+            SyncPreview preview,
+            Func<SkillSyncSource> readInstalled,
+            Func<RemoteSnapshot> fetchSnapshot,
+            Func<string, long, byte[]> download,
+            Action<string> log
+        ) =>
+            ApplyPreview(
+                preview,
+                fetchSnapshot,
+                download,
+                log,
+                () =>
+                {
+                    if (preview?.Source?.IsPackagePinned == true)
+                    {
+                        SkillSyncSource current;
+                        try
+                        {
+                            current = readInstalled();
+                        }
+                        catch (Exception error)
+                        {
+                            throw new InvalidOperationException(
+                                "The installed package selection could not be re-read. Preview again before applying. " + error.Message,
+                                error
+                            );
+                        }
+                        preview.Source.RequireCurrentSelection(current);
+                    }
+                }
+            );
+
+        private static SkillSyncSource ReadInstalledOnMainThread()
+        {
+            var completion = new TaskCompletionSource<SkillSyncSource>();
+            EditorApplication.delayCall += () =>
+            {
+                try
+                {
+                    var reader = InstalledSelectionReader;
+                    completion.TrySetResult(reader != null ? reader() : SkillSyncSource.CaptureInstalled());
+                }
+                catch (Exception error)
+                {
+                    completion.TrySetException(error);
+                }
+            };
+            if (Task.WhenAny(completion.Task, Task.Delay(10000)).GetAwaiter().GetResult() != completion.Task)
+                throw new InvalidOperationException("Installed package selection could not be re-read. Preview again before applying.");
+            return completion.Task.GetAwaiter().GetResult();
         }
 
         internal static SyncResult ApplyPreview(
             SyncPreview preview,
             Func<RemoteSnapshot> fetchSnapshot,
             Func<string, long, byte[]> download,
-            Action<string> log
+            Action<string> log,
+            Action validateSelection = null
         )
         {
             lock (ApplyGate)
@@ -206,6 +307,7 @@ namespace MCPForUnity.Editor.Setup
                 {
                     if (preview == null || !preview.Success)
                         throw new InvalidOperationException("A successful skill preview is required.");
+                    validateSelection?.Invoke();
                     ValidateRemotePreview(preview, fetchSnapshot());
                     ApplyVerifiedPlan(
                         preview.InstallPath,
@@ -214,7 +316,12 @@ namespace MCPForUnity.Editor.Setup
                         StringComparison.OrdinalIgnoreCase,
                         download,
                         log,
-                        () => ValidateRemotePreview(preview, fetchSnapshot())
+                        () =>
+                        {
+                            validateSelection?.Invoke();
+                            ValidateRemotePreview(preview, fetchSnapshot());
+                        },
+                        validateSelection
                     );
                     return new SyncResult
                     {
@@ -223,6 +330,7 @@ namespace MCPForUnity.Editor.Setup
                         Updated = preview.Updated.Count,
                         Deleted = preview.Deleted.Count,
                         CommitSha = preview.CommitSha,
+                        SourceDescription = preview.SourceDescription,
                         Conflicts = preview.Conflicts.ToArray(),
                         Preserved = preview.Preserved.ToArray(),
                         PartialApplication = preview.Conflicts.Count > 0,
@@ -232,6 +340,8 @@ namespace MCPForUnity.Editor.Setup
                 catch (Exception error)
                 {
                     var result = FailureResult(error);
+                    result.CommitSha = preview?.CommitSha;
+                    result.SourceDescription = preview?.SourceDescription;
                     result.Conflicts = preview?.Conflicts?.ToArray() ?? Array.Empty<string>();
                     result.Preserved = preview?.Preserved?.ToArray() ?? Array.Empty<string>();
                     return result;
@@ -272,6 +382,9 @@ namespace MCPForUnity.Editor.Setup
             }
             if (!string.IsNullOrEmpty(result.RecoveryPath))
                 summary += "\nRecovery files retained at: " + result.RecoveryPath;
+            if (!string.IsNullOrEmpty(result.SourceDescription))
+                summary +=
+                    "\n" + result.SourceDescription + "\nResolved commit: " + result.CommitSha + ". Local edits and conflicts can differ from this source.";
             return summary;
         }
 
@@ -338,18 +451,35 @@ namespace MCPForUnity.Editor.Setup
             return true;
         }
 
-        private static RemoteSnapshot FetchRemoteSnapshot(GitHubRepoInfo repoInfo, string branch, string subdir, Action<string> log)
+        internal static RemoteSnapshot FetchSourceSnapshot(HttpClient client, SkillSyncSource source, Action<string> log)
         {
-            using var client = CreateGitHubClient();
-            var commitSha = FetchBranchHeadCommitSha(client, repoInfo, branch, log);
-            var treeApiUrl = BuildTreeApiUrl(repoInfo, commitSha);
+            if (source == null || !TryParseGitHubRepository(source.RepoUrl, out var repoInfo))
+                throw new InvalidOperationException("A valid skill source is required.");
+            string commitSha = source.Revision ?? FetchBranchHeadCommitSha(client, repoInfo, source.Branch, log);
+            if (!SkillSyncSource.IsCommit(commitSha))
+                throw new InvalidOperationException("GitHub did not return a full skill commit identity.");
+            commitSha = commitSha.ToLowerInvariant();
+            string commitUrl = $"https://api.github.com/repos/{repoInfo.Owner}/{repoInfo.Repo}/git/commits/{commitSha}";
+            JObject commit;
+            try
+            {
+                commit = JObject.Parse(DownloadString(client, commitUrl, SkillSyncDownload.MaxBranchBytes));
+            }
+            catch (Exception error)
+            {
+                throw new InvalidOperationException($"Skill commit {commitSha} is unavailable or invalid for {source.Description}: {error.Message}", error);
+            }
+            string treeSha = commit["tree"]?["sha"]?.Type == JTokenType.String ? commit["tree"]["sha"].Value<string>() : null;
+            if (commit["sha"]?.Type != JTokenType.String || commit.Value<string>("sha") != commitSha || !SkillSyncSource.IsCommit(treeSha))
+                throw new InvalidOperationException("GitHub returned a different or invalid skill commit/tree identity.");
+            var treeApiUrl = BuildTreeApiUrl(repoInfo, treeSha);
             log?.Invoke($"Fetching remote directory tree at commit {ShortCommit(commitSha)}...");
             var json = DownloadString(client, treeApiUrl);
             SkillSyncDownload.ValidateTreeJson(json);
             var treeResponse = JsonUtility.FromJson<GitHubTreeResponse>(json);
-            if (treeResponse == null || treeResponse.tree == null)
+            if (treeResponse == null || treeResponse.tree == null || treeResponse.sha != treeSha)
             {
-                throw new InvalidOperationException("Failed to parse GitHub directory tree response.");
+                throw new InvalidOperationException("GitHub returned a different or invalid skill directory tree identity.");
             }
 
             if (treeResponse.truncated)
@@ -360,7 +490,7 @@ namespace MCPForUnity.Editor.Setup
                 );
             }
 
-            var normalizedSubdir = NormalizeRemotePath(subdir);
+            var normalizedSubdir = NormalizeRemotePath(SkillSubdir);
             var subdirPrefix = string.IsNullOrEmpty(normalizedSubdir) ? string.Empty : $"{normalizedSubdir}/";
             var remoteFiles = new Dictionary<string, string>(StringComparer.Ordinal);
             var remoteBudget = new SkillSyncDownload.ByteBudget();
@@ -402,9 +532,9 @@ namespace MCPForUnity.Editor.Setup
                 remoteFiles[safeRelativePath] = entry.sha.Trim().ToLowerInvariant();
             }
 
-            if (remoteFiles.Count == 0)
+            if (!remoteFiles.ContainsKey("SKILL.md"))
             {
-                throw new InvalidOperationException($"Remote directory not found: {normalizedSubdir}");
+                throw new InvalidOperationException($"Remote skill directory is missing SKILL.md: {normalizedSubdir} at {commitSha}");
             }
 
             log?.Invoke($"Remote file count: {remoteFiles.Count}");
@@ -745,7 +875,8 @@ namespace MCPForUnity.Editor.Setup
             StringComparison pathComparison,
             Func<string, long, byte[]> download,
             Action<string> log,
-            Action revalidateRemote
+            Action revalidateRemote,
+            Action validateSelection = null
         )
         {
             pathComparison = StringComparison.OrdinalIgnoreCase;
@@ -808,6 +939,7 @@ namespace MCPForUnity.Editor.Setup
                     }
                 }
                 ValidateLocalSnapshot(targetRoot, plan);
+                validateSelection?.Invoke();
                 EnsureDirectory(targetRoot, createdDirectories);
                 foreach (string path in plan.Updated.Concat(plan.Deleted))
                     Backup(path, plan.LocalHashes[path]);
@@ -917,6 +1049,7 @@ namespace MCPForUnity.Editor.Setup
             void Backup(string path, string expectedHash)
             {
                 BeforeFileOperation?.Invoke("backup", path);
+                validateSelection?.Invoke();
                 string current = ResolvePathUnderRoot(targetRoot, path, pathComparison);
                 if (!File.Exists(current) || ComputeGitBlobSha1(current) != expectedHash)
                     throw new IOException($"Local file changed before replacement: {path}");
@@ -928,6 +1061,7 @@ namespace MCPForUnity.Editor.Setup
             void Install(string path)
             {
                 BeforeFileOperation?.Invoke("install", path);
+                validateSelection?.Invoke();
                 string destination = ResolvePathUnderRoot(targetRoot, path, pathComparison);
                 RemoveEmptyDestinationDirectories(
                     destination,
@@ -1187,9 +1321,9 @@ namespace MCPForUnity.Editor.Setup
             }
             if (
                 baseline == null
-                || baseline.version != 1
+                || baseline.version != 1 && baseline.version != 2
                 || baseline.repository != repository
-                || baseline.branch != branch
+                || baseline.version == 1 && string.IsNullOrWhiteSpace(baseline.branch)
                 || baseline.subdir != SkillSubdir
                 || !IsBlobHash(baseline.commit)
                 || baseline.files == null
@@ -1388,6 +1522,8 @@ namespace MCPForUnity.Editor.Setup
             public int version;
             public string repository;
             public string branch;
+            public string selection;
+            public string packageVersion;
             public string subdir;
             public string commit;
             public BaselineEntry[] files;

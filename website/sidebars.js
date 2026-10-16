@@ -27,6 +27,7 @@ const sidebars = {
         'guides/uv-setup',
         'guides/claude-code-cli',
         'guides/client-configurators',
+        'guides/skills',
         'guides/multi-instance',
         'guides/tool-groups',
         'guides/ugui',
