@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal
 
@@ -18,6 +19,7 @@ from transport.plugin_hub import extend_http_request_deadline
 import transport.legacy.unity_connection as _legacy_conn
 from services.state.external_changes_scanner import external_changes_scanner
 import services.resources.editor_state as editor_state
+from services.tools.get_compile_job import parse_compile_job, read_compile_job, unknown_compile_job
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +260,28 @@ async def refresh_unity(
         "wait_for_ready": bool(wait_for_ready and compile == "request"),
     }
 
+    compile_id = uuid.uuid4().hex if compile == "request" else None
+    if compile_id is not None:
+        params["compile_id"] = compile_id
+    compilation = unknown_compile_job(compile_id, "tracking_unsupported") if compile_id else None
+
+    def with_compilation(value):
+        if compile_id is None:
+            return value
+        payload = value.model_dump() if isinstance(value, MCPResponse) else dict(value)
+        data = dict(payload["data"]) if isinstance(payload.get("data"), dict) else {}
+        data["compilation"] = compilation
+        data["source_revision_confirmed"] = False
+        if dirty_snapshot is not None:
+            current = external_changes_scanner.capture_dirty_state(dirty_instance)
+            if current is not None and (
+                current.state is not dirty_snapshot.state
+                or current.last_seen_mtime_ns != dirty_snapshot.last_seen_mtime_ns
+            ):
+                data["concurrent_external_changes"] = True
+        payload["data"] = data
+        return MCPResponse(**payload)
+
     recovered_from_disconnect = False
     # Don't retry on reload - refresh_unity triggers compilation/reload,
     # so retrying would cause multiple reloads (issue #577)
@@ -277,6 +301,9 @@ async def refresh_unity(
         if isinstance(response, dict)
         else (response.model_dump() if hasattr(response, "model_dump") else response.__dict__)
     )
+    native_data = response_dict.get("data")
+    if compile_id and isinstance(native_data, dict):
+        compilation = parse_compile_job(native_data.get("compilation"), compile_id)
     if not response_dict.get("success", True):
         err = (response_dict.get("error") or response_dict.get("message") or "").lower()
         outcome = response_dict.get("data")
@@ -291,7 +318,7 @@ async def refresh_unity(
         # A rejected command never ran. Later readiness cannot prove refresh success.
         # Only an ambiguous lost response may recover, without replaying the write.
         if is_reloading_rejection(response_dict) or not wait_for_ready or not is_connection_lost:
-            return MCPResponse(**response_dict)
+            return with_compilation(MCPResponse(**response_dict))
         recovered_from_disconnect = True
 
     # Optional server-side wait loop (defensive): if Unity tool doesn't wait or returns quickly,
@@ -305,11 +332,23 @@ async def refresh_unity(
         # If we timed out without confirming readiness, log and return failure
         if not ready_confirmed:
             logger.warning("refresh_unity: Timed out after 60s waiting for editor to become ready")
-            return MCPResponse(
-                success=False,
-                message="Refresh triggered but timed out after 60s waiting for editor readiness.",
-                data={"timeout": True, "wait_seconds": 60.0},
+            return with_compilation(
+                MCPResponse(
+                    success=False,
+                    message="Refresh triggered but timed out after 60s waiting for editor readiness.",
+                    data={"timeout": True, "wait_seconds": 60.0},
+                )
             )
+
+    if (
+        compile_id
+        and wait_for_ready
+        and (recovered_from_disconnect or compilation["reason"] != "tracking_unsupported")
+    ):
+        try:
+            compilation = await read_compile_job(unity_instance, compile_id)
+        except Exception:
+            compilation = unknown_compile_job(compile_id, "observation_unavailable")
 
     # A dispatch-only response does not confirm import. Acknowledge only the edits
     # observed before dispatch, leaving concurrent or subsequently sampled edits dirty.
@@ -326,10 +365,14 @@ async def refresh_unity(
         external_changes_scanner.clear_dirty(dirty_instance, expected=dirty_snapshot)
 
     if recovered_from_disconnect:
-        return MCPResponse(
-            success=True,
-            message="Editor is ready after the refresh response was lost; refresh execution is unconfirmed.",
-            data={"recovered_from_disconnect": True},
+        return with_compilation(
+            MCPResponse(
+                success=True,
+                message="Editor is ready after the refresh response was lost; refresh execution is unconfirmed.",
+                data={"recovered_from_disconnect": True},
+            )
         )
 
-    return MCPResponse(**response_dict) if isinstance(response, dict) else response
+    return with_compilation(
+        MCPResponse(**response_dict) if isinstance(response, dict) else response
+    )

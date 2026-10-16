@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Literal, Any
 
 from fastmcp import Context
 from pydantic import BaseModel
@@ -63,7 +63,17 @@ class EditorStateActivity(BaseModel):
     reasons: list[str] | None = None
 
 
+class EditorStateCompileSummary(BaseModel):
+    tracking_schema: str | None = None
+    session_id: str | None = None
+    generation: int | None = None
+    outcome: Literal["success", "failed", "unknown"] = "unknown"
+    error_count: int = 0
+    warning_count: int = 0
+
+
 class EditorStateCompilation(BaseModel):
+    latest_job: EditorStateCompileSummary | None = None
     is_compiling: bool | None = None
     is_domain_reload_pending: bool | None = None
     last_compile_started_unix_ms: int | None = None

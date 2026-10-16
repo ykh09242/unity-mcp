@@ -177,6 +177,9 @@ namespace MCPForUnity.Editor.Services
 
         private sealed class EditorStateCompilation
         {
+            [JsonProperty("latest_job")]
+            public JObject LatestJob { get; set; }
+
             [JsonProperty("is_compiling")]
             public bool? IsCompiling { get; set; }
 
@@ -293,21 +296,29 @@ namespace MCPForUnity.Editor.Services
                 // [InitializeOnLoad] ctor re-subscribes, so the flag is per-domain.
                 // The timestamps beside it are not per-domain — see the SessionState
                 // note on CompileStartedKey.
-                UnityEditor.Compilation.CompilationPipeline.compilationStarted += _ =>
+                UnityEditor.Compilation.CompilationPipeline.compilationStarted += context =>
                 {
                     _pipelineCompilationRunning = true;
+                    CompilationJobTracker.Ledger.Started(context);
                     SetSessionUnixMs(CompileStartedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     SessionState.SetInt(CompileCountKey, SessionState.GetInt(CompileCountKey, 0) + 1);
                     ForceUpdate("compilation_started");
                 };
-                UnityEditor.Compilation.CompilationPipeline.compilationFinished += _ =>
+                UnityEditor.Compilation.CompilationPipeline.compilationFinished += context =>
                 {
                     _pipelineCompilationRunning = false;
+                    CompilationJobTracker.Ledger.Finished(context);
                     // Fires before the domain reload, which is what makes the finish
                     // observable at all: the write lands while this domain is alive and
                     // is read back by the next one.
                     SetSessionUnixMs(CompileFinishedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     ForceUpdate("compilation_finished");
+                };
+
+                UnityEditor.Compilation.CompilationPipeline.assemblyCompilationFinished += (assembly, messages) =>
+                {
+                    CompilationJobTracker.Ledger.Assembly(assembly, messages);
+                    ForceUpdate("assembly_compilation_finished");
                 };
 
                 AssemblyReloadEvents.beforeAssemblyReload += () =>
@@ -579,6 +590,7 @@ namespace MCPForUnity.Editor.Services
                 },
                 Compilation = new EditorStateCompilation
                 {
+                    LatestJob = CompilationJobTracker.Ledger.Summary(),
                     IsCompiling = isCompiling,
                     IsDomainReloadPending = _domainReloadPending,
                     LastCompileStartedUnixMs = GetSessionUnixMs(CompileStartedKey),
