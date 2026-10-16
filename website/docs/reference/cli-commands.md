@@ -1285,6 +1285,15 @@ Fetch documentation for a Unity class or member. Examples: unity-mcp docs get Ph
 | --version / -v | text | optional | nargs=1 | — | — | Unity version (e.g., 6000.0). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp doctor`
+
+Verify this diagnostic SDK connection; does not attest another desktop client's session.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --protocol | choice: auto, legacy | optional | nargs=1 | "auto" | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp editor`
 
 Editor operations - play mode, console, tags, layers.

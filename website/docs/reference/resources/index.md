@@ -20,6 +20,13 @@ List all cameras in the scene (Unity Camera + CinemachineCamera) with status. In
 URI: mcpforunity://scene/cameras
 
 
+## `connection_doctor`
+
+**URI:** `mcpforunity://doctor`
+
+Read current bounded connection/native-read/source evidence for this MCP request. Does not attest another client application's connection or change configuration.
+
+
 ## `custom_tools`
 
 **URI:** `mcpforunity://custom-tools`

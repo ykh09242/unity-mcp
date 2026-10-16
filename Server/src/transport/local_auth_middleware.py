@@ -8,6 +8,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.local_auth import LOCAL_AUTH_HEADER
 
+AUTHENTICATED_LOCAL_STATE = "unity_mcp_authenticated_local_control"
+
 
 class LocalControlAuthMiddleware:
     """Require a launch token on every local control request and plugin upgrade."""
@@ -63,4 +65,8 @@ class LocalControlAuthMiddleware:
                 await response(scope, receive, send)
             return
 
-        await self.app(scope, receive, send)
+        authenticated_scope = {
+            **scope,
+            "state": {**scope.get("state", {}), AUTHENTICATED_LOCAL_STATE: True},
+        }
+        await self.app(authenticated_scope, receive, send)

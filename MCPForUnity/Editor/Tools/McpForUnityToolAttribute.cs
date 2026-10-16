@@ -25,6 +25,13 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         public bool StructuredOutput { get; set; } = true;
 
+        /// <summary>Zero preserves legacy metadata; one requires an updated schema-validating server.</summary>
+        public int SchemaVersion { get; set; }
+
+        /// <summary>Optional contract for normalized successful response data, not the handler envelope.</summary>
+        public Type OutputDataType { get; set; }
+        public bool OutputAllowNull { get; set; }
+
         /// <summary>
         /// Controls whether this tool is automatically registered with FastMCP.
         /// Defaults to true so most tools opt-in automatically. Set to false
@@ -113,6 +120,15 @@ namespace MCPForUnity.Editor.Tools
         /// Whether this parameter is required
         /// </summary>
         public bool Required { get; set; } = true;
+        public bool AllowNull { get; set; }
+
+        // NaN and -1 are explicit unset sentinels. Other provided bounds must be finite/applicable.
+        public double Minimum { get; set; } = double.NaN;
+        public double Maximum { get; set; } = double.NaN;
+        public int MinLength { get; set; } = -1;
+        public int MaxLength { get; set; } = -1;
+        public int MinItems { get; set; } = -1;
+        public int MaxItems { get; set; } = -1;
 
         /// <summary>
         /// Default value (as string)

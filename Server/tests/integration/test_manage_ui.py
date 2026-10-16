@@ -714,3 +714,48 @@ def test_mutation_selector_forwarding_preserves_empty_false_and_native_failure(
         assert (key in wire) == (key in expected)
         if key in expected:
             assert wire[key] == expected[key]
+
+
+@pytest.mark.parametrize(
+    "budgets",
+    [
+        {},
+        {"max_depth": 0, "max_pairs": 0, "max_findings": 1},
+        {"max_depth": None, "max_pairs": None},
+    ],
+)
+def test_diagnose_read_transport_and_strict_peer_admission(monkeypatch, budgets):
+    from tests.test_ui_layout_diagnostics import sample
+
+    sent = []
+    native = sample()
+    for key, value in budgets.items():
+        if value is not None:
+            native["traversal"][key] = value
+
+    async def instance(_ctx):
+        return None
+
+    async def read(_func, _instance, command, params, **_kwargs):
+        sent.append((command, params))
+        return {"success": True, "data": native, "untrusted_extra": "not published"}
+
+    async def mutation(*_args, **_kwargs):
+        raise AssertionError("diagnostics entered mutation transport")
+
+    monkeypatch.setattr(manage_ui_mod, "get_unity_instance_from_context", instance)
+    monkeypatch.setattr(manage_ui_mod, "send_with_unity_instance", read)
+    monkeypatch.setattr(manage_ui_mod, "send_mutation", mutation)
+    result = run_async(
+        manage_ui_mod.manage_ui(DummyContext(), action="diagnose", target="123", **budgets)
+    )
+    assert result == {"success": True, "data": native}
+    assert len(sent) == 1 and sent[0][0] == "manage_ui"
+    for public, wire in (
+        ("max_depth", "maxDepth"),
+        ("max_pairs", "maxPairs"),
+        ("max_findings", "maxFindings"),
+    ):
+        assert (wire in sent[0][1]) == (budgets.get(public) is not None)
+        if wire in sent[0][1]:
+            assert sent[0][1][wire] == budgets[public]

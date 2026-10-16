@@ -317,6 +317,7 @@ def register_commands():
         ("cli.commands.packages", "packages"),
         ("cli.commands.reflect", "reflect"),
         ("cli.commands.docs", "docs"),
+        ("cli.commands.doctor", "doctor"),
         ("cli.commands.physics", "physics"),
         ("cli.commands.profiler", "profiler"),
     ]

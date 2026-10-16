@@ -41,22 +41,22 @@ namespace MCPForUnity.Editor.Resources.Editor
                         }
                     }
 
-                    toolsArray.Add(
-                        new JObject
-                        {
-                            ["name"] = tool.Name,
-                            ["group"] = tool.Group ?? "core",
-                            ["enabled"] = discovery.IsToolEnabled(tool.Name),
-                            ["description"] = tool.Description,
-                            ["auto_register"] = tool.AutoRegister,
-                            ["is_built_in"] = tool.IsBuiltIn,
-                            ["structured_output"] = tool.StructuredOutput,
-                            ["requires_polling"] = tool.RequiresPolling,
-                            ["poll_action"] = tool.PollAction ?? "status",
-                            ["max_poll_seconds"] = tool.MaxPollSeconds,
-                            ["parameters"] = paramsArray,
-                        }
-                    );
+                    var descriptor = new JObject
+                    {
+                        ["name"] = tool.Name,
+                        ["group"] = tool.Group ?? "core",
+                        ["enabled"] = discovery.IsToolEnabled(tool.Name),
+                        ["description"] = tool.Description,
+                        ["auto_register"] = tool.AutoRegister,
+                        ["is_built_in"] = tool.IsBuiltIn,
+                        ["structured_output"] = tool.StructuredOutput,
+                        ["requires_polling"] = tool.RequiresPolling,
+                        ["poll_action"] = tool.PollAction ?? "status",
+                        ["max_poll_seconds"] = tool.MaxPollSeconds,
+                        ["parameters"] = paramsArray,
+                    };
+                    ToolSchemaBuilder.AppendSchema(descriptor, tool);
+                    toolsArray.Add(descriptor);
                 }
 
                 var groups = toolsArray

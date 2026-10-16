@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import re
 from pathlib import Path
+from threading import BoundedSemaphore, Event, get_ident
 from unittest.mock import AsyncMock
 
 import pytest
@@ -160,29 +161,58 @@ async def test_invalid_lsp_positions_do_not_write(monkeypatch, entrypoint, line,
 
 
 @pytest.mark.asyncio
-async def test_text_regex_timeout_does_not_block_event_loop(script_transport):
-    # Given: an actual bounded regex that times out while unrelated work is ready.
+async def test_text_regex_timeout_does_not_block_event_loop(script_transport, monkeypatch):
+    # Given: actual bounded work with its own admission and an observed worker lifetime.
     reader, writer = script_transport
     reader.return_value = {"success": True, "data": {"contents": "a" * 30_000 + "!"}}
-    ticks = []
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    active, release = Event(), Event()
+    worker_threads, ticks = [], []
+    actual_run = script_edits._run_regex_work
+    monkeypatch.setattr(script_edits, "_REGEX_WORKERS", BoundedSemaphore(1))
+
+    async def observed_run(budget, work):
+        def observed_work():
+            worker_threads.append(get_ident())
+            active.set()
+            loop.call_soon_threadsafe(started.set)
+            try:
+                assert release.wait(script_edits.bounded_regex.TOTAL_TIMEOUT_SECONDS)
+                return work()  # Keep the real pattern, timeout, and conversion on this worker.
+            finally:
+                active.clear()
+
+        return await actual_run(budget, observed_work)
+
+    monkeypatch.setattr(script_edits, "_run_regex_work", observed_run)
 
     async def heartbeat():
-        await asyncio.sleep(0.005)
-        ticks.append(True)
+        await started.wait()
+        try:
+            assert active.is_set()
+            assert worker_threads[0] != get_ident()
+            ticks.append(True)
+        finally:
+            release.set()
 
     pulse = asyncio.create_task(heartbeat())
-    # When: the production text-only conversion runs the pattern.
-    response = await script_edits.script_apply_edits(
-        AsyncMock(),
-        "Foo",
-        "Assets/Scripts",
-        [{"op": "regex_replace", "pattern": r"(a+)+$", "replacement": "x"}],
-    )
-    responsive = bool(ticks)
-    await pulse
-    # Then: matching yields to the event loop and never writes after rejection.
-    assert responsive
+    # When: unrelated loop work must progress before the admitted worker is released.
+    try:
+        response = await script_edits.script_apply_edits(
+            AsyncMock(),
+            "Foo",
+            "Assets/Scripts",
+            [{"op": "regex_replace", "pattern": r"(a+)+$", "replacement": "x"}],
+        )
+    finally:
+        release.set()
+        await asyncio.wait_for(pulse, script_edits.bounded_regex.TOTAL_TIMEOUT_SECONDS)
+    # Then: a genuinely concurrent worker runs the bounded regex and never writes.
+    assert ticks == [True]
     assert response["success"] is False
+    assert response["code"] == "bad_regex"
+    assert "timed out" in response["message"]
     writer.assert_not_awaited()
 
 

@@ -24,6 +24,7 @@ from models.response_limits import (
 )
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from transport.stdio_response_delivery import stdio_delivery
+from transport.test_job_tasks import CreateWaitTaskResult
 
 # Only owners of admitted plugin results enter this map; PluginHub's global
 # retained-byte and pending-command budgets also bound this bookkeeping.
@@ -176,6 +177,15 @@ class ResponseLimitMiddleware(Middleware):
 
     async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> ToolResult:
         result = await call_next(context)
+        return self.admit_tool_result(result)
+
+    def admit_tool_result(self, result):
+        """Share the existing ordinary projection/admission with detached waits."""
+        if type(result) is CreateWaitTaskResult:
+            if response_size(result, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
+                error = response_limit_error()
+                return ToolResult(content=error, structured_content=error, is_error=True)
+            return result
         raw = getattr(result, "_raw_mcp_result", None)
         wire = (
             raw

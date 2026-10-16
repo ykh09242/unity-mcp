@@ -41,6 +41,8 @@ from transport.catalog_subscriptions import (
     install_catalog_subscriptions,
 )
 from transport.mcp_version_middleware import McpVersionMiddleware
+from transport.test_job_tasks import WaitTaskDeliveryMiddleware
+from transport.test_wait_binding import install_test_job_tasks
 from transport.request_body_limit_middleware import (
     MAX_HTTP_REQUEST_BYTES,
     RequestBodyLimitMiddleware,
@@ -58,6 +60,7 @@ import sys
 import logging
 from contextlib import asynccontextmanager, nullcontext
 import os
+from pathlib import Path
 import threading
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
@@ -552,6 +555,8 @@ class UnityMCP(FastMCP):
         )
         # add_middleware prepends: authenticate before inspecting or reading bodies.
         if app.state.transport_type == "streamable-http":
+            if getattr(self, "_test_job_tasks", None) is not None:
+                app.add_middleware(WaitTaskDeliveryMiddleware)
             app.add_middleware(McpVersionMiddleware, path=app.state.path)
             app.add_middleware(CatalogSubscriptionLifetimeMiddleware)
         app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_HTTP_REQUEST_BYTES)
@@ -568,6 +573,7 @@ def create_mcp_server(
     *,
     managed_instance_token: str | None = None,
     custom_instructions: str | None = None,
+    test_wait_tasks_root: Path | None = None,
 ) -> FastMCP:
     mcp = UnityMCP(
         name="mcp-for-unity-server",
@@ -899,6 +905,9 @@ def create_mcp_server(
     # Register all resources
     register_all_resources(mcp, project_scoped_tools=project_scoped_tools)
 
+    if test_wait_tasks_root is not None:
+        install_test_job_tasks(mcp, test_wait_tasks_root, remote_hosted=config.http_remote_hosted)
+
     return mcp
 
 
@@ -1202,6 +1211,11 @@ Examples:
     mcp = create_mcp_server(
         project_scoped_tools,
         custom_instructions=custom_instructions,
+        test_wait_tasks_root=(
+            Path(os.environ["UNITY_MCP_TEST_WAIT_TASKS_DIR"])
+            if config.transport_mode == "http" and os.environ.get("UNITY_MCP_TEST_WAIT_TASKS_DIR")
+            else None
+        ),
         managed_instance_token=(
             args.unity_instance_token
             if args.pidfile and config.transport_mode == "http" and not config.http_remote_hosted

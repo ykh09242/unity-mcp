@@ -13,6 +13,7 @@ from models.response_limits import ResponseOwner, response_owner, response_size
 from services.tools.shared_read_budget import SharedReadBudget
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 import services.tools.shared_tool_reads as sharing
+import services.tools.test_job_wait as job_waits
 import transport.legacy.unity_connection as connections
 
 
@@ -265,7 +266,7 @@ async def test_stdio_job_waiters_share_status_but_replacement_and_legacy_stay_pr
     monkeypatch.setattr(jobs, "_update_job_nudge", AsyncMock())
     generation = "authenticated-one"
     monkeypatch.setattr(
-        jobs, "get_authenticated_stdio_generation", AsyncMock(side_effect=lambda _: generation)
+        job_waits, "get_authenticated_stdio_generation", AsyncMock(side_effect=lambda _: generation)
     )
     sender = AsyncMock(
         return_value={"success": True, "data": {"job_id": "job", "status": "succeeded"}}
@@ -279,6 +280,12 @@ async def test_stdio_job_waiters_share_status_but_replacement_and_legacy_stay_pr
     generation = None
     await asyncio.gather(*(jobs.get_test_job(context(), "job", wait_timeout=1) for _ in range(2)))
     assert sender.await_count == 3
+    generation = "authenticated-replacement"
+    replacements = await asyncio.gather(
+        *(jobs.get_test_job(context(), "job", wait_timeout=1) for _ in range(2))
+    )
+    assert all(reply.data.status == "succeeded" for reply in replacements)
+    assert sender.await_count == 4
 
 
 @pytest.mark.asyncio
@@ -292,7 +299,7 @@ async def test_replacement_does_not_join_old_active_stdio_job(monkeypatch, budge
     monkeypatch.setattr(jobs, "_update_job_nudge", AsyncMock())
     generation = "authenticated-old"
     monkeypatch.setattr(
-        jobs, "get_authenticated_stdio_generation", AsyncMock(side_effect=lambda _: generation)
+        job_waits, "get_authenticated_stdio_generation", AsyncMock(side_effect=lambda _: generation)
     )
     entered, release = asyncio.Event(), asyncio.Event()
     calls = []
@@ -410,7 +417,7 @@ async def test_job_polling_releases_superseded_copies_and_keeps_final_delivery(
         jobs, "get_unity_instance_from_context", AsyncMock(return_value="Owned@synthetic")
     )
     monkeypatch.setattr(
-        jobs,
+        job_waits,
         "get_authenticated_stdio_generation",
         AsyncMock(
             side_effect=lambda _: (

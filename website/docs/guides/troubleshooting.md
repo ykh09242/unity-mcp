@@ -28,6 +28,22 @@ Work from package import to server, bridge, client, then target. Do not delete p
 
 `GET /health` checks only the process. Verify an Editor by reading `mcpforunity://instances` and its project info. Never share token-file contents, API keys or complete private payloads in diagnostics.
 
+## Verify the actual MCP read path
+
+Run the diagnostic against an exact discovered Editor ID:
+
+```sh
+unity-mcp --host 127.0.0.1 --port 8080 --instance 'Project@01234567' --format json doctor
+unity-mcp --instance 'Project@01234567' --format json doctor --protocol legacy
+```
+
+`doctor` uses its own SDK connection and the existing configured authentication. The default `auto` mode uses SDK discovery and official handshake fallback; `legacy` explicitly uses the initialize handshake. It does not inspect, configure or verify another desktop application's session. To verify the affected MCP client itself, discover resources in that client and read `mcpforunity://doctor` for the intended `unity_instance` in that existing session. Save that client's actual discovery/read transcript; a CLI receipt cannot substitute for it.
+
+The receipt separates MCP discovery, an actual safe Unity read, target identity and immutable server-source comparison. Unity Editor, Unity package, Python server and skill revisions are distinct. A successful read with unavailable source provenance remains `connection_verified: true` and an incomplete result. Restart the affected client's MCP server after changing its source; preserve intentional manual pins. Optional input/recording readiness does not determine connection success.
+
+Exit codes are `0` verified read and matching comparable source, `1` observed failure, `2` invalid doctor input, `3` incomplete/unknown, and `4` missing local SDK dependency. Read the enumerated `reason` and `next_action`; the command performs no repair. Cold stdio may perform existing metadata discovery handshake/ping probes, but the doctor read creates no new authenticated command generation and dispatches no native command. Unknown observations stay unknown.
+
+The CLI bounds its own SDK work and stream teardown. It awaits the existing auth loader under the same original deadline; a timeout sends no HTTP request and discards a later result. An OS-blocked auth-file read itself may outlive that wait, reported separately as `residual_auth_io: unknown`. Existing server discovery/native work follows its existing cancellation limits and may outlive a caller; `residual_server_work: unknown` does not claim native termination. Diagnostic output omits tokens, paths, raw configurations and native error bodies, including in verbose mode. Share the bounded receipt rather than credentials or full private logs.
 ## Server still uses the previous build after an update
 
 An externally owned stdio server can stay alive after the Unity package changes.

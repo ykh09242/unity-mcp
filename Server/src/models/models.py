@@ -11,7 +11,11 @@ from pydantic import (
     TypeAdapter,
     ValidationInfo,
     field_validator,
+    model_validator,
+    JsonValue,
 )
+
+from models.custom_tool_schema import prepare_descriptor
 
 
 def parse_tool_parameter_default(value: str | None, param_type: str | None) -> object:
@@ -72,6 +76,23 @@ class ToolDefinitionModel(BaseModel):
     # Zero selects the server default; plugins cannot extend the server lifetime.
     max_poll_seconds: StrictInt = Field(default=0, ge=0, le=600)
     parameters: list[ToolParameterModel] = Field(default_factory=list)
+    schema_version: StrictInt = Field(default=0, ge=0, le=1)
+    input_schema: dict[str, JsonValue] | None = None
+    output_data_schema: dict[str, JsonValue] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_versioned_schema(cls, value):
+        """Reject the entire rich descriptor before Pydantic traverses its graph."""
+        if not isinstance(value, dict):
+            return value
+        version = value.get("schema_version", 0)
+        input_schema = value.get("input_schema")
+        output_schema = value.get("output_data_schema")
+        prepare_descriptor(
+            version, input_schema, output_schema, value.get("structured_output", True)
+        )
+        return value
 
 
 class UnityInstanceInfo(BaseModel):

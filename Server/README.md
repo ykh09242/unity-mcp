@@ -32,7 +32,7 @@ Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` 
 Normally the Editor manages launch/configuration. This beta checkout uses the exact `mcpServerSource` recorded in [`MCPForUnity/package.json`](../MCPForUnity/package.json). Published stable releases keep their own immutable source pins; use the value from the installed package:
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/3fbfcafe185600f53328fbac1529f5cd8c0a14b3.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/e280d0183e1cf2186225d9131dfc22480ae87c9b.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
 Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving branch. First launch can require dependency downloads; a source pin is not an offline-install guarantee. The commit-addressed archive avoids Git checkout and its Windows long-path limit; it still downloads the repository archive and builds only `Server`. Existing full-commit Git and explicit local development overrides remain supported.
@@ -60,6 +60,22 @@ Discover `mcpforunity://instances`. Modern sessionless calls use `unity_instance
 
 `manage_tools` activation/deactivation/reset also require a stateful handshake. Local clients can use `sync` to refresh selected-Editor toggles. Hosted catalogs are pushed by authenticated Unity plugins; remote `sync` is unavailable. See [Tool Groups](../website/docs/guides/tool-groups.md).
 
+## Optional bounded test-wait Tasks
+
+Tasks are disabled by default. Set `UNITY_MCP_TEST_WAIT_TASKS_DIR` in the HTTP server process environment to a dedicated private journal directory, then restart. The normal launcher reads it only for `--transport http`; stdio and the local `unity-mcp` control CLI do not expose this extension. Existing local-token or hosted API-key authentication still applies.
+
+This adapter requires the locked MCP SDK **2.3.0** and FastMCP **4.1.0**. A client must use protocol **2026-07-28**, advertise `io.modelcontextprotocol/tasks` in its per-request `io.modelcontextprotocol/clientCapabilities.extensions`, and support `resultType: "task"` and `tasks/get`, `tasks/update`, and `tasks/cancel`. Confirm the extension in `server/discover`. Unsupported SDK hooks or an unavailable journal leave Tasks unadvertised and ordinary calls available.
+
+Call the existing `get_test_job` with its `job_id`, an integer `wait_timeout` from 1 to 60, and `unity_instance` when routing requires it. Calls requesting details, failed tests, page size, or a cursor remain ordinary. An admitted eligible call returns a Task handle; use a Tasks-capable SDK to poll `tasks/get` with its `taskId` and matching encoded `Mcp-Name` header. The nested result preserves the ordinary tool result. `tasks/update` acknowledges the wait Task without changing native inputs. There is no separate `wait_for_test_job` tool; `run_tests` is unchanged.
+
+The Task observes the same bounded wait and original HTTP budget (normally at most 30 seconds). Its result can still say the native job is running. Clients without Tasks, ineligible calls, and capacity refusals retain ordinary `get_test_job` results and polling. Tasks never start a new native run or grant a fresh wait deadline.
+
+Journal results and job metadata are private and subject to bounded disk/worker admission. Tasks expire for retrieval after one hour. Expired files are cleaned up lazily when the journal reopens or admits a new wait, so an idle or stopped server can retain files longer; this is not timed disk erasure. Use one dedicated journal per server process, outside shared/synced folders and source control. POSIX roots/entries must be current-user owned and private; new owned directories/files use 0700/0600, and insecure existing paths are refused rather than chmodded. On Windows, supply a per-user directory with private inherited ACLs; POSIX modes do not enforce Windows ACL privacy.
+
+Authenticated local clients share the journal installation's nonsecret owner identity. A rotated valid launch token keeps Task access; stale tokens fail authentication. Hosted Tasks belong to the authenticated user. A different journal has a different local identity; missing/corrupt identity metadata with existing records fails closed. Reopening the same journal preserves retained results; interrupted waits can report an interruption fault without restarting the native job. Credentials are not stored.
+
+`tasks/cancel` cancels the **wait Task**, not native test execution. Its acknowledgement records cancellation intent; inspect `tasks/get` for the final Task state. Use existing native-job polling/control separately.
+
 ## Scalar input types
 
 Tool arguments preserve their declared types. Use JSON `true`/`false` for boolean flags and whole JSON integers for integer arguments. Numeric `0`/`1` cannot substitute for booleans; booleans cannot substitute for numbers. Integer arguments reject floating values such as `1.0` and `1.5` instead of rounding or truncating them. Floating arguments accept integers and finite floats, but reject NaN and Infinity.
@@ -77,8 +93,8 @@ The routing middleware checks built-in tool signatures before instance discovery
 ## CLI and environment reference
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/3fbfcafe185600f53328fbac1529f5cd8c0a14b3.zip#subdirectory=Server" mcp-for-unity --help
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/3fbfcafe185600f53328fbac1529f5cd8c0a14b3.zip#subdirectory=Server" unity-mcp --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/e280d0183e1cf2186225d9131dfc22480ae87c9b.zip#subdirectory=Server" mcp-for-unity --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/e280d0183e1cf2186225d9131dfc22480ae87c9b.zip#subdirectory=Server" unity-mcp --help
 ```
 
 The server and Editor-control CLI have different options. `unity-mcp` requires local HTTP and accepts `--host`, `--port`, `--timeout`, `--format`, and `--instance`. Place global options before subcommands; see [CLI examples](../website/docs/guides/cli.md).
@@ -91,6 +107,7 @@ The server and Editor-control CLI have different options. `unity-mcp` requires l
 | `UNITY_MCP_SKIP_STARTUP_CONNECT=1` | Skip initial Unity connection attempt. |
 | `UNITY_MCP_LOG_DIR` | Override rotating server log directory. |
 | `UNITY_MCP_DISABLE_FOCUS_NUDGE=1` | Disable local test-focus nudges. |
+| `UNITY_MCP_TEST_WAIT_TASKS_DIR` | Opt in to bounded test-wait Tasks over HTTP with a private journal directory. |
 
 Hosted mode requires an HTTPS validator and private HTTPS/WSS proxy plus `--http-behind-tls-proxy`; this assertion does not enable TLS. Its flags, environment variables and deployment examples live in [Remote Server Auth](../website/docs/guides/remote-server-auth.md). Local REST/CLI control is unavailable in hosted mode.
 

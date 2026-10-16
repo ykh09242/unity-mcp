@@ -1,5 +1,6 @@
 """Compose existing capability sources under one generation and read deadline."""
 
+from dataclasses import dataclass
 from hashlib import sha256
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -297,7 +298,13 @@ def _compose(
     )
 
 
-async def query_project_capabilities(ctx: Context) -> ProjectCapabilities:
+@dataclass(frozen=True, slots=True)
+class _CapabilityCapture:
+    capabilities: ProjectCapabilities
+    observations: dict[str, _Observation]
+
+
+async def _capture_project_capabilities(ctx: Context) -> _CapabilityCapture:
     """Read current evidence once; discard observations if connection ownership changes."""
     http = (config.transport_mode or "stdio").lower() == "http"
     timeout = _query_timeout()
@@ -401,4 +408,9 @@ async def query_project_capabilities(ctx: Context) -> ProjectCapabilities:
                 "next_action": "retry_later",
             }
         )
-    return _compose(connection, limits, observations)
+    return _CapabilityCapture(_compose(connection, limits, observations), observations)
+
+
+async def query_project_capabilities(ctx: Context) -> ProjectCapabilities:
+    """Preserve the original capability view over one verified capture."""
+    return (await _capture_project_capabilities(ctx)).capabilities

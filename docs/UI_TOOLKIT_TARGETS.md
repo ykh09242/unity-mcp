@@ -185,3 +185,72 @@ by `manage_ui.element_id`; they do not become mutation/object handles. The root 
 wholly unmapped semantic branch may still resolve through the unchanged semantic
 selector. Use a default semantic capture for editing IDs, or the independent current
 `element_path` mutation selector.
+
+
+## Diagnose current-panel layout candidates
+
+`manage_ui(action="diagnose", target="123")` observes the selected UI component's
+current flat panel. It reports separate display suppression, resolved visibility,
+effective opacity, rectangular clipping, outside-parent bounds and sibling overlap
+candidates. It does not force layout, read text/input values, resize the Game View,
+change styles, or save source assets. Use the current instance ID, unique name or
+unique hierarchy path; ambiguous GameObject targets refuse.
+
+```json
+{
+  "action": "diagnose",
+  "target": "123",
+  "component_type": "auto",
+  "max_depth": 10,
+  "max_nodes": 200,
+  "max_evaluations": 5000,
+  "max_characters": 65536,
+  "max_pairs": 2000,
+  "max_findings": 200
+}
+```
+
+The example shows defaults. Depth accepts0..24, nodes1..1000, evaluations1..20000,
+characters1..262144, pairs0..20000 and findings1..2000. Omitted/null budgets use
+defaults; other supplied values must be integers. Each physical ancestor inspection,
+node admission, child fetch, fixed style probe and pair considered consumes an
+operation. Pairs are charged before visibility/geometry filters. `max_pairs=0`
+disables overlap and reports partial evidence. Names/types have a local256 UTF-16
+unit limit; variable metadata and whole paths share the character budget. Limits
+bound producer work and retention, not scene lookup or engine getter time.
+
+`data.kind="uitoolkit_layout_diagnostics"` and `schema_version=1` identify this
+closed response. `status` is `complete`, `partial` or `unavailable`; traversal
+counters/cutoff reasons and independent clipping/overlap stages describe coverage.
+Missing roots, detached panels, inactive components and unavailable layout are
+explicit unavailable observations. An attached `display:none` or empty element is
+reported separately. Unknown APIs, non-flat panel space, unsupported transforms
+or rounded clipping shapes remain uncertain. An empty finding list under partial
+or unavailable status does not establish a clean layout. Even complete geometry
+is neither a pixel-visibility nor an event-delivery test.
+
+Diagnostics use the **physical hierarchy**, including ScrollView viewport internals.
+Their `diagnostic_path` values are current physical index positions, not
+content-container `element_path` selectors, snapshot IDs, UI-05 identity assignments
+or persistent handles. Do not send them to mutation actions. This action operates
+on the component root; element selectors, identity maps, resolutions, file/render
+and mutation options refuse rather than silently change the diagnostic scope.
+
+Clipping uses checked engine-computed overflow and inherited rectangular constraints;
+unset inline styles do not imply visible overflow. Overlap covers direct physical
+siblings only, excludes ancestor/descendant pairs and returns candidates without
+claiming front/back order or a raycast blocker. Outside-parent bounds may be intended
+margins/absolute positioning. Text glyph overflow, curved/stencil/custom-render shapes,
+cross-branch/document overlap and multi-resolution simulation are outside this action.
+Ordinary names can still contain application-supplied information; the tool does not
+identify arbitrary secrets copied into names by scripts.
+
+Only exact engine-owned UIDocument/PanelRenderer types and validated engine members
+can provide a diagnostic root. Project-defined PanelRenderer lookalikes refuse before
+getters or receiver registration. The verified built-in PanelRenderer's temporary
+root receiver is the sole callback exception and is unregistered synchronously.
+No source/settings getter is used. Optional or changed engine clip APIs are reported
+as unknown, and old peers returning unrelated success data are refused by the server.
+Existing UI group/tool permissions and the mixed read/write tool's annotations remain
+unchanged; diagnosis uses the read transport. Snapshot versions2/3, identities,
+privacy/state extraction and existing mutation/read actions retain their contracts.

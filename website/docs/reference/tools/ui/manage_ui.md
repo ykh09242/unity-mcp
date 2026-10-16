@@ -12,7 +12,8 @@ description: "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity
 
 ## Description
 
-Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components). Read-only actions: ping, read, get_visual_tree, list. Modifying actions: create, update, delete, attach_ui_document, detach_ui_document, create_panel_settings, update_panel_settings, modify_visual_element.
+Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components). Read-only actions: ping, read, get_visual_tree, diagnose, list.  Modifying actions: create, update, delete, attach_ui_document, detach_ui_document, create_panel_settings, update_panel_settings, modify_visual_element.
+diagnose observes bounded current-panel physical geometry/clipping/overflow/sibling-overlap candidates without text or layout updates. Unknown/partial results are not a clean-layout assertion; diagnostic paths are not mutation/snapshot selectors.
 Visual actions: render_ui (captures UI panel to a PNG screenshot for self-evaluation).
 Structural actions: link_stylesheet (adds a Style src reference to a UXML file).
 
@@ -40,7 +41,7 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['ping', 'create', 'read', 'update', 'delete', 'attach_ui_document', 'detach_ui_document', 'create_panel_settings', 'update_panel_settings', 'get_visual_tree', 'render_ui', 'link_stylesheet', 'list', 'modify_visual_element']` | yes | Action to perform. |
+| `action` | `Literal['ping', 'create', 'read', 'update', 'delete', 'attach_ui_document', 'detach_ui_document', 'create_panel_settings', 'update_panel_settings', 'get_visual_tree', 'diagnose', 'render_ui', 'link_stylesheet', 'list', 'modify_visual_element']` | yes | Action to perform. |
 | `path` | `str \| None` | — | Assets-relative path (e.g., 'Assets/UI/MainMenu.uxml' or 'Assets/UI/Styles.uss'). For render_ui: optional UXML path to render directly without a scene GameObject. |
 | `contents` | `str \| None` | — | File content (UXML or USS markup). Plain text - encoding handled automatically. |
 | `target` | `str \| None` | — | Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui. |
@@ -51,10 +52,12 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `scale_mode` | `Literal['ConstantPixelSize', 'ConstantPhysicalSize', 'ScaleWithScreenSize'] \| None` | — | Panel scale mode. Legacy shorthand; prefer using 'settings' dict. |
 | `reference_resolution` | `dict[str, int] \| None` | — | Reference resolution as {width, height}. Legacy shorthand; prefer using 'settings' dict. |
 | `settings` | `dict[str, Any] \| None` | — | Generic PanelSettings properties dict for create_panel_settings. Keys: scaleMode (ConstantPixelSize\|ConstantPhysicalSize\|ScaleWithScreenSize), referenceResolution ({width,height}), screenMatchMode (MatchWidthOrHeight\|ShrinkToFit\|ExpandToFill), match (0-1 float), referenceDpi, fallbackDpi, sortingOrder, targetDisplay, clearColor (bool), colorClearValue (#RRGGBB or {r,g,b,a}), clearDepthStencil, themeStyleSheet (asset path), dynamicAtlasSettings ({minAtlasSize,maxAtlasSize,maxSubTextureSize,activeFilters}). |
-| `max_depth` | `int \| None` | — | get_visual_tree inclusive depth: root is 0; default 10, maximum 24. |
-| `max_nodes` | `int \| None` | — | get_visual_tree emitted node budget, including root (default 200). |
-| `max_evaluations` | `int \| None` | — | get_visual_tree operation budget: node admissions, child fetches and class probes (default 5000). Not a time or scene-lookup bound. |
-| `max_characters` | `int \| None` | — | get_visual_tree shared copied UTF-16 string budget, including metadata (default 65536). Per-string limit 8192 and per-node class limit 64 also apply. |
+| `max_depth` | `int \| None` | — | get_visual_tree / diagnose inclusive depth: root is 0; default 10, maximum 24. |
+| `max_nodes` | `int \| None` | — | get_visual_tree / diagnose emitted node budget, including root (default 200). |
+| `max_evaluations` | `int \| None` | — | get_visual_tree operation budget: node admissions, child fetches and class probes; diagnose charges ancestors, admissions, child fetches, fixed style probes and pairs (default 5000). Not a time or scene-lookup bound. |
+| `max_characters` | `int \| None` | — | get_visual_tree / diagnose shared copied UTF-16 string budget including metadata (default 65536). get_visual_tree per-string limit 8192/class limit 64; diagnose name/type limit 256 and whole physical paths. |
+| `max_pairs` | `int \| None` | — | diagnose physical sibling pairs examined before filters (default 2000); zero disables overlap and yields partial evidence. |
+| `max_findings` | `int \| None` | — | diagnose retained candidate findings (default 200); reaching the cap reports partial coverage. |
 | `capture_id` | `str \| None` | — | Play-mode capture ID returned by render_ui. Supply this ID alone to poll the original request; optional target/output settings must match the start request. Omit to start a separate capture even with identical settings. Results expire after 30 seconds. |
 | `cancel_capture` | `bool \| None` | — | Cancel the Play-mode capture owned by capture_id (default false). For render_ui. |
 | `width` | `int \| None` | — | Render width in pixels, 1 to 8192 (default 1920). The frame may contain at most 33,554,432 pixels. For render_ui. |
