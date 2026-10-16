@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
-import json
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -16,27 +15,6 @@ from typing import Final
 ROOT: Final = Path(__file__).resolve().parents[1]
 RUFF_VERSION: Final = "0.17.0"
 CSHARPIER_VERSION: Final = "1.3.0"
-PRETTIER_VERSION: Final = "3.9.10"
-FRONTEND_ROOT: Final = "tools/feature_program_web/"
-FRONTEND_SUFFIXES: Final = frozenset(
-    {
-        ".js",
-        ".jsx",
-        ".mjs",
-        ".cjs",
-        ".ts",
-        ".tsx",
-        ".json",
-        ".css",
-        ".scss",
-        ".html",
-        ".yml",
-        ".yaml",
-    }
-)
-FRONTEND_OUTPUT_PARTS: Final = frozenset(
-    {"evidence", "captures", "test-results", "playwright-report", "coverage"}
-)
 PYTHON_SUFFIXES: Final = frozenset({".py", ".pyi"})
 CSHARP_SUFFIXES: Final = frozenset({".cs", ".csx"})
 EDITOR_SUFFIXES: Final = frozenset(
@@ -125,8 +103,6 @@ def is_authored_path(relative: str) -> bool:
     if path.is_absolute() or ".." in path.parts or not path.parts:
         return False
     parts = tuple(part.casefold() for part in path.parts)
-    if relative.startswith(FRONTEND_ROOT) and any(part in FRONTEND_OUTPUT_PARTS for part in parts):
-        return False
     if any(part.startswith(".env") for part in parts):
         return False
     if "/assets/resources/gamedata/" in "/" + relative.casefold() + "/":
@@ -268,65 +244,6 @@ def csharpier_command(root: Path) -> tuple[str, ...]:
     )
 
 
-def prettier_command(root: Path) -> tuple[str, ...]:
-    """Use only the installed package-local CLI after checking all setup contracts."""
-    package = root / FRONTEND_ROOT
-    setup = (
-        f"Prettier {PRETTIER_VERSION} setup is unavailable or inconsistent. "
-        f"Install Node.js and run npm ci in {FRONTEND_ROOT} (see docs/FORMATTING.md)."
-    )
-    executable = shutil.which("node")
-    cli = package / "node_modules/prettier/bin/prettier.cjs"
-    settings = (
-        package / "package.json",
-        package / "package-lock.json",
-        package / ".prettierrc.json",
-        package / ".prettierignore",
-        cli,
-    )
-    if not executable or any(
-        not path.is_file() or path.is_symlink() or path.resolve() != path.absolute()
-        for path in settings
-    ):
-        raise RuntimeError(setup)
-    try:
-        manifest = json.loads(settings[0].read_text(encoding="utf-8"))
-        lock = json.loads(settings[1].read_text(encoding="utf-8"))
-        config = json.loads(settings[2].read_text(encoding="utf-8"))
-        versions = (
-            manifest["devDependencies"]["prettier"],
-            lock["packages"][""]["devDependencies"]["prettier"],
-            lock["packages"]["node_modules/prettier"]["version"],
-        )
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise RuntimeError(setup) from exc
-    if any(version != PRETTIER_VERSION for version in versions) or not isinstance(config, dict):
-        raise RuntimeError(setup)
-    command = (executable, str(cli))
-    try:
-        result = subprocess.run(
-            [*command, "--version"],
-            cwd=package,
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(setup) from exc
-    if result.returncode or result.stdout.strip() != PRETTIER_VERSION:
-        raise RuntimeError(setup)
-    return (
-        *command,
-        "--config",
-        str(package / ".prettierrc.json"),
-        "--ignore-path",
-        str(package / ".prettierignore"),
-    )
-
-
 def run_batches(root: Path, command: Sequence[str], files: Sequence[Path]) -> int:
     """Keep explicit file arguments below Windows' command-line length limit."""
     status = 0
@@ -452,13 +369,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         python_files = tuple(path for path in files if path.suffix.casefold() in PYTHON_SUFFIXES)
         csharp_files = tuple(path for path in files if path.suffix.casefold() in CSHARP_SUFFIXES)
-        frontend_files = tuple(
-            path
-            for path in files
-            if path.relative_to(ROOT).as_posix().startswith(FRONTEND_ROOT)
-            and path.suffix.casefold() in FRONTEND_SUFFIXES
-        )
-        editor_files = len(files) - len(python_files) - len(csharp_files) - len(frontend_files)
+        editor_files = len(files) - len(python_files) - len(csharp_files)
         if editor_files:
             print(
                 f"EditorConfig/manual-only: {editor_files} web/config/shell/PowerShell files; no syntax formatter or whitespace rewriting applied.",
@@ -475,9 +386,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             commands.append((command if args.write else (*command, "--check"), python_files))
         csharp_command = csharpier_command(ROOT) if csharp_files else None
-        if frontend_files:
-            command = (*prettier_command(ROOT), "--write" if args.write else "--check", "--")
-            commands.append((command, frontend_files))
         status = 0
         for command, targets in commands:
             print(

@@ -1,6 +1,5 @@
 """Selection, safe defaults and pinned-tool contracts for the formatting runner."""
 
-import json
 from pathlib import Path
 import subprocess
 import sys
@@ -172,7 +171,7 @@ def test_batched_execution_preserves_file_arguments_and_signal_failure(tmp_path,
     assert [argument for call in calls for argument in call[2:]] == [str(path) for path in files]
 
 
-@pytest.mark.parametrize("relative", ["tools/file.py", "tools/feature_program_web/src/App.tsx"])
+@pytest.mark.parametrize("relative", ["tools/file.py", "website/src/App.tsx"])
 def test_list_mode_invokes_no_formatter(tmp_path, monkeypatch, capsys, relative):
     file = make_file(tmp_path, relative)
     monkeypatch.setattr(formatting, "ROOT", tmp_path)
@@ -271,208 +270,14 @@ def test_csharp_concurrent_edit_is_not_overwritten(tmp_path, monkeypatch):
     assert file.read_bytes() == b"// Another contributor's edit\n"
 
 
-@pytest.fixture
-def frontend_package(tmp_path, monkeypatch):
-    package = tmp_path / formatting.FRONTEND_ROOT
-    version = formatting.PRETTIER_VERSION
-    make_file(package, "package.json", json.dumps({"devDependencies": {"prettier": version}}))
-    make_file(
-        package,
-        "package-lock.json",
-        json.dumps(
-            {
-                "packages": {
-                    "": {"devDependencies": {"prettier": version}},
-                    "node_modules/prettier": {"version": version},
-                }
-            }
-        ),
-    )
-    make_file(package, ".prettierrc.json", '{"singleQuote": true, "semi": true}\n')
-    make_file(package, ".prettierignore", "generated/\nnode_modules/\npackage-lock.json\n")
-    make_file(package, "node_modules/prettier/bin/prettier.cjs", "// Synthetic CLI fixture\n")
-    monkeypatch.setattr(formatting.shutil, "which", lambda _: "node executable with spaces")
-    return package
-
-
-@pytest.mark.parametrize("write", [False, True])
-@pytest.mark.parametrize("exit_code", [0, 1, 2, -15])
-def test_frontend_selection_paths_modes_and_failure_propagation(
-    tmp_path, monkeypatch, frontend_package, write, exit_code
-):
-    target = make_file(frontend_package, "src/component with spaces.tsx", "const value=1;\n")
-    manual = make_file(tmp_path, "website/src/manual.js", "const manual=1;\n")
-    package_shell = make_file(frontend_package, "scripts/manual.ps1", "$value = 1\n")
-    calls = []
-
-    def run(arguments, **kwargs):
-        calls.append((arguments, kwargs))
-        if "--version" in arguments:
-            assert kwargs["cwd"] == frontend_package
-            return subprocess.CompletedProcess(arguments, 0, formatting.PRETTIER_VERSION + "\n", "")
-        assert kwargs["cwd"] == tmp_path
-        assert arguments[0] == "node executable with spaces"
-        assert arguments[1] == str(frontend_package / "node_modules/prettier/bin/prettier.cjs")
-        assert arguments[arguments.index("--config") + 1] == str(
-            frontend_package / ".prettierrc.json"
-        )
-        assert arguments[arguments.index("--ignore-path") + 1] == str(
-            frontend_package / ".prettierignore"
-        )
-        assert arguments[-3:] == ["--write" if write else "--check", "--", str(target)]
-        if write and exit_code == 0:
-            target.write_text("const value = 1;\n", encoding="utf-8")
-        return subprocess.CompletedProcess(arguments, exit_code)
-
-    monkeypatch.setattr(formatting, "ROOT", tmp_path)
-    monkeypatch.setattr(formatting, "discover_files", lambda *_: (target, manual, package_shell))
-    monkeypatch.setattr(formatting.subprocess, "run", run)
-    assert formatting.main(["--write"] if write else ["--check"]) == max(
-        exit_code, 1 if exit_code < 0 else 0
-    )
-    assert len(calls) == 2
-    assert target.read_text(encoding="utf-8") == (
-        "const value = 1;\n" if write and exit_code == 0 else "const value=1;\n"
-    )
-    assert manual.read_text(encoding="utf-8") == "const manual=1;\n"
-    assert package_shell.read_text(encoding="utf-8") == "$value = 1\n"
-
-
-@pytest.mark.parametrize(
-    "fault",
-    ["node", "cli", "config", "ignore", "manifest", "lock", "lock-root", "version", "timeout"],
-)
-def test_frontend_setup_failure_precedes_all_selected_writes(
-    tmp_path, monkeypatch, frontend_package, fault, capsys
-):
-    target = make_file(frontend_package, "src/App.tsx", "const value=1;\n")
-    python = make_file(tmp_path, "tools/file.py", "value=1\n")
-    csharp = make_file(tmp_path, "tools/File.cs", "class File{}\n")
-    originals = {path: path.read_bytes() for path in (target, python, csharp)}
-    if fault == "node":
-        monkeypatch.setattr(formatting.shutil, "which", lambda _: None)
-    elif fault == "cli":
-        (frontend_package / "node_modules/prettier/bin/prettier.cjs").unlink()
-    elif fault == "config":
-        (frontend_package / ".prettierrc.json").write_text("invalid json", encoding="utf-8")
-    elif fault == "ignore":
-        (frontend_package / ".prettierignore").unlink()
-    elif fault == "manifest":
-        (frontend_package / "package.json").write_text(
-            '{"devDependencies": {"prettier": "^3.9.10"}}', encoding="utf-8"
-        )
-    elif fault in {"lock", "lock-root"}:
-        lock_path = frontend_package / "package-lock.json"
-        lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        if fault == "lock":
-            lock["packages"]["node_modules/prettier"]["version"] = "3.9.9"
-        else:
-            lock["packages"][""]["devDependencies"]["prettier"] = "3.9.9"
-        lock_path.write_text(json.dumps(lock), encoding="utf-8")
-
-    def run(arguments, **_kwargs):
-        assert "--version" in arguments
-        if fault == "timeout":
-            raise subprocess.TimeoutExpired(arguments, 30)
-        output = "3.9.9" if fault == "version" else formatting.PRETTIER_VERSION
-        return subprocess.CompletedProcess(arguments, 0, output + "\n", "")
-
-    monkeypatch.setattr(formatting, "ROOT", tmp_path)
-    monkeypatch.setattr(formatting, "discover_files", lambda *_: (python, csharp, target))
-    monkeypatch.setattr(formatting, "ruff_command", lambda _: ("ruff",))
-    monkeypatch.setattr(formatting, "csharpier_command", lambda _: ("csharpier",))
-    monkeypatch.setattr(formatting.subprocess, "run", run)
-    monkeypatch.setattr(
-        formatting, "run_batches", lambda *_: pytest.fail("unexpected format write")
-    )
-    monkeypatch.setattr(
-        formatting, "format_csharp_files", lambda *_: pytest.fail("unexpected C# write")
-    )
-    assert formatting.main(["--write"]) == 2
-    assert all(path.read_bytes() == content for path, content in originals.items())
-    assert "npm ci in tools/feature_program_web/" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    "relative",
-    [
-        "generated/reference.ts",
-        "node_modules/module/index.js",
-        "package-lock.json",
-        "captures/snapshot.json",
-        "evidence/report.json",
-        "test-results/report.json",
-        "playwright-report/report.json",
-        "coverage/coverage.json",
-        ".env.secret.json",
-    ],
-)
-def test_frontend_exclusions_precede_source_reads(tmp_path, monkeypatch, relative):
-    source = make_file(tmp_path, "tools/feature_program_web/src/App.tsx", "export {};\n")
-    excluded = formatting.FRONTEND_ROOT + relative
-    monkeypatch.setattr(
-        formatting, "git_paths", lambda *_: {excluded, source.relative_to(tmp_path).as_posix()}
-    )
-    monkeypatch.setattr(Path, "read_bytes", lambda *_: pytest.fail("unexpected source read"))
-    monkeypatch.setattr(
-        Path, "read_text", lambda *_args, **_kwargs: pytest.fail("unexpected source read")
-    )
-    assert formatting.discover_files(tmp_path, True, ()) == (source,)
-    with pytest.raises(ValueError, match="eligible"):
-        formatting.discover_files(tmp_path, False, [excluded])
-
-
-def test_frontend_linked_ancestor_is_rejected(tmp_path, monkeypatch):
-    source = make_file(tmp_path, "tools/feature_program_web/src/App.tsx", "export {};\n")
-    monkeypatch.setattr(
-        formatting, "git_paths", lambda *_: {source.relative_to(tmp_path).as_posix()}
-    )
-    resolve = Path.resolve
-    monkeypatch.setattr(
-        Path,
-        "resolve",
-        lambda path: tmp_path.parent / "external.tsx" if path == source else resolve(path),
-    )
-    assert formatting.discover_files(tmp_path, True, ()) == ()
-    with pytest.raises(ValueError, match="without links"):
-        formatting.discover_files(tmp_path, False, [str(source)])
-
-
-@pytest.mark.parametrize(
-    ("returncode", "output"),
-    [(0, "3.9.10+modified\n"), (0, "prettier 3.9.10\n"), (1, "3.9.10\n")],
-)
-def test_prettier_installed_version_requires_exact_success(
-    tmp_path, monkeypatch, frontend_package, returncode, output
-):
-    monkeypatch.setattr(
-        formatting.subprocess,
-        "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess([], returncode, output, ""),
-    )
-    with pytest.raises(RuntimeError, match="npm ci"):
-        formatting.prettier_command(tmp_path)
-
-
-def test_prettier_setup_rejects_linked_configuration_before_reading(
-    tmp_path, monkeypatch, frontend_package
-):
-    config = frontend_package / ".prettierrc.json"
-    is_symlink = Path.is_symlink
-    monkeypatch.setattr(Path, "is_symlink", lambda path: path == config or is_symlink(path))
-    monkeypatch.setattr(Path, "read_text", lambda *_args, **_kwargs: pytest.fail("unexpected read"))
-    with pytest.raises(RuntimeError, match="npm ci"):
-        formatting.prettier_command(tmp_path)
-
-
 @pytest.mark.parametrize(
     "private",
     [
-        ".work/programs/private.py",
+        ".work/scratch/private.py",
         ".work/handoffs/private.json",
-        "tools/.work/programs/private.py",
-        "tools/feature_program_web/.WORK/handoffs/private.tsx",
-        ".omo/programs/legacy.py",
+        "tools/.work/scratch/private.py",
+        "tools/.WORK/handoffs/private.tsx",
+        ".omo/scratch/legacy.py",
     ],
 )
 def test_private_work_paths_are_rejected_before_reads_or_link_resolution(
@@ -508,7 +313,7 @@ def test_private_work_paths_are_rejected_before_reads_or_link_resolution(
 
 def test_public_link_into_private_work_is_rejected_before_read(tmp_path, monkeypatch):
     source = make_file(tmp_path, "tools/linked.py")
-    private_target = tmp_path / ".work/programs/private.py"
+    private_target = tmp_path / ".work/scratch/private.py"
     monkeypatch.setattr(formatting, "git_paths", lambda *_: {"tools/linked.py"})
     resolve = Path.resolve
     monkeypatch.setattr(

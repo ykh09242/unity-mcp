@@ -9,11 +9,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 VALIDATIONS = [
-    ("python-tests.yml", "tools/feature_program_web.py"),
+    ("python-tests.yml", "tools/lint_python.py"),
     ("unity-tests.yml", "MCPForUnity/Editor/Tools/ManageBuild.cs"),
     ("compile-check.yml", "MCPForUnity/Editor/Tools/ManageBuild.cs"),
-    ("workflow-lint.yml", ".github/workflows/work-program-web.yml"),
-    ("work-program-web.yml", "tools/feature_program_web/src/App.tsx"),
+    ("workflow-lint.yml", ".github/workflows/python-tests.yml"),
 ]
 
 
@@ -43,7 +42,7 @@ def selected(name, event, branch, path, activity=None):
 
 @pytest.mark.parametrize("name,path", VALIDATIONS)
 def test_work_branch_push_does_not_duplicate_pr_validation(name, path):
-    assert not selected(name, "push", "codex/work-program-dashboard", path)
+    assert not selected(name, "push", "codex/server-improvement", path)
 
 
 @pytest.mark.parametrize("name,path", VALIDATIONS)
@@ -55,7 +54,7 @@ def test_pr_creation_and_updates_select_relevant_validation(name, path, activity
     assert not selected(name, "pull_request", target, path, "closed")
 
 
-@pytest.mark.parametrize("name", ["workflow-lint.yml", "work-program-web.yml"])
+@pytest.mark.parametrize("name", ["workflow-lint.yml"])
 def test_existing_unrestricted_pr_target_scope_is_preserved(name):
     path = dict(VALIDATIONS)[name]
     assert selected(name, "pull_request", "release/maintenance", path, "synchronize")
@@ -63,7 +62,7 @@ def test_existing_unrestricted_pr_target_scope_is_preserved(name):
     assert "branches" not in config.get("on", config.get(True))["pull_request"]
 
 
-@pytest.mark.parametrize("name", ["compile-check.yml", "workflow-lint.yml", "work-program-web.yml"])
+@pytest.mark.parametrize("name", ["compile-check.yml", "workflow-lint.yml"])
 def test_direct_integration_validation_is_beta_only(name):
     path = dict(VALIDATIONS)[name]
     assert selected(name, "push", "beta", path)

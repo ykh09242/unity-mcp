@@ -11,7 +11,7 @@ Editor tests by themselves. Keep the repository Actions variable
 
 | Check | What runs without a license |
 | --- | --- |
-| Python 3.11–3.15 | Server and repository tool test suites, plus correctness lint |
+| Python 3.11–3.15 | Server and shared repository tool test suites, plus correctness lint |
 | Windows, Linux and macOS bootstrap | Cold/offline server bootstrap checks |
 | Unity version matrix | Runtime, Editor and test assembly compilation for Windows, macOS and Linux defines |
 | Optional packages | Pinned Cinemachine, ProBuilder and graphics dependency preparation and integrity checks |
@@ -27,57 +27,6 @@ To intentionally restore native execution later, set the repository variable to 
 and provide usable license credentials as described below. A manual workflow dispatch
 also respects this variable. Review the Personal-only activation limits before enabling
 native jobs for an account that also has company entitlements.
-
-## Assessing recorded CI for delivery
-
-A delivery observation binds the repository, PR head and base, actual tested checkout or
-test-merge revision, and receiving squash/beta revision separately. An equal local source
-digest or an old green run does not certify the current provider context. If the test checkout
-differs from the reviewed head, retain the explicit head/base/test-merge relationship.
-After merge, inspect applicable required execution for the actual receiving beta revision;
-PR success does not establish beta success. The final objective also keeps its current-HEAD
-CI and fresh independent integrated-review requirements.
-
-Before collecting results, identify required actual execution, authorized policy skips,
-explicit nonapplicability and advisory checks. Preserve the exact selected required set.
-A missing workflow, matrix row, test step or needed output remains missing or unassessed;
-a setup-only successful job is insufficient. Unexpectedly skipped, canceled or failed
-required execution blocks delivery. License-policy skips remain skipped and cannot satisfy
-a criterion requiring native Editor or Player execution. Do not infer nonapplicability from
-absent jobs or relax conservative full/tools-only classification.
-
-Capture run, attempt when available, job and selected test-step identities with the exact
-source context, outcome, completeness and evidence. Retain earlier failures and retries,
-even when the provider reuses a run ID. A newer relevant failed, canceled, pending or
-mismatched capture must not resurrect an older success. Missing attempt or timing metadata
-stays unknown. Provider creation-to-update intervals are qualified observations, not pure
-execution duration or director idle time; overlapping workflow times are not additive.
-
-The work program's [provider preparation](feature-program-tool.md#frozen-provider-delivery-inputs)
-assesses explicit frozen local captures and prepares individual task-bound inputs. It does
-not authenticate remote facts, start a workflow or authorize merge. The director still
-inspects actual current PR jobs and receiving-beta jobs, refreshes head/base/review/checks
-immediately before the authorized expected-head squash, and records the returned mapping.
-Cleanup remains a separate observed action under the existing usage and preservation rules.
-
-### Precise execution inputs and attached evidence
-
-Preserve the actual provider-tested checkout and command input closure when preparing local
-verification records. Owned task paths, declared test/config/runtime inputs and reviewed
-PR head are different identities. A test-merge capture retains its exact base/head relation;
-a scoped byte comparison does not certify an unrelated local runtime or replace required
-provider execution. Do not normalize raw Git/file bytes to make differing captures match.
-
-One original run's immutable raw evidence may be attached byte-for-byte for explicitly
-compatible task obligations. Each target keeps its own current source/attempt/submission,
-required checks, authority and evidence paths. Retain the original run/attempt/job/step,
-method/environment and outcome; attachment or closure preparation is not a new CI run.
-Failures, interruption, missing output and policy skips survive packaging and retries.
-`closure-resume` performs record-only publication recovery, never provider execution or a
-remote merge. The explicitly invoked `verification-run` command executes its supplied live
-argv; that local execution cannot substitute for required actual provider checks.
-Actual current PR/beta checks, immediate expected-head premerge inspection, independent
-acceptance and safe physical cleanup remain unchanged requirements.
 
 ## Runner images
 

@@ -19,6 +19,10 @@ Read the ancestor workspace guidance and any guide on the target file's ancestor
 
 Use the existing Python environment and relevant checks. `tools/lint_python.py` runs correctness lint; formatting does not replace it. Compilation is distinct from native Unity execution. Do not launch Unity, install optional packages, or mutate sibling projects merely to verify formatting or documentation.
 
-## Feature program coordination
+## Task coordination
 
-Use [the feature program tool guide](docs/development/feature-program-tool.md) and [the directing workflow](docs/development/work-program-workflow.md) for durable task coordination. Select the intended program under the ignored `.work/programs/` directory and follow its recovery entrypoint before resuming. Keep session handoffs under `.work/handoffs/`. Explicit legacy program paths remain supported; follow relocation markers instead of creating a second active copy. Keep personal plans, source reports, agent/session information and execution evidence in the ignored local program directory; never force-add them. Use the program tool for state changes, and keep transient status out of this guide.
+Use the applicable installed Superpowers skills for general workflow: `superpowers:writing-plans`, `superpowers:executing-plans`, `superpowers:requesting-code-review`, `superpowers:verification-before-completion` and `superpowers:finishing-a-development-branch`. Preserve existing user authorization and task scope; do not add redundant approval or tracking steps. Keep checks proportionate and reuse evidence whose inputs are unchanged.
+
+- For authorized squash delivery, inspect review status and applicable CI for the exact PR head and base immediately before merging. Then inspect applicable beta CI for the actual receiving commit.
+- Delete completed branches and worktrees when the user requests it, preserving work the user wants to retain.
+- For compaction or transfer, update one short ignored handoff under `.work/handoffs/` with the actual repository/worktree, branch and commit, changed paths, checks and results, unresolved work, and next action. Resume without repeating completed work; keep temporary status out of this guide and never force-add private notes.
