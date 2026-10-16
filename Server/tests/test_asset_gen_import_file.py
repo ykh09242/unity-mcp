@@ -20,7 +20,14 @@ from services.tools.import_model_file import import_model_file
 
 
 COMMAND = "import_model_file"
-ALLOWED_KEYS = {"sourcePath", "name", "outputFolder", "targetSize", "animationType"}
+ALLOWED_KEYS = {
+    "sourcePath",
+    "name",
+    "outputFolder",
+    "targetSize",
+    "animationType",
+    "archiveModelPath",
+}
 
 
 def _call_tool(**kwargs):
@@ -336,5 +343,131 @@ def test_dependency_bundle_failure_evidence_survives_registered_sdk_tool(protoco
                         "outputFolder": "Assets/Models",
                     },
                 )
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("selector", ["main/model.obj", r"main\model.obj", "模型/model.FBX"])
+def test_archive_selector_mapping(selector):
+    _, sent = _call_tool(source_path="Assets/source.zip", archive_model_path=selector)
+    assert _sent_params(sent) == {
+        "sourcePath": "Assets/source.zip",
+        "archiveModelPath": selector.replace("\\", "/"),
+    }
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "",
+        " ",
+        "../model.obj",
+        "./model.obj",
+        "a//model.obj",
+        "/model.obj",
+        "C:/model.obj",
+        "//host/model.obj",
+        "model.obj/",
+        "model.png",
+        "a\n.obj",
+        "a" * 509 + ".obj",
+        "/".join(["a"] * 32) + "/model.obj",
+    ],
+)
+def test_archive_selector_invalid_before_transport(selector):
+    with patch.object(mod, "get_unity_instance_from_context", new=AsyncMock()) as context:
+        with patch.object(mod, "send_with_unity_instance", new=AsyncMock()) as send:
+            result = asyncio.run(
+                import_model_file(
+                    MagicMock(), source_path="Assets/source.zip", archive_model_path=selector
+                )
+            )
+    assert result["success"] is False
+    assert result["data"]["model_import_error_code"] == "archive_model_path_invalid"
+    context.assert_not_awaited()
+    send.assert_not_awaited()
+
+
+def test_archive_selector_nonarchive_rejected_before_transport():
+    with patch.object(mod, "send_with_unity_instance", new=AsyncMock()) as send:
+        result = asyncio.run(
+            import_model_file(
+                MagicMock(), source_path="Assets/model.obj", archive_model_path="model.obj"
+            )
+        )
+    assert result["data"]["model_import_error_code"] == "archive_selector_requires_zip"
+    send.assert_not_awaited()
+
+
+def test_archive_selector_cli(cli_runner):
+    result, command = cli_runner(
+        [
+            "import-model-file",
+            "--source-path",
+            "Assets/source.zip",
+            "--archive-model-path",
+            "main/model.obj",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+    assert command.call_args.args[:2] == (
+        COMMAND,
+        {"sourcePath": "Assets/source.zip", "archiveModelPath": "main/model.obj"},
+    )
+
+
+@pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize("success", [True, False])
+def test_archive_selection_evidence_through_registered_sdk(protocol, success):
+    async def exercise():
+        entry = next(tool for tool in get_registered_tools() if tool["name"] == COMMAND)
+        server = FastMCP("archive-selection-contract")
+        wrapped = log_execution(COMMAND, "Tool")(entry["func"])
+        server.tool(name=entry["name"], description=entry["description"], **entry["kwargs"])(
+            telemetry_tool(COMMAND)(wrapped)
+        )
+        response = {
+            "success": success,
+            "data": {
+                "asset_path": "Assets/Output/model.obj" if success else "Assets/Output/archive.zip",
+                "asset_guid": "owned-guid",
+                "model_import_stage": "usable" if success else "registered",
+                "archive_selection": {
+                    "archive_path": "Assets/Output/archive.zip",
+                    "requested_path": "main/model.obj",
+                    "selected_path": "main/model.obj" if success else None,
+                    "candidates": ["lod/model.obj", "main/model.obj"],
+                    "candidate_count": 2,
+                    "candidates_complete": True,
+                    "extraction": "complete" if success else "not_started",
+                },
+            },
+        }
+        if not success:
+            response["error"] = "Owned missing selection"
+            response["data"]["model_import_error_code"] = "archive_model_not_found"
+        with patch.object(
+            mod, "get_unity_instance_from_context", new=AsyncMock(return_value="owned")
+        ):
+            with patch.object(
+                mod, "send_with_unity_instance", new=AsyncMock(return_value=response)
+            ) as send:
+                async with Client(server, mode=protocol) as client:
+                    schemas = await client.list_tools()
+                    schema = next(tool for tool in schemas if tool.name == COMMAND).input_schema
+                    assert "archive_model_path" in schema["properties"]
+                    result = await client.call_tool(
+                        COMMAND,
+                        {
+                            "source_path": "Assets/source.zip",
+                            "archive_model_path": "main/model.obj",
+                        },
+                    )
+                assert result.structured_content == response
+                send.assert_awaited_once()
+                assert send.call_args.args[3] == {
+                    "sourcePath": "Assets/source.zip",
+                    "archiveModelPath": "main/model.obj",
+                }
 
     asyncio.run(exercise())

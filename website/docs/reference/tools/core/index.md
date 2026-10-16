@@ -14,9 +14,10 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`debug_request_context`](./debug_request_context.md)** — Return the current FastMCP request context details (client_id, session_id, and meta dump).
 - **[`delete_script`](./delete_script.md)** — Delete a C# script by URI or Assets-relative path.
 - **[`execute_custom_tool`](./execute_custom_tool.md)** — Execute a project-scoped custom tool registered by Unity.
-- **[`execute_menu_item`](./execute_menu_item.md)** — Execute a Unity menu item by path.
+- **[`execute_menu_item`](./execute_menu_item.md)** — Inspect menu existence/availability evidence or invoke a menu by exact path.
 - **[`find_gameobjects`](./find_gameobjects.md)** — Search GameObjects by name, tag, layer, component, path or ID; returns IDs only. scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. active uses SceneManager's reported active scene; all_loaded co…
 - **[`find_in_file`](./find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
+- **[`get_compile_job`](./get_compile_job.md)** — Read a compilation request outcome and bounded diagnostics by compile_id.
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_asset`](./manage_asset.md)** — Performs asset operations (import, create, modify, delete, etc.) in Unity.
 - **[`manage_audio`](./manage_audio.md)** — Play or stop an existing scene AudioSource in Play mode.

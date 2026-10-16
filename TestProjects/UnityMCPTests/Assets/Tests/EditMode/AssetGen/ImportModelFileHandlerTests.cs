@@ -319,7 +319,15 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(false, (bool)response["success"], response.ToString());
             StringAssert.Contains("no model file", (string)response["error"]);
             Assert.AreEqual(original, File.ReadAllText(existing));
-            Assert.IsTrue(File.Exists(Path.Combine(folder + "_1", "materials.mtl")));
+            Assert.IsFalse(Directory.Exists(folder + "_1"), "No-model archives must fail inspection before extracting dependencies.");
+            Assert.AreEqual("archive_no_model", (string)response["data"]["model_import_error_code"]);
+            Assert.AreEqual(TestFolder + "/bundle.zip", (string)response["data"]["asset_path"]);
+            Assert.IsTrue(File.Exists(folder + ".zip"));
+            JObject selection = (JObject)response["data"]["archive_selection"];
+            Assert.IsTrue((bool)selection["candidates_complete"]);
+            Assert.IsEmpty((JArray)selection["candidates"]);
+            Assert.AreEqual("not_started", (string)selection["extraction"]);
+            Assert.IsNull((string)selection["selected_asset_path"]);
         }
 
         [TestCase(false)]

@@ -26,7 +26,7 @@ AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-you
 - **[`import_model`](./asset_gen/import_model.md)** — Import 3D models from the Sketchfab marketplace into the Unity project.
 - **[`import_model_file`](./asset_gen/import_model_file.md)** — Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project.
 
-## `core` &nbsp; (33 tools)
+## `core` &nbsp; (34 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`batch_execute`](./core/batch_execute.md)** — Executes multiple MCP commands in a single batch for dramatically better performance.
@@ -34,9 +34,10 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`debug_request_context`](./core/debug_request_context.md)** — Return the current FastMCP request context details (client_id, session_id, and meta dump).
 - **[`delete_script`](./core/delete_script.md)** — Delete a C# script by URI or Assets-relative path.
 - **[`execute_custom_tool`](./core/execute_custom_tool.md)** — Execute a project-scoped custom tool registered by Unity.
-- **[`execute_menu_item`](./core/execute_menu_item.md)** — Execute a Unity menu item by path.
+- **[`execute_menu_item`](./core/execute_menu_item.md)** — Inspect menu existence/availability evidence or invoke a menu by exact path.
 - **[`find_gameobjects`](./core/find_gameobjects.md)** — Search GameObjects by name, tag, layer, component, path or ID; returns IDs only. scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. active uses SceneManager's reported active scene; all_loaded co…
 - **[`find_in_file`](./core/find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
+- **[`get_compile_job`](./core/get_compile_job.md)** — Read a compilation request outcome and bounded diagnostics by compile_id.
 - **[`get_sha`](./core/get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_asset`](./core/manage_asset.md)** — Performs asset operations (import, create, modify, delete, etc.) in Unity.
 - **[`manage_audio`](./core/manage_audio.md)** — Play or stop an existing scene AudioSource in Play mode.

@@ -105,8 +105,8 @@ paths have 1024 characters, 32 segments and 255 UTF-8 bytes per segment.
   self-contained GLB. Embedded extensions such as `KHR_materials_unlit` stay
   intact and report `inspection=not_scanned` and
   `inspection_scope=glb_core_resources_only`.
-- FBX reports `not_scanned`; ZIP reports `archive_managed`. Existing archive
-  extraction is unchanged. Neither label promises a full dependency audit.
+- FBX reports `not_scanned`; ZIP reports `archive_managed`. Neither label promises
+  a full dependency audit. ZIP selection is described below.
 
 Missing dependencies, unsafe paths, unsupported forms and limits have distinct
 preflight error codes. Source changes/write failures retain partial evidence.
@@ -183,6 +183,50 @@ a background. It does not enable the unsupported operation.
 - [ ] Enter the OpenRouter key.
 - [ ] `generate_image(provider=openrouter, prompt="...")`.
 - [ ] Confirm the inline-image path works (image bytes decode and import as a sprite).
+
+## ZIP model selection
+
+`import_model_file(source_path="Assets/source.zip", archive_model_path="models/main.obj")`
+and `import_model(action="import", uid=..., archive_model_path="models/main.obj")`
+select an exact, case-sensitive relative entry. Both CLI import commands expose
+`--archive-model-path`. Backslashes normalize to slashes; URLs, rooted paths,
+traversal, wildcards, directory paths and basename searches are unsupported.
+Omit the selector to prefer FBX/OBJ, then GLB/glTF, with ordinal full-path ordering
+within each group. Names such as `main`, `preview` and `LOD` have no special meaning.
+A selected model that fails import never falls back to another candidate.
+
+Inspection allows at most 128 model candidates, 512 UTF-8 bytes per normalized
+entry path and 32 path segments. It rejects duplicate/case-colliding destinations
+and file/directory conflicts before extraction. Existing extraction limits remain
+4096 entries, 512 MiB per entry, 2 GiB combined and compression ratio 200, with
+16 MiB of ZIP metadata. Limits fail explicitly rather than returning a partial
+candidate list. Output folders use fresh suffixes within 1000 attempts; existing
+files, metadata and linked paths are not overwritten or adopted.
+
+`archive_selection` reports the retained `archive_path`, requested and selected
+relative paths, complete candidates, selection policy and extraction state.
+`selected_asset_path` identifies the original extracted model; a normalized prefab
+variant may become the final `asset_path`. Before extraction, failure evidence
+refers to the retained ZIP. Completed extraction followed by an importer failure
+can retain extracted files for repair. All allowed inert files in the archive
+are extracted and imported; the selector determines which model is returned and
+normalized. Source bytes are preserved. These fields do not establish usable mesh,
+material, texture or optional importer success; inspect `model_import_stage` too.
+
+- [ ] Put distinct preview, main and LOD models in one owned archive. Select each
+      exact entry and inspect its actual mesh. Reverse archive order and confirm
+      the omitted selector still chooses the same default.
+- [ ] Select a nested OBJ with MTL and PNG dependencies. Confirm its renderer's
+      texture asset path is inside the extracted folder, not the source or a decoy.
+- [ ] Request a missing entry and inspect complete candidates; verify no extraction
+      folder remains. Try a basename shared by two nested folders and require an
+      exact full path. Duplicate full paths, traversal and limits must fail safely.
+- [ ] Select a corrupt model beside a valid model and confirm failure without
+      fallback. Without an installed compatible glTF importer, require an actual
+      `missing_gltf_importer` failure with retained ZIP/selected-file evidence.
+- [ ] Confirm original ZIP bytes/GUID and existing output sentinels survive repeat
+      imports and failures. Never use metadata-only FBX or glTF selection as proof
+      of native importer success.
 
 ## Sketchfab (3D import)
 

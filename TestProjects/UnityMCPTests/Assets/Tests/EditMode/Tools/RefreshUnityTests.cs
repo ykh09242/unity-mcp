@@ -13,6 +13,8 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class RefreshUnityTests
     {
+        [TestCase("compile_id", "42")]
+        [TestCase("compile_id", "\"not-an-id\"")]
         [TestCase("mode", "\"bogus\"")]
         [TestCase("mode", "42")]
         [TestCase("mode", "[]")]

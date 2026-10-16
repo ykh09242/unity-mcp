@@ -14,6 +14,7 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.import_model_file import _normalize_archive_model_path
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -30,7 +31,11 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "- preview: Fetch model metadata (name, thumbnail URLs, license, vertex/face counts) "
         "for a uid before import.\n"
         "- import: Download + import a model by uid. Returns { job_id } immediately; poll "
-        "with the status action. Params: uid, target_size, name, output_folder. "
+        "with the status action. Params: uid, target_size, name, output_folder, archive_model_path. "
+        "archive_model_path selects an exact case-sensitive relative ZIP entry; omission prefers FBX/OBJ "
+        "then GLB/glTF with ordinal path ordering. At most 128 model candidates, 512 UTF-8 bytes per "
+        "path and 32 segments. Status archive_selection reports candidates, chosen paths and extraction "
+        "state; failed selection/import retains evidence and never falls back to another model. "
         "target_size applies only when Auto-Normalize Imported Models is enabled; finite zero or negative values preserve imported scale. Successful normalization of a model without ModelImporter may return a prefab variant while retaining its source model.\n"
         "- status: Poll an async import job by job_id -> { state, progress, assetPath?, error? }.\n"
         "- cancel: Cancel an in-flight import by job_id.\n"
@@ -62,7 +67,22 @@ async def import_model(
     name: Annotated[str, "Base name for the imported asset."] | None = None,
     output_folder: Annotated[str, "Destination folder under Assets/ for the import."] | None = None,
     job_id: Annotated[str, "Job id for status/cancel."] | None = None,
+    archive_model_path: Annotated[
+        str,
+        "Import only: exact case-sensitive relative ZIP model entry. Omit for deterministic FBX/OBJ-first "
+        "selection; no basename search or fallback. At most 512 UTF-8 bytes and 32 segments.",
+    ]
+    | None = None,
 ) -> dict[str, Any]:
+    if action.lower() == "import":
+        try:
+            archive_model_path = _normalize_archive_model_path(archive_model_path)
+        except ValueError as error:
+            return {
+                "success": False,
+                "error": str(error),
+                "data": {"model_import_error_code": "archive_model_path_invalid"},
+            }
     unity_instance = await get_unity_instance_from_context(ctx)
 
     params_dict = {
@@ -77,6 +97,7 @@ async def import_model(
         "name": name,
         "outputFolder": output_folder,
         "jobId": job_id,
+        "archiveModelPath": archive_model_path if action.lower() == "import" else None,
     }
 
     # Remove None values

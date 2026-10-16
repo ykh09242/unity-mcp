@@ -33,6 +33,7 @@ async def test_refresh_waits_for_canonical_asset_refresh(
     elapsed = 0.0
     polls = 0
     refreshes = 0
+    dispatched_compile_id = None
 
     async def advance(seconds):
         nonlocal elapsed
@@ -44,10 +45,11 @@ async def test_refresh_waits_for_canonical_asset_refresh(
     )
 
     async def transport(send, target, command, params, **kwargs):
-        nonlocal polls, refreshes
+        nonlocal polls, refreshes, dispatched_compile_id
         assert target == instance
         if command == "refresh_unity":
             refreshes += 1
+            dispatched_compile_id = params.get("compile_id")
             assert kwargs == {"retry_on_reload": False}
             assert params["wait_for_ready"] is (compile_mode == "request")
             return {"success": True, "message": "Refresh requested"}
@@ -75,4 +77,16 @@ async def test_refresh_waits_for_canonical_asset_refresh(
     assert refreshes == 1
     assert scanner._states[instance].dirty is (not expected_success)
     if not expected_success:
-        assert response.data == {"timeout": True, "wait_seconds": 60.0}
+        if compile_mode == "none":
+            assert response.data == {"timeout": True, "wait_seconds": 60.0}
+            assert dispatched_compile_id is None
+        else:
+            data = dict(response.data)
+            compilation = data.pop("compilation")
+            assert data.pop("source_revision_confirmed") is False
+            assert data == {"timeout": True, "wait_seconds": 60.0}
+            assert compilation["compile_id"] == dispatched_compile_id
+            assert len(dispatched_compile_id) == 32
+            assert compilation["outcome"] == "unknown"
+            assert compilation["attribution"] == "unconfirmed"
+            assert refreshes == 1

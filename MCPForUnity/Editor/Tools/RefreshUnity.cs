@@ -68,6 +68,15 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(error.Message);
             }
 
+            string compileId = null;
+            if (string.Equals(compile, "request", StringComparison.OrdinalIgnoreCase))
+            {
+                var idToken = @params?["compile_id"];
+                if (idToken != null && (idToken.Type != JTokenType.String || !CompilationLedger.ValidId(idToken.Value<string>())))
+                    return new ErrorResponse("Invalid compile_id.");
+                compileId = idToken?.Value<string>() ?? Guid.NewGuid().ToString("N");
+            }
+
             if (TestRunStatus.IsRunning)
             {
                 return new ErrorResponse("tests_running", new { reason = "tests_running", retry_after_ms = 5000 });
@@ -76,6 +85,17 @@ namespace MCPForUnity.Editor.Tools
             bool refreshTriggered = false;
             bool compileRequested = false;
             int compileCountBefore = EditorStateCache.CompileCount;
+
+            if (compileId != null && !CompilationJobTracker.Ledger.Begin(compileId))
+                return new SuccessResponse(
+                    "Compilation request already tracked or tracking capacity reached; no work repeated.",
+                    new
+                    {
+                        compilation = CompilationJobTracker.Ledger.Query(compileId),
+                        refresh_triggered = false,
+                        compile_requested = false,
+                    }
+                );
 
             try
             {
@@ -99,7 +119,9 @@ namespace MCPForUnity.Editor.Tools
 
                 if (string.Equals(compile, "request", StringComparison.OrdinalIgnoreCase))
                 {
+                    CompilationJobTracker.Ledger.ExplicitRequest(compileId);
                     CompilationPipeline.RequestScriptCompilation();
+                    CompilationJobTracker.Ledger.Dispatched(compileId);
                     compileRequested = true;
                 }
 
@@ -114,7 +136,12 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception ex)
             {
-                return new ErrorResponse($"refresh_failed: {ex.Message}");
+                if (compileId != null)
+                    CompilationJobTracker.Ledger.Reject(compileId);
+                return new ErrorResponse(
+                    $"refresh_failed: {ex.Message}",
+                    new { compilation = compileId == null ? null : CompilationJobTracker.Ledger.Query(compileId) }
+                );
             }
 
             // RequestScriptCompilation only queues; the pipeline starts on a later
@@ -165,6 +192,7 @@ namespace MCPForUnity.Editor.Tools
                         "refresh_timeout_waiting_for_ready",
                         new
                         {
+                            compilation = compileId == null ? null : CompilationJobTracker.Ledger.Query(compileId),
                             refresh_triggered = refreshTriggered,
                             compile_requested = compileRequested,
                             compile_started = compileStarted,
@@ -184,6 +212,7 @@ namespace MCPForUnity.Editor.Tools
                 "Refresh requested.",
                 new
                 {
+                    compilation = compileId == null ? null : CompilationJobTracker.Ledger.Query(compileId),
                     refresh_triggered = refreshTriggered,
                     compile_requested = compileRequested,
                     compile_started = compileStarted,

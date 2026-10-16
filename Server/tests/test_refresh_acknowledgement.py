@@ -52,7 +52,11 @@ async def test_public_refresh_acknowledges_only_confirmed_snapshot(
 
     async def transport(send, selected, command, params, **kwargs):
         requests.append(command)
-        assert selected == instance and command == "refresh_unity"
+        assert selected == instance
+        if command == "get_compile_job":
+            assert compile_mode == "request" and case == "lost_response"
+            return {"success": False, "error": "Unknown command"}
+        assert command == "refresh_unity"
         assert kwargs == {"retry_on_reload": False}
         if case in ("rejected", "rejected_disconnect", "retry_rejected"):
             return {
@@ -98,7 +102,11 @@ async def test_public_refresh_acknowledges_only_confirmed_snapshot(
         )
     response = json.loads(result.content[0].text)
     # Then: rejected/no-wait/newer changes are never acknowledged as imported.
-    assert requests == ["refresh_unity"]
+    assert requests == (
+        ["refresh_unity", "get_compile_job"]
+        if compile_mode == "request" and case == "lost_response"
+        else ["refresh_unity"]
+    )
     if case in ("rejected", "rejected_disconnect", "retry_rejected", "lost_response_no_wait"):
         assert response["success"] is False and response["hint"] == "retry"
         assert polls == []

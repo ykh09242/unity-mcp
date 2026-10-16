@@ -15,10 +15,10 @@ class GetMenuItemsResponse(MCPResponse):
 @mcp_for_unity_resource(
     uri="mcpforunity://menu-items",
     name="menu_items",
-    description="Provides a list of all menu items.\n\nURI: mcpforunity://menu-items",
+    description="Lists managed MenuItem attribute declarations; this is not a complete native menu inventory or availability report.\n\nURI: mcpforunity://menu-items",
 )
 async def get_menu_items(ctx: Context) -> GetMenuItemsResponse | MCPResponse:
-    """Provides a list of all menu items."""
+    """List managed menu declarations without claiming native inventory completeness."""
     unity_instance = await get_unity_instance_from_context(ctx)
     params = {
         "refresh": False,

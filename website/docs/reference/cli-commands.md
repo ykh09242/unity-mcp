@@ -577,6 +577,7 @@ Import a 3D model from the Sketchfab marketplace by uid. Examples: unity-mcp ass
 | --target-size | float | optional | nargs=1 | — | — | Normalize largest dimension (meters). |
 | --name | text | optional | nargs=1 | — | — | Base name for the imported asset. |
 | --output-folder | text | optional | nargs=1 | — | — | Destination folder under Assets/. |
+| --archive-model-path | text | optional | nargs=1 | — | — | Exact case-sensitive ZIP model entry; omit for deterministic FBX/OBJ-first selection. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp asset-gen import-model-file`
@@ -590,6 +591,7 @@ Import a 3D model file already within this Unity project's Assets folder.
 | --output-folder | text | optional | nargs=1 | — | — | Destination folder under Assets/. |
 | --target-size | float | optional | nargs=1 | — | — | Normalize largest dimension (meters). |
 | --animation-type | choice: none, generic, humanoid, legacy | optional | nargs=1 | — | — | FBX/OBJ rig mode: generic/humanoid surface animation clips; legacy selects Unity's legacy Animation system (glTF ignores this). |
+| --archive-model-path | text | optional | nargs=1 | — | — | Exact case-sensitive ZIP model entry; omit for deterministic FBX/OBJ-first selection. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp asset-gen list-models`

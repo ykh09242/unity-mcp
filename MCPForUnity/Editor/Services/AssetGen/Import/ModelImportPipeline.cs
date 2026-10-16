@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
+using MCPForUnity.Runtime.Helpers;
 using UnityEditor;
 using UnityEngine;
 
@@ -57,6 +58,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             job.AssetGuid = null;
             job.ModelImportStage = null;
             job.ModelImportErrorCode = null;
+            job.ArchiveSelection = null;
             try
             {
                 if (string.IsNullOrEmpty(localFilePath))
@@ -72,10 +74,17 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     return Fail(job, "target_size must be finite. Zero or a negative value preserves the imported scale.", "invalid_target_size");
 
                 string ext = Path.GetExtension(rel).ToLowerInvariant();
+                job.ArchiveModelPath = ModelArchiveSelection.NormalizeSelector(job.ArchiveModelPath);
+                if (job.ArchiveModelPath != null && ext != ".zip")
+                    return Fail(job, "archive_model_path applies only to ZIP archives.", "archive_selector_requires_zip");
                 if (ext == ".zip")
                     return ImportArchive(job, rel, autoNormalize);
 
                 return ImportModelFile(job, rel, ext, autoNormalize);
+            }
+            catch (ArchiveSelectionException e)
+            {
+                return Fail(job, SecretRedactor.Scrub(e.Message), e.ErrorCode);
             }
             catch (Exception e)
             {
@@ -241,44 +250,57 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             return false;
         }
 
-        /// <summary>
-        /// Unpack a downloaded archive (Sketchfab ships .zip) into a sibling folder named
-        /// after the archive, import it, then locate the first model file inside and import that.
-        /// FBX/OBJ are preferred over glTF; glTF still needs an active compatible importer.
-        /// </summary>
+        /// <summary>Inspect and select from the bounded archive before writing any extracted files.</summary>
         private static AssetGenJob ImportArchive(AssetGenJob job, string zipRel, bool autoNormalize)
         {
-            string zipAbs = AssetGenPaths.ToAbsolute(zipRel);
-            if (!File.Exists(zipAbs))
-                return Fail(job, "Downloaded archive was not found on disk.");
-
-            string folderRel = zipRel.Substring(0, zipRel.Length - ".zip".Length);
-            string folderBaseRel = folderRel;
-            string folderAbs = AssetGenPaths.ToAbsolute(folderRel);
-            int suffix = 1;
-            while (Directory.Exists(folderAbs) || File.Exists(folderAbs))
+            job.ArchiveSelection = ModelArchiveSelection.Evidence(zipRel, job.ArchiveModelPath);
+            var evidence = job.ArchiveSelection;
+            using var folders = new AssetFolderScope();
+            string folderRel;
+            string modelRel;
+            bool selectionComplete = false;
+            try
             {
-                folderRel = folderBaseRel + "_" + suffix++;
-                folderAbs = AssetGenPaths.ToAbsolute(folderRel);
+                string zipAbs = AssetGenPaths.ToAbsolute(zipRel);
+                folderRel = FindArchiveOutput(zipRel);
+                string folderAbs = AssetGenPaths.ToAbsolute(folderRel);
+                folders.EnsureFolder(folderRel);
+                string selected = null;
+                // Only inert model/texture files are written. Selection inspects the same open,
+                // size-limited archive; the extractor retains streaming and owned-file rollback.
+                SafeZipExtractor.ExtractToWithInspection(
+                    zipAbs,
+                    folderAbs,
+                    ArchiveAllowedExtensions,
+                    archive =>
+                    {
+                        selected = ModelArchiveSelection.Select(archive, ArchiveAllowedExtensions, job.ArchiveModelPath, evidence);
+                        selectionComplete = true;
+                    },
+                    directory => folders.EnsureFolder(AssetGenPaths.ToProjectRelative(directory))
+                );
+                string selectedAbs = SafePathUtility.ResolveWithinRoot(folderAbs, selected);
+                if (!File.Exists(selectedAbs))
+                    throw new IOException("The selected archive model was not extracted.");
+                modelRel = AssetGenPaths.ToProjectRelative(selectedAbs);
+                evidence["selected_asset_path"] = modelRel;
+                evidence["extraction_root"] = folderRel;
+                evidence["extraction"] = "complete";
+            }
+            catch (ArchiveSelectionException e)
+            {
+                evidence["selection_error_code"] = e.ErrorCode;
+                return Fail(job, SecretRedactor.Scrub(e.Message), e.ErrorCode);
+            }
+            catch (Exception e)
+            {
+                evidence["selection_error_code"] = "archive_extraction_failed";
+                evidence["extraction"] = selectionComplete ? "failed" : "not_started";
+                return Fail(job, SecretRedactor.Scrub(e.Message), "archive_extraction_failed");
             }
 
-            using var folders = new AssetFolderScope();
-            folders.EnsureFolder(folderRel);
-            // Provider archives are untrusted: only inert model/texture files are written under
-            // Assets/ — scripts/assemblies are skipped so they can't be compiled on import.
-            SafeZipExtractor.ExtractTo(
-                zipAbs,
-                folderAbs,
-                ArchiveAllowedExtensions,
-                ensureDirectory: directory => folders.EnsureFolder(AssetGenPaths.ToProjectRelative(directory))
-            );
-
-            string modelRel = FindFirstModel(folderAbs);
-            if (string.IsNullOrEmpty(modelRel))
-                return Fail(job, "Archive extracted but no model file (.fbx/.obj/.glb/.gltf) was found inside.");
-
-            // The same usability gate applies to extracted models. Failed outputs remain available
-            // for repair; AssetFolderScope only removes this operation's empty directories.
+            // Failed model imports retain the completed extraction for repair. Selection never
+            // retries another candidate; GEN-03 usability and GEN-04 normalization apply as usual.
             RecordSavedFile(job, modelRel);
             AssetDatabase.ImportAsset(
                 folderRel,
@@ -289,32 +311,34 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             return job;
         }
 
-        /// <summary>
-        /// Walk the extracted directory for a model file, preferring FBX/OBJ (built-in importer)
-        /// over glTF (needs a compatible importer). Returns a project-relative path or null when none found.
-        /// </summary>
-        private static string FindFirstModel(string folderAbs)
+        internal static string FindArchiveOutput(string zipRel, int maxAttempts = 1000)
         {
-            string[] all;
+            string stem = zipRel.Substring(0, zipRel.Length - ".zip".Length);
             try
             {
-                all = Directory.GetFiles(folderAbs, "*", SearchOption.AllDirectories);
+                for (int attempt = 0; attempt < maxAttempts; attempt++)
+                {
+                    string candidate = stem + (attempt == 0 ? "" : "_" + attempt);
+                    string full = AssetGenPaths.ToAbsolute(candidate);
+                    string metadata = AssetGenPaths.ToAbsolute(candidate + ".meta");
+                    if (
+                        !File.Exists(full)
+                        && !Directory.Exists(full)
+                        && !File.Exists(metadata)
+                        && !Directory.Exists(metadata)
+                        && string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(candidate, AssetPathToGUIDOptions.OnlyExistingAssets))
+                    )
+                        return candidate;
+                }
             }
-            catch
+            catch (Exception e)
             {
-                return null;
+                throw new ArchiveSelectionException(
+                    "archive_output_conflict",
+                    "The archive output path is unsafe or inaccessible: " + SecretRedactor.Scrub(e.Message)
+                );
             }
-
-            string firstGltf = null;
-            foreach (string abs in all)
-            {
-                string e = Path.GetExtension(abs).ToLowerInvariant();
-                if (e == ".fbx" || e == ".obj")
-                    return AssetGenPaths.ToProjectRelative(abs);
-                if (firstGltf == null && (e == ".glb" || e == ".gltf"))
-                    firstGltf = abs;
-            }
-            return firstGltf == null ? null : AssetGenPaths.ToProjectRelative(firstGltf);
+            throw new ArchiveSelectionException("archive_output_conflict", "No free archive output folder was found within the 1000-attempt limit.");
         }
 
         private static void ApplyModelImporterSettings(string rel, AssetGenJob job)

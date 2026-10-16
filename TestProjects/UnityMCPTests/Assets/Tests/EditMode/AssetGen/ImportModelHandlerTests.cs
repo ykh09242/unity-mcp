@@ -115,6 +115,40 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsFalse(string.IsNullOrEmpty(jobId));
         }
 
+        [TestCase(true)]
+        [TestCase(false)]
+        public void ArchiveSelector_MapsInputAndFailureEvidence(bool valid)
+        {
+            _store.Set("sketchfab", "owned-archive-key");
+            var fake = new FakeHttpTransport();
+            AssetGenJobManager.TransportOverrideForTests = fake;
+            JObject pending = Call(
+                new JObject
+                {
+                    ["action"] = "import",
+                    ["uid"] = "owned-model",
+                    ["outputFolder"] = "Assets/Generated/__assetgen_jobtest",
+                    ["archiveModelPath"] = "nested\\model.obj",
+                }
+            );
+            string id = (string)pending["data"]["job_id"];
+            AssetGenJob job = AssetGenJobManager.GetJob(id);
+            Assert.AreEqual("nested/model.obj", (string)JObject.FromObject(job)["ArchiveModelPath"]);
+            var evidence = new JObject
+            {
+                ["selected_path"] = "nested/model.obj",
+                ["candidates"] = new JArray("nested/model.obj"),
+                ["candidates_complete"] = true,
+            };
+            typeof(AssetGenJob).GetField("ArchiveSelection")?.SetValue(job, evidence);
+            job.State = valid ? AssetGenJobState.Done : AssetGenJobState.Failed;
+            job.Error = valid ? null : "owned import rejection";
+            JObject response = Call(new JObject { ["action"] = "status", ["job_id"] = id });
+            Assert.AreEqual(valid, (bool)response["success"]);
+            Assert.IsTrue(JToken.DeepEquals(evidence, response["data"]["archive_selection"]));
+            Assert.IsEmpty(fake.RecordedRequests);
+        }
+
         [Test]
         public void ListProviders_IncludesSketchfabOnly()
         {

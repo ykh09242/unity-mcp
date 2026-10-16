@@ -164,7 +164,7 @@ URI: mcpforunity://tests/{mode}
 
 **URI:** `mcpforunity://menu-items`
 
-Provides a list of all menu items.
+Lists managed MenuItem attribute declarations; this is not a complete native menu inventory or availability report.
 
 URI: mcpforunity://menu-items
 

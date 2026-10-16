@@ -23,7 +23,7 @@
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/9229fd60ac4fce7fe6e6be8ef2aa0bab2fe42ef5.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/3fbfcafe185600f53328fbac1529f5cd8c0a14b3.zip#subdirectory=Server",
         "mcp-for-unity"
       ],
       "env": {}
@@ -93,6 +93,10 @@
     {
       "name": "generate_model",
       "description": "Generate 3D models with AI providers and import them into the project"
+    },
+    {
+      "name": "get_compile_job",
+      "description": "Read compilation request outcomes and bounded diagnostics without refreshing Unity"
     },
     {
       "name": "get_sha",
