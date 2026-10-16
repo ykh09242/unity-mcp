@@ -183,3 +183,77 @@ class TestGenerateAudioCLI:
         assert params["provider"] == "fal"
         assert params["duration"] == 30.0
         assert set(params.keys()).issubset(ALLOWED_KEYS)
+
+
+@pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize("state", ["running", "failed", "canceled", "done"])
+def test_recovery_status_evidence_through_registered_sdk(protocol, state):
+    from fastmcp import Client, FastMCP
+    from core.logging_decorator import log_execution
+    from core.telemetry_decorator import telemetry_tool
+
+    async def exercise():
+        entry = next(tool for tool in get_registered_tools() if tool["name"] == COMMAND)
+        server = FastMCP("generation-recovery-contract")
+        wrapped = log_execution(COMMAND, "Tool")(entry["func"])
+        server.tool(name=entry["name"], description=entry["description"], **entry["kwargs"])(
+            telemetry_tool(COMMAND)(wrapped)
+        )
+        response = {
+            "success": state != "failed",
+            "data": {
+                "state": state,
+                "job_id": "owned-local-job",
+                "recovery_state": "resuming"
+                if state == "running"
+                else "outcome_unknown"
+                if state == "failed"
+                else "terminal",
+                "recovery_code": "resumed"
+                if state == "running"
+                else "import_outcome_unknown"
+                if state == "failed"
+                else state,
+                "provider_task_id": "owned-provider-task",
+                "provider_phase": "poll" if state == "running" else "import",
+                "asset_path": "Assets/Owned/output.obj" if state != "running" else None,
+                "asset_guid": "a" * 32 if state != "running" else None,
+                "model_import_stage": "registered"
+                if state == "failed"
+                else "usable"
+                if state == "done"
+                else None,
+                "archive_selection": {
+                    "requested_path": "main/model.obj",
+                    "selected_path": "main/model.obj",
+                    "candidates": ["main/model.obj", "preview/model.obj"],
+                    "extraction": "complete",
+                },
+            },
+        }
+        if state == "failed":
+            response["error"] = (
+                "Prior import outcome is unknown; retained output requires inspection."
+            )
+        with patch.object(
+            generate_audio_module,
+            "get_unity_instance_from_context",
+            new=AsyncMock(return_value="owned"),
+        ):
+            with patch.object(
+                generate_audio_module,
+                "send_with_unity_instance",
+                new=AsyncMock(return_value=response),
+            ) as send:
+                async with Client(server, mode=protocol) as client:
+                    result = await client.call_tool(
+                        COMMAND, {"action": "status", "job_id": "owned-local-job"}
+                    )
+                assert result.structured_content == response
+                send.assert_awaited_once()
+                assert send.call_args.args[2:] == (
+                    COMMAND,
+                    {"action": "status", "jobId": "owned-local-job"},
+                )
+
+    asyncio.run(exercise())

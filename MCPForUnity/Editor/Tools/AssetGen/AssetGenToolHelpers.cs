@@ -34,6 +34,10 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         new
                         {
                             state = "done",
+                            recovery_state = job.RecoveryState,
+                            recovery_code = job.RecoveryCode,
+                            provider_task_id = job.ProviderTaskId,
+                            provider_phase = job.ProviderPhase,
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
@@ -47,6 +51,10 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         new
                         {
                             state = "failed",
+                            recovery_state = job.RecoveryState,
+                            recovery_code = job.RecoveryCode,
+                            provider_task_id = job.ProviderTaskId,
+                            provider_phase = job.ProviderPhase,
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
@@ -55,7 +63,21 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         }
                     );
                 case AssetGenJobState.Canceled:
-                    return new SuccessResponse("Generation canceled.", new { state = "canceled" });
+                    return new SuccessResponse(
+                        "Generation canceled.",
+                        new
+                        {
+                            state = "canceled",
+                            recovery_state = job.RecoveryState,
+                            recovery_code = job.RecoveryCode,
+                            provider_task_id = job.ProviderTaskId,
+                            provider_phase = job.ProviderPhase,
+                            asset_path = job.AssetPath,
+                            asset_guid = job.AssetGuid,
+                            model_import_stage = job.ModelImportStage,
+                            archive_selection = job.ArchiveSelection,
+                        }
+                    );
                 default:
                     return new PendingResponse(
                         $"{kindLabel} {job.State.ToString().ToLowerInvariant()} ({job.Progress:P0}).",
@@ -63,6 +85,10 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         data: new
                         {
                             job_id = job.JobId,
+                            recovery_state = job.RecoveryState,
+                            recovery_code = job.RecoveryCode,
+                            provider_task_id = job.ProviderTaskId,
+                            provider_phase = job.ProviderPhase,
                             state = job.State.ToString().ToLowerInvariant(),
                             progress = job.Progress,
                         }

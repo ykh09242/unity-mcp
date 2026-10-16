@@ -12,6 +12,15 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         private ModelEntry profile;
         public string Id => "fal";
 
+        internal string CaptureOutputField() => profile?.ModelOutputField;
+
+        internal void RestoreOutputField(string field)
+        {
+            if (field != "model_glb" && field != "model_urls.glb")
+                throw new ArgumentException("Invalid fal recovery output field.");
+            profile = new ModelEntry { ModelOutputField = field };
+        }
+
         public Task<string> SubmitAsync(ModelGenRequest req, string apiKey, IHttpTransport http, CancellationToken ct)
         {
             profile = req.CatalogEntry;

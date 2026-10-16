@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Services.AssetGen;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 
@@ -112,6 +113,54 @@ namespace MCPForUnityTests.Editor.AssetGen
             string index = SessionState.GetString(IndexKey, string.Empty);
             Assert.AreEqual(TerminalLimit, index.Split(',').Length);
             StringAssert.EndsWith(",interrupted", index);
+        }
+
+        [TestCase("normalization_variant_failed")]
+        [TestCase("archive_selection_limit")]
+        public void SafePersistedFailure_RetainsKnownImportAndArchiveEvidence(string code)
+        {
+            var evidence = new JObject
+            {
+                ["archive_path"] = "Assets/owned/archive.zip",
+                ["requested_path"] = "main/model.obj",
+                ["selected_path"] = null,
+                ["selected_asset_path"] = null,
+                ["extraction_root"] = null,
+                ["mode"] = "explicit",
+                ["policy"] = "builtin_then_ordinal",
+                ["extraction"] = "not_started",
+                ["candidates"] = new JArray(),
+                ["candidate_count"] = 0,
+                ["candidates_complete"] = false,
+                ["selection_error_code"] = "archive_selection_limit",
+                ["limit"] = "candidate_count",
+            };
+            var job = new AssetGenJob
+            {
+                JobId = "owned-projection",
+                Kind = "model",
+                Provider = "meshy",
+                State = AssetGenJobState.Failed,
+                AssetPath = "Assets/owned/archive.zip",
+                AssetGuid = new string('a', 32),
+                ModelImportStage = "registered",
+                ModelImportErrorCode = code,
+                ArchiveSelection = (JObject)evidence.DeepClone(),
+                Error = "PRIVATE_PROVIDER_BODY https://example.invalid/file?signature=PRIVATE_SIGNATURE",
+            };
+            job.ArchiveSelection["unknown_provider_payload"] = "PRIVATE_EXTENSION";
+            Store(job);
+            string saved = SessionState.GetString(JobPrefix + job.JobId, "");
+            StringAssert.DoesNotContain("PRIVATE_", saved);
+            AssetGenJobManager.ResetTransientForTests();
+            AssetGenJobManager.RestoreJobs();
+            AssetGenJob restored = AssetGenJobManager.GetJob(job.JobId);
+            Assert.AreEqual(code, restored.ModelImportErrorCode);
+            Assert.AreEqual(job.AssetGuid, restored.AssetGuid);
+            Assert.AreEqual(job.AssetPath, restored.AssetPath);
+            Assert.AreEqual("registered", restored.ModelImportStage);
+            Assert.IsTrue(JToken.DeepEquals(evidence, restored.ArchiveSelection), restored.ArchiveSelection?.ToString());
+            StringAssert.DoesNotContain("PRIVATE_", restored.Error);
         }
     }
 }
