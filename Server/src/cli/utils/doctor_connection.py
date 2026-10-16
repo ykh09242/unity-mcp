@@ -58,6 +58,9 @@ class _BoundedTransport(httpx2.AsyncBaseTransport):
         self.factory = factory
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        # SDK cancellation/termination may send again during cleanup; never reopen expired I/O.
+        if self.factory.deadline is not None and anyio.current_time() >= self.factory.deadline:
+            raise TimeoutError()
         remaining = self.factory.remaining()
         with anyio.fail_after(remaining):
             try:

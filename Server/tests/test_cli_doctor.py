@@ -103,6 +103,35 @@ def test_factory_overrides_sdk_redirect_request(follow_redirects):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("budget", ["expired", "future", "unbounded"])
+async def test_factory_never_admits_http_after_original_deadline(budget):
+    import anyio
+    import httpx2
+    from cli.utils.doctor_connection import DoctorHttpFactory
+
+    calls = []
+    deadline = (
+        None
+        if budget == "unbounded"
+        else anyio.current_time() + (-1 if budget == "expired" else 10)
+    )
+    factory = DoctorHttpFactory(deadline=deadline)
+
+    def receive(request):
+        calls.append(request.method)
+        return httpx2.Response(200, content=b"owned")
+
+    async with factory(transport=httpx2.MockTransport(receive)) as client:
+        if budget == "expired":
+            with pytest.raises(TimeoutError):
+                await client.delete("http://fixture.invalid/mcp")
+            assert calls == []
+        else:
+            response = await client.get("http://fixture.invalid/mcp")
+            assert response.status_code == 200 and calls == ["GET"]
+
+
+@pytest.mark.asyncio
 async def test_stream_limit_closes_original_response_without_echoing_bytes():
     import httpx2
     from cli.utils.doctor_connection import DoctorHttpFactory, DiagnosticLimit
@@ -567,6 +596,7 @@ async def test_actual_refused_socket_is_server_unreachable(monkeypatch):
 @pytest.mark.asyncio
 async def test_actual_http_read_timeout_closes_owned_sdk_streams(monkeypatch):
     import anyio
+    import httpx2
     from fastmcp import FastMCP
     from cli.utils.config import CLIConfig
     import cli.utils.doctor_connection as connection
@@ -580,8 +610,10 @@ async def test_actual_http_read_timeout_closes_owned_sdk_streams(monkeypatch):
 
     clients = []
     streams = []
+    wire_admissions = []
     make_client = connection._make_client
     init_stream = connection._BoundedStream.__init__
+    send_request = httpx2.AsyncHTTPTransport.handle_async_request
 
     def capture_client(*args):
         client = make_client(*args)
@@ -592,8 +624,13 @@ async def test_actual_http_read_timeout_closes_owned_sdk_streams(monkeypatch):
         init_stream(stream, *args)
         streams.append(stream)
 
+    async def capture_admission(transport, request):
+        wire_admissions.append((request.method, anyio.current_time()))
+        return await send_request(transport, request)
+
     monkeypatch.setattr(connection, "_make_client", capture_client)
     monkeypatch.setattr(connection._BoundedStream, "__init__", capture_stream)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", capture_admission)
     async with live_mcp(server, []) as port:
         started = anyio.current_time()
         receipt = await connection.diagnose(
@@ -603,6 +640,10 @@ async def test_actual_http_read_timeout_closes_owned_sdk_streams(monkeypatch):
         assert elapsed < 2.2
         assert all(stream.response.is_closed for stream in streams)
         assert all(not client.is_connected() for client in clients)
+        assert wire_admissions and clients
+        assert all(admitted < clients[0].factory.deadline for _, admitted in wire_admissions), (
+            "SDK cancellation/termination must not open HTTP after the original read deadline"
+        )
     assert receipt.exit_code == 3
     assert receipt.reason == "deadline"
     assert receipt.residual_server_work == "unknown"
