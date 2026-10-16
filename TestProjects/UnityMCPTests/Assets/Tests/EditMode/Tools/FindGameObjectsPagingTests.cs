@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
@@ -11,6 +12,35 @@ namespace MCPForUnityTests.Editor.Tools
     public class FindGameObjectsPagingTests
     {
         private readonly List<GameObject> _objects = new List<GameObject>();
+
+        [TestCase("by_name")]
+        [TestCase("by_tag")]
+        [TestCase("by_layer")]
+        [TestCase("by_component")]
+        [TestCase("by_path")]
+        [TestCase("by_id")]
+        public void ExplicitLegacyPreservesOmittedScopeResponse(string method)
+        {
+            var go = new GameObject("Legacy_" + Guid.NewGuid().ToString("N"));
+            _objects.Add(go);
+            string term =
+                method == "by_id" ? go.GetInstanceIDCompat().ToString()
+                : method == "by_tag" ? "Untagged"
+                : method == "by_layer" ? "0"
+                : method == "by_component" ? "Transform"
+                : go.name;
+            var request = new JObject
+            {
+                ["search_method"] = method,
+                ["search_term"] = term,
+                ["page_size"] = "2",
+                ["cursor"] = "0",
+            };
+            var omitted = JObject.FromObject(FindGameObjects.HandleCommand(request));
+            request["scene_scope"] = "legacy";
+            var explicitScope = JObject.FromObject(FindGameObjects.HandleCommand(request));
+            Assert.IsTrue(JToken.DeepEquals(omitted, explicitScope));
+        }
 
         [TearDown]
         public void TearDown()

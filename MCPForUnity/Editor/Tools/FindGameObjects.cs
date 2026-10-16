@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -23,7 +25,12 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         /// <param name="params">Command parameters</param>
         /// <returns>Paginated list of instance IDs</returns>
-        public static object HandleCommand(JObject @params)
+        public static object HandleCommand(JObject @params) => HandleCommandCore(@params, CancellationToken.None);
+
+        public static Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken) =>
+            Task.FromResult(HandleCommandCore(@params, cancellationToken));
+
+        private static object HandleCommandCore(JObject @params, CancellationToken cancellationToken)
         {
             if (@params == null)
             {
@@ -32,6 +39,19 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                string sceneScope;
+                try
+                {
+                    sceneScope = GameObjectSearch.SceneScope(@params);
+                }
+                catch (System.ArgumentException ex)
+                {
+                    return new ErrorResponse("invalid_parameters", new { message = ex.Message });
+                }
+                if (sceneScope != "legacy")
+                    return GameObjectSearch.Handle(@params, cancellationToken);
+
                 var p = new ToolParams(@params);
 
                 // Parse search parameters
@@ -82,6 +102,10 @@ namespace MCPForUnity.Editor.Tools
                         hasMore = paginatedResult.HasMore,
                     }
                 );
+            }
+            catch (System.OperationCanceledException)
+            {
+                throw;
             }
             catch (System.ArgumentException ex)
             {
