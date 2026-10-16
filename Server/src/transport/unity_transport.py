@@ -73,6 +73,9 @@ async def send_with_unity_instance(
             retry_on_reload = True
 
         read_options = {}
+        if "_catalog_guard" in kwargs:
+            read_options["_catalog_guard"] = kwargs.pop("_catalog_guard")
+            retry_on_reload = False
         if "editor_state_read_mode" in kwargs:
             read_options["editor_state_read_mode"] = kwargs.pop("editor_state_read_mode")
 

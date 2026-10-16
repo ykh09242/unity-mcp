@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from fastmcp import FastMCP
@@ -36,8 +36,10 @@ def tenant_state(monkeypatch):
 @pytest.mark.asyncio
 async def test_remote_registration_does_not_mutate_global_catalog(tenant_state, monkeypatch):
     registry, mcp, service = tenant_state
-    notifications = AsyncMock()
+    notifications = AsyncMock(wraps=PluginHub._notify_mcp_tool_list_changed)
     monkeypatch.setattr(PluginHub, "_notify_mcp_tool_list_changed", notifications)
+    legacy_broadcast = Mock()
+    monkeypatch.setattr(PluginHub._catalog_notifications, "publish", legacy_broadcast)
     hub = PluginHub({"type": "websocket"}, receive=AsyncMock(), send=AsyncMock())
     transforms = list(mcp._transforms)
     for user in ("alice", "bob"):
@@ -56,12 +58,21 @@ async def test_remote_registration_does_not_mutate_global_catalog(tenant_state, 
     assert await mcp.list_tools() == []
     assert mcp._transforms == transforms
     assert service._global_tools == {}
-    notifications.assert_not_awaited()
+    expected_scopes = [
+        call(user_id=user, project_hash="shared-hash", session_id=user, catalog_revision=1)
+        for user in ("alice", "bob")
+    ]
+    assert notifications.await_args_list == expected_scopes
+    legacy_broadcast.assert_not_called()
     for user in ("alice", "bob"):
         tool = await service.get_tool_definition("shared-hash", "shared_tool", user_id=user)
         assert tool.description == user
 
     await hub.on_disconnect(PluginHub._connections["alice"], 1000)
+    assert notifications.await_args_list == expected_scopes + [
+        call(user_id="alice", project_hash="shared-hash", session_id="alice", catalog_revision=2)
+    ]
+    legacy_broadcast.assert_not_called()
     assert await service.list_registered_tools("shared-hash", user_id="alice") == []
     assert len(await service.list_registered_tools("shared-hash", user_id="bob")) == 1
 

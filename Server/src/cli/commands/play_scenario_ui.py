@@ -10,7 +10,7 @@ from cli.utils.connection import handle_unity_errors, run_command
 from cli.utils.output import format_output
 from cli.utils.play_scenario_analysis_io import AnalysisError, safe_local_path, write_new
 from cli.utils.play_scenario_ui import UiComparisonPolicy, compare_ui_snapshots
-from models.ui_snapshots import UiSnapshot
+from models.ui_snapshots import validate_ui_snapshot
 
 
 @click.command("capture-ui-snapshot")
@@ -33,10 +33,8 @@ def capture_ui_snapshot(framework: str, target: str, max_nodes: int, output: Pat
         )
         result = response.get("result", response)
         if result.get("success") is not True:
-            raise AnalysisError(
-                str(result.get("error") or result.get("message") or "Capture failed")
-            )
-        snapshot = UiSnapshot.model_validate_json(json.dumps(result.get("data"), allow_nan=False))
+            raise AnalysisError("UI snapshot capture failed; native evidence is unavailable.")
+        snapshot = validate_ui_snapshot(result.get("data"), require_v2=True)
         content = snapshot.model_dump_json(indent=2).encode("utf-8")
         if len(content) > 2 * 1024 * 1024:
             raise AnalysisError("Snapshot exceeds the 2 MiB saved artifact bound")

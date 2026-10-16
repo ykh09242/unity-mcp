@@ -265,3 +265,76 @@ def test_import_file_contract_through_registered_sdk_tool(protocol):
                     send.assert_not_awaited()
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize("import_stage", ["partial", "saved", "registered"])
+def test_dependency_bundle_failure_evidence_survives_registered_sdk_tool(protocol, import_stage):
+    async def exercise():
+        entry = next(tool for tool in get_registered_tools() if tool["name"] == COMMAND)
+        server = FastMCP("import-bundle-evidence")
+        wrapped = log_execution(COMMAND, "Tool")(entry["func"])
+        server.tool(name=entry["name"], description=entry["description"], **entry["kwargs"])(
+            telemetry_tool(COMMAND)(wrapped)
+        )
+        partial = import_stage == "partial"
+        data = {
+            "dependency_bundle": {
+                "inspection": "complete",
+                "inspection_scope": "supported_local_dependencies",
+                "stage": "partial" if partial else "staged",
+                "root_path": "Assets/Models/OwnedBundle",
+                "planned_file_count": 3,
+                "staged_file_count": 1 if partial else 3,
+                "staged_bytes": 14 if partial else 256,
+            }
+        }
+        if partial:
+            data["dependency_bundle"]["error_code"] = "dependency_stage_failed"
+            data["dependency_bundle"]["reference"] = "Textures/owned.png"
+        else:
+            data.update(
+                {
+                    "asset_path": "Assets/Models/OwnedBundle/model.gltf",
+                    "asset_guid": "owned-guid" if import_stage == "registered" else "",
+                    "model_import_stage": import_stage,
+                    "model_import_error_code": (
+                        "missing_gltf_importer"
+                        if import_stage == "registered"
+                        else "model_not_registered"
+                    ),
+                }
+            )
+            data["dependency_bundle"]["main_asset_path"] = data["asset_path"]
+        failure = {
+            "success": False,
+            "error": "Owned fixture failure; output retained.",
+            "data": data,
+        }
+        with patch.object(
+            mod, "get_unity_instance_from_context", new=AsyncMock(return_value="unity-fixture")
+        ):
+            with patch.object(
+                mod, "send_with_unity_instance", new=AsyncMock(return_value=failure)
+            ) as send:
+                async with Client(server, mode=protocol) as client:
+                    result = await client.call_tool(
+                        COMMAND,
+                        {
+                            "source_path": "Assets/Source/model.gltf",
+                            "name": "OwnedBundle",
+                            "output_folder": "Assets/Models",
+                        },
+                    )
+                assert result.structured_content == failure
+                send.assert_awaited_once()
+                assert send.call_args.args[2:] == (
+                    COMMAND,
+                    {
+                        "sourcePath": "Assets/Source/model.gltf",
+                        "name": "OwnedBundle",
+                        "outputFolder": "Assets/Models",
+                    },
+                )
+
+    asyncio.run(exercise())

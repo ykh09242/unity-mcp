@@ -1,14 +1,13 @@
 """Offline comparison of two explicitly selected semantic UI snapshots."""
 
 from dataclasses import dataclass
-import json
 import math
 from pathlib import Path
 
 from pydantic import JsonValue
 
 from cli.utils.play_scenario_analysis_io import AnalysisError, read_json
-from models.ui_snapshots import UiGeometry, UiSnapshot
+from models.ui_snapshots import UiGeometry, UiSnapshot, UiSnapshotV2, validate_ui_snapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,12 +22,12 @@ class UiComparisonPolicy:
             raise AnalysisError("Geometry tolerance must be finite and within 0..10000")
 
 
-def load_ui_snapshot(path: Path) -> UiSnapshot:
+def load_ui_snapshot(path: Path) -> UiSnapshot | UiSnapshotV2:
     """Parse one bounded saved snapshot; reject duplicate JSON keys before modeling."""
     # read_json shares duplicate-key and numeric checks with native scenario reports.
     raw = read_json(path)
     # JSON mode accepts fixed-size arrays for tuples without weakening scalar strictness.
-    return UiSnapshot.model_validate_json(json.dumps(raw, allow_nan=False))
+    return validate_ui_snapshot(raw)
 
 
 def _geometry_changes(before: UiGeometry, after: UiGeometry, tolerance: float) -> list[str]:
@@ -52,7 +51,7 @@ def compare_ui_snapshots(
 ) -> dict[str, JsonValue]:  # noqa: DICT_OK - CLI JSON envelope
     """Compare compatible complete trees, never matching by instance ID or fuzzy name."""
     before, after = load_ui_snapshot(baseline), load_ui_snapshot(candidate)
-    for field in ("framework", "mode", "resolution", "target", "evidence"):
+    for field in ("schema_version", "framework", "mode", "resolution", "target", "evidence"):
         if getattr(before, field) != getattr(after, field):
             raise AnalysisError(f"UI snapshots have incompatible {field}")
     if sorted(before.scenes) != sorted(after.scenes):

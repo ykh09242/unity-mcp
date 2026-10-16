@@ -22,6 +22,8 @@ class PluginSession:
     registered_at: datetime
     connected_at: datetime
     tools: dict[str, ToolDefinitionModel] = field(default_factory=dict)
+    tools_revision: int = 0
+    tools_known: bool = False
     project_id: str | None = None
     # Full path to project root (for focus nudging)
     project_path: str | None = None
@@ -80,6 +82,8 @@ class PluginRegistry:
         unity_version: str,
         project_path: str | None = None,
         user_id: str | None = None,
+        *,
+        _publish=None,
     ) -> tuple[PluginSession, str | None]:
         """Register (or replace) a plugin session.
 
@@ -120,6 +124,14 @@ class PluginRegistry:
                 project_path=project_path,
                 user_id=user_id,
             )
+            if _publish is not None:
+                prospective = {
+                    sid: entry
+                    for sid, entry in self._sessions.items()
+                    if sid not in {previous, session_id}
+                }
+                prospective[session_id] = session
+                _publish(session, prospective)
 
             # Remove old mapping for this hash if it existed under a different session
             evicted_session_id: str | None = None
@@ -159,12 +171,18 @@ class PluginRegistry:
             if session:
                 session.connected_at = datetime.now(timezone.utc)
 
-    async def unregister(self, session_id: str) -> None:
+    async def unregister(self, session_id: str, *, _publish=None) -> bool:
         """Remove a plugin session from the registry."""
 
         async with self._lock:
-            session = self._sessions.pop(session_id, None)
+            session = self._sessions.get(session_id)
             if session:
+                if _publish is not None:
+                    _publish(
+                        session,
+                        {sid: entry for sid, entry in self._sessions.items() if sid != session_id},
+                    )
+                self._sessions.pop(session_id)
                 # Clean up hash mappings
                 if session.project_hash in self._hash_to_session:
                     mapped = self._hash_to_session.get(session.project_hash)
@@ -179,19 +197,58 @@ class PluginRegistry:
                         if mapped == session_id:
                             del self._user_hash_to_session[composite_key]
                 self.notify_changed()
+                return True
+            return False
 
     async def register_tools_for_session(
-        self, session_id: str, tools: list[ToolDefinitionModel]
-    ) -> None:
+        self, session_id: str, tools: list[ToolDefinitionModel], *, _publish=None
+    ) -> bool:
         """Register tools for a specific session."""
+        prepared = {}
+        for tool in tools:
+            if tool.name in prepared:
+                raise ValueError("Duplicate tool name in catalog")
+            prepared[tool.name] = tool.model_copy(deep=True)
         async with self._lock:
             session = self._sessions.get(session_id)
-            if session:
-                # Replace existing tools or merge? Usually replace for "set state".
-                # We will replace the dict but keep the field.
-                session.tools.clear()
-                for tool in tools:
-                    session.tools[tool.name] = tool
+            current = (
+                self._user_hash_to_session.get((session.user_id, session.project_hash))
+                if session is not None and session.user_id
+                else self._hash_to_session.get(session.project_hash)
+                if session is not None
+                else None
+            )
+            if session is None or current != session_id:
+                return False
+            changed = not session.tools_known or session.tools != prepared
+            if _publish is not None:
+                _publish(session, prepared)
+            if changed:
+                session.tools = prepared
+                session.tools_known = True
+                session.tools_revision += 1
+                self.notify_changed()
+            return changed
+
+    async def get_catalog_snapshot(self, project_hash, user_id=None):
+        """Capture membership/revision/ownership under one existing registry lock."""
+        if config.http_remote_hosted and not user_id:
+            return None
+        async with self._lock:
+            sid = (
+                self._user_hash_to_session.get((user_id, project_hash))
+                if user_id
+                else self._hash_to_session.get(project_hash)
+            )
+            session = self._sessions.get(sid)
+            if session is None or session.user_id != user_id:
+                return None
+            return (
+                session.session_id,
+                session.tools_revision,
+                session.tools_known,
+                dict(session.tools),
+            )
 
     async def get_session(self, session_id: str) -> PluginSession | None:
         """Fetch a session by its ``session_id``."""

@@ -1,8 +1,18 @@
 """Strict bounded contracts for semantic UI snapshots."""
 
+import json
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictStr,
+    ValidationError,
+    model_serializer,
+    model_validator,
+)
 
 
 class UiSnapshotError(ValueError):
@@ -108,3 +118,129 @@ class UiSnapshot(SnapshotModel):
         if self.evidence.geometry_space != expected_space:
             raise UiSnapshotError("Snapshot framework and geometry evidence disagree")
         return self
+
+
+Int32 = Annotated[int, Field(ge=-2147483648, le=2147483647)]
+Index = Annotated[int, Field(ge=0, le=2147483647)]
+
+
+class UiToggleState(SnapshotModel):
+    value: StrictBool
+
+
+class UiFloatSliderState(SnapshotModel):
+    kind: Literal["float"]
+    value: Finite
+    low: Finite
+    high: Finite
+    whole_numbers: StrictBool
+
+
+class UiIntegerSliderState(SnapshotModel):
+    kind: Literal["integer"]
+    value: Int32
+    low: Int32
+    high: Int32
+
+
+class UiIndexSelection(SnapshotModel):
+    kind: Literal["index"]
+    index: Annotated[int, Field(ge=-1, le=2147483647)]
+
+
+class UiIndicesSelection(SnapshotModel):
+    kind: Literal["indices"]
+    selection_type: Literal["none", "single", "multiple"]
+    indices: list[Index] = Field(max_length=64)
+
+    @model_validator(mode="after")
+    def ordered_indices(self):
+        if self.indices != sorted(set(self.indices)):
+            raise UiSnapshotError("Selection indices must be sorted and unique")
+        return self
+
+
+class UiInputState(SnapshotModel):
+    redacted: StrictBool
+    read_only: StrictBool
+    password: StrictBool
+
+    @model_validator(mode="after")
+    def always_redacted(self):
+        if self.redacted is not True:
+            raise UiSnapshotError("Input state must be redacted")
+        return self
+
+
+class UiScrollState(SnapshotModel):
+    kind: Literal["normalized", "panel_points"]
+    position: tuple[Finite, Finite]
+
+
+class UiControlState(SnapshotModel):
+    toggle: UiToggleState | None = None
+    slider: (
+        Annotated[UiFloatSliderState | UiIntegerSliderState, Field(discriminator="kind")] | None
+    ) = None
+    selection: (
+        Annotated[UiIndexSelection | UiIndicesSelection, Field(discriminator="kind")] | None
+    ) = None
+    input: UiInputState | None = None
+    scroll: UiScrollState | None = None
+
+    @model_validator(mode="after")
+    def provided_sections_are_typed(self):
+        if any(getattr(self, key) is None for key in self.model_fields_set):
+            raise UiSnapshotError("Provided control state sections cannot be null")
+        return self
+
+    @model_serializer(mode="wrap")
+    def sparse_sections(self, serialize):
+        return {key: value for key, value in serialize(self).items() if value is not None}
+
+
+class UiNodeV2(UiNode):
+    state: UiControlState
+
+    @model_validator(mode="after")
+    def input_text_is_never_retained(self):
+        if self.state.input is not None and self.text is not None:
+            raise UiSnapshotError("Input nodes require null text")
+        return self
+
+
+class UiEvidenceV2(UiEvidence):
+    control_state_method: Literal["typed_allowlist_v1"]
+    input_privacy: Literal["recognized_input_ownership_v1"]
+
+
+class UiSnapshotV2(UiSnapshot):
+    schema_version: Annotated[int, Field(ge=2, le=2)]
+    nodes: list[UiNodeV2] = Field(min_length=1, max_length=1000)
+    evidence: UiEvidenceV2
+
+    @model_validator(mode="after")
+    def framework_scroll_units(self):
+        expected = "normalized" if self.framework == "ugui" else "panel_points"
+        if any(
+            node.state.scroll is not None and node.state.scroll.kind != expected
+            for node in self.nodes
+        ):
+            raise UiSnapshotError("Control state coordinates disagree with the framework")
+        return self
+
+
+def validate_ui_snapshot(value, *, require_v2: bool = False) -> UiSnapshot | UiSnapshotV2:
+    """Dispatch exact versions without echoing native/file payloads in validation errors."""
+    try:
+        version = value.get("schema_version") if isinstance(value, dict) else None
+        if type(version) is not int or version not in (1, 2) or (require_v2 and version != 2):
+            raise UiSnapshotError(
+                "Unsupported UI snapshot schema_version; live capture requires version 2"
+            )
+        model = UiSnapshot if version == 1 else UiSnapshotV2
+        return model.model_validate_json(json.dumps(value, allow_nan=False))
+    except (ValidationError, ValueError, TypeError):
+        raise UiSnapshotError(
+            "UI snapshot schema/privacy validation failed; live capture requires version 2"
+        ) from None

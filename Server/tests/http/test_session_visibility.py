@@ -205,7 +205,8 @@ async def test_manual_http_sync_does_not_overwrite_reconnected_project_catalog(
 
     monkeypatch.setattr(PluginHub, "send_command_for_instance", respond_after_reconnect)
     result = await sync_tool_visibility_from_unity("B@b", notify=False)
-    assert result["synced"] is True
+    assert "synced" not in result
+    assert result["error"] == "Unity catalog generation changed"
     assert {tool.name for tool in await PluginHub.get_tools_for_project("b")} == {"manage_scene"}
     assert {tool.name for tool in await server.list_tools()} == {
         "run_tests",
@@ -244,6 +245,272 @@ async def test_manual_http_sync_preserves_registered_runtime_metadata(
     result = await sync_tool_visibility_from_unity("B@b", notify=False)
     assert result["synced"] is True
     assert await PluginHub.get_tools_for_project("b") == [definition]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+async def test_old_http_toggles_preserve_omitted_metadata_and_ignore_unknown_custom_schema(
+    local_catalog, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from services.custom_tool_service import CustomToolService
+
+    server, hub, _, sockets = local_catalog
+    monkeypatch.setattr(CustomToolService, "_instance", None)
+    service = CustomToolService(server)
+    known = ToolDefinitionModel(
+        name="known_custom",
+        description="authoritative",
+        structured_output=False,
+        requires_polling=True,
+        poll_action="owned_status",
+        max_poll_seconds=30,
+        parameters=[
+            ToolParameterModel(name="value", type="integer", required=False, default_value="7")
+        ],
+    )
+    await hub._handle_register_tools(
+        sockets["B"],
+        RegisterToolsMessage(
+            tools=[
+                ToolDefinitionModel(name="manage_scene"),
+                known,
+            ]
+        ),
+    )
+    component = service._owned_tools["known_custom"]
+    monkeypatch.setattr(
+        PluginHub,
+        "send_command_for_instance",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "data": {
+                    "tools": [
+                        {"name": "manage_scene", "enabled": False},
+                        {
+                            "name": "known_custom",
+                            "enabled": True,
+                            "description": "not a schema",
+                            "parameters": [],
+                        },
+                        {
+                            "name": "unknown_custom",
+                            "enabled": True,
+                            "parameters": [{"name": "forged", "type": "string"}],
+                        },
+                    ]
+                },
+            }
+        ),
+    )
+    assert (await sync_tool_visibility_from_unity("B@b", notify=False))["synced"]
+    assert await PluginHub.get_tools_for_project("b") == [known]
+    assert service._owned_tools["known_custom"] is component
+    async with Client(server, mode=mode) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+        assert set(tools) == {"known_custom", "run_tests", "set_active_instance"}
+        assert set(tools["known_custom"].input_schema["properties"]) == {"value"}
+    # Omission from an old-format reply is not an authoritative schema removal.
+    monkeypatch.setattr(
+        PluginHub,
+        "send_command_for_instance",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "data": {"tools": [{"name": "manage_scene", "enabled": False}]},
+            }
+        ),
+    )
+    assert (await sync_tool_visibility_from_unity("B@b", notify=False))["synced"]
+    assert await PluginHub.get_tools_for_project("b") == [known]
+    assert service._owned_tools["known_custom"] is component
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evidence", ["fresh", "authoritative", "reconnected"])
+async def test_old_http_toggle_does_not_create_authoritative_empty_evidence(
+    local_catalog, monkeypatch: pytest.MonkeyPatch, evidence: str
+) -> None:
+    from services.custom_tool_service import CustomToolService
+
+    server, hub, registry, _ = local_catalog
+    monkeypatch.setattr(CustomToolService, "_instance", None)
+    service = CustomToolService(server)
+    socket = AsyncMock()
+    socket.state = SimpleNamespace()
+    await hub._handle_register(socket, RegisterMessage(project_name="C", project_hash="c"))
+    first_generation = socket.state.plugin_session_id
+    if evidence != "fresh":
+        await hub._handle_register_tools(
+            socket, RegisterToolsMessage(tools=[ToolDefinitionModel(name="manage_scene")])
+        )
+    if evidence == "reconnected":
+        socket = AsyncMock()
+        socket.state = SimpleNamespace()
+        await hub._handle_register(socket, RegisterMessage(project_name="C", project_hash="c"))
+        assert socket.state.plugin_session_id != first_generation
+    monkeypatch.setattr(
+        PluginHub,
+        "send_command_for_instance",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "data": {"tools": [{"name": "manage_scene", "enabled": True}]},
+            }
+        ),
+    )
+    assert (await sync_tool_visibility_from_unity("C@c", notify=False))["synced"]
+    source = service._sources[("http", None, "c")]
+    assert source.generation == socket.state.plugin_session_id
+    assert source.known is (evidence == "authoritative")
+    session = await registry.get_session(socket.state.plugin_session_id)
+    original_tools = session.tools
+    original_revision = session.tools_revision
+    original_sources = service._sources
+    original_transforms = server._transforms
+    async with Client(server, mode="legacy") as client:
+        original_inventory = {tool.name for tool in await client.list_tools()}
+        monkeypatch.setattr(
+            PluginHub,
+            "send_command_for_instance",
+            AsyncMock(return_value={"success": True, "data": {"tools": []}}),
+        )
+        result = await sync_tool_visibility_from_unity("C@c", notify=False)
+        assert {tool.name for tool in await client.list_tools()} == original_inventory
+    if evidence == "authoritative":
+        assert result["synced"]
+        assert session.tools == {}
+        assert session.tools_revision == original_revision + 1
+    else:
+        assert result == {"error": "Empty Unity catalog has no same-generation extended evidence"}
+        assert session.tools is original_tools and session.tools_revision == original_revision
+        assert service._sources is original_sources and server._transforms is original_transforms
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_tail",
+    [
+        {"name": "unknown_custom", "enabled": "true"},
+        {"name": "unknown_custom", "parameters": [{"name": "bad", "required": "true"}]},
+        {"name": "manage_scene", "enabled": True},
+        "not a descriptor",
+    ],
+)
+async def test_malformed_old_http_toggle_delta_rejects_whole_publication(
+    local_catalog, monkeypatch: pytest.MonkeyPatch, invalid_tail
+) -> None:
+    server, _, registry, sockets = local_catalog
+    session = await registry.get_session(sockets["B"].state.plugin_session_id)
+    original_tools = session.tools
+    original_revision = session.tools_revision
+    original_transforms = server._transforms
+    monkeypatch.setattr(
+        PluginHub,
+        "send_command_for_instance",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "data": {"tools": [{"name": "manage_scene", "enabled": False}, invalid_tail]},
+            }
+        ),
+    )
+    assert "error" in await sync_tool_visibility_from_unity("B@b", notify=False)
+    assert session.tools is original_tools and session.tools_revision == original_revision
+    assert server._transforms is original_transforms
+    assert {tool.name for tool in await server.list_tools()} == {
+        "run_tests",
+        "manage_scene",
+        "scene_alias",
+        "set_active_instance",
+    }
+
+
+@pytest.mark.asyncio
+async def test_old_http_toggle_publication_failure_restores_union_and_catalog(
+    local_catalog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.custom_tool_service import CustomToolService
+
+    server, _, registry, sockets = local_catalog
+    monkeypatch.setattr(CustomToolService, "_instance", None)
+    service = CustomToolService(server)
+    session = await registry.get_session(sockets["B"].state.plugin_session_id)
+    original_tools = session.tools
+    original_revision = session.tools_revision
+    original_transforms = server._transforms
+    original_sources = service._sources
+    commit = PluginHub._commit_server_tool_visibility
+
+    def fail_after_mutation(plan):
+        commit(plan)
+        raise RuntimeError("visibility publication failed after mutation")
+
+    monkeypatch.setattr(PluginHub, "_commit_server_tool_visibility", fail_after_mutation)
+    monkeypatch.setattr(
+        PluginHub,
+        "send_command_for_instance",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "data": {"tools": [{"name": "manage_scene", "enabled": False}]},
+            }
+        ),
+    )
+    assert "error" in await sync_tool_visibility_from_unity("B@b", notify=False)
+    assert session.tools is original_tools and session.tools_revision == original_revision
+    assert server._transforms is original_transforms and service._sources is original_sources
+    assert {tool.name for tool in await server.list_tools()} == {
+        "run_tests",
+        "manage_scene",
+        "scene_alias",
+        "set_active_instance",
+    }
+
+
+@pytest.mark.asyncio
+async def test_old_http_toggle_merge_rejects_catalog_capacity_overflow(
+    local_catalog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, hub, registry, sockets = local_catalog
+    await hub._handle_register_tools(
+        sockets["B"],
+        RegisterToolsMessage(
+            tools=[ToolDefinitionModel(name=f"known_{index}") for index in range(256)]
+        ),
+    )
+    session = await registry.get_session(sockets["B"].state.plugin_session_id)
+    original = session.tools
+    monkeypatch.setattr(
+        PluginHub,
+        "send_command_for_instance",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "data": {"tools": [{"name": "run_tests", "enabled": True}]},
+            }
+        ),
+    )
+    result = await sync_tool_visibility_from_unity("B@b", notify=False)
+    assert result == {"error": "Unity catalog exceeds supported bounds"}
+    assert session.tools is original
+
+
+@pytest.mark.asyncio
+async def test_old_http_toggle_reply_cannot_overwrite_newer_same_session_revision(
+    local_catalog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, hub, _, sockets = local_catalog
+    replacement = ToolDefinitionModel(name="manage_scene", description="new revision")
+
+    async def after_update(*_args, **_kwargs):
+        await hub._handle_register_tools(sockets["B"], RegisterToolsMessage(tools=[replacement]))
+        return {"success": True, "data": {"tools": [{"name": "manage_scene", "enabled": False}]}}
+
+    monkeypatch.setattr(PluginHub, "send_command_for_instance", after_update)
+    result = await sync_tool_visibility_from_unity("B@b", notify=False)
+    assert result == {"error": "Unity catalog generation changed"}
+    assert await PluginHub.get_tools_for_project("b") == [replacement]
 
 
 @pytest.mark.asyncio

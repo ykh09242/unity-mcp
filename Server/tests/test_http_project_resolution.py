@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.config import config
+from models.models import ToolDefinitionModel
 import services.custom_tool_service as module
 from services.custom_tool_service import CustomToolService
 from transport.legacy.port_discovery import PortDiscovery
@@ -65,9 +66,22 @@ def test_local_http_mapping_changes_are_read_without_stale_resolution_cache(
 ):
     monkeypatch.setattr(config, "transport_mode", "http")
     monkeypatch.setattr(config, "http_remote_hosted", False)
+    sources = resolution.service._sources
     resolution.service._register_project_tools("first-project", [], project_hash="AABBCCDD")
+    assert resolution.service._sources is sources
+    assert module.resolve_project_id_for_unity_instance("Remote@AABBCCDD") == "aabbccdd"
+    definition = ToolDefinitionModel(name="mapping_fixture")
+    resolution.service._register_project_tools(
+        "first-project", [definition], project_hash="AABBCCDD"
+    )
     assert module.resolve_project_id_for_unity_instance("Remote@AABBCCDD") == "first-project"
-    resolution.service._register_project_tools("replacement-project", [], project_hash="AABBCCDD")
+    sources = resolution.service._sources
+    resolution.service._register_project_tools("ignored-empty-project", [], project_hash="AABBCCDD")
+    assert resolution.service._sources is sources
+    assert module.resolve_project_id_for_unity_instance("Remote@AABBCCDD") == "first-project"
+    resolution.service._register_project_tools(
+        "replacement-project", [definition], project_hash="AABBCCDD"
+    )
     assert module.resolve_project_id_for_unity_instance("Remote@AABBCCDD") == "replacement-project"
     assert resolution.scans == 0
 

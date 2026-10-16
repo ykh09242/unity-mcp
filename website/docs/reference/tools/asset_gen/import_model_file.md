@@ -18,15 +18,17 @@ Params: source_path (Assets-relative path, or an absolute path physically within
 
 animation_type (FBX/OBJ only): pass 'generic' or 'humanoid' for a rigged/animated mesh so Unity surfaces its AnimationClips; omitted or 'none' imports no rig (this is the usual cause of a rigged FBX importing with zero clips); 'legacy' selects Unity's legacy Animation system (rarely needed). glTF/GLB ignore it — the selected glTF importer handles animation.
 
-For multi-file exports (a text .gltf with an external .bin, or an .obj with a sibling .mtl/textures), zip them and pass the .zip — a bare .gltf/.obj is copied without its sidecars.
+Core text glTF buffer/image sidecars and OBJ same-directory MTL files with simple PNG/JPEG texture maps are copied together into a fresh bundle folder, preserving relative paths and the original model basename. name labels that folder; a single-file import keeps its flat asset name. Dependencies must stay below the source directory without parent traversal, links, absolute/network paths or executable files. Limits include 256 files and 512 MiB combined file/embedded-data bytes. Unsupported text glTF extensions and MTL options or ambiguous filenames fail before staging; no reference is silently dropped.
+
+dependency_bundle reports inspection, stage ('not_staged', 'partial', 'staged'), paths and copy counts. Partial output can remain after a write failure; staged does not mean usable. GLB core external resources are rejected: export core text glTF with its files or a self-contained GLB. Embedded GLB extensions are preserved with explicitly limited inspection. FBX dependencies are not scanned; ZIP keeps its existing archive import behavior.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `source_path` | `str` | yes | Assets-relative or absolute-within-Assets model file path (.fbx/.obj/.glb/.gltf/.zip). |
-| `name` | `str \| None` | — | Base name for the imported asset. |
-| `output_folder` | `str \| None` | — | Destination under Assets/. Failed imports may retain staged output here for repair. |
+| `name` | `str \| None` | — | Asset base name for a single file; folder name for a dependency bundle, whose model basename is preserved. |
+| `output_folder` | `str \| None` | — | Destination under Assets/. Dependency bundles use a fresh folder; partial or failed imports may retain output for repair. |
 | `target_size` | `float \| None` | — | Normalize the largest dimension to this size (meters). |
 | `animation_type` | `Literal['none', 'generic', 'humanoid', 'legacy'] \| None` | — | FBX/OBJ only: rig/animation import mode. 'generic' or 'humanoid' surface the model's AnimationClips; 'legacy' selects Unity's legacy Animation system (rarely needed); omitted or 'none' imports no rig. Ignored for glTF/GLB. |
 

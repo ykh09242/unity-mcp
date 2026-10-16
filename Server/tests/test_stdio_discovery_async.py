@@ -522,6 +522,7 @@ async def test_custom_tool_entrypoints_allow_other_requests_while_discovery_wait
         options = {"user_id": "owned-user"} if entrypoint in ("generic", "global") else {}
         if entrypoint == "global":
             options["omit_nulls"] = True
+            options["_expected_contract"] = '{"parameters":[],"structured_output":true}'
         instance = target.hash if entrypoint == "rest_execute" else target.id
         assert dispatched == [
             (target.hash, "fixture_tool", instance, {"value": 3}, options, threading.get_ident())

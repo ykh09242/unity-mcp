@@ -477,6 +477,7 @@ class UnityConnection:
         params: dict[str, Any] | None = None,
         max_attempts: int | None = None,
         deadline: float | None = None,
+        _catalog_guard=None,
     ) -> dict[str, Any]:
         """Send a command with retry/backoff and port rediscovery. Pings only when requested.
 
@@ -565,6 +566,13 @@ class UnityConnection:
                         time.time() - t_conn_start,
                         command_type,
                     )
+
+                    # Linearize catalog admission after liveness/reconnect,
+                    # while this exact connection owns the existing I/O lock.
+                    if _catalog_guard is not None and not _catalog_guard.check_stdio(self):
+                        from services.custom_tool_service import custom_catalog_changed
+
+                        return custom_catalog_changed().model_dump()
 
                     # Build payload
                     if command_type == "ping":
@@ -1093,6 +1101,34 @@ def get_unity_connection(instance_identifier: str | None = None) -> UnityConnect
     return pool.get_connection(instance_identifier)
 
 
+def _commit_stdio_catalog(connection, generation, publish):
+    """Publish only while the cached authenticated socket still owns its source.
+
+    Never wait on blocking transport locks from the server loop. The caller can
+    retry a busy refresh; ordinary commands retain their existing lock policy.
+    """
+    pool = _unity_connection_pool
+    if pool is None or not pool._pool_lock.acquire(blocking=False):
+        raise ValueError("Unity catalog connection ownership unavailable")
+    try:
+        if pool._connections.get(connection.instance_id) is not connection:
+            raise ValueError("Unity catalog connection ownership changed")
+        if not connection._io_lock.acquire(blocking=False):
+            raise ValueError("Unity catalog connection is busy")
+        try:
+            if (
+                not generation
+                or connection.sock is None
+                or connection.session_generation != generation
+            ):
+                raise ValueError("Unity catalog generation changed before publication")
+            return publish()
+        finally:
+            connection._io_lock.release()
+    finally:
+        pool._pool_lock.release()
+
+
 async def get_authenticated_stdio_generation(instance_id: str | None) -> str | None:
     """Verify the selected socket before permitting an authenticated cache hit.
 
@@ -1252,6 +1288,7 @@ def _send_command_with_retry(
     retry_on_reload: bool = True,
     _connection: UnityConnection | None = None,
     _deadline: float | None = None,
+    _catalog_guard=None,
 ) -> tuple[dict[str, Any] | MCPResponse, UnityConnection]:
     """Retain dispatch provenance for async completion without another lookup.
 
@@ -1294,10 +1331,16 @@ def _send_command_with_retry(
 
     # If retry_on_reload=False, disable connection-level retries too (issue #577)
     # Commands that trigger compilation/reload shouldn't retry on disconnect
+    if _catalog_guard is not None:
+        retry_on_reload = False
     send_max_attempts = None if retry_on_reload else 0
 
     response = conn.send_command(
-        command_type, params, max_attempts=send_max_attempts, deadline=deadline
+        command_type,
+        params,
+        max_attempts=send_max_attempts,
+        deadline=deadline,
+        **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
     )
     retries = 0
     wait_started = None
@@ -1425,6 +1468,8 @@ async def async_send_command_with_retry(
     retry_ms: int | None = None,
     retry_on_reload: bool = True,
     _deadline: float | None = None,
+    _catalog_guard=None,
+    _catalog_capture=None,
 ) -> dict[str, Any] | MCPResponse:
     """Admit one blocking command worker per actual connection and event loop.
 
@@ -1472,6 +1517,8 @@ async def async_send_command_with_retry(
                     "Unity command exceeded total deadline during connection selection"
                 ) from exc
 
+        if _catalog_guard is not None:
+            _catalog_guard.select_stdio(conn)
         gate = conn._async_admission(loop)
         if deadline is None:
             await gate.acquire()
@@ -1492,16 +1539,28 @@ async def async_send_command_with_retry(
                 # aborted. No public await consumes this private sentinel.
                 return None
             conn._check_deadline(deadline)
-            return _send_command_with_retry(
-                command_type,
-                params,
-                instance_id=conn.instance_id,
-                max_retries=max_retries,
-                retry_ms=retry_ms,
-                retry_on_reload=retry_on_reload,
-                _connection=conn,
-                _deadline=deadline,
-            )
+
+            def send():
+                return _send_command_with_retry(
+                    command_type,
+                    params,
+                    instance_id=conn.instance_id,
+                    max_retries=max_retries,
+                    retry_ms=retry_ms,
+                    retry_on_reload=retry_on_reload,
+                    _connection=conn,
+                    _deadline=deadline,
+                    **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
+                )
+
+            if _catalog_capture is None:
+                return send()
+            # Only catalog discovery requests capture provenance. The lock is
+            # reentrant; ordinary readers keep their existing lifetime.
+            with conn._command_lock(deadline):
+                result = send()
+                _catalog_capture.append((conn, conn.session_generation))
+                return result
 
         try:
             completion = loop.run_in_executor(None, dispatch)

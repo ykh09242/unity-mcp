@@ -8,6 +8,7 @@ Verifies that:
 """
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -74,6 +75,39 @@ CUSTOM_TOOL = {
 }
 
 
+def _captured_reply(response):
+    async def reply(*_args, **kwargs):
+        kwargs["_catalog_capture"].append(
+            (
+                SimpleNamespace(instance_id="Project@deadbeef"),
+                "authenticated-fixture",
+            )
+        )
+        return response
+
+    return reply
+
+
+@pytest.fixture(autouse=True)
+def authenticated_catalog_context(monkeypatch):
+    from core.config import config
+    from services.custom_tool_service import CustomToolService
+    from transport.plugin_hub import PluginHub
+
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(CustomToolService, "_instance", None)
+    monkeypatch.setattr(PluginHub, "_mcp", None)
+    monkeypatch.setattr(
+        "transport.legacy.unity_connection._commit_stdio_catalog",
+        lambda _conn, _generation, publish: publish(),
+    )
+    monkeypatch.setattr(
+        "transport.legacy.unity_connection.get_authenticated_stdio_generation",
+        AsyncMock(return_value="authenticated-fixture"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # sync_tool_visibility_from_unity — custom tool registration
 # ---------------------------------------------------------------------------
@@ -85,13 +119,13 @@ async def test_sync_registers_custom_tools():
     response = _make_unity_response([BUILTIN_TOOL, CUSTOM_TOOL])
 
     mock_service = MagicMock()
-    mock_service.register_global_tools = MagicMock()
+    mock_service._sources = {}
 
     with (
         patch(
             "transport.legacy.unity_connection.async_send_command_with_retry",
             new_callable=AsyncMock,
-            return_value=response,
+            side_effect=_captured_reply(response),
         ),
         patch(
             "transport.plugin_hub.PluginHub._sync_server_tool_visibility",
@@ -101,8 +135,8 @@ async def test_sync_registers_custom_tools():
             new_callable=AsyncMock,
         ),
         patch(
-            "services.custom_tool_service.CustomToolService.get_instance",
-            return_value=mock_service,
+            "services.custom_tool_service.CustomToolService._instance",
+            new=mock_service,
         ),
     ):
         from services.tools import sync_tool_visibility_from_unity
@@ -112,9 +146,9 @@ async def test_sync_registers_custom_tools():
     assert result["synced"] is True
     assert result["custom_tool_count"] == 1
 
-    # Verify register_global_tools was called with the custom tool
-    mock_service.register_global_tools.assert_called_once()
-    registered = mock_service.register_global_tools.call_args[0][0]
+    # The identified authoritative source replaces its complete custom subset.
+    mock_service.replace_project_catalog.assert_called_once()
+    registered = mock_service.replace_project_catalog.call_args[0][1]
     assert len(registered) == 1
     assert registered[0].name == "test_ping"
     assert registered[0].description == "Simple test tool that returns a pong."
@@ -131,7 +165,7 @@ async def test_sync_skips_builtin_tools():
         patch(
             "transport.legacy.unity_connection.async_send_command_with_retry",
             new_callable=AsyncMock,
-            return_value=response,
+            side_effect=_captured_reply(response),
         ),
         patch(
             "transport.plugin_hub.PluginHub._sync_server_tool_visibility",
@@ -194,7 +228,7 @@ async def test_sync_handles_custom_tool_service_not_initialized():
         patch(
             "transport.legacy.unity_connection.async_send_command_with_retry",
             new_callable=AsyncMock,
-            return_value=response,
+            side_effect=_captured_reply(response),
         ),
         patch(
             "transport.plugin_hub.PluginHub._sync_server_tool_visibility",

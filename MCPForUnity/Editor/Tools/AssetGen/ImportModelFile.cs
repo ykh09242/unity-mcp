@@ -46,8 +46,31 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     baseName = Path.GetFileNameWithoutExtension(srcAbs);
 
                 var job = new AssetGenJob { TargetSize = p.GetFloat("targetSize", 1f) ?? 1f, AnimationType = p.Get("animationType") };
-                string destRel = StageUnderAssets(srcAbs, baseName, ext, p.Get("outputFolder"));
-                AssetGenJob result = ModelImportPipeline.ImportInto(job, destRel);
+                string destRel;
+                string bundleRoot = null;
+                JObject dependencyEvidence;
+                if (ext == ".obj" || ext == ".gltf" || ext == ".glb")
+                {
+                    BundlePlan plan = ModelDependencyBundle.Plan(srcAbs);
+                    BundleStageResult staged = ModelDependencyBundle.Stage(plan, p.Get("outputFolder"), baseName);
+                    destRel = staged.MainAssetPath;
+                    bundleRoot = staged.BundleRoot;
+                    dependencyEvidence = staged.Evidence;
+                }
+                else
+                {
+                    destRel = StageUnderAssets(srcAbs, baseName, ext, p.Get("outputFolder"));
+                    dependencyEvidence = new JObject
+                    {
+                        ["inspection"] = ext == ".zip" ? "archive_managed" : "not_scanned",
+                        ["stage"] = "staged",
+                        ["main_asset_path"] = destRel,
+                        ["planned_file_count"] = 1,
+                        ["staged_file_count"] = 1,
+                        ["staged_bytes"] = new FileInfo(AssetGenPaths.ToAbsolute(destRel)).Length,
+                    };
+                }
+                AssetGenJob result = ImportStaged(job, destRel, bundleRoot);
 
                 if (result == null || result.State == AssetGenJobState.Failed)
                     return new ErrorResponse(
@@ -58,6 +81,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             asset_guid = result?.AssetGuid,
                             model_import_stage = result?.ModelImportStage,
                             model_import_error_code = result?.ModelImportErrorCode,
+                            dependency_bundle = dependencyEvidence,
                         }
                     );
 
@@ -68,12 +92,40 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         asset_path = result.AssetPath,
                         asset_guid = result.AssetGuid,
                         model_import_stage = result.ModelImportStage,
+                        dependency_bundle = dependencyEvidence,
                     }
                 );
+            }
+            catch (BundleImportException e)
+            {
+                return new ErrorResponse(SecretRedactor.Scrub(e.Message), new { dependency_bundle = e.Evidence });
             }
             catch (Exception e)
             {
                 return new ErrorResponse(SecretRedactor.Scrub(e.Message));
+            }
+        }
+
+        private static AssetGenJob ImportStaged(AssetGenJob job, string mainPath, string bundleRoot)
+        {
+            try
+            {
+                if (bundleRoot != null)
+                    AssetDatabase.ImportAsset(
+                        bundleRoot,
+                        ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport
+                    );
+                return ModelImportPipeline.ImportInto(job, mainPath);
+            }
+            catch (Exception e)
+            {
+                job.AssetPath = mainPath;
+                job.AssetGuid = AssetDatabase.AssetPathToGUID(mainPath, AssetPathToGUIDOptions.OnlyExistingAssets);
+                job.ModelImportStage = string.IsNullOrEmpty(job.AssetGuid) ? "saved" : "registered";
+                job.ModelImportErrorCode = "model_import_failed";
+                job.State = AssetGenJobState.Failed;
+                job.Error = SecretRedactor.Scrub(e.Message);
+                return job;
             }
         }
 

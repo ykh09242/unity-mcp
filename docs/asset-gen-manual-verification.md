@@ -58,10 +58,73 @@ unverified rather than usable; simplify or split the retained model and reimport
 
 - [ ] Import a tiny valid OBJ with `import_model_file` and confirm success,
       `model_import_stage=usable`, a loadable hierarchy and actual mesh geometry.
-- [ ] Import corrupt OBJ bytes directly and from a ZIP. Confirm failure with retained
-      staged path/GUID and `registered` evidence; confirm original source bytes are unchanged.
+- [ ] Import a syntactically supported but mesh-less OBJ (an object declaration and one
+      vertex, without a face) directly and from a ZIP. Confirm failure with retained staged
+      path/GUID and `registered` evidence; confirm original source bytes are unchanged.
+      Unsupported direct OBJ dependency syntax instead fails before staging.
 - [ ] Repair or re-export the model, inspect Unity's Console, and reimport; do not use
       a saved file or GUID alone as proof that import succeeded.
+
+## Local model dependency bundles
+
+Direct `import_model_file` discovers core text glTF buffer/image references and
+OBJ `mtllib` references. MTL files must be beside the OBJ; unoptioned texture-map
+references may use subdirectories beneath that source folder. Supported buffer
+files are `.bin`, `.glbin`, `.glbuf`; textures are PNG/JPEG. Recognized base64
+buffer/PNG/JPEG data URIs stay embedded and count toward the byte budget.
+
+Multi-file inputs use a fresh destination directory named by `name`, preserving
+the original model basename, relative layout and source bytes. Existing outputs
+are not merged or overwritten; source metadata is not copied or rewritten.
+
+The supported subset rejects traversal, links/junctions, absolute/network paths,
+query/fragment syntax, ambiguous names, executable dependencies, text glTF
+extensions, nested MTL locations, map options, quoted/escaped-space filenames,
+continuations and unknown resource directives. Limits are 256 files, 1024
+references, 512 MiB combined file/embedded bytes, 16 MiB JSON, 4 MiB per MTL,
+32 MiB total JSON/MTL metadata, JSON depth 64 and 64 KiB per text line. Relative
+paths have 1024 characters, 32 segments and 255 UTF-8 bytes per segment.
+
+`data.dependency_bundle` distinguishes staging from import:
+
+- `inspection=complete` covers the supported dependency forms; it does not
+  certify materials, rigs or rendering.
+- `stage=not_staged` means this operation copied no model bytes. Preflight
+  failures create no output.
+- `stage=partial` reports retained files after a write/consistency failure.
+  `staged_file_count` counts completed copies; `staged_bytes` includes observed
+  retained partial bytes.
+- `stage=staged` means all planned bytes were copied. The separate
+  `model_import_stage` still decides whether usable geometry exists.
+- GLB inspection covers core buffer/image resources only. Known external core
+  references fail before staging: export core text glTF with its files or a
+  self-contained GLB. Embedded extensions such as `KHR_materials_unlit` stay
+  intact and report `inspection=not_scanned` and
+  `inspection_scope=glb_core_resources_only`.
+- FBX reports `not_scanned`; ZIP reports `archive_managed`. Existing archive
+  extraction is unchanged. Neither label promises a full dependency audit.
+
+Missing dependencies, unsafe paths, unsupported forms and limits have distinct
+preflight error codes. Source changes/write failures retain partial evidence.
+Importer failure after complete staging retains the bundle and GEN-03's
+saved/registered path, GUID and error evidence.
+
+- [ ] Import owned OBJ + MTL + PNG into a fresh folder. Inspect actual indexed
+      mesh, renderer material and the bound texture's asset path. It must point
+      inside the staged bundle, not to the original or a same-name decoy.
+      Compare source/output bytes and repeat to verify collision isolation.
+- [ ] Import core glTF + BIN + PNG and compare copied paths/bytes. Without an
+      active compatible importer, require actual `missing_gltf_importer` failure
+      and retained bundle evidence; copying alone is not successful glTF import.
+- [ ] Only in an authorized environment with an already installed compatible
+      glTF importer, check actual mesh/material/texture connections and record
+      its version. Do not manufacture a hierarchy or mark an unavailable branch
+      passed.
+- [ ] Reject external-core GLB before staging; preserve an embedded GLB with
+      `KHR_materials_unlit` and report limited inspection even if import fails.
+- [ ] Check missing/unsafe sidecars, source changes, limits and later-copy
+      failure. Confirm no preflight output, accurate partial evidence, no
+      overwrite and unchanged source/pre-existing files.
 
 ## glTFast / GLB
 

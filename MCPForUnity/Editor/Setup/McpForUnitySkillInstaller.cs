@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Text;
+using MCPForUnity.Editor.Constants;
 using UnityEditor;
 using UnityEngine;
 
@@ -17,18 +18,23 @@ namespace MCPForUnity.Editor.Setup
         private const string CodexCli = "codex";
         private const string ClaudeCli = "claude";
         private static readonly string[] BranchOptions = { "beta", "main" };
+        private static readonly string[] SourceOptions = { "Installed package", "Latest from branch" };
         private static readonly string[] CliOptions = { CodexCli, ClaudeCli };
 
         private string _repoUrl;
         private string _targetBranch;
         private string _cliType;
         private string _installDir;
+        private bool _latest;
+        private SkillSyncSource _packageSource;
+        private string _packageError;
         private Vector2 _scroll;
         private volatile bool _isRunning;
         private SkillSyncService.SyncPreview _preview;
         private readonly ConcurrentQueue<string> _pendingLogs = new();
         private readonly StringBuilder _logBuilder = new(4096);
 
+        [MenuItem(ProductInfo.MenuRoot + "/Skill Installer", priority = 4)]
         public static void OpenWindow()
         {
             GetWindow<McpForUnitySkillInstaller>("Unity MCP Skill Install(Sync)");
@@ -49,6 +55,8 @@ namespace MCPForUnity.Editor.Setup
                 _cliType = CodexCli;
             }
             _installDir = EditorPrefs.GetString(InstallDirKey, GetDefaultInstallDir(userHome, _cliType));
+            _latest = false;
+            RefreshPackageSource();
             EditorApplication.update += OnEditorUpdate;
         }
 
@@ -71,15 +79,34 @@ namespace MCPForUnity.Editor.Setup
             EditorGUI.BeginChangeCheck();
             using (new EditorGUI.DisabledScope(_isRunning))
             {
-                _repoUrl = EditorGUILayout.TextField("Repo URL", _repoUrl);
-                var branchIndex = Array.IndexOf(BranchOptions, _targetBranch);
-                if (branchIndex < 0)
+                _latest = EditorGUILayout.Popup("Skill source", _latest ? 1 : 0, SourceOptions) == 1;
+                if (!_latest)
                 {
-                    branchIndex = 0;
+                    EditorGUILayout.HelpBox(_packageSource?.Description ?? _packageError, _packageSource == null ? MessageType.Error : MessageType.Info);
+                    EditorGUILayout.LabelField(
+                        "Local changes are preserved; installed files may differ from the selected source.",
+                        EditorStyles.wordWrappedLabel
+                    );
                 }
+                if (_latest)
+                {
+                    _repoUrl = EditorGUILayout.TextField("Repo URL", _repoUrl);
+                    var branchIndex = Array.IndexOf(BranchOptions, _targetBranch);
+                    if (branchIndex < 0)
+                    {
+                        branchIndex = 0;
+                    }
 
-                var selectedBranchIndex = EditorGUILayout.Popup("Branch", branchIndex, BranchOptions);
-                _targetBranch = BranchOptions[selectedBranchIndex];
+                    var selectedBranchIndex = EditorGUILayout.Popup("Branch", branchIndex, BranchOptions);
+                    _targetBranch = BranchOptions[selectedBranchIndex];
+                }
+                else
+                    EditorGUILayout.LabelField("Repository", SkillSyncSource.ForkRepository);
+                if (_latest)
+                    EditorGUILayout.HelpBox(
+                        "Latest resolves the selected branch at preview time. Compatibility with this package is not verified.",
+                        MessageType.Info
+                    );
 
                 var cliIndex = Array.IndexOf(CliOptions, _cliType);
                 if (cliIndex < 0)
@@ -104,7 +131,7 @@ namespace MCPForUnity.Editor.Setup
             EditorGUILayout.BeginHorizontal();
             using (new EditorGUI.DisabledScope(_isRunning))
             {
-                if (GUILayout.Button($"Preview ({_targetBranch})", GUILayout.Height(32f)))
+                if (GUILayout.Button(_latest ? $"Preview latest ({_targetBranch})" : "Preview package skills", GUILayout.Height(32f)))
                     RunPreview();
             }
 
@@ -121,7 +148,10 @@ namespace MCPForUnity.Editor.Setup
             if (_preview != null)
                 EditorGUILayout.HelpBox(
                     $"Preview: +{_preview.Added.Count} ~{_preview.Updated.Count} -{_preview.Deleted.Count}. "
-                        + $"Local preserved: {_preview.Preserved.Count}. Conflicts retained: {_preview.Conflicts.Count}. See the file list below.",
+                        + $"Local preserved: {_preview.Preserved.Count}. Conflicts retained: {_preview.Conflicts.Count}.\n"
+                        + _preview.SourceDescription
+                        + "\nResolved commit: "
+                        + _preview.CommitSha,
                     _preview.Conflicts.Count > 0 ? MessageType.Warning : MessageType.Info
                 );
 
@@ -145,12 +175,25 @@ namespace MCPForUnity.Editor.Setup
         {
             if (_isRunning)
                 return;
+            SkillSyncSource source;
+            try
+            {
+                source = _latest ? SkillSyncSource.Latest(_repoUrl, _targetBranch) : SkillSyncSource.CaptureInstalled();
+                if (!_latest)
+                    _packageSource = source;
+            }
+            catch (Exception error)
+            {
+                _preview = null;
+                _packageError = error.Message;
+                AppendLineImmediate("[ERROR] " + error.Message);
+                return;
+            }
             _isRunning = true;
             _preview = null;
-            SkillSyncService.PreviewAsync(
-                _repoUrl,
+            SkillSyncService.PreviewSourceAsync(
+                source,
                 _installDir,
-                _targetBranch,
                 line => _pendingLogs.Enqueue($"[{DateTime.Now:HH:mm:ss}] {SanitizeLogLine(line)}"),
                 preview =>
                 {
@@ -163,6 +206,20 @@ namespace MCPForUnity.Editor.Setup
                     Repaint();
                 }
             );
+        }
+
+        private void RefreshPackageSource()
+        {
+            try
+            {
+                _packageSource = SkillSyncSource.CaptureInstalled();
+                _packageError = null;
+            }
+            catch (Exception error)
+            {
+                _packageSource = null;
+                _packageError = error.Message;
+            }
         }
 
         private void RunApply()

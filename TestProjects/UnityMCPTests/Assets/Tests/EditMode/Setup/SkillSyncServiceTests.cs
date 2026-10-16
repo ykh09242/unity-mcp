@@ -359,7 +359,12 @@ namespace MCPForUnityTests.Editor.Setup
             }
             var before = Snapshot();
             Assert.Throws<InvalidOperationException>(() =>
-                SkillSyncService.CreatePreview(Repository, _install, kind == "source" ? "main" : "beta", RemoteSnapshot(Remote(("SKILL.md", "new upstream"))))
+                SkillSyncService.CreatePreview(
+                    kind == "source" ? "https://github.com/other/owned-test" : Repository,
+                    _install,
+                    "beta",
+                    RemoteSnapshot(Remote(("SKILL.md", "new upstream")))
+                )
             );
             AssertSnapshot(before);
         }
