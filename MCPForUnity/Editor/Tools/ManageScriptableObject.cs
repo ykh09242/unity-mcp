@@ -1925,13 +1925,21 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool TrySetObjectReference(SerializedProperty property, JToken value, string excludedReferencePath, out string error)
         {
-            int previousInstanceId = property.objectReferenceInstanceIDValue;
+#if UNITY_6000_4_OR_NEWER
+            var previousReferenceId = property.objectReferenceEntityIdValue;
+#else
+            int previousReferenceId = property.objectReferenceInstanceIDValue;
+#endif
             if (!ComponentOps.SetObjectReference(property, value, out error))
                 return false;
             var resolved = property.objectReferenceValue;
             if (excludedReferencePath != null && resolved != null && AssetDatabase.GetAssetPath(resolved) == excludedReferencePath)
             {
-                property.objectReferenceInstanceIDValue = previousInstanceId;
+#if UNITY_6000_4_OR_NEWER
+                property.objectReferenceEntityIdValue = previousReferenceId;
+#else
+                property.objectReferenceInstanceIDValue = previousReferenceId;
+#endif
                 error = "The reference targets the original asset that this type replacement will remove.";
                 return false;
             }

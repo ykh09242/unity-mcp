@@ -564,7 +564,11 @@ namespace MCPForUnityTests.Editor.Tools
             if (nested)
                 Assert.AreEqual("Valid sibling", replacement.nested.text);
             using var serialized = new SerializedObject(replacement);
+#if UNITY_6000_4_OR_NEWER
+            Assert.AreEqual(default(EntityId), serialized.FindProperty(nested ? "nested.objectReference" : "objectReference").objectReferenceEntityIdValue);
+#else
             Assert.AreEqual(0, serialized.FindProperty(nested ? "nested.objectReference" : "objectReference").objectReferenceInstanceIDValue);
+#endif
         }
 
         [Test]
