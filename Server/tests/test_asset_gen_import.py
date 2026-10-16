@@ -7,6 +7,9 @@ import asyncio
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from click.testing import CliRunner
+from fastmcp import Client, FastMCP
+from core.logging_decorator import log_execution
+from core.telemetry_decorator import telemetry_tool
 
 from cli.commands.asset_gen import asset_gen
 from cli.utils.config import CLIConfig
@@ -29,6 +32,7 @@ ALLOWED_KEYS = {
     "name",
     "outputFolder",
     "jobId",
+    "archiveModelPath",
 }
 
 
@@ -182,3 +186,94 @@ class TestImportModelCLI:
         assert params["name"] == "Prop"
         assert params["outputFolder"] == "Assets/Props"
         assert set(params.keys()).issubset(ALLOWED_KEYS)
+
+
+@pytest.mark.parametrize("selector", ["nested/model.obj", r"nested\model.obj"])
+def test_archive_selector_mapping(selector):
+    _, sent = _call_tool(action="import", uid="owned", archive_model_path=selector)
+    assert _sent_params(sent) == {
+        "action": "import",
+        "uid": "owned",
+        "archiveModelPath": selector.replace("\\", "/"),
+    }
+
+
+@pytest.mark.parametrize("selector", ["", "../model.obj", "/model.obj", "texture.png", "x\x00.obj"])
+def test_archive_selector_invalid_before_transport(selector):
+    with patch.object(
+        import_model_module, "get_unity_instance_from_context", new=AsyncMock()
+    ) as context:
+        with patch.object(import_model_module, "send_with_unity_instance", new=AsyncMock()) as send:
+            result = asyncio.run(
+                import_model(MagicMock(), action="import", uid="owned", archive_model_path=selector)
+            )
+    assert result["success"] is False
+    assert result["data"]["model_import_error_code"] == "archive_model_path_invalid"
+    context.assert_not_awaited()
+    send.assert_not_awaited()
+
+
+def test_archive_selector_cli(cli_runner):
+    result, command = cli_runner(
+        ["import-model", "--uid", "owned", "--archive-model-path", "nested/model.obj"]
+    )
+    assert result.exit_code == 0, result.output
+    assert command.call_args.args[:2] == (
+        COMMAND,
+        {"action": "import", "uid": "owned", "archiveModelPath": "nested/model.obj"},
+    )
+
+
+@pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize("success", [True, False])
+def test_archive_selection_evidence_through_registered_sdk(protocol, success):
+    async def exercise():
+        entry = next(tool for tool in get_registered_tools() if tool["name"] == COMMAND)
+        server = FastMCP("marketplace-archive-contract")
+        wrapped = log_execution(COMMAND, "Tool")(entry["func"])
+        server.tool(name=entry["name"], description=entry["description"], **entry["kwargs"])(
+            telemetry_tool(COMMAND)(wrapped)
+        )
+        response = {
+            "success": success,
+            "data": {
+                "asset_path": "Assets/Owned/archive.zip",
+                "asset_guid": "owned-guid",
+                "model_import_stage": "registered",
+                "archive_selection": {
+                    "requested_path": "main/model.obj",
+                    "candidates": ["main/model.obj", "preview.obj"],
+                    "candidates_complete": True,
+                },
+            },
+        }
+        if not success:
+            response["error"] = "Owned missing selection"
+            response["data"]["model_import_error_code"] = "archive_model_not_found"
+        with patch.object(
+            import_model_module,
+            "get_unity_instance_from_context",
+            new=AsyncMock(return_value="owned"),
+        ):
+            with patch.object(
+                import_model_module,
+                "send_with_unity_instance",
+                new=AsyncMock(return_value=response),
+            ) as send:
+                async with Client(server, mode=protocol) as client:
+                    result = await client.call_tool(
+                        COMMAND,
+                        {
+                            "action": "import",
+                            "uid": "owned",
+                            "archive_model_path": "main/model.obj",
+                        },
+                    )
+                assert result.structured_content == response
+                assert send.call_args.args[3] == {
+                    "action": "import",
+                    "uid": "owned",
+                    "archiveModelPath": "main/model.obj",
+                }
+
+    asyncio.run(exercise())

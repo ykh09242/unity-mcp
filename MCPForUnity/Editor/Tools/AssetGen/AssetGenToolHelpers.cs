@@ -37,6 +37,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
+                            archive_selection = job.ArchiveSelection,
                             progress = 1f,
                         }
                     );
@@ -49,6 +50,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
+                            archive_selection = job.ArchiveSelection,
                             model_import_error_code = job.ModelImportErrorCode,
                         }
                     );

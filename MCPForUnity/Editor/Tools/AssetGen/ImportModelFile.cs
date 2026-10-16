@@ -29,6 +29,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             var p = new ToolParams(@params);
             try
             {
+                string archiveModelPath = ModelArchiveSelection.ReadSelector(p.GetRaw("archiveModelPath"));
                 string source = p.Get("sourcePath");
                 if (string.IsNullOrWhiteSpace(source))
                     return new ErrorResponse("'source_path' is required.");
@@ -41,11 +42,19 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 if (Array.IndexOf(SupportedExt, ext) < 0)
                     return new ErrorResponse($"Unsupported model extension '{ext}'. Supported: .fbx, .obj, .glb, .gltf, .zip.");
 
+                if (archiveModelPath != null && ext != ".zip")
+                    throw new ArchiveSelectionException("archive_selector_requires_zip", "archive_model_path applies only to ZIP archives.");
+
                 string baseName = p.Get("name");
                 if (string.IsNullOrWhiteSpace(baseName))
                     baseName = Path.GetFileNameWithoutExtension(srcAbs);
 
-                var job = new AssetGenJob { TargetSize = p.GetFloat("targetSize", 1f) ?? 1f, AnimationType = p.Get("animationType") };
+                var job = new AssetGenJob
+                {
+                    TargetSize = p.GetFloat("targetSize", 1f) ?? 1f,
+                    AnimationType = p.Get("animationType"),
+                    ArchiveModelPath = archiveModelPath,
+                };
                 string destRel;
                 string bundleRoot = null;
                 JObject dependencyEvidence;
@@ -82,6 +91,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             model_import_stage = result?.ModelImportStage,
                             model_import_error_code = result?.ModelImportErrorCode,
                             dependency_bundle = dependencyEvidence,
+                            archive_selection = result?.ArchiveSelection,
                         }
                     );
 
@@ -93,8 +103,13 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         asset_guid = result.AssetGuid,
                         model_import_stage = result.ModelImportStage,
                         dependency_bundle = dependencyEvidence,
+                        archive_selection = result.ArchiveSelection,
                     }
                 );
+            }
+            catch (ArchiveSelectionException e)
+            {
+                return new ErrorResponse(SecretRedactor.Scrub(e.Message), new { model_import_error_code = e.ErrorCode });
             }
             catch (BundleImportException e)
             {

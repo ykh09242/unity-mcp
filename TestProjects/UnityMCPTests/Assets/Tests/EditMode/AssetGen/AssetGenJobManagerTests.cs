@@ -126,6 +126,97 @@ namespace MCPForUnityTests.Editor.AssetGen
             }
         }
 
+        [TestCase(true)]
+        [TestCase(false)]
+        public void ArchiveSelector_PropagatesToImportAndStatus(bool valid)
+        {
+            const string key = "MCPFORUNITY_SKETCHFAB_API_KEY";
+            Environment.SetEnvironmentVariable(key, "owned-archive-key");
+            try
+            {
+                string observed = null;
+                var evidence = new JObject
+                {
+                    ["archive_path"] = TestFolder + "/archive.zip",
+                    ["requested_path"] = "main/model.obj",
+                    ["selected_path"] = "main/model.obj",
+                    ["candidates"] = new JArray("main/model.obj", "preview.obj"),
+                    ["candidates_complete"] = true,
+                    ["extraction"] = "complete",
+                };
+                AssetGenJobManager.ImportOverrideForTests = (job, path) =>
+                {
+                    observed = (string)JObject.FromObject(job)["ArchiveModelPath"];
+                    typeof(AssetGenJob).GetField("ArchiveSelection")?.SetValue(job, evidence.DeepClone());
+                    job.AssetPath = path;
+                    if (!valid)
+                    {
+                        job.State = AssetGenJobState.Failed;
+                        job.Error = "owned importer rejection";
+                        job.ModelImportErrorCode = "unusable_model";
+                    }
+                    return job;
+                };
+                byte[] payload = ModelArchiveSelectionTests.ArchiveBytes(
+                    ("main/model.obj", System.Text.Encoding.UTF8.GetBytes(ModelImportPipelineTests.TriangleObj))
+                );
+                _fake.Handler = spec =>
+                    spec.DownloadProvider == null
+                        ? Json("{\"gltf\":{\"url\":\"https://sketchfab-prod-media.s3.amazonaws.com/owned/archive.zip\"}}")
+                        : new HttpResult
+                        {
+                            Status = 200,
+                            IsSuccess = true,
+                            Body = payload,
+                        };
+                var method = typeof(AssetGenJobManager).GetMethod(nameof(AssetGenJobManager.StartMarketplaceImport));
+                object[] args =
+                    method.GetParameters().Length == 5
+                        ? new object[] { "owned-archive", 0f, "archive", TestFolder, "main/model.obj" }
+                        : new object[] { "owned-archive", 0f, "archive", TestFolder };
+                var result = (AssetGenJob)method.Invoke(null, args);
+                Pump(result.JobId);
+                Assert.AreEqual("main/model.obj", observed, result.State + ": " + result.Error);
+                Assert.AreEqual(valid ? AssetGenJobState.Done : AssetGenJobState.Failed, result.State);
+                JObject saved = JObject.Parse(SessionState.GetString("MCPForUnity.AssetGen.Job." + result.JobId, ""));
+                Assert.IsTrue(JToken.DeepEquals(evidence, saved["ArchiveSelection"]));
+                var request = new JObject { ["action"] = "status", ["job_id"] = result.JobId };
+                JObject marketplace = JObject.FromObject(ImportModel.HandleCommand(request).GetAwaiter().GetResult());
+                Assert.IsTrue(JToken.DeepEquals(evidence, marketplace["data"]["archive_selection"]));
+                JObject generation = JObject.FromObject(GenerateModel.HandleCommand(request));
+                Assert.IsTrue(JToken.DeepEquals(evidence, generation["data"]["archive_selection"]));
+                Assert.AreEqual(2, _fake.RecordedRequests.Count);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(key, null);
+            }
+        }
+
+        [TestCase("../model.obj")]
+        [TestCase("")]
+        [TestCase("model.png")]
+        public void ArchiveSelector_InvalidDoesNotSubmit(string selector)
+        {
+            const string key = "MCPFORUNITY_SKETCHFAB_API_KEY";
+            Environment.SetEnvironmentVariable(key, "owned-archive-key");
+            try
+            {
+                var method = typeof(AssetGenJobManager).GetMethod(nameof(AssetGenJobManager.StartMarketplaceImport));
+                object[] args =
+                    method.GetParameters().Length == 5
+                        ? new object[] { "owned-archive", 0f, "archive", TestFolder, selector }
+                        : new object[] { "owned-archive", 0f, "archive", TestFolder };
+                Assert.Throws<System.Reflection.TargetInvocationException>(() => method.Invoke(null, args));
+                Assert.IsEmpty(AssetGenJobManager.RecentJobs());
+                Assert.IsEmpty(_fake.RecordedRequests);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(key, null);
+            }
+        }
+
         private static AudioGenRequest AudioReq() =>
             new AudioGenRequest
             {

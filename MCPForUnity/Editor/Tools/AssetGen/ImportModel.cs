@@ -6,6 +6,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
+using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
 using Newtonsoft.Json.Linq;
 
@@ -56,6 +57,10 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     default:
                         return new ErrorResponse($"Unknown action: '{action}'. Supported: search, preview, import, status, cancel, list_providers.");
                 }
+            }
+            catch (ArchiveSelectionException e)
+            {
+                return new ErrorResponse(SecretRedactor.Scrub(e.Message), new { model_import_error_code = e.ErrorCode });
             }
             catch (NotSupportedException nse)
             {
@@ -114,6 +119,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
 
         private static object Import(ToolParams p)
         {
+            string archiveModelPath = ModelArchiveSelection.ReadSelector(p.GetRaw("archiveModelPath"));
             string uid = p.Get("uid");
             if (string.IsNullOrWhiteSpace(uid))
                 return new ErrorResponse("'uid' is required for import.");
@@ -127,7 +133,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 return new ErrorResponse("'output_folder' must resolve under the project's Assets folder.");
             }
 
-            AssetGenJob job = AssetGenJobManager.StartMarketplaceImport(uid, targetSize, name, outputFolder);
+            AssetGenJob job = AssetGenJobManager.StartMarketplaceImport(uid, targetSize, name, outputFolder, archiveModelPath);
             if (job.State == AssetGenJobState.Failed)
                 return new ErrorResponse(job.Error ?? "Failed to start import.");
 
@@ -163,6 +169,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
+                            archive_selection = job.ArchiveSelection,
                             progress = 1f,
                         }
                     );
@@ -175,6 +182,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
+                            archive_selection = job.ArchiveSelection,
                             model_import_error_code = job.ModelImportErrorCode,
                         }
                     );

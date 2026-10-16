@@ -9,6 +9,7 @@ using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -46,6 +47,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
         // Null means this job has not reached model import; usable does not certify materials, rigs or rendering.
         public string ModelImportStage;
         public string ModelImportErrorCode;
+        public string ArchiveModelPath;
+        public JObject ArchiveSelection;
         public string Error;
     }
 
@@ -259,13 +262,15 @@ namespace MCPForUnity.Editor.Services.AssetGen
             return job;
         }
 
-        public static AssetGenJob StartMarketplaceImport(string uid, float targetSize, string name, string outputFolder)
+        public static AssetGenJob StartMarketplaceImport(string uid, float targetSize, string name, string outputFolder, string archiveModelPath = null)
         {
+            archiveModelPath = ModelArchiveSelection.NormalizeSelector(archiveModelPath);
             if (string.IsNullOrEmpty(uid))
                 throw new ArgumentException("uid required");
             outputFolder = AssetGenPaths.ResolveOutputFolder(outputFolder, "Sketchfab");
             var adapter = AssetGenProviders.Marketplace("sketchfab"); // throws NotSupported if unimplemented
             var job = NewJob("marketplace", "sketchfab", "import");
+            job.ArchiveModelPath = archiveModelPath;
             job.TargetSize = targetSize;
             if (!TryResolveKey("sketchfab", job, out string apiKey))
                 return job;

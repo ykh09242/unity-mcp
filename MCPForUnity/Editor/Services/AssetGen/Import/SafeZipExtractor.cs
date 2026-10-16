@@ -28,6 +28,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             Action<string> ensureDirectory = null
         ) => ExtractTo(zipPath, destDir, allowedExtensions, cancellationToken, 4096, 512L * 1024 * 1024, 2L * 1024 * 1024 * 1024, 200, ensureDirectory);
 
+        internal static void ExtractToWithInspection(
+            string zipPath,
+            string destDir,
+            ISet<string> allowedExtensions,
+            Action<ZipArchive> inspectArchive,
+            Action<string> ensureDirectory
+        ) => ExtractTo(zipPath, destDir, allowedExtensions, default, 4096, 512L * 1024 * 1024, 2L * 1024 * 1024 * 1024, 200, ensureDirectory, inspectArchive);
+
         internal static void ExtractTo(
             string zipPath,
             string destDir,
@@ -37,7 +45,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             long maxEntryBytes,
             long maxTotalBytes,
             int maxRatio,
-            Action<string> ensureDirectory = null
+            Action<string> ensureDirectory = null,
+            Action<ZipArchive> inspectArchive = null
         )
         {
             if (string.IsNullOrEmpty(zipPath))
@@ -65,6 +74,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         throw new IOException("Archive exceeds the compression ratio limit.");
                     declaredTotal += entry.Length;
                 }
+                inspectArchive?.Invoke(archive); // Same bounded archive; selection can reject before any extracted file is written.
                 long totalWritten = 0;
                 var createdFiles = new List<string>();
                 // Asset imports share their outer folder scope, including explicit directory entries.

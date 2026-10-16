@@ -20,6 +20,34 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
 
+def _normalize_archive_model_path(value: str | None) -> str | None:
+    """Cheap syntax check; C# validates the actual bounded archive before extraction."""
+    if value is None:
+        return None
+    message = (
+        "archive_model_path must be an exact relative .fbx/.obj/.glb/.gltf entry path "
+        "without traversal, URLs or wildcards (at most 512 UTF-8 bytes and 32 segments)."
+    )
+    if not isinstance(value, str):
+        raise ValueError(message)
+    path = value.replace("\\", "/")
+    segments = path.split("/")
+    try:
+        invalid = (
+            not path.strip()
+            or any(c in ':*?"<>|' or ord(c) < 32 or 127 <= ord(c) <= 159 for c in path)
+            or any(part in ("", ".", "..") for part in segments)
+            or PurePosixPath(path).suffix.lower() not in {".fbx", ".obj", ".glb", ".gltf"}
+            or len(path.encode("utf-8")) > 512
+            or len(segments) > 32
+        )
+    except UnicodeEncodeError as error:
+        raise ValueError(message) from error
+    if invalid:
+        raise ValueError(message)
+    return path
+
+
 @mcp_for_unity_tool(
     group="asset_gen",
     description=(
@@ -30,7 +58,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "and no file bytes over the bridge.\n\n"
         "Params: source_path (Assets-relative path, or an absolute path physically within this Unity project's Assets, "
         "to a .fbx/.obj/.glb/.gltf/.zip; traversal and symbolic links/junctions are rejected), "
-        "name, output_folder (under Assets/), target_size, animation_type. "
+        "name, output_folder (under Assets/), target_size, animation_type, archive_model_path (ZIP only). "
         "Success returns { asset_path, asset_guid, model_import_stage: 'usable' } after Unity loads "
         "a hierarchy containing indexed mesh geometry. This does not certify materials, rigs or rendering. "
         "Failed imports may retain staged bytes and return asset_path, asset_guid, model_import_stage "
@@ -55,7 +83,13 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "copy counts. Partial output can remain after a write failure; staged does not mean usable. "
         "GLB core external resources are rejected: export core text glTF with its files or a "
         "self-contained GLB. Embedded GLB extensions are preserved with explicitly limited inspection. "
-        "FBX dependencies are not scanned; ZIP keeps its existing archive import behavior."
+        "FBX dependencies are not scanned. For ZIP, archive_model_path selects an exact case-sensitive "
+        "relative entry (backslashes normalize to slashes). Omit it for FBX/OBJ first, then GLB/glTF, "
+        "with ordinal path ordering within each group. Selection is limited to 128 models, 512 UTF-8 "
+        "bytes per path and 32 segments; extraction retains its existing byte/entry limits. "
+        "archive_selection reports complete candidates, chosen paths and extraction state. Missing, "
+        "conflicting or over-limit selections fail; an unusable selected model never falls back to another. "
+        "All allowed archive files are extracted/imported; the selector determines the returned model."
     ),
     annotations=ToolAnnotations(
         title="Import Model File",
@@ -91,7 +125,30 @@ async def import_model_file(
         "omitted or 'none' imports no rig. Ignored for glTF/GLB.",
     ]
     | None = None,
+    archive_model_path: Annotated[
+        str,
+        "ZIP only: exact case-sensitive relative model entry. Omit for deterministic FBX/OBJ-first selection; "
+        "no basename search or fallback. At most 512 UTF-8 bytes and 32 segments.",
+    ]
+    | None = None,
 ) -> dict[str, Any]:
+    try:
+        archive_model_path = _normalize_archive_model_path(archive_model_path)
+    except ValueError as error:
+        return {
+            "success": False,
+            "error": str(error),
+            "data": {"model_import_error_code": "archive_model_path_invalid"},
+        }
+    if (
+        archive_model_path is not None
+        and PurePosixPath(source_path.replace("\\", "/")).suffix.lower() != ".zip"
+    ):
+        return {
+            "success": False,
+            "error": "archive_model_path applies only to ZIP archives.",
+            "data": {"model_import_error_code": "archive_selector_requires_zip"},
+        }
     source = source_path.replace("\\", "/")
     windows_path = PureWindowsPath(source)
     if (
@@ -122,6 +179,7 @@ async def import_model_file(
         "outputFolder": output_folder,
         "targetSize": target_size,
         "animationType": animation_type,
+        "archiveModelPath": archive_model_path,
     }
     params_dict = {k: v for k, v in params_dict.items() if v is not None}
 

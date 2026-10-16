@@ -152,12 +152,18 @@ def generate_model(
 )
 @click.option("--name", default=None, help="Base name for the imported asset.")
 @click.option("--output-folder", default=None, help="Destination folder under Assets/.")
+@click.option(
+    "--archive-model-path",
+    default=None,
+    help="Exact case-sensitive ZIP model entry; omit for deterministic FBX/OBJ-first selection.",
+)
 @handle_unity_errors
 def import_model(
     uid: str,
     target_size: Optional[float],
     name: Optional[str],
     output_folder: Optional[str],
+    archive_model_path: Optional[str],
 ):
     """Import a 3D model from the Sketchfab marketplace by uid.
 
@@ -173,6 +179,7 @@ def import_model(
         "targetSize": target_size,
         "name": name,
         "outputFolder": output_folder,
+        "archiveModelPath": archive_model_path,
     }
     params.update({k: v for k, v in optional.items() if v is not None})
 
@@ -200,14 +207,22 @@ def import_model(
     help="FBX/OBJ rig mode: generic/humanoid surface animation clips; "
     "legacy selects Unity's legacy Animation system (glTF ignores this).",
 )
+@click.option(
+    "--archive-model-path",
+    default=None,
+    help="Exact case-sensitive ZIP model entry; omit for deterministic FBX/OBJ-first selection.",
+)
 @handle_unity_errors
-def import_model_file(source_path, name, output_folder, target_size, animation_type):
+def import_model_file(
+    source_path, name, output_folder, target_size, animation_type, archive_model_path
+):
     """Import a 3D model file already within this Unity project's Assets folder."""
     config = get_config()
     params = {
         "sourcePath": source_path,
         "name": name,
         "outputFolder": output_folder,
+        "archiveModelPath": archive_model_path,
         "targetSize": target_size,
         "animationType": animation_type,
     }
