@@ -18,8 +18,8 @@ namespace MCPForUnity.Editor.Tools
                     || parameters["cursor"] != null && parameters["cursor"].Type != JTokenType.String
                 )
                     return new ErrorResponse("Expected job_id/format strings and optional cursor string.");
-                var job = TestJobManager.GetJob((string)parameters["job_id"]);
-                if (job?.CompletionKind != "completed" || job.ResultArtifact == null)
+                var job = TestJobManager.GetCompletedJobForExport((string)parameters["job_id"]);
+                if (job == null)
                     return new ErrorResponse("Test result details are unavailable.");
                 // Lifecycle fields belong to the typed job, not optional persisted attribution.
                 job.ResultArtifact["status"] = job.Status.ToString().ToLowerInvariant();

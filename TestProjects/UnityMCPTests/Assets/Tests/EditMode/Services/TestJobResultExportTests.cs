@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Xml;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
@@ -14,6 +15,112 @@ namespace MCPForUnityTests.Editor.Services
 {
     public class TestJobResultExportTests
     {
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        public void PublicExportOfUnfinishedJobPreservesLifecycleAndPendingAdmission(bool pendingAdmission, bool contradictoryArtifact)
+        {
+            const BindingFlags privateStatic = BindingFlags.NonPublic | BindingFlags.Static;
+            const string jobsKey = "MCPForUnity.TestJobsV1";
+            const string currentKey = "MCPForUnity.CurrentTestJobIdV1";
+            var manager = typeof(TestJobManager);
+            var runner = typeof(TestRunnerService);
+            var jobs = (Dictionary<string, TestJob>)manager.GetField("Jobs", privateStatic).GetValue(null);
+            var originalJobs = new Dictionary<string, TestJob>(jobs);
+            object originalCurrent = manager.GetField("_currentJobId", privateStatic).GetValue(null);
+            object originalPersist = manager.GetField("_lastPersistUnixMs", privateStatic).GetValue(null);
+            object originalStore = manager.GetField("ResultStoreOverride", privateStatic).GetValue(null);
+            object originalOwner = runner.GetField("_activeRunOwner", privateStatic).GetValue(null);
+            var originalStatus = typeof(TestRunStatus)
+                .GetFields(privateStatic)
+                .Where(field => !field.IsInitOnly)
+                .ToDictionary(field => field, field => field.GetValue(null));
+            string originalSessionJobs = SessionState.GetString(jobsKey, "");
+            string originalSessionCurrent = SessionState.GetString(currentKey, "");
+            string root = Path.Combine(Path.GetTempPath(), "mcp-readonly-export-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            object admission = null;
+            object admissions = runner.GetField("PendingRunAdmissions", privateStatic).GetValue(null);
+            using var cancellation = new CancellationTokenSource();
+            try
+            {
+                // The regression exercises real pending cancellation, without giving RED a
+                // native run owner whose retirement could restore global Editor preferences.
+                runner.GetField("_activeRunOwner", privateStatic).SetValue(null, null);
+                object store = TestJobResultStoreTests.NewStore(root);
+                manager.GetField("ResultStoreOverride", privateStatic).SetValue(null, store);
+                long started = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 60_000;
+                var job = new TestJob
+                {
+                    JobId = TestJobResultStoreTests.JobId,
+                    Status = TestJobStatus.Running,
+                    Mode = "EditMode",
+                    StartedUnixMs = started,
+                    LastUpdateUnixMs = started,
+                    InitTimeoutMs = 1,
+                    TotalTests = contradictoryArtifact ? 10 : null,
+                };
+                if (contradictoryArtifact)
+                {
+                    job.CompletionKind = "completed";
+                    job.ResultArtifact = (JObject)TestJobResultStoreTests.Call(store, "Save", job.JobId, job.Mode, TestJobResultStoreTests.Result(10), started);
+                }
+                jobs.Clear();
+                jobs.Add(job.JobId, job);
+                manager.GetField("_currentJobId", privateStatic).SetValue(null, job.JobId);
+                TestRunStatus.MarkStarted(UnityEditor.TestTools.TestRunner.Api.TestMode.EditMode);
+                long? runningSince = TestRunStatus.StartedUnixMs;
+                if (pendingAdmission)
+                {
+                    Type type = runner.GetNestedType("PendingRunAdmission", BindingFlags.NonPublic);
+                    admission = Activator.CreateInstance(type, nonPublic: true);
+                    type.GetField("JobId", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(admission, job.JobId);
+                    type.GetField("Cancellation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(admission, cancellation);
+                    admissions.GetType().GetMethod("Add").Invoke(admissions, new[] { admission });
+                }
+                string before = JObject.FromObject(job).ToString();
+                string[] filesBefore = Directory.GetFiles(root, "*", SearchOption.AllDirectories);
+
+                JObject response = JObject.FromObject(
+                    MCPForUnity.Editor.Tools.ExportTestJob.HandleCommand(new JObject { ["job_id"] = job.JobId, ["format"] = "json" })
+                );
+
+                Assert.IsFalse((bool)response["success"], "Only a terminal, completed job can be exported.");
+                Assert.AreEqual("Test result details are unavailable.", (string)response["error"]);
+                Assert.AreEqual(before, JObject.FromObject(job).ToString(), "Export must not auto-fail an expired running job or repair unfinished metadata.");
+                Assert.AreEqual(job.JobId, TestJobManager.CurrentJobId);
+                Assert.IsTrue(TestRunStatus.IsRunning);
+                Assert.AreEqual(runningSince, TestRunStatus.StartedUnixMs);
+                Assert.IsNull(TestRunStatus.FinishedUnixMs);
+                Assert.IsFalse(cancellation.IsCancellationRequested, "An export query must not retire a pending test admission.");
+                Assert.AreEqual(originalSessionJobs, SessionState.GetString(jobsKey, ""));
+                Assert.AreEqual(originalSessionCurrent, SessionState.GetString(currentKey, ""));
+                Assert.AreEqual(originalPersist, manager.GetField("_lastPersistUnixMs", privateStatic).GetValue(null));
+                CollectionAssert.AreEquivalent(
+                    filesBefore,
+                    Directory.GetFiles(root, "*", SearchOption.AllDirectories),
+                    "A refused unfinished export must not create cache artifacts."
+                );
+            }
+            finally
+            {
+                if (admission != null)
+                    admissions.GetType().GetMethod("Remove").Invoke(admissions, new[] { admission });
+                runner.GetField("_activeRunOwner", privateStatic).SetValue(null, originalOwner);
+                manager.GetField("ResultStoreOverride", privateStatic).SetValue(null, originalStore);
+                manager.GetField("_currentJobId", privateStatic).SetValue(null, originalCurrent);
+                manager.GetField("_lastPersistUnixMs", privateStatic).SetValue(null, originalPersist);
+                jobs.Clear();
+                foreach (var entry in originalJobs)
+                    jobs.Add(entry.Key, entry.Value);
+                foreach (var entry in originalStatus)
+                    entry.Key.SetValue(null, entry.Value);
+                SessionState.SetString(jobsKey, originalSessionJobs);
+                SessionState.SetString(currentKey, originalSessionCurrent);
+                Directory.Delete(root, true);
+            }
+        }
+
         [Test]
         public void ReplacedCachedExportCannotAcquireANewTrustedDigestAfterRebind()
         {

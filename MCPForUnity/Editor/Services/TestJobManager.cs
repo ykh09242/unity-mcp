@@ -756,6 +756,26 @@ namespace MCPForUnity.Editor.Services
             PersistToSessionState(force: true);
         }
 
+        internal static TestJob GetCompletedJobForExport(string jobId)
+        {
+            if (string.IsNullOrWhiteSpace(jobId))
+                return null;
+
+            // Export observes completed results; polling's initialization timeout must not
+            // retire an active or pending run as a side effect of a read-only request.
+            lock (LockObj)
+            {
+                if (
+                    !Jobs.TryGetValue(jobId, out var job)
+                    || (job.Status != TestJobStatus.Succeeded && job.Status != TestJobStatus.Failed)
+                    || job.CompletionKind != "completed"
+                    || job.ResultArtifact == null
+                )
+                    return null;
+                return job;
+            }
+        }
+
         internal static TestJob GetJob(string jobId)
         {
             if (string.IsNullOrWhiteSpace(jobId))
