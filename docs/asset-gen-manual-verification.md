@@ -19,10 +19,21 @@ never deletes generated assets or output files.
 ## Tripo (default 3D, text→3D)
 
 - [ ] Enter the Tripo key in the **Asset Gen** tab.
-- [ ] `generate_model(provider=tripo, mode=text, prompt="a low-poly oak tree", format=fbx)`.
+- [ ] Ensure the optional GLB importer is available as described below.
+- [ ] `generate_model(provider=tripo, mode=text, prompt="a low-poly oak tree", format=glb)`.
 - [ ] Poll `generate_model(action=status, job_id=<id>)` until it reports done.
-- [ ] Confirm an FBX appears under `Assets/Generated/Models/`.
-- [ ] Confirm it imports cleanly **with materials**.
+- [ ] Confirm a GLB appears under `Assets/Generated/Models/`, status reports a `.glb` asset path,
+      and the imported model has usable geometry and materials.
+- [ ] Repeat with `texture=false` and `model=v3.1-20260211`; confirm the request produces
+      geometry without textures. The adapter sends both `texture=false` and `pbr=false`.
+- [ ] Request `format=fbx`, `format=obj`, or a nonblank `tier`: confirm a synchronous
+      unsupported-option error, no job ID, no provider submission, and no output file.
+- [ ] Request `texture=false` with `model=v1.4-20240625`: confirm the same early rejection.
+
+Tripo generation defaults to GLB with textures and no tier. Geometry-only generation is
+supported here for `v3.0-20250812`, `v3.1-20260211`, and `P1-20260311`. Other formats need
+Tripo's separate conversion task; this integration does not submit it. A GLB container
+check before saving does not establish usable mesh content or installed importer support.
 
 ## glTFast / GLB
 

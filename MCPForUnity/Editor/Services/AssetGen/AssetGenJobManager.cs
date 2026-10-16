@@ -657,6 +657,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     ext = actual;
                 r.Job.Format = ext;
             }
+            if (r.Job.Kind == "model" && string.Equals(r.Job.Provider, "tripo", StringComparison.OrdinalIgnoreCase))
+            {
+                ext = TripoAdapter.ValidateModelBytes(bytes, r.OverrideExt);
+                r.Job.Format = ext;
+            }
             string root = AssetGenPaths.ResolveOutputFolder(r.OutputFolder, r.Subfolder);
             using var folders = new AssetFolderScope();
             folders.EnsureFolder(root);

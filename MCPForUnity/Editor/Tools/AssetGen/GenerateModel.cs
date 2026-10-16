@@ -88,6 +88,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 req.Mode = "text";
             if (req.Mode != "text" && req.Mode != "image")
                 return new ErrorResponse("'mode' must be 'text' or 'image'.");
+            if (provider == "tripo")
+                TripoAdapter.ValidateOptions(req);
             if (!AssetGenPaths.NormalizeOutputFolder(req.OutputFolder, out req.OutputFolder, out string outputErr))
                 return new ErrorResponse(outputErr);
 

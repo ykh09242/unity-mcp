@@ -1,12 +1,15 @@
 using System;
 using System.IO;
+using System.Text;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
+using MCPForUnity.Editor.Services.AssetGen.Providers;
 using MCPForUnity.Editor.Tools.AssetGen;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 
 namespace MCPForUnityTests.Editor.AssetGen
@@ -40,7 +43,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             catch { }
             try
             {
-                Directory.Delete(Path.Combine(ProjectRoot(), "Assets/Generated/__assetgen_model_handler"), true);
+                const string fixtureRoot = "Assets/Generated/__assetgen_model_handler";
+                if (AssetDatabase.IsValidFolder(fixtureRoot))
+                    AssetDatabase.DeleteAsset(fixtureRoot);
+                string absoluteRoot = Path.Combine(ProjectRoot(), fixtureRoot);
+                if (Directory.Exists(absoluteRoot))
+                    Directory.Delete(absoluteRoot, true);
             }
             catch { }
         }
@@ -292,6 +300,170 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(1, AssetGenJobManager.RecentJobs().Count);
             AssetGenJobManager.TryAdvanceForTests((string)response["data"]["job_id"]);
             Assert.AreEqual(1, transport.RecordedRequests.Count);
+        }
+
+        private static JObject ContractRequest() =>
+            new JObject
+            {
+                ["action"] = "generate",
+                ["provider"] = "tripo",
+                ["model"] = TripoAdapter.ModelVersion,
+                ["prompt"] = "fixture",
+                ["name"] = "fixture",
+                ["output_folder"] = "Assets/Generated/__assetgen_model_handler/output",
+            };
+
+        [TestCase("format", "fbx")]
+        [TestCase("format", "obj")]
+        [TestCase("tier", "premium")]
+        [TestCase("model", "v1.4-20240625")]
+        public void Contract_UnsupportedOptionsRejectedBeforeJob(string key, string value)
+        {
+            _store.Set("tripo", "fixture-key");
+            JObject request = ContractRequest();
+            request[key] = value;
+            if (key == "model")
+                request["texture"] = false;
+            JObject response = Call(request);
+            Assert.AreEqual(false, (bool)response["success"]);
+            Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
+            Assert.AreEqual(0, ((FakeHttpTransport)AssetGenJobManager.TransportOverrideForTests).RecordedRequests.Count);
+            Assert.IsFalse(Directory.Exists(Path.Combine(ProjectRoot(), (string)request["output_folder"])));
+        }
+
+        [TestCase("tripo", null, null)]
+        [TestCase("tripo", "glb", null)]
+        [TestCase("tripo", " .GLB ", " ")]
+        [TestCase("meshy", "fbx", "premium")]
+        public void Contract_DefaultsAndOtherProviderOptionsStillStart(string provider, string format, string tier)
+        {
+            _store.Set(provider, "fixture-key");
+            JObject request = ContractRequest();
+            request["provider"] = provider;
+            request["model"] = provider == "tripo" ? TripoAdapter.ModelVersion : "meshy-6";
+            if (format != null)
+                request["format"] = format;
+            if (tier != null)
+                request["tier"] = tier;
+            JObject response = Call(request);
+            Assert.AreEqual(true, (bool)response["success"], response.ToString());
+            AssetGenJob job = AssetGenJobManager.GetJob((string)response["data"]["job_id"]);
+            Assert.AreEqual(provider == "tripo" ? "glb" : "fbx", job.Format);
+            Assert.AreEqual(0, ((FakeHttpTransport)AssetGenJobManager.TransportOverrideForTests).RecordedRequests.Count);
+        }
+
+        private static byte[] ContractGlb(string document = "{\"asset\":{\"version\":\"2.0\"}}")
+        {
+            byte[] json = Encoding.UTF8.GetBytes(document + new string(' ', (4 - Encoding.UTF8.GetByteCount(document) % 4) % 4));
+            using var stream = new MemoryStream();
+            using var writer = new BinaryWriter(stream);
+            writer.Write(0x46546C67u);
+            writer.Write(2u);
+            writer.Write((uint)(20 + json.Length));
+            writer.Write((uint)json.Length);
+            writer.Write(0x4E4F534Au);
+            writer.Write(json);
+            return stream.ToArray();
+        }
+
+        [TestCase("single-quotes", false)]
+        [TestCase("comments", false)]
+        [TestCase("trailing-comma", false)]
+        [TestCase("escapes", true)]
+        [TestCase("unicode", true)]
+        public void Contract_SaveRequiresStrictJson(string kind, bool valid) => Contract_SaveRequiresGlbBytesBeforeCreatingOutput(kind, "model.glb", valid);
+
+        [TestCase("glb", "model.glb?signature=hidden.obj", true)]
+        [TestCase("glb", "download?id=model.fbx", true)]
+        [TestCase("html", "model.glb", false)]
+        [TestCase("obj", "model.glb", false)]
+        [TestCase("length", "model.glb", false)]
+        [TestCase("json", "download", false)]
+        [TestCase("glb", "model.fbx", false)]
+        public void Contract_SaveRequiresGlbBytesBeforeCreatingOutput(string bytesKind, string path, bool valid)
+        {
+            _store.Set("tripo", "fixture-key");
+            byte[] bytes = ContractGlb();
+            if (bytesKind == "single-quotes")
+                bytes = ContractGlb("{'asset':{'version':'2.0'}}");
+            if (bytesKind == "comments")
+                bytes = ContractGlb("{\"asset\":{/* comment */\"version\":\"2.0\"}}");
+            if (bytesKind == "trailing-comma")
+                bytes = ContractGlb("{\"asset\":{\"version\":\"2.0\",}}");
+            if (bytesKind == "escapes")
+                bytes = ContractGlb(
+                    "{\"asset\":{\"version\":\"2.0\"},\"extras\":{\"label\":\"quote: \\\" slash: \\\\ newline: \\n rocket: \\uD83D\\uDE80\",\"values\":[null,true,false,0,-2,1.5,1e-3,[],{}]}}"
+                );
+            if (bytesKind == "unicode")
+                bytes = ContractGlb("{\"asset\":{\"version\":\"2.0\"},\"extras\":{\"label\":\"Ω🚀\"}}");
+            if (bytesKind == "html")
+                bytes = Encoding.UTF8.GetBytes("<html>provider error</html>");
+            if (bytesKind == "obj")
+                bytes = Encoding.UTF8.GetBytes("v 0 0 0\nv 1 0 0\nf 1 2 3\n");
+            if (bytesKind == "length")
+                bytes[8]++;
+            if (bytesKind == "json")
+                bytes[20] = (byte)'!';
+            var http = new FakeHttpTransport
+            {
+                Handler = spec =>
+                {
+                    if (spec.Method == "POST")
+                        return new HttpResult
+                        {
+                            Status = 200,
+                            IsSuccess = true,
+                            Text = "{\"code\":0,\"data\":{\"task_id\":\"fixture\"}}",
+                        };
+                    if (spec.Url.Contains("/v2/openapi/task/"))
+                        return new HttpResult
+                        {
+                            Status = 200,
+                            IsSuccess = true,
+                            Text = new JObject
+                            {
+                                ["code"] = 0,
+                                ["data"] = new JObject
+                                {
+                                    ["status"] = "success",
+                                    ["output"] = new JObject { ["model"] = "https://tripo-data.rg1.data.tripo3d.com/" + path },
+                                },
+                            }.ToString(),
+                        };
+                    return new HttpResult
+                    {
+                        Status = 200,
+                        IsSuccess = true,
+                        Body = bytes,
+                    };
+                },
+            };
+            AssetGenJobManager.TransportOverrideForTests = http;
+            AssetGenJobManager.PollIntervalSeconds = 0;
+            AssetGenJobManager.ImportOverrideForTests = (job, assetPath) =>
+            {
+                job.AssetPath = assetPath;
+                return job;
+            };
+            AssetGenJobManager.SkipModelVerificationForTests = true;
+            string source = WriteProjectFile("Assets/Generated/__assetgen_model_handler/source.bin", new byte[] { 1, 2, 3 });
+            JObject request = ContractRequest();
+            JObject response = Call(request);
+            Assert.AreEqual(true, (bool)response["success"]);
+            string id = (string)response["data"]["job_id"];
+            for (int i = 0; i < 30 && !AssetGenJobManager.TryAdvanceForTests(id); i++) { }
+            AssetGenJob result = AssetGenJobManager.GetJob(id);
+            Assert.AreEqual(valid ? AssetGenJobState.Done : AssetGenJobState.Failed, result.State, result.Error);
+            CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Path.Combine(ProjectRoot(), source)));
+            string output = Path.Combine(ProjectRoot(), (string)request["output_folder"]);
+            if (valid)
+            {
+                Assert.AreEqual("glb", result.Format);
+                StringAssert.EndsWith(".glb", result.AssetPath);
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(Path.Combine(ProjectRoot(), result.AssetPath)));
+            }
+            else
+                Assert.IsFalse(Directory.Exists(output), "Invalid artifacts must fail before output folder creation.");
         }
     }
 }
