@@ -111,6 +111,27 @@ class MilestoneType(str, Enum):
     WEEKLY_ACTIVE_USER = "weekly_active_user"
 
 
+class TelemetryOutcome(str, Enum):
+    """Fixed execution dimensions; response and exception text never become labels."""
+
+    SUCCESS = "success"
+    DOMAIN_ERROR = "domain_error"
+    EXCEPTION = "exception"
+    CANCELED = "canceled"
+    TIMEOUT = "timeout"
+    OUTCOME_UNKNOWN = "outcome_unknown"
+
+
+def _outcome_label(outcome: TelemetryOutcome | str) -> str:
+    if isinstance(outcome, TelemetryOutcome):
+        return outcome.value
+    if type(outcome) is str:
+        for known in TelemetryOutcome:
+            if outcome == known.value:
+                return known.value
+    return TelemetryOutcome.OUTCOME_UNKNOWN.value
+
+
 def _error_class(error: object) -> str:
     """Return fixed diagnostic labels without formatting caller-controlled errors."""
     classes = (
@@ -559,6 +580,8 @@ def record_tool_usage(
     duration_ms: float,
     error: Exception | str | None = None,
     sub_action: str | None = None,
+    *,
+    outcome: TelemetryOutcome | str | None = None,
 ):
     """Record tool usage telemetry
 
@@ -568,8 +591,11 @@ def record_tool_usage(
         duration_ms: Execution duration in milliseconds.
         error: Optional exception or stable class label; messages are never sent.
         sub_action: Only labels from the registered built-in action contract are emitted.
+        outcome: Optional fixed execution classification; unknown labels are discarded.
     """
     data = {"tool_name": tool_name, "success": success, "duration_ms": round(duration_ms, 2)}
+    if outcome is not None:
+        data["outcome"] = _outcome_label(outcome)
 
     label = tool_action_label(tool_name, sub_action)
     if label is not None:
@@ -582,7 +608,12 @@ def record_tool_usage(
 
 
 def record_resource_usage(
-    resource_name: str, success: bool, duration_ms: float, error: Exception | str | None = None
+    resource_name: str,
+    success: bool,
+    duration_ms: float,
+    error: Exception | str | None = None,
+    *,
+    outcome: TelemetryOutcome | str | None = None,
 ):
     """Record resource usage telemetry
 
@@ -591,12 +622,15 @@ def record_resource_usage(
         success: Whether the resource completed successfully.
         duration_ms: Execution duration in milliseconds.
         error: Optional exception or stable class label; messages are never sent.
+        outcome: Optional fixed execution classification; unknown labels are discarded.
     """
     data = {
         "resource_name": resource_name,
         "success": success,
         "duration_ms": round(duration_ms, 2),
     }
+    if outcome is not None:
+        data["outcome"] = _outcome_label(outcome)
 
     if error:
         data["error"] = _error_class(error)

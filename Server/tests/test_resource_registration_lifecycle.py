@@ -58,7 +58,7 @@ from services.registry.resource_registry import (
 clear_resource_registry()
 resources.discover_modules = lambda *args: ()
 events = []
-telemetry.record_resource_usage = lambda name, success, duration, error: events.append((name, success))
+telemetry.record_resource_usage = lambda name, success, duration, error, **kwargs: events.append((name, success))
 started = []
 class Starts(logging.Handler):
     def emit(self, record):
