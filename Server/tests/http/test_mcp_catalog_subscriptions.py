@@ -36,7 +36,7 @@ def catalog_wire(tmp_path_factory):
         yield WireServer(*server)
 
 
-def test_modern_discover_advertises_tools_notifications_only(catalog_wire):
+def test_modern_discover_advertises_supported_resource_notifications(catalog_wire):
     # Given: the actual authenticated production server, with no initialize handshake.
     url, _, token = catalog_wire
     with httpx.Client(headers={LOCAL_AUTH_HEADER: token}, trust_env=False, timeout=5) as client:
@@ -50,13 +50,13 @@ def test_modern_discover_advertises_tools_notifications_only(catalog_wire):
             json=_body("server/discover"),
         )
 
-    # Then: tool subscriptions are usable without advertising unimplemented resource events.
+    # Then: tools and fixed editor-state subscriptions are usable; list events stay declined.
     assert response.status_code == 200
     caps = response.json()["result"]["capabilities"]
     assert caps["tools"]["listChanged"] is True
     assert caps["prompts"].get("listChanged", False) is False
     assert caps["resources"].get("listChanged", False) is False
-    assert caps["resources"].get("subscribe", False) is False
+    assert caps["resources"]["subscribe"] is True
 
 
 class LegacyChanges(MessageHandler):
