@@ -248,7 +248,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
                 int sceneCountBefore = SceneManager.sceneCount;
                 a = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-                int ownedSceneHandle = a.handle;
+                var ownedSceneHandle = a.handle;
                 Assert.That(a.IsValid() && a.isLoaded && a.path.Length == 0 && a.rootCount == 0, Is.True);
                 Assert.That(ownedSceneHandle, Is.Not.EqualTo(previous.handle));
                 Assert.That(SceneManager.sceneCount, Is.EqualTo(sceneCountBefore + 1));
@@ -513,7 +513,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
                 int sceneCountBefore = SceneManager.sceneCount;
                 a = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-                int ownedSceneHandle = a.handle;
+                var ownedSceneHandle = a.handle;
                 Assert.That(a.IsValid() && a.isLoaded && a.path.Length == 0 && a.rootCount == 0, Is.True);
                 Assert.That(ownedSceneHandle, Is.Not.EqualTo(previous.handle));
                 Assert.That(SceneManager.sceneCount, Is.EqualTo(sceneCountBefore + 1));
