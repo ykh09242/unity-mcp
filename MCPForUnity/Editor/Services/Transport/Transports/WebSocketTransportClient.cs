@@ -1137,12 +1137,28 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 Command = command,
                 TimeoutSeconds = timeoutSeconds,
                 Deadline = deadline,
+                Timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.WebSocket),
             };
             string rejection = work.TryStart(commandId, previous => ExecuteQueuedCommandAsync(previous, request, token), request.Cancel);
             if (rejection != null)
             {
                 deadline.Dispose();
-                await SendCommandResultAsync(commandId, new { status = "error", error = rejection }, token).ConfigureAwait(false);
+                request.Timing?.ExecutionDone();
+                try
+                {
+                    await SendTimedCommandResultAsync(commandId, new { status = "error", error = rejection }, token, request.Timing).ConfigureAwait(false);
+                    request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
+                }
+                catch (OperationCanceledException)
+                {
+                    request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Canceled);
+                    throw;
+                }
+                catch
+                {
+                    request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Failed);
+                    throw;
+                }
             }
         }
 
@@ -1152,6 +1168,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             public Command Command;
             public int TimeoutSeconds;
             public CancellationTokenSource Deadline;
+            public CommandPhaseTiming Timing;
             private int _cancelRequested;
             public bool CancelRequested => Volatile.Read(ref _cancelRequested) != 0;
 
@@ -1165,6 +1182,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private async Task ExecuteQueuedCommandAsync(Task previous, QueuedCommand request, CancellationToken token)
         {
             TransportCommandOperation operation = null;
+            request.Timing?.Start(CommandPhaseTiming.Phase.Queue);
             try
             {
                 object response;
@@ -1172,7 +1190,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     await ConnectionCommandWork.WaitAsync(previous, request.Deadline.Token).ConfigureAwait(false);
                     request.Deadline.Token.ThrowIfCancellationRequested();
-                    operation = TransportCommandDispatcher.ExecuteCommandAsync(request.Command, request.Deadline.Token);
+                    operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(request.Command, request.Deadline.Token, null, request.Timing);
                     response = (await operation.Response.ConfigureAwait(false)).Payload;
                 }
                 catch (OperationCanceledException)
@@ -1190,11 +1208,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     response = new { status = "error", error = ex.Message };
                 }
-                await SendCommandResultAsync(request.Id, response, token).ConfigureAwait(false);
+                await SendTimedCommandResultAsync(request.Id, response, token, request.Timing).ConfigureAwait(false);
+                request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException)
+            {
+                request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Canceled);
+            }
             catch (Exception ex)
             {
+                request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Failed);
                 await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false);
             }
             finally
@@ -1207,13 +1230,26 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         await operation.Completion.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { }
+                request.Timing?.ExecutionDone();
                 request.Deadline.Dispose();
             }
         }
 
-        private Task SendCommandResultAsync(string id, object result, CancellationToken token)
+        private Task SendCommandResultAsync(string id, object result, CancellationToken token) => SendTimedCommandResultAsync(id, result, token, null);
+
+        private Task SendTimedCommandResultAsync(string id, object result, CancellationToken token, CommandPhaseTiming timing) =>
+            SendCommandResultCoreAsync(id, result, token, timing, SendFrameAsync);
+
+        private Task SendCommandResultCoreAsync(
+            string id,
+            object result,
+            CancellationToken token,
+            CommandPhaseTiming timing,
+            Func<ArraySegment<byte>, WebSocketMessageType, CancellationToken, Task> sendFrame
+        )
         {
             token.ThrowIfCancellationRequested();
+            timing?.Start(CommandPhaseTiming.Phase.Serialization);
             var responseJson = new LargeResultWriter.PreparedJson(
                 JsonConvert.SerializeObject(
                     new
@@ -1251,7 +1287,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             bool allowCompression =
                 _ownedConnection?.AllowCompression
                 ?? string.Equals(Environment.GetEnvironmentVariable("UNITY_MCP_RESULT_COMPRESSION"), "gzip", StringComparison.OrdinalIgnoreCase);
-            return LargeResultWriter.SendPreparedJsonAsync(id, responseJson, negotiated, SendFrameAsync, token, compressionNegotiated, allowCompression);
+            timing?.Stop(CommandPhaseTiming.Phase.Serialization);
+            timing?.Start(CommandPhaseTiming.Phase.Send);
+            var send = LargeResultWriter.SendPreparedJsonAsync(id, responseJson, negotiated, sendFrame, token, compressionNegotiated, allowCompression);
+            return timing == null ? send : CompleteTimedSendAsync(send, timing);
+        }
+
+        private static async Task CompleteTimedSendAsync(Task send, CommandPhaseTiming timing)
+        {
+            await send.ConfigureAwait(false);
+            timing.Stop(CommandPhaseTiming.Phase.Send);
         }
 
         private async Task KeepAliveLoopAsync(CancellationToken token)

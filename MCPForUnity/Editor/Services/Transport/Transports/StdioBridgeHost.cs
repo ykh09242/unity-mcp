@@ -29,6 +29,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public long EnqueuedAtMs;
         public int TimeoutMs;
         public CancellationToken OwnerCancellation;
+        public CommandPhaseTiming Timing;
 
         /// <summary>
         /// Connection that queued this command, used to tell a broker resend apart from a
@@ -766,6 +767,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                     while (isRunning && !token.IsCancellationRequested)
                     {
+                        CommandPhaseTiming timing = null;
                         try
                         {
                             string commandText = await ReadFrameAsUtf8Async(stream, FrameIOTimeoutMs, token).ConfigureAwait(false);
@@ -793,6 +795,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             // broker gave up waiting, reconnected and resent it. Running it a
                             // second time would duplicate side effects (issue #1130), so attach
                             // to the original instead of queueing a copy.
+                            timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.Stdio);
                             TaskCompletionSource<string> pending = tcs;
                             int commandTimeoutMs = ResolveCommandTimeoutMs(commandText, FrameIOTimeoutMs);
                             using var commandLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
@@ -803,6 +806,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 if (inFlight != null)
                                 {
                                     pending = inFlight.Tcs;
+                                    timing?.ExecutionDone();
                                     McpLog.Warn(
                                         "Suppressed duplicate command resent on a new connection; "
                                             + "awaiting the in-flight result instead of running it twice."
@@ -813,9 +817,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                     if (commandQueue.Count >= 128)
                                     {
                                         tcs.TrySetResult("{\"status\":\"error\",\"error\":\"Command queue capacity reached\"}");
+                                        timing?.ExecutionDone();
                                     }
                                     else
                                     {
+                                        timing?.Start(CommandPhaseTiming.Phase.Queue);
                                         commandQueue[commandId] = new QueuedCommand
                                         {
                                             CommandJson = commandText,
@@ -825,6 +831,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                             TimeoutMs = commandTimeoutMs,
                                             Owner = client,
                                             OwnerCancellation = commandLifetime.Token,
+                                            Timing = timing,
                                         };
                                     }
                                 }
@@ -858,13 +865,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                     int timeouts = Interlocked.Increment(ref _consecutiveTimeouts);
                                     McpLog.Warn($"Command TCS timed out ({timeouts} consecutive)");
                                     var timeoutResponse = new { status = "error", error = $"Command processing timed out after {commandTimeoutMs} ms" };
-                                    response = JsonConvert.SerializeObject(timeoutResponse);
+                                    response = SerializeTimedResponse(timeoutResponse, timing);
                                 }
                             }
                             catch (Exception ex)
                             {
                                 var errorResponse = new { status = "error", error = ex.Message };
-                                response = JsonConvert.SerializeObject(errorResponse);
+                                response = SerializeTimedResponse(errorResponse, timing);
                             }
                             finally
                             {
@@ -885,7 +892,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             byte[] responseBytes;
                             try
                             {
+                                timing?.Start(CommandPhaseTiming.Phase.Serialization);
                                 responseBytes = System.Text.Encoding.UTF8.GetBytes(response);
+                                timing?.Stop(CommandPhaseTiming.Phase.Serialization);
                             }
                             catch (Exception ex)
                             {
@@ -895,7 +904,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                             try
                             {
+                                timing?.Start(CommandPhaseTiming.Phase.Send);
                                 await WriteFrameAsync(stream, responseBytes);
+                                timing?.Stop(CommandPhaseTiming.Phase.Send);
+                                timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
                             }
                             catch (Exception ex)
                             {
@@ -922,6 +934,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             }
                             break;
                         }
+                        finally
+                        {
+                            timing?.DeliveryDone(
+                                connectionLifetime.IsCancellationRequested ? CommandPhaseTiming.Delivery.Canceled : CommandPhaseTiming.Delivery.Failed
+                            );
+                        }
                     }
                 }
                 finally
@@ -936,6 +954,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         foreach (var id in abandoned)
                         {
                             commandQueue[id].Tcs.TrySetCanceled(connectionLifetime.Token);
+                            commandQueue[id].Timing?.ExecutionDone();
                             commandQueue.Remove(id);
                         }
                     }
@@ -1159,6 +1178,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     foreach (var id in canceled)
                     {
                         commandQueue[id].Tcs.TrySetCanceled(commandQueue[id].OwnerCancellation);
+                        commandQueue[id].Timing?.ExecutionDone();
                         commandQueue.Remove(id);
                     }
                     // Early exit inside lock to prevent per-frame List allocations (GitHub issue #577)
@@ -1198,11 +1218,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     if (string.IsNullOrWhiteSpace(commandText))
                     {
                         var emptyResponse = new { status = "error", error = "Empty command received" };
-                        tcs.SetResult(JsonConvert.SerializeObject(emptyResponse));
+                        tcs.SetResult(SerializeTimedResponse(emptyResponse, queuedCommand.Timing));
                         lock (lockObj)
                         {
                             commandQueue.Remove(id);
                         }
+                        queuedCommand.Timing?.ExecutionDone();
                         continue;
                     }
 
@@ -1210,11 +1231,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     if (commandText == "ping")
                     {
                         var pingResponse = new { status = "success", result = new { message = "pong" } };
-                        tcs.SetResult(JsonConvert.SerializeObject(pingResponse));
+                        tcs.SetResult(SerializeTimedResponse(pingResponse, queuedCommand.Timing));
                         lock (lockObj)
                         {
                             commandQueue.Remove(id);
                         }
+                        queuedCommand.Timing?.ExecutionDone();
                         continue;
                     }
 
@@ -1226,11 +1248,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             error = "Invalid JSON format",
                             receivedText = commandText.Length > 50 ? commandText[..50] + "..." : commandText,
                         };
-                        tcs.SetResult(JsonConvert.SerializeObject(invalidJsonResponse));
+                        tcs.SetResult(SerializeTimedResponse(invalidJsonResponse, queuedCommand.Timing));
                         lock (lockObj)
                         {
                             commandQueue.Remove(id);
                         }
+                        queuedCommand.Timing?.ExecutionDone();
                         continue;
                     }
 
@@ -1256,14 +1279,24 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 try
                 {
                     var command = JsonConvert.DeserializeObject<MCPForUnity.Editor.Models.Command>(payload);
-                    operation = TransportCommandDispatcher.ExecuteCommandAsync(command, cts.Token, TransportMode.Stdio);
+                    operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(command, cts.Token, TransportMode.Stdio, queuedCommand.Timing);
                     var response = await operation.Response.ConfigureAwait(true);
-                    completionSource.TrySetResult(response.ToJson());
+                    queuedCommand.Timing?.Start(CommandPhaseTiming.Phase.Serialization);
+                    string json;
+                    try
+                    {
+                        json = response.ToJson();
+                    }
+                    finally
+                    {
+                        queuedCommand.Timing?.Stop(CommandPhaseTiming.Phase.Serialization);
+                    }
+                    completionSource.TrySetResult(json);
                 }
                 catch (OperationCanceledException)
                 {
                     var timeoutResponse = new { status = "error", error = $"Command processing timed out after {commandTimeoutMs} ms" };
-                    completionSource.TrySetResult(JsonConvert.SerializeObject(timeoutResponse));
+                    completionSource.TrySetResult(SerializeTimedResponse(timeoutResponse, queuedCommand.Timing));
                 }
                 catch (Exception ex)
                 {
@@ -1274,7 +1307,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         error = ex.Message,
                         receivedText = payload?.Length > 50 ? payload[..50] + "..." : payload,
                     };
-                    completionSource.TrySetResult(JsonConvert.SerializeObject(response));
+                    completionSource.TrySetResult(SerializeTimedResponse(response, queuedCommand.Timing));
                 }
                 finally
                 {
@@ -1292,11 +1325,25 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     lock (lockObj)
                     {
                         commandQueue.Remove(commandId);
+                        queuedCommand.Timing?.ExecutionDone();
                     }
                 }
             }
 
             Runner();
+        }
+
+        private static string SerializeTimedResponse(object response, CommandPhaseTiming timing)
+        {
+            timing?.Start(CommandPhaseTiming.Phase.Serialization);
+            try
+            {
+                return JsonConvert.SerializeObject(response);
+            }
+            finally
+            {
+                timing?.Stop(CommandPhaseTiming.Phase.Serialization);
+            }
         }
 
         private static object InvokeOnMainThreadWithTimeout(Func<object> func, int timeoutMs)

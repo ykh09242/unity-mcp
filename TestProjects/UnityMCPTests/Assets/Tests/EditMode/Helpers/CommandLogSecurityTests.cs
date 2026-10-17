@@ -10,6 +10,37 @@ namespace MCPForUnityTests.Editor.Helpers
     public class CommandLogSecurityTests
     {
         [Test]
+        public void PhaseRecordAcceptsOnlyFixedMetadataWithoutChangingPreferences()
+        {
+            JObject row = null;
+            var timing = new MCPForUnity.Editor.Services.Transport.CommandPhaseTiming(
+                () => 0,
+                1000,
+                value => row = value,
+                MCPForUnity.Editor.Services.Transport.CommandPhaseTiming.Transport.Direct
+            );
+            timing.ExecutionDone();
+            timing.DeliveryDone(MCPForUnity.Editor.Services.Transport.CommandPhaseTiming.Delivery.Unobserved);
+            CollectionAssert.AreEquivalent(
+                new[]
+                {
+                    "event",
+                    "sample_every",
+                    "correlation",
+                    "transport",
+                    "delivery",
+                    "execution_settled",
+                    "execution_settled_after_delivery",
+                    "total_ms",
+                    "incomplete_stages",
+                },
+                System.Linq.Enumerable.Select(row.Properties(), property => property.Name)
+            );
+            Assert.IsTrue(Guid.TryParseExact(row.Value<string>("correlation"), "N", out _));
+            Assert.AreEqual(64, row.Value<int>("sample_every"));
+        }
+
+        [Test]
         public void RecorderExcludesPayloadActionAndErrorText()
         {
             string sentinel = "secret-probe-" + Guid.NewGuid().ToString("N");
