@@ -7,13 +7,14 @@ from contextlib import asynccontextmanager
 from contextvars import Context, ContextVar
 from dataclasses import dataclass, field
 from threading import Lock
+from typing import Final
 
 import anyio
 from fastmcp import FastMCP
 from mcp.server.context import ServerRequestContext
 from mcp.server.subscriptions import ListenHandler
 from mcp.shared.exceptions import MCPError
-from mcp.shared.subscriptions import ServerEvent, ToolsListChanged
+from mcp.shared.subscriptions import ResourceUpdated, ServerEvent, ToolsListChanged
 from mcp_types import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -24,6 +25,9 @@ from mcp_types import (
     SubscriptionsListenResult,
 )
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+
+EDITOR_STATE_URI: Final = "mcpforunity://editor/state"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +84,7 @@ class SubscriptionAdmission:
 # keep its charge rather than grant another lifespan additional capacity.
 _process_admission = SubscriptionAdmission()
 _watch_scope: ContextVar[WatchScope | None] = ContextVar("catalog_watch_scope", default=None)
+_watch_resources: ContextVar[bool] = ContextVar("editor_state_watch", default=False)
 _HTTP_OWNER = "unity_mcp_catalog_subscription_owner"
 
 
@@ -117,23 +122,27 @@ class ScopedSubscriptionBus:
     """SDK bus seam; scopes stay outside the event vocabulary and wire payload."""
 
     def __init__(self, on_removed: Callable[[WatchScope], None]) -> None:
-        self._listeners: dict[object, tuple[WatchScope, Callable[[ServerEvent], None]]] = {}
+        self._listeners: dict[object, tuple[WatchScope, bool, Callable[[ServerEvent], None]]] = {}
         self._on_removed = on_removed
 
     @property
     def scopes(self) -> set[WatchScope]:
-        return {scope for scope, _ in self._listeners.values()}
+        return {scope for scope, _, _ in self._listeners.values()}
+
+    @property
+    def resource_scopes(self) -> set[WatchScope]:
+        return {scope for scope, resources, _ in self._listeners.values() if resources}
 
     def subscribe(self, listener: Callable[[ServerEvent], None]) -> Callable[[], None]:
         scope = _watch_scope.get()
         if scope is None:
             raise RuntimeError("Catalog subscription scope is not bound")
         token = object()
-        self._listeners[token] = (scope, listener)
+        self._listeners[token] = (scope, _watch_resources.get(), listener)
 
         def unsubscribe() -> None:
             removed = self._listeners.pop(token, None)
-            if removed is not None and scope not in self.scopes:
+            if removed is not None:
                 self._on_removed(scope)
 
         return unsubscribe
@@ -142,7 +151,7 @@ class ScopedSubscriptionBus:
         scope = _watch_scope.get()
         if scope is None:
             raise RuntimeError("Catalog publication scope is not bound")
-        for target, listener in tuple(self._listeners.values()):
+        for target, _, listener in tuple(self._listeners.values()):
             if target == scope:
                 listener(event)
         await anyio.lowlevel.checkpoint()
@@ -156,7 +165,7 @@ class _Lease:
 
 
 class CatalogSubscriptions:
-    """Own tools-only SDK subscriptions and one bounded catalog publisher worker."""
+    """Own scoped SDK subscriptions and one bounded invalidation publisher worker."""
 
     def __init__(
         self,
@@ -175,6 +184,8 @@ class CatalogSubscriptions:
         self._leases: dict[object, _Lease] = {}
         self._dirty: set[WatchScope] = set()
         self._stamps: dict[WatchScope, tuple[str, int]] = {}
+        self._resource_dirty: set[WatchScope] = set()
+        self._resource_stamps: dict[WatchScope, tuple[str, str, int]] = {}
         self._wake = anyio.Event()
         self._changed = anyio.Event()
         self._closed = True
@@ -219,7 +230,7 @@ class CatalogSubscriptions:
                         if caps.prompts is not None
                         else None,
                         "resources": caps.resources.model_copy(
-                            update={"list_changed": False, "subscribe": False}
+                            update={"list_changed": False, "subscribe": True}
                         )
                         if caps.resources is not None
                         else None,
@@ -228,7 +239,9 @@ class CatalogSubscriptions:
             }
         )
 
-    async def _resolve_scope(self, ctx: ServerRequestContext) -> WatchScope:
+    async def _resolve_scope(
+        self, ctx: ServerRequestContext, *, require_instance: bool = False
+    ) -> WatchScope:
         from fastmcp.server.dependencies import get_context
         from transport.plugin_hub import PluginHub
         from transport.unity_instance_middleware import get_unity_instance_middleware
@@ -238,7 +251,7 @@ class CatalogSubscriptions:
         if self.remote_hosted and not user_id:
             raise MCPError(INVALID_PARAMS, "Authenticated catalog principal is required")
         selector = (ctx.meta or {}).get("unity_instance")
-        if selector is None and not self.remote_hosted:
+        if selector is None and not self.remote_hosted and not require_instance:
             return WatchScope(None, None)
         if not isinstance(selector, str) or not selector.strip():
             raise MCPError(INVALID_PARAMS, "Catalog subscriptions require unity_instance metadata")
@@ -261,7 +274,8 @@ class CatalogSubscriptions:
     ) -> SubscriptionsListenResult:
         if self._closed:
             raise MCPError(INTERNAL_ERROR, "Catalog subscriptions are closed")
-        scope = await self._resolve_scope(ctx)
+        resources = EDITOR_STATE_URI in (params.notifications.resource_subscriptions or [])
+        scope = await self._resolve_scope(ctx, require_instance=resources)
         if self._closed:
             raise MCPError(INTERNAL_ERROR, "Catalog subscriptions are closed")
         admission = self.admission.acquire(scope)
@@ -272,11 +286,13 @@ class CatalogSubscriptions:
         if owner is not None:
             owner.on_finished = lambda: self._finish(admission)
         bound = _watch_scope.set(scope)
+        resource_bound = _watch_resources.set(resources)
         try:
             narrowed = params.model_copy(
                 update={
                     "notifications": SubscriptionFilter(
-                        tools_list_changed=params.notifications.tools_list_changed
+                        tools_list_changed=params.notifications.tools_list_changed,
+                        resource_subscriptions=[EDITOR_STATE_URI] if resources else None,
                     )
                 }
             )
@@ -287,6 +303,7 @@ class CatalogSubscriptions:
             raise MCPError(INTERNAL_ERROR, "Catalog subscription closed")
         finally:
             _watch_scope.reset(bound)
+            _watch_resources.reset(resource_bound)
             if owner is None:
                 self._finish(admission)
 
@@ -325,21 +342,59 @@ class CatalogSubscriptions:
         if self._dirty:
             self._wake.set()
 
+    def publish_editor_state(
+        self,
+        *,
+        user_id: str | None,
+        project_hash: str,
+        session_id: str,
+        generation: str,
+        revision: int,
+    ) -> None:
+        """Queue the fixed resource only for active, explicitly resolved watchers."""
+        if self._closed or (self.remote_hosted and not user_id):
+            return
+        scope = WatchScope(user_id, project_hash)
+        if scope not in self.bus.resource_scopes:
+            return
+        stamp = (session_id, generation, revision)
+        if self._resource_stamps.get(scope) == stamp:
+            return
+        self._resource_stamps[scope] = stamp
+        self._resource_dirty.add(scope)
+        self._wake.set()
+
     def _remove_scope(self, scope: WatchScope) -> None:
-        self._dirty.discard(scope)
-        self._stamps.pop(scope, None)
+        if scope not in self.bus.scopes:
+            self._dirty.discard(scope)
+            self._stamps.pop(scope, None)
+        if scope not in self.bus.resource_scopes:
+            self._resource_dirty.discard(scope)
+            self._resource_stamps.pop(scope, None)
 
     async def _drain(self) -> None:
         while not self._closed:
             await self._wake.wait()
             self._wake = anyio.Event()
             dirty, self._dirty = self._dirty, set()
+            resources, self._resource_dirty = self._resource_dirty, set()
             for scope in dirty:
                 if self._closed:
                     break
                 bound = _watch_scope.set(scope)
                 try:
                     await self.bus.publish(ToolsListChanged())
+                finally:
+                    _watch_scope.reset(bound)
+
+            for scope in resources:
+                if self._closed:
+                    break
+                if scope not in self.bus.resource_scopes:
+                    continue
+                bound = _watch_scope.set(scope)
+                try:
+                    await self.bus.publish(ResourceUpdated(uri=EDITOR_STATE_URI))
                 finally:
                     _watch_scope.reset(bound)
 
@@ -350,6 +405,8 @@ class CatalogSubscriptions:
         self._closed = True
         self._dirty.clear()
         self._stamps.clear()
+        self._resource_dirty.clear()
+        self._resource_stamps.clear()
         self._wake.set()
         self.handler.close()
         with anyio.move_on_after(grace_seconds):

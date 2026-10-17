@@ -2,6 +2,7 @@
 
 import json
 import secrets
+import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -17,7 +18,8 @@ from services.api_key_service import ApiKeyService, ValidationResult
 from tests.http.prepared_tool_registration import prepared_tool_factory  # pylint: disable=unused-import
 from tests.http.test_mcp_protocol_wire import _body, _headers
 from tests.http.test_request_body_limit import scope_for
-from transport.catalog_subscriptions import SubscriptionAdmission, WatchScope
+from transport.catalog_subscriptions import EDITOR_STATE_URI, SubscriptionAdmission, WatchScope
+from tests.test_editor_state_store import message as editor_state_message
 from transport.plugin_hub import PluginHub
 
 
@@ -70,7 +72,10 @@ class ListenStream:
                 self.acknowledged.set()
                 if self.stall_ack:
                     await self.resume.wait()
-            if b"notifications/tools/list_changed" in content:
+            if (
+                b"notifications/tools/list_changed" in content
+                or b"notifications/resources/updated" in content
+            ):
                 self.changed.set()
                 if self.stall_changes:
                     with anyio.CancelScope(shield=self.shield_send):
@@ -107,11 +112,12 @@ class ListenStream:
 class PluginStream:
     """Bounded authenticated ASGI websocket peer; next receive is a processing barrier."""
 
-    def __init__(self, app, principal, project_hash, project_name):
+    def __init__(self, app, principal, project_hash, project_name, *, capabilities=()):
         self.app = app
         self.principal = principal
         self.project_hash = project_hash
         self.project_name = project_name
+        self.capabilities = capabilities
         self.started = False
         self.welcome = anyio.Event()
         self.registered = anyio.Event()
@@ -185,6 +191,7 @@ class PluginStream:
                 "project_hash": self.project_hash,
                 "project_name": self.project_name,
                 "unity_version": "6000.0",
+                "capabilities": list(self.capabilities),
             }
         )
         await self._wait(self.registered)
@@ -824,3 +831,396 @@ def test_admission_limits_are_global_principal_and_project_scoped():
     for token in (a, b, c):
         pool.release(token)
     assert pool.active_count == 0
+
+
+def resource_notifications(stream):
+    return [
+        item
+        for item in stream.messages()
+        if item.get("method") == "notifications/resources/updated"
+    ]
+
+
+def resource_filter():
+    return {"resourceSubscriptions": [EDITOR_STATE_URI]}
+
+
+def publish_state(runtime, *, project="a", user="alice", session="session", revision=1):
+    runtime.publish_editor_state(
+        user_id=user,
+        project_hash=project,
+        session_id=session,
+        generation=session,
+        revision=revision,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hosted_catalog", [(True, True)], indirect=True)
+async def test_editor_state_wire_events_are_scoped_committed_and_generation_owned(
+    hosted_catalog, monkeypatch
+):
+    # Given: actual authenticated plugin sockets for two Alice editors and Bob's same project.
+    app, runtime = hosted_catalog
+    peers = [
+        PluginStream(app, "alice-key", "a", "A", capabilities=("editor_state_v1",)),
+        PluginStream(app, "alice-key", "other", "Other", capabilities=("editor_state_v1",)),
+        PluginStream(app, "bob-key", "a", "A", capabilities=("editor_state_v1",)),
+    ]
+    async with app.router.lifespan_context(app):
+        async with anyio.create_task_group() as group:
+            for peer in peers:
+                await peer.connect(group)
+            streams = [
+                ListenStream(
+                    app,
+                    "state-a",
+                    notifications={
+                        "resourceSubscriptions": [
+                            "fixture://unsupported",
+                            EDITOR_STATE_URI,
+                            EDITOR_STATE_URI,
+                        ],
+                        "resourcesListChanged": True,
+                        "promptsListChanged": True,
+                    },
+                ),
+                ListenStream(
+                    app, "state-other", instance="Other@other", notifications=resource_filter()
+                ),
+                ListenStream(
+                    app, "state-bob", principal="bob-key", notifications=resource_filter()
+                ),
+                ListenStream(app, "tools-only", notifications={"toolsListChanged": True}),
+                ListenStream(
+                    app,
+                    "unsupported",
+                    notifications={"resourceSubscriptions": [EDITOR_STATE_URI + "/"]},
+                ),
+            ]
+            for stream in streams:
+                group.start_soon(stream.run)
+                await wait(stream.acknowledged)
+            ack = streams[0].messages()[0]
+            assert ack["params"]["notifications"] == resource_filter()
+            assert streams[-1].messages()[0]["params"]["notifications"] == {}
+            assert ack["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] == "state-a"
+            payload = editor_state_message(observed=int(time.time() * 1000))
+
+            # When: Alice A commits a complete snapshot through the actual plugin handler.
+            await peers[0].send_json(payload)
+            await wait(streams[0].changed)
+            await anyio.wait_all_tasks_blocked()
+            event = resource_notifications(streams[0])[0]
+            assert event["params"] == {
+                "uri": EDITOR_STATE_URI,
+                "_meta": {"io.modelcontextprotocol/subscriptionId": "state-a"},
+            }
+            assert all(not stream.changed.is_set() for stream in streams[1:])
+            first_count = len(resource_notifications(streams[0]))
+
+            # Then: malformed, duplicate, unchanged heartbeat and out-of-order frames do not publish.
+            for frame in (
+                {"type": "editor_state"},
+                payload,
+                editor_state_message(observed=payload["observed_at_unix_ms"] + 1),
+                editor_state_message(sequence=0, observed=payload["observed_at_unix_ms"]),
+                {**payload, "session_id": peers[1].session_id},
+            ):
+                await peers[0].send_json(frame)
+            await anyio.wait_all_tasks_blocked()
+            assert len(resource_notifications(streams[0])) == first_count
+            socket = PluginHub._connections[peers[0].session_id]
+            with monkeypatch.context() as patch:
+                patch.setattr(socket.state, "user_id", "bob")
+                await peers[0].send_json(
+                    editor_state_message(sequence=2, observed=payload["observed_at_unix_ms"] + 2)
+                )
+            await anyio.wait_all_tasks_blocked()
+            assert len(resource_notifications(streams[0])) == first_count
+
+            # A rejected epoch change invalidates the old cache and still notifies its own scope.
+            streams[0].changed = anyio.Event()
+            await peers[0].send_json(
+                editor_state_message(
+                    epoch="replacement-domain", observed=payload["observed_at_unix_ms"] + 2
+                )
+            )
+            await wait(streams[0].changed)
+            assert PluginHub._editor_states.get(peers[0].session_id, "alice") is None
+            streams[0].changed = anyio.Event()
+            replacement = PluginStream(
+                app, "alice-key", "a", "A", capabilities=("editor_state_v1",)
+            )
+            await replacement.connect(group)
+            await wait(streams[0].changed)
+            await anyio.wait_all_tasks_blocked()
+            before = len(resource_notifications(streams[0]))
+            await PluginHub._handle_editor_state(PluginHub.__new__(PluginHub), socket, payload)
+            await anyio.wait_all_tasks_blocked()
+            assert len(resource_notifications(streams[0])) == before
+            streams[0].changed = anyio.Event()
+            await replacement.send_json(
+                editor_state_message(
+                    sequence=0, epoch="new-session", observed=int(time.time() * 1000)
+                )
+            )
+            await wait(streams[0].changed)
+            assert PluginHub._editor_states.get(replacement.session_id, "alice")["sequence"] == 0
+            assert all(not resource_notifications(stream) for stream in streams[1:])
+            streams[0].changed = anyio.Event()
+            await replacement.close()
+            await wait(streams[0].changed)
+            for peer in peers:
+                await peer.close()
+            for stream in streams:
+                stream.disconnect.set()
+                await wait(stream.done)
+        assert not runtime._resource_dirty
+        assert not runtime._resource_stamps
+        assert not runtime._leases
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hosted_catalog", [False], indirect=True)
+async def test_local_resource_watch_requires_explicit_instance_but_tools_global_remains(
+    hosted_catalog,
+):
+    # Given: a local server with a resolvable canonical editor.
+    app, runtime = hosted_catalog
+    async with app.router.lifespan_context(app):
+        await PluginHub._registry.register("local-a", "A", "a", "fixture")
+        token = config.local_auth_token
+        denied = ListenStream(
+            app,
+            "resource-global",
+            local_token=token,
+            instance=None,
+            notifications=resource_filter(),
+        )
+        await denied.run()
+        assert not denied.acknowledged.is_set()
+        assert "unity_instance" in denied.messages()[-1]["error"]["message"]
+        streams = [
+            ListenStream(
+                app,
+                "tools-global",
+                local_token=token,
+                instance=None,
+                notifications={"toolsListChanged": True},
+            ),
+            ListenStream(
+                app,
+                "resource-explicit",
+                local_token=token,
+                instance="A@a",
+                notifications=resource_filter(),
+            ),
+            ListenStream(
+                app,
+                "unsupported-global",
+                local_token=token,
+                instance=None,
+                notifications={"resourceSubscriptions": ["fixture://unsupported"]},
+            ),
+        ]
+        async with anyio.create_task_group() as group:
+            for stream in streams:
+                group.start_soon(stream.run)
+                await wait(stream.acknowledged)
+            # When: the explicit editor's state changes.
+            publish_state(runtime, user=None)
+            await wait(streams[1].changed)
+            await anyio.wait_all_tasks_blocked()
+            # Then: global tools/unsupported watches receive no resource event.
+            assert streams[2].messages()[0]["params"]["notifications"] == {}
+            assert not streams[0].changed.is_set()
+            assert not streams[2].changed.is_set()
+            for stream in streams:
+                stream.disconnect.set()
+                await wait(stream.done)
+        assert not runtime._resource_stamps
+
+
+@pytest.mark.asyncio
+async def test_resource_burst_coalesces_and_generation_zero_invalidates(hosted_catalog):
+    # Given: one acknowledged resource-only watch and tools-only watch in the same scope.
+    app, runtime = hosted_catalog
+    async with app.router.lifespan_context(app):
+        await register_scopes()
+        resource = ListenStream(app, "resource-burst", notifications=resource_filter())
+        tools = ListenStream(app, "tools-burst", notifications={"toolsListChanged": True})
+        async with anyio.create_task_group() as group:
+            for stream in (resource, tools):
+                group.start_soon(stream.run)
+                await wait(stream.acknowledged)
+            # When: a synchronous burst replaces the pending latest invalidation.
+            for revision in range(1000):
+                publish_state(runtime, revision=revision)
+            assert len(runtime._resource_dirty) == 1
+            assert len(runtime._resource_stamps) == 1
+            await wait(resource.changed)
+            await anyio.wait_all_tasks_blocked()
+            assert len(resource_notifications(resource)) == 1
+            publish_state(runtime, revision=999)
+            await anyio.wait_all_tasks_blocked()
+            assert len(resource_notifications(resource)) == 1
+            resource.changed = anyio.Event()
+            publish_state(runtime, session="replacement", revision=0)
+            await wait(resource.changed)
+            # Then: generation reset invalidates, and resource state is removed with its last watch.
+            assert len(resource_notifications(resource)) == 2
+            assert not tools.changed.is_set()
+            resource.disconnect.set()
+            await wait(resource.done)
+            assert not runtime._resource_dirty
+            assert not runtime._resource_stamps
+            assert runtime.bus.scopes == {WatchScope("alice", "a")}
+            tools.disconnect.set()
+            await wait(tools.done)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shield_send", [False, True], ids=["cooperative", "retired-shielded"])
+async def test_resource_slow_writer_is_bounded_and_keeps_charge_until_http_exit(
+    hosted_catalog, monkeypatch, shield_send
+):
+    # Given: a slow Alice writer and a healthy Bob writer with separate tenant ownership.
+    app, runtime = hosted_catalog
+    runtime.admission = SubscriptionAdmission(total=2, principal=1, project=1)
+    dispatched = anyio.Event()
+    publish = runtime.bus.publish
+
+    async def observed_publish(event):
+        await publish(event)
+        dispatched.set()
+
+    monkeypatch.setattr(runtime.bus, "publish", observed_publish)
+    async with app.router.lifespan_context(app):
+        await register_scopes()
+        slow = ListenStream(
+            app,
+            "resource-slow",
+            notifications=resource_filter(),
+            stall_changes=True,
+            shield_send=shield_send,
+        )
+        healthy = ListenStream(
+            app, "resource-healthy", principal="bob-key", notifications=resource_filter()
+        )
+        async with anyio.create_task_group() as group:
+            for stream in (slow, healthy):
+                group.start_soon(stream.run)
+                await wait(stream.acknowledged)
+            # When: bounded SDK buffering overflows behind the stalled HTTP writer.
+            for revision in range(80):
+                dispatched = anyio.Event()
+                publish_state(runtime, revision=revision)
+                await wait(dispatched)
+            assert slow.changed.is_set()
+            assert len(runtime.handler._streams) == 1
+            assert runtime.admission.active_count == 2
+            assert len(runtime._resource_dirty) <= 2
+            assert len(runtime._resource_stamps) <= 2
+            denied = ListenStream(app, "resource-excess", notifications=resource_filter())
+            await denied.run()
+            assert not denied.acknowledged.is_set()
+            assert (
+                denied.messages()[-1]["error"]["message"] == "Catalog subscription capacity reached"
+            )
+            publish_state(runtime, user="bob")
+            await wait(healthy.changed)
+            assert len(resource_notifications(healthy)) == 1
+            await runtime.close(grace_seconds=0)
+            # Then: retirement clears pending data while actual HTTP teardown owns admission.
+            assert not runtime._resource_dirty
+            assert not runtime._resource_stamps
+            if shield_send:
+                assert not slow.done.is_set()
+                assert runtime.admission.active_count >= 1
+                from mcp.shared.exceptions import MCPError
+
+                with pytest.raises(MCPError):
+                    runtime.admission.acquire(WatchScope("alice", "other"))
+                slow.resume.set()
+            slow.disconnect.set()
+            healthy.disconnect.set()
+            await wait(slow.done)
+            await wait(healthy.done)
+        assert runtime.admission.active_count == 0
+        assert not runtime.bus.scopes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "disconnect_during_ack", [False, True], ids=["buffer-until-ack", "disconnect-during-ack"]
+)
+async def test_resource_ack_boundary_buffers_events_and_cleans_disconnect(
+    hosted_catalog, disconnect_during_ack
+):
+    # Given: a listener registered by the real SDK before its HTTP acknowledgment completes.
+    app, runtime = hosted_catalog
+    async with app.router.lifespan_context(app):
+        await register_scopes()
+        stream = ListenStream(app, "resource-ack", notifications=resource_filter(), stall_ack=True)
+        async with anyio.create_task_group() as group:
+            group.start_soon(stream.run)
+            await wait(stream.acknowledged)
+            publish_state(runtime)
+            await anyio.wait_all_tasks_blocked()
+            assert not stream.changed.is_set()
+            assert runtime.admission.active_count >= 1
+            # When: the client disconnects during acknowledgment or allows it to finish.
+            if disconnect_during_ack:
+                stream.disconnect.set()
+            else:
+                stream.resume.set()
+                await wait(stream.changed)
+                assert stream.messages()[0]["method"] == "notifications/subscriptions/acknowledged"
+                assert resource_notifications(stream)[0]["params"]["uri"] == EDITOR_STATE_URI
+                stream.disconnect.set()
+            await wait(stream.done)
+        # Then: listener, pending state and admission all leave with the actual HTTP handler.
+        assert not runtime._resource_dirty
+        assert not runtime._resource_stamps
+        assert not runtime._leases
+        assert not runtime.bus.scopes
+
+
+@pytest.mark.asyncio
+async def test_nonpush_editor_replacement_and_disconnect_invalidate_polling_resource(
+    hosted_catalog,
+):
+    # Given: an authorized legacy editor and an explicit fixed-resource watcher.
+    app, runtime = hosted_catalog
+    async with app.router.lifespan_context(app):
+        async with anyio.create_task_group() as group:
+            first = PluginStream(app, "alice-key", "a", "A")
+            await first.connect(group)
+            stream = ListenStream(app, "polling-lifecycle", notifications=resource_filter())
+            group.start_soon(stream.run)
+            await wait(stream.acknowledged)
+            old_socket = PluginHub._connections[first.session_id]
+            # When: a polling-only editor reconnects, then disconnects.
+            replacement = PluginStream(app, "alice-key", "a", "A")
+            await replacement.connect(group)
+            await wait(stream.changed)
+            await anyio.wait_all_tasks_blocked()
+            assert not PluginHub._editor_states._owners
+            before = len(resource_notifications(stream))
+            lock = PluginHub._lock
+            assert lock is not None
+            await PluginHub.on_disconnect(PluginHub.__new__(PluginHub), old_socket, 1000)
+            assert PluginHub._lock is lock
+            await anyio.wait_all_tasks_blocked()
+            assert len(resource_notifications(stream)) == before
+            stream.changed = anyio.Event()
+            await replacement.close()
+            await wait(stream.changed)
+            # Then: both availability changes invalidate, without retaining an old push slot.
+            assert len(resource_notifications(stream)) > before
+            await first.close()
+            stream.disconnect.set()
+            await wait(stream.done)
+        assert not runtime._resource_dirty
+        assert not runtime._resource_stamps

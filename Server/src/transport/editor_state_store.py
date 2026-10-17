@@ -69,6 +69,7 @@ class EditorStateStore:
         self._owners: dict[str, str | None] = {}
         self._states: dict[str, StoredState] = {}
         self._invalidated: set[str] = set()
+        self._changes: dict[str, int] = {}
         self._lock = RLock()
 
     def register_session(self, session_id: str, user_id: str | None) -> bool:
@@ -79,24 +80,33 @@ class EditorStateStore:
             if len(self._owners) >= self._max_sessions:
                 return False
             self._owners[session_id] = user_id
+            self._changes[session_id] = 0
             return True
+
+    def change_token(self, session_id: str) -> int | None:
+        """Return a bounded slot revision, independent of accept's boolean contract."""
+        with self._lock:
+            return self._changes.get(session_id)
 
     def remove_session(self, session_id: str) -> None:
         with self._lock:
             self._owners.pop(session_id, None)
+            self._changes.pop(session_id, None)
             self._states.pop(session_id, None)
             self._invalidated.discard(session_id)
 
     def invalidate_session(self, session_id: str) -> None:
         """Require a new authenticated connection generation before serving state."""
         with self._lock:
-            if session_id in self._owners:
+            if session_id in self._owners and session_id not in self._invalidated:
+                self._changes[session_id] += 1
                 self._invalidated.add(session_id)
                 self._states.pop(session_id, None)
 
     def reset(self) -> None:
         with self._lock:
             self._owners.clear()
+            self._changes.clear()
             self._states.clear()
             self._invalidated.clear()
 
@@ -146,6 +156,8 @@ class EditorStateStore:
                         return False
                     if message.observed_at_unix_ms == previous.observed_ms:
                         return True
+            if previous is None or content != previous.content:
+                self._changes[session_id] += 1
             self._states[session_id] = StoredState(
                 message.epoch,
                 message.sequence,

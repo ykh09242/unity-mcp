@@ -84,6 +84,16 @@ from transport.models import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class _EditorStatePublication:
+    """Registry-derived routing captured during the authenticated registration."""
+
+    user_id: str | None
+    project_hash: str
+    session_id: str
+    generation: str
+
+
 def _read_bounded_wait_env(name: str, default_s: float, max_s: float) -> float:
     """Read a wait-seconds env override, clamped to [0, max_s].
 
@@ -475,7 +485,10 @@ class PluginHub(WebSocketEndpoint):
     def _discard_socket_state(cls, websocket: WebSocket) -> None:
         session_id = getattr(websocket.state, "plugin_session_id", None)
         if isinstance(session_id, str):
+            revision = cls._editor_states.change_token(session_id)
             cls._editor_states.remove_session(session_id)
+            cls._publish_editor_state(websocket, (revision or 0) + 1)
+            websocket.state.plugin_editor_state_publication = None
         generation = getattr(websocket.state, "plugin_generation", None)
         if cls._large_results is not None and isinstance(generation, str):
             cls._large_results.discard_owner(generation)
@@ -1843,6 +1856,12 @@ class PluginHub(WebSocketEndpoint):
             websocket.state.plugin_registered = True
             websocket.state.plugin_session_id = session_id
             websocket.state.plugin_generation = str(uuid.uuid4())
+            websocket.state.plugin_editor_state_publication = _EditorStatePublication(
+                session.user_id,
+                session.project_hash,
+                session.session_id,
+                websocket.state.plugin_generation,
+            )
             websocket.state.plugin_command_epoch = 0
             websocket.state.plugin_state_read_epoch = 0
             accepted = cls.CAPABILITIES.intersection(payload.capabilities)
@@ -1852,6 +1871,7 @@ class PluginHub(WebSocketEndpoint):
                 if not cls._editor_states.register_session(session_id, user_id):
                     accepted = accepted - {"editor_state_v1"}
             websocket.state.plugin_features = frozenset(accepted)
+            cls._publish_editor_state(websocket, 0)
             # Initialize last pong time and start ping loop for this session
             cls._last_pong[session_id] = time.monotonic()
             # Cancel any existing ping task for this session (shouldn't happen, but be safe)
@@ -2221,6 +2241,20 @@ class PluginHub(WebSocketEndpoint):
                 catalog_revision=catalog_revision,
             )
 
+    @classmethod
+    def _publish_editor_state(cls, websocket: WebSocket, revision: int) -> None:
+        """The caller holds the Hub lock; queue no snapshot or payload identity."""
+        scope = getattr(websocket.state, "plugin_editor_state_publication", None)
+        subscriptions = getattr(cls._mcp, "_catalog_subscriptions", None)
+        if isinstance(scope, _EditorStatePublication) and subscriptions is not None:
+            subscriptions.publish_editor_state(
+                user_id=scope.user_id,
+                project_hash=scope.project_hash,
+                session_id=scope.session_id,
+                generation=scope.generation,
+                revision=revision,
+            )
+
     async def _handle_editor_state(self, websocket: WebSocket, data: dict[str, Any]) -> None:
         cls = type(self)
         lock = cls._lock
@@ -2228,8 +2262,23 @@ class PluginHub(WebSocketEndpoint):
             return
         session_id = getattr(websocket.state, "plugin_session_id", None)
         async with lock:
-            if cls._connections.get(session_id) is websocket:
-                cls._editor_states.accept(session_id, data)
+            registry = cls._registry
+            if cls._connections.get(session_id) is not websocket or registry is None:
+                return
+            session = await registry.get_session(session_id)
+            if (
+                cls._registry is not registry
+                or cls._lock is not lock
+                or cls._connections.get(session_id) is not websocket
+                or session is None
+                or session.user_id != getattr(websocket.state, "user_id", None)
+            ):
+                return
+            before = cls._editor_states.change_token(session_id)
+            cls._editor_states.accept(session_id, data)
+            after = cls._editor_states.change_token(session_id)
+            if after is not None and after != before:
+                cls._publish_editor_state(websocket, after)
 
     async def _handle_large_result(
         self, websocket: WebSocket, data: bytes | dict[str, Any]

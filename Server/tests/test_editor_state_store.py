@@ -241,3 +241,45 @@ def test_state_payload_has_independent_size_and_shape_budget(store, value):
     # Then the state store retains none of it.
     assert accepted is False
     assert cache.get("actual-socket", "alice") is None
+
+
+@pytest.mark.parametrize(
+    "payload,accepted,changed",
+    [
+        (message(), True, False),
+        (message(observed=100_500), True, False),
+        (message(sequence=2), True, True),
+        (message(sequence=0), False, False),
+        (message(epoch="new-domain"), False, True),
+        (message(sequence=2, reload_pending=True), True, True),
+        ({"type": "editor_state"}, False, False),
+    ],
+    ids=["duplicate", "heartbeat", "commit", "out-of-order", "epoch", "reload", "malformed"],
+)
+def test_change_token_only_advances_for_commits_or_invalidation(store, payload, accepted, changed):
+    # Given: one valid committed snapshot and its independently observable revision.
+    cache, _ = store
+    assert cache.accept("actual-socket", message()) is True
+    before = cache.change_token("actual-socket")
+    # When: an incoming frame is accepted or rejected under the existing boolean contract.
+    result = cache.accept("actual-socket", payload)
+    # Then: duplicate/heartbeat/rejected frames cannot trigger a resource invalidation.
+    assert result is accepted
+    assert (cache.change_token("actual-socket") != before) is changed
+
+
+def test_change_tokens_remain_bounded_and_reset_only_for_a_new_slot(store):
+    # Given: one registered slot, with no arbitrary-session retained revision.
+    cache, _ = store
+    assert cache.change_token("unknown") is None
+    assert cache.change_token("actual-socket") == 0
+    cache.accept("actual-socket", message())
+    # When: the connection is removed and a new generation registers.
+    cache.remove_session("actual-socket")
+    cache.register_session("replacement", "alice")
+    # Then: no old revision remains and sequence zero is valid in the new generation.
+    assert cache.change_token("actual-socket") is None
+    assert cache.change_token("replacement") == 0
+    assert cache.accept("replacement", message(sequence=0, epoch="replacement")) is True
+    cache.reset()
+    assert not cache._changes

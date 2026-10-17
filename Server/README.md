@@ -60,6 +60,42 @@ Discover `mcpforunity://instances`. Modern sessionless calls use `unity_instance
 
 `manage_tools` activation/deactivation/reset also require a stateful handshake. Local clients can use `sync` to refresh selected-Editor toggles. Hosted catalogs are pushed by authenticated Unity plugins; remote `sync` is unavailable. See [Tool Groups](../website/docs/guides/tool-groups.md).
 
+## Editor state subscriptions
+
+Clients using MCP **2026-07-28** can discover resource subscription support through
+`server/discover`, then call `subscriptions/listen` with these parameters:
+
+```json
+{
+  "notifications": {
+    "resourceSubscriptions": ["mcpforunity://editor/state"]
+  },
+  "_meta": {"unity_instance": "My Project@project-hash"}
+}
+```
+
+Use an authorized Editor selector from `mcpforunity://instances`. An explicit
+`_meta.unity_instance` is required for this subscription even on a local server.
+The acknowledgment honors only the supported editor-state URI; duplicate and
+unsupported URI entries are removed. Resource list-change events are not offered.
+
+Treat `notifications/resources/updated` as an invalidation: re-read
+`mcpforunity://editor/state` with the same Editor metadata. The event carries the
+URI and subscription metadata, not a state snapshot. State changes, domain
+invalidation, and Editor registration/replacement/disconnection can notify,
+including connection changes for polling-only plugins. Exact duplicate frames and
+unchanged heartbeats do not notify; rapid changes may coalesce into one event.
+
+Buffers and pending invalidations are bounded. A stream that falls behind may
+close; reconnect and re-read rather than counting notifications as individual
+changes. Keep polling when notifications are unavailable. Resource reads retain
+fresh pushed-state reuse and their RPC fallback when push state is stale or
+unavailable; mutation preflight still uses authoritative state.
+
+This adds modern `subscriptions/listen` delivery only. Legacy
+`resources/subscribe` delivery is not added; legacy resource polling remains
+available.
+
 ## Optional bounded test-wait Tasks
 
 Tasks are disabled by default. Set `UNITY_MCP_TEST_WAIT_TASKS_DIR` in the HTTP server process environment to a dedicated private journal directory, then restart. The normal launcher reads it only for `--transport http`; stdio and the local `unity-mcp` control CLI do not expose this extension. Existing local-token or hosted API-key authentication still applies.
