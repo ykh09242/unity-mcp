@@ -24,6 +24,15 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
     public class McpClientConfigSection
     {
         // UI Elements
+        private ClientConfigurationChangeService configurationChanges = ClientConfigurationChangeService.Shared;
+        private ClientConfigurationPreview configurationPreview;
+        private ClientConfigurationReceipt configurationReceipt;
+        private Button previewConfigurationButton,
+            applyConfigurationButton,
+            restoreConfigurationButton,
+            cancelConfigurationPreviewButton;
+        private TextField configurationPreviewText;
+        private Label configurationChangeStatusLabel;
         private DropdownField clientDropdown;
         private Button configureAllButton;
         private Button retryFailedButton;
@@ -81,12 +90,19 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             configurators = MCPServiceLocator.Client.GetAllClients().ToList();
             CacheUIElements();
             InitializeUI();
+            RefreshRestoreAvailability();
             RegisterCallbacks();
         }
 
         private void CacheUIElements()
         {
             clientDropdown = Root.Q<DropdownField>("client-dropdown");
+            previewConfigurationButton = Root.Q<Button>("preview-configuration");
+            applyConfigurationButton = Root.Q<Button>("apply-configuration");
+            restoreConfigurationButton = Root.Q<Button>("restore-configuration");
+            cancelConfigurationPreviewButton = Root.Q<Button>("cancel-configuration-preview");
+            configurationPreviewText = Root.Q<TextField>("configuration-preview");
+            configurationChangeStatusLabel = Root.Q<Label>("configuration-change-status");
             configureAllButton = Root.Q<Button>("configure-all-button");
             retryFailedButton = Root.Q<Button>("retry-failed-button");
             retryStatusLabel = Root.Q<Label>("retry-status");
@@ -114,6 +130,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         private void InitializeUI()
         {
             SetRetryAttempt(null);
+            applyConfigurationButton?.SetEnabled(false);
+            restoreConfigurationButton?.SetEnabled(false);
             // Ensure manual config foldout starts collapsed
             if (manualConfigFoldout != null)
             {
@@ -162,6 +180,14 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void RegisterCallbacks()
         {
+            if (previewConfigurationButton != null)
+                previewConfigurationButton.clicked += OnPreviewConfigurationClicked;
+            if (applyConfigurationButton != null)
+                applyConfigurationButton.clicked += OnApplyConfigurationPreviewClicked;
+            if (restoreConfigurationButton != null)
+                restoreConfigurationButton.clicked += OnRestoreConfigurationClicked;
+            if (cancelConfigurationPreviewButton != null)
+                cancelConfigurationPreviewButton.clicked += OnCancelConfigurationPreviewClicked;
             clientDropdown.RegisterValueChangedCallback(evt =>
             {
                 int selectedIndex = GetIndexForDropdownValue(evt.newValue);
@@ -174,7 +200,9 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                     return;
                 }
 
+                OnCancelConfigurationPreviewClicked();
                 selectedClientIndex = selectedIndex;
+                RefreshRestoreAvailability();
                 // Persist the selected client so it's restored on next window open
                 if (selectedClientIndex >= 0 && selectedClientIndex < configurators.Count)
                 {
@@ -316,8 +344,66 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             }
         }
 
+        private IMcpClientConfigurator PreviewClient =>
+            selectedClientIndex >= 0 && selectedClientIndex < configurators.Count ? configurators[selectedClientIndex] : null;
+
+        private void RefreshRestoreAvailability()
+        {
+            configurationReceipt = configurationChanges?.RestoreReceiptFor(PreviewClient);
+            restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
+        }
+
+        private void OnPreviewConfigurationClicked()
+        {
+            RefreshRestoreAvailability();
+            configurationPreview = configurationChanges.Prepare(PreviewClient);
+            if (configurationPreviewText != null)
+                configurationPreviewText.value = configurationPreview.DisplayText;
+            if (configurationChangeStatusLabel != null)
+                configurationChangeStatusLabel.text = configurationPreview.Code;
+            applyConfigurationButton?.SetEnabled(configurationPreview.CanApply);
+        }
+
+        private void OnCancelConfigurationPreviewClicked()
+        {
+            configurationChanges?.CancelPreview();
+            configurationPreview = null;
+            applyConfigurationButton?.SetEnabled(false);
+            if (configurationPreviewText != null)
+                configurationPreviewText.value = "";
+        }
+
+        private void OnApplyConfigurationPreviewClicked()
+        {
+            var result = configurationChanges.Apply(configurationPreview, PreviewClient);
+            OnCancelConfigurationPreviewClicked();
+            if (result.Code == "applied")
+            {
+                configurationReceipt = result.Receipt;
+                DiscardRetryAttempt();
+            }
+            restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
+            if (configurationChangeStatusLabel != null)
+                configurationChangeStatusLabel.text = result.Code;
+        }
+
+        private void OnRestoreConfigurationClicked()
+        {
+            var result = configurationChanges.Restore(configurationReceipt, PreviewClient);
+            OnCancelConfigurationPreviewClicked();
+            if (result.Code == "restored")
+            {
+                configurationReceipt = null;
+                DiscardRetryAttempt();
+            }
+            restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
+            if (configurationChangeStatusLabel != null)
+                configurationChangeStatusLabel.text = result.Code;
+        }
+
         private void OnConfigureAllClientsClicked()
         {
+            OnCancelConfigurationPreviewClicked();
             if (configurationInProgress)
                 return;
             SetConfigurationBusy(true);
@@ -390,6 +476,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void OnRetryFailedClientsClicked()
         {
+            OnCancelConfigurationPreviewClicked();
             if (configurationInProgress)
                 return;
             var service = MCPServiceLocator.Client;
@@ -451,6 +538,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void OnConfigureClicked()
         {
+            OnCancelConfigurationPreviewClicked();
             if (selectedClientIndex < 0 || selectedClientIndex >= configurators.Count)
                 return;
 
@@ -674,6 +762,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void OnBrowseClaudeClicked()
         {
+            OnCancelConfigurationPreviewClicked();
             string suggested = RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
                 ? "/opt/homebrew/bin"
                 : Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
@@ -696,6 +785,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void OnBrowseProjectDirClicked()
         {
+            OnCancelConfigurationPreviewClicked();
             string currentDir = ClaudeCliMcpConfigurator.GetClientProjectDir();
             string picked = EditorUtility.OpenFolderPanel("Select Client Project Directory", currentDir, "");
             if (!string.IsNullOrEmpty(picked))
@@ -714,6 +804,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void OnClearProjectDirClicked()
         {
+            OnCancelConfigurationPreviewClicked();
             EditorPrefs.DeleteKey(EditorPrefKeys.ClientProjectDirOverride);
             UpdateClientProjectDirVisibility();
             UpdateClientStatus();
@@ -728,6 +819,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void OnOpenFileClicked()
         {
+            OnCancelConfigurationPreviewClicked();
             string path = configPathField.value;
             try
             {
@@ -753,6 +845,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         public void RefreshSelectedClient(bool forceImmediate = false)
         {
+            OnCancelConfigurationPreviewClicked();
             if (selectedClientIndex >= 0 && selectedClientIndex < configurators.Count)
             {
                 var client = configurators[selectedClientIndex];

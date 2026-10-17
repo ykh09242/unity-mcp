@@ -105,6 +105,16 @@ URI: mcpforunity://scene/gameobject-api
 
 - `_ctx` (`Context`, required)
 
+## `gameobject_by_handle`
+
+**URI:** `mcpforunity://scene/gameobject-by-handle/{handle}`
+
+Read the original loaded GameObject and bounded metadata from a v2 session handle. Handles expire on scene reopen, domain reload, Play transitions, Undo/Redo, fixed 600-second lifetime or earlier eviction. Never loads scenes/assets; respects the original GameObject resource policy. Requires v2 Editor support.
+
+**Parameters:**
+
+- `handle` (`str`, required)
+
 ## `gameobject_children`
 
 **URI:** `mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}`

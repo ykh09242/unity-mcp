@@ -79,7 +79,7 @@ namespace MCPForUnity.Editor.Tools
                         "Recognized input contents and owned renderers are omitted before text access; redacted content changes cannot be compared. Unrelated script-copied secrets are not identified.",
                         "Selection indices are current positions, not persistent item identities. Native input inventories may allocate before managed processing bounds are checked.",
                         framework == "ugui"
-                            ? "uGUI bounds are world XY axis-aligned bounds, not camera-projected screen rectangles; renderer cull is partial evidence only."
+                            ? "uGUI bounds are world XY axis-aligned bounds, not camera-projected screen rectangles; renderer cull is partial evidence only. Use manage_ugui diagnose_projection for explicit current camera evidence."
                             : "UI Toolkit bounds use panel coordinates; ancestor display, visibility and opacity affect render eligibility, while clipping and overlapping elements remain untested."
                     ),
                 };

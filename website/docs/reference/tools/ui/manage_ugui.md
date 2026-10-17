@@ -12,13 +12,13 @@ description: "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, la
 
 ## Description
 
-Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. Read-only actions: ping, get_hierarchy, diagnose. Mutating actions: create, set_rect, set_layout, set_text, set_canvas. Optional uGUI and TextMeshPro support is detected in the Editor. Diagnostics evaluate bounded screen-size candidates and report limitations; they do not render screenshots.
+Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection. Mutating actions: create, set_rect, set_layout, set_text, set_canvas. Optional uGUI and TextMeshPro support is detected in the Editor. diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['ping', 'get_hierarchy', 'create', 'set_rect', 'set_layout', 'set_text', 'set_canvas', 'diagnose']` | yes | Action to perform. |
+| `action` | `Literal['ping', 'get_hierarchy', 'create', 'set_rect', 'set_layout', 'set_text', 'set_canvas', 'diagnose', 'diagnose_projection']` | yes | Action to perform. |
 | `target` | `str \| int \| None` | — | GameObject name, hierarchy path, or instance ID. Required for get_hierarchy, setters and diagnose. |
 | `parent` | `str \| int \| None` | — | Parent GameObject for create, resolved by name, hierarchy path, or instance ID. |
 | `name` | `str \| None` | — | Name of the created GameObject. |
@@ -26,6 +26,10 @@ Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and
 | `properties` | `dict[str, JsonValue] \| str \| None` | — | Action-specific camelCase properties, as a dict or JSON object string. Rect: anchorMin, anchorMax, pivot, anchoredPosition, sizeDelta, offsetMin, offsetMax, localScale, localEulerAngles. Create: all elements accept Rect properties; panel/image/button also accept color; text also accepts Text properties. Image raycastTarget requires manage_components after creation. Layout: type must be vertical, horizontal, grid, layout_element or content_size_fitter, plus that component's properties. Text: text, fontSize, color, alignment, enableAutoSizing, fontSizeMin, fontSizeMax, raycastTarget. Canvas: Canvas and CanvasScaler properties via set_canvas. |
 | `include_inactive` | `bool` | — | Include inactive GameObjects in hierarchy and diagnostics. |
 | `max_nodes` | `int` | — | Maximum hierarchy nodes to inspect, 1 to 1000. |
+| `camera` | `str \| int \| None` | — | For diagnose_projection: explicit view camera required for World Space; Screen Camera uses only its assigned camera. Current scene GameObject name/path/Int32 ID; no camera fallback. |
+| `max_depth` | `int \| None` | — | For diagnose_projection: maximum physical transform depth, default 10, range 0..24. |
+| `max_evaluations` | `int \| None` | — | For diagnose_projection: shared precharged observations/math budget, default 20000, range 1..200000. |
+| `max_characters` | `int \| None` | — | For diagnose_projection: shared metadata/name/path UTF-16 budget, default 65536, range 1..262144. |
 | `resolutions` | `list[dict[str, int]] \| str \| None` | — | For diagnose: 1 to 8 {width,height} objects, or a JSON array string. Integer dimensions 64 to 8192. Omit to use Editor diagnostic defaults. |
 
 ## Returns

@@ -28,28 +28,65 @@ namespace MCPForUnity.Editor.Helpers
             return root.ToString(Formatting.Indented);
         }
 
-        public static JObject ApplyUnityServerToExistingConfig(JObject root, string uvPath, McpClient client)
+        public static JObject ApplyUnityServerToExistingConfig(JObject root, string uvPath, McpClient client) =>
+            ApplyUnityServerToExistingConfig(root, uvPath, client, null, true);
+
+        internal static JObject ApplyUnityServerToExistingConfig(
+            JObject root,
+            string uvPath,
+            McpClient client,
+            ClientConfigurationInputs inputs,
+            bool addSchema
+        )
         {
             if (root == null)
                 root = new JObject();
             bool isVSCode = client?.IsVsCodeLayout == true;
             string containerKey = GetContainerKey(client, isVSCode);
-            JToken existingContainer = root[containerKey];
-            if (existingContainer != null && !(existingContainer is JObject))
-                throw new FormatException($"Configuration '{containerKey}' must be an object.");
-            JToken existingUnity = (existingContainer as JObject)?["unityMCP"];
-            if (existingUnity != null && !(existingUnity is JObject))
-                throw new FormatException($"Configuration '{containerKey}.unityMCP' must be an object.");
+            JObject existingUnity = ExistingUnityNode(root, client);
 
             // Generate on a detached entry so validation or endpoint failures cannot alter the caller's document.
             JObject unity = existingUnity?.DeepClone() as JObject ?? new JObject();
-            PopulateUnityNode(unity, uvPath, client, isVSCode);
+            PopulateUnityNode(unity, uvPath, client, isVSCode, inputs);
 
-            if (!string.IsNullOrEmpty(client?.SchemaUrl) && root["$schema"] == null)
+            if (addSchema && !string.IsNullOrEmpty(client?.SchemaUrl) && root["$schema"] == null)
                 root["$schema"] = client.SchemaUrl;
             JObject container = EnsureObject(root, containerKey);
             container["unityMCP"] = unity;
             return root;
+        }
+
+        private static JObject ExistingUnityNode(JObject root, McpClient client)
+        {
+            string key = GetContainerKey(client, client?.IsVsCodeLayout == true);
+            JToken container = root[key];
+            if (container != null && container is not JObject)
+                throw new FormatException($"Configuration '{key}' must be an object.");
+            JToken unity = (container as JObject)?["unityMCP"];
+            if (unity != null && unity is not JObject)
+                throw new FormatException($"Configuration '{key}.unityMCP' must be an object.");
+            return unity as JObject;
+        }
+
+        internal static void ValidatePreviewConfiguration(JObject root, McpClient client)
+        {
+            var unity = ExistingUnityNode(root, client);
+            if (unity == null)
+                return;
+            ValidateCustomAuthentication(unity);
+            ValidateHeaderObject(unity["headers"]);
+        }
+
+        private static void ValidateCustomAuthentication(JObject unity)
+        {
+            if (unity["headersHelper"] != null || unity["http_headers_helper"] != null)
+                throw new InvalidOperationException("Custom HTTP authentication must be migrated manually. The existing configuration was not changed.");
+        }
+
+        private static void ValidateHeaderObject(JToken headers)
+        {
+            if (headers != null && headers is not JObject)
+                throw new FormatException("Configuration 'unityMCP.headers' must be an object.");
         }
 
         /// <summary>
@@ -59,14 +96,11 @@ namespace MCPForUnity.Editor.Helpers
         /// - Adds transport configuration (HTTP or stdio)
         /// - Adds disabled:false for Windsurf/Kiro only when missing
         /// </summary>
-        private static void PopulateUnityNode(JObject unity, string uvPath, McpClient client, bool isVSCode)
+        private static void PopulateUnityNode(JObject unity, string uvPath, McpClient client, bool isVSCode, ClientConfigurationInputs inputs = null)
         {
-            if (unity["headersHelper"] != null || unity["http_headers_helper"] != null)
-            {
-                throw new InvalidOperationException("Custom HTTP authentication must be migrated manually. The existing configuration was not changed.");
-            }
+            ValidateCustomAuthentication(unity);
             // Get transport preference (default to HTTP)
-            bool prefValue = EditorConfigurationCache.Instance.UseHttpTransport;
+            bool prefValue = inputs?.UseHttp ?? EditorConfigurationCache.Instance.UseHttpTransport;
             bool clientSupportsHttp = client?.SupportsHttpTransport != false;
             bool useHttpTransport = clientSupportsHttp && prefValue;
             string httpProperty = string.IsNullOrEmpty(client?.HttpUrlProperty) ? "url" : client.HttpUrlProperty;
@@ -76,11 +110,10 @@ namespace MCPForUnity.Editor.Helpers
             if (useHttpTransport)
             {
                 JToken existingHeaders = unity["headers"];
-                if (existingHeaders != null && !(existingHeaders is JObject))
-                    throw new FormatException("Configuration 'unityMCP.headers' must be an object.");
+                ValidateHeaderObject(existingHeaders);
 
                 // HTTP mode: Use URL, no command
-                string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
+                string httpUrl = inputs == null ? HttpEndpointUtility.GetMcpRpcUrl() : inputs.Endpoint;
                 unity[httpProperty] = httpUrl;
 
                 foreach (var prop in urlPropsToRemove)
@@ -106,7 +139,7 @@ namespace MCPForUnity.Editor.Helpers
                         .ToArray()
                 )
                     property.Remove();
-                foreach (var header in HttpEndpointUtility.GetAuthHeaders())
+                foreach (var header in inputs?.Headers ?? HttpEndpointUtility.GetAuthHeaders())
                     headers[header.Key] = header.Value;
                 if (headers.HasValues)
                 {
@@ -126,9 +159,19 @@ namespace MCPForUnity.Editor.Helpers
             else
             {
                 // Stdio mode: Use uvx command
-                var (uvxPath, fromUrl, packageName) = AssetPathUtility.GetUvxCommandParts();
-
-                var toolArgs = BuildUvxArgs(fromUrl, packageName);
+                string uvxPath;
+                IList<string> toolArgs;
+                if (inputs != null)
+                {
+                    uvxPath = inputs.Command;
+                    toolArgs = inputs.Args;
+                }
+                else
+                {
+                    var parts = AssetPathUtility.GetUvxCommandParts();
+                    uvxPath = parts.Item1;
+                    toolArgs = BuildUvxArgs(parts.Item2, parts.Item3);
+                }
 
                 unity["command"] = uvxPath;
                 unity["args"] = JArray.FromObject(toolArgs.ToArray());
@@ -233,7 +276,7 @@ namespace MCPForUnity.Editor.Helpers
             return created;
         }
 
-        private static IList<string> BuildUvxArgs(string fromUrl, string packageName)
+        internal static IList<string> BuildUvxArgs(string fromUrl, string packageName)
         {
             // Dev mode: force a fresh install/resolution (avoids stale cached builds while iterating).
             // `--no-cache` avoids reading from cache; `--refresh` ensures metadata is revalidated.

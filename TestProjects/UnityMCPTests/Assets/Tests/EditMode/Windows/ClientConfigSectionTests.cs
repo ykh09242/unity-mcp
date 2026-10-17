@@ -206,6 +206,104 @@ namespace MCPForUnityTests.Editor.Windows
             Set(section, "retryStatusLabel", new Label());
         }
 
+        [TestCase("json")]
+        [TestCase("toml")]
+        public void PreviewFlow_CancelPreservesRetryWhileApplyAndRestoreInvalidateIt(string format)
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            var original = slot.GetValue(null);
+            string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "unity-mcp-preview-ui-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(root);
+            try
+            {
+                var client = new ManualClient { AllowConfigure = true, ConfigureFails = true };
+                bool http = true;
+                var clientService = new ClientConfigurationService(new[] { client }, () => http, v => http = v, () => { }, _ => { });
+                slot.SetValue(null, clientService);
+                var retry = clientService.ConfigureAllDetectedClients().Attempt;
+                var path = System.IO.Path.Combine(root, "config");
+                System.IO.File.WriteAllText(path, MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Document(format));
+                var harness = new MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Harness(path, format);
+                harness.Target.Value = MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Target(client, path, format);
+                var section = CreateSection(client);
+                InitializeRetryUi(section);
+                Set(section, "retryAttempt", retry);
+                Get<Button>(section, "retryFailedButton").SetEnabled(true);
+                InitializePreviewUi(section, harness.Service);
+                Invoke(section, "OnPreviewConfigurationClicked");
+                Assert.AreSame(retry, Get<object>(section, "retryAttempt"));
+                Assert.IsTrue(Get<Button>(section, "applyConfigurationButton").enabledSelf);
+                StringAssert.DoesNotContain("synthetic-sensitive", Get<TextField>(section, "configurationPreviewText").value);
+                Invoke(section, "OnCancelConfigurationPreviewClicked");
+                Assert.AreSame(retry, Get<object>(section, "retryAttempt"));
+                Assert.IsFalse(Get<Button>(section, "applyConfigurationButton").enabledSelf);
+                Invoke(section, "OnPreviewConfigurationClicked");
+                Invoke(section, "OnApplyConfigurationPreviewClicked");
+                Assert.IsFalse(Get<Button>(section, "retryFailedButton").enabledSelf);
+                Assert.IsTrue(Get<Button>(section, "restoreConfigurationButton").enabledSelf);
+                Assert.AreEqual(1, client.ConfigureCalls, "Apply must commit the reviewed file rather than call Configure again");
+                var nextRetry = clientService.ConfigureAllDetectedClients().Attempt;
+                Set(section, "retryAttempt", nextRetry);
+                Get<Button>(section, "retryFailedButton").SetEnabled(true);
+                MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.AddOtherServerEdit(path, format);
+                Invoke(section, "OnRestoreConfigurationClicked");
+                Assert.IsFalse(Get<Button>(section, "retryFailedButton").enabledSelf);
+                StringAssert.Contains("original-owned-endpoint", System.IO.File.ReadAllText(path));
+                StringAssert.Contains("later-user-edit", System.IO.File.ReadAllText(path));
+                Assert.AreEqual(2, client.ConfigureCalls);
+                Assert.IsTrue(http);
+            }
+            finally
+            {
+                slot.SetValue(null, original);
+                Assert.IsTrue(System.IO.Path.GetFileName(root).StartsWith("unity-mcp-preview-ui-", StringComparison.Ordinal));
+                System.IO.Directory.Delete(root, true);
+            }
+        }
+
+        [Test]
+        public void PreviewFlow_StaleApplyNeverFallsBackToConfigure()
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            var original = slot.GetValue(null);
+            string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "unity-mcp-preview-ui-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(root);
+            try
+            {
+                slot.SetValue(null, new MemoryClientService());
+                var path = System.IO.Path.Combine(root, "config");
+                var harness = new MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Harness(path, "json");
+                var section = CreateSection(harness.Client);
+                InitializeRetryUi(section);
+                InitializePreviewUi(section, harness.Service);
+                Invoke(section, "OnPreviewConfigurationClicked");
+                System.IO.File.WriteAllText(path, "{\"user\":\"owned-later-edit\"}");
+                Invoke(section, "OnApplyConfigurationPreviewClicked");
+                Assert.AreEqual("{\"user\":\"owned-later-edit\"}", System.IO.File.ReadAllText(path));
+                Assert.AreEqual(0, harness.Client.ForbiddenCalls);
+                Assert.IsFalse(Get<Button>(section, "applyConfigurationButton").enabledSelf);
+                StringAssert.Contains("stale_file", Get<Label>(section, "configurationChangeStatusLabel").text);
+            }
+            finally
+            {
+                slot.SetValue(null, original);
+                Assert.IsTrue(System.IO.Path.GetFileName(root).StartsWith("unity-mcp-preview-ui-", StringComparison.Ordinal));
+                System.IO.Directory.Delete(root, true);
+            }
+        }
+
+        private static void InitializePreviewUi(McpClientConfigSection section, object service)
+        {
+            var field = typeof(McpClientConfigSection).GetField("configurationChanges", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(field, "Zero-write preview must have its own owned service; no Configure fallback is allowed");
+            field.SetValue(section, service);
+            Set(section, "previewConfigurationButton", new Button());
+            Set(section, "applyConfigurationButton", new Button());
+            Set(section, "restoreConfigurationButton", new Button());
+            Set(section, "configurationPreviewText", new TextField());
+            Set(section, "configurationChangeStatusLabel", new Label());
+        }
+
         private static void Invoke(McpClientConfigSection section, string method)
         {
             var target = typeof(McpClientConfigSection).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic);

@@ -38,6 +38,7 @@ namespace MCPForUnity.Editor.Tools
             "move",
             "rename",
             "search",
+            "search_metadata_v1",
             "get_info",
             "create_folder",
             "get_components",
@@ -60,6 +61,10 @@ namespace MCPForUnity.Editor.Tools
                 string validActionsList = string.Join(", ", ValidActions);
                 return new ErrorResponse($"Unknown action: '{action}'. Valid actions are: {validActionsList}");
             }
+
+            var searchOptionError = AssetSearchSnapshots.ValidateOptions(@params, action == "search_metadata_v1");
+            if (searchOptionError != null)
+                return searchOptionError;
 
             // Common parameters
             string path = @params["path"]?.ToString();
@@ -120,6 +125,17 @@ namespace MCPForUnity.Editor.Tools
                     && destinationToken.Type != JTokenType.String
                 )
                     return new ErrorResponse("'destination' must be a string or null.");
+                if (
+                    action == "import"
+                    || action == "create"
+                    || action == "modify"
+                    || action == "delete"
+                    || action == "duplicate"
+                    || action == "move"
+                    || action == "rename"
+                    || action == "create_folder"
+                )
+                    AssetSearchSnapshots.Invalidate();
                 switch (action)
                 {
                     case "import":
@@ -139,6 +155,8 @@ namespace MCPForUnity.Editor.Tools
                         return MoveOrRenameAsset(path, @params["destination"]?.ToString());
                     case "search":
                         return SearchAssets(@params);
+                    case "search_metadata_v1":
+                        return SearchAssets(@params, metadataOnly: true);
                     case "get_info":
                         return GetAssetInfo(path, @params["generatePreview"]?.ReadScalar<bool?>() ?? false);
                     case "create_folder": // Added specific action for clarity
@@ -731,7 +749,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object SearchAssets(JObject @params)
+        private static object SearchAssets(JObject @params, bool metadataOnly = false)
         {
             string searchPattern = @params["searchPattern"]?.ToString();
             string filterType = @params["filterType"]?.ToString();
@@ -774,7 +792,8 @@ namespace MCPForUnity.Editor.Tools
             if (!string.IsNullOrEmpty(pathScope))
             {
                 folderScope = new string[] { AssetPathUtility.SanitizeAssetPath(pathScope) };
-                if (!AssetDatabase.IsValidFolder(folderScope[0]))
+                // A continuation reads the captured scope; changed/deleted folders are handled by snapshot invalidation.
+                if ((!metadataOnly || @params["searchSnapshot"] == null) && !AssetDatabase.IsValidFolder(folderScope[0]))
                 {
                     return new ErrorResponse($"Search path '{pathScope}' is not a valid folder.");
                 }
@@ -802,6 +821,16 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                if (metadataOnly)
+                    return AssetSearchSnapshots.Search(
+                        string.Join(" ", searchFilters),
+                        folderScope,
+                        filterDateAfter,
+                        pageSize,
+                        pageNumber,
+                        @params["searchSnapshot"]?.Value<string>()
+                    );
+                AssetSearchSnapshots.Observe("find_assets");
                 string[] guids = AssetDatabase.FindAssets(string.Join(" ", searchFilters), folderScope);
                 List<object> results = new List<object>();
                 int totalFound = 0;
@@ -1134,6 +1163,7 @@ namespace MCPForUnity.Editor.Tools
 
             string guid = AssetDatabase.AssetPathToGUID(path);
             Type assetType = AssetDatabase.GetMainAssetTypeAtPath(path);
+            AssetSearchSnapshots.Observe("load_asset");
             UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
             string previewBase64 = null;
             int previewWidth = 0;
@@ -1142,6 +1172,7 @@ namespace MCPForUnity.Editor.Tools
             previewBudget ??= new PaginationBounds.PreviewBudget();
             if (generatePreview && asset != null && previewBudget.CanGenerate)
             {
+                AssetSearchSnapshots.Observe("asset_preview");
                 Texture2D preview = AssetPreview.GetAssetPreview(asset);
 
                 if (preview != null && preview.width > 0 && preview.height > 0)

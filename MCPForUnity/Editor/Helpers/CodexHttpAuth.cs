@@ -16,6 +16,8 @@ namespace MCPForUnity.Editor.Helpers
         private static DateTime checkedAt;
         private static bool supported;
 
+        internal static bool? CachedHeadersHelper => DateTime.UtcNow - checkedAt < TimeSpan.FromMinutes(1) ? supported : (bool?)null;
+
         private static bool DetectHeadersHelper()
         {
             if (DateTime.UtcNow - checkedAt < TimeSpan.FromMinutes(1))

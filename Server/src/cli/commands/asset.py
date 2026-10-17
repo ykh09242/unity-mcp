@@ -2,6 +2,7 @@
 
 import sys
 import json
+import re
 import click
 from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
@@ -31,8 +32,26 @@ def asset():
 )
 @click.option("--limit", "-l", default=25, type=int, help="Maximum results per page.")
 @click.option("--page", default=1, type=int, help="Page number (1-based).")
+@click.option(
+    "--metadata-only",
+    is_flag=True,
+    help="Search metadata without explicit object/preview loads; return a short-lived reusable snapshot.",
+)
+@click.option(
+    "--search-snapshot",
+    default=None,
+    help="Continue metadata pages with the same query, scope, type and limit.",
+)
 @handle_unity_errors
-def search(pattern: str, path: str, filter_type: Optional[str], limit: int, page: int):
+def search(
+    pattern: str,
+    path: str,
+    filter_type: Optional[str],
+    limit: int,
+    page: int,
+    metadata_only: bool,
+    search_snapshot: str | None,
+):
     """Search for assets.
 
     \b
@@ -42,10 +61,18 @@ def search(pattern: str, path: str, filter_type: Optional[str], limit: int, page
         unity-mcp asset search "*" --type Material
         unity-mcp asset search "t:MonoScript" --path "Assets/Scripts"
     """
+    if search_snapshot is not None and (
+        not metadata_only
+        or len(search_snapshot) != 75
+        or re.fullmatch(r"mcp-as-v1_[0-9a-f]{32}_[0-9a-f]{32}", search_snapshot) is None
+    ):
+        raise click.BadParameter(
+            "A valid token requires --metadata-only.", param_hint="--search-snapshot"
+        )
     config = get_config()
 
     params: dict[str, Any] = {
-        "action": "search",
+        "action": "search_metadata_v1" if metadata_only else "search",
         "path": path,
         "searchPattern": pattern,
         "pageSize": limit,
@@ -54,6 +81,8 @@ def search(pattern: str, path: str, filter_type: Optional[str], limit: int, page
 
     if filter_type:
         params["filterType"] = filter_type
+    if search_snapshot is not None:
+        params["searchSnapshot"] = search_snapshot
 
     result = run_command("manage_asset", params, config)
     click.echo(format_output(result, config.format))
