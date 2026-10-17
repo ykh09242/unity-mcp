@@ -2,7 +2,6 @@
 
 import json
 import os
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import urlsplit
 
@@ -216,10 +215,15 @@ def public_app(request, monkeypatch, prepared_tool_factory):
     monkeypatch.setattr(config, "transport_mode", "http")
     monkeypatch.setattr(config, "local_auth_token", "fixture-token")
     monkeypatch.setattr(config, "api_key_validation_url", None)
-    validator = AsyncMock(return_value=ValidationResult(valid=True, user_id="fixture-user"))
-    monkeypatch.setattr(
-        ApiKeyService, "_instance", SimpleNamespace(validate=validator, aclose=AsyncMock())
-    )
+    monkeypatch.setattr(ApiKeyService, "_instance", None)
+    service = ApiKeyService("https://fixture.invalid/validate")
+
+    async def validate(key):
+        return ValidationResult(
+            valid=key == "fixture-key", user_id="fixture-user" if key == "fixture-key" else None
+        )
+
+    monkeypatch.setattr(service, "_validate_external", validate)
     headers = (
         [(b"x-api-key", b"fixture-key")] if remote else [(b"x-unity-mcp-token", b"fixture-token")]
     )

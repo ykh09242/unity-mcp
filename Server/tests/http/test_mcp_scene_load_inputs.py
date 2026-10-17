@@ -118,19 +118,20 @@ def flow_server(monkeypatch, prepared_tool_factory, request):
     monkeypatch.setenv("UNITY_MCP_SCENE_LOAD_INPUTS", "1" if enabled else "0")
     monkeypatch.setenv("DISABLE_TELEMETRY", "1")
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "1")
-    validation = AsyncMock(
-        side_effect=lambda key, **_kwargs: ValidationResult(
-            valid=key in {"alice-key", "bob-key"},
-            user_id={"alice-key": "alice", "bob-key": "bob"}.get(key),
-        )
-    )
-    monkeypatch.setattr(
-        ApiKeyService, "_instance", SimpleNamespace(validate=validation, aclose=AsyncMock())
-    )
+    monkeypatch.setattr(ApiKeyService, "_instance", None)
+    monkeypatch.setattr(config, "api_key_validation_url", None)
     # Exercise the real preflight instead of its repository-wide pytest shortcut.
     monkeypatch.setattr(preflight_module, "_in_pytest", lambda: False)
 
     def create():
+        # Reopened servers need a fresh service; a prior lifespan closes its captured service.
+        service = ApiKeyService("https://fixture.invalid/validate")
+
+        async def validate(key):
+            users = {"alice-key": "alice", "bob-key": "bob"}
+            return ValidationResult(valid=key in users, user_id=users.get(key))
+
+        monkeypatch.setattr(service, "_validate_external", validate)
         with monkeypatch.context() as patch:
             patch.setattr(Tool, "from_function", prepared_tool_factory)
             return create_mcp_server(False)

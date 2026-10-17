@@ -333,40 +333,49 @@ def test_ordinary_unicode_and_base64_response_remain_supported():
 @pytest.mark.asyncio
 async def test_authenticated_socket_admission_is_atomic_and_recoverable(isolated, monkeypatch):
     from services.api_key_service import ApiKeyService, ValidationResult
+    from starlette.datastructures import Headers
 
     PluginHub.configure(isolated)
     monkeypatch.setattr(config, "http_remote_hosted", True)
     monkeypatch.setattr(PluginRegistry, "MAX_SESSIONS_PER_USER", 1)
 
-    async def validate(key, **kwargs):
+    async def validate(key):
         return ValidationResult(valid=True, user_id=key)
 
-    monkeypatch.setattr(ApiKeyService, "_instance", SimpleNamespace(validate=validate))
+    monkeypatch.setattr(ApiKeyService, "_instance", None)
+    service = ApiKeyService("https://fixture.invalid/validate")
+    monkeypatch.setattr(service, "_validate_external", validate)
     hub = PluginHub({"type": "websocket"}, None, None)
 
     def socket(user):
         ws = AsyncMock()
-        ws.headers = {"X-API-Key": user}
+        ws.headers = Headers({"X-API-Key": user})
         ws.state = SimpleNamespace()
         ws.client = SimpleNamespace(host="inert")
         ws.application_state = WebSocketState.CONNECTED
         return ws
 
-    a, duplicate, b = socket("alice"), socket("alice"), socket("bob")
-    await asyncio.gather(hub.on_connect(a), hub.on_connect(duplicate), hub.on_connect(b))
-    assert sum(ws.accept.await_count for ws in (a, duplicate)) == 1
-    b.accept.assert_awaited_once()
-    # In a real dispatch finally the rejected socket is immediately removed.
-    rejected = a if not a.accept.await_count else duplicate
-    await hub.on_disconnect(rejected, 4429)
-    accepted = duplicate if rejected is a else a
-    await hub.on_disconnect(accepted, 1000)
-    replacement = socket("alice")
-    await hub.on_connect(replacement)
-    replacement.accept.assert_awaited_once()
-    await hub.on_disconnect(replacement, 1000)
-    await hub.on_disconnect(b, 1000)
-    assert PluginHub._admitted == {}
+    try:
+        a, duplicate, b = socket("alice"), socket("alice"), socket("bob")
+        await asyncio.gather(hub.on_connect(a), hub.on_connect(duplicate), hub.on_connect(b))
+        assert sum(ws.accept.await_count for ws in (a, duplicate)) == 1
+        b.accept.assert_awaited_once()
+        # In a real dispatch finally the rejected socket is immediately removed.
+        rejected = a if not a.accept.await_count else duplicate
+        await hub.on_disconnect(rejected, 4429)
+        accepted = duplicate if rejected is a else a
+        await hub.on_disconnect(accepted, 1000)
+        replacement = socket("alice")
+        await hub.on_connect(replacement)
+        replacement.accept.assert_awaited_once()
+        await hub.on_disconnect(replacement, 1000)
+        await hub.on_disconnect(b, 1000)
+        assert PluginHub._admitted == {}
+    finally:
+        try:
+            await PluginHub.shutdown()
+        finally:
+            await service.aclose()
 
 
 @pytest.mark.asyncio

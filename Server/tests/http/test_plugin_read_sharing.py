@@ -12,6 +12,8 @@ from starlette.websockets import WebSocketState
 from core.config import config
 from models.response_limits import ResponseOwner, response_owner, response_size
 from services.tools.shared_tool_reads import SharedToolReads
+from services.api_key_service import ApiKeyService, ValidationResult
+from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
 from transport.charge_ledger import ChargeLedger
@@ -21,7 +23,15 @@ from transport.plugin_registry import PluginRegistry
 class Peer:
     """Owned in-memory registered peer; commands use production Hub accounting."""
 
-    def __init__(self, session="owned-session", generation="owned-generation", user="owned-user"):
+    def __init__(
+        self,
+        session="owned-session",
+        generation="owned-generation",
+        user="owned-user",
+        *,
+        plugin_lease=None,
+        requester_lease=None,
+    ):
         self.state = SimpleNamespace(
             plugin_registered=True,
             plugin_session_id=session,
@@ -29,9 +39,16 @@ class Peer:
             user_id=user,
             plugin_features=frozenset(),
         )
+        setattr(self.state, AUTHENTICATED_LEASE_STATE, plugin_lease)
+        self.requester_lease = requester_lease
         self.application_state = self.client_state = WebSocketState.CONNECTED
         self.sent = []
         self.commands = asyncio.Queue()
+
+    async def request(self, function, *args, **kwargs):
+        assert self.requester_lease is not None
+        async with self.requester_lease.own():
+            return await function(*args, **kwargs)
 
     async def send_json(self, value):
         self.sent.append(value)
@@ -80,39 +97,66 @@ async def peer(monkeypatch):
         "_retained_results",
     ):
         monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == "_retained_results" else {})
+    monkeypatch.setattr(ApiKeyService, "_instance", None)
+    service = ApiKeyService("https://fixture.invalid/validate")
+
+    async def validate(key):
+        users = {
+            "plugin-key": "owned-user",
+            "alice-key": "owned-user",
+            "second-plugin-key": "second-user",
+            "second-requester-key": "second-user",
+        }
+        return ValidationResult(valid=key in users, user_id=users.get(key))
+
+    monkeypatch.setattr(service, "_validate_external", validate)
+    plugin_lease = (await service.validate("plugin-key")).lease
+    requester_lease = (await service.validate("alice-key")).lease
+    assert plugin_lease is not None and requester_lease is not None
     registry = PluginRegistry()
     PluginHub.configure(registry)
     await registry.register("owned-session", "Owned", "ownedhash", "test", user_id="owned-user")
-    wire = Peer()
+    wire = Peer(plugin_lease=plugin_lease, requester_lease=requester_lease)
+    wire.credential_service = service
     PluginHub._connections["owned-session"] = wire
     tasks_before = set(asyncio.all_tasks())
-    yield wire
-    for task in asyncio.all_tasks() - tasks_before:
-        if task is not asyncio.current_task():
-            task.cancel()
-    await asyncio.gather(
-        *(
-            task
-            for task in asyncio.all_tasks() - tasks_before
-            if task is not asyncio.current_task()
-        ),
-        return_exceptions=True,
-    )
-    await PluginHub.shutdown()
-    assert PluginHub._pending == {}
-    assert PluginHub._retained_results == {}
+    try:
+        yield wire
+    finally:
+        try:
+            for task in asyncio.all_tasks() - tasks_before:
+                if task is not asyncio.current_task():
+                    task.cancel()
+            await asyncio.gather(
+                *(
+                    task
+                    for task in asyncio.all_tasks() - tasks_before
+                    if task is not asyncio.current_task()
+                ),
+                return_exceptions=True,
+            )
+            await PluginHub.shutdown()
+            assert PluginHub._pending == {}
+            assert PluginHub._retained_results == {}
+        finally:
+            await service.aclose()
 
 
-def read(command="read_console", **kwargs):
-    return PluginHub.send_command_for_instance(
-        "ownedhash", command, {}, user_id="owned-user", **kwargs
+def read(peer, command="read_console", **kwargs):
+    return peer.request(
+        PluginHub.send_command_for_instance,
+        "ownedhash",
+        command,
+        {},
+        user_id="owned-user",
+        **kwargs,
     )
 
 
 @pytest.mark.asyncio
 async def test_concurrent_readiness_is_one_ping_and_next_request_is_fresh(peer):
     # When: six callers overlap the same main-thread readiness probe.
-    callers = [asyncio.create_task(read()) for _ in range(6)]
+    callers = [asyncio.create_task(read(peer)) for _ in range(6)]
     await peer.next_command()
     await yield_callers()
     probes = [value for value in peer.sent if value["name"] == "ping"]
@@ -125,7 +169,7 @@ async def test_concurrent_readiness_is_one_ping_and_next_request_is_fresh(peer):
     # Then: command fanout is preserved, but readiness itself is shared.
     assert all(result["success"] for result in results)
     assert peer.counts() == {"ping": 1, "read_console": 6}
-    fresh = asyncio.create_task(read())
+    fresh = asyncio.create_task(read(peer))
     await yield_callers()
     probe = peer.sent[-1]
     assert probe["name"] == "ping"
@@ -139,9 +183,9 @@ async def test_concurrent_readiness_is_one_ping_and_next_request_is_fresh(peer):
 @pytest.mark.asyncio
 async def test_cancelled_first_readiness_waiter_preserves_other_waiter(peer):
     # Given: a first request whose probe is blocked, and a joined second request.
-    first = asyncio.create_task(read())
+    first = asyncio.create_task(read(peer))
     await peer.next_command()
-    second = asyncio.create_task(read())
+    second = asyncio.create_task(read(peer))
     await yield_callers()
     # When: the first consumer is cancelled before the shared result arrives.
     first.cancel()
@@ -158,7 +202,7 @@ async def test_cancelled_first_readiness_waiter_preserves_other_waiter(peer):
 @pytest.mark.asyncio
 async def test_last_readiness_waiter_cancels_orphan_without_retained_result(peer):
     # Given: one pending readiness probe.
-    caller = asyncio.create_task(read())
+    caller = asyncio.create_task(read(peer))
     await peer.next_command()
     # When: its last waiter leaves.
     caller.cancel()
@@ -172,7 +216,7 @@ async def test_last_readiness_waiter_cancels_orphan_without_retained_result(peer
 async def test_ordinary_state_fallback_is_shared_and_next_read_is_fresh(peer):
     # When: ordinary state reads miss the push cache at the same time.
     callers = [
-        asyncio.create_task(read("get_editor_state", editor_state_read_mode="ordinary"))
+        asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
         for _ in range(6)
     ]
     probe = await peer.next_command()
@@ -186,7 +230,9 @@ async def test_ordinary_state_fallback_is_shared_and_next_read_is_fresh(peer):
     # Then: both raw readiness and state fetch are single flights, without TTL.
     assert all(result["data"]["value"] == 7 for result in results)
     assert peer.counts() == {"ping": 1, "get_editor_state": 1}
-    following = asyncio.create_task(read("get_editor_state", editor_state_read_mode="ordinary"))
+    following = asyncio.create_task(
+        read(peer, "get_editor_state", editor_state_read_mode="ordinary")
+    )
     await peer.reply(await peer.next_command())
     await peer.reply(await peer.next_command())
     assert (await following)["success"]
@@ -201,7 +247,7 @@ async def test_state_source_and_consumer_copies_keep_separate_delivery_budgets(p
     async def owned_read(owner):
         token = response_owner.set(owner)
         try:
-            return await read("get_editor_state", editor_state_read_mode="ordinary")
+            return await read(peer, "get_editor_state", editor_state_read_mode="ordinary")
         finally:
             response_owner.reset(token)
 
@@ -224,13 +270,13 @@ async def test_state_source_and_consumer_copies_keep_separate_delivery_budgets(p
 @pytest.mark.parametrize("command", ["batch_execute", "unknown_custom_tool"])
 async def test_mutation_admission_separates_pending_state_flights(peer, command):
     # Given: an ordinary state observation still executing in the editor.
-    old = asyncio.create_task(read("get_editor_state", editor_state_read_mode="ordinary"))
+    old = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
     await peer.reply(await peer.next_command())
     old_command = await peer.next_command()
     # When: mutation admission occurs before a second ordinary observation.
-    mutation = asyncio.create_task(read(command))
+    mutation = asyncio.create_task(read(peer, command))
     mutation_command = await peer.next_command()
-    fresh = asyncio.create_task(read("get_editor_state", editor_state_read_mode="ordinary"))
+    fresh = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
     await peer.reply(await peer.next_command())
     fresh_command = await peer.next_command()
     await peer.reply(mutation_command)
@@ -246,14 +292,16 @@ async def test_mutation_admission_separates_pending_state_flights(peer, command)
 @pytest.mark.asyncio
 async def test_authoritative_state_separates_ordinary_flights_before_private_rpc(peer):
     # Given: an older ordinary state source remains pending.
-    old = asyncio.create_task(read("get_editor_state", editor_state_read_mode="ordinary"))
+    old = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
     await peer.reply(await peer.next_command())
     old_command = await peer.next_command()
     # When: strict preflight begins, then another ordinary resource is read.
-    strict = asyncio.create_task(read("get_editor_state", editor_state_read_mode="authoritative"))
+    strict = asyncio.create_task(
+        read(peer, "get_editor_state", editor_state_read_mode="authoritative")
+    )
     await peer.reply(await peer.next_command())
     strict_command = await peer.next_command()
-    fresh = asyncio.create_task(read("get_editor_state", editor_state_read_mode="ordinary"))
+    fresh = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
     await peer.reply(await peer.next_command())
     fresh_command = await peer.next_command()
     await peer.reply(fresh_command, {"success": True, "data": {"value": 11}})
@@ -269,12 +317,16 @@ async def test_authoritative_state_separates_ordinary_flights_before_private_rpc
 @pytest.mark.asyncio
 async def test_replaced_socket_between_capture_and_admission_never_receives_old_read(peer):
     # Given: an identity captured from a registered old socket.
-    identity = await PluginHub._read_identity("owned-session")
-    replacement = Peer(generation="replacement-generation")
+    identity = await peer.request(PluginHub._read_identity, "owned-session")
+    replacement = Peer(
+        generation="replacement-generation",
+        plugin_lease=getattr(peer.state, AUTHENTICATED_LEASE_STATE),
+        requester_lease=peer.requester_lease,
+    )
     PluginHub._connections["owned-session"] = replacement
     # When: the old flight reaches actual admission after replacement.
-    result = await PluginHub.send_command(
-        "owned-session", "get_editor_state", {}, _expected_read=identity
+    result = await peer.request(
+        PluginHub.send_command, "owned-session", "get_editor_state", {}, _expected_read=identity
     )
     # Then: no request is dispatched to the replacement under the old key.
     assert result["data"]["reason"] == "read_invalidated"
@@ -284,9 +336,9 @@ async def test_replaced_socket_between_capture_and_admission_never_receives_old_
 @pytest.mark.asyncio
 async def test_mutation_between_probe_and_tool_dispatch_refuses_old_readiness(peer):
     # Given: a reader is waiting for a ping started before mutation admission.
-    caller = asyncio.create_task(read())
+    caller = asyncio.create_task(read(peer))
     probe = await peer.next_command()
-    mutation = asyncio.create_task(read("unknown_custom_tool"))
+    mutation = asyncio.create_task(read(peer, "unknown_custom_tool"))
     command = await peer.next_command()
     # When: that old probe replies after mutation admission.
     await peer.reply(probe)
@@ -305,8 +357,22 @@ async def test_unverified_identity_keeps_readiness_private(peer, invalid):
         peer.state.plugin_generation = None
     else:
         peer.state.user_id = "different-user"
+        replies = await asyncio.gather(
+            read(peer, retry_on_reload=False),
+            read(peer, retry_on_reload=False),
+            return_exceptions=True,
+        )
+        assert all(
+            isinstance(reply, dict)
+            and reply.get("success") is False
+            and reply.get("error") == "auth_required"
+            for reply in replies
+        )
+        assert peer.sent == []
+        assert PluginHub._pending == {}
+        return
     # When: two readers arrive together.
-    callers = [asyncio.create_task(read()) for _ in range(2)]
+    callers = [asyncio.create_task(read(peer)) for _ in range(2)]
     probes = [await peer.next_command(), await peer.next_command()]
     for probe in probes:
         await peer.reply(probe)
@@ -323,7 +389,7 @@ async def test_readiness_capacity_refusal_has_no_retry_or_tool_dispatch(peer, mo
     # Given: actual Hub command admission has no available slot.
     monkeypatch.setattr(PluginHub, "MAX_PENDING_PER_SESSION", 0)
     # When: readiness is requested.
-    result = await asyncio.wait_for(read(), 0.3)
+    result = await asyncio.wait_for(read(peer), 0.3)
     # Then: refusal is immediate, without a probe/retry or tool dispatch.
     assert result["data"]["reason"] == "command_capacity"
     assert peer.sent == []
@@ -333,7 +399,7 @@ async def test_readiness_capacity_refusal_has_no_retry_or_tool_dispatch(peer, mo
 async def test_readiness_result_capacity_refusal_does_not_retry(peer, monkeypatch):
     # Given: the shared source cannot reserve even the ping result.
     monkeypatch.setattr(PluginHub, "MAX_RETAINED_RESULT_BYTES_PER_SESSION", 0)
-    caller = asyncio.create_task(read())
+    caller = asyncio.create_task(read(peer))
     probe = await peer.next_command()
     # When: an otherwise valid response exceeds the source budget.
     await peer.reply(probe)
@@ -350,7 +416,7 @@ async def test_state_copy_capacity_is_reserved_before_fanout_without_another_rpc
     async def owned_read(owner):
         token = response_owner.set(owner)
         try:
-            return await read("get_editor_state", editor_state_read_mode="ordinary")
+            return await read(peer, "get_editor_state", editor_state_read_mode="ordinary")
         finally:
             response_owner.reset(token)
 
@@ -386,7 +452,7 @@ async def test_cancelled_state_first_owner_does_not_own_the_late_shared_result(p
     async def owned_read(owner):
         token = response_owner.set(owner)
         try:
-            return await read("get_editor_state", editor_state_read_mode="ordinary")
+            return await read(peer, "get_editor_state", editor_state_read_mode="ordinary")
         finally:
             response_owner.reset(token)
 
@@ -445,7 +511,7 @@ async def test_actual_ordinary_resource_coalesces_raw_fallback_before_private_en
         transport, "_resolve_user_id_from_request", AsyncMock(return_value="owned-user")
     )
     ctx = SimpleNamespace(get_state=AsyncMock(return_value="owned-user"))
-    callers = [asyncio.create_task(state.get_editor_state(ctx)) for _ in range(6)]
+    callers = [asyncio.create_task(peer.request(state.get_editor_state, ctx)) for _ in range(6)]
     await peer.reply(await peer.next_command())
     source = await peer.next_command()
     await yield_callers()
@@ -474,10 +540,14 @@ async def test_actual_ordinary_resource_coalesces_raw_fallback_before_private_en
 @pytest.mark.asyncio
 async def test_replacement_between_ping_and_read_never_dispatches_to_new_generation(peer):
     # Given: a successful pong is delivered as the registered socket is replaced.
-    caller = asyncio.create_task(read())
+    caller = asyncio.create_task(read(peer))
     probe = await peer.next_command()
     await peer.reply(probe)
-    replacement = Peer(generation="replacement-generation")
+    replacement = Peer(
+        generation="replacement-generation",
+        plugin_lease=getattr(peer.state, AUTHENTICATED_LEASE_STATE),
+        requester_lease=peer.requester_lease,
+    )
     PluginHub._connections["owned-session"] = replacement
     # When: the waiter resumes and reaches final read admission.
     result = await caller
@@ -490,7 +560,7 @@ async def test_replacement_between_ping_and_read_never_dispatches_to_new_generat
 @pytest.mark.asyncio
 async def test_replacement_between_socket_lookup_and_admission_is_refused(peer, monkeypatch):
     # Given: a pinned read pauses after socket lookup but before atomic admission.
-    identity = await PluginHub._read_identity("owned-session")
+    identity = await peer.request(PluginHub._read_identity, "owned-session")
     original = PluginHub._get_connection
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -502,11 +572,17 @@ async def test_replacement_between_socket_lookup_and_admission_is_refused(peer, 
 
     monkeypatch.setattr(PluginHub, "_get_connection", parked_lookup)
     pending = asyncio.create_task(
-        PluginHub.send_command("owned-session", "get_editor_state", {}, _expected_read=identity)
+        peer.request(
+            PluginHub.send_command, "owned-session", "get_editor_state", {}, _expected_read=identity
+        )
     )
     await entered.wait()
     # When: the same routing session now refers to a different actual socket.
-    replacement = Peer(generation="replacement-generation")
+    replacement = Peer(
+        generation="replacement-generation",
+        plugin_lease=getattr(peer.state, AUTHENTICATED_LEASE_STATE),
+        requester_lease=peer.requester_lease,
+    )
     PluginHub._connections["owned-session"] = replacement
     release.set()
     result = await pending
@@ -520,12 +596,27 @@ async def test_registered_principals_with_the_same_project_never_share(peer):
     # Given: two authenticated users have the same project hash.
     registry = PluginHub._registry
     await registry.register("second-session", "Owned", "ownedhash", "test", user_id="second-user")
-    second_peer = Peer("second-session", "second-generation", "second-user")
+    second_plugin = (await peer.credential_service.validate("second-plugin-key")).lease
+    second_requester = (await peer.credential_service.validate("second-requester-key")).lease
+    assert second_plugin is not None and second_requester is not None
+    second_peer = Peer(
+        "second-session",
+        "second-generation",
+        "second-user",
+        plugin_lease=second_plugin,
+        requester_lease=second_requester,
+    )
     PluginHub._connections["second-session"] = second_peer
     # When: both read that project concurrently.
-    first = asyncio.create_task(read())
+    first = asyncio.create_task(read(peer))
     second = asyncio.create_task(
-        PluginHub.send_command_for_instance("ownedhash", "read_console", {}, user_id="second-user")
+        second_peer.request(
+            PluginHub.send_command_for_instance,
+            "ownedhash",
+            "read_console",
+            {},
+            user_id="second-user",
+        )
     )
     await peer.reply(await peer.next_command())
     await second_peer.reply(await second_peer.next_command())
@@ -542,7 +633,7 @@ async def test_registered_principals_with_the_same_project_never_share(peer):
 @pytest.mark.asyncio
 async def test_malformed_optional_ping_reason_does_not_turn_pong_into_a_retry_loop(peer):
     # Given: a valid pong contains an irrelevant malformed optional reason.
-    caller = asyncio.create_task(read())
+    caller = asyncio.create_task(read(peer))
     probe = await peer.next_command()
     # When: its untrusted JSON reason is an array, not a capacity code.
     await peer.reply(
@@ -559,7 +650,8 @@ async def test_parameterized_state_commands_stay_private(peer):
     # Given: internal ordinary mode was used with different noncanonical params.
     callers = [
         asyncio.create_task(
-            PluginHub.send_command_for_instance(
+            peer.request(
+                PluginHub.send_command_for_instance,
                 "ownedhash",
                 "get_editor_state",
                 {"owned_projection": value},
@@ -591,12 +683,13 @@ async def test_parameterized_state_commands_stay_private(peer):
 async def test_private_latest_state_invalidates_older_ordinary_flight(peer, mode, params):
     # Given: an ordinary state result has not arrived yet.
     old = asyncio.create_task(
-        read("get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
+        read(peer, "get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
     )
     old_command = await peer.next_command()
     # When: a private latest-state query completes before the next ordinary read.
     private = asyncio.create_task(
-        PluginHub.send_command_for_instance(
+        peer.request(
+            PluginHub.send_command_for_instance,
             "ownedhash",
             "get_editor_state",
             params,
@@ -608,7 +701,7 @@ async def test_private_latest_state_invalidates_older_ordinary_flight(peer, mode
     await peer.reply(await peer.next_command(), {"success": True, "data": {"value": 9}})
     assert (await private)["data"]["value"] == 9
     following = asyncio.create_task(
-        read("get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
+        read(peer, "get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
     )
     await yield_callers()
     # Then: a subsequent ordinary request cannot adopt the older pending snapshot.
@@ -624,12 +717,13 @@ async def test_private_latest_state_invalidates_older_ordinary_flight(peer, mode
 async def test_console_mutation_admission_invalidates_older_state_flight(peer, action):
     # Given: a state source began before a console operation.
     old = asyncio.create_task(
-        read("get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
+        read(peer, "get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
     )
     old_command = await peer.next_command()
     # When: clear (or an ambiguous action) is admitted before another state read.
     console = asyncio.create_task(
-        PluginHub.send_command_for_instance(
+        peer.request(
+            PluginHub.send_command_for_instance,
             "ownedhash",
             "read_console",
             {"action": action},
@@ -640,7 +734,7 @@ async def test_console_mutation_admission_invalidates_older_state_flight(peer, a
     await peer.reply(await peer.next_command())
     assert (await console)["success"]
     following = asyncio.create_task(
-        read("get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
+        read(peer, "get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
     )
     await yield_callers()
     # Then: the post-admission resource cannot join the pre-operation state source.
@@ -656,19 +750,24 @@ async def test_console_mutation_admission_invalidates_older_state_flight(peer, a
 async def test_console_get_keeps_ordinary_state_flight_shareable(peer, params):
     # Given: the console's canonical/default get action is a read-only operation.
     old = asyncio.create_task(
-        read("get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
+        read(peer, "get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
     )
     old_command = await peer.next_command()
     console = asyncio.create_task(
-        PluginHub.send_command_for_instance(
-            "ownedhash", "read_console", params, user_id="owned-user", retry_on_reload=False
+        peer.request(
+            PluginHub.send_command_for_instance,
+            "ownedhash",
+            "read_console",
+            params,
+            user_id="owned-user",
+            retry_on_reload=False,
         )
     )
     await peer.reply(await peer.next_command())
     assert (await console)["success"]
     # When: another ordinary state request arrives after this read-only console RPC.
     following = asyncio.create_task(
-        read("get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
+        read(peer, "get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
     )
     await yield_callers()
     await peer.reply(old_command)
@@ -702,7 +801,8 @@ async def test_two_private_state_reads_succeed_after_both_identity_captures(
     monkeypatch.setattr(PluginHub, "_read_identity", parked_identity)
 
     async def private_read():
-        return await PluginHub.send_command_for_instance(
+        return await peer.request(
+            PluginHub.send_command_for_instance,
             "ownedhash",
             "get_editor_state",
             params,
@@ -731,15 +831,17 @@ async def test_two_private_state_reads_succeed_after_both_identity_captures(
 async def test_direct_private_state_admission_separates_ordinary_flights(peer):
     # Given: a raw ordinary source precedes a direct Hub private state query.
     old = asyncio.create_task(
-        read("get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
+        read(peer, "get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
     )
     old_command = await peer.next_command()
-    private = asyncio.create_task(PluginHub.send_command("owned-session", "get_editor_state", {}))
+    private = asyncio.create_task(
+        peer.request(PluginHub.send_command, "owned-session", "get_editor_state", {})
+    )
     await peer.reply(await peer.next_command(), {"success": True, "data": {"value": 9}})
     assert (await private)["data"]["value"] == 9
     # When: another ordinary request follows the private command's admission.
     following = asyncio.create_task(
-        read("get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
+        read(peer, "get_editor_state", editor_state_read_mode="ordinary", retry_on_reload=False)
     )
     await yield_callers()
     # Then: direct callers cannot bypass the ordinary late-join barrier.
@@ -754,27 +856,23 @@ async def test_direct_private_state_admission_separates_ordinary_flights(peer):
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(peer, monkeypatch, cancel):
     # Given: actual installed SDK HTTP transport and a blocked final ASGI consumer.
-    from unittest.mock import AsyncMock
     from main import UnityMCP
-    from services.api_key_service import ApiKeyService, ValidationResult
     from transport.response_limit_middleware import ResponseLimitMiddleware, _http_response_owners
-    from test_plugin_response_delivery import Wire
+    from tests.http.test_plugin_response_delivery import Wire
 
     monkeypatch.setattr(config, "http_behind_tls_proxy", True)
-    monkeypatch.setattr(
-        ApiKeyService,
-        "_instance",
-        SimpleNamespace(
-            validate=AsyncMock(return_value=ValidationResult(valid=True, user_id="owned-user")),
-            aclose=AsyncMock(),
-        ),
-    )
     server = UnityMCP("owned-shared-delivery")
     server.add_middleware(ResponseLimitMiddleware())
 
     @server.tool
     async def shared_state() -> dict:
-        return await read("get_editor_state", editor_state_read_mode="ordinary")
+        return await PluginHub.send_command_for_instance(
+            "ownedhash",
+            "get_editor_state",
+            {},
+            user_id="owned-user",
+            editor_state_read_mode="ordinary",
+        )
 
     app = server.http_app(transport="http", json_response=True)
     async with app.router.lifespan_context(app):
