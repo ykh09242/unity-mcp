@@ -4,6 +4,7 @@ from contextlib import AsyncExitStack
 import copy
 import json
 import math
+from urllib.parse import quote
 
 import anyio
 import httpx2
@@ -14,6 +15,7 @@ from cli.utils.connection import UnityConnectionError, _auth_headers, _server_ur
 from cli.utils.doctor_connection import DoctorHttpFactory, DiagnosticLimit
 from models.capabilities import ProjectCapabilitiesResponse
 from models.tool_description import ToolAvailability, ToolDescriptionReceipt
+from models.tool_diagnostics import ToolDiagnosticsResponse
 
 _READ_TIMEOUT_SECONDS = 15.0
 _CLEANUP_GRACE_SECONDS = 1.0
@@ -28,6 +30,7 @@ _RESOURCES = {
     "capabilities": "mcpforunity://capabilities",
     "custom_tools": "mcpforunity://custom-tools",
     "tool_groups": "mcpforunity://tool-groups",
+    "tool_diagnostics": "mcpforunity://tool-diagnostics",
 }
 _DESCRIPTOR_FIELDS = {
     "name",
@@ -239,11 +242,11 @@ async def _resource_uris(client, meta, deadline):
     raise DiagnosticLimit()
 
 
-async def _read_project(client, meta, deadline, state):
+async def _read_project(client, meta, deadline, state, name):
     uris = await _resource_uris(client, meta, deadline)
 
-    async def read(key, uri):
-        if uri not in uris:
+    async def read(key, uri, support_uri=None):
+        if (support_uri or uri) not in uris:
             return
         try:
             _remaining(deadline)
@@ -263,12 +266,16 @@ async def _read_project(client, meta, deadline, state):
 
     async with anyio.create_task_group() as group:
         for key, uri in _RESOURCES.items():
-            group.start_soon(read, key, uri)
+            if key == "tool_diagnostics":
+                group.start_soon(read, key, uri + "/" + quote(name, safe=""), uri)
+            else:
+                group.start_soon(read, key, uri)
 
 
 def _project_fields(name, requested, state):
     availability = ToolAvailability()
     verified = None
+    cap = None
 
     def discard_project(reason):
         for key in _RESOURCES:
@@ -301,6 +308,63 @@ def _project_fields(name, requested, state):
                 return discard_project("connection_unavailable")
         except (ValidationError, ValueError):
             state["evidence"]["capabilities"] = _evidence("invalid_source_response")
+    diagnostic_raw = state["reads"].get("tool_diagnostics")
+    if diagnostic_raw is not None:
+        try:
+            diagnostic = ToolDiagnosticsResponse.model_validate(diagnostic_raw).data
+            owner = diagnostic.connection
+            if not (
+                verified is True
+                and cap is not None
+                and owner.status == "connected"
+                and owner.instance_id == cap.connection.instance_id
+                and owner.project_hash == cap.connection.project_hash
+                and owner.generation == cap.connection.generation
+            ):
+                state["evidence"]["tool_diagnostics"] = _evidence("wrong_target")
+            else:
+                winners = [
+                    row
+                    for row in diagnostic.native.rows
+                    if row.tool_name == name
+                    and row.native_enabled is not None
+                    and row.state in ("discovered", "disabled")
+                ]
+                rows = [
+                    row
+                    for attempt in diagnostic.server
+                    for row in attempt.rows
+                    if row.tool_name == name
+                ]
+                if diagnostic.native.complete and len(winners) == 1:
+                    availability = availability.model_copy(
+                        update={"native_enabled": winners[0].native_enabled}
+                    )
+                    rows = winners
+                elif diagnostic.native.complete:
+                    rejected = [
+                        row
+                        for row in diagnostic.native.rows
+                        if row.tool_name == name
+                        and row.state == "rejected"
+                        and row.reason
+                        in ("unsupported_handler", "metadata_invalid", "schema_or_default_invalid")
+                    ]
+                    if rejected:
+                        rows = rejected
+                if rows:
+                    row = rows[0]
+                    state["evidence"]["tool_diagnostics"] = {
+                        "status": "observed",
+                        "reason": row.reason,
+                        "stage": row.stage,
+                        "state": row.state,
+                        "next_action": row.next_action,
+                    }
+                else:
+                    state["evidence"]["tool_diagnostics"] = _evidence("not_observed")
+        except (ValidationError, ValueError):
+            state["evidence"]["tool_diagnostics"] = _evidence("invalid_source_response")
     descriptor = None
     raw = state["reads"].get("custom_tools", {}).get("data")
     tools = raw.get("tools") if isinstance(raw, dict) else None
@@ -420,7 +484,7 @@ async def inspect_tool(config: CLIConfig, name: str, *, protocol="auto") -> Tool
                             )
                             await _listing(client, name, meta, deadline, state)
                             if config.unity_instance:
-                                await _read_project(client, meta, deadline, state)
+                                await _read_project(client, meta, deadline, state, name)
                     finally:
                         # Keep the scope outside SDK contexts and never lend unused read time.
                         maximum_scope.deadline = min(

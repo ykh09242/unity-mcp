@@ -302,7 +302,7 @@ namespace MCPForUnity.Editor.Services
                     CompilationJobTracker.Ledger.Started(context);
                     SetSessionUnixMs(CompileStartedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     SessionState.SetInt(CompileCountKey, SessionState.GetInt(CompileCountKey, 0) + 1);
-                    ForceUpdate("compilation_started");
+                    ForceUpdate("compilation_started", _pipelineCompilationRunning);
                 };
                 UnityEditor.Compilation.CompilationPipeline.compilationFinished += context =>
                 {
@@ -312,13 +312,13 @@ namespace MCPForUnity.Editor.Services
                     // observable at all: the write lands while this domain is alive and
                     // is read back by the next one.
                     SetSessionUnixMs(CompileFinishedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    ForceUpdate("compilation_finished");
+                    ForceUpdate("compilation_finished", _pipelineCompilationRunning);
                 };
 
                 UnityEditor.Compilation.CompilationPipeline.assemblyCompilationFinished += (assembly, messages) =>
                 {
                     CompilationJobTracker.Ledger.Assembly(assembly, messages);
-                    ForceUpdate("assembly_compilation_finished");
+                    ForceUpdate("assembly_compilation_finished", _pipelineCompilationRunning);
                 };
 
                 AssemblyReloadEvents.beforeAssemblyReload += () =>
@@ -437,11 +437,11 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static void ForceUpdate(string reason)
+        private static void ForceUpdate(string reason, bool? compilationState = null)
         {
             lock (LockObj)
             {
-                _cached = BuildSnapshot(reason);
+                _cached = BuildSnapshotCore(reason, compilationState);
             }
             NotifyObservers();
         }
@@ -511,12 +511,22 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static JObject BuildSnapshot(string reason)
+        private static class CompilationObservation
+        {
+            // Unity's AssemblyBuilder completion callback can run inside its own
+            // compilation enumeration. Reentering isCompiling there mutates that
+            // enumeration; use the event-tracked state only for that snapshot.
+            internal static bool Read(bool? eventState, Func<bool> readNative) => eventState ?? readNative();
+        }
+
+        private static JObject BuildSnapshot(string reason) => BuildSnapshotCore(reason, null);
+
+        private static JObject BuildSnapshotCore(string reason, bool? compilationState)
         {
             _sequence++;
             _observedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-            bool isCompiling = GetActualIsCompiling();
+            bool isCompiling = CompilationObservation.Read(compilationState, GetActualIsCompiling);
             _lastIsCompiling = isCompiling;
 
             var scene = EditorSceneManager.GetActiveScene();

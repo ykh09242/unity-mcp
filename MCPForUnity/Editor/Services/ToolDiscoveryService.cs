@@ -5,13 +5,15 @@ using System.Reflection;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 
 namespace MCPForUnity.Editor.Services
 {
-    public class ToolDiscoveryService : IToolDiscoveryService
+    public class ToolDiscoveryService : IToolDiscoveryService, IToolDiscoveryDiagnostics
     {
         private Dictionary<string, ToolMetadata> _cachedTools;
+        private ToolDiscoveryDiagnostics _diagnostics = new ToolDiscoveryDiagnostics();
 
         public List<ToolMetadata> DiscoverAllTools()
         {
@@ -46,11 +48,10 @@ namespace MCPForUnity.Editor.Services
                 try
                 {
                     toolAttr = type.GetCustomAttribute<McpForUnityToolAttribute>();
-                    if (CommandRegistry.GetCommandMethod(type) == null)
-                        continue;
                 }
                 catch (Exception ex)
                 {
+                    _diagnostics.Record(type, null, "rejected", "attribute_unreadable", "review_tool_declaration");
                     McpLog.Warn($"Failed to discover MCP tool {type.FullName}: {ex.Message}");
                     continue;
                 }
@@ -60,19 +61,103 @@ namespace MCPForUnity.Editor.Services
                     continue;
                 }
 
-                var metadata = ExtractToolMetadata(type, toolAttr);
+                var metadata = ClassifyAndApply(
+                    type,
+                    toolAttr,
+                    ex => McpLog.Warn($"Failed to discover MCP tool {type.FullName}: {ex.Message}"),
+                    ex => McpLog.Error($"Failed to extract metadata for {type.Name}: {ex.Message}"),
+                    name => McpLog.Warn($"Duplicate tool name '{name}' from {type.FullName}; overwriting previous registration.")
+                );
                 if (metadata != null)
-                {
-                    if (_cachedTools.ContainsKey(metadata.Name))
-                    {
-                        McpLog.Warn($"Duplicate tool name '{metadata.Name}' from {type.FullName}; overwriting previous registration.");
-                    }
-                    _cachedTools[metadata.Name] = metadata;
                     EnsurePreferenceInitialized(metadata);
-                }
             }
+            _diagnostics.Complete();
 
             McpLog.Info($"Discovered {_cachedTools.Count} MCP tools via reflection", false);
+        }
+
+        internal ToolMetadata ApplyDiagnosticCandidate(Type type, McpForUnityToolAttribute attribute) => ClassifyAndApply(type, attribute, null, null, null);
+
+        private ToolMetadata ClassifyAndApply(
+            Type type,
+            McpForUnityToolAttribute attribute,
+            Action<Exception> handlerError,
+            Action<Exception> metadataError,
+            Action<string> duplicate
+        )
+        {
+            var name = string.IsNullOrEmpty(attribute.Name) ? ConvertToSnakeCase(type.Name) : attribute.Name;
+            try
+            {
+                if (CommandRegistry.GetCommandMethod(type) == null)
+                {
+                    _diagnostics.Record(type, name, "rejected", "unsupported_handler", "fix_handler_signature");
+                    return null;
+                }
+            }
+            catch (Exception ex)
+            {
+                handlerError?.Invoke(ex);
+                _diagnostics.Record(type, name, "rejected", "attribute_unreadable", "review_tool_declaration");
+                return null;
+            }
+            var metadata = ExtractToolMetadataCore(type, attribute, metadataError);
+            if (metadata == null)
+            {
+                _diagnostics.Record(type, name, "rejected", "metadata_invalid", "review_tool_declaration");
+                return null;
+            }
+            if (_cachedTools.ContainsKey(metadata.Name))
+            {
+                _diagnostics.Shadow(metadata.Name);
+                duplicate?.Invoke(metadata.Name);
+            }
+            _cachedTools[metadata.Name] = metadata;
+            bool failed = !string.IsNullOrEmpty(metadata.SchemaError);
+            _diagnostics.Record(
+                type,
+                metadata.Name,
+                failed ? "rejected" : "discovered",
+                failed ? "schema_or_default_invalid" : "none",
+                failed ? "review_schema_and_defaults" : "none"
+            );
+            return metadata;
+        }
+
+        public JObject GetDiagnostics(string toolName = null, int limit = 64)
+        {
+            return GetDiagnosticsCore(toolName, limit, IsCachedToolEnabled);
+        }
+
+        private JObject GetDiagnosticsCore(string toolName, int limit, Func<string, ToolMetadata, bool> readEnablement)
+        {
+            if (!ToolDiscoveryDiagnostics.ValidName(toolName) || limit < 1 || limit > (toolName == null ? 64 : 16))
+                throw new ArgumentException("Invalid diagnostic query");
+            var cache = _cachedTools;
+            var diagnostics = _diagnostics;
+            var snapshot = diagnostics.Snapshot(toolName, limit);
+            if (cache == null || !(bool)snapshot["complete"])
+                return snapshot;
+            foreach (var row in (JArray)snapshot["rows"])
+            {
+                var name = (string)row["tool_name"];
+                if (name == null || (string)row["state"] != "discovered" || !cache.TryGetValue(name, out var metadata))
+                    continue;
+                if (!ReferenceEquals(cache, _cachedTools) || !ReferenceEquals(diagnostics, _diagnostics))
+                    return new ToolDiscoveryDiagnostics().Snapshot(toolName, limit);
+                bool enabled = readEnablement(name, metadata);
+                if (!ReferenceEquals(cache, _cachedTools) || !ReferenceEquals(diagnostics, _diagnostics))
+                    return new ToolDiscoveryDiagnostics().Snapshot(toolName, limit);
+                row["native_enabled"] = enabled;
+                if (!enabled)
+                {
+                    row["stage"] = "native_enablement";
+                    row["state"] = "disabled";
+                    row["reason"] = "native_disabled";
+                    row["next_action"] = "review_tool_toggle";
+                }
+            }
+            return snapshot;
         }
 
         /// <summary>
@@ -106,7 +191,11 @@ namespace MCPForUnity.Editor.Services
                 return false;
             }
 
-            var metadata = GetToolMetadata(toolName);
+            return IsCachedToolEnabled(toolName, GetToolMetadata(toolName));
+        }
+
+        private bool IsCachedToolEnabled(string toolName, ToolMetadata metadata)
+        {
             if (metadata?.RequiresExplicitConsent == true && !EditorPrefs.GetBool(GetConsentPreferenceKey(toolName), false))
                 return false;
 
@@ -132,7 +221,10 @@ namespace MCPForUnity.Editor.Services
             EditorPrefs.SetBool(key, enabled);
         }
 
-        private ToolMetadata ExtractToolMetadata(Type type, McpForUnityToolAttribute toolAttr)
+        private ToolMetadata ExtractToolMetadata(Type type, McpForUnityToolAttribute toolAttr) =>
+            ExtractToolMetadataCore(type, toolAttr, ex => McpLog.Error($"Failed to extract metadata for {type.Name}: {ex.Message}"));
+
+        private ToolMetadata ExtractToolMetadataCore(Type type, McpForUnityToolAttribute toolAttr, Action<Exception> reportError)
         {
             try
             {
@@ -188,7 +280,7 @@ namespace MCPForUnity.Editor.Services
             }
             catch (Exception ex)
             {
-                McpLog.Error($"Failed to extract metadata for {type.Name}: {ex.Message}");
+                reportError?.Invoke(ex);
                 return null;
             }
         }
@@ -293,6 +385,7 @@ namespace MCPForUnity.Editor.Services
         public void InvalidateCache()
         {
             _cachedTools = null;
+            _diagnostics = new ToolDiscoveryDiagnostics();
         }
 
         private void EnsurePreferenceInitialized(ToolMetadata metadata)

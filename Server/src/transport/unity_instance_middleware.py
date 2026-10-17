@@ -607,10 +607,12 @@ class UnityInstanceMiddleware(Middleware):
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into resource context if available."""
-        if str(getattr(context.message, "uri", "")) in {
+        uri = str(getattr(context.message, "uri", ""))
+        if uri in {
             "mcpforunity://capabilities",
             "mcpforunity://doctor",
-        }:
+            "mcpforunity://tool-diagnostics",
+        } or uri.startswith("mcpforunity://tool-diagnostics/"):
             from services.capabilities import capability_read_scope
 
             with capability_read_scope() as deadline:

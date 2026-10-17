@@ -17,6 +17,34 @@ namespace MCPForUnity.Editor.Resources.Editor
 
         public static object HandleCommand(JObject @params)
         {
+            var diagnosticsFlag = @params?["diagnostics"];
+            if (diagnosticsFlag != null && (diagnosticsFlag.Type != JTokenType.Boolean || diagnosticsFlag.Value<bool>()))
+            {
+                // This read boundary must never enter settings preparation/failure handling.
+                try
+                {
+                    if (diagnosticsFlag.Type != JTokenType.Boolean)
+                        return new ErrorResponse("Invalid tool diagnostics query.");
+                    var nameToken = @params["tool_name"];
+                    if (nameToken != null && nameToken.Type != JTokenType.Null && nameToken.Type != JTokenType.String)
+                        return new ErrorResponse("Invalid tool diagnostics query.");
+                    string name = nameToken?.Value<string>();
+                    var limitToken = @params["limit"];
+                    if (limitToken != null && limitToken.Type != JTokenType.Integer)
+                        return new ErrorResponse("Invalid tool diagnostics query.");
+                    int limit = limitToken == null ? (name == null ? 64 : 16) : limitToken.Value<int>();
+                    if (!ToolDiscoveryDiagnostics.ValidName(name) || limit < 1 || limit > (name == null ? 64 : 16))
+                        return new ErrorResponse("Invalid tool diagnostics query.");
+                    var provider = MCPServiceLocator.ToolDiscovery as IToolDiscoveryDiagnostics;
+                    if (provider == null)
+                        return new ErrorResponse("Tool diagnostics unavailable.");
+                    return new SuccessResponse("Retrieved tool diagnostics.", provider.GetDiagnostics(name, limit));
+                }
+                catch (Exception)
+                {
+                    return new ErrorResponse("Tool diagnostics unavailable.");
+                }
+            }
             try
             {
                 var discovery = MCPServiceLocator.ToolDiscovery;

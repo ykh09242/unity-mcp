@@ -2,6 +2,8 @@
 
 import click
 
+from cli.commands.custom_tool_scaffold import scaffold_command
+
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error
 from cli.utils.connection import run_list_custom_tools, handle_unity_errors
@@ -104,3 +106,7 @@ def custom_tool():
 def list_custom_tools():
     """List custom tools registered for the active Unity project."""
     _list_custom_tools()
+
+
+tool.add_command(scaffold_command)
+custom_tool.add_command(scaffold_command)
