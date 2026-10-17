@@ -56,24 +56,38 @@ namespace MCPForUnity.Editor.Services.Blender
 
             using var client = new TcpClient();
             using var cancellation = cancellationToken.Register(() => client.Close());
-            IAsyncResult connect = client.BeginConnect(endpoint.Host, endpoint.Port, null, null);
-            using var connectWait = connect.AsyncWaitHandle;
-            bool connected = connectWait.WaitOne(TimeSpan.FromSeconds(ConnectTimeoutSeconds));
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!connected || !client.Connected)
+            try
             {
-                throw new BlenderUnavailableException(
-                    $"Blender addon not reachable at {endpoint}. Start Blender and press " + "'Connect to MCP server' in the BlenderMCP sidebar (N panel)."
-                );
-            }
-            client.EndConnect(connect);
+                IAsyncResult connect = client.BeginConnect(endpoint.Host, endpoint.Port, null, null);
+                using var connectWait = connect.AsyncWaitHandle;
+                bool connected = cancellationToken.CanBeCanceled
+                    ? WaitHandle.WaitAny(new[] { connectWait, cancellationToken.WaitHandle }, TimeSpan.FromSeconds(ConnectTimeoutSeconds)) == 0
+                    : connectWait.WaitOne(TimeSpan.FromSeconds(ConnectTimeoutSeconds));
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!connected || !client.Connected)
+                {
+                    throw new BlenderUnavailableException(
+                        $"Blender addon not reachable at {endpoint}. Start Blender and press " + "'Connect to MCP server' in the BlenderMCP sidebar (N panel)."
+                    );
+                }
+                client.EndConnect(connect);
 
-            using NetworkStream stream = client.GetStream();
-            var elapsed = Stopwatch.StartNew();
-            stream.WriteTimeout = timeoutSeconds * 1000;
-            stream.Write(payload, 0, payload.Length);
-            stream.Flush();
-            return ReadResponse(stream, type, timeoutSeconds, cancellationToken, elapsed);
+                using NetworkStream stream = client.GetStream();
+                var elapsed = Stopwatch.StartNew();
+                stream.WriteTimeout = timeoutSeconds * 1000;
+                cancellationToken.ThrowIfCancellationRequested();
+                stream.Write(payload, 0, payload.Length);
+                stream.Flush();
+                cancellationToken.ThrowIfCancellationRequested();
+                return ReadResponse(stream, type, timeoutSeconds, cancellationToken, elapsed);
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                // Closing a canceled socket can surface as connect/write/read IO errors on Mono.
+                // Keep the caller's cancellation identity regardless of which operation unblocked.
+                cancellationToken.ThrowIfCancellationRequested();
+                throw;
+            }
         }
 
         internal static JToken ReadResponse(
@@ -114,6 +128,7 @@ namespace MCPForUnity.Editor.Services.Blender
                     throw;
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 if (n <= 0)
                     break;
                 if (buffer.Length + n > MaxResponseBytes)
@@ -121,11 +136,18 @@ namespace MCPForUnity.Editor.Services.Blender
                 buffer.Write(chunk, 0, n);
 
                 if (boundary.Append(chunk, n) && TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject parsed))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
                     return Unwrap(parsed, type);
+                }
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             if (TryParseResponse(buffer.GetBuffer(), (int)buffer.Length, out JObject final))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
                 return Unwrap(final, type);
+            }
             throw new IOException($"Blender closed the connection before a complete response to '{type}' arrived.");
         }
 
@@ -232,25 +254,34 @@ namespace MCPForUnity.Editor.Services.Blender
         }
 
         /// <summary>Runs Python inside Blender (blocking) and returns its captured stdout.</summary>
-        public static string RunPython(BlenderEndpoint endpoint, string code, int timeoutSeconds = 120)
+        public static string RunPython(BlenderEndpoint endpoint, string code, int timeoutSeconds = 120, CancellationToken cancellationToken = default)
         {
-            JToken result = Send(endpoint, "execute_code", new JObject { ["code"] = code }, timeoutSeconds);
+            JToken result = Send(endpoint, "execute_code", new JObject { ["code"] = code }, timeoutSeconds, cancellationToken);
             return result?["result"]?.ToString() ?? string.Empty;
         }
 
         /// <summary>Runs <see cref="RunPython"/> on the thread pool.</summary>
-        public static Task<string> RunPythonAsync(BlenderEndpoint endpoint, string code, int timeoutSeconds = 120)
+        public static Task<string> RunPythonAsync(
+            BlenderEndpoint endpoint,
+            string code,
+            int timeoutSeconds = 120,
+            CancellationToken cancellationToken = default
+        )
         {
-            return Task.Run(() => RunPython(endpoint, code, timeoutSeconds));
+            return Task.Run(() => RunPython(endpoint, code, timeoutSeconds, cancellationToken), cancellationToken);
         }
 
         /// <summary>Probes the addon with get_scene_info; returns whether it answered and the error text if not.</summary>
-        public static (bool Ok, string Error) Probe(BlenderEndpoint endpoint, int timeoutSeconds = 10)
+        public static (bool Ok, string Error) Probe(BlenderEndpoint endpoint, int timeoutSeconds = 10, CancellationToken cancellationToken = default)
         {
             try
             {
-                Send(endpoint, "get_scene_info", null, timeoutSeconds);
+                Send(endpoint, "get_scene_info", null, timeoutSeconds, cancellationToken);
                 return (true, null);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception e)
             {
@@ -259,9 +290,9 @@ namespace MCPForUnity.Editor.Services.Blender
         }
 
         /// <summary>Runs <see cref="Probe"/> on the thread pool.</summary>
-        public static Task<(bool Ok, string Error)> ProbeAsync(BlenderEndpoint endpoint, int timeoutSeconds = 10)
+        public static Task<(bool Ok, string Error)> ProbeAsync(BlenderEndpoint endpoint, int timeoutSeconds = 10, CancellationToken cancellationToken = default)
         {
-            return Task.Run(() => Probe(endpoint, timeoutSeconds));
+            return Task.Run(() => Probe(endpoint, timeoutSeconds, cancellationToken), cancellationToken);
         }
 
         /// <summary>True once the bytes received so far form one complete JSON object.</summary>

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
@@ -41,6 +42,15 @@ namespace MCPForUnity.Editor.Tools.Blender
     )]
     public static class BlenderBridgeTool
     {
+        // Internal readers let isolated tests avoid changing Editor preferences.
+        internal static Func<bool> ConsentGrantedOverride = null;
+        internal static Func<BlenderEndpoint> EndpointOverride = null;
+
+        private static bool ConsentGranted =>
+            ConsentGrantedOverride?.Invoke() ?? EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("blender_bridge"), false);
+
+        private static BlenderEndpoint Endpoint => EndpointOverride?.Invoke() ?? BlenderBridgePrefs.Endpoint;
+
         private static readonly string[] ValidActions =
         {
             "status",
@@ -58,16 +68,17 @@ namespace MCPForUnity.Editor.Tools.Blender
         private const string NotConfiguredMessage =
             "The blender-mcp checkout is not set. Open Window > MCP for Unity > Generative > Blender Bridge " + "and pick the folder that contains addon.py.";
 
-        /// <summary>Entry point for the bridge: validates parameters, dispatches by action, and never throws.</summary>
-        public static async Task<object> HandleCommand(JObject @params)
+        /// <summary>Compatibility entry point for callers without cooperative cancellation.</summary>
+        public static Task<object> HandleCommand(JObject @params) => HandleCommand(@params, CancellationToken.None);
+
+        /// <summary>Dispatches bridge actions; requested cancellation propagates with the caller token.</summary>
+        public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (@params == null)
                 return new ErrorResponse("Parameters cannot be null.");
             // Panel/menu callers and direct registry dispatch must enforce the same grant.
-            if (
-                !EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("blender_bridge"), false)
-                || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("blender_bridge")
-            )
+            if (!ConsentGranted || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("blender_bridge"))
                 return new ErrorResponse(
                     "blender_consent_required",
                     "Enable blender_bridge explicitly in the Unity Editor before using Blender bridge operations, "
@@ -83,55 +94,70 @@ namespace MCPForUnity.Editor.Tools.Blender
                 switch (action)
                 {
                     case "status":
-                        return await StatusAsync();
+                        return await StatusAsync(cancellationToken);
                     case "scene_info":
-                        return new SuccessResponse(
-                            "Retrieved Blender scene info.",
-                            await BlenderSocketClient.SendAsync(BlenderBridgePrefs.Endpoint, "get_scene_info", null, timeout)
-                        );
+                    {
+                        JToken scene = await BlenderSocketClient.SendAsync(Endpoint, "get_scene_info", null, timeout, cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        return new SuccessResponse("Retrieved Blender scene info.", scene);
+                    }
                     case "object_info":
                     {
                         string objectName = p.Get("object_name");
                         if (string.IsNullOrWhiteSpace(objectName))
                             return new ErrorResponse("'object_name' is required for object_info.");
                         JToken info = await BlenderSocketClient.SendAsync(
-                            BlenderBridgePrefs.Endpoint,
+                            Endpoint,
                             "get_object_info",
                             new JObject { ["object_name"] = objectName },
-                            timeout
+                            timeout,
+                            cancellationToken
                         );
+                        cancellationToken.ThrowIfCancellationRequested();
                         return new SuccessResponse($"Retrieved info for '{objectName}'.", info);
                     }
                     case "screenshot":
-                        return await ScreenshotAsync(p, timeout);
+                        return await ScreenshotAsync(p, timeout, cancellationToken);
                     case "run_python":
                     {
                         string code = p.Get("code");
                         if (string.IsNullOrWhiteSpace(code))
                             return new ErrorResponse("'code' is required for run_python.");
-                        string stdout = await BlenderSocketClient.RunPythonAsync(BlenderBridgePrefs.Endpoint, code, timeout);
+                        string stdout = await BlenderSocketClient.RunPythonAsync(Endpoint, code, timeout, cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
                         return new SuccessResponse("Executed Python in Blender.", new { stdout });
                     }
                     case "import_model":
-                        return await ImportModelAsync(p, timeout);
+                        return await ImportModelAsync(p, timeout, cancellationToken);
                     case "compare_screenshot":
-                        return await CompareScreenshotAsync(p, timeout);
+                        return await CompareScreenshotAsync(p, timeout, cancellationToken);
                     case "setup_bloom":
-                        return ToBloomResponse(await SetupBloomAsync());
+                    {
+                        JObject bloom = await SetupBloomAsync(cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        return ToBloomResponse(bloom);
+                    }
                     case "check_updates":
-                        return await CheckUpdatesAsync();
+                        return await CheckUpdatesAsync(cancellationToken);
                     case "sync_addon":
+                        cancellationToken.ThrowIfCancellationRequested();
                         return SyncAddon(p.GetBool("force", false));
                     default:
                         return new ErrorResponse($"Unknown action '{action}'. Valid: {string.Join(", ", ValidActions)}.");
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (BlenderUnavailableException e)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 return new ErrorResponse(e.Message);
             }
             catch (Exception e)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 return new ErrorResponse(SecretRedactor.Scrub($"blender_bridge '{action}' failed: {e.Message}"));
             }
         }
@@ -139,9 +165,9 @@ namespace MCPForUnity.Editor.Tools.Blender
         // ------------------------------------------------------------------ status
 
         /// <summary>Probes the addon socket and reports checkout / installed-addon state without failing.</summary>
-        private static async Task<object> StatusAsync()
+        private static async Task<object> StatusAsync(CancellationToken cancellationToken)
         {
-            BlenderEndpoint endpoint = BlenderBridgePrefs.Endpoint;
+            BlenderEndpoint endpoint = Endpoint;
             string forkAddon = BlenderBridgePrefs.ForkAddonPath;
             string installedAddon = BlenderBridgePrefs.InstalledAddonPath;
             bool forkConfigured = BlenderBridgePrefs.IsForkConfigured;
@@ -153,14 +179,20 @@ namespace MCPForUnity.Editor.Tools.Blender
             JToken scene = null;
             try
             {
-                scene = await BlenderSocketClient.SendAsync(endpoint, "get_scene_info", null, 10);
+                scene = await BlenderSocketClient.SendAsync(endpoint, "get_scene_info", null, 10, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
                 reachable = true;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception e)
             {
                 error = SecretRedactor.Scrub(e.Message);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             string forkMd5 = forkAddon != null && File.Exists(forkAddon) ? FileMd5(forkAddon) : null;
             string installedMd5 = installedAddon != null && File.Exists(installedAddon) ? FileMd5(installedAddon) : null;
 
@@ -180,13 +212,14 @@ namespace MCPForUnity.Editor.Tools.Blender
                 ["addon_in_sync"] = forkMd5 != null && installedMd5 != null && forkMd5 == installedMd5,
             };
             string msg = reachable ? $"Blender reachable. Scene '{scene?["name"]}' with {scene?["object_count"]} objects." : "Blender not reachable.";
+            cancellationToken.ThrowIfCancellationRequested();
             return new SuccessResponse(msg, data);
         }
 
         // -------------------------------------------------------------- screenshot
 
         /// <summary>Asks Blender for an offscreen viewport render and optionally copies it under Assets/.</summary>
-        private static async Task<object> ScreenshotAsync(ToolParams p, int timeout)
+        private static async Task<object> ScreenshotAsync(ToolParams p, int timeout, CancellationToken cancellationToken)
         {
             int maxSize = Math.Max(64, p.GetInt("max_size", 1000) ?? 1000);
             string outputFolder = p.Get("output_folder");
@@ -200,11 +233,12 @@ namespace MCPForUnity.Editor.Tools.Blender
             }
 
             string dir = Path.Combine(ProjectRoot(), "Library", "BlenderBridge");
+            cancellationToken.ThrowIfCancellationRequested();
             Directory.CreateDirectory(dir);
             string file = Path.Combine(dir, $"blender_viewport_{UniqueSuffix()}.png").Replace('\\', '/');
 
             JToken result = await BlenderSocketClient.SendAsync(
-                BlenderBridgePrefs.Endpoint,
+                Endpoint,
                 "get_viewport_screenshot",
                 new JObject
                 {
@@ -212,8 +246,10 @@ namespace MCPForUnity.Editor.Tools.Blender
                     ["filepath"] = file,
                     ["format"] = "png",
                 },
-                timeout
+                timeout,
+                cancellationToken
             );
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (!File.Exists(file))
                 return new ErrorResponse($"Blender did not write a screenshot to {file}. Response: {result}");
@@ -222,12 +258,16 @@ namespace MCPForUnity.Editor.Tools.Blender
             if (assetsRelativeFolder != null)
             {
                 string absDir = AssetGenPaths.ToAbsolute(assetsRelativeFolder);
+                cancellationToken.ThrowIfCancellationRequested();
                 Directory.CreateDirectory(absDir);
                 assetPath = $"{assetsRelativeFolder}/{Path.GetFileName(file)}";
+                cancellationToken.ThrowIfCancellationRequested();
                 File.Copy(file, Path.Combine(absDir, Path.GetFileName(file)), true);
+                cancellationToken.ThrowIfCancellationRequested();
                 AssetDatabase.ImportAsset(assetPath);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             return new SuccessResponse(
                 "Captured Blender viewport.",
                 new JObject
@@ -244,7 +284,7 @@ namespace MCPForUnity.Editor.Tools.Blender
         // ------------------------------------------------------------ import_model
 
         /// <summary>Exports from Blender, imports through the shared normalization policy, then places the resulting asset.</summary>
-        private static async Task<object> ImportModelAsync(ToolParams p, int timeout)
+        private static async Task<object> ImportModelAsync(ToolParams p, int timeout, CancellationToken cancellationToken)
         {
             string fmt = (p.Get("format") ?? "glb").Trim().ToLowerInvariant();
             if (fmt != "glb" && fmt != "fbx")
@@ -271,14 +311,17 @@ namespace MCPForUnity.Editor.Tools.Blender
 
             // 1. Export from Blender to a temp file (off the editor thread).
             string exportDir = Path.Combine(Path.GetTempPath(), "BlenderBridge");
+            cancellationToken.ThrowIfCancellationRequested();
             Directory.CreateDirectory(exportDir);
             string exportPath = Path.Combine(exportDir, $"{name}_{UniqueSuffix()}.{fmt}").Replace('\\', '/');
 
             if (File.Exists(exportPath) || Directory.Exists(exportPath))
                 throw new IOException("The Blender export path already exists.");
 
-            string stdout = await ExportFromBlenderAsync(BlenderBridgePrefs.Endpoint, exportPath, names, selectionOnly, applyModifiers, fmt, timeout);
+            // Own the unique path before waiting. A remote exporter may still recreate it after cleanup.
             using var export = new TemporaryBlenderExport(exportPath);
+            string stdout = await ExportFromBlenderAsync(Endpoint, exportPath, names, selectionOnly, applyModifiers, fmt, timeout, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (!File.Exists(exportPath))
                 return new ErrorResponse($"Blender did not produce {exportPath}. Blender output: {Truncate(stdout, 800)}");
@@ -298,18 +341,28 @@ namespace MCPForUnity.Editor.Tools.Blender
 
             // The public importer only accepts Assets-contained sources. Stage this bridge's
             // own export there without broadening that boundary to arbitrary local files.
-            string stagedExport = StageExportForImport(exportPath);
+            string stagedExport = StageExportForImport(exportPath, cancellationToken);
             JObject importResult;
             try
             {
                 importParams["sourcePath"] = stagedExport;
+                cancellationToken.ThrowIfCancellationRequested();
+                // Once admitted, the shared synchronous import may finish. Keep its published asset.
                 importResult = JObject.FromObject(ImportModelFile.HandleCommand(importParams));
             }
             finally
             {
-                File.Delete(stagedExport);
-                Directory.Delete(Path.GetDirectoryName(stagedExport));
+                try
+                {
+                    File.Delete(stagedExport);
+                    Directory.Delete(Path.GetDirectoryName(stagedExport));
+                }
+                catch (Exception ex) when (cancellationToken.IsCancellationRequested)
+                {
+                    McpLog.Warn($"Could not remove canceled Blender staging directory ({ex.GetType().Name}).");
+                }
             }
+            cancellationToken.ThrowIfCancellationRequested();
             if (!(importResult.Value<bool?>("success") ?? false))
                 return MapImportFailure(importResult);
 
@@ -324,24 +377,31 @@ namespace MCPForUnity.Editor.Tools.Blender
                 ["placed"] = false,
             };
 
+            cancellationToken.ThrowIfCancellationRequested();
             if (!place || string.IsNullOrEmpty(assetPath))
                 return export.Preserve(new SuccessResponse($"Imported {assetPath} (not placed).", data));
 
+            cancellationToken.ThrowIfCancellationRequested();
             string sourceAssetPath = NormalizedModelVariant.ResolveSourceAssetPath(assetPath);
             if (fmt == "fbx" && autoAnimate)
-                ConfigureFbxClipLooping(sourceAssetPath);
+                ConfigureFbxClipLooping(sourceAssetPath, cancellationToken);
 
             // 3. Place the pipeline's verified output. AutoNormalize and nonpositive targets must
             // have identical meaning with or without placement; never rescale a second time here.
-            GameObject go = PlaceImportedModel(assetPath, name, position, SceneManager.GetActiveScene());
+            cancellationToken.ThrowIfCancellationRequested();
+            GameObject go = PlaceImportedModelWithCancellation(assetPath, name, position, SceneManager.GetActiveScene(), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (go == null)
             {
                 data["note"] = "Asset has no GameObject root to instantiate.";
                 return export.Preserve(new SuccessResponse($"Imported {assetPath} but could not instantiate it.", data));
             }
+            cancellationToken.ThrowIfCancellationRequested();
             Undo.RegisterCreatedObjectUndo(go, "Import from Blender");
 
+            cancellationToken.ThrowIfCancellationRequested();
             EditorSceneManager.MarkSceneDirty(go.scene);
+            cancellationToken.ThrowIfCancellationRequested();
             Selection.activeGameObject = go;
 
             data["placed"] = true;
@@ -355,14 +415,18 @@ namespace MCPForUnity.Editor.Tools.Blender
             }
 
             // 4. Optional finishing touches: play imported clips, keep a prefab, make emission glow.
-            JObject animation = SetupAnimation(go, assetPath, name, autoAnimate);
+            cancellationToken.ThrowIfCancellationRequested();
+            JObject animation = SetupAnimationWithCancellation(go, assetPath, name, autoAnimate, null, cancellationToken);
             if (animation != null)
                 data["animation"] = animation;
+            cancellationToken.ThrowIfCancellationRequested();
             if (savePrefab)
-                data["prefab_path"] = SavePrefab(go, assetPath, name);
+                data["prefab_path"] = SavePrefabWithCancellation(go, assetPath, name, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (ensureBloom && HasEmissiveMaterial(go))
-                data["bloom"] = await SetupBloomAsync();
+                data["bloom"] = await SetupBloomAsync(cancellationToken);
 
+            cancellationToken.ThrowIfCancellationRequested();
             return export.Preserve(new SuccessResponse($"Imported {assetPath} and placed '{go.name}' in the scene.", data));
         }
 
@@ -378,7 +442,8 @@ namespace MCPForUnity.Editor.Tools.Blender
             bool selectionOnly,
             bool applyModifiers,
             string fmt,
-            int timeout
+            int timeout,
+            CancellationToken cancellationToken
         )
         {
             var args = new JObject
@@ -391,15 +456,19 @@ namespace MCPForUnity.Editor.Tools.Blender
             };
             try
             {
-                JToken result = await BlenderSocketClient.SendAsync(endpoint, "export_scene", args, timeout);
+                JToken result = await BlenderSocketClient.SendAsync(endpoint, "export_scene", args, timeout, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
                 if (result?["error"] != null)
                     throw new BlenderCommandException($"Blender export_scene failed: {result["error"]}");
                 return result?.ToString(Formatting.None) ?? string.Empty;
             }
             catch (BlenderCommandException e) when (e.Message.Contains("Unknown command type"))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 string script = BuildExportScript(exportPath, names, selectionOnly, applyModifiers, fmt);
-                return await BlenderSocketClient.RunPythonAsync(endpoint, script, timeout);
+                string output = await BlenderSocketClient.RunPythonAsync(endpoint, script, timeout, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                return output;
             }
         }
 
@@ -476,8 +545,9 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         // ---------------------------------------------------------- finishing touches
 
         /// <summary>Marks every clip in an FBX as looping so the imported animation cycles once a controller drives it.</summary>
-        private static void ConfigureFbxClipLooping(string assetPath)
+        private static void ConfigureFbxClipLooping(string assetPath, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!(AssetImporter.GetAtPath(assetPath) is ModelImporter importer))
                 return;
             ModelImporterClipAnimation[] clips = importer.clipAnimations.Length > 0 ? importer.clipAnimations : importer.defaultClipAnimations;
@@ -485,19 +555,35 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 return;
             foreach (ModelImporterClipAnimation clip in clips)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 clip.loopTime = true;
+                cancellationToken.ThrowIfCancellationRequested();
                 if (importer.animationType == ModelImporterAnimationType.Legacy)
                     clip.wrapMode = WrapMode.Loop;
             }
+            cancellationToken.ThrowIfCancellationRequested();
             importer.clipAnimations = clips;
+            cancellationToken.ThrowIfCancellationRequested();
             importer.SaveAndReimport();
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         /// <summary>
         /// Configures looping playback with the animation system used by the imported clips.
         /// </summary>
-        internal static JObject SetupAnimation(GameObject go, string assetPath, string name, bool autoAnimate, AnimationClip[] clips = null)
+        internal static JObject SetupAnimation(GameObject go, string assetPath, string name, bool autoAnimate, AnimationClip[] clips = null) =>
+            SetupAnimationWithCancellation(go, assetPath, name, autoAnimate, clips, CancellationToken.None);
+
+        private static JObject SetupAnimationWithCancellation(
+            GameObject go,
+            string assetPath,
+            string name,
+            bool autoAnimate,
+            AnimationClip[] clips,
+            CancellationToken cancellationToken
+        )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!autoAnimate)
                 return null;
             clips = (
@@ -506,6 +592,7 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             )
                 .Where(c => c != null && !c.name.StartsWith("__preview__", StringComparison.Ordinal))
                 .ToArray();
+            cancellationToken.ThrowIfCancellationRequested();
             if (clips.Length == 0)
                 return null;
             bool legacy = clips[0].legacy;
@@ -514,20 +601,31 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
 
             if (legacy)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 UnityEngine.Animation animation = go.GetComponentInChildren<UnityEngine.Animation>(true) ?? go.AddComponent<UnityEngine.Animation>();
                 AnimationClip defaultClip = clips.Contains(animation.clip) ? animation.clip : clips[0];
                 foreach (AnimationClip clip in clips)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     clip.wrapMode = WrapMode.Loop;
+                    cancellationToken.ThrowIfCancellationRequested();
                     animation.AddClip(clip, clip.name);
+                    cancellationToken.ThrowIfCancellationRequested();
                     EditorUtility.SetDirty(clip);
                 }
+                cancellationToken.ThrowIfCancellationRequested();
                 animation.clip = defaultClip;
+                cancellationToken.ThrowIfCancellationRequested();
                 animation.wrapMode = WrapMode.Loop;
+                cancellationToken.ThrowIfCancellationRequested();
                 animation.playAutomatically = true;
+                cancellationToken.ThrowIfCancellationRequested();
                 animation.enabled = true;
+                cancellationToken.ThrowIfCancellationRequested();
                 EditorUtility.SetDirty(animation);
+                cancellationToken.ThrowIfCancellationRequested();
                 AssetDatabase.SaveAssets();
+                cancellationToken.ThrowIfCancellationRequested();
                 return new JObject
                 {
                     ["system"] = "legacy",
@@ -538,11 +636,14 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 };
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             Animator animator = go.GetComponentInChildren<Animator>(true) ?? go.AddComponent<Animator>();
             string controllerPath = AssetDatabase.GenerateUniqueAssetPath(
                 Path.Combine(Path.GetDirectoryName(assetPath) ?? "Assets", $"{name}_Controller.controller").Replace('\\', '/')
             );
+            cancellationToken.ThrowIfCancellationRequested();
             var controller = UnityEditor.Animations.AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            cancellationToken.ThrowIfCancellationRequested();
             var stateMachine = controller.layers[0].stateMachine;
             foreach (AnimationClip clip in clips)
             {
@@ -550,17 +651,26 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 if (!settings.loopTime)
                 {
                     settings.loopTime = true;
+                    cancellationToken.ThrowIfCancellationRequested();
                     AnimationUtility.SetAnimationClipSettings(clip, settings);
                 }
+                cancellationToken.ThrowIfCancellationRequested();
                 var state = stateMachine.AddState(clip.name);
+                cancellationToken.ThrowIfCancellationRequested();
                 state.motion = clip;
+                cancellationToken.ThrowIfCancellationRequested();
                 if (stateMachine.defaultState == null)
                     stateMachine.defaultState = state;
             }
+            cancellationToken.ThrowIfCancellationRequested();
             animator.runtimeAnimatorController = controller;
+            cancellationToken.ThrowIfCancellationRequested();
             EditorUtility.SetDirty(controller);
+            cancellationToken.ThrowIfCancellationRequested();
             EditorUtility.SetDirty(animator);
+            cancellationToken.ThrowIfCancellationRequested();
             AssetDatabase.SaveAssets();
+            cancellationToken.ThrowIfCancellationRequested();
             return new JObject
             {
                 ["system"] = "mecanim",
@@ -572,17 +682,27 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         }
 
         /// <summary>Saves the placed instance as a prefab under &lt;asset folder&gt;/Prefabs and connects the instance to it.</summary>
-        private static string SavePrefab(GameObject go, string assetPath, string name)
+        private static string SavePrefab(GameObject go, string assetPath, string name) =>
+            SavePrefabWithCancellation(go, assetPath, name, CancellationToken.None);
+
+        private static string SavePrefabWithCancellation(GameObject go, string assetPath, string name, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string parent = (Path.GetDirectoryName(assetPath) ?? "Assets").Replace('\\', '/');
             string dir = $"{parent}/Prefabs";
             using var folders = new AssetFolderScope();
+            cancellationToken.ThrowIfCancellationRequested();
             folders.EnsureFolder(dir);
+            cancellationToken.ThrowIfCancellationRequested();
             string prefabPath = AssetDatabase.GenerateUniqueAssetPath($"{dir}/{name}.prefab");
             AssetPathUtility.GetFullAssetPath(prefabPath);
-            if (PrefabUtility.SaveAsPrefabAssetAndConnect(go, prefabPath, InteractionMode.AutomatedAction) == null)
+            cancellationToken.ThrowIfCancellationRequested();
+            var saved = PrefabUtility.SaveAsPrefabAssetAndConnect(go, prefabPath, InteractionMode.AutomatedAction);
+            if (saved != null)
+                folders.Complete(); // Keep a published prefab even if this admitted save observed cancellation.
+            cancellationToken.ThrowIfCancellationRequested();
+            if (saved == null)
                 throw new IOException($"Failed to save prefab at '{prefabPath}'.");
-            folders.Complete();
             return prefabPath;
         }
 
@@ -609,8 +729,9 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// global Volume with a Bloom override exists (reusing the scene's global volume when it has one).
         /// Goes through manage_graphics so the Volume/Bloom reflection lives in one place.
         /// </summary>
-        private static async Task<JObject> SetupBloomAsync()
+        private static async Task<JObject> SetupBloomAsync(CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var result = new JObject();
             Type volumeType = Type.GetType("UnityEngine.Rendering.Volume, Unity.RenderPipelines.Core.Runtime");
             if (volumeType == null)
@@ -623,11 +744,14 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             Type camDataType = Type.GetType("UnityEngine.Rendering.Universal.UniversalAdditionalCameraData, Unity.RenderPipelines.Universal.Runtime");
             if (cam != null && camDataType != null)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 Component camData = cam.GetComponent(camDataType) ?? cam.gameObject.AddComponent(camDataType);
                 System.Reflection.PropertyInfo post = camDataType.GetProperty("renderPostProcessing");
                 if (post != null && !(bool)post.GetValue(camData))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     post.SetValue(camData, true);
+                    cancellationToken.ThrowIfCancellationRequested();
                     EditorUtility.SetDirty(camData);
                     result["camera_post_processing_enabled"] = cam.name;
                 }
@@ -663,9 +787,11 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                             ["action"] = "volume_add_effect",
                             ["target"] = globalVolume.gameObject.name,
                             ["effect"] = "Bloom",
-                        }
+                        },
+                        cancellationToken
                     )
                 );
+                cancellationToken.ThrowIfCancellationRequested();
                 if (graphics.Value<bool?>("success") ?? false)
                 {
                     await CommandRegistry.InvokeCommandAsync(
@@ -676,7 +802,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                             ["target"] = globalVolume.gameObject.name,
                             ["effect"] = "Bloom",
                             ["parameters"] = new JObject { ["intensity"] = 1.0f, ["threshold"] = 0.9f },
-                        }
+                        },
+                        cancellationToken
                     );
                 }
                 result["volume"] = globalVolume.gameObject.name;
@@ -699,11 +826,13 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                                     ["threshold"] = 0.9f,
                                 }
                             ),
-                        }
+                        },
+                        cancellationToken
                     )
                 );
                 result["volume"] = "Global Volume (Blender Bridge)";
             }
+            cancellationToken.ThrowIfCancellationRequested();
             bool ok = graphics.Value<bool?>("success") ?? false;
             result["message"] = ok ? $"Bloom added to '{result["volume"]}'." : $"Could not add Bloom: {graphics["error"] ?? graphics["message"]}";
             result["success"] = ok;
@@ -721,7 +850,7 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         // -------------------------------------------------------- compare_screenshot
 
         /// <summary>Puts a Blender viewport capture and a Unity capture of a placed object side by side in one PNG.</summary>
-        private static async Task<object> CompareScreenshotAsync(ToolParams p, int timeout)
+        private static async Task<object> CompareScreenshotAsync(ToolParams p, int timeout, CancellationToken cancellationToken)
         {
             string target = p.Get("game_object");
             if (string.IsNullOrWhiteSpace(target))
@@ -737,10 +866,11 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 return new ErrorResponse(folderError);
 
             string dir = Path.Combine(ProjectRoot(), "Library", "BlenderBridge");
+            cancellationToken.ThrowIfCancellationRequested();
             Directory.CreateDirectory(dir);
             string blenderPng = Path.Combine(dir, $"compare_blender_{UniqueSuffix()}.png").Replace('\\', '/');
             await BlenderSocketClient.SendAsync(
-                BlenderBridgePrefs.Endpoint,
+                Endpoint,
                 "get_viewport_screenshot",
                 new JObject
                 {
@@ -748,8 +878,10 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                     ["filepath"] = blenderPng,
                     ["format"] = "png",
                 },
-                timeout
+                timeout,
+                cancellationToken
             );
+            cancellationToken.ThrowIfCancellationRequested();
             if (!File.Exists(blenderPng))
                 return new ErrorResponse("Blender did not write a viewport screenshot.");
 
@@ -762,17 +894,21 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                         ["view_target"] = target,
                         ["max_resolution"] = maxSize,
                         ["screenshot_file_name"] = $"blender_bridge_compare_{UniqueSuffix()}",
-                    }
+                    },
+                    cancellationToken
                 )
             );
+            cancellationToken.ThrowIfCancellationRequested();
             string unityPng = shot["data"]?["fullPath"]?.ToString();
             if (!(shot.Value<bool?>("success") ?? false) || string.IsNullOrEmpty(unityPng) || !File.Exists(unityPng))
                 return new ErrorResponse($"Unity screenshot failed: {shot["error"] ?? shot["message"]}");
 
             string outPath = Path.Combine(dir, $"compare_{UniqueSuffix()}.png").Replace('\\', '/');
+            cancellationToken.ThrowIfCancellationRequested();
             (int width, int height) = CompositeSideBySide(blenderPng, unityPng, outPath);
 
             // The Unity capture is written under Assets/ by manage_scene; keep the project clean.
+            cancellationToken.ThrowIfCancellationRequested();
             string unityAssetPath = shot["data"]?["path"]?.ToString();
             if (!string.IsNullOrEmpty(unityAssetPath) && unityAssetPath.StartsWith("Assets/", StringComparison.Ordinal))
                 AssetDatabase.DeleteAsset(unityAssetPath);
@@ -781,12 +917,16 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             if (assetsRelativeFolder != null)
             {
                 string absDir = AssetGenPaths.ToAbsolute(assetsRelativeFolder);
+                cancellationToken.ThrowIfCancellationRequested();
                 Directory.CreateDirectory(absDir);
                 assetPath = $"{assetsRelativeFolder}/{Path.GetFileName(outPath)}";
+                cancellationToken.ThrowIfCancellationRequested();
                 File.Copy(outPath, Path.Combine(absDir, Path.GetFileName(outPath)), true);
+                cancellationToken.ThrowIfCancellationRequested();
                 AssetDatabase.ImportAsset(assetPath);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             return new SuccessResponse(
                 "Composited Blender (left) and Unity (right).",
                 new JObject
@@ -876,7 +1016,7 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         // ----------------------------------------------------------- check_updates
 
         /// <summary>Fetches the checkout's remotes on the thread pool and reports how far behind it is.</summary>
-        private static async Task<object> CheckUpdatesAsync()
+        private static async Task<object> CheckUpdatesAsync(CancellationToken cancellationToken)
         {
             if (!BlenderBridgePrefs.IsForkConfigured)
                 return new ErrorResponse(NotConfiguredMessage);
@@ -887,7 +1027,10 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             if (!Directory.Exists(gitPath) && !File.Exists(gitPath))
                 return new ErrorResponse($"'{fork}' is not a git checkout (no .git entry); check_updates needs one.");
 
-            return await Task.Run(() => CheckUpdatesBlocking(fork, forkAddon, installedAddon));
+            cancellationToken.ThrowIfCancellationRequested();
+            object result = await Task.Run(() => CheckUpdatesBlocking(fork, forkAddon, installedAddon), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
         }
 
         /// <summary>Git and file work for check_updates; touches no Unity API so it can run on any thread.</summary>
@@ -1077,8 +1220,9 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             }
         }
 
-        internal static string StageExportForImport(string exportPath)
+        internal static string StageExportForImport(string exportPath, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string relative = "Assets/.BlenderBridge/" + Guid.NewGuid().ToString("N") + "/" + Path.GetFileName(exportPath);
             string staged = AssetGenPaths.ToAbsolute(relative);
             string stagingDirectory = Path.GetDirectoryName(staged);
@@ -1089,15 +1233,19 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             {
                 if (!Directory.Exists(stagingRoot))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     Directory.CreateDirectory(stagingRoot);
                     ownsRoot = true;
                 }
                 if (Directory.Exists(stagingDirectory) || File.Exists(stagingDirectory))
                     throw new IOException("The Blender staging directory already exists.");
+                cancellationToken.ThrowIfCancellationRequested();
                 Directory.CreateDirectory(stagingDirectory);
                 ownsDirectory = true;
                 staged = AssetGenPaths.ToAbsolute(relative);
+                cancellationToken.ThrowIfCancellationRequested();
                 File.Copy(exportPath, staged);
+                cancellationToken.ThrowIfCancellationRequested();
                 return staged;
             }
             catch
@@ -1296,19 +1444,35 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         internal static object MapImportFailure(JObject response) =>
             new ErrorResponse($"Import failed: {response["error"] ?? response["message"]}", response["data"]?.DeepClone());
 
-        internal static GameObject PlaceImportedModel(string assetPath, string name, Vector3 position, Scene destinationScene)
+        internal static GameObject PlaceImportedModel(string assetPath, string name, Vector3 position, Scene destinationScene) =>
+            PlaceImportedModelWithCancellation(assetPath, name, position, destinationScene, CancellationToken.None);
+
+        private static GameObject PlaceImportedModelWithCancellation(
+            string assetPath,
+            string name,
+            Vector3 position,
+            Scene destinationScene,
+            CancellationToken cancellationToken
+        )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
             if (prefab == null)
                 return null;
+            cancellationToken.ThrowIfCancellationRequested();
             var go = PrefabUtility.InstantiatePrefab(prefab, destinationScene) as GameObject;
             if (go == null)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 go = UnityEngine.Object.Instantiate(prefab);
+                cancellationToken.ThrowIfCancellationRequested();
                 SceneManager.MoveGameObjectToScene(go, destinationScene);
             }
+            cancellationToken.ThrowIfCancellationRequested();
             go.name = name;
+            cancellationToken.ThrowIfCancellationRequested();
             go.transform.position = position;
+            cancellationToken.ThrowIfCancellationRequested();
             return go;
         }
 

@@ -27,6 +27,8 @@ Actions:
 
 check_updates and sync_addon need the checkout path to be set; the other actions only need Blender running with the addon connected.
 
+Cancellation closes local socket work and prevents later local stages once observed. Already-started Blender code or exports may continue, and an admitted synchronous Unity import may finish with its assets retained. Inspect state before retrying a mutation.
+
 ## Parameters
 
 | Name | Type | Required | Description |

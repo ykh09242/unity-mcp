@@ -1,7 +1,11 @@
 using System;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Blender;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -147,6 +151,127 @@ namespace MCPForUnityTests.Editor.Blender
             long bytesAllocated = allocated() - before;
             Assert.AreEqual(256 * 1024, ((string)result).Length);
             Assert.Less(bytesAllocated, payload.Length * 32L, "Incomplete prefixes must not be repeatedly decoded and parsed.");
+        }
+
+        [Test]
+        public void ReadResponse_CancelDuringSuccessfulRead_DoesNotReturnResult()
+        {
+            using var cancellation = new CancellationTokenSource();
+            using var stream = new CancelOnReadStream(Bytes("{\"status\":\"success\",\"result\":1}"), cancellation);
+            var exception = Assert.Throws<OperationCanceledException>(() => BlenderSocketClient.ReadResponse(stream, "get_scene_info", 10, cancellation.Token));
+            Assert.AreEqual(cancellation.Token, exception.CancellationToken);
+        }
+
+        [Test]
+        public Task SendAsync_CancelBlockedReply_ClosesPeerAndSettlesWithCallerToken() => AssertBlockedReplyCancellation("SendAsync");
+
+        [TestCase("RunPythonAsync")]
+        [TestCase("ProbeAsync")]
+        public Task Wrapper_CancelBlockedReply_PreservesTokenAndClosesPeer(string wrapper) => AssertBlockedReplyCancellation(wrapper);
+
+        private static async Task AssertBlockedReplyCancellation(string wrapper)
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            using var cancellation = new CancellationTokenSource();
+            TcpClient peer = null;
+            Task command = null;
+            try
+            {
+                var accept = listener.AcceptTcpClientAsync();
+                var endpoint = new BlenderEndpoint("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port);
+                command =
+                    wrapper == "RunPythonAsync" ? BlenderSocketClient.RunPythonAsync(endpoint, "pass", 10, cancellation.Token)
+                    : wrapper == "ProbeAsync" ? BlenderSocketClient.ProbeAsync(endpoint, 10, cancellation.Token)
+                    : BlenderSocketClient.SendAsync(endpoint, "get_scene_info", timeoutSeconds: 10, cancellationToken: cancellation.Token);
+                Assert.AreSame(accept, await Task.WhenAny(accept, Task.Delay(5000)), "The loopback peer must accept the actual request.");
+                peer = await accept;
+                peer.ReceiveTimeout = 5000;
+                var stream = peer.GetStream();
+                var request = new byte[4096];
+                Assert.Greater(await stream.ReadAsync(request, 0, request.Length), 0);
+                cancellation.Cancel();
+                Assert.AreSame(command, await Task.WhenAny(command, Task.Delay(5000)), "The actual socket task must settle.");
+                try
+                {
+                    await command;
+                    Assert.Fail("Requested cancellation must not become a result.");
+                }
+                catch (OperationCanceledException exception)
+                {
+                    Assert.AreEqual(cancellation.Token, exception.CancellationToken);
+                }
+                var closed = Task.Run(() =>
+                {
+                    try
+                    {
+                        return stream.ReadByte() == -1;
+                    }
+                    catch (IOException exception)
+                    {
+                        return exception.InnerException is SocketException socket && socket.SocketErrorCode != SocketError.TimedOut;
+                    }
+                });
+                Assert.AreSame(closed, await Task.WhenAny(closed, Task.Delay(6000)), "Peer close observation must settle.");
+                Assert.IsTrue(await closed, "The peer must observe EOF/reset, not merely caller cancellation.");
+            }
+            finally
+            {
+                cancellation.Cancel();
+                peer?.Dispose();
+                listener.Stop();
+                if (command != null)
+                {
+                    try
+                    {
+                        await command;
+                    }
+                    catch (OperationCanceledException) { }
+                }
+            }
+        }
+
+        [TestCase("RunPythonAsync", true)]
+        [TestCase("ProbeAsync", false)]
+        public async Task Wrapper_PreCancelledToken_DoesNotConnect(string name, bool python)
+        {
+            var types = python
+                ? new[] { typeof(BlenderEndpoint), typeof(string), typeof(int), typeof(CancellationToken) }
+                : new[] { typeof(BlenderEndpoint), typeof(int), typeof(CancellationToken) };
+            MethodInfo method = typeof(BlenderSocketClient).GetMethod(name, types);
+            Assert.IsNotNull(method, "The additive wrapper must accept the caller token (baseline capability check).");
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            object[] args = python
+                ? new object[] { new BlenderEndpoint("invalid", 0), "pass", 10, cancellation.Token }
+                : new object[] { new BlenderEndpoint("invalid", 0), 10, cancellation.Token };
+            var command = (Task)method.Invoke(null, args);
+            try
+            {
+                await command;
+                Assert.Fail("The wrapper must preserve cancellation.");
+            }
+            catch (OperationCanceledException exception)
+            {
+                Assert.AreEqual(cancellation.Token, exception.CancellationToken);
+            }
+        }
+
+        private sealed class CancelOnReadStream : MemoryStream
+        {
+            private readonly CancellationTokenSource cancellation;
+
+            public CancelOnReadStream(byte[] bytes, CancellationTokenSource cancellation)
+                : base(bytes) => this.cancellation = cancellation;
+
+            public override int ReadTimeout { get; set; }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                int read = base.Read(buffer, offset, count);
+                cancellation.Cancel();
+                return read;
+            }
         }
 
         private sealed class TestStream : MemoryStream
