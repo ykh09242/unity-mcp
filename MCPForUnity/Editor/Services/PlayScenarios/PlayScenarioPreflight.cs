@@ -74,7 +74,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         );
                     try
                     {
-                        if (step.Action == "load_scene" || step.Action == "wait_scene")
+                        if (step.Action == "load_scene" || step.Action == "wait_scene" || step.Action == "unload_scene" || step.Action == "set_active_scene")
                         {
                             expectedScene = step.Scene;
                             UnityPlayScenarioHost.RequireSceneAsset(step.Scene);
@@ -148,6 +148,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                             );
                         if (step.ClickMode == "raycast" && !(ManageInput.UguiBackend is IUguiScenarioRaycastClickBackend))
                             throw UnityPlayScenarioHost.CapabilityFailure(step, "The optional uGUI backend does not support raycast-verified clicks.");
+                        if (step.Scene != null)
+                        {
+                            UnityPlayScenarioHost.RequireSceneAsset(step.Scene);
+                            Add(
+                                stage,
+                                index,
+                                step.Name,
+                                "deferred",
+                                "Exact scene-scoped target identity and runtime loaded state are deferred; no scene effect or target callback was dispatched."
+                            );
+                            continue;
+                        }
                         if (!activeScene.IsValid() || !activeScene.isLoaded || !string.Equals(activeScene.path, expectedScene, StringComparison.Ordinal))
                         {
                             Add(stage, index, step.Name, "deferred", "Target inspection is deferred until its expected scene is active; no scene was loaded.");

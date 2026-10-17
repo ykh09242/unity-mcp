@@ -1,12 +1,11 @@
 """Explicitly polled Editor interaction recordings, saved as reviewable drafts."""
 
 import click
-from pydantic import ValidationError
-
 from cli.utils.config import get_config
 from cli.utils.connection import handle_unity_errors, run_command
 from cli.utils.output import format_output
 from models.scenario_recording import ScenarioRecordingCommand
+from pydantic import ValidationError
 
 
 def _dispatch(**arguments) -> None:
@@ -26,11 +25,21 @@ def register_recording_commands(group: click.Group) -> None:
     @click.argument("name")
     @click.option("--max-events", type=click.IntRange(1, 31), default=31, show_default=True)
     @click.option("--duration-seconds", type=click.IntRange(1, 600), default=300, show_default=True)
+    @click.option(
+        "--scene-scope",
+        type=click.Choice(["active", "all_loaded"]),
+        default="active",
+        show_default=True,
+    )
     @handle_unity_errors
-    def start(name: str, max_events: int, duration_seconds: int) -> None:
+    def start(name: str, max_events: int, duration_seconds: int, scene_scope: str) -> None:
         """Observe supported Buttons in current Play Mode; return immediately."""
         _dispatch(
-            action="start", name=name, max_events=max_events, duration_seconds=duration_seconds
+            action="start",
+            name=name,
+            max_events=max_events,
+            duration_seconds=duration_seconds,
+            **({"scene_scope": scene_scope} if scene_scope != "active" else {}),
         )
 
     @group.command("status")

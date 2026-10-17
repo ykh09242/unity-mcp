@@ -28,7 +28,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private const string SnapshotKey = "MCPForUnity.PlayScenarioRecording.Last";
         private static PlayScenarioRecordingDraft draft;
         private static IPlayScenarioRecordingSession session;
-        private static readonly List<string> PendingScenes = new List<string>();
+        private static readonly List<(string Path, string State)> PendingScenes = new List<(string, string)>();
+        private static readonly Dictionary<int, string> ScenePaths = new Dictionary<int, string>();
+        private static string sceneScope = "active";
         private static double deadline;
         private static double nextScan;
         private static bool hooked;
@@ -40,7 +42,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             EditorApplication.quitting += BeforeQuit;
         }
 
-        public static JObject Start(string name, int maxEvents = 31, int durationSeconds = 300)
+        public static JObject Start(string name, int maxEvents = 31, int durationSeconds = 300, string sceneScope = "active")
         {
             if (draft != null && !draft.Saved && draft.Status != "cancelled")
                 throw new InvalidOperationException("A scenario recording has not been saved or cancelled. Stop or cancel it first.");
@@ -56,9 +58,36 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             PlayScenarioDefinition.ValidateName(name);
             if (store.List().Contains(name, StringComparer.Ordinal))
                 throw new InvalidOperationException("A scenario with this name already exists. Choose a new draft name.");
+            if (sceneScope != "active" && sceneScope != "all_loaded")
+                throw new ArgumentException("scene_scope must be active or all_loaded.");
+            string[] context = null;
+            if (sceneScope == "all_loaded")
+            {
+                if (SceneManager.sceneCount < 1 || SceneManager.sceneCount > 16)
+                    throw new InvalidOperationException("Recording context requires one to sixteen loaded normal scenes.");
+                var paths = new List<string>();
+                for (int i = 0; i < SceneManager.sceneCount; i++)
+                {
+                    Scene selected = SceneManager.GetSceneAt(i);
+                    if (!PlayScenarioSceneScope.Normal(selected) || !selected.isLoaded)
+                        throw new InvalidOperationException("Recording context contains an unnamed, preview, prefab or loading scene.");
+                    UnityPlayScenarioHost.RequireSceneAsset(selected.path);
+                    if (paths.Contains(selected.path, StringComparer.Ordinal))
+                        throw new InvalidOperationException("Recording context has duplicate scene paths.");
+                    paths.Add(selected.path);
+                }
+                context = paths.ToArray();
+            }
             Cleanup();
-            draft = new PlayScenarioRecordingDraft(name, SceneManager.GetActiveScene().path, maxEvents);
-            if (SceneManager.sceneCount > 1)
+            PlayScenarioRecordingService.sceneScope = sceneScope;
+            draft = new PlayScenarioRecordingDraft(name, SceneManager.GetActiveScene().path, maxEvents, sceneScope, context);
+            if (sceneScope == "all_loaded")
+                for (int i = 0; i < SceneManager.sceneCount; i++)
+                {
+                    Scene selected = SceneManager.GetSceneAt(i);
+                    ScenePaths.Add(selected.handle, selected.path);
+                }
+            if (sceneScope == "active" && SceneManager.sceneCount > 1)
                 draft.Diagnose(
                     "Multiple scenes were loaded at recording start. The draft loads only the active scene; additive setup requires manual authoring."
                 );
@@ -71,6 +100,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 nextScan = EditorApplication.timeSinceStartup + 0.25;
                 SceneManager.activeSceneChanged += SceneChanged;
                 SceneManager.sceneLoaded += SceneLoaded;
+                SceneManager.sceneUnloaded += SceneUnloaded;
                 EditorApplication.update += Tick;
                 EditorApplication.playModeStateChanged += PlayModeChanged;
                 hooked = true;
@@ -164,7 +194,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return;
             // Button callbacks may load a scene before the observer receives pointerClick.
             // Keep that source click before its queued transition; a click in the new scene flushes first.
-            if (target != null && target.Scene != draft.CurrentScene)
+            if (sceneScope == "all_loaded" || (target != null && target.Scene != draft.CurrentScene))
                 FlushScenes();
             draft.Click(target);
             if (!draft.Recording)
@@ -181,23 +211,68 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Interrupt("scene_transition_limit");
                 return;
             }
-            PendingScenes.Add(current.path);
+            PendingScenes.Add((current.path, "active"));
         }
 
         private static void SceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            if (mode == LoadSceneMode.Additive)
+            if (sceneScope == "all_loaded" && draft?.Recording == true)
+            {
+                try
+                {
+                    if (!PlayScenarioSceneScope.Normal(scene) || ScenePaths.Count >= 32 || SceneManager.sceneCount > 32)
+                        throw new InvalidOperationException("Unsupported or excessive loaded scene context.");
+                    UnityPlayScenarioHost.RequireSceneAsset(scene.path);
+                    if (ScenePaths.Values.Contains(scene.path, StringComparer.Ordinal) && !ScenePaths.ContainsKey(scene.handle))
+                        throw new InvalidOperationException("Duplicate loaded scene path.");
+                    ScenePaths[scene.handle] = scene.path;
+                    QueueScene(scene.path, "loaded");
+                }
+                catch (Exception error)
+                {
+                    draft.Diagnose("Scene observation unavailable: " + error.GetType().Name);
+                    Interrupt("scene_context_unavailable");
+                    return;
+                }
+            }
+            else if (mode == LoadSceneMode.Additive)
                 draft?.Diagnose("An additive scene load was observed; only active-scene transitions are captured.");
             Refresh();
         }
 
+        private static void SceneUnloaded(Scene scene)
+        {
+            if (sceneScope != "all_loaded" || draft?.Recording != true)
+                return;
+            if (!ScenePaths.TryGetValue(scene.handle, out string path))
+            {
+                Interrupt("scene_context_unavailable");
+                return;
+            }
+            ScenePaths.Remove(scene.handle);
+            QueueScene(path, "unloaded");
+        }
+
+        private static void QueueScene(string path, string state)
+        {
+            if (PendingScenes.Count >= 31)
+            {
+                Interrupt("scene_transition_limit");
+                return;
+            }
+            PendingScenes.Add((path, state));
+        }
+
         private static void FlushScenes()
         {
-            foreach (string scene in PendingScenes)
+            foreach (var scene in PendingScenes)
             {
                 if (draft == null || !draft.Recording)
                     break;
-                draft.SceneChanged(scene);
+                if (sceneScope == "all_loaded")
+                    draft.SceneObserved(scene.Path, scene.State);
+                else
+                    draft.SceneChanged(scene.Path);
             }
             PendingScenes.Clear();
         }
@@ -270,11 +345,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 SceneManager.activeSceneChanged -= SceneChanged;
                 SceneManager.sceneLoaded -= SceneLoaded;
+                SceneManager.sceneUnloaded -= SceneUnloaded;
                 EditorApplication.update -= Tick;
                 EditorApplication.playModeStateChanged -= PlayModeChanged;
                 hooked = false;
             }
             PendingScenes.Clear();
+            ScenePaths.Clear();
             IPlayScenarioRecordingSession previous = session;
             session = null;
             previous?.Dispose();

@@ -610,3 +610,29 @@ Put a fence before the action that may emit synchronously:
 A mark must occur earlier in the same setup/main/cleanup array; at most16 unique marks per stage. New iterations require new fences. Once a wait succeeds, its entire observed snapshot is consumed, so earlier records cannot satisfy another assertion through the same or an older alias mark. Events emitted after that snapshot remain eligible. Report `event_evidence` discloses the generation, fence/observed/consumed sequences, match positions/count and dropped-total. It is omitted from legacy step reports, contains no raw journal and is capped at1024 UTF-8 bytes per step.
 
 If unobserved records after the effective fence are overwritten, fail with `event_journal_overflow` rather than infer absence or retry from a newer fence. Drops before the fence and already-read prefixes are not unobserved gaps. Released/destroyed/replaced streams fail `event_stream_unavailable`; sequence exhaustion fails `event_sequence_exhausted` without wrapping. A reconstructed engine cannot replay a lost fence/accumulator: `event_history_unavailable` is explicit. Preflight reports deferred runtime evidence and never polls, emits or installs producers. The shared runtime supports Editor/Player compilation; actual Player execution and a live transport bridge require their own evidence and are not implied by deterministic engine tests or controlled SDK/CLI admission.
+
+
+### Explicit additive scenes and scene-scoped targets
+
+Legacy definitions still load with Single mode and resolve object targets in the active scene. To opt in, use `load_mode: "additive"`, a `scene_state` wait, a scene-qualified object target, or an explicit scene action. The first executed scene anchor must remain Single (omitted or `load_mode: "single"`). Scene paths are canonical `Assets/...unity` assets; scene names, build indices and persisted native handles are not selectors.
+
+```json
+{"name":"two-scenes","setup_steps":[{"name":"Anchor","action":"load_scene","scene":"Assets/A.unity"}],"steps":[
+  {"name":"Add B","action":"load_scene","scene":"Assets/B.unity","load_mode":"additive"},
+  {"name":"B loaded","action":"wait_scene","scene":"Assets/B.unity","scene_state":"loaded"},
+  {"name":"Click only B","action":"click_ui","scene":"Assets/B.unity","target_id":"shared"},
+  {"name":"Keep A active","action":"set_active_scene","scene":"Assets/A.unity"},
+  {"name":"Remove B","action":"unload_scene","scene":"Assets/B.unity"},
+  {"name":"B absent","action":"wait_scene","scene":"Assets/B.unity","scene_state":"unloaded"}
+]}
+```
+
+`wait_scene` defaults to `scene_state: "active"`; `loaded` does not require activation, and `unloaded` requires absence from SceneManager. Additive loading preserves the active scene and refuses an already-present path. `set_active_scene` succeeds when the exact valid loaded scene is already active. `unload_scene` is idempotent for an absent scene, refuses the active/last loaded scene, and waits for the admitted native operation and removal. Explicitly activate another scene first. Unloading scene objects does not unload assets or certify memory release.
+
+`wait_object` and `click_ui` accept an optional `scene` path. The same stable ID may exist in different scenes; duplicates within the selected scene remain ambiguous. Exact scope inspects at most32 SceneManager entries, excluding preview/prefab/DontDestroy contexts. A selected instance is bound privately for that step; unloading/replacing it cannot silently attach a new instance with the same path. Player bundles include every referenced scene path; runtime property assertions remain unsupported.
+
+The entire validated definition determines scene-operation admission before its first effect. In an opted-in scenario, the Single anchor, repeats and cleanup all respect one retained scenario-owned native-operation lease. A waiting step does not queue a deferred effect: cancellation/release prevents it from dispatching later. Cancel does not stop Unity loading/unloading, roll back scenes or guarantee user cleanup. Explicit cleanup steps have their existing deadline and can time out while prior native work is pending. Entirely legacy definitions keep their previous admission behavior; foreign Unity/game scene operations are not globally coordinated.
+
+If an owned pending operation crosses Editor assembly reload, its completion identity is unavailable. An independent reload observer preserves `scene_operation_state_unknown` even after terminal runner detachment. Further opted-in scene effects are refused until a fresh Editor session; another host/reload or legacy run does not clear that uncertainty. Effects are never replayed. Player process startup is a fresh lifetime; no managed-reload continuation is added.
+
+Recorder `scene_scope: "all_loaded"` (CLI `scenario-recording start NAME --scene-scope all_loaded`) explicitly snapshots1..16 named unique initial scenes into setup: active Single first, then additive loads. Default `active` output remains compatible. Supported clicks carry exact scene paths. Loaded/unloaded/active callbacks become ordered `wait_scene` observations, not invented scene effects. The bounded draft remains unreviewed, with31 observed events,32 main steps and60KiB budget; unsupported/ambiguous context stops observation with diagnostics. Gameplay must cause newly observed transitions. Review initial setup, selectors and waits before clearing `draft`; no inferred expected gameplay state or readiness timing is supplied.
