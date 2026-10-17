@@ -66,6 +66,10 @@ async def get_gameobject_api_docs(_ctx: Context) -> MCPResponse:
             "Example: Adding components to 3 objects → 1 batch_execute with 3 manage_components commands",
         ],
         "resources": {
+            "mcpforunity://scene/gameobject-by-handle/{handle}": {
+                "description": "Read an original loaded GameObject through a v2 session handle from manage_object_handles. Never loads assets/scenes or falls back to a live ID.",
+                "note": "Session identity plus bounded GameObject data. Fixed 600-second lifetime, earlier eviction, scene/domain/Play/Undo expiry. Child links retain their live-ID/cursor lifetime. Old peers fail closed.",
+            },
             "mcpforunity://scene/gameobject/{instance_id}": {
                 "description": "Get basic GameObject data (name, tag, layer, transform, component type list)",
                 "example": "mcpforunity://scene/gameobject/-81840",
@@ -393,3 +397,28 @@ async def get_gameobject_component(
     )
 
     return _normalize_response(response)
+
+
+@mcp_for_unity_resource(
+    uri="mcpforunity://scene/gameobject-by-handle/{handle}",
+    name="gameobject_by_handle",
+    description="Read the original loaded GameObject and bounded metadata from a v2 session handle. Handles expire on scene reopen, domain reload, Play transitions, Undo/Redo, fixed 600-second lifetime or earlier eviction. Never loads scenes/assets; respects the original GameObject resource policy. Requires v2 Editor support.",
+)
+async def get_gameobject_by_handle(handle: str, ctx: Context) -> dict[str, Any]:
+    from services.tools.manage_object_handles import validate_handle
+
+    if not validate_handle(handle):
+        return {
+            "success": False,
+            "code": "invalid_handle",
+            "error": "invalid_handle",
+            "data": {"reason": "invalid_handle"},
+        }
+    unity_instance = await get_unity_instance_from_context(ctx)
+    return await send_with_unity_instance(
+        async_send_command_with_retry,
+        unity_instance,
+        "get_gameobject_by_handle_v2",
+        {"handle": handle},
+        retry_on_reload=False,
+    )
