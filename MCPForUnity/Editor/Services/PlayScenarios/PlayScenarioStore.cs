@@ -25,6 +25,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             [typeof(PlayScenarioRun)] = Describe(typeof(PlayScenarioRun)),
             [typeof(PlayScenarioStepResult)] = Describe(typeof(PlayScenarioStepResult)),
+            [typeof(PlayScenarioEventEvidence)] = Describe(typeof(PlayScenarioEventEvidence)),
             [typeof(PlayScenarioPerformanceResult)] = Describe(typeof(PlayScenarioPerformanceResult)),
             [typeof(PlayScenarioScreenshotResult)] = Describe(typeof(PlayScenarioScreenshotResult)),
             [typeof(PlayScenarioIterationResult)] = Describe(typeof(PlayScenarioIterationResult)),
@@ -799,6 +800,57 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 State((string)value["build_mode"], "editor", "development", "release");
         }
 
+        private static long EventInteger(JToken value)
+        {
+            if (
+                value == null
+                || value.Type != JTokenType.Integer
+                || !long.TryParse(
+                    value.ToString(Formatting.None),
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out long number
+                )
+            )
+                throw new ArgumentException("Event evidence numbers must be signed64-bit integer tokens.");
+            return number;
+        }
+
+        private static void ValidateEventEvidence(JObject value)
+        {
+            // Only this optional proof has scalar sequence arrays; do not relax generic report arrays.
+            PlayScenarioDefinition.Fields(value, ReportFields[typeof(PlayScenarioEventEvidence)].Keys.ToArray());
+            if (EventInteger(value["schema_version"]) != 1 || value["generation"]?.Type != JTokenType.String || value["overflow"]?.Type != JTokenType.Boolean)
+                throw new ArgumentException("Invalid event evidence schema, generation or overflow flag.");
+            foreach (
+                string key in new[] { "since_sequence", "retained_from_sequence", "observed_through_sequence", "consumed_through_sequence", "dropped_total" }
+            )
+                EventInteger(value[key]);
+            long count = EventInteger(value["match_count"]);
+            if (count < 0 || count > 128)
+                throw new ArgumentException("Event match count must be0..128.");
+            foreach (string key in new[] { "first_matched_sequence", "last_matched_sequence" })
+                if (value[key] != null && value[key].Type != JTokenType.Null)
+                    EventInteger(value[key]);
+            JToken positions = value["matched_sequences"];
+            if (positions != null && positions.Type != JTokenType.Null)
+            {
+                if (!(positions is JArray array) || array.Count > 16)
+                    throw new ArgumentException("Event proof positions must be an array of at most16 integers.");
+                foreach (JToken position in array)
+                    EventInteger(position);
+            }
+            PlayScenarioEventEvidence proof = value.ToObject<PlayScenarioEventEvidence>();
+            try
+            {
+                proof.CheckSize();
+            }
+            catch (InvalidOperationException error)
+            {
+                throw new ArgumentException("Invalid bounded event proof.", error);
+            }
+        }
+
         private static void ValidateShape(JObject value, Type type)
         {
             Dictionary<string, Type> fields = ReportFields[type];
@@ -813,7 +865,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 {
                     // Newly optional observation evidence stays absent on legacy reports; required fields remain strict.
                     if (
-                        (type == typeof(PlayScenarioStepResult) && (pair.Key == "performance" || pair.Key == "screenshot"))
+                        (type == typeof(PlayScenarioStepResult) && (pair.Key == "performance" || pair.Key == "screenshot" || pair.Key == "event_evidence"))
                         || (
                             type == typeof(PlayScenarioPerformanceResult)
                             && (pair.Key == "frame_time_p95_ms" || pair.Key == "gc_allocated_bytes_per_frame_max" || pair.Key == "error")
@@ -844,6 +896,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     if (!(token is JObject environment))
                         throw new ArgumentException("Invalid report environment object.");
                     ValidateEnvironment(environment);
+                    continue;
+                }
+                if (fieldType == typeof(PlayScenarioEventEvidence))
+                {
+                    if (token.Type != JTokenType.Null)
+                    {
+                        if (!(token is JObject evidence))
+                            throw new ArgumentException("Invalid event evidence object.");
+                        ValidateEventEvidence(evidence);
+                    }
                     continue;
                 }
                 if (

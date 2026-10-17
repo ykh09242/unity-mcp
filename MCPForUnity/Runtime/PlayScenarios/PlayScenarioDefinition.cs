@@ -132,7 +132,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "performance",
                     "screenshot",
                     "input",
-                    "wait_frames"
+                    "wait_frames",
+                    "event_id",
+                    "event_mark",
+                    "event_since",
+                    "event_name",
+                    "event_count",
+                    "event_order"
                 );
                 var parsed = new PlayScenarioStep
                 {
@@ -142,6 +148,46 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     Performance = step.Property("performance") == null ? null : PlayScenarioPerformanceOptions.Parse(Object(step, "performance")),
                     Screenshot = step.Property("screenshot") == null ? null : PlayScenarioScreenshotOptions.Parse(Object(step, "screenshot")),
                 };
+                if (parsed.Action == "mark_events" || parsed.Action == "wait_events")
+                {
+                    if (parsed.Action == "mark_events")
+                    {
+                        Fields(step, "name", "action", "timeout_seconds", "event_id", "event_mark", "performance", "screenshot");
+                        parsed.EventId = Text(step, "event_id", 128);
+                        if (!MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget.IsValidTargetId(parsed.EventId))
+                            throw new ArgumentException("Invalid event_id.");
+                        parsed.EventMark = EventName(step, "event_mark");
+                    }
+                    else
+                    {
+                        parsed.EventSince = EventName(step, "event_since");
+                        if (step.Property("event_order") != null)
+                        {
+                            Fields(step, "name", "action", "timeout_seconds", "event_since", "event_order", "performance", "screenshot");
+                            if (!(step["event_order"] is JArray order) || order.Count < 1 || order.Count > 16)
+                                throw new ArgumentException("event_order must contain one to sixteen exact names.");
+                            parsed.EventOrder = new List<string>(order.Count);
+                            foreach (JToken item in order)
+                            {
+                                if (item.Type != JTokenType.String || !MCPForUnity.Runtime.PlayScenarios.PlayScenarioEventRegistry.ValidName((string)item))
+                                    throw new ArgumentException("Invalid event_order name.");
+                                parsed.EventOrder.Add((string)item);
+                            }
+                        }
+                        else
+                        {
+                            Fields(step, "name", "action", "timeout_seconds", "event_since", "event_name", "event_count", "performance", "screenshot");
+                            parsed.EventName = EventName(step, "event_name");
+                            if (step.Property("event_count") == null)
+                                throw new ArgumentException("event_count is required.");
+                            parsed.EventCount = Integer(step, "event_count", 1, 128, 1);
+                        }
+                    }
+                    result.Add(parsed);
+                    continue;
+                }
+                if (step.Properties().Any(property => property.Name.StartsWith("event_", StringComparison.Ordinal)))
+                    throw new ArgumentException("Event fields are only permitted on event actions.");
                 if (parsed.Action == "input")
                 {
                     Fields(step, "name", "action", "timeout_seconds", "input", "wait_frames", "performance", "screenshot");
@@ -302,7 +348,23 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 }
                 result.Add(parsed);
             }
+            var marks = new HashSet<string>(StringComparer.Ordinal);
+            foreach (PlayScenarioStep step in result)
+            {
+                if (step.Action == "mark_events" && (marks.Count >= 16 || !marks.Add(step.EventMark)))
+                    throw new ArgumentException("Event marks must be unique and at most sixteen per stage.");
+                if (step.Action == "wait_events" && !marks.Contains(step.EventSince))
+                    throw new ArgumentException("event_since must reference a prior mark in the same stage.");
+            }
             return result;
+        }
+
+        private static string EventName(JObject value, string key)
+        {
+            string name = Text(value, key, 64);
+            if (!MCPForUnity.Runtime.PlayScenarios.PlayScenarioEventRegistry.ValidName(name))
+                throw new ArgumentException("Invalid event name or mark: " + key);
+            return name;
         }
 
         private static PlayScenarioLogPolicy ParseLogPolicy(JObject value)
@@ -531,6 +593,24 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("state_compare", NullValueHandling = NullValueHandling.Ignore)]
         public PlayScenarioNumericCondition StateCompare;
+
+        [JsonProperty("event_id", NullValueHandling = NullValueHandling.Ignore)]
+        public string EventId;
+
+        [JsonProperty("event_mark", NullValueHandling = NullValueHandling.Ignore)]
+        public string EventMark;
+
+        [JsonProperty("event_since", NullValueHandling = NullValueHandling.Ignore)]
+        public string EventSince;
+
+        [JsonProperty("event_name", NullValueHandling = NullValueHandling.Ignore)]
+        public string EventName;
+
+        [JsonProperty("event_count", NullValueHandling = NullValueHandling.Ignore)]
+        public int? EventCount;
+
+        [JsonProperty("event_order", NullValueHandling = NullValueHandling.Ignore)]
+        public List<string> EventOrder;
 
         [JsonProperty("reset_ids", NullValueHandling = NullValueHandling.Ignore)]
         public List<string> ResetIds;

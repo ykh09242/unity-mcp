@@ -37,8 +37,17 @@ ScenarioAction = Literal[
     "suite_reports",
 ]
 StepAction = Literal[
-    "load_scene", "wait_scene", "click_ui", "wait_object", "reset_state", "wait_state", "input"
+    "load_scene",
+    "wait_scene",
+    "click_ui",
+    "wait_object",
+    "reset_state",
+    "wait_state",
+    "input",
+    "mark_events",
+    "wait_events",
 ]
+EventName = Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")]
 TargetId = Annotated[str, Field(strict=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 
 
@@ -63,6 +72,12 @@ def normalize_native_definition(value: JsonValue) -> JsonValue:
         "state_id",
         "state_equals",
         "state_compare",
+        "event_id",
+        "event_mark",
+        "event_since",
+        "event_name",
+        "event_count",
+        "event_order",
         "performance",
         "screenshot",
         "input",
@@ -389,6 +404,17 @@ class ScenarioStep(BaseModel):
     performance: PlayScenarioPerformanceOptions | None = None
     screenshot: PlayScenarioScreenshotOptions | None = None
 
+    event_id: TargetId | None = Field(default=None, exclude_if=lambda value: value is None)
+    event_mark: EventName | None = Field(default=None, exclude_if=lambda value: value is None)
+    event_since: EventName | None = Field(default=None, exclude_if=lambda value: value is None)
+    event_name: EventName | None = Field(default=None, exclude_if=lambda value: value is None)
+    event_count: Annotated[int, Field(strict=True, ge=1, le=128)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    event_order: (
+        Annotated[list[EventName], Field(strict=True, min_length=1, max_length=16)] | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
+
     @field_validator("state_equals", mode="before")
     @classmethod
     def check_state_scalar(cls, value: JsonValue) -> JsonValue:
@@ -410,6 +436,43 @@ class ScenarioStep(BaseModel):
     @model_validator(mode="after")
     def check_arguments(self) -> "ScenarioStep":
         """Reject unused selectors, invalid conditions and unsafe scene/object paths."""
+        event_fields = {
+            "event_id",
+            "event_mark",
+            "event_since",
+            "event_name",
+            "event_count",
+            "event_order",
+        }
+        if self.action in ("mark_events", "wait_events"):
+            supplied = self.model_fields_set & event_fields
+            required = (
+                {"event_id", "event_mark"}
+                if self.action == "mark_events"
+                else (
+                    {"event_since", "event_order"}
+                    if "event_order" in supplied
+                    else {"event_since", "event_name", "event_count"}
+                )
+            )
+            if supplied != required or self.model_fields_set - (
+                required | {"name", "action", "timeout_seconds", "performance", "screenshot"}
+            ):
+                raise ValueError("Event actions require exactly their mark, count or order fields")
+            if any(
+                getattr(self, field) is None
+                for field in supplied | (self.model_fields_set & {"performance", "screenshot"})
+            ):
+                raise ValueError("Event options must be omitted rather than null")
+            if (
+                not self.name.strip()
+                or "\\" in self.name
+                or any(category(char) == "Cc" for char in self.name)
+            ):
+                raise ValueError("Step name has an invalid character")
+            return self
+        if self.model_fields_set & event_fields:
+            raise ValueError("Event fields are only permitted on event actions")
         if self.action == "input":
             if self.model_fields_set - {
                 "name",
@@ -619,6 +682,15 @@ class PlayScenario(BaseModel):
         """Every iteration begins by loading a scene, within the definition byte bound."""
         if "draft" in self.model_fields_set and self.draft is None:
             raise ValueError("draft must be omitted rather than null")
+        for steps in (self.setup_steps, self.steps, self.cleanup_steps):
+            marks: set[str] = set()
+            for step in steps:
+                if step.action == "mark_events":
+                    if step.event_mark in marks or len(marks) >= 16:
+                        raise ValueError("Event marks must be unique and at most sixteen per stage")
+                    marks.add(step.event_mark)
+                elif step.action == "wait_events" and step.event_since not in marks:
+                    raise ValueError("event_since must name a prior mark in the same stage")
         first = self.setup_steps[0] if self.setup_steps else self.steps[0]
         if first.action != "load_scene":
             message = "The first executed step must be load_scene"
