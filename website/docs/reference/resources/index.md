@@ -176,6 +176,16 @@ Lists managed MenuItem attribute declarations; this is not a complete native men
 URI: mcpforunity://menu-items
 
 
+## `named_tool_diagnostics`
+
+**URI:** `mcpforunity://tool-diagnostics/{tool_name}`
+
+Read bounded diagnostics for one tool; schemas remain authoritative in tools/list.
+
+**Parameters:**
+
+- `tool_name` (`str`, required)
+
 ## `prefab_api`
 
 **URI:** `mcpforunity://prefab-api`
@@ -258,6 +268,13 @@ Lists all URP renderer features on the active renderer with type, name, and acti
 **URI:** `mcpforunity://rendering/stats`
 
 Snapshot of rendering counters (draw calls, batches, triangles, texture counts and bytes, etc.).
+
+
+## `tool_diagnostics`
+
+**URI:** `mcpforunity://tool-diagnostics`
+
+Bounded current discovery and registration diagnostics; unknown when unobserved.
 
 
 ## `tool_groups`

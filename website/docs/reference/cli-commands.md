@@ -1269,6 +1269,21 @@ List custom tools registered for the active Unity project.
 | --- | --- | --- | --- | --- | --- | --- |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp custom_tool scaffold`
+
+Create a new CLASS_NAME custom tool without contacting an Editor. Existing source or observed metadata refuses; compilation/availability remain unverified. Predefined Editor assemblies only; custom asmdef/asmref boundaries are unsupported.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| class_name | text | required | nargs=1 | — | — |  |
+| --namespace | text | required | nargs=1 | — | — | Explicit C# namespace; pass an empty value for global. |
+| --tool-name | text | required | nargs=1 | — | — | Explicit unchanged wire name; uniqueness is unverified. |
+| --project-root | file/path (lexical only) | optional | nargs=1 | nonliteral (not evaluated) | — |  |
+| --output | text | optional | nargs=1 | — | — | New relative .cs path under an Assets/Editor folder. |
+| --template | choice: sync, async-polling | optional | nargs=1 | "sync" | — |  |
+| --dry-run | boolean | optional | nargs=1, flag | — | — | Validate/render without creating files or reserving a path. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp docs`
 
 Fetch Unity API documentation.
@@ -4005,6 +4020,21 @@ List custom tools registered for the active Unity project.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp tool scaffold`
+
+Create a new CLASS_NAME custom tool without contacting an Editor. Existing source or observed metadata refuses; compilation/availability remain unverified. Predefined Editor assemblies only; custom asmdef/asmref boundaries are unsupported.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| class_name | text | required | nargs=1 | — | — |  |
+| --namespace | text | required | nargs=1 | — | — | Explicit C# namespace; pass an empty value for global. |
+| --tool-name | text | required | nargs=1 | — | — | Explicit unchanged wire name; uniqueness is unverified. |
+| --project-root | file/path (lexical only) | optional | nargs=1 | nonliteral (not evaluated) | — |  |
+| --output | text | optional | nargs=1 | — | — | New relative .cs path under an Assets/Editor folder. |
+| --template | choice: sync, async-polling | optional | nargs=1 | "sync" | — |  |
+| --dry-run | boolean | optional | nargs=1, flag | — | — | Validate/render without creating files or reserving a path. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp tool schema`
