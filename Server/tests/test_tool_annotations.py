@@ -43,6 +43,8 @@ READ_ONLY = {
     "get_sha",
     "get_test_job",
     "get_tests",
+    # Session reference cache only; neither action edits scenes/assets or refreshes them.
+    "manage_object_handles",
     "manage_script_capabilities",
     "unity_docs",
     "unity_reflect",
