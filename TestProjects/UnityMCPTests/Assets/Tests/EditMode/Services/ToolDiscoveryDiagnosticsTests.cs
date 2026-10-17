@@ -284,7 +284,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
             public class Parameters
             {
                 [ThrowingParameter]
-                public int count;
+                public int count = 0;
             }
         }
 
@@ -295,7 +295,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
             public class Parameters
             {
                 [ToolParameter("owned", Required = false, DefaultValue = "private-default-text")]
-                public int count;
+                public int count = 0;
             }
         }
 

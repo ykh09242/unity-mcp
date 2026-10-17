@@ -52,11 +52,13 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
             string owned = Path.Combine(packet, "compile-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(owned);
             string assemblyPath = Path.Combine(owned, "Dev19Generated.dll");
+#pragma warning disable CS0618 // Retain the compilation API available across supported Unity versions.
             var builder = new AssemblyBuilder(assemblyPath, sources.ToArray())
             {
                 flags = AssemblyBuilderFlags.EditorAssembly,
                 additionalReferences = new[] { typeof(McpForUnityToolAttribute).Assembly.Location, typeof(JObject).Assembly.Location },
             };
+#pragma warning restore CS0618
             bool finished = false;
             CompilerMessage[] diagnostics = null;
             builder.buildFinished += (_, messages) =>
