@@ -32,7 +32,7 @@ Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` 
 Normally the Editor manages launch/configuration. This beta checkout uses the exact `mcpServerSource` recorded in [`MCPForUnity/package.json`](../MCPForUnity/package.json). Published stable releases keep their own immutable source pins; use the value from the installed package:
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/17256bd8586cb0a89c4fa49e1299e29a9eecbac0.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/6e1e3c4cc9b4d7287280e4efcb042d63fed805cf.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
 Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving branch. First launch can require dependency downloads; a source pin is not an offline-install guarantee. The commit-addressed archive avoids Git checkout and its Windows long-path limit; it still downloads the repository archive and builds only `Server`. Existing full-commit Git and explicit local development overrides remain supported.
@@ -133,8 +133,8 @@ The routing middleware checks built-in tool signatures before instance discovery
 ## CLI and environment reference
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/17256bd8586cb0a89c4fa49e1299e29a9eecbac0.zip#subdirectory=Server" mcp-for-unity --help
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/17256bd8586cb0a89c4fa49e1299e29a9eecbac0.zip#subdirectory=Server" unity-mcp --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/6e1e3c4cc9b4d7287280e4efcb042d63fed805cf.zip#subdirectory=Server" mcp-for-unity --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/6e1e3c4cc9b4d7287280e4efcb042d63fed805cf.zip#subdirectory=Server" unity-mcp --help
 ```
 
 The server and Editor-control CLI have different options. `unity-mcp` requires local HTTP and accepts `--host`, `--port`, `--timeout`, `--format`, and `--instance`. Place global options before subcommands; see [CLI examples](../website/docs/guides/cli.md).
@@ -151,6 +151,31 @@ The server and Editor-control CLI have different options. `unity-mcp` requires l
 | `UNITY_MCP_SCENE_LOAD_INPUTS=1` | Opt in to missing-target scene-load form input over HTTP. |
 
 Hosted mode requires an HTTPS validator and private HTTPS/WSS proxy plus `--http-behind-tls-proxy`; this assertion does not enable TLS. Its flags, environment variables and deployment examples live in [Remote Server Auth](../website/docs/guides/remote-server-auth.md). Local REST/CLI control is unavailable in hosted mode.
+
+## Tripo local image consent and task recovery
+
+`generate_model` supports local PNG/JPEG input for Tripo when the caller explicitly
+sets `allow_image_upload=true`; the CLI equivalent is `--allow-image-upload`.
+A hosted `image_url` takes precedence. Upload sends the original file, including
+embedded metadata, to Tripo and may incur provider charges. Use only an image you
+intend to share. Local input must be a regular file under `Assets`, at most
+20,000,000 bytes, with a matching PNG/JPEG signature; URI, traversal, links, empty
+files and WebP input are refused. Tripo generation returns GLB; this integration
+does not submit a separate conversion task.
+
+Poll the returned job with the status action. Retained generation task receipts can
+reconnect after a domain reload in the same Editor session within the original
+600-second budget. An unknown submission or import outcome is not replayed; inspect
+retained output before retrying. A saved local output may resume without a provider
+key only when its recorded file/metadata identity still matches. Recovery across
+Editor exit is not promised. Cancel stops local continuation; it does not guarantee
+remote cancellation, cleanup or a refund. Checkpoints omit provider keys, upload
+tokens, image bytes, source paths and prompts.
+
+See [manual verification](../docs/asset-gen-manual-verification.md) and
+[download policy](../docs/asset-gen-download-security.md). Automated upload/recovery
+coverage uses synthetic files, fake HTTP and fake GLB containers; it does not verify
+live providers, real reload/importer success, decoded image or model quality.
 
 ## Privacy, limits and diagnosis
 

@@ -1046,6 +1046,180 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(TaskId, AssetGenJobManager.GetJob(job.JobId).ProviderTaskId);
         }
 
+        private sealed class DeferredTripoUpload : IHttpTransport
+        {
+            internal readonly TaskCompletionSource<HttpResult> Upload = new();
+            internal readonly List<HttpRequestSpec> Requests = new();
+
+            public Task<HttpResult> SendAsync(HttpRequestSpec request, CancellationToken ct)
+            {
+                Requests.Add(request);
+                return request.Url.EndsWith("/files", StringComparison.Ordinal)
+                    ? Upload.Task
+                    : Task.FromResult(
+                        Json(
+                            new JObject
+                            {
+                                ["code"] = 0,
+                                ["data"] = new JObject { ["task_id"] = TaskId },
+                            }
+                        )
+                    );
+            }
+        }
+
+        [TestCase("cancel")]
+        [TestCase("reload")]
+        [TestCase("deadline")]
+        [TestCase("checkpoint")]
+        public void TripoUpload_ReturnedTokenCannotCrossGenerationAdmissionFence(string interruption)
+        {
+            CreateOwnedFolder();
+            string image = output + "/private-reference.png";
+            byte[] bytes = { 137, 80, 78, 71, 13, 10, 26, 10, 1 };
+            File.WriteAllBytes(AssetGenPaths.ToAbsolute(image), bytes);
+            var pending = new DeferredTripoUpload();
+            AssetGenJobManager.TransportOverrideForTests = pending;
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(
+                new ModelGenRequest
+                {
+                    Provider = "tripo",
+                    Mode = "image",
+                    ImagePath = image,
+                    AllowImageUpload = true,
+                    Name = "owned-output",
+                    OutputFolder = output,
+                }
+            );
+            Pump(job.JobId, 1);
+            Assert.AreEqual(1, pending.Requests.Count);
+            Assert.AreEqual("https://openapi.tripo3d.ai/v3/files", pending.Requests[0].Url);
+            string beforeReload = null;
+            AssetGenJob restored = null;
+            if (interruption == "cancel")
+                Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
+            if (interruption == "reload")
+            {
+                SimulateReload();
+                restored = AssetGenJobManager.GetJob(job.JobId);
+                beforeReload = SessionState.GetString(Prefix + job.JobId, "");
+            }
+            if (interruption == "deadline")
+                now = 701;
+            if (interruption == "checkpoint")
+                AssetGenJobManager.BeforeCheckpointWriteForTests = phase =>
+                {
+                    if (phase == "submitting")
+                        throw new IOException("Owned post-upload intent storage failure.");
+                };
+            pending.Upload.SetResult(
+                Json(
+                    new JObject
+                    {
+                        ["code"] = 0,
+                        ["data"] = new JObject { ["file_token"] = "gen09_private_upload_token" },
+                    }
+                )
+            );
+            Pump(job.JobId, 3);
+            Assert.AreEqual(1, pending.Requests.Count, "An upload may survive locally canceled work; no generation POST may follow this fence.");
+            AssetGenJob current = AssetGenJobManager.GetJob(job.JobId);
+            Assert.AreEqual(interruption == "cancel" ? AssetGenJobState.Canceled : AssetGenJobState.Failed, current.State);
+            if (interruption == "reload")
+            {
+                Assert.AreSame(restored, current);
+                Assert.AreEqual(beforeReload, SessionState.GetString(Prefix + job.JobId, ""));
+                Assert.AreEqual("submission_outcome_unknown", current.RecoveryCode);
+            }
+            if (interruption == "deadline")
+                Assert.AreEqual("job_timeout", current.RecoveryCode);
+            string record = SessionState.GetString(Prefix + job.JobId, "");
+            StringAssert.DoesNotContain("gen09_private_upload_token", record);
+            StringAssert.DoesNotContain(image, record);
+            StringAssert.DoesNotContain(Secret, record);
+            Assert.IsTrue(string.IsNullOrEmpty(current.ProviderTaskId));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(AssetGenPaths.ToAbsolute(image)));
+            Assert.IsEmpty(http.RecordedRequests);
+        }
+
+        [Test]
+        public void TripoLegacyReceipt_ReloadPollsV3WithoutAnyUploadOrGeneration()
+        {
+            AssetGenJob job = Inject(Checkpoint());
+            Pump(job.JobId, 4);
+            Assert.IsNotEmpty(http.RecordedRequests);
+            Assert.IsTrue(http.RecordedRequests.All(request => request.Method == "GET" && request.Url == "https://openapi.tripo3d.ai/v3/tasks/" + TaskId));
+            Assert.AreEqual(TaskId, job.ProviderTaskId);
+            Assert.AreEqual(AssetGenJobState.Running, job.State);
+        }
+
+        [Test]
+        public void TripoV3Result_UsesProviderScopedDownloadAndPreservesGlbBytes()
+        {
+            CreateOwnedFolder();
+            byte[] document = Encoding.UTF8.GetBytes("{\"asset\":{\"version\":\"2.0\"}} ");
+            Assert.AreEqual(0, document.Length % 4);
+            byte[] glb;
+            using (var buffer = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(buffer, Encoding.UTF8, true))
+                {
+                    writer.Write(0x46546C67u);
+                    writer.Write(2u);
+                    writer.Write((uint)(20 + document.Length));
+                    writer.Write((uint)document.Length);
+                    writer.Write(0x4E4F534Au);
+                    writer.Write(document);
+                }
+                glb = buffer.ToArray();
+            }
+            const string url = "https://cdn.tripo3d.ai/owned.glb?Signature=synthetic";
+            int downloads = 0;
+            int imports = 0;
+            http.Handler = request =>
+            {
+                if (request.Url == url)
+                {
+                    downloads++;
+                    Assert.AreEqual("tripo", request.DownloadProvider);
+                    Assert.AreEqual("GET", request.Method);
+                    Assert.IsFalse(request.Headers.ContainsKey("Authorization"));
+                    return new HttpResult
+                    {
+                        Status = 200,
+                        IsSuccess = true,
+                        Body = glb,
+                    };
+                }
+                return Json(
+                    new JObject
+                    {
+                        ["code"] = 0,
+                        ["data"] = new JObject
+                        {
+                            ["status"] = "success",
+                            ["output"] = new JObject { ["model_url"] = url },
+                        },
+                    }
+                );
+            };
+            AssetGenJobManager.ImportOverrideForTests = (job, path) =>
+            {
+                imports++;
+                job.AssetPath = path;
+                return job;
+            };
+            AssetGenJobCheckpoint checkpoint = Checkpoint();
+            checkpoint.Extension = "glb";
+            AssetGenJob restored = Inject(checkpoint);
+            Pump(restored.JobId, 10);
+            Assert.AreEqual(AssetGenJobState.Done, restored.State, restored.Error);
+            Assert.AreEqual(1, downloads);
+            Assert.AreEqual(1, imports);
+            CollectionAssert.AreEqual(glb, File.ReadAllBytes(AssetGenPaths.ToAbsolute(restored.AssetPath)));
+            Assert.IsTrue(http.RecordedRequests.All(request => request.Method == "GET"));
+        }
+
         private sealed class DeferredRefineTransport : IHttpTransport
         {
             internal readonly TaskCompletionSource<HttpResult> Refine = new();

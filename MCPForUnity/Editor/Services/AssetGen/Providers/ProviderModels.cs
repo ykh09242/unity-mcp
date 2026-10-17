@@ -39,6 +39,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         public string Prompt;
         public string ImagePath;
         public string ImageUrl;
+        public bool AllowImageUpload; // Transient Tripo-only consent; never a checkpoint field.
         public string Format = "glb";
         public float TargetSize = 1f;
         public bool Texture = true;

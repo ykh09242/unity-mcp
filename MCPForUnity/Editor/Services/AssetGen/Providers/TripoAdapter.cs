@@ -1,9 +1,9 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -12,13 +12,13 @@ using UnityEngine;
 namespace MCPForUnity.Editor.Services.AssetGen.Providers
 {
     /// <summary>
-    /// Tripo3D model provider. Submits text→3D / image→3D tasks to the OpenAPI task endpoint and
-    /// polls for completion. The bearer key is supplied per call and never logged; every error
-    /// message is run through <see cref="SecretRedactor"/> before it is surfaced.
+    /// Tripo v3 generation and polling, including explicitly consented local image uploads.
+    /// Keys, upload tokens and provider response bodies never enter public error messages.
     /// </summary>
     public sealed class TripoAdapter : IModelProviderAdapter
     {
-        private const string TaskEndpoint = "https://api.tripo3d.ai/v2/openapi/task";
+        private const string ApiRoot = "https://openapi.tripo3d.ai/v3";
+        private const int MaxEnvelopeBytes = 64 * 1024;
 
         // Current recommended Tripo model (v3.1). Premium alternative: P1-20260311.
         // internal so the model catalog references it directly (single source of truth, drift-guarded).
@@ -26,65 +26,86 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public string Id => "tripo";
 
-        public async Task<string> SubmitAsync(ModelGenRequest req, string apiKey, IHttpTransport http, CancellationToken ct)
+        public Task<string> SubmitAsync(ModelGenRequest req, string apiKey, IHttpTransport http, CancellationToken ct) =>
+            SubmitAsync(req, apiKey, http, ct, null);
+
+        internal async Task<string> SubmitAsync(ModelGenRequest req, string apiKey, IHttpTransport http, CancellationToken ct, Action admitGeneration)
         {
             if (req == null)
                 throw new ArgumentNullException(nameof(req));
             if (http == null)
                 throw new ArgumentNullException(nameof(http));
-
+            ct.ThrowIfCancellationRequested();
             ValidateOptions(req);
-
-            // Tripo rejects base64 data URIs and needs a multipart upload→token flow for local files,
-            // which isn't wired yet — fail clearly rather than silently falling back to text mode.
-            bool imageMode = string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase);
-            if (imageMode && string.IsNullOrEmpty(req.ImageUrl))
-                throw new Exception(
-                    "Tripo image input requires a hosted 'image_url'; local 'image_path' upload is not yet supported for Tripo (use Meshy for local-image→3D, or host the image)."
-                );
-
-            JObject body;
-            bool image = imageMode && !string.IsNullOrEmpty(req.ImageUrl);
+            bool image = string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase);
+            string input = null;
+            string uploadToken = null;
+            if (image && !string.IsNullOrWhiteSpace(req.ImageUrl))
+            {
+                if (
+                    !Uri.TryCreate(req.ImageUrl, UriKind.Absolute, out Uri source)
+                    || (source.Scheme != Uri.UriSchemeHttps && source.Scheme != Uri.UriSchemeHttp)
+                )
+                    throw new InvalidDataException("Tripo hosted image input must be an HTTP or HTTPS URL.");
+                input = req.ImageUrl;
+            }
+            else if (image)
+            {
+                if (!req.AllowImageUpload)
+                    throw new InvalidOperationException("Tripo local image upload requires explicit allow_image_upload=true consent.");
+                using var upload = TripoLocalImageUpload.Prepare(req.ImagePath, ct);
+                HttpRequestSpec uploadRequest = new HttpRequestSpec
+                {
+                    Method = "POST",
+                    Url = ApiRoot + "/files",
+                    ContentType = upload.ContentType,
+                    Body = upload.Body,
+                };
+                uploadRequest.Headers["Authorization"] = "Bearer " + apiKey;
+                try
+                {
+                    ct.ThrowIfCancellationRequested();
+                    HttpResult uploaded = await SendAsync(http, uploadRequest, ct, "upload");
+                    JObject response = ParseAndValidate(uploaded, "upload");
+                    uploadToken = SafeIdentifier((response["data"] as JObject)?["file_token"], "upload");
+                    input = uploadToken;
+                }
+                finally
+                {
+                    // Release this adapter's multipart references. A transport/native handler or
+                    // a test recorder may retain its own copy; no universal memory zeroing claim.
+                    uploadRequest = null;
+                }
+            }
+            var body = new JObject
+            {
+                ["model"] = string.IsNullOrEmpty(req.Model) ? ModelVersion : req.Model,
+                ["texture"] = req.Texture,
+                ["pbr"] = req.Texture,
+            };
             if (image)
-            {
-                body = new JObject
-                {
-                    ["type"] = "image_to_model",
-                    ["model_version"] = string.IsNullOrEmpty(req.Model) ? ModelVersion : req.Model,
-                    ["file"] = new JObject { ["type"] = "url", ["url"] = req.ImageUrl },
-                };
-            }
+                body["input"] = input;
             else
-            {
-                body = new JObject
-                {
-                    ["type"] = "text_to_model",
-                    ["prompt"] = req.Prompt ?? string.Empty,
-                    ["model_version"] = string.IsNullOrEmpty(req.Model) ? ModelVersion : req.Model,
-                };
-            }
-
-            // PBR defaults to true and forces textures on, so both flags must agree.
-            body["texture"] = req.Texture;
-            body["pbr"] = req.Texture;
-
+                body["prompt"] = req.Prompt ?? string.Empty;
             var spec = new HttpRequestSpec
             {
                 Method = "POST",
-                Url = TaskEndpoint,
+                Url = ApiRoot + (image ? "/generation/image-to-model" : "/generation/text-to-model"),
                 ContentType = "application/json",
-                Body = Encoding.UTF8.GetBytes(body.ToString(Formatting.None)),
+                Body = ProviderHttp.SerializeRequest(body),
             };
             spec.Headers["Authorization"] = "Bearer " + apiKey;
-
-            HttpResult res = await http.SendAsync(spec, ct);
-            JObject json = ParseAndValidate(res, apiKey, "submit");
-
-            string taskId = json["data"]?["task_id"]?.ToString();
-            if (string.IsNullOrEmpty(taskId))
-            {
-                throw new Exception(SecretRedactor.Scrub("Tripo submit returned no task_id: " + ProviderHttp.Truncate(res?.Text), apiKey));
-            }
+            // The callback is the manager's existing original-deadline/epoch/ownership and
+            // durable submission admission. It runs after upload await, before the paid POST.
+            ct.ThrowIfCancellationRequested();
+            if (uploadToken != null)
+                admitGeneration?.Invoke();
+            ct.ThrowIfCancellationRequested();
+            HttpResult result = await SendAsync(http, spec, ct, "generation");
+            JObject generation = ParseAndValidate(result, "generation");
+            string taskId = SafeIdentifier((generation["data"] as JObject)?["task_id"], "generation");
+            if (uploadToken != null && string.Equals(taskId, uploadToken, StringComparison.Ordinal))
+                throw new InvalidDataException("Tripo generation returned an invalid task receipt.");
             return taskId;
         }
 
@@ -94,22 +115,28 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 throw new ArgumentNullException(nameof(providerJobId));
             if (http == null)
                 throw new ArgumentNullException(nameof(http));
-
-            var spec = new HttpRequestSpec { Method = "GET", Url = TaskEndpoint + "/" + providerJobId };
+            ct.ThrowIfCancellationRequested();
+            string receipt = SafeIdentifier(new JValue(providerJobId), "poll");
+            var spec = new HttpRequestSpec { Method = "GET", Url = ApiRoot + "/tasks/" + Uri.EscapeDataString(receipt) };
             spec.Headers["Authorization"] = "Bearer " + apiKey;
-
-            HttpResult res = await http.SendAsync(spec, ct);
-            JObject json = ParseAndValidate(res, apiKey, "poll");
-            JObject data = json["data"] as JObject ?? new JObject();
-
-            var result = new ProviderPollResult { State = MapState(data["status"]?.ToString()) };
-
-            JToken progressTok = data["progress"];
-            if (progressTok != null && progressTok.Type != JTokenType.Null)
+            JObject json = ParseAndValidate(await SendAsync(http, spec, ct, "poll"), "poll");
+            JObject data = json["data"] as JObject;
+            if (data == null)
+                throw new InvalidDataException("Tripo poll returned an invalid response.");
+            var result = new ProviderPollResult { State = MapState(data["status"]?.Type == JTokenType.String ? (string)data["status"] : null) };
+            JToken progress = data["progress"];
+            if (progress?.Type == JTokenType.Integer || progress?.Type == JTokenType.Float)
             {
-                result.Progress = Mathf.Clamp01(progressTok.Value<float>() / 100f);
+                try
+                {
+                    double value = progress.Value<double>();
+                    if (!double.IsInfinity(value) && !double.IsNaN(value))
+                        result.Progress = Mathf.Clamp01((float)(value / 100));
+                }
+                catch (Exception error) when (error is OverflowException || error is InvalidCastException || error is FormatException)
+                { /* Optional malformed progress remains zero. */
+                }
             }
-
             if (result.State == ProviderPollState.Succeeded)
             {
                 result.Progress = 1f;
@@ -117,34 +144,27 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 if (string.IsNullOrEmpty(result.DownloadUrl))
                 {
                     result.State = ProviderPollState.Failed;
-                    result.Error = "Tripo reported success but no model URL was present in the response.";
+                    result.Error = "Tripo reported success without a model URL.";
+                }
+                else if (!Uri.TryCreate(result.DownloadUrl, UriKind.Absolute, out Uri uri))
+                {
+                    result.State = ProviderPollState.Failed;
+                    result.Error = "Tripo returned an invalid model URL.";
                 }
                 else
                 {
-                    if (!Uri.TryCreate(result.DownloadUrl, UriKind.Absolute, out Uri uri))
+                    string extension = Path.GetExtension(uri.AbsolutePath).TrimStart('.').ToLowerInvariant();
+                    if (extension.Length != 0 && extension != "glb")
                     {
                         result.State = ProviderPollState.Failed;
-                        result.Error = "Tripo returned an invalid model URL.";
+                        result.Error = "Tripo returned a non-GLB artifact; conversion is not supported.";
                     }
                     else
-                    {
-                        string extension = Path.GetExtension(uri.AbsolutePath).TrimStart('.').ToLowerInvariant();
-                        if (extension.Length != 0 && extension != "glb")
-                        {
-                            result.State = ProviderPollState.Failed;
-                            result.Error = "Tripo returned a non-GLB artifact; model conversion is not supported by this integration.";
-                        }
-                        else
-                            result.ResultExt = extension.Length == 0 ? null : extension;
-                    }
+                        result.ResultExt = extension.Length == 0 ? null : extension;
                 }
             }
             else if (result.State == ProviderPollState.Failed)
-            {
-                string err = data["error"]?.ToString() ?? data["message"]?.ToString() ?? json["message"]?.ToString() ?? "Tripo task failed.";
-                result.Error = SecretRedactor.Scrub(err, apiKey);
-            }
-
+                result.Error = "Tripo task failed (code=" + NumericCode(data["code"] ?? data["error_code"]) + ").";
             return result;
         }
 
@@ -389,7 +409,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             JObject output = data["output"] as JObject;
             JObject resultObj = data["result"] as JObject;
 
-            return UrlOf(output?["pbr_model"])
+            return UrlOf(output?["model_url"])
+                ?? UrlOf(output?["pbr_model"])
                 ?? UrlOf(resultObj?["pbr_model"])
                 ?? UrlOf(output?["model"])
                 ?? UrlOf(resultObj?["model"])
@@ -419,43 +440,70 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         /// Validate transport success + Tripo's body-level <c>code</c> (0 == ok), parse the JSON,
         /// and throw a redacted exception otherwise.
         /// </summary>
-        private static JObject ParseAndValidate(HttpResult res, string apiKey, string phase)
+        private static JObject ParseAndValidate(HttpResult result, string phase)
         {
-            string text = ProviderHttp.BodyText(res);
-
             JObject json = null;
-            if (!string.IsNullOrEmpty(text))
+            try
             {
-                try
-                {
-                    json = JObject.Parse(text);
-                }
-                catch { /* non-JSON body; handled below */ }
+                if (result?.Body?.Length > MaxEnvelopeBytes || result?.Text?.Length > MaxEnvelopeBytes)
+                    throw new InvalidDataException("Tripo " + phase + " response exceeds the envelope limit.");
+                string text = ProviderHttp.BodyText(result);
+                if (string.IsNullOrEmpty(text) || Encoding.UTF8.GetByteCount(text) > MaxEnvelopeBytes)
+                    throw new InvalidDataException("Tripo " + phase + " returned an invalid response.");
+                using var source = new StringReader(text);
+                using var reader = new JsonTextReader(source) { MaxDepth = 16, DateParseHandling = DateParseHandling.None };
+                json = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+                if (reader.Read())
+                    throw new InvalidDataException("Tripo " + phase + " returned an invalid response.");
             }
-
-            bool httpOk = res?.Ok == true;
-
-            int code = 0;
-            JToken codeTok = json?["code"];
-            if (codeTok != null && codeTok.Type != JTokenType.Null)
+            catch (Exception error) when (error is JsonException || error is DecoderFallbackException)
             {
-                try
-                {
-                    code = codeTok.Value<int>();
-                }
-                catch
-                {
-                    code = -1;
-                }
+                throw new InvalidDataException("Tripo " + phase + " returned an invalid response.");
             }
+            int code = NumericCode(json?["code"]);
+            if (result?.Ok != true || code != 0)
+                throw new InvalidOperationException("Tripo " + phase + " failed (status=" + (result?.Status ?? 0) + ", code=" + code + ").");
+            return json;
+        }
 
-            if (!httpOk || code != 0)
+        private static int NumericCode(JToken token) =>
+            token?.Type == JTokenType.Integer && int.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int code) ? code : -1;
+
+        private static string SafeIdentifier(JToken token, string phase)
+        {
+            if (token?.Type != JTokenType.String)
+                throw new InvalidDataException("Tripo " + phase + " returned an invalid identifier.");
+            string value = (string)token;
+            if (string.IsNullOrEmpty(value) || value.Length > 256)
+                throw new InvalidDataException("Tripo " + phase + " returned an invalid identifier.");
+            foreach (char character in value)
+                if (
+                    !(character >= 'a' && character <= 'z')
+                    && !(character >= 'A' && character <= 'Z')
+                    && !(character >= '0' && character <= '9')
+                    && character != '_'
+                    && character != '-'
+                )
+                    throw new InvalidDataException("Tripo " + phase + " returned an invalid identifier.");
+            return value;
+        }
+
+        private static async Task<HttpResult> SendAsync(IHttpTransport http, HttpRequestSpec request, CancellationToken token, string phase)
+        {
+            token.ThrowIfCancellationRequested();
+            try
             {
-                string detail = json?["message"]?.ToString() ?? json?["error"]?.ToString() ?? ProviderHttp.Truncate(text);
-                throw new Exception(SecretRedactor.Scrub($"Tripo {phase} failed (status={res?.Status}, code={code}): {detail}", apiKey));
+                return await http.SendAsync(request, token);
             }
-
-            return json ?? new JObject();
+            catch (OperationCanceledException)
+            {
+                throw new OperationCanceledException("Tripo request canceled.", token);
+            }
+            catch (Exception)
+            {
+                // Transport exceptions can contain URLs, request bodies or provider secrets.
+                throw new InvalidOperationException("Tripo " + phase + " request failed; remote outcome may be unknown.");
+            }
         }
     }
 }

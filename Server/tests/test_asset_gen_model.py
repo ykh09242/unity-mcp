@@ -27,6 +27,7 @@ ALLOWED_KEYS = {
     "prompt",
     "imagePath",
     "imageUrl",
+    "allowImageUpload",
     "format",
     "targetSize",
     "texture",
@@ -331,5 +332,126 @@ def test_recovery_status_evidence_through_registered_sdk(protocol, state):
                     COMMAND,
                     {"action": "status", "jobId": "owned-local-job"},
                 )
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("consent", [False, None, "true"])
+def test_tripo_upload_requires_literal_true_mapping(consent):
+    _, sent = _call_tool(
+        action="generate",
+        provider="tripo",
+        mode="image",
+        image_path="Assets/reference.png",
+        allow_image_upload=consent,
+    )
+    assert "allowImageUpload" not in _sent_params(sent)
+
+
+def test_tripo_upload_acknowledgement_maps_without_image_bytes():
+    _, sent = _call_tool(
+        action="generate",
+        provider="tripo",
+        mode="image",
+        image_path="Assets/reference.png",
+        allow_image_upload=True,
+    )
+    assert _sent_params(sent) == {
+        "action": "generate",
+        "provider": "tripo",
+        "mode": "image",
+        "imagePath": "Assets/reference.png",
+        "allowImageUpload": True,
+    }
+
+
+def test_tripo_upload_consent_at_actual_modern_and_legacy_sdk_boundary():
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent("""
+        import asyncio, importlib
+        from fastmcp import FastMCP, Client
+        module = importlib.import_module("services.tools.generate_model")
+        sent = []
+        async def instance(ctx): return None
+        async def send(fn, unity, command, params):
+            sent.append((command, params))
+            return {"success": True, "data": {"job_id": "owned-sdk-receipt"}}
+        module.get_unity_instance_from_context = instance
+        module.send_with_unity_instance = send
+        server = FastMCP("gen09-upload-contract")
+        server.tool(name="generate_model")(module.generate_model)
+        async def main():
+            for protocol in ("2026-07-28", "legacy"):
+                async with Client(server, mode=protocol) as client:
+                    for supplied in (None, False, True):
+                        payload = {"action": "generate", "provider": "tripo", "mode": "image", "image_path": "Assets/owned-reference.png"}
+                        if supplied is not None: payload["allow_image_upload"] = supplied
+                        result = await client.call_tool("generate_model", payload)
+                        assert result.structured_content["success"] is True
+                        command, wire = sent[-1]
+                        assert command == "generate_model"
+                        assert ("allowImageUpload" in wire) == (supplied is True)
+                        if supplied is True: assert wire["allowImageUpload"] is True
+                        assert wire["imagePath"] == payload["image_path"]
+                        assert "allow_image_upload" not in wire
+                    await client.call_tool("generate_model", {"action": "generate", "mode": "image", "image_url": "https://fixture.invalid/reference.png"})
+                    assert sent[-1][1]["imageUrl"] == "https://fixture.invalid/reference.png"
+                    assert "allowImageUpload" not in sent[-1][1]
+            assert len(sent) == 8
+        asyncio.run(main())
+    """)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize("consent", ["true", 1, None], ids=["string_true", "one", "null"])
+def test_registered_sdk_rejects_nonboolean_upload_consent_before_dispatch(protocol, consent):
+    from fastmcp import Client, FastMCP
+    from core.logging_decorator import log_execution
+    from core.telemetry_decorator import telemetry_tool
+
+    async def exercise():
+        entry = next(tool for tool in get_registered_tools() if tool["name"] == COMMAND)
+        server = FastMCP("gen09-strict-upload-consent")
+        wrapped = log_execution(COMMAND, "Tool")(entry["func"])
+        server.tool(name=entry["name"], description=entry["description"], **entry["kwargs"])(
+            telemetry_tool(COMMAND)(wrapped)
+        )
+        with patch.object(
+            generate_model_module,
+            "get_unity_instance_from_context",
+            new=AsyncMock(return_value="owned"),
+        ) as instance:
+            with patch.object(
+                generate_model_module,
+                "send_with_unity_instance",
+                new=AsyncMock(),
+            ) as send:
+                async with Client(server, mode=protocol) as client:
+                    result = await client.call_tool(
+                        COMMAND,
+                        {
+                            "action": "generate",
+                            "provider": "tripo",
+                            "mode": "image",
+                            "image_path": "Assets/must-not-be-read.png",
+                            "allow_image_upload": consent,
+                        },
+                        raise_on_error=False,
+                    )
+                assert result.is_error
+                instance.assert_not_awaited()
+                send.assert_not_awaited()
 
     asyncio.run(exercise())

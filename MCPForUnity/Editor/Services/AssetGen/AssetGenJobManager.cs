@@ -307,7 +307,9 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         req.CatalogEntry = await FalModelCatalog.VerifyForGeneration(req.Model, "model", req.Mode, ct, apiKey);
                     }
                     AdmitSubmission(job);
-                    string providerJobId = await adapter.SubmitAsync(req, apiKey, transport, ct);
+                    string providerJobId = adapter is TripoAdapter tripo
+                        ? await tripo.SubmitAsync(req, apiKey, transport, ct, () => AdmitSubmission(job))
+                        : await adapter.SubmitAsync(req, apiKey, transport, ct);
                     req = null; // Submission is the final consumer; polling/import share this closure.
                     return providerJobId;
                 },

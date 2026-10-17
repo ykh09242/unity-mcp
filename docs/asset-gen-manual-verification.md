@@ -37,6 +37,29 @@ supported here for `v3.0-20250812`, `v3.1-20260211`, and `P1-20260311`. Other fo
 Tripo's separate conversion task; this integration does not submit it. A GLB container
 check before saving does not establish usable mesh content or installed importer support.
 
+Tripo text/image generation and task polling use the v3 API. Hosted image URLs require
+no extra upload and take precedence over `image_path`. Local PNG/JPEG input requires
+explicit per-call `allow_image_upload=true`, or the CLI `--allow-image-upload` flag.
+This sends the original file, including embedded metadata, to Tripo and can incur
+provider charges. Use only an image you intend to share. Local input is limited to
+20,000,000 raw bytes and an existing regular file inside `Assets`; WebP, URI paths,
+traversal, links, empty files and mismatched PNG/JPEG signatures are refused.
+
+For a deliberately authorized provider smoke check:
+
+- [ ] `generate_model(provider=tripo, mode=image, image_path=Assets/refs/x.png, allow_image_upload=true)`;
+      poll the returned job and verify the resulting model through the existing GLB import checks.
+- [ ] CLI equivalent: `unity-mcp asset-gen generate-model --provider tripo --mode image --image-path Assets/refs/x.png --allow-image-upload`.
+- [ ] Omit the consent option for local input and confirm refusal before any upload.
+- [ ] Supply a hosted `image_url` and an invalid local path; confirm URL precedence with no file upload.
+- [ ] Cancel while upload is pending; confirm no generation submission follows local cancellation.
+      A remote upload may remain. Cancellation does not promise remote cleanup or a refund.
+- [ ] Inspect job status/recovery evidence for the generation task receipt, with no upload token,
+      source path, image bytes, prompt or provider key in the saved checkpoint.
+
+The automated upload tests use synthetic files, in-memory keys and fake HTTP. They do
+not establish provider availability, model quality, image decoding or importer support.
+
 ## Model import evidence
 
 A model is `usable` only after Unity loads a GameObject hierarchy containing a
@@ -257,8 +280,8 @@ These paths are covered by unit tests at the request-shaping layer only — conf
       → confirm the reference image influences the result.
 - [ ] **fal output size:** `generate_image(provider=fal, width=512, height=512, prompt="...")`
       → confirm the returned image is 512×512.
-- [ ] **Tripo local image is rejected clearly:** `generate_model(provider=tripo, mode=image, image_path=...)`
-      → confirm the job fails with a clear "Tripo requires a hosted image_url" message (no silent text fallback).
+- [ ] **Tripo local upload consent:** `generate_model(provider=tripo, mode=image, image_path=...)`
+      → confirm omission of `allow_image_upload=true` refuses before any upload or generation POST.
 - [ ] **Sketchfab search filters/paging:** `import_model(action=search, query="chair", categories=furniture-home, count=12, cursor=<from prior cursors.next>)`
       → confirm filtering works and `cursors.next` advances the page.
 - [ ] **Transparency is import-only:** `generate_image(transparent=true)` sets the Unity alpha-is-transparency

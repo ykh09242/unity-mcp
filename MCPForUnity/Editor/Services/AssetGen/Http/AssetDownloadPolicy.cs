@@ -37,7 +37,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             switch (provider?.ToLowerInvariant())
             {
                 case "tripo":
-                    return EqualsHost(host, "tripo-data.rg1.data.tripo3d.com");
+                    return EqualsHost(host, "tripo-data.rg1.data.tripo3d.com") || EqualsHost(host, "cdn.tripo3d.ai");
                 case "meshy":
                     return EqualsHost(host, "assets.meshy.ai");
                 case "fal":

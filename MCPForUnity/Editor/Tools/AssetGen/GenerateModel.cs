@@ -28,7 +28,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 switch (action)
                 {
                     case "generate":
-                        return Generate(p);
+                        return Generate(p, @params["allowImageUpload"]);
                     case "status":
                         return AssetGenToolHelpers.Status(p, "3D model", 3.0);
                     case "cancel":
@@ -57,7 +57,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             }
         }
 
-        private static object Generate(ToolParams p)
+        private static object Generate(ToolParams p, JToken uploadConsent)
         {
             string provider = (p.Get("provider", "tripo") ?? "tripo").ToLowerInvariant();
             AssetGenProviders.Model(provider); // throws NotSupportedException for unimplemented providers
@@ -76,6 +76,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 Prompt = p.Get("prompt"),
                 ImagePath = p.Get("imagePath"),
                 ImageUrl = p.Get("imageUrl"),
+                AllowImageUpload = uploadConsent?.Type == JTokenType.Boolean && uploadConsent.Value<bool>(),
                 Format = (p.Get("format", "glb") ?? "glb").ToLowerInvariant(),
                 TargetSize = p.GetFloat("targetSize", 1f) ?? 1f,
                 Texture = p.GetBool("texture", true),
@@ -100,12 +101,17 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 if (string.IsNullOrWhiteSpace(req.ImagePath))
                     return new ErrorResponse("image mode requires 'image_url' or 'image_path'.");
                 if (provider == "tripo")
-                    return new ErrorResponse(
-                        "Tripo image input requires a hosted 'image_url'; local 'image_path' is not supported for Tripo (use Meshy for local-image→3D)."
-                    );
-                if (!LocalImage.ResolveExisting(req.ImagePath, out string absImg, out string imgErr))
-                    return new ErrorResponse(imgErr);
-                req.ImagePath = absImg;
+                {
+                    if (!req.AllowImageUpload)
+                        return new ErrorResponse("Tripo local image upload requires explicit allow_image_upload=true consent.");
+                    req.ImagePath = TripoLocalImageUpload.RequirePath(req.ImagePath);
+                }
+                else
+                {
+                    if (!LocalImage.ResolveExisting(req.ImagePath, out string absImg, out string imgErr))
+                        return new ErrorResponse(imgErr);
+                    req.ImagePath = absImg;
+                }
             }
 
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(req);

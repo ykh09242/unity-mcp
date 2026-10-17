@@ -15,6 +15,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         private static readonly IPAddress PublicIp = IPAddress.Parse("93.184.215.14");
 
         [TestCase("tripo", "https://tripo-data.rg1.data.tripo3d.com/model.glb?Signature=test")]
+        [TestCase("tripo", "https://cdn.tripo3d.ai/model.glb?Signature=test")]
         [TestCase("meshy", MeshyUrl)]
         [TestCase("fal", "https://fal.media/a.png")]
         [TestCase("fal", "https://v3.fal.media/a.wav")]
@@ -68,12 +69,44 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TestCase("fal", "https://fal.media.evil.example/a.png")]
         [TestCase("sketchfab", "https://attacker.s3.amazonaws.com/model.zip")]
         [TestCase("tripo", "https://api.tripo3d.ai/private")]
+        [TestCase("tripo", "https://sub.cdn.tripo3d.ai/model.glb")]
+        [TestCase("tripo", "https://cdn.tripo3d.ai.evil.example/model.glb")]
+        [TestCase("tripo", "https://evilcdn.tripo3d.ai/model.glb")]
+        [TestCase("meshy", "https://cdn.tripo3d.ai/model.glb")]
         [TestCase("meshy", "https://fal.media/a.png")]
         [TestCase("openrouter", "https://arbitrary.example/a.png")]
         [TestCase("unknown", MeshyUrl)]
         public void HostAllowlist_IsProviderSpecific(string provider, string url)
         {
             Assert.Throws<InvalidOperationException>(() => AssetDownloadPolicy.RequireAllowedUrl(provider, url));
+        }
+
+        [Test]
+        public async Task TripoCdnDownload_PinsPublicAddressAndRevalidatesRedirect()
+        {
+            int lookups = 0;
+            int sends = 0;
+            var downloader = new AssetDownloadTransport(
+                host =>
+                {
+                    Assert.AreEqual("cdn.tripo3d.ai", host);
+                    lookups++;
+                    return Task.FromResult(new[] { PublicIp });
+                },
+                (uri, address, _) =>
+                {
+                    Assert.AreEqual(PublicIp, address);
+                    var request = AssetDownloadTransport.CreatePinnedRequest(uri, address);
+                    Assert.AreEqual("cdn.tripo3d.ai", request.Host);
+                    Assert.IsFalse(request.AllowAutoRedirect);
+                    Assert.IsNull(request.Headers["Authorization"]);
+                    request.Abort();
+                    return Task.FromResult(++sends == 1 ? Redirect("/final.glb?Signature=synthetic") : Ok());
+                }
+            );
+            Assert.IsTrue((await downloader.DownloadAsync("tripo", "https://cdn.tripo3d.ai/model.glb", CancellationToken.None)).IsSuccess);
+            Assert.AreEqual(2, sends);
+            Assert.AreEqual(2, lookups);
         }
 
         [TestCase("0.0.0.0")]
