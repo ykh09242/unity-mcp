@@ -82,7 +82,9 @@ namespace MCPForUnity.Editor.Helpers
             return writer.ToString();
         }
 
-        public static string UpsertCodexServerBlock(string existingToml, string uvPath)
+        public static string UpsertCodexServerBlock(string existingToml, string uvPath) => UpsertCodexServerBlock(existingToml, uvPath, null);
+
+        internal static string UpsertCodexServerBlock(string existingToml, string uvPath, ClientConfigurationInputs inputs)
         {
             var root = TryParseToml(existingToml);
             if (root == null && !string.IsNullOrWhiteSpace(existingToml))
@@ -92,10 +94,9 @@ namespace MCPForUnity.Editor.Helpers
             var mcpServers = GetOrCreateTable(root, "mcp_servers", "mcp_servers");
             var unityMcp = GetOrCreateTable(mcpServers, "unityMCP", "mcp_servers.unityMCP");
             // Refuse malformed nested settings rather than erase user configuration.
-            ValidateOptionalTable(unityMcp, "env", "mcp_servers.unityMCP.env");
-            ValidateOptionalTable(unityMcp, "http_headers", "mcp_servers.unityMCP.http_headers");
+            ValidateNestedSettings(unityMcp);
 
-            bool useHttpTransport = EditorConfigurationCache.Instance.UseHttpTransport;
+            bool useHttpTransport = inputs?.UseHttp ?? EditorConfigurationCache.Instance.UseHttpTransport;
 
             // Codex rejects fields belonging to the other transport. Refuse custom
             // settings rather than discard them or serialize an unusable configuration.
@@ -125,15 +126,10 @@ namespace MCPForUnity.Editor.Helpers
 
             if (useHttpTransport)
             {
-                ValidateOptionalTable(unityMcp, "env_http_headers", "mcp_servers.unityMCP.env_http_headers");
-                if (
-                    (unityMcp.TryGetNode("http_headers_helper", out _) && !managedHelper)
-                    || (TryGetTable(unityMcp, "env_http_headers", out var envHeaders) && envHeaders.Keys.Any(IsManagedAuthHeader))
-                )
-                    throw new FormatException("Custom Codex HTTP authentication is preserved. " + "Update it manually before using automatic configuration.");
+                ValidateHttpAuthentication(unityMcp, managedHelper);
             }
 
-            var generated = CreateUnityMcpTable(uvPath);
+            var generated = inputs == null ? CreateUnityMcpTable(uvPath) : CreateCapturedTable(inputs);
             if (managedHelper)
                 unityMcp.Delete("http_headers_helper");
             unityMcp.Delete(useHttpTransport ? "command" : "url");
@@ -237,7 +233,117 @@ namespace MCPForUnity.Editor.Helpers
             return updated;
         }
 
-        private static bool SameToml(TomlNode left, TomlNode right)
+        private static void ValidateNestedSettings(TomlTable unityMcp)
+        {
+            ValidateOptionalTable(unityMcp, "env", "mcp_servers.unityMCP.env");
+            ValidateOptionalTable(unityMcp, "http_headers", "mcp_servers.unityMCP.http_headers");
+        }
+
+        private static void ValidateHttpAuthentication(TomlTable unityMcp, bool managedHelper)
+        {
+            ValidateOptionalTable(unityMcp, "env_http_headers", "mcp_servers.unityMCP.env_http_headers");
+            if (
+                (unityMcp.TryGetNode("http_headers_helper", out _) && !managedHelper)
+                || (TryGetTable(unityMcp, "env_http_headers", out var envHeaders) && envHeaders.Keys.Any(IsManagedAuthHeader))
+            )
+                throw new FormatException("Custom Codex HTTP authentication is preserved. " + "Update it manually before using automatic configuration.");
+        }
+
+        internal static void ValidatePreviewConfiguration(string document)
+        {
+            var owned = OwnedEntry(document);
+            if (owned == null)
+                return;
+            ValidateNestedSettings(owned);
+            ValidateHttpAuthentication(owned, IsManagedHttpHelper(owned));
+        }
+
+        internal static TomlTable ParseConfiguration(string document) =>
+            TryParseToml(document) ?? (string.IsNullOrWhiteSpace(document) ? new TomlTable() : throw new FormatException());
+
+        internal static TomlTable OwnedEntry(string document)
+        {
+            var root = ParseConfiguration(document);
+            if (root.TryGetNode("mcpServers", out var legacy) && legacy is TomlTable legacyTable && legacyTable.HasKey("unityMCP"))
+                throw new ConfigurationLayoutException();
+            if (!root.TryGetNode("mcp_servers", out var node))
+                return null;
+            if (node is not TomlTable servers)
+                throw new FormatException();
+            if (!servers.TryGetNode("unityMCP", out var owned))
+                return null;
+            return owned as TomlTable ?? throw new FormatException();
+        }
+
+        internal static string ReplaceOwnedEntry(string document, TomlTable desired)
+        {
+            var expected = ParseConfiguration(document);
+            OwnedEntry(document);
+            string remainder;
+            try
+            {
+                remainder = RemoveCodexServerBlock(document);
+            }
+            catch (FormatException)
+            {
+                throw new ConfigurationLayoutException();
+            }
+            if (desired != null)
+            {
+                using var writer = new StringWriter();
+                desired.WriteTo(writer, "mcp_servers.unityMCP");
+                remainder = remainder.TrimEnd() + "\n" + writer.ToString();
+                GetOrCreateTable(expected, "mcp_servers", "mcp_servers")["unityMCP"] = desired;
+            }
+            else if (expected.TryGetNode("mcp_servers", out var node) && node is TomlTable servers)
+            {
+                servers.Delete("unityMCP");
+                if (!servers.Keys.Any())
+                    expected.Delete("mcp_servers");
+            }
+            var actual = ParseConfiguration(remainder);
+            if (actual.TryGetNode("mcp_servers", out var empty) && empty is TomlTable table && !table.Keys.Any())
+                actual.Delete("mcp_servers");
+            if (!SameToml(expected, actual))
+                throw new ConfigurationLayoutException();
+            return remainder;
+        }
+
+        private static TomlTable CreateCapturedTable(ClientConfigurationInputs inputs)
+        {
+            var table = new TomlTable();
+            if (inputs.UseHttp)
+            {
+                table["url"] = inputs.Endpoint;
+                if (!inputs.Remote)
+                    table["http_headers_helper"] = inputs.LocalHelperCommand;
+                else if (inputs.Headers.Count != 0)
+                {
+                    var headers = new TomlTable { IsInline = true };
+                    foreach (var pair in inputs.Headers)
+                        headers[pair.Key] = pair.Value;
+                    table["http_headers"] = headers;
+                }
+            }
+            else
+            {
+                table["command"] = inputs.Command;
+                var args = new TomlArray();
+                foreach (string arg in inputs.Args)
+                    args.Add(new TomlString { Value = arg });
+                table["args"] = args;
+                if (!string.IsNullOrEmpty(inputs.SystemRoot))
+                {
+                    var env = new TomlTable { IsInline = true };
+                    env["SystemRoot"] = inputs.SystemRoot;
+                    table["env"] = env;
+                }
+                table["startup_timeout_sec"] = new TomlInteger { Value = 60 };
+            }
+            return table;
+        }
+
+        internal static bool SameToml(TomlNode left, TomlNode right)
         {
             if (left is TomlTable table && right is TomlTable other)
             {
