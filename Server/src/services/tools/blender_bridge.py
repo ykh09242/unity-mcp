@@ -50,7 +50,10 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "- sync_addon(force): copy the checkout's addon.py into Blender's addons folder (backs up "
         "the old file); restart Blender afterwards.\n\n"
         "check_updates and sync_addon need the checkout path to be set; the other actions only need "
-        "Blender running with the addon connected."
+        "Blender running with the addon connected.\n\n"
+        "Cancellation closes local socket work and prevents later local stages once observed. "
+        "Already-started Blender code or exports may continue, and an admitted synchronous Unity import "
+        "may finish with its assets retained. Inspect state before retrying a mutation."
     ),
     annotations=ToolAnnotations(
         title="Blender Bridge",
@@ -143,7 +146,11 @@ async def blender_bridge(
     ]
     | None = None,
 ) -> dict[str, Any]:
-    """Forward one Blender Bridge action to the Unity Editor and return its response."""
+    """Forward one Blender Bridge action to the Unity Editor and return its response.
+
+    Cancellation is cooperative at local stage boundaries; it does not confirm that
+    remote Blender execution stopped or roll back an admitted Unity operation.
+    """
     unity_instance = await get_unity_instance_from_context(ctx)
 
     params_dict = {
