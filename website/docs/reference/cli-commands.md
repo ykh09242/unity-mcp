@@ -3556,6 +3556,7 @@ Observe supported Buttons in current Play Mode; return immediately.
 | name | text | required | nargs=1 | — | — |  |
 | --max-events | integer range: [1..31] | optional | nargs=1 | 31 | — |  |
 | --duration-seconds | integer range: [1..600] | optional | nargs=1 | 300 | — |  |
+| --scene-scope | choice: active, all_loaded | optional | nargs=1 | "active" | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp scenario-recording status`
