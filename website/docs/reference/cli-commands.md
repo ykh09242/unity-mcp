@@ -507,6 +507,8 @@ Search for assets. Examples: unity-mcp asset search "*.prefab" unity-mcp asset s
 | --type / -t | text | optional | nargs=1 | — | — | Filter by asset type (e.g., Material, Prefab, MonoScript). |
 | --limit / -l | integer | optional | nargs=1 | 25 | — | Maximum results per page. |
 | --page | integer | optional | nargs=1 | 1 | — | Page number (1-based). |
+| --metadata-only | boolean | optional | nargs=1, flag | — | — | Search metadata without explicit object/preview loads; return a short-lived reusable snapshot. |
+| --search-snapshot | text | optional | nargs=1 | — | — | Continue metadata pages with the same query, scope, type and limit. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp asset-gen`
