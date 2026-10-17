@@ -76,9 +76,10 @@ ProBuilder 3D modeling – requires com.unity.probuilder package
 Unity Profiler session control, counters, memory snapshots & Frame Debugger
 - **[`manage_profiler`](./profiling/manage_profiler.md)** — Unity Profiler session control, counter reads, memory snapshots, and Frame Debugger.
 
-## `scripting_ext` &nbsp; (2 tools)
+## `scripting_ext` &nbsp; (3 tools)
 ScriptableObject management
 - **[`execute_code`](./scripting_ext/execute_code.md)** — Execute arbitrary C# code inside the Unity Editor.
+- **[`inspect_serialized_object`](./scripting_ext/inspect_serialized_object.md)** — Inspect one exact Component or ScriptableObject instance ID through SerializedObject.
 - **[`manage_scriptable_object`](./scripting_ext/manage_scriptable_object.md)** — Creates and modifies ScriptableObject assets using Unity SerializedObject property paths.
 
 ## `testing` &nbsp; (8 tools)
