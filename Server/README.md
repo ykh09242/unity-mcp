@@ -32,7 +32,7 @@ Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` 
 Normally the Editor manages launch/configuration. This beta checkout uses the exact `mcpServerSource` recorded in [`MCPForUnity/package.json`](../MCPForUnity/package.json). Published stable releases keep their own immutable source pins; use the value from the installed package:
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/6e1e3c4cc9b4d7287280e4efcb042d63fed805cf.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/0cb61e83be14096de3341a98b892073662bcc9e9.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
 Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving branch. First launch can require dependency downloads; a source pin is not an offline-install guarantee. The commit-addressed archive avoids Git checkout and its Windows long-path limit; it still downloads the repository archive and builds only `Server`. Existing full-commit Git and explicit local development overrides remain supported.
@@ -133,8 +133,8 @@ The routing middleware checks built-in tool signatures before instance discovery
 ## CLI and environment reference
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/6e1e3c4cc9b4d7287280e4efcb042d63fed805cf.zip#subdirectory=Server" mcp-for-unity --help
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/6e1e3c4cc9b4d7287280e4efcb042d63fed805cf.zip#subdirectory=Server" unity-mcp --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/0cb61e83be14096de3341a98b892073662bcc9e9.zip#subdirectory=Server" mcp-for-unity --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/0cb61e83be14096de3341a98b892073662bcc9e9.zip#subdirectory=Server" unity-mcp --help
 ```
 
 The server and Editor-control CLI have different options. `unity-mcp` requires local HTTP and accepts `--host`, `--port`, `--timeout`, `--format`, and `--instance`. Place global options before subcommands; see [CLI examples](../website/docs/guides/cli.md).
@@ -176,6 +176,28 @@ See [manual verification](../docs/asset-gen-manual-verification.md) and
 [download policy](../docs/asset-gen-download-security.md). Automated upload/recovery
 coverage uses synthetic files, fake HTTP and fake GLB containers; it does not verify
 live providers, real reload/importer success, decoded image or model quality.
+
+## Request-ordered C# edits
+
+For a mixed text/structured `script_apply_edits` request, set
+`options.mixed_order="request"` and `options.preview=true`. Each step interprets
+its coordinates, anchors and structural target against the current buffer produced
+by earlier steps. Preparation returns the complete proposed contents, paths and
+hashes without applying the edits. With `mixed_order` omitted or set to
+`"text_first"`, legacy text-first behavior remains and mixed preview is unsupported.
+
+Inspect the preview, then apply the same edit list with preview disabled and its
+`precondition_bytes_sha256` and `candidate_bytes_sha256`. If supplied, `applyMode`
+or `apply_mode` must be `"sequential"` for request-order interpretation. The final
+candidate is committed once under raw-byte hash guards; a no-op needs no file
+replacement or refresh. An unknown result after dispatch must be inspected before
+retrying, rather than replayed automatically.
+
+Method/class replacements adapt indentation and line endings without changing
+string values. Text/range/anchor/regex payloads are literal: include every desired
+space and newline. Preserve exact candidate bytes when using a native file tool;
+CRLF, BOM or a missing final newline may require a byte-preserving tool or direct
+Unity edit fallback. Never normalize string bytes or invent file events.
 
 ## Privacy, limits and diagnosis
 

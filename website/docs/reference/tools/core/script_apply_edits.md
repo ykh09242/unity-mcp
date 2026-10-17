@@ -17,7 +17,9 @@ Structured C# edits (methods/classes) with safer boundaries - prefer this over r
     - Method/class edits adapt to local indentation and line endings without changing string values.
     - Range, anchor, regex, prepend and append payloads are literal: include all desired whitespace/newlines.
     - options.preview=true prepares complete proposed contents, target paths and hashes without applying changes.
-    - Mixed text/structured preview is unsupported. Direct edits keep their existing behavior.
+    - options.mixed_order='request' prepares mixed edits in request order against the current buffer.
+    - Ordered apply requires precondition_bytes_sha256 and candidate_bytes_sha256 from its preview; it commits once.
+    - Omitted or text_first mixed_order preserves text-first execution and unsupported mixed preview.
     - For Codex-native file visibility, verify local target/workspace and original SHA, use an exposed native file tool only if it preserves exact candidate bytes, then verify candidate_bytes_sha256 before Unity validate/refresh.
     - Native patch capabilities vary: CRLF, BOM and missing final newline may require a byte-preserving tool or direct Unity edit fallback. Never normalize string bytes or fabricate file events.
     - Prefer anchor_* ops for pattern-based insert/replace near stable markers
