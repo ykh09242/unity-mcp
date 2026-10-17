@@ -109,7 +109,12 @@ def test_registered_inspector_strict_projection_wire_and_old_peer(mode, tmp_path
                 listed = await client.list_tools()
                 assert {tool.name for tool in listed} == {"inspect_serialized_object"}
                 tool = listed[0]
-                assert tool.annotations.readOnlyHint is True and tool.annotations.destructiveHint is False
+                # The lookup may load an asset and invoke arbitrary native callbacks.
+                # Assert the public serialized hints in both SDK modes, not just decorator data.
+                hints = tool.annotations.model_dump(by_alias=True)
+                assert hints["readOnlyHint"] is False, hints
+                assert hints["destructiveHint"] is True, hints
+                assert hints["openWorldHint"] is False, hints
                 assert "load" in tool.description.lower() and "callback" in tool.description.lower()
                 for args, wire in [
                     ({"instance_id":-1}, {"instance_id":-1,"mode":"fields","property_path":"","include_values":True,"page_size":32}),

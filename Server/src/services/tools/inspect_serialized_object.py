@@ -69,8 +69,10 @@ def _path(value: Any, *, empty: bool = False) -> bool:
     ),
     annotations=ToolAnnotations(
         title="Inspect Serialized Object",
-        readOnlyHint=True,
-        destructiveHint=False,
+        # Initial ID lookup can load an asset and invoke user callbacks.
+        # Those callbacks may mutate the environment, so keep conservative hints.
+        readOnlyHint=False,
+        destructiveHint=True,
         openWorldHint=False,
     ),
 )
