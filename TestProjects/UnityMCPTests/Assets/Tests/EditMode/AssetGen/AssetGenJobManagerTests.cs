@@ -643,6 +643,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             public int CancellationCalls;
             public bool ThrowOnCancel;
             public bool IgnoreCancel;
+            public byte[] SuccessDownloadBytes;
             public CancellationToken PendingToken;
             public TaskCompletionSource<HttpResult> Pending;
 
@@ -665,7 +666,16 @@ namespace MCPForUnityTests.Editor.AssetGen
                 }
                 // Retain completed-request callbacks to detect any unwanted cancellation on Done.
                 ct.Register(() => CancellationCalls++);
-                return Task.FromResult(ResultFor(Requests));
+                return Task.FromResult(
+                    Requests == 3 && SuccessDownloadBytes != null
+                        ? new HttpResult
+                        {
+                            Status = 200,
+                            IsSuccess = true,
+                            Body = SuccessDownloadBytes,
+                        }
+                        : ResultFor(Requests)
+                );
             }
 
             public static HttpResult ResultFor(int request)
@@ -700,7 +710,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             AssetGenJobManager.TransportOverrideForTests = transport;
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
             PumpUntilPending(job, transport);
-            AssetGenJobManager.TimeoutSeconds = -1; // Deterministic expiry through the existing clock comparison.
+            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + 601; // Expire the original recorded deadline.
             Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(job.JobId));
             Assert.AreEqual(AssetGenJobState.Failed, job.State);
             StringAssert.Contains("Timed out", job.Error);
@@ -716,7 +726,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             AssetGenJobManager.TransportOverrideForTests = transport;
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
             PumpUntilPending(job, transport);
-            AssetGenJobManager.TimeoutSeconds = -1;
+            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + 601;
             Assert.DoesNotThrow(() => AssetGenJobManager.TryAdvanceForTests(job.JobId));
             Assert.AreEqual(AssetGenJobState.Failed, job.State);
             Assert.AreEqual(1, transport.CancellationCalls);
@@ -738,7 +748,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             };
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
             PumpUntilPending(job, transport);
-            AssetGenJobManager.TimeoutSeconds = -1;
+            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + 601;
             AssetGenJobManager.TryAdvanceForTests(job.JobId);
             transport.Pending.SetResult(PendingTransport.ResultFor(pendingAt));
             for (int i = 0; i < 10; i++)
@@ -770,7 +780,10 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void CompletedJob_DoesNotRequestCancellation()
         {
-            var transport = new PendingTransport();
+            // Container validity only: import is the existing fake. Do not imply optional GLB importer success.
+            byte[] bytes = ModelImportPipelineTests.ContainerOnlyGlb();
+            Assert.AreEqual("glb", TripoAdapter.ValidateModelBytes(bytes, "glb"));
+            var transport = new PendingTransport { SuccessDownloadBytes = bytes };
             AssetGenJobManager.TransportOverrideForTests = transport;
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
             Pump(job.JobId);

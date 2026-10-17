@@ -11,6 +11,7 @@ using UnityEngine.UIElements;
 
 namespace MCPForUnityTests.Editor.Windows
 {
+    [Parallelizable(ParallelScope.None)]
     public class ClientConfigSectionTests
     {
         [TestCase("path")]
@@ -57,7 +58,8 @@ namespace MCPForUnityTests.Editor.Windows
         [TestCase(McpStatus.IncorrectPath)]
         public void CodexConfigureButtonAlwaysWritesAndCanBeRepeated(McpStatus initialStatus)
         {
-            var originalService = MCPServiceLocator.Client;
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            var originalService = slot.GetValue(null);
             try
             {
                 MCPServiceLocator.Register<IClientConfigurationService>(new MemoryClientService());
@@ -71,8 +73,144 @@ namespace MCPForUnityTests.Editor.Windows
             }
             finally
             {
-                MCPServiceLocator.Register<IClientConfigurationService>(originalService);
+                slot.SetValue(null, originalService);
             }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RetryUi_OnlyRetriesFailureAndNeverRefreshesSuccessfulClient(bool startsWithNullSlot)
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            var original = slot.GetValue(null);
+            try
+            {
+                slot.SetValue(null, startsWithNullSlot ? null : new MemoryClientService());
+                var peer = new ManualClient { AllowConfigure = true };
+                var failed = new ManualClient
+                {
+                    AllowConfigure = true,
+                    ConfigureFails = true,
+                    ClientId = "failed",
+                };
+                bool http = true;
+                var service = new ClientConfigurationService(new IMcpClientConfigurator[] { peer, failed }, () => http, v => http = v, () => { }, _ => { });
+                slot.SetValue(null, service);
+                var section = CreateSection(peer);
+                Set(section, "configurators", new List<IMcpClientConfigurator> { peer, failed });
+                InitializeRetryUi(section);
+                Invoke(section, "OnConfigureAllClientsClicked");
+                var retryButton = Get<Button>(section, "retryFailedButton");
+                Assert.IsTrue(retryButton.enabledSelf);
+                int peerStatuses = peer.StatusCalls;
+                int peerConfigures = peer.ConfigureCalls;
+                failed.ConfigureFails = false;
+                Invoke(section, "OnRetryFailedClientsClicked");
+                Assert.AreEqual(peerStatuses, peer.StatusCalls, "Retry must not use the default status refresh for a successful client");
+                Assert.AreEqual(peerConfigures, peer.ConfigureCalls);
+                Assert.AreEqual(2, failed.ConfigureCalls);
+                Assert.IsFalse(retryButton.enabledSelf);
+                Assert.AreEqual(0, Get<int>(section, "selectedClientIndex"));
+                Assert.IsTrue(http);
+                StringAssert.DoesNotContain("owned-sensitive-marker", Get<Label>(section, "retryStatusLabel").text);
+            }
+            finally
+            {
+                slot.SetValue(null, original);
+            }
+        }
+
+        [Test]
+        public void RetryUi_ServiceReplacementRefusesWithoutFallingBackToBulk()
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            var original = slot.GetValue(null);
+            try
+            {
+                var failed = new ManualClient { AllowConfigure = true, ConfigureFails = true };
+                bool http = true;
+                var service = new ClientConfigurationService(new[] { failed }, () => http, v => http = v, () => { }, _ => { });
+                slot.SetValue(null, service);
+                var section = CreateSection(failed);
+                InitializeRetryUi(section);
+                Invoke(section, "OnConfigureAllClientsClicked");
+                slot.SetValue(null, new MemoryClientService());
+                Invoke(section, "OnRetryFailedClientsClicked");
+                Assert.AreEqual(1, failed.ConfigureCalls);
+                Assert.IsFalse(Get<Button>(section, "retryFailedButton").enabledSelf);
+                StringAssert.Contains("unavailable", Get<Label>(section, "retryStatusLabel").text.ToLowerInvariant());
+            }
+            finally
+            {
+                slot.SetValue(null, original);
+            }
+        }
+
+        [Test]
+        public void RetryUi_PartialFailureKeepsRetryAvailableAndIndividualActionDiscardsIt()
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            var original = slot.GetValue(null);
+            try
+            {
+                var failed = new ManualClient { AllowConfigure = true, ConfigureFails = true };
+                bool http = true;
+                var service = new ClientConfigurationService(new[] { failed }, () => http, v => http = v, () => { }, _ => { });
+                slot.SetValue(null, service);
+                var section = CreateSection(failed);
+                InitializeRetryUi(section);
+                Invoke(section, "OnConfigureAllClientsClicked");
+                Invoke(section, "OnRetryFailedClientsClicked");
+                Assert.IsTrue(Get<Button>(section, "retryFailedButton").enabledSelf);
+                StringAssert.Contains("1 failed", Get<Label>(section, "retryStatusLabel").text);
+                StringAssert.DoesNotContain("owned-sensitive-marker", Get<Label>(section, "retryStatusLabel").text);
+                failed.ConfigureFails = false;
+                Invoke(section, "OnConfigureClicked");
+                Assert.IsFalse(Get<Button>(section, "retryFailedButton").enabledSelf);
+                Invoke(section, "OnRetryFailedClientsClicked");
+                Assert.AreEqual(3, failed.ConfigureCalls);
+            }
+            finally
+            {
+                slot.SetValue(null, original);
+            }
+        }
+
+        [Test]
+        public void RetryUi_LegacyServiceExplicitlyReportsSelectiveRetryUnavailable()
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            var original = slot.GetValue(null);
+            try
+            {
+                slot.SetValue(null, new MemoryClientService { AllowBulk = true });
+                var section = CreateSection(new ManualClient());
+                InitializeRetryUi(section);
+                Invoke(section, "OnConfigureAllClientsClicked");
+                Assert.IsFalse(Get<Button>(section, "retryFailedButton").enabledSelf);
+                StringAssert.Contains("unavailable for this client service", Get<Label>(section, "retryStatusLabel").text.ToLowerInvariant());
+            }
+            finally
+            {
+                slot.SetValue(null, original);
+            }
+        }
+
+        private static void InitializeRetryUi(McpClientConfigSection section)
+        {
+            var presenter = typeof(McpClientConfigSection).GetField("showConfigurationResult", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(presenter, "Bulk/retry flow requires an owned result presenter before any modal-producing handler is invoked");
+            presenter.SetValue(section, new Action<string, string>((_, __) => { }));
+            Set(section, "configureAllButton", new Button());
+            Set(section, "retryFailedButton", new Button());
+            Set(section, "retryStatusLabel", new Label());
+        }
+
+        private static void Invoke(McpClientConfigSection section, string method)
+        {
+            var target = typeof(McpClientConfigSection).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(target, "Selective retry must have its own action, without replaying configure-all");
+            target.Invoke(section, null);
         }
 
         private static McpClientConfigSection CreateSection(IMcpClientConfigurator client)
@@ -121,6 +259,8 @@ namespace MCPForUnityTests.Editor.Windows
 
         private sealed class MemoryClientService : IClientConfigurationService
         {
+            public bool AllowBulk;
+
             public void ConfigureClient(IMcpClientConfigurator configurator) => configurator.Configure();
 
             public bool CheckClientStatus(IMcpClientConfigurator configurator, bool attemptAutoRewrite = true) => false;
@@ -128,14 +268,19 @@ namespace MCPForUnityTests.Editor.Windows
             public IReadOnlyList<IMcpClientConfigurator> GetAllClients() => Array.Empty<IMcpClientConfigurator>();
 
             public ClientConfigurationSummary ConfigureAllDetectedClients() =>
-                throw new InvalidOperationException("Bulk configuration is forbidden in this test.");
+                AllowBulk ? new ClientConfigurationSummary() : throw new InvalidOperationException("Bulk configuration is forbidden in this test.");
         }
 
         private sealed class ManualClient : IMcpClientConfigurator
         {
             public string FailureStage;
+            public string ClientId = "memory-client";
+            public bool AllowConfigure;
+            public bool ConfigureFails;
+            public int ConfigureCalls;
+            public int StatusCalls;
             public IList<string> Steps = new[] { "Install", "Configure" };
-            public string Id => "memory-client";
+            public string Id => ClientId;
             public string DisplayName => "Memory Client";
             public McpStatus Status => McpStatus.NotConfigured;
             public ConfiguredTransport ConfiguredTransport => ConfiguredTransport.Unknown;
@@ -166,10 +311,19 @@ namespace MCPForUnityTests.Editor.Windows
                 return Steps;
             }
 
-            public McpStatus CheckStatus(bool attemptAutoRewrite = true) => Status;
+            public McpStatus CheckStatus(bool attemptAutoRewrite = true)
+            {
+                StatusCalls++;
+                return Status;
+            }
 
             public void Configure()
             {
+                ConfigureCalls++;
+                if (AllowConfigure && !ConfigureFails)
+                    return;
+                if (ConfigureFails)
+                    throw new InvalidOperationException("owned-sensitive-marker");
                 throw new InvalidOperationException("Real configuration is forbidden in this test.");
             }
 

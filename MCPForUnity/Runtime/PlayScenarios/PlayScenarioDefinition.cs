@@ -128,6 +128,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "reset_ids",
                     "state_id",
                     "state_equals",
+                    "state_compare",
                     "performance",
                     "screenshot",
                     "input",
@@ -158,12 +159,30 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     throw new ArgumentException("input and wait_frames are permitted only on input steps.");
                 if (parsed.Action == "wait_state")
                 {
-                    Fields(step, "name", "action", "timeout_seconds", "state_id", "state_equals", "stable_for_ms", "performance", "screenshot");
+                    Fields(
+                        step,
+                        "name",
+                        "action",
+                        "timeout_seconds",
+                        "state_id",
+                        "state_equals",
+                        "state_compare",
+                        "stable_for_ms",
+                        "performance",
+                        "screenshot"
+                    );
                     parsed.StateId = Text(step, "state_id", 128);
                     if (!MCPForUnity.Runtime.PlayScenarios.PlayScenarioTarget.IsValidTargetId(parsed.StateId))
                         throw new ArgumentException("state_id must contain 1-128 permitted identifier characters.");
-                    MCPForUnity.Runtime.PlayScenarios.PlayScenarioStateValue.FromJson(step["state_equals"]);
-                    parsed.StateEquals = step["state_equals"].DeepClone();
+                    if ((step.Property("state_equals") != null) == (step.Property("state_compare") != null))
+                        throw new ArgumentException("Exactly one state_equals or state_compare is required.");
+                    if (step.Property("state_compare") != null)
+                        parsed.StateCompare = PlayScenarioNumericCondition.Parse(step["state_compare"]);
+                    else
+                    {
+                        MCPForUnity.Runtime.PlayScenarios.PlayScenarioStateValue.FromJson(step["state_equals"]);
+                        parsed.StateEquals = step["state_equals"].DeepClone();
+                    }
                     if (step.Property("stable_for_ms") != null)
                     {
                         parsed.StableForMs = Integer(step, "stable_for_ms", 0, 60000, 0);
@@ -173,8 +192,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     result.Add(parsed);
                     continue;
                 }
-                if (step.Property("state_id") != null || step.Property("state_equals") != null)
-                    throw new ArgumentException("state_id and state_equals are permitted only on wait_state.");
+                if (step.Property("state_id") != null || step.Property("state_equals") != null || step.Property("state_compare") != null)
+                    throw new ArgumentException("state_id, state_equals and state_compare are permitted only on wait_state.");
                 if (parsed.Action == "reset_state")
                 {
                     Fields(step, "name", "action", "timeout_seconds", "reset_ids", "performance", "screenshot");
@@ -258,11 +277,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     if (step.Property("property") != null)
                     {
                         JObject condition = Object(step, "property");
-                        Fields(condition, "path", "equals");
-                        JToken expected = condition["equals"];
-                        if (!Scalar(expected))
-                            throw new ArgumentException("property.equals must be a bounded boolean, signed integer, finite number or string.");
-                        parsed.Property = new PlayScenarioPropertyCondition { Path = Text(condition, "path", 256), Equals = expected.DeepClone() };
+                        Fields(condition, "path", "equals", "compare");
+                        if ((condition.Property("equals") != null) == (condition.Property("compare") != null))
+                            throw new ArgumentException("Exactly one property.equals or property.compare is required.");
+                        parsed.Property = new PlayScenarioPropertyCondition { Path = Text(condition, "path", 256) };
+                        if (condition.Property("compare") != null)
+                            parsed.Property.Compare = PlayScenarioNumericCondition.Parse(condition["compare"]);
+                        else
+                        {
+                            JToken expected = condition["equals"];
+                            if (!Scalar(expected))
+                                throw new ArgumentException("property.equals must be a bounded boolean, signed integer, finite number or string.");
+                            parsed.Property.Equals = expected.DeepClone();
+                        }
                         if (parsed.Component == null)
                             throw new ArgumentException("property requires component.");
                     }
@@ -502,6 +529,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("state_equals", NullValueHandling = NullValueHandling.Ignore)]
         public JToken StateEquals;
 
+        [JsonProperty("state_compare", NullValueHandling = NullValueHandling.Ignore)]
+        public PlayScenarioNumericCondition StateCompare;
+
         [JsonProperty("reset_ids", NullValueHandling = NullValueHandling.Ignore)]
         public List<string> ResetIds;
 
@@ -532,8 +562,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("path")]
         public string Path;
 
-        [JsonProperty("equals")]
+        [JsonProperty("equals", NullValueHandling = NullValueHandling.Ignore)]
         public new JToken Equals;
+
+        [JsonProperty("compare", NullValueHandling = NullValueHandling.Ignore)]
+        public PlayScenarioNumericCondition Compare;
     }
 
     public sealed class PlayScenarioLogPolicy

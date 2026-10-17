@@ -189,31 +189,64 @@ async def test_sdk_stale_cleanup_survives_deadline_and_preserves_replacement(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "tool,arguments,wire_timeout",
+    "tool,arguments,wire_timeout,request_timeout",
     [
-        ("manage_play_scenario", {"action": "run", "name": "fixture"}, 300),
-        ("manage_play_scenario", {"action": "run", "name": "fixture", "timeout_seconds": 900}, 900),
-        ("manage_build", {"action": "build"}, 0.08),
+        ("manage_play_scenario", {"action": "run", "name": "fixture"}, 300, 305),
+        (
+            "manage_play_scenario",
+            {"action": "run", "name": "fixture", "timeout_seconds": 900},
+            900,
+            905,
+        ),
+        ("manage_build", {"action": "build"}, 5, 5),
     ],
 )
 async def test_sdk_production_long_run_and_build_policy(
-    command_hub, monkeypatch, tool, arguments, wire_timeout
+    command_hub, monkeypatch, tool, arguments, wire_timeout, request_timeout
 ):
+    """Observe production policy directly, independently of subsecond scheduler latency."""
     async with Client(request_server(), mode="legacy") as client:
         await client.call_tool("select_fixture")
-        monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.08)
+        monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 5)
+        entered, release = asyncio.Event(), asyncio.Event()
+        observed = {}
 
-        async def delayed_send(message):
+        async def controlled_send(message):
             command_hub.sent.append(message)
             if message["type"] == "execute":
-                await asyncio.sleep(0.1 if tool == "manage_play_scenario" else 0.02)
+                request = http_request_budget.get()
+                assert request is not None
+                observed["request_timeout"] = request.budget.expires_at - request.started_at
+                observed["scope_deadline"] = request.scope.when()
+                observed["request_deadline"] = request.budget.expires_at
+                assert request.budget.active is not None
+                observed["command_deadline"] = request.budget.active.expires_at
+                entered.set()
+                await release.wait()
                 await answer(command_hub, command_hub.websocket, message)
 
-        command_hub.websocket.send_json = delayed_send
-        result = await client.call_tool(tool, arguments, raise_on_error=False)
-        assert result.structured_content["success"] is True
-        assert command_hub.sent[0]["timeout"] == wire_timeout
-        assert command_hub.sent[0]["name"] == tool
+        command_hub.websocket.send_json = controlled_send
+        task = asyncio.create_task(client.call_tool(tool, arguments, raise_on_error=False))
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+            assert observed["request_timeout"] == pytest.approx(request_timeout)
+            assert observed["scope_deadline"] == pytest.approx(observed["request_deadline"])
+            assert observed["command_deadline"] == observed["request_deadline"]
+            assert not task.done()
+            assert len(PluginHub._pending) == 1
+            assert command_hub.sent[0]["id"] in PluginHub._pending
+            release.set()
+            result = await asyncio.wait_for(task, 10)
+            assert result.structured_content["success"] is True
+            assert command_hub.sent[0]["timeout"] == wire_timeout
+            assert command_hub.sent[0]["name"] == tool
+            assert len([m for m in command_hub.sent if m["type"] == "execute"]) == 1
+            assert PluginHub._pending == {}
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

@@ -3,10 +3,13 @@ Defines the read_console tool for accessing Unity Editor console messages.
 """
 
 from typing import Annotated, Any, Literal
+import hashlib
+import json
+import re
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -16,6 +19,101 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 ConsoleField = Literal["type", "message", "file", "line", "stackTrace"]
 _CONSOLE_FIELDS = TypeAdapter(list[ConsoleField])
+
+
+class ConsoleTailEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    type: Literal["Error", "Assert", "Warning", "Log", "Exception"]
+    message: str = Field(max_length=8192)
+    file: str | None = Field(default=None, max_length=1024)
+    line: int | None = None
+    stackTrace: str | None = Field(default=None, max_length=16384)
+    truncated_fields: list[Literal["message", "file", "stackTrace"]] = Field(
+        default_factory=list, max_length=3
+    )
+
+    @model_validator(mode="after")
+    def bounded_text(self):
+        for name, limit in (("message", 8192), ("file", 1024), ("stackTrace", 16384)):
+            text = getattr(self, name)
+            if text is not None and len(text.encode("utf-8")) > limit:
+                raise ValueError("Tail text exceeds its byte bound")
+        if len(set(self.truncated_fields)) != len(self.truncated_fields):
+            raise ValueError("Duplicate truncation field")
+        return self
+
+
+class ConsoleTailItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    sequence: int = Field(ge=1, le=2147483647)
+    entry: ConsoleTailEntry
+
+
+class ConsoleTailPage(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    version: Literal[1]
+    generation: str = Field(pattern=r"^[a-f0-9]{32}$")
+    filter_identity: str = Field(pattern=r"^[a-f0-9]{64}$")
+    items: list[ConsoleTailItem] = Field(max_length=200)
+    next_cursor: str = Field(pattern=r"^ct1\.[a-f0-9]{32}\.[a-f0-9]{32}$")
+    snapshot_rows: int = Field(ge=0, le=2147483647)
+    scanned_rows: int = Field(ge=0, le=4096)
+    filtered_rows: int = Field(ge=0, le=4096)
+    native_entry_reads: int = Field(ge=0, le=4099)
+    has_more: bool
+    stop_reason: Literal["snapshot_end", "page_size", "row_budget", "text_budget", "payload_budget"]
+    loss_unknown: Literal[True]
+    continuity: Literal["bounded_anchors"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def strict_literals(cls, value):
+        if isinstance(value, dict) and (
+            type(value.get("version")) is not int or type(value.get("loss_unknown")) is not bool
+        ):
+            raise ValueError("Invalid tail literal type")
+        return value
+
+    @model_validator(mode="after")
+    def consistent_page(self):
+        sequences = [item.sequence for item in self.items]
+        if sequences != sorted(set(sequences)) or any(
+            value > self.snapshot_rows for value in sequences
+        ):
+            raise ValueError("Invalid tail sequence")
+        if (
+            self.scanned_rows != self.filtered_rows + len(self.items)
+            or self.native_entry_reads < self.scanned_rows
+        ):
+            raise ValueError("Invalid tail read counters")
+        if type(self.loss_unknown) is not bool or type(self.version) is not int:
+            raise ValueError("Invalid tail literal type")
+        if self.next_cursor.split(".")[1] != self.generation:
+            raise ValueError("Mismatched tail generation")
+        return self
+
+
+def _tail_identity(params: dict[str, Any]) -> str:
+    types = params["types"]
+    canonical = {
+        "types": sorted({"error", "warning", "log"} if "all" in types else set(types)),
+        "filter": params.get("filterText", "").encode("utf-8").hex(),
+        "includeMcp": params["includeMcpLogs"],
+        "includeStack": params["includeStacktrace"],
+        "format": "json",
+        "fields": sorted(params["fields"]) if "fields" in params else None,
+    }
+    return hashlib.sha256(
+        json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _tail_error(reason: str) -> dict[str, Any]:
+    return {
+        "success": False,
+        "message": "Console tail is unavailable for this request.",
+        "data": {"reason": reason, "restart_required": True, "loss_unknown": True},
+    }
 
 
 def _strip_stacktrace_from_list(items: list) -> None:
@@ -75,7 +173,40 @@ async def read_console(
         bool | str,
         "Include MCP internal logger messages (default false). Filtering occurs before count and pagination.",
     ] = False,
+    tail_cursor: Annotated[
+        str,
+        "Opt-in incremental tail: begin starts at the current end; otherwise pass the returned opaque token. Loss cannot be ruled out.",
+    ]
+    | None = None,
 ) -> dict[str, Any]:
+    # Validate the raw opt-in before legacy count/format defaults or instance lookup.
+    tail = tail_cursor is not None
+    if tail:
+        if (
+            not isinstance(tail_cursor, str)
+            or len(tail_cursor) > 96
+            or (
+                tail_cursor != "begin"
+                and re.fullmatch(r"ct1\.[a-f0-9]{32}\.[a-f0-9]{32}", tail_cursor) is None
+            )
+        ):
+            return _tail_error("invalid_cursor")
+        if (
+            count is not None
+            or cursor is not None
+            or action not in (None, "get")
+            or format not in (None, "json")
+        ):
+            return _tail_error("invalid_tail_options")
+        if filter_text is not None and (not isinstance(filter_text, str) or len(filter_text) > 256):
+            return _tail_error("invalid_filter")
+        try:
+            tail_page_size = coerce_int(page_size, default=50)
+        except ValueError:
+            return _tail_error("invalid_page_size")
+        if isinstance(page_size, bool) or not 1 <= tail_page_size <= 200:
+            return _tail_error("invalid_page_size")
+        format = "json"
     # Get active instance from session state
     # Removed session_state import
     # Set defaults if values are None
@@ -157,6 +288,47 @@ async def read_console(
                 "success": False,
                 "message": "The stackTrace field requires include_stacktrace=true.",
             }
+
+    if tail:
+        tail_params = {
+            "tail_cursor": tail_cursor,
+            "types": types,
+            "format": "json",
+            "pageSize": coerce_int(page_size, default=50),
+            "includeStacktrace": include_stacktrace,
+            "includeMcpLogs": include_mcp_logs,
+        }
+        if filter_text:
+            tail_params["filterText"] = filter_text
+        if selected_fields is not None:
+            tail_params["fields"] = selected_fields
+        try:
+            identity = _tail_identity(tail_params)
+        except UnicodeEncodeError:
+            return _tail_error("invalid_filter")
+        instance = await get_unity_instance_from_context(ctx)
+        response = await send_with_unity_instance(
+            async_send_command_with_retry,
+            instance,
+            "tail_console",
+            tail_params,
+            retry_on_reload=False,
+        )
+        if not isinstance(response, dict) or response.get("success") is not True:
+            return response if isinstance(response, dict) else _tail_error("tail_unsupported")
+        try:
+            page = ConsoleTailPage.model_validate(response.get("data"))
+            if page.filter_identity != identity or len(page.items) > tail_params["pageSize"]:
+                return _tail_error("invalid_tail_response")
+            if tail_cursor != "begin" and page.generation != tail_cursor.split(".")[1]:
+                return _tail_error("invalid_tail_response")
+            if tail_cursor == "begin" and (page.items or page.scanned_rows or page.has_more):
+                return _tail_error("invalid_tail_response")
+            if len(json.dumps(response["data"], ensure_ascii=False).encode("utf-8")) > 262144:
+                return _tail_error("invalid_tail_response")
+        except (ValidationError, UnicodeEncodeError):
+            return _tail_error("invalid_tail_response")
+        return response
 
     # Read an integer count without boolean conversion or fractional truncation.
     # Important: leaving count unset previously meant "return all console entries", which can be extremely slow

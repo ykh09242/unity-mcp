@@ -264,7 +264,9 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Register("state.ready", provider);
             var mismatch = Engine(new Host());
             Finish(mismatch);
+            NumericTimeoutDiagnostic("legacy-equality-mismatch", mismatch, provider);
             Assert.That(mismatch.State.Status, Is.EqualTo("timed_out"));
+            AssertConditionTimeout(mismatch, provider);
             Assert.That(mismatch.State.Failure.Expected, Is.EqualTo("true"));
             Assert.That(mismatch.State.Failure.Actual, Is.EqualTo("1"));
         }
@@ -570,6 +572,190 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(definition.Steps[0].StateEquals.Type, Is.EqualTo(JTokenType.Boolean));
             json["steps"][0]["state_equals"] = false;
             Assert.That(definition.Steps[0].StateEquals.Value<bool>(), Is.True);
+        }
+
+        private static void AssertConditionTimeout(PlayScenarioEngine engine, Provider provider)
+        {
+            PlayScenarioStepResult main = engine.State.Steps.Single(step => step.Stage == "main");
+            Assert.That(main.Action, Is.EqualTo("wait_state"));
+            Assert.That(main.Status, Is.EqualTo("timed_out"));
+            Assert.That(main.StartedUnixMs, Is.Not.Null);
+            Assert.That(main.FinishedUnixMs, Is.EqualTo(main.StartedUnixMs.Value + engine.State.Scenario.Steps[0].TimeoutSeconds * 1000L));
+            Assert.That(
+                main.FinishedUnixMs.Value,
+                Is.LessThan(engine.State.DeadlineUnixMs),
+                "The condition deadline, not the outer run deadline, ended the step."
+            );
+            Assert.That(provider.Ready, Is.True);
+            Assert.That(provider.Reads, Is.EqualTo(main.PollCount).And.GreaterThan(0));
+            Assert.That(engine.State.Failure.Code, Is.EqualTo("condition_unmet"));
+            Assert.That(engine.State.Failure.Stage, Is.EqualTo("main"));
+            Assert.That(engine.State.Failure.Target, Is.EqualTo("state.ready"));
+            Assert.That(engine.State.Failure.Actual, Is.EqualTo(provider.Value.JsonText()));
+            Assert.That(engine.State.Error, Does.Contain("Step timed out: state."));
+            Assert.That(engine.State.Steps.Single(step => step.Stage == "cleanup").Status, Is.EqualTo("passed"));
+        }
+
+        // Bounded synthetic evidence is retained in NUnit XML before outcome assertions.
+        private static void NumericTimeoutDiagnostic(string label, PlayScenarioEngine engine, Provider provider)
+        {
+            var evidence = new JObject
+            {
+                ["label"] = label,
+                ["provider_ready"] = provider.Ready,
+                ["provider_reads"] = provider.Reads,
+                ["provider_actual"] = provider.Value.JsonText(),
+                ["run"] = JObject.FromObject(engine.State),
+            };
+            string encoded = evidence.ToString(Newtonsoft.Json.Formatting.None);
+            Assert.That(encoded.Length, Is.LessThanOrEqualTo(65536), "Owned diagnostic output bound.");
+            TestContext.Out.WriteLine("PLAY06_DIAGNOSTIC " + encoded);
+        }
+
+        private static JObject NumericJson(string comparison)
+        {
+            JObject json = Json();
+            var step = (JObject)json["steps"][0];
+            step.Remove("state_equals");
+            step["state_compare"] = JObject.Parse(comparison);
+            return json;
+        }
+
+        [TestCase("9007199254740993", "{operator:'gte',value:9007199254740992.0}", true)]
+        [TestCase("9007199254740993", "{operator:'lte',value:9007199254740992.0}", false)]
+        [TestCase("9223372036854775807", "{operator:'gte',value:9223372036854775808.0}", false)]
+        [TestCase("-9223372036854775808", "{operator:'lte',value:-9223372036854775808.0}", true)]
+        [TestCase("-1", "{operator:'gte',value:-1.5}", true)]
+        [TestCase("-1.5", "{operator:'lte',value:-1}", true)]
+        [TestCase("-0.0", "{operator:'range',min:0,max:0}", true)]
+        [TestCase("9007199254740993", "{operator:'range',min:9007199254740993,max:9007199254740993}", true)]
+        [TestCase("9223372036854775807", "{operator:'approximately',value:9223372036854775806,absolute_tolerance:1}", true)]
+        [TestCase("9223372036854775807", "{operator:'approximately',value:9223372036854775806,absolute_tolerance:0}", false)]
+        [TestCase("0", "{operator:'approximately',value:5e-324,relative_tolerance:0.5}", false)]
+        [TestCase("0", "{operator:'approximately',value:5e-324,relative_tolerance:1}", true)]
+        [TestCase("1", "{operator:'approximately',value:0,relative_tolerance:1.7976931348623157e308}", false)]
+        [TestCase("1", "{operator:'approximately',value:0,absolute_tolerance:1}", true)]
+        [TestCase("3", "{operator:'approximately',value:2,relative_tolerance:0.5}", true)]
+        [TestCase("4", "{operator:'approximately',value:2,absolute_tolerance:1,relative_tolerance:0.5}", false)]
+        [TestCase("3.0000000000000004", "{operator:'approximately',value:2,relative_tolerance:0.5}", false)]
+        [TestCase("-1.7976931348623157e308", "{operator:'approximately',value:1.7976931348623157e308,relative_tolerance:1}", false)]
+        [TestCase("-1.7976931348623157e308", "{operator:'approximately',value:1.7976931348623157e308,relative_tolerance:2}", true)]
+        [TestCase("-1.7976931348623157e308", "{operator:'approximately',value:1.7976931348623157e308,relative_tolerance:1.7976931348623157e308}", true)]
+        [TestCase("1.7976931348623157e308", "{operator:'approximately',value:5e-324,relative_tolerance:5e-324}", false)]
+        [TestCase("true", "{operator:'gte',value:0}", false)]
+        public void NumericAssertionsPreserveExactFiniteValues(string actual, string comparison, bool expected)
+        {
+            var provider = new Provider { Value = PlayScenarioStateValue.FromJson(JToken.Parse(actual)) };
+            Register("state.ready", provider);
+            var engine = Engine(new Host(), NumericJson(comparison));
+            Finish(engine);
+            NumericTimeoutDiagnostic("numeric-table", engine, provider);
+            Assert.That(engine.State.Status, Is.EqualTo(expected ? "succeeded" : "timed_out"));
+            if (!expected)
+            {
+                AssertConditionTimeout(engine, provider);
+                Assert.That(engine.State.Failure.Code, Is.EqualTo("condition_unmet"));
+                Assert.That(engine.State.Failure.Expected, Does.Contain((string)JObject.Parse(comparison)["operator"]));
+                Assert.That(engine.State.Failure.Actual, Does.Contain(provider.Value.JsonText()));
+            }
+        }
+
+        [Test]
+        public void NumericThresholdCrossingAndFalseObservationResetStability()
+        {
+            var provider = new Provider { Value = PlayScenarioStateValue.FromNumber(0.4) };
+            Register("state.ready", provider);
+            JObject json = NumericJson("{operator:'gte',value:0.5}");
+            json["steps"][0]["stable_for_ms"] = 250;
+            var engine = Engine(new Host(), json);
+            engine.Tick(1000, true);
+            engine.Tick(1100, true);
+            provider.Value = PlayScenarioStateValue.FromNumber(0.6);
+            engine.Tick(1200, true);
+            engine.Tick(1300, true);
+            provider.Value = PlayScenarioStateValue.FromNumber(0.4);
+            engine.Tick(1400, true);
+            Assert.That(engine.State.Steps.Single(step => step.Stage == "main").StableSinceUnixMs, Is.Null);
+            provider.Value = PlayScenarioStateValue.FromNumber(0.6);
+            engine.Tick(1500, true);
+            engine.Tick(1700, true);
+            Assert.That(engine.State.Status, Is.EqualTo("running"));
+            Finish(engine, 1800);
+            Assert.That(engine.State.Status, Is.EqualTo("succeeded"));
+        }
+
+        [TestCase("{operator:'gte'}")]
+        [TestCase("{operator:'gte',value:true}")]
+        [TestCase("{operator:'gte',value:null}")]
+        [TestCase("{operator:'gte',value:'1'}")]
+        [TestCase("{operator:'gte',value:9223372036854775808}")]
+        [TestCase("{operator:'gte',value:NaN}")]
+        [TestCase("{operator:'gte',value:Infinity}")]
+        [TestCase("{operator:'gte',value:-Infinity}")]
+        [TestCase("{operator:'gt',value:1}")]
+        [TestCase("{operator:'gte',value:1,min:0}")]
+        [TestCase("{operator:'range',min:2,max:1}")]
+        [TestCase("{operator:'range',min:9007199254740993,max:9007199254740992.0}")]
+        [TestCase("{operator:'range',min:1}")]
+        [TestCase("{operator:'approximately',value:1}")]
+        [TestCase("{operator:'approximately',value:1,absolute_tolerance:-1}")]
+        [TestCase("{operator:'approximately',value:1,relative_tolerance:NaN}")]
+        [TestCase("{operator:'approximately',value:1,relative_tolerance:null}")]
+        [TestCase("{operator:'approximately',value:1,absolute_tolerance:0,extra:0}")]
+        public void NumericAssertionSchemaRejectsInvalidOperandsAndFields(string comparison) =>
+            Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(NumericJson(comparison)));
+
+        [Test]
+        public void NumericAssertionPresenceConflictsAndWrongActionsAreRejected()
+        {
+            JObject json = NumericJson("{operator:'gte',value:0}");
+            json["steps"][0]["state_equals"] = JValue.CreateNull();
+            Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(json));
+            json = NumericJson("{operator:'gte',value:0}");
+            json["steps"][0]["action"] = "wait_scene";
+            Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(json));
+        }
+
+        [Test]
+        public void NumericDefinitionsRoundTripWithoutInventingAbsentEqualityOrPredicateFields()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "mcp-numeric-" + Guid.NewGuid().ToString("N"));
+            _directories.Add(directory);
+            var store = new PlayScenarioStore(directory);
+            JObject source = NumericJson("{operator:'range',min:9007199254740993,max:9223372036854775807}");
+            var definition = PlayScenarioDefinition.Parse(source);
+            source["steps"][0]["state_compare"]["min"] = 0;
+            store.Save(definition);
+            var restored = store.Get(definition.Name);
+            JObject encoded = JObject.FromObject(
+                restored,
+                Newtonsoft.Json.JsonSerializer.Create(
+                    new Newtonsoft.Json.JsonSerializerSettings { NullValueHandling = Newtonsoft.Json.NullValueHandling.Include }
+                )
+            );
+            var step = (JObject)encoded["steps"][0];
+            Assert.That(step.Property("state_equals"), Is.Null);
+            Assert.That(step["state_compare"]["min"].Type, Is.EqualTo(JTokenType.Integer));
+            Assert.That(step["state_compare"]["min"].Value<long>(), Is.EqualTo(9007199254740993L));
+            Assert.That(((JObject)step["state_compare"]).Property("value"), Is.Null);
+            Assert.That(((JObject)step["state_compare"]).Property("absolute_tolerance"), Is.Null);
+            PlayScenarioPlayerCapabilities.Validate(restored, false);
+            var provider = new Provider { Value = PlayScenarioStateValue.FromInteger(9007199254740992L) };
+            Register("state.ready", provider);
+            var engine = Engine(new Host(), encoded);
+            Finish(engine);
+            NumericTimeoutDiagnostic("numeric-store-roundtrip", engine, provider);
+            Assert.That(engine.State.Status, Is.EqualTo("timed_out"));
+            AssertConditionTimeout(engine, provider);
+            store.SaveReport(engine.State);
+            var report = store.GetReport(engine.State.JobId);
+            Assert.That(report.Status, Is.EqualTo("timed_out"));
+            Assert.That(report.Failure.Code, Is.EqualTo("condition_unmet"));
+            Assert.That(report.Failure.Expected, Is.EqualTo(engine.State.Failure.Expected));
+            Assert.That(report.Failure.Expected, Does.Contain("9007199254740993"));
+            Assert.That(report.Failure.Actual, Is.EqualTo("9007199254740992"));
+            store.Save(PlayScenarioDefinition.Parse(Json()));
+            Assert.That(((JObject)JObject.FromObject(store.Get(definition.Name))["steps"][0]).Property("state_compare"), Is.Null);
         }
 
         private void RoundTrip(PlayScenarioRun run)

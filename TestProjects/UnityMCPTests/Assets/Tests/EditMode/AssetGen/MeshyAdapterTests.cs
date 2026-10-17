@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using System.Threading;
+using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
 using NUnit.Framework;
@@ -365,6 +366,64 @@ namespace MCPForUnityTests.Editor.AssetGen
 
             Assert.AreEqual(ProviderPollState.Failed, res.State);
             Assert.IsNotEmpty(res.Error);
+        }
+
+        [TestCase(true, null, "image-to-3d", "preview-owned")]
+        [TestCase(false, null, "text-to-3d", "preview-owned")]
+        [TestCase(false, "refine-owned", "text-to-3d", "refine-owned")]
+        public void RestoredState_RetainsEndpointFormatAndTaskWithoutPost(bool image, string refine, string endpoint, string expectedId)
+        {
+            var http = new FakeHttpTransport
+            {
+                Handler = _ =>
+                    Json(
+                        "{\"status\":\"SUCCEEDED\",\"model_urls\":{\"fbx\":\"https://assets.meshy.ai/owned.fbx\",\"glb\":\"https://assets.meshy.ai/wrong.glb\"}}"
+                    ),
+            };
+            var adapter = new MeshyAdapter();
+            adapter.RestoreRecovery(
+                new MeshyRecoveryState
+                {
+                    Format = "fbx",
+                    IsImage = image,
+                    WantTexture = refine != null,
+                    Model = "meshy-6",
+                    RefineId = refine,
+                }
+            );
+            ProviderPollResult result = adapter.PollAsync("preview-owned", "owned-fake-key", http, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(ProviderPollState.Succeeded, result.State);
+            Assert.AreEqual("fbx", result.ResultExt);
+            StringAssert.EndsWith("owned.fbx", result.DownloadUrl);
+            Assert.AreEqual(1, http.RecordedRequests.Count);
+            Assert.AreEqual("GET", http.RecordedRequests[0].Method);
+            StringAssert.EndsWith(endpoint + "/" + expectedId, http.RecordedRequests[0].Url);
+        }
+
+        [TestCase("refine_submitting")]
+        [TestCase("refine_admit")]
+        public void RefineCheckpointRejection_BlocksPostAfterSuccessfulPreview(string rejected)
+        {
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"status\":\"SUCCEEDED\"}") };
+            var adapter = new MeshyAdapter();
+            adapter.RestoreRecovery(
+                new MeshyRecoveryState
+                {
+                    Format = "obj",
+                    Model = "meshy-6",
+                    WantTexture = true,
+                }
+            );
+            adapter.RecoveryCheckpoint = (phase, _) =>
+            {
+                if (phase == rejected)
+                    throw new InvalidOperationException("owned rejection");
+            };
+            Assert.Throws<InvalidOperationException>(() =>
+                adapter.PollAsync("preview-owned", "owned-fake-key", http, CancellationToken.None).GetAwaiter().GetResult()
+            );
+            Assert.AreEqual(1, http.RecordedRequests.Count);
+            Assert.AreEqual("GET", http.RecordedRequests[0].Method);
         }
     }
 }

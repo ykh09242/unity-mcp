@@ -35,6 +35,31 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         private string _refineTaskId;
         private bool _refineSubmitted;
 
+        // Manager-owned synchronous admission/checkpoint hook. Direct adapter callers remain compatible.
+        internal Action<string, MeshyRecoveryState> RecoveryCheckpoint = null;
+
+        internal MeshyRecoveryState CaptureRecovery() =>
+            new MeshyRecoveryState
+            {
+                Format = _format,
+                IsImage = _isImage,
+                WantTexture = _wantTexture,
+                Model = _aiModel,
+                RefineId = _refineSubmitted ? _refineTaskId : null,
+            };
+
+        internal void RestoreRecovery(MeshyRecoveryState state)
+        {
+            if (state == null || !state.Validate())
+                throw new ArgumentException("Invalid Meshy recovery state.");
+            _format = state.Format;
+            _isImage = state.IsImage;
+            _wantTexture = state.WantTexture;
+            _aiModel = state.Model;
+            _refineTaskId = state.RefineId;
+            _refineSubmitted = state.RefineId != null;
+        }
+
         public async Task<string> SubmitAsync(ModelGenRequest req, string apiKey, IHttpTransport http, CancellationToken ct)
         {
             if (req == null)
@@ -120,8 +145,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                         ["preview_task_id"] = providerJobId,
                         ["ai_model"] = _aiModel,
                     };
+                    RecoveryCheckpoint?.Invoke("refine_submitting", CaptureRecovery());
+                    // Persistence itself can cross the deadline. Admission is checked again at the POST boundary.
+                    ct.ThrowIfCancellationRequested();
+                    RecoveryCheckpoint?.Invoke("refine_admit", CaptureRecovery());
                     _refineTaskId = await PostTask(TextEndpoint, refineBody, apiKey, http, ct, "refine");
                     _refineSubmitted = true;
+                    RecoveryCheckpoint?.Invoke("refining", CaptureRecovery());
                     result.State = ProviderPollState.Running;
                     result.Progress = 0.5f;
                     return result;

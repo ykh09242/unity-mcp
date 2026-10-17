@@ -26,6 +26,11 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         // UI Elements
         private DropdownField clientDropdown;
         private Button configureAllButton;
+        private Button retryFailedButton;
+        private Label retryStatusLabel;
+        private ClientConfigurationAttempt retryAttempt;
+        private bool configurationInProgress;
+        private Action<string, string> showConfigurationResult = null;
         private VisualElement clientStatusIndicator;
         private Label clientStatusLabel;
         private Button configureButton;
@@ -72,6 +77,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         public McpClientConfigSection(VisualElement root)
         {
             Root = root;
+            showConfigurationResult = (title, message) => EditorUtility.DisplayDialog(title, message, "OK");
             configurators = MCPServiceLocator.Client.GetAllClients().ToList();
             CacheUIElements();
             InitializeUI();
@@ -82,6 +88,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         {
             clientDropdown = Root.Q<DropdownField>("client-dropdown");
             configureAllButton = Root.Q<Button>("configure-all-button");
+            retryFailedButton = Root.Q<Button>("retry-failed-button");
+            retryStatusLabel = Root.Q<Label>("retry-status");
             clientStatusIndicator = Root.Q<VisualElement>("client-status-indicator");
             clientStatusLabel = Root.Q<Label>("client-status");
             configureButton = Root.Q<Button>("configure-button");
@@ -105,6 +113,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void InitializeUI()
         {
+            SetRetryAttempt(null);
             // Ensure manual config foldout starts collapsed
             if (manualConfigFoldout != null)
             {
@@ -179,6 +188,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             });
 
             configureAllButton.clicked += OnConfigureAllClientsClicked;
+            if (retryFailedButton != null)
+                retryFailedButton.clicked += OnRetryFailedClientsClicked;
             configureButton.clicked += OnConfigureClicked;
             installSkillsButton.clicked += OnInstallSkillsClicked;
             browseClaudeButton.clicked += OnBrowseClaudeClicked;
@@ -307,9 +318,18 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void OnConfigureAllClientsClicked()
         {
+            if (configurationInProgress)
+                return;
+            SetConfigurationBusy(true);
+            SetRetryAttempt(null);
             try
             {
-                var summary = MCPServiceLocator.Client.ConfigureAllDetectedClients();
+                var service = MCPServiceLocator.Client;
+                var summary = service.ConfigureAllDetectedClients();
+                bool supportsRetry = service is IClientConfigurationRetryService;
+                SetRetryAttempt(supportsRetry ? summary.Attempt : null);
+                if (!supportsRetry && retryStatusLabel != null)
+                    retryStatusLabel.text = "Selective retry unavailable for this client service.";
 
                 string headline =
                     summary.SkippedCount > 0
@@ -321,7 +341,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                     message += msg + "\n";
                 }
 
-                EditorUtility.DisplayDialog("Configure Detected Clients", message, "OK");
+                showConfigurationResult?.Invoke("Configure Detected Clients", message);
 
                 // The bulk path mutated state for every detected client. Clear the per-client
                 // status cache so any subsequent dropdown switch (or the currently-selected
@@ -338,8 +358,95 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             }
             catch (Exception ex)
             {
-                EditorUtility.DisplayDialog("Configuration Failed", ex.Message, "OK");
+                SetRetryAttempt(null);
+                showConfigurationResult?.Invoke("Configuration Failed", ex.Message);
             }
+            finally
+            {
+                SetConfigurationBusy(false);
+            }
+        }
+
+        private void SetConfigurationBusy(bool busy)
+        {
+            configurationInProgress = busy;
+            configureAllButton?.SetEnabled(!busy);
+            retryFailedButton?.SetEnabled(!busy && retryAttempt != null && retryAttempt.CanRetry);
+        }
+
+        private void SetRetryAttempt(ClientConfigurationAttempt attempt)
+        {
+            retryAttempt = attempt;
+            retryFailedButton?.SetEnabled(!configurationInProgress && attempt != null && attempt.CanRetry);
+            if (retryStatusLabel == null)
+                return;
+            retryStatusLabel.text =
+                attempt == null ? "Uses current settings; successful clients are not changed."
+                : attempt.CanRetry
+                    ? $"{attempt.RemainingFailureCount} failed client(s) remain. Retry uses current settings; successful clients are not changed."
+                : attempt.RemainingFailureCount == 0 ? "No failed clients remain."
+                : "Selective retry unavailable; start a new detected-client configuration run.";
+        }
+
+        private void OnRetryFailedClientsClicked()
+        {
+            if (configurationInProgress)
+                return;
+            var service = MCPServiceLocator.Client;
+            if (!(service is IClientConfigurationRetryService retryService))
+            {
+                SetRetryAttempt(null);
+                if (retryStatusLabel != null)
+                    retryStatusLabel.text = "Selective retry unavailable for this client service.";
+                return;
+            }
+            var previous = retryAttempt;
+            SetConfigurationBusy(true);
+            try
+            {
+                var result = retryService.RetryFailedClients(previous);
+                SetRetryAttempt(result.Attempt);
+                if (retryStatusLabel != null)
+                {
+                    retryStatusLabel.text =
+                        result.Disposition == "completed"
+                            ? $"Retry: {result.Summary.SuccessCount} succeeded, {result.Summary.FailureCount} failed, {result.Summary.SkippedCount} unavailable; {result.Attempt.RemainingFailureCount} remain. Uses current settings."
+                        : result.Disposition == "preparation_failed"
+                            ? "Retry preparation failed; no clients were attempted. Retry again explicitly using current settings."
+                        : "Selective retry unavailable; start a new detected-client configuration run.";
+                }
+                if (result.Disposition != "completed" || previous == null)
+                    return;
+                // Rendering a selective result must not enter the default auto-rewriting refresh path for successful peers.
+                foreach (var target in previous.FailedTargets)
+                    lastStatusChecks.Remove(target.Client);
+                if (
+                    selectedClientIndex >= 0
+                    && selectedClientIndex < configurators.Count
+                    && previous.FailedTargets.Any(target => ReferenceEquals(target.Client, configurators[selectedClientIndex]))
+                )
+                {
+                    ApplyStatusToUi(configurators[selectedClientIndex]);
+                    UpdateManualConfiguration();
+                }
+            }
+            catch (Exception)
+            {
+                SetRetryAttempt(null);
+                if (retryStatusLabel != null)
+                    retryStatusLabel.text = "Selective retry unavailable; start a new detected-client configuration run.";
+            }
+            finally
+            {
+                SetConfigurationBusy(false);
+            }
+        }
+
+        private void DiscardRetryAttempt()
+        {
+            if (MCPServiceLocator.Client is IClientConfigurationRetryService retryService)
+                retryService.DiscardConfigurationAttempt();
+            SetRetryAttempt(null);
         }
 
         private void OnConfigureClicked()
@@ -347,6 +454,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             if (selectedClientIndex < 0 || selectedClientIndex >= configurators.Count)
                 return;
 
+            DiscardRetryAttempt();
             var client = configurators[selectedClientIndex];
 
             // Handle CLI configurators asynchronously

@@ -216,7 +216,7 @@ URI: mcpforunity://prefab/{encoded_path}
 
 **URI:** `mcpforunity://capabilities`
 
-Current selected project's supported features, bounded limits, connection generation and recovery actions. Package presence and scene/runtime readiness are distinct. Unknown means unobserved; Player readiness requires existing bundle preflight. One read budget includes resource selection; separately bounded transport cancellation grace is reported in limits. No completed query cache (TTL 0). URI: mcpforunity://capabilities
+Current selected project's supported features, bounded limits, connection generation and recovery actions. Package presence and scene/runtime readiness are distinct. Unknown means unobserved; Player readiness requires existing bundle preflight. At admission capacity, connection and pending request counts reflect server transport records; native readiness and features stay unknown. Counts are not Unity's queue. One read budget includes resource selection; separately bounded transport cancellation grace is reported in limits. No completed query cache (TTL 0). URI: mcpforunity://capabilities
 
 
 ## `project_info`

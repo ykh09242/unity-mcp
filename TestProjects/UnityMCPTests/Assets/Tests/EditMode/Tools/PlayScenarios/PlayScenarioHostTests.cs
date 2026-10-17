@@ -3,6 +3,7 @@ using System.IO;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Tools.Input;
+using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -554,6 +555,69 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             var step = PropertyStep(path, new JValue(true));
             Assert.Throws<ArgumentException>(() => _host.Evaluate(step, true));
             Assert.That(probe.GetterReadCount, Is.Zero);
+        }
+
+        private PlayScenarioStep NumericPropertyStep(string path, string comparison)
+        {
+            JObject json = JObject.FromObject(PreflightDefinition(PropertyStep(path, new JValue(0))));
+            var property = (JObject)json["steps"][1]["property"];
+            property.Remove("equals");
+            property["compare"] = JObject.Parse(comparison);
+            return PlayScenarioDefinition.Parse(json).Steps[1];
+        }
+
+        [Test]
+        public void NumericFloatPromotionIsExactWhileLegacyFloatEqualityRemainsUnchanged()
+        {
+            var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();
+            probe.Ratio = 0.1f;
+            Assert.That(_host.Evaluate(PropertyStep("Ratio", JToken.Parse("0.1")), true).Ready, Is.True);
+            var numeric = NumericPropertyStep("Ratio", "{operator:'approximately',value:0.1,absolute_tolerance:0}");
+            Assert.That(_host.Evaluate(numeric, true).Ready, Is.False);
+            Assert.That(probe.GetterReadCount, Is.Zero);
+        }
+
+        [Test]
+        public void NumericSerializedFieldsUseLongPrecisionAndCrossThresholdWithoutEquality()
+        {
+            var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();
+            probe.Counter = 9007199254740993L;
+            Assert.That(_host.Evaluate(NumericPropertyStep("Counter", "{operator:'gte',value:9007199254740993}"), true).Ready, Is.True);
+            Assert.That(_host.Evaluate(NumericPropertyStep("Counter", "{operator:'lte',value:9007199254740992.0}"), true).Ready, Is.False);
+            probe.Ratio = 0.4f;
+            var threshold = NumericPropertyStep("Ratio", "{operator:'gte',value:0.5}");
+            Assert.That(_host.Evaluate(threshold, true).Ready, Is.False);
+            probe.Ratio = 0.6f;
+            Assert.That(_host.Evaluate(threshold, false).Ready, Is.True);
+            probe.Precise = double.Epsilon;
+            Assert.That(_host.Evaluate(NumericPropertyStep("Precise", "{operator:'approximately',value:0,absolute_tolerance:5e-324}"), true).Ready, Is.True);
+        }
+
+        [TestCase("Ready")]
+        [TestCase("Label")]
+        [TestCase("DangerousGetter")]
+        [TestCase("Unsupported")]
+        public void NumericPropertyRejectsNonnumericAndReflectedGetterFields(string path)
+        {
+            var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();
+            Assert.Throws<ArgumentException>(() => _host.Evaluate(NumericPropertyStep(path, "{operator:'gte',value:0}"), true));
+            Assert.That(probe.GetterReadCount, Is.Zero);
+        }
+
+        [Test]
+        public void NumericPropertyRejectsNonfiniteActualAndPresenceBasedEqualityConflicts()
+        {
+            var probe = CreateTarget().AddComponent<PlayScenarioConditionProbe>();
+            probe.Precise = double.NaN;
+            Assert.Throws<ArgumentException>(() => _host.Evaluate(NumericPropertyStep("Precise", "{operator:'gte',value:0}"), true));
+            JObject json = JObject.FromObject(PreflightDefinition(PropertyStep("Counter", new JValue(0))));
+            var property = (JObject)json["steps"][1]["property"];
+            property["equals"] = JValue.CreateNull();
+            property["compare"] = JObject.Parse("{operator:'gte',value:0}");
+            Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(json));
+            property.Remove("equals");
+            var definition = PlayScenarioDefinition.Parse(json);
+            Assert.Throws<PlayScenarioException>(() => PlayScenarioPlayerCapabilities.Validate(definition, false));
         }
 
         [Test]

@@ -344,6 +344,11 @@ async def _capture_project_capabilities(ctx: Context) -> _CapabilityCapture:
             instance = await get_unity_instance_from_context(ctx)
             connection = await _connection(instance, user_id)
             captured = True
+            if connection.status == "connected" and connection.admission_available is False:
+                observations = {
+                    name: _Observation(evidence=CapabilityEvidence(reason="command_capacity"))
+                    for name in _SOURCES
+                }
             if connection.status == "connected" and connection.admission_available is not False:
                 remaining = max(0.0, deadline - anyio.current_time())
                 # Leave a bounded tail for final identity verification after cleanup.

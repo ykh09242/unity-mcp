@@ -332,6 +332,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 _clearMethod.Invoke(null, null); // Static method, no instance, no parameters
+                TailConsole.Cursors.Invalidate();
                 return new SuccessResponse("Console cleared successfully.");
             }
             catch (Exception e)
@@ -352,7 +353,7 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="format">Output format: "plain", "detailed", or "json".</param>
         /// <param name="includeStacktrace">Whether to include stack traces in the output.</param>
         /// <returns>A success response with entries, or an error response.</returns>
-        private static object GetConsoleEntries(
+        internal static object GetConsoleEntries(
             List<string> types,
             int? count,
             int? pageSize,
@@ -361,7 +362,8 @@ namespace MCPForUnity.Editor.Tools
             string format,
             bool includeStacktrace,
             HashSet<string> fields = null,
-            bool includeMcpLogs = false
+            bool includeMcpLogs = false,
+            ConsoleReadMetrics metrics = null
         )
         {
             List<object> formattedEntries = new List<object>();
@@ -405,6 +407,8 @@ namespace MCPForUnity.Editor.Tools
                 for (int i = 0; i < totalEntries; i++)
                 {
                     // Get the entry data into our instance using reflection
+                    if (metrics != null)
+                        metrics.EntryReads++;
                     object entryResult = _getEntryMethod.Invoke(null, new object[] { i, logEntryInstance });
                     if (entryResult is bool entryAvailable && !entryAvailable)
                         continue;
@@ -578,6 +582,111 @@ namespace MCPForUnity.Editor.Tools
 
             // Return the filtered and formatted list (might be empty)
             return new SuccessResponse($"Retrieved {formattedEntries.Count} log entries.", formattedEntries);
+        }
+
+        // Tail requires every filtering capability; legacy optional fallback stays unchanged.
+        internal static IConsoleTailSnapshot OpenTailSnapshot() => new TailSnapshot();
+
+        private sealed class TailSnapshot : IConsoleTailSnapshot
+        {
+            private readonly int savedFlags;
+            private readonly string savedFilter;
+            private readonly FieldInfo globalIndex;
+            private readonly object entry;
+            private bool flagsSaved;
+            private bool filterSaved;
+            private bool started;
+            public int Count { get; private set; }
+            public int EntryReads { get; private set; }
+
+            internal TailSnapshot()
+            {
+                if (
+                    _consoleFlagsProperty == null
+                    || _getFilteringTextMethod == null
+                    || _setFilteringTextMethod == null
+                    || _startGettingEntriesMethod == null
+                    || _endGettingEntriesMethod == null
+                    || _getEntryMethod == null
+                    || _messageField == null
+                    || _modeField == null
+                    || _fileField == null
+                    || _lineField == null
+                )
+                    throw new NotSupportedException();
+                Type type = typeof(EditorApplication).Assembly.GetType("UnityEditor.LogEntry");
+                globalIndex = type?.GetField("globalLineIndex", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (globalIndex == null)
+                    throw new NotSupportedException();
+                entry = Activator.CreateInstance(type);
+                try
+                {
+                    savedFlags = (int)_consoleFlagsProperty.GetValue(null);
+                    flagsSaved = true;
+                    savedFilter = (string)_getFilteringTextMethod.Invoke(null, null);
+                    filterSaved = true;
+                    _consoleFlagsProperty.SetValue(null, (savedFlags | ConsoleFlagLogLevelMask) & ~1);
+                    _setFilteringTextMethod.Invoke(null, new object[] { "" });
+                    object count = _startGettingEntriesMethod.Invoke(null, null);
+                    started = true;
+                    if (!(count is int value) || value < 0)
+                        throw new NotSupportedException();
+                    Count = value;
+                }
+                catch
+                {
+                    Dispose();
+                    throw;
+                }
+            }
+
+            public ConsoleTailRow Read(int index)
+            {
+                EntryReads++;
+                object available = _getEntryMethod.Invoke(null, new object[] { index, entry });
+                if (!(available is bool exists) || !exists)
+                    return null;
+                return new ConsoleTailRow
+                {
+                    GlobalIndex = Convert.ToInt64(globalIndex.GetValue(entry)),
+                    Mode = (int)_modeField.GetValue(entry),
+                    Message = (string)_messageField.GetValue(entry),
+                    File = (string)_fileField.GetValue(entry),
+                    Line = (int)_lineField.GetValue(entry),
+                    StackStart = _callstackTextStartField?.GetValue(entry) as int?,
+                };
+            }
+
+            public void Dispose()
+            {
+                try
+                {
+                    if (started)
+                    {
+                        started = false;
+                        _endGettingEntriesMethod.Invoke(null, null);
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        if (filterSaved)
+                        {
+                            filterSaved = false;
+                            _setFilteringTextMethod.Invoke(null, new object[] { savedFilter });
+                        }
+                    }
+                    finally
+                    {
+                        if (flagsSaved)
+                        {
+                            flagsSaved = false;
+                            _consoleFlagsProperty.SetValue(null, savedFlags);
+                        }
+                    }
+                }
+            }
         }
 
         // --- Internal Helpers ---
