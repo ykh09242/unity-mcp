@@ -52,11 +52,17 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_script", AutoRegister = false, RequiresExplicitConsent = true)]
     public static class ManageScript
     {
+        // Private, default-preserving seams; no command payload can set these.
+        private static Func<bool> _explicitConsentForTests = null;
+        private static Func<bool> _parentEnabledForTests = null;
+        private static Action<string, bool> _preparedRefreshForTests = null;
+        private static Action<string> _preparedCommitStageForTests = null;
+
         internal static ErrorResponse RequireExplicitConsent()
         {
             if (
-                !EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("manage_script"), false)
-                || !MCPServiceLocator.ToolDiscovery.IsToolEnabled("manage_script")
+                !(_explicitConsentForTests?.Invoke() ?? EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("manage_script"), false))
+                || !(_parentEnabledForTests?.Invoke() ?? MCPServiceLocator.ToolDiscovery.IsToolEnabled("manage_script"))
             )
                 return new ErrorResponse(
                     "script_consent_required",
@@ -101,7 +107,15 @@ namespace MCPForUnity.Editor.Tools
 
             var consentError = RequireExplicitConsent();
             if (consentError != null)
+            {
+                string requestedAction = @params["action"]?.Type == JTokenType.String ? @params.Value<string>("action") : null;
+                if (
+                    string.Equals(requestedAction, "preview_script_buffer", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(requestedAction, "apply_prepared_script", StringComparison.OrdinalIgnoreCase)
+                )
+                    return OrderedRefusal("script_consent_required", "Enable manage_script and its explicit consent before ordered editing.");
                 return consentError;
+            }
 
             var p = new ToolParams(@params);
 
@@ -181,6 +195,10 @@ namespace MCPForUnity.Editor.Tools
             // Route to specific action handlers
             switch (action)
             {
+                case "preview_script_buffer":
+                    return PreviewScriptBuffer(fullPath, relativePath, name, @params);
+                case "apply_prepared_script":
+                    return ApplyPreparedScript(fullPath, relativePath, @params);
                 case "create":
                     return CreateScript(fullPath, relativePath, name, contents, scriptType, namespaceName);
                 case "read":
@@ -595,7 +613,9 @@ namespace MCPForUnity.Editor.Tools
             string preconditionSha256,
             string refreshModeFromCaller = null,
             string validateMode = null,
-            bool preview = false
+            bool preview = false,
+            string sourceBuffer = null,
+            bool computeOnly = false
         )
         {
             if (!File.Exists(fullPath))
@@ -614,7 +634,7 @@ namespace MCPForUnity.Editor.Tools
             string original;
             try
             {
-                original = ReadScriptContents(fullPath);
+                original = computeOnly ? sourceBuffer : ReadScriptContents(fullPath);
             }
             catch (Exception ex)
             {
@@ -752,6 +772,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 working = working.Remove(sp.start, sp.end - sp.start).Insert(sp.start, sp.text ?? string.Empty);
             }
+            if (computeOnly)
+                return new SuccessResponse("Computed literal buffer without validation or writing.", new { new_contents = working });
 
             // No-op guard: if resulting text is identical, avoid writes and return explicit no-op
             if (string.Equals(working, original, StringComparison.Ordinal))
@@ -915,6 +937,468 @@ namespace MCPForUnity.Editor.Tools
                     bom = false,
                 }
             );
+        }
+
+        private sealed class RawScriptSnapshot
+        {
+            public readonly string Text;
+            public readonly bool Bom;
+            public readonly string RawSha;
+            public readonly int ByteCount;
+
+            public RawScriptSnapshot(byte[] bytes)
+            {
+                Bom = bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf;
+                Text = StrictFileUtf8.GetString(bytes, Bom ? 3 : 0, bytes.Length - (Bom ? 3 : 0));
+                if (Text.IndexOf('\0') >= 0)
+                    throw new ArgumentException("UTF-16/32 and NUL-containing sources are not supported by ordered editing.");
+                RawSha = RawSha256(bytes);
+                ByteCount = bytes.Length;
+            }
+        }
+
+        private static string RawSha256(byte[] bytes)
+        {
+            using var algorithm = SHA256.Create();
+            return BitConverter.ToString(algorithm.ComputeHash(bytes)).Replace("-", string.Empty).ToLowerInvariant();
+        }
+
+        private static byte[] OrderedBytes(string text, bool bom)
+        {
+            int count = StrictFileUtf8.GetByteCount(text);
+            if (count > MaxPreviewTextBytes - (bom ? 3 : 0))
+                throw new ArgumentException("Ordered script buffer exceeds the byte limit.");
+            var bytes = new byte[count + (bom ? 3 : 0)];
+            if (bom)
+            {
+                bytes[0] = 0xef;
+                bytes[1] = 0xbb;
+                bytes[2] = 0xbf;
+            }
+            StrictFileUtf8.GetBytes(text, 0, text.Length, bytes, bom ? 3 : 0);
+            return bytes;
+        }
+
+        private static RawScriptSnapshot ReadOrderedSnapshot(string relativePath)
+        {
+            string fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
+            using var stream = File.Open(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (stream.Length > MaxPreviewTextBytes)
+                throw new ArgumentException("Ordered script file exceeds the byte limit.");
+            var bytes = new byte[(int)stream.Length];
+            int read = 0;
+            while (read < bytes.Length)
+            {
+                int amount = stream.Read(bytes, read, bytes.Length - read);
+                if (amount == 0)
+                    throw new IOException("The script changed during its bounded read.");
+                read += amount;
+            }
+            if (stream.ReadByte() != -1)
+                throw new IOException("The script grew during its bounded read.");
+            return new RawScriptSnapshot(bytes);
+        }
+
+        private static string OrderedString(JObject parameters, string field)
+        {
+            if (parameters[field]?.Type != JTokenType.String)
+                throw new ArgumentException($"Ordered '{field}' must be a string.");
+            return parameters.Value<string>(field);
+        }
+
+        private static bool OrderedBoolean(JObject parameters, string field)
+        {
+            if (parameters[field]?.Type != JTokenType.Boolean)
+                throw new ArgumentException($"Ordered '{field}' must be a boolean.");
+            return parameters.Value<bool>(field);
+        }
+
+        private static string OrderedDigest(JObject parameters, string field)
+        {
+            string digest = OrderedString(parameters, field);
+            if (digest.Length != 64 || digest.Any(c => !Uri.IsHexDigit(c)))
+                throw new ArgumentException($"Ordered '{field}' must be a 64-hex SHA256 digest.");
+            return digest.ToLowerInvariant();
+        }
+
+        private static JObject OrderedOptions(JObject parameters)
+        {
+            _ = OrderedString(parameters, "action");
+            _ = OrderedString(parameters, "name");
+            _ = OrderedString(parameters, "path");
+            var token = parameters["options"];
+            if (token != null && token.Type != JTokenType.Object)
+                throw new ArgumentException("Ordered options must be an object when supplied.");
+            var options = token as JObject ?? new JObject();
+            foreach (string field in new[] { "validate", "refresh", "applyMode", "apply_mode", "mixed_order" })
+                if (options[field] != null && options[field].Type != JTokenType.String)
+                    throw new ArgumentException($"Ordered option '{field}' must be a string.");
+            if (options["preview"] != null && options["preview"].Type != JTokenType.Boolean)
+                throw new ArgumentException("Ordered preview must be a boolean.");
+            foreach (string field in new[] { "applyMode", "apply_mode" })
+                if (options[field] != null && options.Value<string>(field) != "sequential")
+                    throw new ArgumentException("Ordered interpretation requires sequential apply mode.");
+            return options;
+        }
+
+        private static object OrderedRefusal(string code, string message)
+        {
+            return new
+            {
+                success = false,
+                code,
+                error = message,
+                message,
+                data = new { applied = false, outcome = "not_applied" },
+            };
+        }
+
+        private static ErrorResponse ValidateOrderedFinal(string contents, JObject options)
+        {
+            string requested = (options.Value<string>("validate") ?? "standard").ToLowerInvariant();
+            var level = requested switch
+            {
+                "basic" => ValidationLevel.Basic,
+                "syntax" => ValidationLevel.Basic,
+                "standard" => ValidationLevel.Standard,
+                "comprehensive" => ValidationLevel.Comprehensive,
+                "strict" => ValidationLevel.Strict,
+                _ => throw new ArgumentException("Unknown ordered validation level."),
+            };
+            if (!CheckBalancedDelimiters(contents, out int line, out char expected))
+                return new ErrorResponse("validation_failed", new { line, expected = expected.ToString() });
+            if (!ValidateScriptSyntax(contents, level, out var errors))
+                return new ErrorResponse("validation_failed", new { diagnostics = errors ?? Array.Empty<string>() });
+            return null;
+        }
+
+        private static object OrderedPreviewResponse(string fullPath, string relativePath, RawScriptSnapshot original, string candidate, bool final)
+        {
+            byte[] bytes = OrderedBytes(candidate, original.Bom);
+            if ((long)original.ByteCount + bytes.Length > MaxPreviewTextBytes)
+                return OrderedRefusal("payload_too_large", "Original/final buffers exceed 1 MiB.");
+            bool noOp = original.Text == candidate;
+            return new SuccessResponse(
+                "Prepared ordered buffer without writing or refreshing.",
+                new
+                {
+                    path = relativePath,
+                    uri = $"mcpforunity://path/{relativePath}",
+                    absolute_path = Path.GetFullPath(fullPath),
+                    project_root = Path.GetDirectoryName(Path.GetFullPath(Application.dataPath)),
+                    preview = true,
+                    complete = true,
+                    truncated = false,
+                    original_contents = original.Text,
+                    new_contents = candidate,
+                    original_sha256 = ComputeSha256(original.Text),
+                    sha256 = ComputeSha256(original.Text),
+                    candidate_sha256 = ComputeSha256(candidate),
+                    original_bytes_sha256 = original.RawSha,
+                    candidate_bytes_sha256 = RawSha256(bytes),
+                    encoding = "utf-8",
+                    original_bom = original.Bom,
+                    bom = original.Bom,
+                    editsApplied = 0,
+                    editsPrepared = noOp ? 0 : 1,
+                    scheduledRefresh = false,
+                    no_op = noOp,
+                    validation_status = final ? "passed" : "pending",
+                }
+            );
+        }
+
+        private static object PreviewScriptBuffer(string fullPath, string relativePath, string name, JObject parameters)
+        {
+            try
+            {
+                var options = OrderedOptions(parameters);
+                var original = ReadOrderedSnapshot(relativePath);
+                if (parameters["source_contents"] == null)
+                {
+                    if (parameters["edit"] != null || parameters["validate_final"] != null)
+                        return OrderedRefusal("invalid_buffer", "A snapshot cannot contain an edit or final-validation request.");
+                    return OrderedPreviewResponse(fullPath, relativePath, original, original.Text, false);
+                }
+                string source = OrderedString(parameters, "source_contents");
+                bool bom = OrderedBoolean(parameters, "bom");
+                bool final = OrderedBoolean(parameters, "validate_final");
+                if (
+                    OrderedBoolean(parameters, "original_bom") != original.Bom
+                    || bom != original.Bom
+                    || OrderedDigest(parameters, "original_bytes_sha256") != original.RawSha
+                    || OrderedDigest(parameters, "original_sha256") != ComputeSha256(original.Text)
+                )
+                    return OrderedRefusal("stale_file", "Original raw bytes or preamble changed during preparation.");
+                byte[] sourceBytes = OrderedBytes(source, bom);
+                if (
+                    OrderedDigest(parameters, "source_sha256") != ComputeSha256(source)
+                    || OrderedDigest(parameters, "source_bytes_sha256") != RawSha256(sourceBytes)
+                )
+                    return OrderedRefusal("invalid_buffer", "Source logical/raw digests do not match the supplied buffer.");
+                if ((long)original.ByteCount + sourceBytes.Length > MaxPreviewTextBytes)
+                    return OrderedRefusal("payload_too_large", "Original/current buffers exceed the stage limit.");
+                string candidate = source;
+                if (parameters["edit"] != null)
+                {
+                    if (parameters["edit"] is not JObject edit)
+                        return OrderedRefusal("invalid_edit", "The single buffer edit must be an object.");
+                    object computed;
+                    if (edit["startLine"] != null)
+                    {
+                        foreach (string field in new[] { "startLine", "startCol", "endLine", "endCol" })
+                            if (edit[field]?.Type != JTokenType.Integer || edit.Value<long>(field) < 1 || edit.Value<long>(field) > int.MaxValue)
+                                return OrderedRefusal("invalid_range", "Literal coordinates must be positive integers.");
+                        _ = OrderedString(edit, "newText");
+                        if (
+                            !TryIndexFromLineCol(source, edit.Value<int>("startLine"), edit.Value<int>("startCol"), out int start)
+                            || !TryIndexFromLineCol(source, edit.Value<int>("endLine"), edit.Value<int>("endCol"), out int end)
+                            || end < start
+                        )
+                            return OrderedRefusal("invalid_range", "Literal range is outside the current source or reversed.");
+                        computed = ApplyTextEdits(
+                            fullPath,
+                            relativePath,
+                            name,
+                            new JArray(edit),
+                            ComputeSha256(source),
+                            sourceBuffer: source,
+                            computeOnly: true
+                        );
+                    }
+                    else
+                    {
+                        computed = EditScript(
+                            fullPath,
+                            relativePath,
+                            name,
+                            new JArray(edit),
+                            new JObject { ["applyMode"] = "sequential" },
+                            sourceBuffer: source,
+                            computeOnly: true
+                        );
+                    }
+                    var result = JObject.FromObject(computed);
+                    if (result.Value<bool?>("success") != true)
+                        return computed;
+                    candidate = result["data"].Value<string>("new_contents");
+                }
+                else if (!final)
+                    return OrderedRefusal("invalid_edit", "An empty operation is permitted only for final validation.");
+                if ((long)original.ByteCount + sourceBytes.Length + OrderedBytes(candidate, bom).Length > MaxPreviewTextBytes)
+                    return OrderedRefusal("payload_too_large", "Original/current/next buffers exceed 1 MiB.");
+                if (final)
+                {
+                    var validationError = ValidateOrderedFinal(candidate, options);
+                    if (validationError != null)
+                        return validationError;
+                }
+                return OrderedPreviewResponse(fullPath, relativePath, original, candidate, final);
+            }
+            catch (Exception ex)
+                when (ex is IOException
+                    || ex is UnauthorizedAccessException
+                    || ex is ArgumentException
+                    || ex is System.Text.DecoderFallbackException
+                    || ex is System.Text.EncoderFallbackException
+                    || ex is OverflowException
+                )
+            {
+                return OrderedRefusal("invalid_buffer", ex.Message);
+            }
+        }
+
+        private static object ApplyPreparedScript(string fullPath, string relativePath, JObject parameters)
+        {
+            string tempPath = null;
+            string backupPath = null;
+            bool ownsTemp = false;
+            bool attempted = false;
+            bool committed = false;
+            string candidateSha = null;
+            string expectedRaw = null;
+            bool bom = false;
+            try
+            {
+                var options = OrderedOptions(parameters);
+                string originalSha = OrderedDigest(parameters, "original_bytes_sha256");
+                expectedRaw = OrderedDigest(parameters, "candidate_bytes_sha256");
+                string candidate = OrderedString(parameters, "candidate_contents");
+                bom = OrderedBoolean(parameters, "bom");
+                byte[] bytes = OrderedBytes(candidate, bom);
+                candidateSha = ComputeSha256(candidate);
+                if (RawSha256(bytes) != expectedRaw)
+                    return OrderedRefusal("candidate_mismatch", "Candidate bytes do not match their digest.");
+                var original = ReadOrderedSnapshot(relativePath);
+                if (original.RawSha != originalSha || original.Bom != bom)
+                    return OrderedRefusal("stale_file", "Original bytes or BOM changed before commit.");
+                if ((long)original.ByteCount + bytes.Length > MaxPreviewTextBytes)
+                    return OrderedRefusal("payload_too_large", "Original/final buffers exceed 1 MiB.");
+                var validationError = ValidateOrderedFinal(candidate, options);
+                if (validationError != null)
+                    return OrderedRefusal("validation_failed", JObject.FromObject(validationError).ToString());
+                if (original.RawSha == expectedRaw)
+                    return new SuccessResponse(
+                        "Ordered no-op; no write or refresh.",
+                        new
+                        {
+                            applied = false,
+                            no_op = true,
+                            editsApplied = 0,
+                            scheduledRefresh = false,
+                            sha256 = candidateSha,
+                            bytes_sha256 = expectedRaw,
+                            bom,
+                        }
+                    );
+                fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
+                string attempt = Guid.NewGuid().ToString("N");
+                tempPath = fullPath + "." + attempt + ".prepared.tmp";
+                backupPath = fullPath + "." + attempt + ".prepared.bak";
+                using (var stream = File.Open(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    ownsTemp = true;
+                    stream.Write(bytes, 0, bytes.Length);
+                    stream.Flush(true);
+                }
+                _preparedCommitStageForTests?.Invoke("before_compare");
+                if (ReadOrderedSnapshot(relativePath).RawSha != originalSha)
+                    return OrderedRefusal("stale_file", "Original raw bytes changed at final comparison.");
+                fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
+                _preparedCommitStageForTests?.Invoke("before_replace");
+                attempted = true;
+                File.Replace(tempPath, fullPath, backupPath);
+                committed = true;
+                _preparedCommitStageForTests?.Invoke("after_replace");
+                if (ReadOrderedSnapshot(relativePath).RawSha != expectedRaw)
+                    return new SuccessResponse(
+                        "Commit completed but later bytes differ; refresh was not requested.",
+                        new
+                        {
+                            applied = true,
+                            outcome = "conflict",
+                            confirmation = "postcommit_bytes_changed",
+                            sha256 = candidateSha,
+                            bytes_sha256 = expectedRaw,
+                            bom,
+                            scheduledRefresh = false,
+                            refresh_status = "not_requested",
+                        }
+                    );
+                bool immediate = options.Value<string>("refresh") == "immediate" || options.Value<string>("refresh") == "sync";
+                try
+                {
+                    if (_preparedRefreshForTests != null)
+                        _preparedRefreshForTests(relativePath, immediate);
+                    else if (immediate)
+                        ManageScriptRefreshHelpers.ImportAndRequestCompile(relativePath);
+                    else
+                        ManageScriptRefreshHelpers.ScheduleScriptRefresh(relativePath);
+                    return new SuccessResponse(
+                        "Prepared bytes committed once.",
+                        new
+                        {
+                            applied = true,
+                            sha256 = candidateSha,
+                            bytes_sha256 = expectedRaw,
+                            bom,
+                            editsApplied = 1,
+                            no_op = false,
+                            scheduledRefresh = !immediate,
+                            refresh_status = immediate ? "requested" : "scheduled",
+                            confirmation = "candidate_bytes_observed",
+                        }
+                    );
+                }
+                catch (Exception ex)
+                {
+                    return new SuccessResponse(
+                        "Prepared bytes committed; refresh failed.",
+                        new
+                        {
+                            applied = true,
+                            sha256 = candidateSha,
+                            bytes_sha256 = expectedRaw,
+                            bom,
+                            editsApplied = 1,
+                            scheduledRefresh = (bool?)null,
+                            refresh_attempted = true,
+                            refresh_confirmation = "unknown",
+                            refresh_status = "failed",
+                            refresh_error = ex.Message.Substring(0, Math.Min(512, ex.Message.Length)),
+                        }
+                    );
+                }
+            }
+            catch (PlatformNotSupportedException ex)
+            {
+                if (committed)
+                    return new SuccessResponse(
+                        "File replacement completed; postcommit observation failed.",
+                        new
+                        {
+                            applied = true,
+                            sha256 = candidateSha,
+                            bytes_sha256 = expectedRaw,
+                            bom,
+                            scheduledRefresh = false,
+                            refresh_status = "not_requested",
+                            confirmation = "postcommit_observation_failed",
+                        }
+                    );
+                return OrderedRefusal("atomic_replace_unsupported", ex.Message);
+            }
+            // This commit boundary must retain returned-replace evidence even for unexpected postcommit failures.
+            catch (Exception ex)
+            {
+                if (committed)
+                    return new SuccessResponse(
+                        "File replacement completed; postcommit observation failed.",
+                        new
+                        {
+                            applied = true,
+                            sha256 = candidateSha,
+                            bytes_sha256 = expectedRaw,
+                            bom,
+                            scheduledRefresh = false,
+                            refresh_status = "not_requested",
+                            confirmation = "postcommit_observation_failed",
+                        }
+                    );
+                if (attempted)
+                    return new
+                    {
+                        success = false,
+                        code = "outcome_unknown",
+                        data = new
+                        {
+                            outcome = "unknown",
+                            expected_bytes_sha256 = expectedRaw,
+                            confirmation = "pending_verification",
+                            refresh_status = "not_requested",
+                            recovery_backup = backupPath,
+                        },
+                    };
+                return OrderedRefusal("commit_refused", ex.Message);
+            }
+            finally
+            {
+                // These unique paths belong to this attempt only. Never roll a target back.
+                if (ownsTemp && tempPath != null)
+                    try
+                    {
+                        if (File.Exists(tempPath))
+                            File.Delete(tempPath);
+                    }
+                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is System.Security.SecurityException) { }
+                if (committed && backupPath != null)
+                    try
+                    {
+                        if (File.Exists(backupPath))
+                            File.Delete(backupPath);
+                    }
+                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is System.Security.SecurityException) { }
+            }
         }
 
         private static bool TryIndexFromLineCol(string text, int line1, int col1, out int index)
@@ -1653,7 +2137,16 @@ namespace MCPForUnity.Editor.Tools
         /// Supports class-level replace/delete with Roslyn span computation if USE_ROSLYN is defined,
         /// otherwise falls back to a conservative balanced-brace scan.
         /// </summary>
-        private static object EditScript(string fullPath, string relativePath, string name, JArray edits, JObject options, bool preview = false)
+        private static object EditScript(
+            string fullPath,
+            string relativePath,
+            string name,
+            JArray edits,
+            JObject options,
+            bool preview = false,
+            string sourceBuffer = null,
+            bool computeOnly = false
+        )
         {
             var editError = ValidateStructuredEdits(edits);
             if (editError != null)
@@ -1674,7 +2167,7 @@ namespace MCPForUnity.Editor.Tools
             string original;
             try
             {
-                original = ReadScriptContents(fullPath);
+                original = computeOnly ? sourceBuffer : ReadScriptContents(fullPath);
             }
             catch (Exception ex)
             {
@@ -2112,6 +2605,9 @@ namespace MCPForUnity.Editor.Tools
                         working = working.Remove(r.start, r.length).Insert(r.start, r.text);
                     appliedCount = replacements.Count;
                 }
+
+                if (computeOnly)
+                    return new SuccessResponse("Computed structured buffer without final validation or writing.", new { new_contents = working });
 
                 // Guard against structural imbalance before validation
                 if (!CheckBalancedDelimiters(working, out int lineBal, out char expectedBal))
