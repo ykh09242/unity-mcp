@@ -45,6 +45,10 @@ namespace MCPForUnity.Editor.Tools
             "list_asset_bundles",
             "get_bundle_assets",
             "get_bundle_dependencies",
+            "get_labels",
+            "set_labels",
+            "add_labels",
+            "remove_labels",
         };
 
         public static object HandleCommand(JObject @params)
@@ -65,6 +69,9 @@ namespace MCPForUnity.Editor.Tools
             var searchOptionError = AssetSearchSnapshots.ValidateOptions(@params, action == "search_metadata_v1");
             if (searchOptionError != null)
                 return searchOptionError;
+
+            if (AssetLabels.IsAction(action))
+                return AssetLabels.Handle(@params, RequireScriptConsent);
 
             // Common parameters
             string path = @params["path"]?.ToString();

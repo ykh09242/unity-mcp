@@ -467,6 +467,63 @@ Get detailed information about an asset. Examples: unity-mcp asset info "Assets/
 | --preview | boolean | optional | nargs=1, flag | — | — | Generate preview thumbnail (may be large). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp asset labels`
+
+Read or change asset labels using observed revisions; batches are sequential.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp asset labels add`
+
+Add exact labels while preserving unrelated labels.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| path | text | optional | nargs=1 | — | — |  |
+| --targets-json | text | optional | nargs=1 | — | — | 1-32 rows with path and observed revision. |
+| --labels-json | text | required | nargs=1 | — | — | Exact label array; [] clears with set. |
+| --revision | text | optional | nargs=1 | — | — | Observed single-target label revision. |
+| --force / -f | boolean | optional | nargs=1, flag | — | — | Skip confirmation, not revision validation. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp asset labels get`
+
+Read labels and revisions; package targets are read-only.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| path | text | optional | nargs=1 | — | — |  |
+| --targets-json | text | optional | nargs=1 | — | — | 1-32 rows: [&#123;"path":"Assets/a.txt"&#125;]. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp asset labels remove`
+
+Remove exact labels while preserving unrelated labels.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| path | text | optional | nargs=1 | — | — |  |
+| --targets-json | text | optional | nargs=1 | — | — | 1-32 rows with path and observed revision. |
+| --labels-json | text | required | nargs=1 | — | — | Exact label array; [] clears with set. |
+| --revision | text | optional | nargs=1 | — | — | Observed single-target label revision. |
+| --force / -f | boolean | optional | nargs=1, flag | — | — | Skip confirmation, not revision validation. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp asset labels set`
+
+Replace the complete label set; an empty array clears labels.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| path | text | optional | nargs=1 | — | — |  |
+| --targets-json | text | optional | nargs=1 | — | — | 1-32 rows with path and observed revision. |
+| --labels-json | text | required | nargs=1 | — | — | Exact label array; [] clears with set. |
+| --revision | text | optional | nargs=1 | — | — | Observed single-target label revision. |
+| --force / -f | boolean | optional | nargs=1, flag | — | — | Skip confirmation, not revision validation. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp asset mkdir`
 
 Create a folder. Examples: unity-mcp asset mkdir "Assets/NewFolder" unity-mcp asset mkdir "Assets/Levels/Chapter1"

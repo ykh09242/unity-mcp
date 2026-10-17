@@ -14,13 +14,13 @@ description: "Performs asset operations (import, create, modify, delete, etc.) i
 
 Performs asset operations (import, create, modify, delete, etc.) in Unity. Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase assignments, not built bundle files; use bundle_name and pages of at most 100.
 
-Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep `generate_preview=false` (previews can add large base64 blobs). Opt-in metadata_only search avoids explicit object/preview loads and returns a short-lived search_snapshot for reusable pages; keep query, scope, date and page_size unchanged.
+Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep `generate_preview=false` (previews can add large base64 blobs). Opt-in metadata_only search avoids explicit object/preview loads and returns a short-lived search_snapshot for reusable pages; keep query, scope, date and page_size unchanged. Label actions get/set/add/remove support 1-32 targets; mutations require observed revisions, are sequential rather than atomic, and never automatically retry an uncertain write.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['import', 'create', 'modify', 'delete', 'duplicate', 'move', 'rename', 'search', 'get_info', 'create_folder', 'get_components', 'list_asset_bundles', 'get_bundle_assets', 'get_bundle_dependencies']` | yes | Perform CRUD operations on assets. |
+| `action` | `Literal['import', 'create', 'modify', 'delete', 'duplicate', 'move', 'rename', 'search', 'get_info', 'create_folder', 'get_components', 'list_asset_bundles', 'get_bundle_assets', 'get_bundle_dependencies', 'get_labels', 'set_labels', 'add_labels', 'remove_labels']` | yes | Perform CRUD operations on assets. |
 | `path` | `str \| None` | — | Asset path required for asset operations; search defaults to Assets. Ignored for bundle assignment inspection. |
 | `asset_type` | `str \| None` | — | Asset type (e.g., 'Material', 'Folder') - required for 'create'. Note: For ScriptableObjects, use manage_scriptable_object. |
 | `properties` | `dict[str, Any] \| str \| None` | — | Dictionary of properties for 'create'/'modify'. Keys are property names, values are property values. |
@@ -35,6 +35,9 @@ Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_n
 | `recursive` | `bool` | — | Include indirect bundle dependencies (default false). |
 | `metadata_only` | `bool` | — | Search only: return metadata with instanceID=0 and a bounded 60-second Editor-session snapshot; no explicit object/preview loads. Default false preserves legacy behavior. |
 | `search_snapshot` | `str \| None` | — | Search only: opaque token from metadata_only=true; repeat the effective query and page_size. |
+| `labels` | `list[str] \| None` | — | Exact labels; set replaces, empty set clears. |
+| `label_targets` | `list[AssetLabelTarget] \| None` | — | Common-operation batch; each mutation row requires revision. |
+| `label_revision` | `str \| None` | — | Opaque revision from get_labels for a single-target mutation. |
 
 ## Returns
 

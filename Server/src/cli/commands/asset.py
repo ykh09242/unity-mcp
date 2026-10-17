@@ -20,6 +20,102 @@ def asset():
     pass
 
 
+@asset.group("labels")
+def labels_group():
+    """Read or change asset labels using observed revisions; batches are sequential."""
+
+
+def _labels_command(
+    action: str,
+    path: str | None,
+    targets_json: str | None,
+    labels_json: str | None = None,
+    revision: str | None = None,
+    force: bool = False,
+) -> None:
+    """Validate the closed label wire before configuration, confirmation or transport."""
+    from services.tools.manage_asset import asset_label_params
+
+    try:
+        # Inline JSON only: bounded options do not expand files or stdin implicitly.
+        if targets_json is not None and len(targets_json.encode("utf-8")) > 131072:
+            raise ValueError("targets JSON exceeds 128 KiB.")
+        if labels_json is not None and len(labels_json.encode("utf-8")) > 131072:
+            raise ValueError("labels JSON exceeds 128 KiB.")
+        targets = json.loads(targets_json) if targets_json is not None else None
+        requested = json.loads(labels_json) if labels_json is not None else None
+        if targets_json is not None and type(targets) is not list:
+            raise ValueError("--targets-json must supply an array, not null or another JSON type.")
+        if labels_json is not None and type(requested) is not list:
+            raise ValueError("--labels-json must supply an array, not null or another JSON type.")
+        params = asset_label_params(action, path, requested, targets, revision)
+    except (ValueError, TypeError) as exc:
+        raise click.BadParameter(str(exc)[:512]) from exc
+    if action != "get_labels":
+        confirm_destructive_action(
+            "Change labels on", "asset target", path or f"{len(targets)} targets", force
+        )
+    config = get_config()
+    result = run_command("manage_asset", params, config)
+    click.echo(format_output(result, config.format))
+
+
+@labels_group.command("get")
+@click.argument("path", required=False)
+@click.option("--targets-json", default=None, help='1-32 rows: [{"path":"Assets/a.txt"}].')
+@handle_unity_errors
+def labels_get(path: str | None, targets_json: str | None) -> None:
+    """Read labels and revisions; package targets are read-only."""
+    _labels_command("get_labels", path, targets_json)
+
+
+def _label_mutation_options(function):
+    """The three mutation verbs share exactly the same bounded input surface."""
+    function = click.option(
+        "--force", "-f", is_flag=True, help="Skip confirmation, not revision validation."
+    )(function)
+    function = click.option(
+        "--revision", default=None, help="Observed single-target label revision."
+    )(function)
+    function = click.option(
+        "--labels-json", required=True, help="Exact label array; [] clears with set."
+    )(function)
+    function = click.option(
+        "--targets-json", default=None, help="1-32 rows with path and observed revision."
+    )(function)
+    return click.argument("path", required=False)(function)
+
+
+@labels_group.command("set")
+@_label_mutation_options
+@handle_unity_errors
+def labels_set(
+    path: str | None, targets_json: str | None, labels_json: str, revision: str | None, force: bool
+) -> None:
+    """Replace the complete label set; an empty array clears labels."""
+    _labels_command("set_labels", path, targets_json, labels_json, revision, force)
+
+
+@labels_group.command("add")
+@_label_mutation_options
+@handle_unity_errors
+def labels_add(
+    path: str | None, targets_json: str | None, labels_json: str, revision: str | None, force: bool
+) -> None:
+    """Add exact labels while preserving unrelated labels."""
+    _labels_command("add_labels", path, targets_json, labels_json, revision, force)
+
+
+@labels_group.command("remove")
+@_label_mutation_options
+@handle_unity_errors
+def labels_remove(
+    path: str | None, targets_json: str | None, labels_json: str, revision: str | None, force: bool
+) -> None:
+    """Remove exact labels while preserving unrelated labels."""
+    _labels_command("remove_labels", path, targets_json, labels_json, revision, force)
+
+
 @asset.command("search")
 @click.argument("pattern", default="*")
 @click.option("--path", "-p", default="Assets", help="Folder path to search in.")

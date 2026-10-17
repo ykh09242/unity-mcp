@@ -6,11 +6,12 @@ import asyncio
 import json
 import logging
 import re
+import unicodedata
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -23,6 +24,102 @@ from services.tools.pagination import validate_page, page_integer
 logger = logging.getLogger("mcp-for-unity-server")
 
 
+class AssetLabelTarget(BaseModel):
+    """One closed label target; mutation revisions are checked by action admission."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    path: StrictStr
+    revision: StrictStr | None = None
+
+
+def asset_label_params(
+    action: str,
+    path: str | None = None,
+    labels: list[str] | None = None,
+    label_targets: list[AssetLabelTarget | dict[str, Any]] | None = None,
+    label_revision: str | None = None,
+) -> dict[str, Any]:
+    """Admit label inputs before context, preflight, confirmation or transport I/O.
+
+    Shared with the CLI so its JSON options have the same intrinsic limits. Native
+    resolution, editability and revision observations remain authoritative.
+    """
+    mutation = action != "get_labels"
+    if action not in {"get_labels", "set_labels", "add_labels", "remove_labels"}:
+        raise ValueError("Unknown label action.")
+    params = {"action": action}
+    if label_targets is not None:
+        if path is not None or label_revision is not None:
+            raise ValueError("Use either path/revision or label_targets.")
+        if type(label_targets) is not list or not 1 <= len(label_targets) <= 32:
+            raise ValueError("label_targets must contain 1-32 closed target rows.")
+        try:
+            rows = [AssetLabelTarget.model_validate(row) for row in label_targets]
+        except ValidationError as exc:
+            raise ValueError(
+                "Each target requires a string path and only an optional revision."
+            ) from exc
+        if not mutation and any("revision" in row.model_fields_set for row in rows):
+            raise ValueError("get_labels does not accept revisions.")
+        params["labelTargets"] = [row.model_dump(exclude_unset=True) for row in rows]
+    else:
+        if type(path) is not str or (
+            label_revision is not None and type(label_revision) is not str
+        ):
+            raise ValueError("A single target requires a string path and optional string revision.")
+        rows = [AssetLabelTarget(path=path, revision=label_revision)]
+        params["path"] = path
+        if mutation:
+            params["labelRevision"] = label_revision
+        elif label_revision is not None:
+            raise ValueError("get_labels does not accept a revision.")
+    paths = [row.path for row in rows]
+    if any(
+        not value or value != value.strip() or any(unicodedata.category(c) == "Cc" for c in value)
+        for value in paths
+    ):
+        raise ValueError(
+            "Target paths must be nonempty strings without edge whitespace or controls."
+        )
+    if len(set(paths)) != len(paths):
+        raise ValueError("Duplicate target paths are not allowed.")
+    try:
+        if sum(len(value.encode("utf-8")) for value in paths) > 32768:
+            raise ValueError("Target paths exceed 32 KiB.")
+        if mutation:
+            if any(
+                row.revision is None
+                or re.fullmatch(r"mcp-al-v1_[0-9a-f]{32}_[0-9a-f]{64}_[0-9a-f]{64}", row.revision)
+                is None
+                for row in rows
+            ):
+                raise ValueError("Each mutation requires an observed label revision.")
+            if (
+                type(labels) is not list
+                or len(labels) > 128
+                or any(type(value) is not str for value in labels)
+            ):
+                raise ValueError("labels must be an array of at most 128 strings.")
+            if any(
+                not value
+                or value != value.strip()
+                or any(unicodedata.category(c) == "Cc" for c in value)
+                or len(value.encode("utf-16-le")) // 2 > 256
+                for value in labels
+            ):
+                raise ValueError(
+                    "Labels require 1-256 UTF-16 units, no controls or edge whitespace."
+                )
+            if sum(len(value.encode("utf-8")) for value in labels) > 16384:
+                raise ValueError("Requested labels exceed 16 KiB.")
+            params["labels"] = labels
+        elif labels is not None:
+            raise ValueError("get_labels does not accept labels.")
+    except UnicodeError as exc:
+        raise ValueError("Paths and labels must be valid Unicode.") from exc
+    return params
+
+
 @mcp_for_unity_tool(
     description=(
         "Performs asset operations (import, create, modify, delete, etc.) in Unity. "
@@ -32,6 +129,8 @@ logger = logging.getLogger("mcp-for-unity-server")
         "`generate_preview=false` (previews can add large base64 blobs). "
         "Opt-in metadata_only search avoids explicit object/preview loads and returns a short-lived "
         "search_snapshot for reusable pages; keep query, scope, date and page_size unchanged."
+        " Label actions get/set/add/remove support 1-32 targets; mutations require observed revisions, "
+        "are sequential rather than atomic, and never automatically retry an uncertain write."
     ),
     annotations=ToolAnnotations(
         title="Manage Asset",
@@ -56,6 +155,10 @@ async def manage_asset(
             "list_asset_bundles",
             "get_bundle_assets",
             "get_bundle_dependencies",
+            "get_labels",
+            "set_labels",
+            "add_labels",
+            "remove_labels",
         ],
         "Perform CRUD operations on assets.",
     ],
@@ -110,8 +213,68 @@ async def manage_asset(
         "Search only: opaque token from metadata_only=true; repeat the effective query and page_size.",
     ]
     | None = None,
+    labels: Annotated[
+        list[StrictStr], Field(max_length=128), "Exact labels; set replaces, empty set clears."
+    ]
+    | None = None,
+    label_targets: Annotated[
+        list[AssetLabelTarget],
+        Field(min_length=1, max_length=32),
+        "Common-operation batch; each mutation row requires revision.",
+    ]
+    | None = None,
+    label_revision: Annotated[
+        StrictStr, "Opaque revision from get_labels for a single-target mutation."
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     action_l = (action or "").lower()
+    label_action = action_l in {"get_labels", "set_labels", "add_labels", "remove_labels"}
+    if label_action:
+        try:
+            if (
+                any(
+                    value is not None
+                    for value in (
+                        asset_type,
+                        properties,
+                        destination,
+                        search_pattern,
+                        filter_type,
+                        filter_date_after,
+                        page_size,
+                        page_number,
+                        bundle_name,
+                        search_snapshot,
+                    )
+                )
+                or generate_preview is not False
+                or recursive is not False
+                or metadata_only is not False
+            ):
+                raise ValueError("Label actions do not accept other asset options.")
+            params = asset_label_params(action_l, path, labels, label_targets, label_revision)
+        except (ValueError, TypeError) as exc:
+            return {"success": False, "code": "invalid_asset_labels", "message": str(exc)[:512]}
+        instance = await get_unity_instance_from_context(ctx)
+        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=False)
+        if gate is not None:
+            return gate.model_dump()
+        result = await send_with_unity_instance(
+            async_send_command_with_retry,
+            instance,
+            "manage_asset",
+            params,
+            loop=asyncio.get_running_loop(),
+            retry_on_reload=action_l == "get_labels",
+        )
+        return result if isinstance(result, dict) else {"success": False, "message": str(result)}
+    if any(value is not None for value in (labels, label_targets, label_revision)):
+        return {
+            "success": False,
+            "code": "invalid_asset_labels",
+            "message": "Label options require a label action.",
+        }
     if type(metadata_only) is not bool:
         return {
             "success": False,
