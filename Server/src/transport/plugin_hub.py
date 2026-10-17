@@ -977,6 +977,109 @@ class PluginHub(WebSocketEndpoint):
             return session_id, details
 
     @classmethod
+    def _diagnostic_owner_locked(cls, registry, websocket):
+        """Caller holds Hub then registry locks; payload identity is never trusted."""
+        sid = getattr(websocket.state, "plugin_session_id", None)
+        session = registry._sessions.get(sid)
+        if session is None:
+            return None
+        current = (
+            registry._user_hash_to_session.get((session.user_id, session.project_hash))
+            if session.user_id
+            else registry._hash_to_session.get(session.project_hash)
+        )
+        if (
+            cls._registry is not registry
+            or cls._connections.get(sid) is not websocket
+            or current != sid
+            or getattr(websocket.state, "user_id", None) != session.user_id
+            or not getattr(websocket.state, "plugin_registered", False)
+            or websocket.client_state != WebSocketState.CONNECTED
+            or websocket.application_state != WebSocketState.CONNECTED
+        ):
+            return None
+        return session
+
+    @classmethod
+    async def _record_tool_diagnostic_failure(
+        cls,
+        websocket,
+        reason,
+        names=(),
+        since_sequence=None,
+        expected_revision=None,
+        offending=None,
+    ):
+        from services.custom_tool_service import CustomToolService
+
+        lock, registry, service = cls._lock, cls._registry, CustomToolService._instance
+        if lock is None or registry is None or service is None or service._mcp is not cls._mcp:
+            return
+        async with lock:
+            async with registry._lock:
+                session = cls._diagnostic_owner_locked(registry, websocket)
+                if session is None or (
+                    expected_revision is not None and session.tools_revision != expected_revision
+                ):
+                    return
+                if since_sequence is not None and service.diagnostic_attempt_is_newer(
+                    "http",
+                    session.project_hash,
+                    session.user_id,
+                    session.session_id,
+                    since_sequence,
+                ):
+                    return
+                service.record_diagnostic_attempt(
+                    "http",
+                    session.project_hash,
+                    session.session_id,
+                    session.user_id,
+                    names=names,
+                    offending=offending,
+                    reason=reason,
+                    retained=session.tools_known,
+                    revision=session.tools_revision,
+                )
+
+    @classmethod
+    async def get_tool_diagnostic_attempts(cls, instance, user_id=None, name=None):
+        """Read only records belonging to the exact current authenticated socket."""
+        from services.custom_tool_service import CustomToolService
+        from services.tool_diagnostics import _named
+
+        lock, registry, service = cls._lock, cls._registry, CustomToolService._instance
+        if lock is None or registry is None or service is None or service._mcp is not cls._mcp:
+            return []
+        if config.http_remote_hosted and not user_id:
+            return []
+        try:
+            sid = await cls._resolve_session_id(instance, user_id=user_id, retry_on_reload=False)
+        except (InstanceSelectionRequiredError, NoUnitySessionError):
+            return []
+        async with lock:
+            async with registry._lock:
+                websocket = cls._connections.get(sid)
+                session = cls._diagnostic_owner_locked(registry, websocket) if websocket else None
+                if session is None or session.user_id != user_id:
+                    return []
+                result = [
+                    _named(
+                        service.get_diagnostic_attempts(
+                            "http", session.project_hash, user_id, session.session_id
+                        ),
+                        name,
+                    )
+                ]
+                if not config.http_remote_hosted:
+                    alias = (
+                        service.get_project_id_for_hash(session.project_hash)
+                        or session.project_hash
+                    )
+                    result.append(_named(service.get_diagnostic_attempts("manual", alias), name))
+                return [value for value in result if value is not None]
+
+    @classmethod
     async def get_capability_snapshot(
         cls, unity_instance: str | None, user_id: str | None = None
     ) -> CapabilityConnection:
@@ -1782,11 +1885,13 @@ class PluginHub(WebSocketEndpoint):
             try:
                 correlation = ToolSettingsCorrelation.model_validate(data)
             except ValueError:
+                await self._record_tool_diagnostic_failure(websocket, "metadata_invalid")
                 await websocket.close(code=4400, reason="Invalid tool settings correlation")
                 return
         try:
             payload = RegisterToolsMessage.model_validate(data)
         except ValueError:
+            await self._record_tool_diagnostic_failure(websocket, "metadata_invalid")
             if correlation is None:
                 raise
             await self._send_tool_settings_result(
@@ -1842,6 +1947,7 @@ class PluginHub(WebSocketEndpoint):
             len(payload.model_dump_json(exclude=excluded_receipt_fields).encode("utf-8"))
             > 512 * 1024
         ):
+            await self._record_tool_diagnostic_failure(websocket, "diagnostic_limit")
             if correlation is not None:
                 await self._send_tool_settings_result(
                     websocket, correlation, "rejected", reason="invalid_catalog"
@@ -1850,6 +1956,10 @@ class PluginHub(WebSocketEndpoint):
             await websocket.close(code=4400, reason="Tool registration exceeds size limit")
             return
 
+        from services.custom_tool_service import CustomToolService
+
+        diagnostic_service = CustomToolService._instance
+        before_attempt = diagnostic_service._diagnostic_sequence if diagnostic_service else 0
         outcome = None
         scope = None
         committed = None
@@ -1892,6 +2002,13 @@ class PluginHub(WebSocketEndpoint):
                     ),
                 )
         except Exception as error:
+            names = [tool.name for tool in payload.tools[:256]]
+            reason_code = (
+                "duplicate_name" if len(set(names)) != len(names) else "publication_failed"
+            )
+            await self._record_tool_diagnostic_failure(
+                websocket, reason_code, names, before_attempt
+            )
             if correlation is None:
                 raise
             reason = str(error) if isinstance(error, ToolSettingsConflict) else "publication_failed"

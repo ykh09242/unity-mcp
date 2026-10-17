@@ -128,6 +128,62 @@ async def sync_tool_visibility_from_unity(
     from transport.plugin_hub import PluginHub
     from transport.unity_transport import send_with_unity_instance
 
+    service = None
+    captured_sources = {}
+    capture = []
+    diagnostic_socket = None
+    diagnostic_reason = "metadata_invalid"
+    diagnostic_names = []
+    diagnostic_offending = None
+    diagnostic_sequence = 0
+    http_revision = None
+
+    async def record_failure():
+        if service is None:
+            return
+        if config.transport_mode.lower() == "http":
+            if diagnostic_socket is not None:
+                await PluginHub._record_tool_diagnostic_failure(
+                    diagnostic_socket,
+                    diagnostic_reason,
+                    diagnostic_names,
+                    diagnostic_sequence,
+                    expected_revision=http_revision,
+                    offending=diagnostic_offending,
+                )
+            return
+        if not capture:
+            return
+        from transport.legacy.unity_connection import _commit_stdio_catalog
+
+        connection, generation = capture[0]
+        project = connection.instance_id.rsplit("@", 1)[-1]
+
+        def publish_failure():
+            previous = captured_sources.get(("stdio", None, project))
+            with service._catalog_lock:
+                if service._sources.get(("stdio", None, project)) is not previous:
+                    return
+                if service.diagnostic_attempt_is_newer(
+                    "stdio", project, None, generation, diagnostic_sequence
+                ):
+                    return
+                service.record_diagnostic_attempt(
+                    "stdio",
+                    project,
+                    generation,
+                    names=diagnostic_names,
+                    reason=diagnostic_reason,
+                    offending=diagnostic_offending,
+                    retained=previous is not None,
+                    revision=previous.revision if previous is not None else 0,
+                )
+
+        try:
+            _commit_stdio_catalog(connection, generation, publish_failure)
+        except ValueError:
+            logger.debug("Discarded stale/busy diagnostic source")
+
     try:
         registry = PluginHub._registry
         session_id = None
@@ -136,11 +192,13 @@ async def sync_tool_visibility_from_unity(
             session_id = await PluginHub._resolve_session_id(instance_id, retry_on_reload=False)
             session = await registry.get_session(session_id)
             http_revision = session.tools_revision if session is not None else None
+            diagnostic_socket = PluginHub._connections.get(session_id)
 
         from services.custom_tool_service import CustomToolService
 
         service = CustomToolService._instance
         captured_sources = dict(service._sources) if service is not None else {}
+        diagnostic_sequence = service._diagnostic_sequence if service is not None else 0
         capture = []
         response = await send_with_unity_instance(
             async_send_command_with_retry,
@@ -185,6 +243,7 @@ async def sync_tool_visibility_from_unity(
             logger.debug(
                 "sync_tool_visibility_from_unity: no tool data in Unity response",
             )
+            await record_failure()
             return {"error": "No tool data returned from Unity"}
 
         from transport.models import ToolSettingsCorrelation
@@ -201,6 +260,7 @@ async def sync_tool_visibility_from_unity(
         import json
 
         if len(tools) > 256 or len(json.dumps(tools, allow_nan=False).encode("utf-8")) > 512 * 1024:
+            diagnostic_reason = "diagnostic_limit"
             raise ValueError("Unity catalog exceeds supported bounds")
         # Validate the complete raw snapshot before filtering disabled tools.
         # Partial parsing must never turn a malformed member into a deletion.
@@ -208,15 +268,30 @@ async def sync_tool_visibility_from_unity(
         parsed_tools = []
         names = set()
         for tool in tools:
+            candidate = tool.get("name") if isinstance(tool, dict) else None
+            diagnostic_offending = (
+                candidate
+                if isinstance(candidate, str)
+                and 0 < len(candidate) <= 128
+                and all(c.isalnum() or c in "_.-" for c in candidate)
+                else None
+            )
+            if diagnostic_offending is None:
+                diagnostic_names = []
+            else:
+                diagnostic_names.append(diagnostic_offending)
             if not isinstance(tool, dict) or type(tool.get("enabled", True)) is not bool:
                 raise ValueError("Malformed Unity catalog descriptor")
             if extended and type(tool.get("is_built_in")) is not bool:
                 raise ValueError("Incomplete extended Unity catalog")
             parsed = ToolDefinitionModel.model_validate(tool)
             if parsed.name in names:
+                diagnostic_reason = "duplicate_name"
                 raise ValueError("Duplicate Unity catalog tool name")
             names.add(parsed.name)
             parsed_tools.append(parsed)
+        diagnostic_offending = None
+        diagnostic_reason = "publication_failed"
         enabled_tools = [tool for tool in tools if tool.get("enabled", True)]
         enabled_models = [
             parsed for raw, parsed in zip(tools, parsed_tools) if raw.get("enabled", True)
@@ -418,6 +493,7 @@ async def sync_tool_visibility_from_unity(
         }
 
     except Exception as exc:
+        await record_failure()
         logger.warning(
             "Failed to sync tool visibility from Unity (%s)",
             type(exc).__name__,

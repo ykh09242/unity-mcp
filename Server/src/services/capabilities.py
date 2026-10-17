@@ -146,6 +146,13 @@ async def _connection(instance: str | None, user_id: str | None) -> CapabilityCo
     )
 
 
+async def get_connection_evidence(
+    instance: str | None, user_id: str | None = None
+) -> CapabilityConnection:
+    """Observe existing authenticated routing without probes or capability aggregation."""
+    return await _connection(instance, user_id)
+
+
 async def _read_source(
     name: str,
     ctx: Context,

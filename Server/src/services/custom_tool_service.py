@@ -197,6 +197,8 @@ class CustomToolService:
         self._owned_tools: dict[str, Tool] = {}
         self._global_owners: dict[str, tuple[str, str | None, str]] = {}
         self._catalog_lock = RLock()
+        self._diagnostic_attempts = OrderedDict()
+        self._diagnostic_sequence = 0
         self._publishing = False
         self._next_source_ordinal = 0
         self._input_models: OrderedDict[
@@ -845,6 +847,154 @@ class CustomToolService:
             allow_nan=False,
         )
 
+    def retire_diagnostic_generation(self, kind, project_id, generation, user_id=None):
+        """Retire only this captured owner; a replacement generation is untouched."""
+        with self._catalog_lock:
+            self._diagnostic_attempts.pop((kind, user_id, project_id, generation), None)
+
+    def get_diagnostic_attempts(self, kind, project_id, user_id=None, generation=None):
+        """Copy the current safe observation for one exact source owner."""
+        with self._catalog_lock:
+            self._expire_diagnostic_attempts()
+            value = self._diagnostic_attempts.get((kind, user_id, project_id, generation))
+            return value[2] if value is not None else None
+
+    def _expire_diagnostic_attempts(self):
+        now = time.monotonic()
+        for key, value in list(self._diagnostic_attempts.items()):
+            if key[0] == "manual" and now - value[0] >= 600:
+                self._diagnostic_attempts.pop(key)
+
+    def diagnostic_attempt_is_newer(self, kind, project_id, user_id, generation, sequence):
+        """Compare private publication order without exposing cross-owner activity."""
+        with self._catalog_lock:
+            value = self._diagnostic_attempts.get((kind, user_id, project_id, generation))
+            return value is not None and value[3] > sequence
+
+    def record_diagnostic_attempt(
+        self,
+        kind,
+        project_id,
+        generation=None,
+        user_id=None,
+        *,
+        names=(),
+        reason="none",
+        offending=None,
+        retained=False,
+        revision=0,
+        catalog_generation=None,
+    ):
+        """Record fixed vocabulary only; callers fence authenticated connection ownership.
+
+        Quotas charge UTF-8 JSON including all scope identity and record metadata,
+        separately from fixed row/field/object-count caps. They are not heap sizes.
+        """
+        from hashlib import sha256
+        from models.tool_diagnostics import ToolDiagnosticAttempt, ToolDiagnosticRow
+
+        if (
+            kind not in ("http", "stdio", "manual")
+            or any(
+                value is not None
+                and (not isinstance(value, str) or len(value) > 256 or not value.isprintable())
+                for value in (project_id, generation, user_id, catalog_generation)
+            )
+            or not isinstance(project_id, str)
+        ):
+            return
+        action = {
+            "none": "none",
+            "duplicate_name": "remove_duplicate_then_refresh",
+            "schema_or_default_invalid": "review_schema_and_defaults",
+            "publication_failed": "inspect_registration_then_refresh",
+            "metadata_invalid": "review_tool_declaration",
+            "diagnostic_limit": "read_named_tool_or_reduce_catalog",
+        }.get(reason)
+        if action is None:
+            return
+        with self._catalog_lock:
+            self._expire_diagnostic_attempts()
+            key = (kind, user_id, project_id, generation)
+            previous = self._diagnostic_attempts.get(key)
+            ordinal = previous[2].attempt + 1 if previous is not None else 1
+            self._diagnostic_sequence += 1
+            from itertools import islice
+
+            safe_names = [
+                name
+                if isinstance(name, str)
+                and len(name) <= 128
+                and all(c.isalnum() or c in "_.-" for c in name)
+                else None
+                for name in islice(names, 256)
+            ]
+            if offending in safe_names:
+                safe_names.remove(offending)
+                safe_names.insert(0, offending)
+            rows = []
+            for name in (safe_names or [None])[:64]:
+                collateral = reason != "none" and offending is not None and name != offending
+                rows.append(
+                    ToolDiagnosticRow(
+                        tool_name=name,
+                        stage="server_publication",
+                        state="registered" if reason == "none" else "registration_failed",
+                        reason="batch_rejected" if collateral else reason,
+                        next_action="repair_batch_then_refresh" if collateral else action,
+                    )
+                )
+            attempt = ToolDiagnosticAttempt(
+                source_kind=kind,
+                project_id=sha256(project_id.encode()).hexdigest(),
+                generation=sha256(generation.encode()).hexdigest() if generation else None,
+                catalog_generation=sha256(catalog_generation.encode()).hexdigest()
+                if catalog_generation
+                else None,
+                attempt=ordinal,
+                catalog_revision=revision,
+                prior_catalog_retained=retained,
+                truncated=len(safe_names) > 64,
+                rows=rows,
+            )
+
+            def encoded_size(value):
+                return len(
+                    json.dumps(
+                        {
+                            "transport": kind,
+                            "tenant": user_id,
+                            "project": project_id,
+                            "generation": generation,
+                            "observation": value.model_dump(mode="json"),
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ).encode("utf-8")
+                )
+
+            size = encoded_size(attempt)
+            while size > 32 * 1024 and attempt.rows:
+                attempt = attempt.model_copy(update={"rows": attempt.rows[:-1], "truncated": True})
+                size = encoded_size(attempt)
+            if size > 32 * 1024:
+                return
+            self._diagnostic_attempts.pop(key, None)
+            self._diagnostic_attempts[key] = (
+                time.monotonic(),
+                size,
+                attempt,
+                self._diagnostic_sequence,
+            )
+            while len(self._diagnostic_attempts) > 256 or (
+                sum(value[1] for value in self._diagnostic_attempts.values())
+                + max(0, len(self._diagnostic_attempts) - 1)
+                + len(b'{"records":[]}')
+                > 512 * 1024
+            ):
+                self._diagnostic_attempts.popitem(last=False)
+
     def replace_project_catalog(
         self,
         project_id,
@@ -872,11 +1022,17 @@ class CustomToolService:
             if self._publishing:
                 raise ValueError("Reentrant custom tool catalog publication")
             self._publishing = True
+            diagnostic_reason = "schema_or_default_invalid"
+            diagnostic_offending = None
+            diagnostic_names = []
+            diagnostic_record = True
+            old = self._sources.get(key)
             try:
                 old = self._sources.get(key)
                 if expected_revision is not None and (
                     (old.revision if old is not None else 0) != expected_revision
                 ):
+                    diagnostic_record = False
                     raise ValueError("Custom tool catalog changed during refresh")
                 base = (
                     old.tools
@@ -888,8 +1044,14 @@ class CustomToolService:
                 definitions = {} if replace else dict(base)
                 incoming = {}
                 for raw in tools:
+                    diagnostic_offending = (
+                        raw.name if isinstance(raw, ToolDefinitionModel) else None
+                    )
                     definition = ToolDefinitionModel.model_validate(raw.model_dump())
+                    if len(diagnostic_names) < 256:
+                        diagnostic_names.append(definition.name)
                     if definition.name in incoming:
+                        diagnostic_reason = "duplicate_name"
                         raise ValueError("Duplicate custom tool name in catalog")
                     incoming[definition.name] = definition
                 definitions.update(incoming)
@@ -910,7 +1072,10 @@ class CustomToolService:
                 # Even a no-op advertisement must validate the complete incoming batch.
                 for name, definition in definitions.items():
                     if name in incoming or name not in prepared:
+                        diagnostic_offending = name
                         prepared[name] = self._prepare_global_tool(definition)
+                diagnostic_offending = None
+                diagnostic_reason = "publication_failed"
                 changed = (
                     old is None
                     or old.generation != generation
@@ -992,6 +1157,7 @@ class CustomToolService:
                 removals = [tool for name, tool in effective_owned.items() if name not in owned]
                 component_changed = bool(additions or removals)
                 if not changed and not component_changed and visibility is None:
+                    diagnostic_reason = "none"
                     return {
                         "changed": False,
                         "global_component_changed": False,
@@ -1072,6 +1238,7 @@ class CustomToolService:
                     self._next_source_ordinal += 1
                 self._project_tools = project_tools
                 self._hash_to_project = hash_to_project
+                diagnostic_reason = "none"
                 return {
                     "changed": changed or component_changed or visibility is not None,
                     "global_component_changed": component_changed,
@@ -1084,6 +1251,33 @@ class CustomToolService:
                 }
             finally:
                 self._publishing = False
+                if diagnostic_record:
+                    current = self._sources.get(key)
+                    if withdraw or not known or (diagnostic_reason == "none" and current is None):
+                        self.retire_diagnostic_generation(
+                            kind, project_id, old.generation if old else generation, user_id
+                        )
+                    else:
+                        if (
+                            diagnostic_reason == "none"
+                            and old is not None
+                            and old.generation != generation
+                        ):
+                            self.retire_diagnostic_generation(
+                                kind, project_id, old.generation, user_id
+                            )
+                        self.record_diagnostic_attempt(
+                            kind,
+                            project_id,
+                            generation,
+                            user_id,
+                            names=diagnostic_names,
+                            reason=diagnostic_reason,
+                            offending=diagnostic_offending,
+                            retained=diagnostic_reason != "none" and current is not None,
+                            revision=current.revision if current else 0,
+                            catalog_generation=current.generation if current else None,
+                        )
 
     def _publish_global_tools(self, prepared):
         self.register_global_tools([definition for definition, _ in prepared])
