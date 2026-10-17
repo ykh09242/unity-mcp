@@ -113,7 +113,8 @@ async def send_command(
         UnityConnectionError: If connection fails
     """
     cfg = config or get_config()
-    url = _server_url(cfg, "/api/command")
+    guarded = cfg.expected_project_root is not None
+    url = _server_url(cfg, "/api/context-command" if guarded else "/api/command")
 
     payload = {
         "type": command_type,
@@ -123,11 +124,22 @@ async def send_command(
     if cfg.unity_instance:
         payload["unity_instance"] = cfg.unity_instance
 
+    if guarded:
+        from cli.utils.project_context import exact_hash, is_loopback
+
+        if not is_loopback(cfg.host) or exact_hash(cfg.unity_instance) is None:
+            raise click.UsageError(
+                "Project context requires a local server and a complete explicit instance hash."
+            )
+        payload["expected_project"] = {"root": cfg.expected_project_root}
+
     if cfg.verbose:
-        click.echo(f"> POST {url} {json.dumps(payload)}", err=True)
+        visible = {**payload, "expected_project": "<redacted>"} if guarded else payload
+        click.echo(f"> POST {url} {json.dumps(visible)}", err=True)
 
     try:
-        async with httpx.AsyncClient() as client:
+        options = {"trust_env": False, "follow_redirects": False} if guarded else {}
+        async with httpx.AsyncClient(**options) as client:
             response = await client.post(
                 url,
                 json=payload,
@@ -135,7 +147,12 @@ async def send_command(
                 timeout=timeout or cfg.timeout,
             )
             if cfg.verbose:
-                click.echo(f"< {response.status_code} {response.text}", err=True)
+                click.echo(
+                    f"< {response.status_code}"
+                    if guarded
+                    else f"< {response.status_code} {response.text}",
+                    err=True,
+                )
             response.raise_for_status()
             return normalize_unity_response(response.json())
     except httpx.ConnectError as e:
@@ -150,10 +167,18 @@ async def send_command(
             f"Unity may be busy or unresponsive."
         )
     except httpx.HTTPStatusError as e:
+        if guarded:
+            raise UnityConnectionError(
+                "Project context request refused; verify the selected local server supports guarded commands."
+            ) from None
         raise UnityConnectionError(
             f"HTTP error from server: {e.response.status_code} - {e.response.text}"
         )
     except Exception as e:
+        if guarded:
+            raise UnityConnectionError(
+                "Project context request failed; inspect the selected server before retrying."
+            ) from None
         raise UnityConnectionError(f"Unexpected error: {e}")
 
 

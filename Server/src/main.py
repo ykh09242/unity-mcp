@@ -19,8 +19,16 @@ from transport.plugin_hub import (
     _CommandBudget,
     _HttpRequestBudget,
     http_request_budget,
+    command_outcome_unknown,
 )
 from transport.models import SessionDetails, SessionList
+from transport.local_project_context import (
+    ContextCommand,
+    LocalProjectContext,
+    full_hash,
+    normalized_root,
+    local_project_context,
+)
 from services.custom_tool_service import (
     CustomToolService,
     resolve_project_id_for_unity_instance,
@@ -675,44 +683,82 @@ def create_mcp_server(
                 logger.error("CLI command failed (%s)", type(e).__name__)
                 return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
-        async def _execute_cli_command(command_type, params, unity_instance) -> JSONResponse:
-            # Get available sessions
-            sessions = await PluginHub.get_sessions()
-            if not sessions.sessions:
-                return JSONResponse(
-                    {
-                        "success": False,
-                        "error": "No Unity instances connected. Make sure Unity is running with MCP plugin.",
-                    },
-                    status_code=503,
-                )
+        @mcp.custom_route("/api/context-command", methods=["POST"])
+        async def context_command_route(request: Request) -> JSONResponse:
+            """Fail closed on old/mismatched registrations; never change MCP selection."""
+            started_at = asyncio.get_running_loop().time()
+            try:
+                body = ContextCommand.model_validate(await request.json())
+            except (ValueError, UnicodeError):
+                return JSONResponse(LocalProjectContext().refuse("project_context_invalid"))
+            target_hash = full_hash(body.unity_instance)
+            root = normalized_root(body.expected_project.root)
+            context = LocalProjectContext()
+            if target_hash is None or root is None:
+                return JSONResponse(context.refuse("project_context_invalid"))
+            policy_command = body.type
+            policy_params = body.params
+            if body.type == "execute_custom_tool":
+                name = body.params.get("tool_name") or body.params.get("name")
+                policy_command = name if isinstance(name, str) else body.type
+                policy_params = body.params.get("parameters") or body.params.get("params") or {}
+                if not isinstance(policy_params, dict):
+                    policy_params = {}
+            budget = _CommandBudget(
+                started_at + PluginHub._command_timeouts(policy_command, policy_params)[1]
+            )
+            scope = asyncio.timeout_at(budget.expires_at)
+            budget_token = http_request_budget.set(_HttpRequestBudget(started_at, budget, scope))
+            context_token = local_project_context.set(context)
+            try:
+                async with scope:
+                    selected = await PluginHub.capture_local_project_context(
+                        context, target_hash, root
+                    )
+                    if selected is None:
+                        return JSONResponse(
+                            context.refuse(context.refusal or "project_context_unavailable")
+                        )
+                    result = await _execute_cli_command(
+                        body.type, body.params, body.unity_instance, _selected=selected
+                    )
+                if context.refusal is not None:
+                    evidence = budget.execution_evidence()
+                    if evidence.dispatched:
+                        identifiers = (
+                            {"job_id": context.job_id} if context.job_id is not None else {}
+                        )
+                        return JSONResponse(
+                            bound_response(
+                                command_outcome_unknown(
+                                    evidence.command or body.type,
+                                    "Project-bound command could not continue after an earlier dispatch",
+                                    session_id=evidence.session_id,
+                                    command_id=evidence.command_id,
+                                    cause=context.refusal,
+                                    **identifiers,
+                                )
+                            )
+                        )
+                    return JSONResponse(context.refuse(context.refusal))
+                return result
+            except TimeoutError:
+                if not scope.expired():
+                    raise
+                return JSONResponse(bound_response(budget.timeout_response(policy_command)))
+            finally:
+                local_project_context.reset(context_token)
+                http_request_budget.reset(budget_token)
 
-            # Find target session
-            session_id = None
-            session_details = None
-            if unity_instance:
-                session_id, session_details = _select_local_session(sessions, unity_instance)
-
-            # If a specific unity_instance was requested but not found, return an error
-            # (Check done here so execute_custom_tool can also validate the instance)
-            if unity_instance and not session_id:
-                return JSONResponse(
-                    {
-                        "success": False,
-                        "error": f"Unity instance '{unity_instance}' not found",
-                    },
-                    status_code=404,
-                )
-
-            # If no specific unity_instance requested, use first available session
-            # (Must be done before execute_custom_tool check so all command types benefit)
-            if not session_id:
-                try:
-                    session_id = next(iter(sessions.sessions.keys()))
-                    session_details = sessions.sessions.get(session_id)
-                except StopIteration:
-                    # No sessions available - sessions.sessions is empty
-                    # This should not happen since we checked at line 378, but handle gracefully
+        async def _execute_cli_command(
+            command_type, params, unity_instance, _selected=None
+        ) -> JSONResponse:
+            if _selected is not None:
+                session_id, session_details = _selected
+            else:
+                # Get available sessions
+                sessions = await PluginHub.get_sessions()
+                if not sessions.sessions:
                     return JSONResponse(
                         {
                             "success": False,
@@ -720,6 +766,40 @@ def create_mcp_server(
                         },
                         status_code=503,
                     )
+
+                # Find target session
+                session_id = None
+                session_details = None
+                if unity_instance:
+                    session_id, session_details = _select_local_session(sessions, unity_instance)
+
+                # If a specific unity_instance was requested but not found, return an error
+                # (Check done here so execute_custom_tool can also validate the instance)
+                if unity_instance and not session_id:
+                    return JSONResponse(
+                        {
+                            "success": False,
+                            "error": f"Unity instance '{unity_instance}' not found",
+                        },
+                        status_code=404,
+                    )
+
+                # If no specific unity_instance requested, use first available session
+                # (Must be done before execute_custom_tool check so all command types benefit)
+                if not session_id:
+                    try:
+                        session_id = next(iter(sessions.sessions.keys()))
+                        session_details = sessions.sessions.get(session_id)
+                    except StopIteration:
+                        # No sessions available - sessions.sessions is empty
+                        # This should not happen since we checked at line 378, but handle gracefully
+                        return JSONResponse(
+                            {
+                                "success": False,
+                                "error": "No Unity instances connected. Make sure Unity is running with MCP plugin.",
+                            },
+                            status_code=503,
+                        )
 
             # Custom tool execution - must be checked BEFORE the final PluginHub.send_command call
             # This applies to both cases: with or without explicit unity_instance
@@ -776,6 +856,24 @@ def create_mcp_server(
                 result = await service.execute_tool(
                     project_id, tool_name, unity_instance_hint, tool_params
                 )
+                context = local_project_context.get()
+                failure = result.data if isinstance(result.data, dict) else {}
+                request_budget = http_request_budget.get()
+                if (
+                    context is not None
+                    and request_budget is not None
+                    and result.success is False
+                    and result.hint == "inspect_state_before_retry"
+                    and failure.get("dispatched") is False
+                    and failure.get("reason")
+                    in {
+                        "custom_tool_catalog_changed",
+                        "custom_tool_schema_changed",
+                    }
+                    and request_budget.budget.execution_evidence().dispatched
+                ):
+                    # Catalog admission may refuse a poll before it reaches the Hub guard.
+                    context.refuse(failure["reason"], failure)
                 return JSONResponse(bound_response(result.model_dump()))
 
             # Send command to Unity

@@ -22,6 +22,7 @@ class CLIConfig:
     format: str = "text"  # text, json, table
     unity_instance: Optional[str] = None
     verbose: bool = False
+    expected_project_root: str | None = None
 
     @classmethod
     def from_env(cls) -> "CLIConfig":
