@@ -23,6 +23,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private PlayScenarioObservation EvaluateCounted(PlayScenarioStep step, bool firstPoll, PlayScenarioStepResult result)
         {
+            if (step.Action == "mark_events" || step.Action == "wait_events")
+                return EvaluateEvents(step, firstPoll, result);
             if (step.Action == "wait_state")
                 return EvaluateState(step, firstPoll);
             if (step.Action == "reset_state")

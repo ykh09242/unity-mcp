@@ -25,6 +25,9 @@ Unity MCP (ykh09242) Command Line Interface. Control Unity Editor directly from 
 | --format / -f | choice: text, json, table | optional | nargs=1 | "text" | UNITY_MCP_FORMAT | Output format. |
 | --instance / -i | text | optional | nargs=1 | — | UNITY_MCP_INSTANCE | Target Unity instance (hash or Name@hash). |
 | --verbose / -v | boolean | optional | nargs=1, flag | — | — | Print each command sent to Unity and its raw response to stderr. |
+| --project-context | file/path (lexical only) | optional | nargs=1 | — | — | Select a project-local CLI context file. |
+| --no-project-context | boolean | optional | nargs=1, flag | — | — | Disable automatic project context discovery. |
+| --expect-project | file/path (lexical only) | optional | nargs=1 | — | — | Verify this local Unity root for every command dispatch. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp animation`

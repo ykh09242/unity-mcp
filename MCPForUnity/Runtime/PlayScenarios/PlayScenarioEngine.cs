@@ -198,6 +198,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 _observationFailure = null;
                 _resetSnapshot = null;
                 ClearStateProbe();
+                ClearEventProbe();
                 _lastObservation = null;
                 _hasObservation = false;
                 Timeline(now, "step_started", result.Name, result);
@@ -286,6 +287,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Timeline(now, "step_passed", result.Detail, result);
             _resetSnapshot = null;
             ClearStateProbe();
+            ClearEventProbe();
             State.Cursor++;
             State.NextPollUnixMs = now;
             Revision++;
@@ -393,7 +395,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _stepReady = false;
             _resetSnapshot = null;
             if (State.Phase != "cleaning")
+            {
                 ClearStateProbe();
+                ClearEventProbe();
+            }
             CaptureFailure(now);
             Revision++;
             if (_completingIteration.HasValue)
@@ -437,6 +442,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             _resetSnapshot = null;
             ClearStateProbe();
+            ClearEventProbe();
             Timeline(now, "cleanup_started", "Best-effort cleanup started.", State.Steps[cleanup]);
             State.Cursor = cleanup;
             State.Phase = "cleaning";
@@ -471,6 +477,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             CaptureFailure(now);
             _resetSnapshot = null;
             ClearStateProbe();
+            ClearEventProbe();
             State.Cursor++;
             State.NextPollUnixMs = now;
             Revision++;
@@ -873,10 +880,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (_released)
                 return;
             _released = true;
+            eventMarks.Clear();
+            eventConsumed.Clear();
             _resourceBaseline = null;
             _observationFailure = null;
             _resetSnapshot = null;
             ClearStateProbe();
+            ClearEventProbe();
             _lastObservation = null;
             try
             {

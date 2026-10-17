@@ -106,6 +106,21 @@ click.Group.resolve_command = _resolve_command_with_suggestions  # type: ignore[
     is_flag=True,
     help="Print each command sent to Unity and its raw response to stderr.",
 )
+@click.option(
+    "--project-context",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Select a project-local CLI context file.",
+)
+@click.option(
+    "--no-project-context", is_flag=True, help="Disable automatic project context discovery."
+)
+@click.option(
+    "--expect-project",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Verify this local Unity root for every command dispatch.",
+)
 @pass_context
 def cli(
     ctx: Context,
@@ -115,6 +130,9 @@ def cli(
     format: str,
     instance: str | None,
     verbose: bool,
+    project_context: str | None,
+    no_project_context: bool,
+    expect_project: str | None,
 ):
     """Unity MCP (ykh09242) Command Line Interface.
 
@@ -143,6 +161,25 @@ def cli(
         unity_instance=instance,
         verbose=verbose,
     )
+
+    from cli.utils.project_context import ProjectContextError, resolve_project_context
+
+    parameters = click.get_current_context()
+    try:
+        config = resolve_project_context(
+            config,
+            {
+                name: parameters.get_parameter_source(name)
+                for name in ("host", "port", "timeout", "format", "instance")
+            },
+            project_context,
+            no_project_context,
+            expect_project,
+        )
+    except ProjectContextError as error:
+        raise click.UsageError(
+            f"Project context rejected ({error.reason}). Verify the selected context and expected project."
+        ) from None
 
     # Security warning for non-localhost connections
     warn_if_remote_host(config)

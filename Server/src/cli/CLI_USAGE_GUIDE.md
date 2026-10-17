@@ -1251,3 +1251,58 @@ On Windows, test-result storage applies a portable Unity/Mono compatibility budg
 Initial native cancellation/deadline support is restricted to exactly Test Framework 1.6.0 with the required observer binding. Unsupported versions reject explicit cancellation/deadline before native mutation with `unsupported_native_test_control`; ordinary runs with no deadline retain the existing path. This is not a claim of support for every 1.6 release or repository-pinned 1.4.6. Cancellation is cooperative: a blocked test/native call can prevent Editor updates, and a deadline cannot forcibly interrupt it.
 
 The native control record distinguishes request acceptance from termination. `confirmed` requires a matching native run's final progress after framework task-disposal attempts plus a later coherent scheduler-idle observation. It describes framework execution ownership, not successful user cleanup; cleanup hooks may be skipped by native cancellation. Missing final events, observer failures or ambiguous foreign Test Runner activity remain `unknown` and block replacement for an already observer-managed run. No result callback, empty task stack, elapsed frame or accepted cancellation alone is treated as completion. The product does not terminate the Editor or cancel a foreign/manual run to force recovery.
+
+## Project-local CLI context
+
+Place a secret-free `.unity-mcp.json` at the Unity project root, beside Assets and
+ProjectSettings, to reuse connection settings from that project or its subdirectories:
+
+```json
+{
+  "schema_version": "unity-mcp/cli-context@1",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "instance": "My Project@0123456789abcdef",
+  "timeout": 30,
+  "format": "json"
+}
+```
+
+Use the full native instance hash reported by `unity-mcp instances`; the sample is a
+placeholder. Do not put tokens, token filenames, credentials or executable settings in
+this file. The CLI does not create or edit it automatically. The containing Unity root
+is the expected project. Discovery stops at the nearest Unity project; it does not
+inherit another project's file or search home or sibling directories.
+
+Explicit flags take precedence over existing UNITY_MCP environment variables, then
+file values, then defaults. A flag equal to a default still overrides the file.
+`--project-context FILE` explicitly selects another project's context file;
+`--no-project-context` disables automatic discovery. `--expect-project ROOT` explicitly
+sets the expected local root. A context-bound command requires a complete instance
+hash; a bare project name, partial hash or port cannot substitute for it.
+
+```sh
+unity-mcp --project-context /projects/GameB/.unity-mcp.json scene active
+unity-mcp --instance 'GameB@fedcba9876543210' --expect-project /projects/GameB scene active
+unity-mcp --no-project-context --instance 'GameA@0123456789abcdef' scene active
+```
+
+Changing --instance alone preserves the current expected root: overriding both target
+and expected project is deliberate. Context mode supports a local loopback server and
+uses its guarded command endpoint. An older server refuses it; the CLI never retries
+through the unguarded endpoint. Requests without an expected project keep their existing
+behavior. The CLI does not persist an active MCP session selection.
+
+The guard compares the selected Editor's registered local root and full hash and pins
+that connection for each request, including custom-tool polls. A replacement before a
+later poll refuses the poll but cannot undo an earlier mutation or job. An outcome_unknown
+response requires inspecting the project before retrying; known job and command evidence
+is retained when available. Native batch subcommands may have partial effects. A valid
+pending reply remains pending. A timeout never proves rollback or that retry is safe.
+
+This is cooperative registered-path protection. It does not authenticate project contents,
+filesystem aliases or a malicious local server or plugin. Unavailable or mismatched paths
+refuse instead of guessing. Instance, status, doctor and tool-description discovery retain
+their own read-only scopes and do not attest a future guarded mutation or another desktop
+client's live session. Offline custom-tool scaffolding keeps its independent project-root
+option and does not acquire a live connection.

@@ -581,3 +581,32 @@ See [scenario execution and CI evidence](play-scenario-execution.md) for explici
 participants, query budgets, bounded timelines, resource owner/call-site attribution, the **Build Player**
 workflow, `play-scenario player-run`, and required native E2E mode. These features preserve the existing
 bounded polling, once-only effect dispatch, best-effort cleanup and truthful report requirements.
+
+### Bounded transient event evidence
+
+Use a retained scalar counter with `wait_state.state_compare` first when only a threshold matters. A counter does not lose a short pulse between polls. When event order or duplicate occurrences matter, explicitly register a bounded stream on the Unity main thread:
+
+```csharp
+private PlayScenarioEventStream events;
+void OnEnable() => events = PlayScenarioEventRegistry.Register("combat.events", this);
+void OnHit() => events.Emit("hit");
+void OnDisable() { events?.Dispose(); events = null; }
+```
+
+Keep both owner and token alive. Only that token emits; registration and emission require the main thread. Disposal is allowed from any thread. The journal retains event names and sequence numbers only, never payloads or application callbacks. IDs use the existing128-character target-ID syntax; names/mark IDs use the same characters with a64-character limit. At most32 live streams each retain128 records. Token/owner death makes a stream unavailable; bounded pruning on subsequent registration releases expired records. Disposal and Play/domain reset release owned entries. No journal is persisted across reload.
+
+Put a fence before the action that may emit synchronously:
+
+```json
+{"name":"events","setup_steps":[{"name":"load","action":"load_scene","scene":"Assets/Menu.unity"}],"steps":[
+  {"name":"fence","action":"mark_events","event_id":"combat.events","event_mark":"attack"},
+  {"name":"attack","action":"click_ui","target":"Canvas/Attack"},
+  {"name":"hits","action":"wait_events","event_since":"attack","event_name":"hit","event_count":2}
+]}
+```
+
+`event_count` means at least1..128 distinct occurrences. Alternatively use `event_order:["start","hit","hit"]` (1..16 names), an ordered subsequence: unrelated events may interleave, and duplicate names require different increasing sequence positions. Do not combine count/order forms or add `stable_for_ms`. A valid unmet condition retains `condition_unmet` and times out using the existing step deadline.
+
+A mark must occur earlier in the same setup/main/cleanup array; at most16 unique marks per stage. New iterations require new fences. Once a wait succeeds, its entire observed snapshot is consumed, so earlier records cannot satisfy another assertion through the same or an older alias mark. Events emitted after that snapshot remain eligible. Report `event_evidence` discloses the generation, fence/observed/consumed sequences, match positions/count and dropped-total. It is omitted from legacy step reports, contains no raw journal and is capped at1024 UTF-8 bytes per step.
+
+If unobserved records after the effective fence are overwritten, fail with `event_journal_overflow` rather than infer absence or retry from a newer fence. Drops before the fence and already-read prefixes are not unobserved gaps. Released/destroyed/replaced streams fail `event_stream_unavailable`; sequence exhaustion fails `event_sequence_exhausted` without wrapping. A reconstructed engine cannot replay a lost fence/accumulator: `event_history_unavailable` is explicit. Preflight reports deferred runtime evidence and never polls, emits or installs producers. The shared runtime supports Editor/Player compilation; actual Player execution and a live transport bridge require their own evidence and are not implied by deterministic engine tests or controlled SDK/CLI admission.

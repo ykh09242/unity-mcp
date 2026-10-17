@@ -179,6 +179,7 @@ def test_from_env_preserves_valid_boundaries(monkeypatch, port, timeout, output_
         "format": output_format,
         "unity_instance": "Project@fixture",
         "verbose": False,
+        "expected_project_root": None,
     }
 
 
@@ -284,3 +285,19 @@ def test_configuration_smoke_in_fresh_process():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "fresh configuration defaults/invalid/override checks passed" in result.stdout
+
+
+def test_direct_environment_configuration_never_discovers_project_files(monkeypatch, tmp_path):
+    # Given: a project-local file whose connection differs from environment defaults.
+    (tmp_path / "Assets").mkdir()
+    (tmp_path / "ProjectSettings").mkdir()
+    (tmp_path / "ProjectSettings/ProjectVersion.txt").write_text("6000", encoding="utf-8")
+    (tmp_path / ".unity-mcp.json").write_text(
+        '{"schema_version":"unity-mcp/cli-context@1","port":9191}', encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    # When: a library caller uses the explicit environment-only constructor.
+    result = CLIConfig.from_env()
+    # Then: no project file or expected project is silently selected.
+    assert result.port == 8080
+    assert result.expected_project_root is None

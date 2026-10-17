@@ -38,6 +38,13 @@ from models.response_limits import (
     response_owner,
 )
 from transport.plugin_registry import PluginRegistry, ToolSettingsConflict
+from transport.local_project_context import (
+    local_project_context,
+    full_hash,
+    normalized_root,
+    ProjectSelection,
+    LocalProjectContext,
+)
 from transport.tool_list_notifier import ToolListNotifier
 from transport.charge_ledger import ChargeLedger
 from transport.json_decoder import decode_json
@@ -931,6 +938,45 @@ class PluginHub(WebSocketEndpoint):
     # Public API
     # ------------------------------------------------------------------
     @classmethod
+    async def capture_local_project_context(
+        cls, context: LocalProjectContext, target_hash: str, root: str
+    ) -> tuple[str, SessionDetails] | None:
+        """Capture one local registration while owning the same lock as replacement/admission."""
+        lock = cls._lock
+        if lock is None:
+            context.refuse("project_context_unavailable")
+            return None
+        async with lock:
+            registry = cls._registry
+            session_id = await registry.get_session_id_by_hash(target_hash) if registry else None
+            session = await registry.get_session(session_id) if registry and session_id else None
+            websocket = cls._connections.get(session_id)
+            if session is None or websocket is None:
+                context.refuse("project_context_target_unavailable")
+                return None
+            actual_root = normalized_root(session.project_path)
+            if actual_root is None:
+                context.refuse("project_context_unavailable")
+                return None
+            if actual_root != root:
+                context.refuse("project_context_mismatch")
+                return None
+            generation = getattr(websocket.state, "plugin_generation", None)
+            if not isinstance(generation, str) or not generation:
+                context.refuse("project_context_unavailable")
+                return None
+            context.selection = ProjectSelection(
+                registry, session_id, websocket, generation, root, target_hash, session.user_id
+            )
+            details = SessionDetails(
+                project=session.project_name,
+                hash=session.project_hash,
+                unity_version=session.unity_version,
+                connected_at=session.connected_at.isoformat(),
+            )
+            return session_id, details
+
+    @classmethod
     async def get_capability_snapshot(
         cls, unity_instance: str | None, user_id: str | None = None
     ) -> CapabilityConnection:
@@ -1237,9 +1283,16 @@ class PluginHub(WebSocketEndpoint):
         _expected_read: _ConnectionReadIdentity | None = None,
         _catalog_guard=None,
     ) -> dict[str, Any]:
+        context = local_project_context.get()
+        if context is not None and (
+            context.selection is None or context.selection.session_id != session_id
+        ):
+            return context.refuse("project_context_changed", params)
         try:
             websocket = await cls._get_connection(session_id)
         except RuntimeError as exc:
+            if context is not None:
+                return context.refuse("project_context_changed", params)
             if _expected_read is not None:
                 return cls._unavailable_retry_response("read_invalidated")
             raise CommandNotDispatchedError(str(exc)) from exc
@@ -1250,9 +1303,17 @@ class PluginHub(WebSocketEndpoint):
         unity_timeout_s, _ = cls._command_timeouts(command_type, params)
         lock = cls._lock
         if lock is None:
+            if context is not None:
+                return context.refuse("project_context_unavailable", params)
             raise CommandNotDispatchedError("PluginHub not configured")
 
         async with lock:
+            if context is not None and (
+                context.selection is None
+                or cls._connections.get(session_id) is not websocket
+                or not context.selection.matches(registry, session_id, websocket, session)
+            ):
+                return context.refuse("project_context_changed", params)
             if _catalog_guard is not None and not _catalog_guard.check_http(session_id, user_id):
                 from services.custom_tool_service import custom_catalog_changed
 
@@ -2684,6 +2745,22 @@ class PluginHub(WebSocketEndpoint):
         editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
         _catalog_guard=None,
     ) -> dict[str, Any]:
+        context = local_project_context.get()
+        if context is not None:
+            selected = context.selection
+            if (
+                selected is None
+                or full_hash(unity_instance or "") != selected.project_hash
+                or user_id != selected.user_id
+            ):
+                return context.refuse("project_context_changed", params)
+            return await cls.send_command(
+                selected.session_id,
+                command_type,
+                params,
+                _budget=budget,
+                **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
+            )
         if _catalog_guard is not None:
             retry_on_reload = False
         try:

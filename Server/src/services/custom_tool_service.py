@@ -57,6 +57,7 @@ _BACKEND_ONLY_TOOL_NAMES = frozenset(
         "execute_menu_item_observed",
         "manage_components_selected",
         "manage_object_handles_v1",
+        "inspect_serialized_object_v1",
     }
 )
 _MAX_ACTIVE_POLLS_PER_SESSION = 16

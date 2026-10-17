@@ -180,6 +180,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("detail")]
         public string Detail;
 
+        [JsonProperty("event_evidence", NullValueHandling = NullValueHandling.Ignore)]
+        public PlayScenarioEventEvidence EventEvidence;
+
         [JsonProperty("poll_count")]
         public int PollCount;
 

@@ -106,6 +106,17 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                             }
                             continue;
                         }
+                        if (step.Action == "mark_events" || step.Action == "wait_events")
+                        {
+                            Add(
+                                stage,
+                                index,
+                                step.Name,
+                                "deferred",
+                                "Event stream ownership, fences and bounded occurrence evidence are evaluated only at runtime; no journal was accessed."
+                            );
+                            continue;
+                        }
                         if (step.Action == "wait_state")
                         {
                             Add(
