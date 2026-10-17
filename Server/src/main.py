@@ -51,6 +51,7 @@ from transport.catalog_subscriptions import (
 from transport.mcp_version_middleware import McpVersionMiddleware
 from transport.inventory_ordering import InventoryOrderingMiddleware
 from transport.skills_extension import install_skills
+from transport.scene_load_inputs import prepare_scene_load_inputs
 from transport.test_job_tasks import WaitTaskDeliveryMiddleware
 from transport.test_wait_binding import install_test_job_tasks
 from transport.request_body_limit_middleware import (
@@ -361,6 +362,9 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                 "plugin_registry": _plugin_registry,
             }
     finally:
+        scene_inputs = getattr(server, "_scene_load_inputs", None)
+        if scene_inputs is not None:
+            scene_inputs.close()
         for timer in telemetry_timers:
             timer.cancel()
         try:
@@ -585,6 +589,7 @@ def create_mcp_server(
     custom_instructions: str | None = None,
     test_wait_tasks_root: Path | None = None,
 ) -> FastMCP:
+    scene_inputs = prepare_scene_load_inputs()
     mcp = UnityMCP(
         name="mcp-for-unity-server",
         version=RUNNING_SERVER.version,
@@ -592,7 +597,9 @@ def create_mcp_server(
         instructions=append_custom_instructions(
             _build_instructions(project_scoped_tools), custom_instructions
         ),
+        **({"request_state_security": scene_inputs.policy} if scene_inputs is not None else {}),
     )
+    mcp._scene_load_inputs = scene_inputs
     mcp.add_middleware(InventoryOrderingMiddleware())
     mcp.add_middleware(ResponseLimitMiddleware())
     install_catalog_subscriptions(mcp, remote_hosted=config.http_remote_hosted)
@@ -972,6 +979,8 @@ def create_mcp_server(
     # Using the singleton getter ensures we use the same instance everywhere
     unity_middleware = get_unity_instance_middleware()
     mcp.add_middleware(unity_middleware)
+    if scene_inputs is not None:
+        mcp.add_middleware(scene_inputs)
     logger.info("Registered Unity instance middleware for session-based routing")
 
     # Initialize API key authentication if in remote-hosted mode
