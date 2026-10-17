@@ -19,6 +19,144 @@ namespace MCPForUnityTests.Editor.Services
     [TestFixture]
     public class WebSocketTransportClientTests
     {
+        private sealed class TimingSerializationProbe
+        {
+            internal int Reads;
+            internal string Value = new string('x', 100000);
+            public string Payload
+            {
+                get
+                {
+                    Reads++;
+                    return Value;
+                }
+            }
+        }
+
+        private static WebSocketTransportClient CreateTimingClient(bool compression) =>
+            new WebSocketTransportClient(
+                null,
+                new WebSocketTransportClient.OwnedConnectionOptions(
+                    new Uri("ws://127.0.0.1:1"),
+                    Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"),
+                    "core13",
+                    "core13",
+                    "core13-memory-only",
+                    "fixture",
+                    compression
+                )
+            );
+
+        [TestCase(32, false, false)]
+        [TestCase(300000, true, false)]
+        [TestCase(400000, true, true)]
+        public async Task TimedSuccessfulWriterPreservesEveryFrameAndSerializesOnce(int characters, bool negotiated, bool compression)
+        {
+            using var client = CreateTimingClient(compression);
+            using var current = new CancellationTokenSource();
+            SetField(client, "_connectionCts", current);
+            SetField(client, "_largeResultNegotiated", negotiated);
+            SetField(client, "_compressionNegotiated", compression);
+            var expected = new List<Tuple<WebSocketMessageType, byte[]>>();
+            var actual = new List<Tuple<WebSocketMessageType, byte[]>>();
+            Task Record(List<Tuple<WebSocketMessageType, byte[]>> frames, ArraySegment<byte> bytes, WebSocketMessageType type)
+            {
+                var copy = new byte[bytes.Count];
+                Buffer.BlockCopy(bytes.Array, bytes.Offset, copy, 0, bytes.Count);
+                frames.Add(Tuple.Create(type, copy));
+                return Task.CompletedTask;
+            }
+            string id = "f88b3f2a-ef07-4ad4-a9a6-1b9bdb5b9cb0";
+            string value = new string('\u6f22', characters) + "\ud83d\ude80";
+            string baseline = Newtonsoft.Json.JsonConvert.SerializeObject(
+                new
+                {
+                    type = "command_result",
+                    id,
+                    result = new { Payload = value },
+                }
+            );
+            await LargeResultWriter.SendJsonAsync(
+                id,
+                baseline,
+                negotiated,
+                (bytes, type, _) => Record(expected, bytes, type),
+                current.Token,
+                compression,
+                compression
+            );
+            JObject row = null;
+            var timing = new CommandPhaseTiming(() => 10, 1000, item => row = item, CommandPhaseTiming.Transport.WebSocket);
+            var probe = new TimingSerializationProbe { Value = value };
+            Func<ArraySegment<byte>, WebSocketMessageType, CancellationToken, Task> writer = (bytes, type, _) => Record(actual, bytes, type);
+            try
+            {
+                var send = typeof(WebSocketTransportClient).GetMethod("SendCommandResultCoreAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+                await (Task)send.Invoke(client, new object[] { id, probe, current.Token, timing, writer });
+                timing.ExecutionDone();
+                timing.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
+                Assert.AreEqual(1, probe.Reads);
+                Assert.AreEqual(expected.Count, actual.Count);
+                for (int i = 0; i < expected.Count; i++)
+                {
+                    Assert.AreEqual(expected[i].Item1, actual[i].Item1);
+                    CollectionAssert.AreEqual(expected[i].Item2, actual[i].Item2);
+                }
+                if (compression)
+                    Assert.AreEqual("gzip", JObject.Parse(Encoding.UTF8.GetString(actual[0].Item2)).Value<string>("encoding"));
+                if (negotiated)
+                    Assert.Greater(actual.Count, 1);
+                else
+                    Assert.AreEqual(1, actual.Count);
+                Assert.AreEqual("sent", row.Value<string>("delivery"));
+                Assert.IsNotNull(row["send_ms"]);
+                StringAssert.DoesNotContain(id, row.ToString());
+                StringAssert.DoesNotContain("Payload", row.ToString());
+            }
+            finally
+            {
+                client.ForceStop();
+            }
+        }
+
+        [Test]
+        public void TimedResponseSerializesOnceAndCannotWriteToReplacementConnection()
+        {
+            using var client = CreateTimingClient(false);
+            using var obsolete = new CancellationTokenSource();
+            using var current = new CancellationTokenSource();
+            using var replacement = new ClientWebSocket();
+            SetField(client, "_connectionCts", current);
+            SetField(client, "_socket", replacement);
+            Newtonsoft.Json.Linq.JObject row = null;
+            var timing = new MCPForUnity.Editor.Services.Transport.CommandPhaseTiming(
+                () => 0,
+                1000,
+                value => row = value,
+                MCPForUnity.Editor.Services.Transport.CommandPhaseTiming.Transport.WebSocket
+            );
+            var probe = new TimingSerializationProbe();
+            try
+            {
+                var send = typeof(WebSocketTransportClient).GetMethod("SendTimedCommandResultAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+                var error = Assert.Throws<TargetInvocationException>(() =>
+                    send.Invoke(client, new object[] { "private-opaque-request", probe, obsolete.Token, timing })
+                );
+                Assert.IsInstanceOf<OperationCanceledException>(error.InnerException);
+                timing.ExecutionDone();
+                timing.DeliveryDone(MCPForUnity.Editor.Services.Transport.CommandPhaseTiming.Delivery.Canceled);
+                Assert.AreEqual(1, probe.Reads, "Timing must not add a second result serialization.");
+                Assert.AreEqual(WebSocketState.None, replacement.State);
+                StringAssert.DoesNotContain("private-opaque-request", row.ToString());
+                StringAssert.DoesNotContain("Payload", row.ToString());
+                Assert.IsNull(row["send_ms"]);
+            }
+            finally
+            {
+                client.ForceStop();
+            }
+        }
+
         private const string CandidateBuilderMethodName = "BuildConnectionCandidateUris";
         private const string WebSocketTransportClientTypeName = "MCPForUnity.Editor.Services.Transport.Transports.WebSocketTransportClient";
         private static readonly MethodInfo BuildConnectionCandidateUrisMethod = ResolveCandidateBuilderMethod();

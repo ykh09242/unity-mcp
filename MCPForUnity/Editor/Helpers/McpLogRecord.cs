@@ -83,6 +83,19 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
+        // Timing rows contain only fixed metadata and bounded phase measurements.
+        internal static void LogTiming(JObject entry)
+        {
+            if (!IsEnabled)
+                return;
+            try
+            {
+                lock (_logLock)
+                    RotateAndAppend(LogPath, entry.ToString(Formatting.None));
+            }
+            catch { }
+        }
+
         private static void RotateAndAppend(string path, string line)
         {
             Directory.CreateDirectory(LogDir);

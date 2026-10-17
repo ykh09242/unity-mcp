@@ -31,7 +31,9 @@ namespace MCPForUnity.Editor.Services.Transport
                 Command command,
                 CancellationToken cancellationToken,
                 CancellationTokenRegistration registration,
-                TransportMode? origin
+                TransportMode? origin,
+                CommandPhaseTiming timing,
+                bool ownsTiming
             )
             {
                 CommandJson = commandJson;
@@ -39,6 +41,8 @@ namespace MCPForUnity.Editor.Services.Transport
                     JsonResponseSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 Command = command;
                 Origin = origin;
+                Timing = timing;
+                OwnsTiming = ownsTiming;
                 CancellationToken = cancellationToken;
                 CancellationRegistration = registration;
                 QueuedAt = DateTime.UtcNow;
@@ -47,6 +51,8 @@ namespace MCPForUnity.Editor.Services.Transport
             public string CommandJson { get; }
             public Command Command { get; }
             public TransportMode? Origin { get; }
+            public CommandPhaseTiming Timing { get; }
+            public bool OwnsTiming { get; }
             public TaskCompletionSource<string> CompletionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public TaskCompletionSource<TransportCommandResponse> ResponseSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public TaskCompletionSource<bool> ExecutionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -63,21 +69,57 @@ namespace MCPForUnity.Editor.Services.Transport
 
             public void TrySetResult(object payload)
             {
-                var response = TransportCommandResponse.FromObject(payload);
+                Timing?.Start(CommandPhaseTiming.Phase.Prepare);
+                TransportCommandResponse response;
+                try
+                {
+                    response = TransportCommandResponse.FromObject(payload);
+                }
+                finally
+                {
+                    Timing?.Stop(CommandPhaseTiming.Phase.Prepare);
+                }
                 ResponseSource.TrySetResult(response);
-                JsonResponseSource?.TrySetResult(response.ToJson());
+                if (JsonResponseSource != null)
+                {
+                    Timing?.Start(CommandPhaseTiming.Phase.Serialization);
+                    try
+                    {
+                        JsonResponseSource.TrySetResult(response.ToJson());
+                    }
+                    finally
+                    {
+                        Timing?.Stop(CommandPhaseTiming.Phase.Serialization);
+                    }
+                }
+                if (OwnsTiming)
+                    Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Unobserved);
             }
 
             public void TrySetJsonResult(string payload)
             {
-                ResponseSource.TrySetResult(TransportCommandResponse.FromJson(payload));
+                Timing?.Start(CommandPhaseTiming.Phase.Prepare);
+                TransportCommandResponse response;
+                try
+                {
+                    response = TransportCommandResponse.FromJson(payload);
+                }
+                finally
+                {
+                    Timing?.Stop(CommandPhaseTiming.Phase.Prepare);
+                }
+                ResponseSource.TrySetResult(response);
                 JsonResponseSource?.TrySetResult(payload);
+                if (OwnsTiming)
+                    Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Unobserved);
             }
 
             public void TrySetCanceled()
             {
                 ResponseSource.TrySetCanceled(CancellationToken);
                 JsonResponseSource?.TrySetCanceled(CancellationToken);
+                if (OwnsTiming)
+                    Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Canceled);
             }
         }
 
@@ -125,7 +167,26 @@ namespace MCPForUnity.Editor.Services.Transport
             return Enqueue(null, command, cancellationToken, origin);
         }
 
-        private static TransportCommandOperation Enqueue(string commandJson, Command command, CancellationToken cancellationToken, TransportMode? origin = null)
+        internal static TransportCommandOperation ExecuteTimedCommandAsync(
+            Command command,
+            CancellationToken cancellationToken,
+            TransportMode? origin,
+            CommandPhaseTiming timing
+        )
+        {
+            if (command == null)
+                throw new ArgumentNullException(nameof(command));
+            return Enqueue(null, command, cancellationToken, origin, timing, true);
+        }
+
+        private static TransportCommandOperation Enqueue(
+            string commandJson,
+            Command command,
+            CancellationToken cancellationToken,
+            TransportMode? origin = null,
+            CommandPhaseTiming timing = null,
+            bool transportOwnsTiming = false
+        )
         {
             EnsureInitialised();
 
@@ -133,7 +194,11 @@ namespace MCPForUnity.Editor.Services.Transport
 
             var registration = cancellationToken.CanBeCanceled ? cancellationToken.Register(() => CancelPending(id, cancellationToken)) : default;
 
-            var pending = new PendingCommand(commandJson, command, cancellationToken, registration, origin);
+            bool ownsTiming = !transportOwnsTiming;
+            if (ownsTiming)
+                timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.Direct);
+            timing?.Start(CommandPhaseTiming.Phase.Queue);
+            var pending = new PendingCommand(commandJson, command, cancellationToken, registration, origin, timing, ownsTiming);
             var operation = new TransportCommandOperation(pending.ResponseSource.Task, pending.ExecutionSource.Task, pending.JsonResponseSource?.Task);
 
             lock (PendingLock)
@@ -451,6 +516,8 @@ namespace MCPForUnity.Editor.Services.Transport
                     : "unknown";
                 var logName = resourceMeta?.Name ?? toolMeta?.Name ?? "unknown";
                 var sw = McpLogRecord.IsEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
+                pending.Timing?.Stop(CommandPhaseTiming.Phase.Queue);
+                pending.Timing?.Start(CommandPhaseTiming.Phase.Handler);
                 var result = CommandRegistry.ExecuteCommand(command.type, parameters, pending.CompletionSource, pending.CancellationToken);
 
                 if (result == null)
@@ -461,12 +528,15 @@ namespace MCPForUnity.Editor.Services.Transport
                     var capturedLogType = logType;
                     void Complete(Task<string> t)
                     {
+                        pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
                         if (t.IsCanceled)
                             pending.TrySetCanceled();
                         else if (t.IsFaulted)
                         {
                             pending.ResponseSource.TrySetException(t.Exception.InnerExceptions);
                             pending.JsonResponseSource?.TrySetException(t.Exception.InnerExceptions);
+                            if (pending.OwnsTiming)
+                                pending.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Failed);
                         }
                         else
                             pending.TrySetJsonResult(t.Result);
@@ -505,6 +575,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     return;
                 }
 
+                pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
                 sw?.Stop();
 
                 string syncLogStatus = "SUCCESS";
@@ -522,11 +593,13 @@ namespace MCPForUnity.Editor.Services.Transport
             }
             catch (OperationCanceledException) when (pending.CancellationToken.IsCancellationRequested)
             {
+                pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
                 pending.TrySetCanceled();
                 RemovePending(id, pending);
             }
             catch (Exception ex)
             {
+                pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
                 McpLog.Error($"Error processing command: {ex.Message}\n{ex.StackTrace}");
                 pending.TrySetResult(SerializeError(ex.Message, "Unknown (error during processing)", ex.StackTrace));
                 RemovePending(id, pending);
@@ -541,7 +614,10 @@ namespace MCPForUnity.Editor.Services.Transport
                 if (Pending.Remove(id, out pending))
                 {
                     if (!pending.IsExecuting)
+                    {
                         pending.ExecutionSource.TrySetResult(true);
+                        pending.Timing?.ExecutionDone();
+                    }
                     UnhookUpdateIfIdle();
                 }
             }
@@ -560,6 +636,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             pending.Dispose();
             pending.ExecutionSource.TrySetResult(true);
+            pending.Timing?.ExecutionDone();
         }
 
         private static object SerializeError(string message, string commandType = null, string stackTrace = null)

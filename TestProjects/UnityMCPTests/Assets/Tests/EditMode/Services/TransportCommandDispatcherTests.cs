@@ -5,6 +5,8 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Services.Transport.Transports;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -161,6 +163,27 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         private static Task<string> Dispatch(string json, CancellationToken token) => (Task<string>)Execute.Invoke(null, new object[] { json, token });
+
+        [Test]
+        public void TimedQueuedCancellationPreservesCompletionAndOmitsUnrunHandler()
+        {
+            JObject row = null;
+            var timing = new CommandPhaseTiming(() => 5, 1000, value => row = value, CommandPhaseTiming.Transport.WebSocket);
+            using var cts = new CancellationTokenSource();
+            TransportCommandOperation operation = null;
+            Assert.IsTrue(
+                Task.Run(() => operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(new Command { type = "ping" }, cts.Token, null, timing))
+                    .Wait(TimeSpan.FromSeconds(5))
+            );
+            cts.Cancel();
+            timing.DeliveryDone(CommandPhaseTiming.Delivery.Canceled);
+            Assert.IsTrue(operation.Response.IsCanceled);
+            Assert.IsTrue(operation.Completion.IsCompleted);
+            Assert.IsNotNull(row);
+            Assert.IsNull(row["handler_ms"]);
+            Assert.IsNull(row["send_ms"]);
+            Assert.AreEqual("canceled", row.Value<string>("delivery"));
+        }
 
         [TestCase(false)]
         [TestCase(true)]
