@@ -35,7 +35,7 @@ def mock_unity(monkeypatch):
 
 
 def test_all_actions_count():
-    assert len(ALL_ACTIONS) == 9
+    assert len(ALL_ACTIONS) == 11
 
 
 def test_unknown_action_returns_error(mock_unity):
@@ -345,3 +345,82 @@ def test_deep_option_wrappers_reject_before_transport(mock_unity, options):
     result = asyncio.run(manage_build(SimpleNamespace(), action="build", options=options))
     assert result["success"] is False
     assert mock_unity == {}
+
+
+@pytest.mark.parametrize("action", ["plan", "build_from_plan"])
+def test_plan_actions_preserve_resolved_input_transport(action, mock_unity):
+    kwargs = {"expected_plan_sha256": "a" * 64} if action == "build_from_plan" else {}
+    result = asyncio.run(
+        manage_build(
+            SimpleNamespace(),
+            action=action,
+            target="windows64",
+            scenes='["Assets/First.unity","Assets/Second.unity"]',
+            options='["clean_build","auto_run"]',
+            development="false",
+            scripting_backend="il2cpp",
+            **kwargs,
+        )
+    )
+    assert result["success"] is True
+    assert mock_unity["params"] == {
+        "action": action,
+        "target": "windows64",
+        "scenes": ["Assets/First.unity", "Assets/Second.unity"],
+        "options": ["clean_build", "auto_run"],
+        "development": False,
+        "scripting_backend": "il2cpp",
+        **kwargs,
+    }
+
+
+@pytest.mark.parametrize("value", [None, "", "a" * 63, "g" * 64, " a" * 32, "a" * 65])
+def test_guarded_build_rejects_bad_hash_before_transport(value, mock_unity):
+    result = asyncio.run(
+        manage_build(SimpleNamespace(), action="build_from_plan", expected_plan_sha256=value)
+    )
+    assert result["success"] is False
+    assert "expected_plan_sha256" in result["message"]
+    assert "tool_name" not in mock_unity
+
+
+@pytest.mark.parametrize("action", ["build", "plan", "batch", "status"])
+def test_hash_cannot_silently_guard_an_old_action(action, mock_unity):
+    result = asyncio.run(
+        manage_build(SimpleNamespace(), action=action, expected_plan_sha256="a" * 64)
+    )
+    assert result["success"] is False
+    assert "tool_name" not in mock_unity
+
+
+@pytest.mark.parametrize("action", ["plan", "build_from_plan"])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"profile": "Assets/Profile.asset"},
+        {"profiles": '["Assets/Profile.asset"]'},
+        {"targets": '["windows64"]'},
+        {"property": "defines"},
+        {"value": ""},
+        {"activate": "false"},
+        {"output_dir": "Builds"},
+        {"job_id": "existing"},
+    ],
+)
+def test_plan_scope_rejects_unrelated_mutation_inputs(action, extra, mock_unity):
+    kwargs = {"expected_plan_sha256": "a" * 64} if action == "build_from_plan" else {}
+    result = asyncio.run(manage_build(SimpleNamespace(), action=action, **kwargs, **extra))
+    assert result["success"] is False
+    assert "build_plan_scope_unsupported" in result["message"]
+    assert "tool_name" not in mock_unity
+
+
+@pytest.mark.parametrize("action", ["plan", "build_from_plan"])
+@pytest.mark.parametrize(
+    "extra", [{"options": '["invalid"]'}, {"subtarget": "sevrer"}, {"dry_run": True}]
+)
+def test_plan_input_validation_precedes_transport(action, extra, mock_unity):
+    kwargs = {"expected_plan_sha256": "a" * 64} if action == "build_from_plan" else {}
+    result = asyncio.run(manage_build(SimpleNamespace(), action=action, **kwargs, **extra))
+    assert result["success"] is False
+    assert "tool_name" not in mock_unity

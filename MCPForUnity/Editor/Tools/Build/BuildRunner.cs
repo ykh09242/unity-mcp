@@ -13,12 +13,12 @@ namespace MCPForUnity.Editor.Tools.Build
 {
     public static class BuildRunner
     {
-        public static object ScheduleBuild(BuildJob job, BuildPlayerOptions options)
+        public static object ScheduleBuild(BuildJob job, BuildPlayerOptions options, Action beforeBuild = null)
         {
             job.State = BuildJobState.Pending;
             BuildJobStore.AddBuildJob(job);
 
-            ScheduleOnNextUpdate(() => RunBuildCore(job, () => BuildPipeline.BuildPlayer(options)));
+            ScheduleOnNextUpdate(() => RunBuildCore(job, () => BuildPipeline.BuildPlayer(options), beforeBuild));
 
             return new PendingResponse(
                 $"Build scheduled for {job.Target}. Polling for completion...",
@@ -159,7 +159,7 @@ namespace MCPForUnity.Editor.Tools.Build
             return opts;
         }
 
-        private static void RunBuildCore(BuildJob job, Func<BuildReport> buildFunc)
+        private static void RunBuildCore(BuildJob job, Func<BuildReport> buildFunc, Action beforeBuild = null)
         {
             if (job.State != BuildJobState.Pending)
                 return;
@@ -169,6 +169,7 @@ namespace MCPForUnity.Editor.Tools.Build
 
             try
             {
+                beforeBuild?.Invoke();
                 SaveBeforeBuild();
                 BuildReport report = buildFunc();
                 job.CompletedAt = DateTime.UtcNow;

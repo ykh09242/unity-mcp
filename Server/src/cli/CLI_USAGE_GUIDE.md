@@ -1002,6 +1002,36 @@ unity-mcp code search "void Update" "Assets/Scripts/Game.cs" --max-results 20
 
 ### Build Commands
 
+Preview one ordinary build without changing settings, saving scenes or building:
+
+```bash
+unity-mcp --format json build plan --target windows64 --development
+unity-mcp build run --target windows64 --development --expected-plan <plan_sha256>
+```
+
+Use the same flags for preview and apply. `plan_sha256` covers the resolved target,
+ordered scene paths/GUIDs, output, options and declared current settings. Guarded apply
+uses the distinct `build_from_plan` action and checks again before deferred execution;
+stale or unavailable observations require a fresh preview. It never falls back to an
+ordinary build. Plain `build run` retains its existing unguarded behavior.
+
+`build plan` supports target/output/development/backend/subtarget/clean/auto-run flags.
+Profiles and batches are outside this first plan contract. SDK `manage_build` callers
+can also provide explicit scenes/options; explicit empty scenes are rejected by the
+new plan path. Omitted scenes use enabled build scenes. Missing modules, invalid
+scenes/output syntax and unavailable observations return diagnostics without a job.
+Module support does not prove SDK, licensing or backend toolchain readiness, and output
+syntax does not prove writability or disk space.
+
+The fingerprint is a precondition, not an authorization token, reservation, complete
+settings/content snapshot or reproducible-build guarantee. It does not detect changed
+scene/source/dependency contents under the same GUID, unsaved scene contents, every
+PlayerSettings field or changes made by later build callbacks. A matching apply can
+persist the requested backend and uses normal save-before-build behavior; native build
+failure does not roll those effects back. Preview does not switch the active target.
+Caller/poll timeout is not cancellation of a native build. `dry_run` remains specific
+to output cleanup; it is not a build preview.
+
 ```bash
 unity-mcp build platform                       # Read the active platform
 unity-mcp build platform android               # Switch platform

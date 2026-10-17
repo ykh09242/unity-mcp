@@ -1,5 +1,7 @@
 """Build management CLI commands."""
 
+import re
+
 import click
 from typing import Optional
 
@@ -38,6 +40,75 @@ def clean_output(output_path: str, delete_output: bool):
     click.echo(format_output(result, config.format))
 
 
+def _expected_plan_hash(ctx, param, value):
+    if value is not None and re.fullmatch(r"[0-9a-fA-F]{64}", value) is None:
+        raise click.BadParameter(
+            "must be exactly 64 hexadecimal characters from build plan", ctx=ctx, param=param
+        )
+    return value
+
+
+def _build_params(
+    action, target, output_path, development, scripting_backend, subtarget, profile, clean, auto_run
+):
+    params = {"action": action}
+    for name, value in (
+        ("target", target),
+        ("output_path", output_path),
+        ("scripting_backend", scripting_backend),
+        ("subtarget", subtarget),
+        ("profile", profile),
+    ):
+        if value:
+            params[name] = value
+    if development:
+        params["development"] = True
+    options = []
+    if clean:
+        options.append("clean_build")
+    if auto_run:
+        options.append("auto_run")
+    if options:
+        params["options"] = options
+    return params
+
+
+@build.command("plan")
+@click.option("--target", "-t", help="Build target: windows64, osx, linux64, android, ios, webgl")
+@click.option("--output", "-o", "output_path", help="Output path")
+@click.option("--development", "-d", is_flag=True, help="Development build")
+@click.option(
+    "--backend",
+    "scripting_backend",
+    type=click.Choice(["mono", "il2cpp"]),
+    help="Proposed persistent backend change at apply",
+)
+@click.option("--subtarget", type=click.Choice(["player", "server"]), help="Build subtarget")
+@click.option("--clean", is_flag=True, help="Plan a cache clean during build")
+@click.option("--auto-run", is_flag=True, help="Plan auto-run after build")
+@handle_unity_errors
+def plan_build(target, output_path, development, scripting_backend, subtarget, clean, auto_run):
+    """Observe one ordinary build without applying settings, saving or building.
+
+    Use the same flags with build run --expected-plan HASH to reject declared drift.
+    Module availability is not proof of SDK/toolchain readiness or build success.
+    """
+    config = get_config()
+    params = _build_params(
+        "plan",
+        target,
+        output_path,
+        development,
+        scripting_backend,
+        subtarget,
+        None,
+        clean,
+        auto_run,
+    )
+    result = run_command("manage_build", params, config)
+    click.echo(format_output(result, config.format))
+
+
 @build.command("run")
 @click.option("--target", "-t", help="Build target: windows64, osx, linux64, android, ios, webgl")
 @click.option("--output", "-o", "output_path", help="Output path")
@@ -52,9 +123,22 @@ def clean_output(output_path: str, delete_output: bool):
 @click.option("--profile", help="Build Profile asset path (Unity 6+)")
 @click.option("--clean", is_flag=True, help="Clean build cache")
 @click.option("--auto-run", is_flag=True, help="Auto-run after build")
+@click.option(
+    "--expected-plan",
+    callback=_expected_plan_hash,
+    help="Require the 64-hex fingerprint from build plan; no fallback",
+)
 @handle_unity_errors
 def run_build(
-    target, output_path, development, scripting_backend, subtarget, profile, clean, auto_run
+    target,
+    output_path,
+    development,
+    scripting_backend,
+    subtarget,
+    profile,
+    clean,
+    auto_run,
+    expected_plan,
 ):
     """Trigger a player build.
 
@@ -65,27 +149,23 @@ def run_build(
         unity-mcp build run --profile "Assets/Settings/Build Profiles/iOS.asset"
     """
     config = get_config()
-    params = {"action": "build"}
-    if target:
-        params["target"] = target
-    if output_path:
-        params["output_path"] = output_path
-    if development:
-        params["development"] = True
-    if scripting_backend:
-        params["scripting_backend"] = scripting_backend
-    if subtarget:
-        params["subtarget"] = subtarget
-    if profile:
-        params["profile"] = profile
-
-    options = []
-    if clean:
-        options.append("clean_build")
-    if auto_run:
-        options.append("auto_run")
-    if options:
-        params["options"] = options
+    if expected_plan is not None and profile:
+        raise click.UsageError(
+            "--profile is not supported with --expected-plan; profile plans are unavailable."
+        )
+    params = _build_params(
+        "build_from_plan" if expected_plan is not None else "build",
+        target,
+        output_path,
+        development,
+        scripting_backend,
+        subtarget,
+        profile,
+        clean,
+        auto_run,
+    )
+    if expected_plan is not None:
+        params["expected_plan_sha256"] = expected_plan
 
     result = run_command("manage_build", params, config)
     click.echo(format_output(result, config.format))
