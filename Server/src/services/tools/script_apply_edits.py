@@ -1,19 +1,21 @@
+import asyncio
 import base64
 import hashlib
 import logging
+import math
 import re
 from bisect import bisect_right
+from dataclasses import dataclass
 from functools import partial
 from pathlib import PurePosixPath, PureWindowsPath
+from threading import Event
 from typing import Annotated, Any, Callable, TypeVar, Union
 
+from core.config import config
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from core.config import config
-
 from services.registry import mcp_for_unity_tool
-from services.tools import get_unity_instance_from_context
-from services.tools import bounded_regex
+from services.tools import bounded_regex, get_unity_instance_from_context
 from services.tools.manage_script import (
     _edit_integer,
     _lsp_position_to_line_col,
@@ -21,13 +23,14 @@ from services.tools.manage_script import (
     _normalize_script_options,
     _script_lines_and_starts,
     _split_uri,
-    _validate_text_edit_shape,
     _validate_script_name,
+    _validate_text_edit_shape,
 )
 from services.tools.refresh_unity import send_mutation, verify_edit_by_sha
 from services.tools.utils import coerce_bool, coerce_int, parse_json_payload
-from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+from transport.plugin_hub import capture_http_request_budget
+from transport.unity_transport import send_with_unity_instance
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -540,9 +543,10 @@ async def _text_edit_spans(
     *,
     mixed: bool = False,
     line_metadata: tuple[list[str], list[int]] | None = None,
+    budget: bounded_regex.WorkBudget | None = None,
 ) -> list[dict[str, Any]]:
     """Build literal edits using optional metadata from the same original buffer."""
-    budget = bounded_regex.WorkBudget()
+    budget = budget or bounded_regex.WorkBudget()
     budget.consume(len(contents))
     lines, offsets = (
         line_metadata if line_metadata is not None else _script_lines_and_starts(contents)
@@ -881,7 +885,12 @@ def _err(
 
 
 def _prepared_handoff(
-    response: Any, unity_instance: str | None, expected_path: str
+    response: Any,
+    unity_instance: str | None,
+    expected_path: str,
+    *,
+    ordered: bool = False,
+    final: bool = True,
 ) -> dict[str, Any]:
     """Verify a complete Unity snapshot; local native eligibility remains unproven."""
     if isinstance(response, dict) and not response.get("success"):
@@ -911,11 +920,24 @@ def _prepared_handoff(
             data.get("original_sha256") != original_sha
             or data.get("sha256") != original_sha
             or data.get("candidate_sha256") != candidate_sha
-            or data.get("candidate_bytes_sha256") != candidate_sha
             or data.get("encoding") != "utf-8"
-            or data.get("bom") is not False
         ):
             raise ValueError("Candidate contents, hashes or encoding are inconsistent")
+        if ordered:
+            bom = data.get("original_bom")
+            if type(bom) is not bool or data.get("bom") is not bom:
+                raise ValueError("Original and candidate BOM proof must agree")
+            preamble = b"\xef\xbb\xbf" if bom else b""
+            if (
+                data.get("original_bytes_sha256")
+                != hashlib.sha256(preamble + original_bytes).hexdigest()
+                or data.get("candidate_bytes_sha256")
+                != hashlib.sha256(preamble + candidate_bytes).hexdigest()
+                or data.get("validation_status") != ("passed" if final else "pending")
+            ):
+                raise ValueError("Raw-byte digests or final validation proof are inconsistent")
+        elif data.get("candidate_bytes_sha256") != candidate_sha or data.get("bom") is not False:
+            raise ValueError("Legacy preparation requires UTF-8 without a candidate BOM")
         path_type = (
             PureWindowsPath if PureWindowsPath(data["absolute_path"]).drive else PurePosixPath
         )
@@ -982,6 +1004,13 @@ def _prepared_handoff(
             ],
             "fallback": "Use the original edit request without options.preview for a direct Unity edit when native application cannot preserve exact bytes or local provenance is unproven.",
         }
+        if ordered:
+            data["native_apply"]["requirements"][1] = (
+                "original raw-byte SHA and BOM match immediately before writing"
+            )
+            data["native_apply"]["fallback"] = (
+                "For direct ordered apply, retain mixed_order='request' and supply precondition_bytes_sha256 and candidate_bytes_sha256 from this complete preparation."
+            )
         return {
             **response,
             "message": "Prepared only; no changes applied or refresh scheduled.",
@@ -993,6 +1022,241 @@ def _prepared_handoff(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _OrderedScriptRequest:
+    """One normalized request shares a fixed lifetime across preparation and commit."""
+
+    name: str
+    path: str
+    edits: list[dict[str, Any]]
+    options: dict[str, Any]
+    expires_at: float
+
+
+async def _ordered_script_edits(ctx: Context, request: _OrderedScriptRequest) -> dict[str, Any]:
+    """Prepare one current buffer at a time, then dispatch at most one final commit."""
+    loop = asyncio.get_running_loop()
+    instance = None
+    dispatched = False
+    expected_sha = request.options.get("candidate_bytes_sha256")
+    target = f"{request.path}/{request.name}.cs"
+    cancelled = Event()
+    active_remaining = bounded_regex.TOTAL_TIMEOUT_SECONDS
+    characters_remaining = bounded_regex.MAX_WORK_CHARS
+    text_ops = {"prepend", "append", "replace_range", "regex_replace"}
+
+    def unknown(message: str) -> dict[str, Any]:
+        return _err(
+            "outcome_unknown",
+            message,
+            extra={
+                "outcome": "unknown",
+                "confirmation": "pending_verification",
+                "expected_bytes_sha256": expected_sha,
+                "path": target,
+                "unity_instance": instance,
+            },
+        )
+
+    async def send(params: dict[str, Any], *, commit: bool = False):
+        nonlocal dispatched
+        if loop.time() >= request.expires_at:
+            raise TimeoutError("Ordered deadline expired before native dispatch")
+        if commit:
+            dispatched = True
+        return await send_with_unity_instance(
+            async_send_command_with_retry,
+            instance,
+            "manage_script",
+            params,
+            **({"retry_on_reload": False} if commit else {}),
+        )
+
+    try:
+        async with asyncio.timeout_at(request.expires_at):
+            if loop.time() >= request.expires_at:
+                raise TimeoutError("Ordered deadline expired before instance selection")
+            instance = await get_unity_instance_from_context(ctx)
+            response = await send(
+                {
+                    "action": "preview_script_buffer",
+                    "name": request.name,
+                    "path": request.path,
+                    "options": request.options,
+                }
+            )
+            prepared = _prepared_handoff(response, instance, target, ordered=True, final=False)
+            if not prepared.get("success"):
+                return prepared
+            original = prepared["data"]
+            if original["new_contents"] != original["original_contents"]:
+                return _err("invalid_preview", "The original buffer snapshot was not unchanged")
+            if (
+                not request.options.get("preview")
+                and request.options["precondition_bytes_sha256"]
+                != original["original_bytes_sha256"]
+            ):
+                return _err("stale_file", "Original raw bytes do not match the caller precondition")
+            current = original["original_contents"]
+            identity_fields = (
+                "path",
+                "absolute_path",
+                "project_root",
+                "original_contents",
+                "original_sha256",
+                "original_bytes_sha256",
+                "original_bom",
+                "bom",
+            )
+            for index, raw_edit in enumerate(request.edits):
+                final = index == len(request.edits) - 1
+                edit = dict(raw_edit)
+                literal_candidate = None
+                if edit["op"] in text_ops:
+                    phase_started = loop.time()
+                    budget = bounded_regex.WorkBudget()
+                    budget.cancelled = cancelled
+                    budget.remaining = characters_remaining
+                    budget.deadline = bounded_regex.monotonic() + max(
+                        0.0,
+                        min(
+                            active_remaining,
+                            request.expires_at - phase_started,
+                        ),
+                    )
+                    try:
+                        metadata = _script_lines_and_starts(current)
+                        if isinstance(edit.get("range"), dict):
+                            rng = edit.pop("range")
+                            edit["startLine"], edit["startCol"] = _lsp_position_to_line_col(
+                                metadata[0], rng["start"]
+                            )
+                            edit["endLine"], edit["endCol"] = _lsp_position_to_line_col(
+                                metadata[0], rng["end"]
+                            )
+                        spans = await _text_edit_spans(
+                            current, [edit], mixed=True, line_metadata=metadata, budget=budget
+                        )
+                        literal_candidate = _preview_text_spans(current, spans)
+                        edit = spans[0] if spans else None
+                        budget.check()
+                    finally:
+                        active_remaining -= loop.time() - phase_started
+                        characters_remaining = budget.remaining
+                    if active_remaining <= 0:
+                        return _err(
+                            "processing_budget_exceeded",
+                            "Cumulative text processing allowance expired",
+                        )
+                if edit is None and not final:
+                    continue
+                current_bytes = current.encode("utf-8")
+                preamble = b"\xef\xbb\xbf" if original["bom"] else b""
+                params = {
+                    "action": "preview_script_buffer",
+                    "name": request.name,
+                    "path": request.path,
+                    "source_contents": current,
+                    "source_sha256": hashlib.sha256(current_bytes).hexdigest(),
+                    "source_bytes_sha256": hashlib.sha256(preamble + current_bytes).hexdigest(),
+                    "original_sha256": original["original_sha256"],
+                    "original_bytes_sha256": original["original_bytes_sha256"],
+                    "original_bom": original["original_bom"],
+                    "bom": original["bom"],
+                    "validate_final": final,
+                    "options": request.options,
+                }
+                if edit is not None:
+                    params["edit"] = edit
+                response = await send(params)
+                prepared = _prepared_handoff(response, instance, target, ordered=True, final=final)
+                if not prepared.get("success"):
+                    return prepared
+                data = prepared["data"]
+                if any(data[field] != original[field] for field in identity_fields):
+                    return _err(
+                        "invalid_preview", "Original target identity changed during preparation"
+                    )
+                candidate = data["new_contents"]
+                if literal_candidate is not None and candidate != literal_candidate:
+                    return _err(
+                        "invalid_preview", "Native literal result differs from the requested spans"
+                    )
+                if (
+                    sum(
+                        len(value.encode("utf-8"))
+                        for value in (original["original_contents"], current, candidate)
+                    )
+                    > 1024 * 1024
+                ):
+                    return _err(
+                        "payload_too_large", "Original/current/next exceeds the 1 MiB stage limit"
+                    )
+                current = candidate
+            data = prepared["data"]
+            data.update(
+                ordering="request", coordinate_space="current", steps_processed=len(request.edits)
+            )
+            if loop.time() >= request.expires_at:
+                raise TimeoutError("Ordered deadline expired before preparation completed")
+            if request.options.get("preview"):
+                return _with_norm(prepared, request.edits, routing="mixed/request/preview")
+            if data["candidate_bytes_sha256"] != expected_sha:
+                return _err(
+                    "candidate_mismatch",
+                    "Prepared raw bytes differ from the caller candidate digest",
+                )
+            if data["no_op"]:
+                data.update(
+                    applied=False,
+                    bytes_sha256=data["candidate_bytes_sha256"],
+                    refresh_status="not_needed",
+                )
+                prepared["message"] = "Ordered no-op; no file replacement or refresh was requested."
+                return _with_norm(prepared, request.edits, routing="mixed/request/noop")
+            response = await send(
+                {
+                    "action": "apply_prepared_script",
+                    "name": request.name,
+                    "path": request.path,
+                    "original_bytes_sha256": original["original_bytes_sha256"],
+                    "candidate_contents": current,
+                    "candidate_bytes_sha256": expected_sha,
+                    "bom": original["bom"],
+                    "options": request.options,
+                },
+                commit=True,
+            )
+            # Record known commits before another await, including a failed refresh.
+            result_data = response.get("data") if isinstance(response, dict) else None
+            if isinstance(result_data, dict) and result_data.get("applied") is True:
+                result_data.update(path=target, unity_instance=instance, ordering="request")
+                if (
+                    result_data.get("bytes_sha256") != expected_sha
+                    or result_data.get("sha256") != data["candidate_sha256"]
+                    or result_data.get("bom") is not original["bom"]
+                ):
+                    result_data.update(outcome="conflict", confirmation="committed_result_mismatch")
+                return response
+            if isinstance(result_data, dict) and result_data.get("applied") is False:
+                return response
+            return unknown(
+                "No definitive native commit result was received; do not replay this request"
+            )
+    except TimeoutError:
+        if dispatched:
+            return unknown("The ordered deadline expired after commit dispatch; do not replay")
+        return _err(
+            "deadline_exceeded", "The fixed ordered deadline expired before commit dispatch"
+        )
+    except _TextEditError as exc:
+        return _err(exc.code, str(exc))
+    except (ValueError, TypeError, KeyError, OverflowError, UnicodeError) as exc:
+        return unknown(str(exc)) if dispatched else _err("invalid_range", str(exc))
+    except (ConnectionError, OSError) as exc:
+        return unknown(str(exc)) if dispatched else _err("preparation_failed", str(exc))
+
+
 @mcp_for_unity_tool(
     name="script_apply_edits",
     unity_target="manage_script",
@@ -1002,7 +1266,9 @@ def _prepared_handoff(
     - Method/class edits adapt to local indentation and line endings without changing string values.
     - Range, anchor, regex, prepend and append payloads are literal: include all desired whitespace/newlines.
     - options.preview=true prepares complete proposed contents, target paths and hashes without applying changes.
-    - Mixed text/structured preview is unsupported. Direct edits keep their existing behavior.
+    - options.mixed_order='request' prepares mixed edits in request order against the current buffer.
+    - Ordered apply requires precondition_bytes_sha256 and candidate_bytes_sha256 from its preview; it commits once.
+    - Omitted or text_first mixed_order preserves text-first execution and unsupported mixed preview.
     - For Codex-native file visibility, verify local target/workspace and original SHA, use an exposed native file tool only if it preserves exact candidate bytes, then verify candidate_bytes_sha256 before Unity validate/refresh.
     - Native patch capabilities vary: CRLF, BOM and missing final newline may require a byte-preserving tool or direct Unity edit fallback. Never normalize string bytes or fabricate file events.
     - Prefer anchor_* ops for pattern-based insert/replace near stable markers
@@ -1071,6 +1337,34 @@ async def script_apply_edits(
         options = _normalize_script_options(options)
     except ValueError as exc:
         return _err("invalid_options", str(exc))
+    ordered = False
+    expires_at = None
+    if "mixed_order" in options:
+        value = options["mixed_order"]
+        if not isinstance(value, str) or value not in ("text_first", "request"):
+            return _err("invalid_options", "mixed_order must be 'text_first' or 'request'")
+        ordered = value == "request"
+    if ordered:
+        loop = asyncio.get_running_loop()
+        ceiling = float(config.command_total_timeout)
+        if not math.isfinite(ceiling) or ceiling <= 0:
+            return _err("invalid_options", "The command timeout must be positive and finite")
+        expires_at = loop.time() + ceiling
+        http_budget = capture_http_request_budget()
+        if http_budget is not None:
+            expires_at = min(expires_at, http_budget.expires_at)
+        for alias in ("applyMode", "apply_mode"):
+            if alias in options and options[alias] != "sequential":
+                return _err(
+                    "invalid_options",
+                    "Ordered interpretation requires applyMode='sequential' when supplied",
+                )
+        if not options.get("preview"):
+            for field in ("precondition_bytes_sha256", "candidate_bytes_sha256"):
+                value = options.get(field)
+                if not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{64}", value) is None:
+                    return _err("invalid_options", f"Ordered apply requires strict {field}")
+                options[field] = value.lower()
     logger.info("Processing script_apply_edits")
 
     # Parse edits if they came as a stringified JSON
@@ -1227,8 +1521,10 @@ async def script_apply_edits(
                 e["replacement"] = e.get("text", "")
             elif "insert" in e or "content" in e:
                 e["replacement"] = e.get("insert") or e.get("content") or ""
-        if op == "anchor_insert" and not (
-            e.get("text") or e.get("insert") or e.get("content") or e.get("replacement")
+        if (
+            not ordered
+            and op == "anchor_insert"
+            and not (e.get("text") or e.get("insert") or e.get("content") or e.get("replacement"))
         ):
             e["op"] = "anchor_delete"
             normalized_edits.append(e)
@@ -1237,6 +1533,28 @@ async def script_apply_edits(
 
     edits = normalized_edits
     normalized_for_echo = edits
+    if ordered:
+        try:
+            for edit in edits:
+                if "replacementBase64" in edit:
+                    value = edit["replacementBase64"]
+                    if not isinstance(value, str):
+                        raise ValueError("replacementBase64 must be a string")
+                    if len(value) > ((64 * 1024 + 2) // 3) * 4:
+                        return _err(
+                            "payload_too_large",
+                            "Encoded replacement exceeds the ordered payload limit",
+                        )
+                    decoded = base64.b64decode(value, validate=True).decode(
+                        "utf-8", errors="strict"
+                    )
+                    replacement_missing = edit.get("replacement") is None
+                    if replacement_missing or (
+                        edit.get("op") != "anchor_replace" and not edit.get("replacement")
+                    ):
+                        edit["replacement"] = decoded
+        except (ValueError, TypeError, UnicodeError) as exc:
+            return _err("invalid_edit", str(exc))
 
     # Validate required fields and produce machine-parsable hints
     def error_with_hint(
@@ -1270,7 +1588,7 @@ async def script_apply_edits(
                     _validate_text_edit_shape({**e, "newText": payload})
                 except ValueError as exc:
                     return _err("missing_field", str(exc))
-            if op == "regex_replace":
+            if op == "regex_replace" and not ordered:
                 try:
                     flags = re.MULTILINE | (re.IGNORECASE if e.get("ignore_case") else 0)
                     bounded_regex._compile(e.get("pattern") or "", "", flags)
@@ -1342,8 +1660,14 @@ async def script_apply_edits(
                     {"op": op, "required": ["anchor"]},
                     {"edits[0].anchor": "(?m)^\\s*public\\s+bool\\s+HasTarget\\s*\\("},
                 )
-            if op in ("anchor_insert", "anchor_replace") and not (
-                e.get("text") or e.get("replacement")
+            if (
+                op in ("anchor_insert", "anchor_replace")
+                and not (e.get("text") or e.get("replacement"))
+                and not (
+                    ordered
+                    and op == "anchor_replace"
+                    and any(e.get(field) is not None for field in ("text", "replacement"))
+                )
             ):
                 return error_with_hint(
                     f"{op} requires 'text'.",
@@ -1375,6 +1699,54 @@ async def script_apply_edits(
     all_text = ops_set.issubset(TEXT)
     mixed = not (all_struct or all_text)
     preview = options.get("preview", False)
+    if ordered:
+        if not mixed:
+            return _err(
+                "invalid_options", "mixed_order='request' requires a mixed text/structured list"
+            )
+        try:
+            payload_bytes = 0
+            for edit in edits:
+                op = edit["op"]
+                if op in ("anchor_insert", "anchor_replace"):
+                    # Match the native null/empty distinction exactly. insert/content
+                    # are not native anchor payload selectors and cannot mask replacement.
+                    value = edit.get("text")
+                    if value is None:
+                        value = edit.get("replacement")
+                    if op == "anchor_insert":
+                        value = value or ""
+                    elif value is None:
+                        value = ""
+                elif op in STRUCT:
+                    value = (
+                        ""
+                        if op in ("delete_class", "delete_method", "anchor_delete")
+                        else edit.get("replacement") or ""
+                    )
+                else:
+                    value = next(
+                        (
+                            edit[field]
+                            for field in ("text", "insert", "content", "replacement")
+                            if edit.get(field) is not None
+                        ),
+                        "",
+                    )
+                if not isinstance(value, str):
+                    raise TypeError("Replacement payload must be a string")
+                if len(value) > 64 * 1024:
+                    return _err("payload_too_large", "Ordered replacement exceeds 64 KiB")
+                payload_bytes += len(value.encode("utf-8", errors="strict"))
+            if payload_bytes > 64 * 1024:
+                return _err(
+                    "payload_too_large", "Ordered aggregate replacement payload exceeds 64 KiB"
+                )
+        except (ValueError, TypeError, UnicodeError) as exc:
+            return _err("invalid_edit", str(exc))
+        return await _ordered_script_edits(
+            ctx, _OrderedScriptRequest(name, path, edits, options, expires_at)
+        )
     if preview and mixed:
         return _err(
             "unsupported_preview",

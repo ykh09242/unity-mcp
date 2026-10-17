@@ -1,9 +1,11 @@
 """Exercise script editing through the real SDK independently of legacy test stubs."""
 
-import subprocess
 import os
+import subprocess
 import sys
 import textwrap
+
+import pytest
 
 
 def test_modern_sdk_script_edit_preserves_locator_and_replacement():
@@ -64,6 +66,69 @@ def test_modern_sdk_script_edit_preserves_locator_and_replacement():
     # Then: its requested file/replacement and precondition survive the actual SDK stack.
     assert result.returncode == 0, result.stdout + result.stderr
     assert "real modern SDK script edit passed" in result.stdout
+
+
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("old_peer", [False, True])
+def test_ordered_sdk_public_options_digests_and_projection(mode, old_peer):
+    """Real SDK negotiation/wrappers; the native boundary remains controlled."""
+    code = f"MODE = {mode!r}\nOLD_PEER = {old_peer!r}\n" + textwrap.dedent(r"""
+        import asyncio
+        import sys
+        from pathlib import Path
+        from unittest.mock import AsyncMock
+        from fastmcp import Client, FastMCP
+        from core.logging_decorator import log_execution
+        from core.telemetry_decorator import telemetry_tool
+        sys.path.insert(0, str(Path.cwd() / "tests"))
+        from test_script_preparation import OrderedWire, ordered_edits, tools
+        native = OrderedWire()
+        native.bom = True
+        if OLD_PEER:
+            native.fail_action = "preview_script_buffer"
+        tools.get_unity_instance_from_context = native.select
+        tools.send_with_unity_instance = native.send
+        tools.send_mutation = native.legacy
+        server = FastMCP("ordered-script-contract")
+        wrapped = log_execution("script_apply_edits", "Tool")(tools.script_apply_edits)
+        server.tool(name="script_apply_edits")(telemetry_tool("script_apply_edits")(wrapped))
+        async def main():
+            async with Client(server, mode=MODE) as client:
+                arguments = {"name": "Foo.cs", "path": "Assets", "edits": ordered_edits(),
+                             "options": {"mixed_order": "request", "preview": True}}
+                result = await client.call_tool("script_apply_edits", arguments)
+                response = result.structured_content
+                if OLD_PEER:
+                    assert response["success"] is False, response
+                    assert "Unknown action:" in response.get("error", ""), response
+                    assert [p["action"] for p, _ in native.calls] == ["preview_script_buffer"]
+                    assert not native.commits and not native.legacy_writes
+                else:
+                    assert response["success"] is True, response
+                    data = response["data"]
+                    assert data["ordering"] == "request" and data["bom"] is True
+                    assert data["candidate_bytes_sha256"] != data["candidate_sha256"]
+                    assert data["new_contents"].endswith("void Added() { int value = 1; }\n}\n")
+                    arguments["options"] = {"mixed_order": "request",
+                        "precondition_bytes_sha256": data["original_bytes_sha256"],
+                        "candidate_bytes_sha256": data["candidate_bytes_sha256"]}
+                    applied = await client.call_tool("script_apply_edits", arguments)
+                    assert applied.structured_content["data"]["applied"] is True
+                    assert applied.structured_content["data"]["bytes_sha256"] == data["candidate_bytes_sha256"]
+                    assert len(native.commits) == 1 and not native.legacy_writes
+                print("ordered SDK contract passed", MODE, OLD_PEER)
+        asyncio.run(main())
+    """)
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=25,
+        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ordered SDK contract passed" in result.stdout
 
 
 def test_modern_sdk_script_literal_formatting_and_preview():
