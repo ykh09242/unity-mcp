@@ -1,5 +1,6 @@
 """Build management — player builds, platform switching, settings, batch automation."""
 
+import re
 from typing import Annotated, Any, Optional
 
 from fastmcp import Context
@@ -13,6 +14,8 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 ALL_ACTIONS = [
     "build",
+    "plan",
+    "build_from_plan",
     "status",
     "platform",
     "settings",
@@ -74,7 +77,9 @@ async def _send_build_command(
     description=(
         "Manage Unity player builds — trigger builds, switch platforms, configure settings, "
         "manage build scenes and profiles, run batch builds across platforms. "
-        "Actions: build, status, platform, settings, scenes, profiles, batch, cancel, clean_output. "
+        "Actions: plan, build_from_plan, build, status, platform, settings, scenes, profiles, batch, cancel, clean_output.  "
+        "plan observes one ordinary build without applying settings; build_from_plan requires its expected_plan_sha256 and rejects drift. "
+        "These actions do not support build profiles or batch targets. "
         "clean_output previews an explicit Builds/ descendant by default; dry_run=false deletes it. "
         "Refuses links, active builds, project source paths, and scans over 5000 entries."
     ),
@@ -88,7 +93,7 @@ async def manage_build(
     ctx: Context,
     action: Annotated[
         str,
-        "Action: build, status, platform, settings, scenes, profiles, batch, cancel, clean_output",
+        "Action: plan, build_from_plan, build, status, platform, settings, scenes, profiles, batch, cancel, clean_output",
     ],
     target: Annotated[
         Optional[str],
@@ -118,6 +123,9 @@ async def manage_build(
     ] = None,
     output_dir: Annotated[Optional[str], "Base output directory for batch builds"] = None,
     job_id: Annotated[Optional[str], "Job ID for status/cancel"] = None,
+    expected_plan_sha256: Annotated[
+        Optional[str], "build_from_plan only: 64-hex SHA256 from a fresh ordinary build plan"
+    ] = None,
     dry_run: Annotated[
         bool | str | None,
         "clean_output only: preview by default; explicitly false deletes the selected Builds/ descendant. No links allowed.",
@@ -129,6 +137,42 @@ async def manage_build(
             "success": False,
             "message": f"Unknown action '{action}'. Valid actions: {', '.join(ALL_ACTIONS)}",
         }
+
+    if action_lower == "build_from_plan":
+        if (
+            not isinstance(expected_plan_sha256, str)
+            or re.fullmatch(r"[0-9a-fA-F]{64}", expected_plan_sha256) is None
+        ):
+            return {
+                "success": False,
+                "message": "expected_plan_sha256 must be exactly 64 hexadecimal characters from a fresh plan.",
+            }
+    elif expected_plan_sha256 is not None:
+        return {
+            "success": False,
+            "message": "expected_plan_sha256 is supported only for build_from_plan; ordinary build is not guarded.",
+        }
+    if action_lower in {"plan", "build_from_plan"}:
+        unrelated = {
+            "property": property,
+            "value": value,
+            "activate": activate,
+            "output_dir": output_dir,
+            "job_id": job_id,
+        }
+        if (
+            profile not in (None, "")
+            or any(
+                parse_json_payload(item) not in (None, "", [])
+                for item in (profiles, targets)
+                if item is not None
+            )
+            or any(value is not None for value in unrelated.values())
+        ):
+            return {
+                "success": False,
+                "message": "build_plan_scope_unsupported: plans support only one ordinary non-profile build.",
+            }
 
     params_dict: dict[str, Any] = {"action": action_lower}
     if action_lower == "clean_output":
@@ -151,19 +195,20 @@ async def manage_build(
     if isinstance(parsed_scenes, str):
         parsed_scenes = [s.strip() for s in parsed_scenes.split(",") if s.strip()]
     parsed_options = parse_json_payload(options) if options is not None else None
-    if action_lower in {"build", "batch"} and options is not None:
+    if action_lower in {"build", "batch", "plan", "build_from_plan"} and options is not None:
         if not _valid_build_options(parsed_options):
             return {
                 "success": False,
                 "message": "options must contain supported BuildOptions names.",
             }
-    if action_lower in {"build", "platform"} and subtarget is not None:
+    if action_lower in {"build", "platform", "plan", "build_from_plan"} and subtarget is not None:
         if not isinstance(subtarget, str) or subtarget.lower() not in {"player", "server"}:
             return {"success": False, "message": "subtarget must be player or server."}
     parsed_targets = parse_json_payload(targets) if targets else None
     parsed_profiles = parse_json_payload(profiles) if profiles else None
 
     param_map: dict[str, Any] = {
+        "expected_plan_sha256": expected_plan_sha256,
         "target": target,
         "output_path": output_path,
         "scenes": parsed_scenes,

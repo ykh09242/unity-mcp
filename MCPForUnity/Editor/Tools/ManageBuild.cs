@@ -21,7 +21,20 @@ namespace MCPForUnity.Editor.Tools
     )]
     public static class ManageBuild
     {
-        private static readonly string[] ValidActions = { "build", "status", "platform", "settings", "scenes", "profiles", "batch", "cancel", "clean_output" };
+        private static readonly string[] ValidActions =
+        {
+            "build",
+            "plan",
+            "build_from_plan",
+            "status",
+            "platform",
+            "settings",
+            "scenes",
+            "profiles",
+            "batch",
+            "cancel",
+            "clean_output",
+        };
 
         public static object HandleCommand(JObject @params)
         {
@@ -42,6 +55,10 @@ namespace MCPForUnity.Editor.Tools
             {
                 switch (action)
                 {
+                    case "plan":
+                        return HandleBuildPlan(@params, apply: false);
+                    case "build_from_plan":
+                        return HandleBuildPlan(@params, apply: true);
                     case "build":
                         return HandleBuild(p);
                     case "status":
@@ -140,7 +157,62 @@ namespace MCPForUnity.Editor.Tools
             return BuildRunner.ScheduleBuild(job, options);
         }
 
-        private static int ReadSubtarget(ToolParams p)
+        private static object HandleBuildPlan(JObject request, bool apply)
+        {
+            var p = new ToolParams(request);
+            string expected = p.Get("expected_plan_sha256");
+            if (apply && (p.GetRaw("expected_plan_sha256")?.Type != JTokenType.String || !BuildPlan.IsExpectedHash(expected)))
+                return new ErrorResponse(
+                    "build_plan_hash_invalid",
+                    new { message = "expected_plan_sha256 must be exactly 64 hexadecimal characters. Request a fresh plan." }
+                );
+            if (!apply && p.GetRaw("expected_plan_sha256") != null)
+                return new ErrorResponse("build_plan_scope_unsupported", new { message = "expected_plan_sha256 is supported only for build_from_plan." });
+            try
+            {
+                BuildPlan.ValidateRequestSize(request);
+                // Retain no caller-owned token/array references across the next-update boundary.
+                var detached = (JObject)request.DeepClone();
+                BuildPlan plan = BuildPlan.Capture(detached);
+                if (!apply)
+                    return new SuccessResponse("Build plan observed. No settings or build effects were applied.", plan.ToData());
+                if (!string.Equals(expected, plan.Sha256, StringComparison.OrdinalIgnoreCase))
+                    return new ErrorResponse(
+                        "build_plan_stale",
+                        new { message = "Build observations differ from the expected plan. Request a fresh plan before applying." }
+                    );
+                BuildPlayerOptions options = plan.CopyOptions();
+                var job = new BuildJob(BuildJobStore.CreateJobId(), options.target, options.locationPathName);
+                return BuildRunner.ScheduleBuild(
+                    job,
+                    options,
+                    beforeBuild: () =>
+                    {
+                        BuildPlan current;
+                        try
+                        {
+                            current = BuildPlan.Capture(detached);
+                        }
+                        catch (BuildPlanException error)
+                        {
+                            throw new InvalidOperationException("build_plan_stale: " + error.Message + " Request a fresh plan before applying.");
+                        }
+                        if (!string.Equals(expected, current.Sha256, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidOperationException(
+                                "build_plan_stale: Build observations changed before execution. Request a fresh plan before applying."
+                            );
+                        if (plan.RequestedBackend.HasValue)
+                            PlayerSettings.SetScriptingBackend(plan.NamedTarget, plan.RequestedBackend.Value);
+                    }
+                );
+            }
+            catch (BuildPlanException error)
+            {
+                return new ErrorResponse(error.Code, error.ToData());
+            }
+        }
+
+        internal static int ReadSubtarget(ToolParams p)
         {
             var token = p.GetRaw("subtarget");
             if (token == null || token.Type == JTokenType.Null)
@@ -150,7 +222,7 @@ namespace MCPForUnity.Editor.Tools
             return BuildTargetMapping.ResolveSubtarget(token.Value<string>());
         }
 
-        private static string[] ReadBuildOptionNames(JToken token)
+        internal static string[] ReadBuildOptionNames(JToken token)
         {
             if (token == null || token.Type == JTokenType.Null)
                 return null;
@@ -190,7 +262,7 @@ namespace MCPForUnity.Editor.Tools
             return array.Select(item => item.Value<string>()).ToArray();
         }
 
-        private static void ValidateSceneArgument(JToken token)
+        internal static void ValidateSceneArgument(JToken token)
         {
             if (token == null || token.Type == JTokenType.Null)
                 return;

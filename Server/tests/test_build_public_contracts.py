@@ -48,6 +48,10 @@ connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport
 connection._auth_headers = lambda config: {}
 runner = CliRunner()
 
+def invoke(args):
+    # The build contract must not discover any external project context.
+    return runner.invoke(cli, ["--no-project-context", *args])
+
 def check(condition, label):
     global checks
     checks += 1
@@ -56,6 +60,8 @@ def check(condition, label):
         print('FAIL', label)
 
 cases = [
+    (['plan'], {'action': 'plan'}),
+    (['run', '--expected-plan', 'a' * 64], {'action': 'build_from_plan', 'expected_plan_sha256': 'a' * 64}),
     (['run'], {'action': 'build'}),
     (['run', '--target', 'windows64', '--profile', 'Assets/Profiles/Android.asset', '--backend', 'il2cpp'],
      {'action': 'build', 'target': 'windows64', 'profile': 'Assets/Profiles/Android.asset',
@@ -89,14 +95,18 @@ for args, expected in cases:
         reply = {'success': not failed, 'message': 'Controlled native build diagnostic',
                  'data': {'count': 0, 'development': False, 'scenes': [], 'report': None}}
         before = len(requests)
-        result = runner.invoke(
-            cli, ['--format', 'json', '--instance', 'Project@fixture', 'build', *args],
+        result = invoke(['--format', 'json', '--instance', 'Project@fixture', 'build', *args],
         )
         sent = requests[before:]
         check(result.exit_code == (1 if failed else 0), 'CLI native failure exit ' + repr(args))
         check(sent == [{'type': 'manage_build', 'params': expected, 'unity_instance': 'Project@fixture'}],
               'CLI literal values/defaults ' + repr(args))
-        check(json.loads(result.output) == reply, 'single JSON/falsey data ' + repr(args))
+        try:
+            parsed = json.loads(result.output)
+        except json.JSONDecodeError:
+            check(False, 'single JSON/falsey data ' + repr(args) + ' (non-JSON output)')
+        else:
+            check(parsed == reply, 'single JSON/falsey data ' + repr(args))
         print('CLI_WIRE', json.dumps({'args': args, 'requests': sent, 'response': reply}))
 for args, identity in ((['run'], 'build-owned'), (['batch', '--targets', 'windows64,android'], 'batch-owned')):
     for phase in ('pending', 'succeeded', 'failed', 'cancelled'):
@@ -104,20 +114,20 @@ for args, identity in ((['run'], 'build-owned'), (['batch', '--targets', 'window
         if phase == 'pending':
             reply.update(_mcp_status='pending', _mcp_poll_interval=5.0)
         command = args if phase == 'pending' else ['status', identity]
-        result = runner.invoke(cli, ['--format', 'json', 'build', *command])
+        result = invoke(['--format', 'json', 'build', *command])
         check(result.exit_code == 0 and json.loads(result.output) == reply, 'pending/terminal state fidelity')
         check(requests[-1]['params'].get('job_id') == (None if phase == 'pending' else identity),
               'explicit CLI polling identity')
         print('CLI_WIRE', json.dumps({'args': command, 'requests': [requests[-1]], 'response': reply}))
 reply = {'success': True, '_mcp_status': 'pending', 'data': {'job_id': 'batch-owned'}}
-result = runner.invoke(cli, ['--format', 'text', 'build', 'batch', '--targets', 'windows64'])
+result = invoke(['--format', 'text', 'build', 'batch', '--targets', 'windows64'])
 check(result.exit_code == 0 and 'unity-mcp build status batch-owned' in result.output, 'text poll hint')
-for args in (['run', '--backend', 'bad'], ['cancel']):
+for args in (['run', '--backend', 'bad'], ['run', '--expected-plan', 'bad'], ['cancel']):
     before = len(requests)
-    result = runner.invoke(cli, ['--format', 'json', 'build', *args])
+    result = invoke(['--format', 'json', 'build', *args])
     check(result.exit_code != 0 and len(requests) == before, 'invalid CLI before HTTP')
 for command in (None, *build.commands):
-    result = runner.invoke(cli, ['build', *([command] if command else []), '--help'])
+    result = invoke(['build', *([command] if command else []), '--help'])
     check(result.exit_code == 0, 'help ' + repr(command))
     print('FULL_HELP', json.dumps({'command': command, 'text': result.output}))
 print('CLI_SUMMARY', json.dumps({'checks': checks, 'failures': failures, 'requests': len(requests)}))
@@ -175,6 +185,8 @@ service.register_global_tools([definition])
 assert 'manage_build' not in service._global_tools
 service._register_project_tools('fixture', [definition], project_hash='fixture')
 cases = [
+    ({'action': 'plan', 'scenes': '["Assets/First.unity"]', 'options': '["auto_run"]'}, {'action': 'plan', 'scenes': ['Assets/First.unity'], 'options': ['auto_run']}),
+    ({'action': 'build_from_plan', 'expected_plan_sha256': 'a' * 64}, {'action': 'build_from_plan', 'expected_plan_sha256': 'a' * 64}),
     ({'action': 'BUILD'}, {'action': 'build'}),
     ({'action': 'build', 'target': 'windows64', 'profile': 'Assets/Profiles/Android.asset',
       'scripting_backend': 'il2cpp', 'development': 'false'},
@@ -232,6 +244,36 @@ async def main():
                     result, sent = await invoke(client, 'manage_build', payload, mode)
                     check(sent == [('Project@fixture', 'manage_build', expected)], 'SDK parsed literal input ' + mode)
                     check(result.structured_content == response, 'opaque native result fidelity ' + mode)
+            raw = {'success': True, 'data': {'schema_version': 'unity-mcp/build-plan@1', 'plan_sha256': 'a' * 64}}
+            result, sent = await invoke(client, 'execute_custom_tool',
+                {'tool_name': 'manage_build', 'parameters': {'action': 'plan'}}, mode)
+            envelope = result.structured_content
+            check(not result.is_error and isinstance(envelope, dict)
+                  and envelope.get('success') is True and envelope.get('data') == raw['data']
+                  and set(envelope) <= {'success', 'data', 'message', 'error', 'hint'}
+                  and all(envelope.get(key) is None for key in ('message', 'error', 'hint')),
+                  'terminal plan preserves normalized public success/data envelope')
+            check(sent == [('Project@fixture', 'manage_build', {'action': 'plan'})],
+                  'terminal plan has exactly one wire and no poll')
+            check(isinstance(envelope, dict) and isinstance(envelope.get('data'), dict)
+                  and all(key not in envelope and key not in envelope['data']
+                          for key in ('job_id', '_mcp_status', '_mcp_poll_interval')),
+                  'terminal plan has no pending or job state')
+            for native_error in ('Unknown action build_from_plan', 'build_plan_stale'):
+                raw = {'success': False, 'error': native_error}
+                result, sent = await invoke(client, 'manage_build',
+                    {'action': 'build_from_plan', 'expected_plan_sha256': 'a' * 64}, mode)
+                check(len(sent) == 1 and sent[0][2]['action'] == 'build_from_plan',
+                      'old native/stale guard has zero ordinary-build fallback')
+                check(result.structured_content == raw, 'guard failure fidelity')
+            original = {'action': 'build_from_plan', 'expected_plan_sha256': 'a' * 64}
+            replies = [{'success': True, '_mcp_status': 'pending', '_mcp_poll_interval': 0.001,
+                        'data': {'job_id': 'guarded-owned'}},
+                       {'success': True, 'data': {'job_id': 'guarded-owned', 'result': 'succeeded'}}]
+            result, sent = await invoke(client, 'execute_custom_tool',
+                {'tool_name': 'manage_build', 'parameters': original}, mode)
+            check([item[2] for item in sent] == [original, {**original, 'action': 'status', 'job_id': 'guarded-owned'}],
+                  'guarded pending keeps response job identity and normal poll action')
             for state in ('pending', 'building', 'succeeded', 'failed', 'cancelled'):
                 raw = {'success': True, 'data': {'job_id': 'build-owned', 'result': state, 'completed': 0}}
                 if state in ('pending', 'building'):

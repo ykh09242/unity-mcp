@@ -850,6 +850,21 @@ Preview or delete an explicit build output under Builds/.
 | --delete | boolean | optional | nargs=1, flag | — | — | Delete the selected Builds/ descendant; omission previews only. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp build plan`
+
+Observe one ordinary build without applying settings, saving or building. Use the same flags with build run --expected-plan HASH to reject declared drift. Module availability is not proof of SDK/toolchain readiness or build success.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --target / -t | text | optional | nargs=1 | — | — | Build target: windows64, osx, linux64, android, ios, webgl |
+| --output / -o | text | optional | nargs=1 | — | — | Output path |
+| --development / -d | boolean | optional | nargs=1, flag | — | — | Development build |
+| --backend | choice: mono, il2cpp | optional | nargs=1 | — | — | Proposed persistent backend change at apply |
+| --subtarget | choice: player, server | optional | nargs=1 | — | — | Build subtarget |
+| --clean | boolean | optional | nargs=1, flag | — | — | Plan a cache clean during build |
+| --auto-run | boolean | optional | nargs=1, flag | — | — | Plan auto-run after build |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp build platform`
 
 Read or switch the active build platform. Examples: unity-mcp build platform unity-mcp build platform android unity-mcp build platform windows64 --subtarget server
@@ -884,6 +899,7 @@ Trigger a player build. Examples: unity-mcp build run --target windows64 --devel
 | --profile | text | optional | nargs=1 | — | — | Build Profile asset path (Unity 6+) |
 | --clean | boolean | optional | nargs=1, flag | — | — | Clean build cache |
 | --auto-run | boolean | optional | nargs=1, flag | — | — | Auto-run after build |
+| --expected-plan | text | optional | nargs=1 | — | — | Require the 64-hex fingerprint from build plan; no fallback |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp build scenes`

@@ -9,12 +9,13 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 
 // Executes full production command/runner/mapping/job/parameter sources. Unity native APIs
-// are replaced by observable managed seams; update callbacks are never invoked.
+// are replaced by observable managed seams; DEV14 invokes only managed fake callbacks.
 internal static class BuildPreflightHarness
 {
     private static int failures;
     private static int checks;
     private static string outputRoot;
+    private static bool disablePlanGuardControl;
 
     private static void Check(bool value, string name)
     {
@@ -42,6 +43,25 @@ internal static class BuildPreflightHarness
         EditorUserBuildSettings.standaloneBuildSubtarget = StandaloneBuildSubtarget.Player;
         EditorUserBuildSettings.SubtargetWrites = 0;
         BuildPipeline.Builds = 0;
+        BuildPipeline.ThrowSupport = false;
+        BuildPipeline.LastOptions = default;
+        AssetDatabase.Saves = 0;
+        AssetDatabase.SceneGuid = "11111111111111111111111111111111";
+        PlayerSettings.productName = "Game";
+        PlayerSettings.companyName = "Company";
+        PlayerSettings.bundleVersion = "1.0";
+        PlayerSettings.Identifier = "com.fixture.game";
+        PlayerSettings.Defines = "FIXTURE;A";
+        PlayerSettings.Architecture = 0;
+        PlayerSettings.Backend = ScriptingImplementation.Mono2x;
+        EditorUserBuildSettings.buildAppBundle = false;
+        UnityEngine.Application.dataPath = Path.GetFullPath("Assets");
+        UnityEngine.Application.unityVersion = "synthetic";
+        EditorBuildSettings.scenes = new[]
+        {
+            new EditorBuildSettingsScene("Assets/First.unity", true),
+            new EditorBuildSettingsScene("Assets/Second.unity", false),
+        };
     }
 
     private static void Reject(JObject request, string diagnostic)
@@ -64,9 +84,280 @@ internal static class BuildPreflightHarness
         Check(BuildPipeline.Builds == 0 && !Directory.Exists(outputRoot), name + " no build/output folder");
     }
 
+    private static JObject PlanRequest() =>
+        new JObject
+        {
+            ["action"] = "plan",
+            ["scripting_backend"] = "il2cpp",
+            ["options"] = new JArray("clean_build", "auto_run"),
+        };
+
+    private static JObject Call(JObject request)
+    {
+        // Deliberately unsafe routing exists only in this managed fake-Unity oracle control.
+        if (disablePlanGuardControl && request.Value<string>("action") == "build_from_plan")
+        {
+            var unsafeRequest = (JObject)request.DeepClone();
+            unsafeRequest["action"] = "build";
+            return JObject.FromObject(ManageBuild.HandleCommand(unsafeRequest));
+        }
+        return JObject.FromObject(ManageBuild.HandleCommand(request));
+    }
+
+    private static string PlanHash(JObject request)
+    {
+        JObject preview = (JObject)request.DeepClone();
+        preview["action"] = "plan";
+        preview.Remove("expected_plan_sha256");
+        return Call(preview).SelectToken("data.plan_sha256")?.Value<string>();
+    }
+
+    private static bool ReadOnly() =>
+        PlayerSettings.Writes == 0
+        && BuildPipeline.Builds == 0
+        && AssetDatabase.Saves == 0
+        && EditorUserBuildSettings.Switches == 0
+        && EditorUserBuildSettings.SubtargetWrites == 0
+        && Store("_buildJobs").Count == 0
+        && Store("_batchJobs").Count == 0
+        && EditorApplication.update == null
+        && !Directory.Exists(outputRoot);
+
+    private static void RunUpdate()
+    {
+        Action update = EditorApplication.update;
+        update?.Invoke();
+    }
+
+    private static void PlanContracts()
+    {
+        Reset();
+        var unguarded = PlanRequest();
+        unguarded["action"] = "build";
+        Call(unguarded);
+        Check(
+            !ReadOnly() && PlayerSettings.Writes == 1 && Store("_buildJobs").Count == 1,
+            "negative control: old build route fails read-only oracle before actual execution"
+        );
+        RunUpdate();
+        Check(BuildPipeline.Builds == 1 && AssetDatabase.Saves == 1, "negative control: unguarded route really executes fake build");
+
+        Reset();
+        JObject request = PlanRequest();
+        JObject preview = Call(request);
+        Check(preview.Value<bool>("success"), "DEV14 plan facility exists: " + preview.ToString(Newtonsoft.Json.Formatting.None));
+        if (!preview.Value<bool>("success"))
+            return; // baseline is missing-facility RED, not fabricated deeper behavioral evidence
+        Check(ReadOnly(), "valid plan has zero writes/jobs/schedule/save/build/output");
+        Check(preview.SelectToken("data.schema_version")?.Value<string>() == "unity-mcp/build-plan@1", "versioned plan schema");
+        string hash = preview.SelectToken("data.plan_sha256")?.Value<string>();
+        Check(hash != null && System.Text.RegularExpressions.Regex.IsMatch(hash, "^[0-9a-f]{64}$"), "canonical hash syntax");
+        Check(hash == PlanHash(request), "unchanged plan hash deterministic");
+        Check(preview.SelectToken("data.ready_to_schedule")?.Value<bool>() == true, "valid plan ready only for scheduling");
+        Check(preview.SelectToken("data.job_id") == null, "plan has no job identity");
+        Check(
+            preview.SelectToken("data.observed.scripting_backend.raw")?.Value<int>() == (int)ScriptingImplementation.Mono2x,
+            "raw observed backend preserved"
+        );
+        Check(preview.SelectToken("data.scenes[0].path")?.Value<string>() == "Assets/First.unity", "enabled default scene resolved");
+        Check(preview.SelectToken("data.effects.scripting_backend_write")?.Value<bool>() == true, "requested backend effect explained but unapplied");
+
+        foreach (JToken badHash in new JToken[] { JValue.CreateNull(), "bad", new string('a', 63), new string('g', 64), 123 })
+        {
+            Reset();
+            var invalidHash = PlanRequest();
+            invalidHash["action"] = "build_from_plan";
+            invalidHash["expected_plan_sha256"] = badHash;
+            JObject result = Call(invalidHash);
+            Check(
+                !result.Value<bool>("success") && result.Value<string>("code") == "build_plan_hash_invalid" && ReadOnly(),
+                "malformed guarded hash has zero effects: " + badHash
+            );
+        }
+        Reset();
+        var mobileRequest = PlanRequest();
+        mobileRequest["target"] = "android";
+        mobileRequest["subtarget"] = "server";
+        JObject mobile = Call(mobileRequest);
+        Check(
+            mobile.Value<bool>("success")
+                && mobile.SelectToken("data.target.subtarget")?.Value<int>() == 0
+                && mobile.SelectToken("data.target.requested_subtarget")?.Value<int>() == (int)StandaloneBuildSubtarget.Server,
+            "non-Standalone plan reports actual platform default and separate requested subtarget"
+        );
+        Check(ReadOnly(), "mobile plan does not switch/apply requested Standalone subtarget");
+
+        foreach (
+            string json in new[]
+            {
+                "{scenes:[]}",
+                "{scenes:['Assets/Missing.unity']}",
+                "{scenes:['Assets/not-scene.txt']}",
+                "{target:'invalid'}",
+                "{subtarget:'sevrer'}",
+                "{options:['invalid']}",
+                "{scripting_backend:'unknown'}",
+                "{profile:'Assets/Valid.asset'}",
+                "{profiles:['Assets/Valid.asset']}",
+                "{targets:['windows64']}",
+                "{property:'defines'}",
+                "{value:''}",
+                "{activate:false}",
+                "{output_dir:'Builds'}",
+                "{job_id:'old'}",
+                "{dry_run:true}",
+            }
+        )
+        {
+            Reset();
+            JObject invalid = JObject.Parse(json);
+            invalid["action"] = "plan";
+            JObject result = Call(invalid);
+            Check(!result.Value<bool>("success") && result.SelectToken("data.plan_sha256") == null, "invalid plan has no usable hash: " + json);
+            Check(ReadOnly(), "invalid plan has zero effects: " + json);
+        }
+        foreach (bool throws in new[] { false, true })
+        {
+            Reset();
+            BuildPipeline.TargetSupported = false;
+            BuildPipeline.ThrowSupport = throws;
+            JObject result = Call(PlanRequest());
+            Check(!result.Value<bool>("success") && result.SelectToken("data.plan_sha256") == null, "unsupported/unavailable module not ready");
+            Check(ReadOnly(), "module failure read-only");
+        }
+        foreach (string field in new[] { "scenes", "options", "output_path" })
+        {
+            Reset();
+            var invalid = PlanRequest();
+            if (field == "output_path")
+                invalid[field] = new string('a', 4097);
+            else
+                invalid[field] = new JArray(System.Linq.Enumerable.Repeat(field == "scenes" ? "Assets/First.unity" : "auto_run", field == "scenes" ? 129 : 33));
+            JObject result = Call(invalid);
+            Check(!result.Value<bool>("success") && result.SelectToken("data.plan_sha256") == null && ReadOnly(), "bounded plan rejects overflow: " + field);
+        }
+
+        Action[] drift =
+        {
+            () => PlayerSettings.productName = "Changed",
+            () => PlayerSettings.companyName = "Changed",
+            () => PlayerSettings.bundleVersion = "2",
+            () => PlayerSettings.Identifier = "com.changed",
+            () => PlayerSettings.Defines = "B",
+            () => PlayerSettings.Architecture = 2,
+            () => PlayerSettings.Backend = ScriptingImplementation.IL2CPP,
+            () => PlayerSettings.Backend = (ScriptingImplementation)712,
+            () => EditorUserBuildSettings.activeBuildTarget = BuildTarget.StandaloneLinux64,
+            () =>
+            {
+                EditorUserBuildSettings.standaloneBuildSubtarget = StandaloneBuildSubtarget.Server;
+                EditorUserBuildSettings.SubtargetWrites = 0;
+            },
+            () => EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene("Assets/Second.unity", true) },
+            () => AssetDatabase.SceneGuid = "22222222222222222222222222222222",
+            () => UnityEngine.Application.dataPath = Path.GetFullPath("Other/Assets"),
+            () => UnityEngine.Application.unityVersion = "changed",
+        };
+        foreach (bool deferred in new[] { false, true })
+            for (int i = 0; i < drift.Length; i++)
+            {
+                Reset();
+                var guarded = PlanRequest();
+                string expected = PlanHash(guarded);
+                guarded["action"] = "build_from_plan";
+                guarded["expected_plan_sha256"] = expected;
+                if (!deferred)
+                    drift[i]();
+                JObject result = Call(guarded);
+                if (deferred)
+                {
+                    Check(
+                        result.Value<string>("_mcp_status") == "pending" && PlayerSettings.Writes == 0,
+                        "deferred guard schedules without backend write " + i
+                    );
+                    drift[i]();
+                    RunUpdate();
+                    var job = (BuildJob)Store("_buildJobs")[result.SelectToken("data.job_id").Value<string>()];
+                    Check(
+                        job.State == BuildJobState.Failed && job.ErrorMessage?.Contains("build_plan_stale") == true,
+                        "deferred drift fails existing job " + i
+                    );
+                }
+                else
+                    Check(
+                        !result.Value<bool>("success")
+                            && result.Value<string>("code") == "build_plan_stale"
+                            && Store("_buildJobs").Count == 0
+                            && EditorApplication.update == null,
+                        "immediate drift no job " + i
+                    );
+                Check(
+                    PlayerSettings.Writes == 0 && BuildPipeline.Builds == 0 && AssetDatabase.Saves == 0,
+                    "stale guard before settings/save/build " + i + deferred
+                );
+            }
+        Reset();
+        request = PlanRequest();
+        request["target"] = "android";
+        hash = PlanHash(request);
+        EditorUserBuildSettings.buildAppBundle = true;
+        Check(hash != PlanHash(request) && ReadOnly(), "Android output-mode observation participates in fingerprint");
+        Reset();
+        request = PlanRequest();
+        hash = PlanHash(request);
+        request["scenes"] = new JArray("Assets/First.unity", "Assets/Second.unity");
+        Check(hash != PlanHash(request), "explicit ordered scenes/default provenance participates");
+        hash = PlanHash(request);
+        request["scenes"] = new JArray("Assets/Second.unity", "Assets/First.unity");
+        Check(hash != PlanHash(request), "scene ordering participates");
+        hash = PlanHash(request);
+        request["options"] = new JArray("strict_mode");
+        Check(hash != PlanHash(request), "option flags participate");
+        hash = PlanHash(request);
+        request["output_path"] = "Builds/Other.exe";
+        Check(hash != PlanHash(request), "output participates");
+
+        foreach (bool cancel in new[] { false, true })
+        {
+            Reset();
+            request = PlanRequest();
+            request["scenes"] = new JArray("Assets/First.unity", "Assets/Second.unity");
+            hash = PlanHash(request);
+            request["action"] = "build_from_plan";
+            request["expected_plan_sha256"] = hash;
+            JObject pending = Call(request);
+            Check(
+                pending.Value<string>("_mcp_status") == "pending" && PlayerSettings.Writes == 0 && BuildPipeline.Builds == 0,
+                "matching guard awaits callback"
+            );
+            var job = (BuildJob)Store("_buildJobs")[pending.SelectToken("data.job_id").Value<string>()];
+            // Caller mutation after admission cannot alter the retained request/options arrays.
+            ((JArray)request["scenes"])[0] = "Assets/Missing.unity";
+            ((JArray)request["options"])[0] = "invalid";
+            request["scripting_backend"] = "mono";
+            if (cancel)
+                job.State = BuildJobState.Cancelled;
+            RunUpdate();
+            Check(
+                BuildPipeline.Builds == (cancel ? 0 : 1) && PlayerSettings.Writes == (cancel ? 0 : 1) && AssetDatabase.Saves == (cancel ? 0 : 1),
+                "matching/cancel effects exactly once " + cancel
+            );
+            if (!cancel)
+            {
+                Check(job.State == BuildJobState.Succeeded, "matching job succeeds through fake build");
+                Check(
+                    BuildPipeline.LastOptions.scenes[0] == "Assets/First.unity" && BuildPipeline.LastOptions.options.HasFlag(BuildOptions.AutoRunPlayer),
+                    "detached resolved scene/options passed unchanged"
+                );
+                Check(BuildPipeline.BackendAtBuild == ScriptingImplementation.IL2CPP, "backend applied after guard before build");
+            }
+        }
+    }
+
     public static int Main(string[] args)
     {
         outputRoot = Path.Combine(Path.GetFullPath(args[0]), "never-created-output");
+        disablePlanGuardControl = args.Length == 2 && args[1] == "--disable-plan-guard-control";
         foreach (
             string json in new[]
             {
@@ -348,6 +639,8 @@ internal static class BuildPreflightHarness
             );
         }
         Reset();
+        PlanContracts();
+        Reset();
         Console.WriteLine("BUILD_PREFLIGHT: " + checks + " checks, " + failures + " failures");
         return failures == 0 ? 0 : 1;
     }
@@ -505,11 +798,27 @@ namespace UnityEditor
     public static class PlayerSettings
     {
         public static string productName = "Game";
+        public static string companyName = "Company";
+        public static string bundleVersion = "1.0";
+        public static string Identifier = "com.fixture.game";
+        public static string Defines = "FIXTURE;A";
+        public static int Architecture;
+        public static ScriptingImplementation Backend;
+
+        public static ScriptingImplementation GetScriptingBackend(Build.NamedBuildTarget target) => Backend;
+
+        public static string GetApplicationIdentifier(Build.NamedBuildTarget target) => Identifier;
+
+        public static string GetScriptingDefineSymbols(Build.NamedBuildTarget target) => Defines;
+
+        public static int GetArchitecture(Build.NamedBuildTarget target) => Architecture;
+
         public static int Writes;
 
         public static void SetScriptingBackend(Build.NamedBuildTarget target, ScriptingImplementation backend)
         {
             Writes++;
+            Backend = backend;
         }
     }
 
@@ -519,15 +828,33 @@ namespace UnityEditor
         public static int Builds;
 
         public static bool TargetSupported = true;
+        public static bool ThrowSupport;
+        public static BuildPlayerOptions LastOptions;
+        public static ScriptingImplementation BackendAtBuild;
 
-        public static bool IsBuildTargetSupported(BuildTargetGroup group, BuildTarget target) => TargetSupported;
+        public static bool IsBuildTargetSupported(BuildTargetGroup group, BuildTarget target)
+        {
+            if (ThrowSupport)
+                throw new InvalidOperationException("Synthetic unavailable module observation");
+            return TargetSupported;
+        }
 
         public static BuildTargetGroup GetBuildTargetGroup(BuildTarget target) => MCPForUnity.Editor.Tools.Build.BuildTargetMapping.GetTargetGroup(target);
 
         public static Build.Reporting.BuildReport BuildPlayer(BuildPlayerOptions options)
         {
             Builds++;
-            throw new InvalidOperationException("Native build forbidden");
+            LastOptions = options;
+            BackendAtBuild = PlayerSettings.Backend;
+            return new Build.Reporting.BuildReport
+            {
+                summary = new Build.Reporting.BuildSummary
+                {
+                    result = Build.Reporting.BuildResult.Succeeded,
+                    platform = options.target,
+                    outputPath = options.locationPathName,
+                },
+            };
         }
 
         public static Build.Reporting.BuildReport BuildPlayer(BuildPlayerWithProfileOptions options)
@@ -562,12 +889,22 @@ namespace UnityEditor
         public static T LoadAssetAtPath<T>(string path)
             where T : UnityEngine.Object
         {
+            if (typeof(T) == typeof(SceneAsset) && (path == "Assets/First.unity" || path == "Assets/Second.unity"))
+                return (T)(UnityEngine.Object)new SceneAsset();
             if (typeof(T) == typeof(Build.Profile.BuildProfile) && path == "Assets/Valid.asset")
                 return (T)(UnityEngine.Object)new Build.Profile.BuildProfile();
             return null;
         }
 
-        public static void SaveAssets() { }
+        public static int Saves;
+        public static string SceneGuid = "11111111111111111111111111111111";
+
+        public static string AssetPathToGUID(string path) => SceneGuid;
+
+        public static void SaveAssets()
+        {
+            Saves++;
+        }
 
         public static string[] FindAssets(string filter) => Array.Empty<string>();
 
@@ -584,9 +921,11 @@ namespace UnityEditor
         public void Dispose() { }
     }
 
-    public sealed class SerializedProperty
+    public sealed class SerializedProperty : IDisposable
     {
         public int intValue;
+
+        public void Dispose() { }
     }
 }
 
@@ -594,9 +933,10 @@ namespace UnityEditor.Build
 {
     public struct NamedBuildTarget
     {
-        public static NamedBuildTarget Server => default;
+        public static NamedBuildTarget Server => new NamedBuildTarget { TargetName = "Dedicated Server" };
+        public string TargetName { get; private set; }
 
-        public static NamedBuildTarget FromBuildTargetGroup(UnityEditor.BuildTargetGroup group) => default;
+        public static NamedBuildTarget FromBuildTargetGroup(UnityEditor.BuildTargetGroup group) => new NamedBuildTarget { TargetName = group.ToString() };
     }
 }
 

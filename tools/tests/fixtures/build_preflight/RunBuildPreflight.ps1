@@ -5,7 +5,8 @@ param(
     [string]$UnityData = 'C:/Program Files/Unity/Hub/Editor/6000.0.69f1/Editor/Data',
     [string]$SdkPath = 'C:/Program Files/dotnet/sdk/10.0.401',
     [string]$UnityDefines = 'UNITY_6000_0_OR_NEWER,UNITY_2023_1_OR_NEWER',
-    [string]$DotnetPath = 'dotnet'
+    [string]$DotnetPath = 'dotnet',
+    [switch]$DisablePlanGuardControl
 )
 $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '../../../..')).Path
@@ -22,10 +23,17 @@ foreach ($relative in @('MCPForUnity/Editor/Tools/ManageBuild.cs', 'MCPForUnity/
     Write-Output ('SOURCE_SHA256: ' + $relative + ' ' + (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash)
     $arguments += $source
 }
+$planSource = if ($BaselinePath) { Join-Path $BaselinePath 'BuildPlan.cs' } else { Join-Path $repository 'MCPForUnity/Editor/Tools/Build/BuildPlan.cs' }
+if (Test-Path -LiteralPath $planSource) {
+    Write-Output ('SOURCE_SHA256: MCPForUnity/Editor/Tools/Build/BuildPlan.cs ' + (Get-FileHash -LiteralPath $planSource -Algorithm SHA256).Hash)
+    $arguments += $planSource
+}
 $arguments += @('MCPForUnity/Editor/Tools/Build/BuildJob.cs', 'MCPForUnity/Editor/Helpers/ToolParams.cs', 'MCPForUnity/Editor/Helpers/ParamCoercion.cs', 'MCPForUnity/Editor/Helpers/StringCaseUtility.cs', 'MCPForUnity/Runtime/Serialization/JsonScalarConversion.cs', 'MCPForUnity/Editor/Helpers/Response.cs') | ForEach-Object { Join-Path $repository $_ }
 $arguments += Join-Path $PSScriptRoot 'BuildPreflightHarness.cs'
 Write-Output ('UNITY_DEFINES: ' + $UnityDefines)
 & $DotnetPath @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Build preflight harness compilation failed' }
-& (Join-Path $WorkPath 'BuildPreflight.exe') $WorkPath
+$harnessArguments = @($WorkPath)
+if ($DisablePlanGuardControl) { $harnessArguments += '--disable-plan-guard-control' }
+& (Join-Path $WorkPath 'BuildPreflight.exe') @harnessArguments
 exit $LASTEXITCODE

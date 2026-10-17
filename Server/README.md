@@ -32,7 +32,7 @@ Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` 
 Normally the Editor manages launch/configuration. This beta checkout uses the exact `mcpServerSource` recorded in [`MCPForUnity/package.json`](../MCPForUnity/package.json). Published stable releases keep their own immutable source pins; use the value from the installed package:
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/4c61ca82b477bf5207e303e1bed29f15ba0b3792.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/473b12b7b64ba2abfdd19052e06c4bfd2aa2bb6b.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
 Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving branch. First launch can require dependency downloads; a source pin is not an offline-install guarantee. The commit-addressed archive avoids Git checkout and its Windows long-path limit; it still downloads the repository archive and builds only `Server`. Existing full-commit Git and explicit local development overrides remain supported.
@@ -76,6 +76,38 @@ Authenticated local clients share the journal installation's nonsecret owner ide
 
 `tasks/cancel` cancels the **wait Task**, not native test execution. Its acknowledgement records cancellation intent; inspect `tasks/get` for the final Task state. Use existing native-job polling/control separately.
 
+## Optional missing scene-load input
+
+`UNITY_MCP_SCENE_LOAD_INPUTS=1` enables an optional HTTP input round for the built-in
+`manage_scene(action="load")` when no `name`, `path`, or `build_index` was supplied.
+It is disabled by default. The reviewed MCP 2.3.0/FastMCP 4.1.0 APIs and protocol
+2026-07-28 are required; the client must support `resultType: "input_required"`
+and form elicitation. Local and hosted HTTP retain their existing authentication
+and instance-selection rules. Unsupported clients, stdio, unavailable SDK hooks,
+and admission refusal retain the ordinary missing-target response; supply the
+target explicitly to use the existing flow.
+
+The form asks for one existing `Assets/.../*.unity` scene path, without searching
+for a target or repeating consent for a complete request. No preflight, refresh or
+scene command runs before an accepted, validated answer. The accepted continuation
+runs the original tool with only the missing path added. A timeout after dispatch
+still has the ordinary uncertain-outcome semantics; inspect Unity before retrying.
+
+The SDK seals state against tampering and binds it to the authenticated principal
+and original arguments. Each question also binds the selected instance, project,
+session and socket generation for 120 seconds; unrelated reads do not invalidate
+it. Decline/cancel completes without loading. A consumed question admits at most
+one continuation, including concurrent retries, and a replay reports that the
+attempt already occurred rather than claiming success. The process holds at most
+128 questions, at most 16 per principal. Active continuations retain their charge
+until they exit. These limits do not extend ordinary command deadlines.
+
+Keys and pending questions are process-local and ephemeral. Restart or another
+worker cannot resume that question; send a fresh request with an explicit target.
+There is no shared-key setting: safely sharing consumption across replicas would
+also require shared atomic attempt tracking. Client support does not imply that
+any particular host renders the form.
+
 ## Pinned Unity guidance over MCP
 
 On the reviewed MCP SDK **2.3.0** and FastMCP **4.1.0**, the server automatically offers the final `io.modelcontextprotocol/skills` extension when its packaged snapshot validates. Modern **2026-07-28** clients can discover it with `server/discover`, enumerate `skills/list`, and look up `skills/get` with `uri: "skill://unity-mcp-orchestrator/SKILL.md"`. Each entry includes unchanged frontmatter and a complete file manifest with raw-byte SHA-256 digests and sizes. Read individual files on demand with `resources/read`; directory reads are not offered. Explicit legacy clients can read the same ordinary resources but cannot call the modern Skills methods.
@@ -101,8 +133,8 @@ The routing middleware checks built-in tool signatures before instance discovery
 ## CLI and environment reference
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/4c61ca82b477bf5207e303e1bed29f15ba0b3792.zip#subdirectory=Server" mcp-for-unity --help
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/4c61ca82b477bf5207e303e1bed29f15ba0b3792.zip#subdirectory=Server" unity-mcp --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/473b12b7b64ba2abfdd19052e06c4bfd2aa2bb6b.zip#subdirectory=Server" mcp-for-unity --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/473b12b7b64ba2abfdd19052e06c4bfd2aa2bb6b.zip#subdirectory=Server" unity-mcp --help
 ```
 
 The server and Editor-control CLI have different options. `unity-mcp` requires local HTTP and accepts `--host`, `--port`, `--timeout`, `--format`, and `--instance`. Place global options before subcommands; see [CLI examples](../website/docs/guides/cli.md).
@@ -116,6 +148,7 @@ The server and Editor-control CLI have different options. `unity-mcp` requires l
 | `UNITY_MCP_LOG_DIR` | Override rotating server log directory. |
 | `UNITY_MCP_DISABLE_FOCUS_NUDGE=1` | Disable local test-focus nudges. |
 | `UNITY_MCP_TEST_WAIT_TASKS_DIR` | Opt in to bounded test-wait Tasks over HTTP with a private journal directory. |
+| `UNITY_MCP_SCENE_LOAD_INPUTS=1` | Opt in to missing-target scene-load form input over HTTP. |
 
 Hosted mode requires an HTTPS validator and private HTTPS/WSS proxy plus `--http-behind-tls-proxy`; this assertion does not enable TLS. Its flags, environment variables and deployment examples live in [Remote Server Auth](../website/docs/guides/remote-server-auth.md). Local REST/CLI control is unavailable in hosted mode.
 
