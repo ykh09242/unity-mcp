@@ -27,7 +27,9 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "- generate: Submit a generation job (text->3D or image->3D). Returns { job_id } "
         "immediately; poll with the status action. Params: provider, mode (text|image), "
         "prompt, image_path|image_url, format (glb|fbx|obj|usdz), target_size, texture, "
-        "tier, model, name, output_folder. Tripo supports GLB generation only; omit tier. "
+        "tier, model, name, output_folder, allow_image_upload. Tripo local PNG/JPEG input "
+        "requires allow_image_upload=true to upload original bytes including metadata and start potentially billable generation. "
+        "Hosted image_url takes precedence and does not upload the local file. Tripo supports GLB generation only; omit tier. "
         "Tripo texture=false requires v3.0-20250812, v3.1-20260211, or P1-20260311. "
         "Other formats require a separate conversion workflow, which this tool does not submit. "
         "target_size applies only when Auto-Normalize Imported Models is enabled; finite zero or negative values preserve imported scale. Successful normalization of a model without ModelImporter may return a prefab variant while retaining its source model.\n"
@@ -60,6 +62,10 @@ async def generate_model(
     prompt: Annotated[str, "Text prompt for text->3D."] | None = None,
     image_path: Annotated[str, "Path to a source image for image->3D."] | None = None,
     image_url: Annotated[str, "URL of a source image for image->3D."] | None = None,
+    allow_image_upload: Annotated[
+        bool,
+        "Consent to send a selected local PNG/JPEG including metadata to Tripo for potentially billable generation; false by default. Hosted URLs take precedence.",
+    ] = False,
     format: Annotated[
         str,
         "Output model format: glb, fbx, obj, or usdz, subject to provider support. Tripo supports glb only.",
@@ -114,6 +120,9 @@ async def generate_model(
         "limit": limit,
         "offset": offset,
     }
+
+    if allow_image_upload is True:
+        params_dict["allowImageUpload"] = True
 
     # Remove None values
     params_dict = {k: v for k, v in params_dict.items() if v is not None}

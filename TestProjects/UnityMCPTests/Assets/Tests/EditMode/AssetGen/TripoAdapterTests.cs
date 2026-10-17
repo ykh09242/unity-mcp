@@ -42,14 +42,14 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(1, http.RecordedRequests.Count);
 
             HttpRequestSpec rec = http.RecordedRequests[0];
-            StringAssert.Contains("/v2/openapi/task", rec.Url);
+            Assert.AreEqual("https://openapi.tripo3d.ai/v3/generation/text-to-model", rec.Url);
             Assert.AreEqual("POST", rec.Method);
             Assert.IsTrue(rec.Headers.ContainsKey("Authorization"));
             StringAssert.StartsWith("Bearer ", rec.Headers["Authorization"]);
 
             string body = Encoding.UTF8.GetString(rec.Body);
             StringAssert.Contains("a red dragon", body);
-            StringAssert.Contains("text_to_model", body);
+            Assert.IsNull(JObject.Parse(body)["type"]);
         }
 
         [Test]
@@ -110,7 +110,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
             string body = Encoding.UTF8.GetString(http.RecordedRequests[0].Body);
-            StringAssert.Contains("\"model_version\":\"P1-20260311\"", body);
+            StringAssert.Contains("\"model\":\"P1-20260311\"", body);
         }
 
         [Test]
@@ -128,7 +128,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
             string body = Encoding.UTF8.GetString(http.RecordedRequests[0].Body);
-            StringAssert.Contains("\"model_version\":\"" + TripoAdapter.ModelVersion + "\"", body);
+            StringAssert.Contains("\"model\":\"" + TripoAdapter.ModelVersion + "\"", body);
         }
 
         [Test]
@@ -146,7 +146,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
             string body = Encoding.UTF8.GetString(http.RecordedRequests[0].Body);
-            StringAssert.Contains("image_to_model", body);
+            Assert.AreEqual("https://openapi.tripo3d.ai/v3/generation/image-to-model", http.RecordedRequests[0].Url);
             StringAssert.Contains("https://example.com/in.png", body);
         }
 
@@ -166,8 +166,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
             string body = Encoding.UTF8.GetString(http.RecordedRequests[0].Body);
-            StringAssert.Contains("image_to_model", body);
-            StringAssert.Contains("\"model_version\":\"P1-20260311\"", body);
+            Assert.AreEqual("https://openapi.tripo3d.ai/v3/generation/image-to-model", http.RecordedRequests[0].Url);
+            StringAssert.Contains("\"model\":\"P1-20260311\"", body);
         }
 
         [Test]
@@ -185,14 +185,13 @@ namespace MCPForUnityTests.Editor.AssetGen
             adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult();
 
             string body = Encoding.UTF8.GetString(http.RecordedRequests[0].Body);
-            StringAssert.Contains("\"model_version\":\"" + TripoAdapter.ModelVersion + "\"", body);
+            StringAssert.Contains("\"model\":\"" + TripoAdapter.ModelVersion + "\"", body);
         }
 
         [Test]
         public void Submit_ImageMode_LocalPathOnly_Throws()
         {
-            // Tripo can't take a local image inline (no data-URI support, upload not wired) — it must
-            // fail clearly rather than silently falling back to text mode.
+            // Direct adapter callers also require explicit local-upload consent.
             var adapter = new TripoAdapter();
             var req = new ModelGenRequest
             {
@@ -201,7 +200,9 @@ namespace MCPForUnityTests.Editor.AssetGen
                 ImagePath = "/tmp/whatever.png",
             };
 
-            Assert.Throws<System.Exception>(() => adapter.SubmitAsync(req, "k", new FakeHttpTransport(), CancellationToken.None).GetAwaiter().GetResult());
+            var http = new FakeHttpTransport();
+            Assert.Throws<InvalidOperationException>(() => adapter.SubmitAsync(req, "k", http, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.IsEmpty(http.RecordedRequests);
         }
 
         [TestCase("fbx", null, true, null)]
@@ -225,6 +226,44 @@ namespace MCPForUnityTests.Editor.AssetGen
                 new TripoAdapter().SubmitAsync(req, "fixture-key", http, CancellationToken.None).GetAwaiter().GetResult()
             );
             Assert.AreEqual(0, http.RecordedRequests.Count);
+        }
+
+        [Test]
+        public void Poll_PrefersV3ModelUrl_AndUsesTaskQueryEndpoint()
+        {
+            const string current = "https://cdn.tripo3d.ai/current.glb";
+            var http = new FakeHttpTransport
+            {
+                Handler = _ =>
+                    Json(
+                        "{\"code\":0,\"data\":{\"status\":\"success\",\"output\":{\"model_url\":\""
+                            + current
+                            + "\",\"pbr_model\":\"https://fixture.invalid/legacy.glb\"}}}"
+                    ),
+            };
+            ProviderPollResult result = new TripoAdapter().PollAsync("legacy-task-id", "k", http, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual("https://openapi.tripo3d.ai/v3/tasks/legacy-task-id", http.RecordedRequests[0].Url);
+            Assert.AreEqual("GET", http.RecordedRequests[0].Method);
+            Assert.AreEqual(current, result.DownloadUrl);
+            Assert.AreEqual(ProviderPollState.Succeeded, result.State);
+        }
+
+        [TestCase("output", "pbr_model", false)]
+        [TestCase("result", "pbr_model", true)]
+        [TestCase("output", "model", false)]
+        [TestCase("result", "model", true)]
+        [TestCase("output", "base_model", false)]
+        [TestCase("result", "base_model", true)]
+        public void Poll_PreservesLegacyOutputAliases(string container, string field, bool nested)
+        {
+            const string url = "https://tripo-data.rg1.data.tripo3d.com/legacy.glb";
+            var data = new JObject
+            {
+                ["status"] = "success",
+                [container] = new JObject { [field] = nested ? (JToken)new JObject { ["url"] = url } : new JValue(url) },
+            };
+            var http = new FakeHttpTransport { Handler = _ => Json(new JObject { ["code"] = 0, ["data"] = data }.ToString()) };
+            Assert.AreEqual(url, new TripoAdapter().PollAsync("legacy-task-id", "k", http, CancellationToken.None).GetAwaiter().GetResult().DownloadUrl);
         }
 
         [TestCase("text", true, null)]

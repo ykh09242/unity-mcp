@@ -89,6 +89,12 @@ def list_models(
 @click.option("--prompt", default=None, help="Text prompt for text->3D.")
 @click.option("--image-path", default=None, help="Source image path for image->3D.")
 @click.option("--image-url", default=None, help="Source image URL for image->3D.")
+@click.option(
+    "--allow-image-upload",
+    is_flag=True,
+    default=False,
+    help="Consent to upload a local PNG/JPEG including metadata to Tripo for potentially billable generation.",
+)
 @click.option("--format", "fmt", default=None, help="Output format: glb, fbx, obj, usdz.")
 @click.option(
     "--target-size", default=None, type=float, help="Normalize largest dimension (meters)."
@@ -107,6 +113,7 @@ def generate_model(
     prompt: Optional[str],
     image_path: Optional[str],
     image_url: Optional[str],
+    allow_image_upload: bool,
     fmt: Optional[str],
     target_size: Optional[float],
     texture: Optional[bool],
@@ -140,6 +147,9 @@ def generate_model(
         "outputFolder": output_folder,
     }
     params.update({k: v for k, v in optional.items() if v is not None})
+
+    if allow_image_upload:
+        params["allowImageUpload"] = True
 
     result = run_command("generate_model", params, config)
     _emit(result, config, "Generation")
