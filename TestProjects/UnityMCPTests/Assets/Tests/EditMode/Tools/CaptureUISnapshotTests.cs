@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
@@ -17,6 +18,17 @@ namespace MCPForUnityTests.EditMode.Tools
     {
         private sealed class SnapshotWindow : EditorWindow { }
 
+        private static PanelSettings CreateOwnedPanelSettings()
+        {
+            const string path = "Assets/UI Toolkit/UnityThemes/UnityDefaultRuntimeTheme.tss";
+            var theme = AssetDatabase.LoadAssetAtPath<ThemeStyleSheet>(path);
+            Assert.IsNotNull(theme, "Exact preseeded owned theme prerequisite: " + path);
+            var settings = ScriptableObject.CreateInstance<PanelSettings>();
+            settings.themeStyleSheet = theme;
+            Assert.AreSame(theme, settings.themeStyleSheet, "Explicit theme must be assigned before UIDocument creates its runtime panel.");
+            return settings;
+        }
+
         private sealed class ToolkitPanel : IDisposable
         {
             private readonly PanelSettings settings;
@@ -27,7 +39,7 @@ namespace MCPForUnityTests.EditMode.Tools
 
             internal ToolkitPanel(GameObject root)
             {
-                settings = ScriptableObject.CreateInstance<PanelSettings>();
+                settings = CreateOwnedPanelSettings();
                 Document = root.AddComponent<UIDocument>();
                 Document.panelSettings = settings;
                 Tree = Document.rootVisualElement;
@@ -438,7 +450,7 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             // Given: an actual UIDocument root mounted in an Editor panel with computed layout.
             var root = Root();
-            var settings = ScriptableObject.CreateInstance<PanelSettings>();
+            var settings = CreateOwnedPanelSettings();
             var document = root.AddComponent<UIDocument>();
             var window = ScriptableObject.CreateInstance<SnapshotWindow>();
             try
@@ -630,6 +642,39 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.That(child.style.opacity.value, Is.EqualTo(0.5f));
                 Assert.That(EditorJsonUtility.ToJson(root.GetComponent<RectTransform>()), Is.EqualTo(rootBefore));
             }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ProjectionCompanionDoesNotChangeWorldXYSnapshotContract(bool explicitIdentity)
+        {
+            var root = Root();
+            root.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
+            root.transform.position = new Vector3(1, 2, 5);
+            var child = Child("ProjectionRow", root);
+            ((RectTransform)child.transform).sizeDelta = new Vector2(2, 1);
+            var cameraObject = new GameObject("SnapshotProjectionCamera", typeof(Camera));
+            roots.Add(cameraObject);
+            cameraObject.GetComponent<Camera>().enabled = false;
+            var request = new JObject { ["framework"] = "ugui", ["target"] = root.GetInstanceIDCompat() };
+            if (explicitIdentity)
+                request["identity_map"] = new JArray(new JObject { ["element_path"] = "/0", ["id"] = "row-1" });
+            var beforeResponse = JObject.FromObject(CaptureUISnapshot.HandleCommand(request));
+            Assert.IsTrue(beforeResponse.Value<bool>("success"), beforeResponse.ToString());
+            var before = beforeResponse["data"];
+            cameraObject.transform.SetPositionAndRotation(new Vector3(3, 1, 0), Quaternion.Euler(0, 25, 0));
+            var afterResponse = JObject.FromObject(CaptureUISnapshot.HandleCommand(request));
+            Assert.IsTrue(afterResponse.Value<bool>("success"), afterResponse.ToString());
+            Assert.IsTrue(JToken.DeepEquals(before, afterResponse["data"]));
+            string exportPrefix = System.IO.Path.Combine(System.IO.Path.GetTempPath(), explicitIdentity ? "ui07-snapshot-v3" : "ui07-snapshot-v2");
+            System.IO.File.WriteAllText(exportPrefix + "-before.json", before.ToString(Newtonsoft.Json.Formatting.None));
+            System.IO.File.WriteAllText(exportPrefix + "-after.json", afterResponse["data"].ToString(Newtonsoft.Json.Formatting.None));
+            Assert.AreEqual(explicitIdentity ? 3 : 2, before.Value<int>("schema_version"));
+            Assert.AreEqual("world_aabb", before["evidence"].Value<string>("geometry_space"));
+            Assert.IsTrue(
+                before["limitations"].Any(v => v.Value<string>().Contains("diagnose_projection")),
+                "The fixed limitation points callers to explicit camera evidence."
+            );
         }
 
         private static bool HasLayout(VisualElement element)

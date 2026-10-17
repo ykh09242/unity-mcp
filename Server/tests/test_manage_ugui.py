@@ -800,3 +800,21 @@ async def test_returns_instance_selection_failure_without_waiting_for_editor(
     send.assert_not_awaited()
     ready.assert_not_awaited()
     assert listing.await_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "options",
+    [{"camera": "View"}, {"max_depth": 1}, {"max_evaluations": 100}, {"max_characters": 100}],
+)
+async def test_projection_only_options_cannot_change_legacy_actions(
+    boundary: Boundary, options: dict
+) -> None:
+    result = await manage_ugui(
+        SimpleNamespace(), action="get_hierarchy", target="Canvas", **options
+    )
+    assert result == {"success": False, "message": "invalid_projection_request"}
+    boundary.preflight.assert_not_awaited()
+    boundary.instance.assert_not_awaited()
+    boundary.read.assert_not_awaited()
+    boundary.mutate.assert_not_awaited()

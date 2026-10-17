@@ -18,6 +18,7 @@ from pydantic import (
 from typing_extensions import assert_never
 
 from models import MCPResponse
+from models.ugui_projection_diagnostics import validate_ugui_projection_diagnostics
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
@@ -35,6 +36,7 @@ UGUIAction = Literal[
     "set_text",
     "set_canvas",
     "diagnose",
+    "diagnose_projection",
 ]
 ElementType = Literal["canvas", "panel", "image", "button", "text"]
 _ACTIONS: Final = get_args(UGUIAction)
@@ -306,13 +308,88 @@ def _validate_unicode_strings(value: JsonValue) -> None:
             assert_never(value)
 
 
+async def _diagnose_projection(
+    ctx, target, camera, include_inactive, max_nodes, max_depth, max_evaluations, max_characters
+):
+    """Keep the new current-only boundary separate from legacy preview/mutation semantics."""
+    invalid = {"success": False, "message": "invalid_projection_request"}
+    if type(include_inactive) is not bool:
+        return invalid
+    for value, optional in ((target, False), (camera, True)):
+        if optional and value is None:
+            continue
+        if type(value) is int:
+            if not -(2**31) <= value < 2**31:
+                return invalid
+        elif type(value) is str:
+            try:
+                if not value.strip() or len(value.encode("utf-16-le")) // 2 > 4096:
+                    return invalid
+            except UnicodeError:
+                return invalid
+        else:
+            return invalid
+    budgets = {
+        "max_nodes": (max_nodes, 200, 1, 1000),
+        "max_depth": (max_depth, 10, 0, 24),
+        "max_evaluations": (max_evaluations, 20000, 1, 200000),
+        "max_characters": (max_characters, 65536, 1, 262144),
+    }
+    params = {
+        "action": "diagnose_projection",
+        "target": target,
+        "include_inactive": include_inactive,
+    }
+    for key, (value, default, low, high) in budgets.items():
+        value = default if value is None else value
+        if type(value) is not int or not low <= value <= high:
+            return invalid
+        params[key] = value
+    if camera is not None:
+        params["camera"] = camera
+    blocked = await preflight(ctx, requires_no_tests=False, wait_for_no_compile=True)
+    if blocked is not None:
+        return blocked.model_dump()
+    instance = await get_unity_instance_from_context(ctx)
+    result = await send_with_unity_instance(
+        async_send_command_with_retry, instance, "manage_ugui", params
+    )
+    result = result.model_dump() if isinstance(result, MCPResponse) else result
+    if not isinstance(result, dict) or result.get("success") is not True:
+        allowed = {
+            "invalid_projection_request",
+            "invalid_or_ambiguous_projection_target",
+            "invalid_or_ambiguous_projection_camera",
+            "camera_required",
+            "camera_canvas_mismatch",
+            "unsupported_projection_canvas_mode",
+            "projection_artifact_limit",
+            "projection_unavailable",
+        }
+        code = result.get("error") if isinstance(result, dict) else None
+        return {
+            "success": False,
+            "message": code
+            if isinstance(code, str) and code in allowed
+            else "projection_unavailable",
+        }
+    try:
+        data = validate_ugui_projection_diagnostics(result.get("data"))
+        if any(data["traversal"][key] != params[key] for key in budgets):
+            raise ValueError("budget echo")
+    except ValueError:
+        return {"success": False, "message": "unsupported_projection_response"}
+    return {"success": True, "data": data}
+
+
 @mcp_for_unity_tool(
     group="ui",
     description=(
         "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. "
-        "Read-only actions: ping, get_hierarchy, diagnose. Mutating actions: create, set_rect, set_layout, "
+        "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection. Mutating actions: create, set_rect, set_layout, "
         "set_text, set_canvas. Optional uGUI and TextMeshPro support is detected in the Editor. "
-        "Diagnostics evaluate bounded screen-size candidates and report limitations; they do not render screenshots."
+        "diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera "
+        "geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility."
     ),
     annotations=ToolAnnotations(
         title="Manage uGUI",
@@ -362,6 +439,39 @@ async def manage_ugui(
             description="Maximum hierarchy nodes to inspect, 1 to 1000.",
         ),
     ] = 200,
+    camera: Annotated[
+        str | StrictInt | None,
+        Field(
+            description="For diagnose_projection: explicit view camera required for World Space; Screen Camera uses only its assigned camera. Current scene GameObject name/path/Int32 ID; no camera fallback."
+        ),
+    ] = None,
+    max_depth: Annotated[
+        int | None,
+        Field(
+            strict=True,
+            ge=0,
+            le=24,
+            description="For diagnose_projection: maximum physical transform depth, default 10, range 0..24.",
+        ),
+    ] = None,
+    max_evaluations: Annotated[
+        int | None,
+        Field(
+            strict=True,
+            ge=1,
+            le=200000,
+            description="For diagnose_projection: shared precharged observations/math budget, default 20000, range 1..200000.",
+        ),
+    ] = None,
+    max_characters: Annotated[
+        int | None,
+        Field(
+            strict=True,
+            ge=1,
+            le=262144,
+            description="For diagnose_projection: shared metadata/name/path UTF-16 budget, default 65536, range 1..262144.",
+        ),
+    ] = None,
     resolutions: Annotated[
         list[dict[str, ResolutionDimension]] | str | None,
         "For diagnose: 1 to 8 {width,height} objects, or a JSON array string. Integer dimensions 64 to 8192. "
@@ -374,6 +484,23 @@ async def manage_ugui(
     action-specific inputs rather than an opaque options object.
     """
     action_lower = action.strip().lower()
+    if action_lower == "diagnose_projection":
+        if any(
+            value is not None for value in (parent, name, element_type, properties, resolutions)
+        ):
+            return {"success": False, "message": "invalid_projection_request"}
+        return await _diagnose_projection(
+            ctx,
+            target,
+            camera,
+            include_inactive,
+            max_nodes,
+            max_depth,
+            max_evaluations,
+            max_characters,
+        )
+    if any(value is not None for value in (camera, max_depth, max_evaluations, max_characters)):
+        return {"success": False, "message": "invalid_projection_request"}
     if action_lower not in _ACTIONS:
         return {
             "success": False,
