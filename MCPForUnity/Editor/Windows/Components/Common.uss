@@ -325,6 +325,15 @@
     min-width: 0;
 }
 
+.client-configuration-review {
+    margin-top: 8px;
+}
+
+.client-configuration-review-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
 .config-label {
     font-size: 11px;
     -unity-font-style: bold;

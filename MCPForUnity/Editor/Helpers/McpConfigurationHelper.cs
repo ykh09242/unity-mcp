@@ -193,7 +193,41 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
-        public static void WriteAtomicFile(string path, string contents)
+        private static bool MatchesExpectedFile(string path, byte[] expected)
+        {
+            if (!File.Exists(path))
+                return expected == null;
+            if (expected == null)
+                return false;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (stream.Length != expected.Length)
+                return false;
+            var buffer = new byte[8192];
+            int offset = 0,
+                read;
+            while ((read = stream.Read(buffer, 0, Math.Min(buffer.Length, expected.Length - offset))) != 0)
+            {
+                for (int index = 0; index < read; index++)
+                    if (buffer[index] != expected[offset + index])
+                        return false;
+                offset += read;
+            }
+            return offset == expected.Length && stream.ReadByte() == -1;
+        }
+
+        internal sealed class ConfigurationConflictException : IOException { }
+
+        private static readonly object guardedWriteGate = new object();
+
+        internal static void WriteGuardedConfiguration(string path, string contents, byte[] expected, Action beforeComparison)
+        {
+            lock (guardedWriteGate)
+                WriteAtomicFileCore(path, contents, expected, true, beforeComparison);
+        }
+
+        public static void WriteAtomicFile(string path, string contents) => WriteAtomicFileCore(path, contents, null, false, null);
+
+        private static void WriteAtomicFileCore(string path, string contents, byte[] expected, bool compare, Action beforeComparison)
         {
             string attempt = Guid.NewGuid().ToString("N");
             string tmp = path + "." + attempt + ".tmp";
@@ -203,6 +237,12 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 File.WriteAllText(tmp, contents, new UTF8Encoding(false));
+                if (compare)
+                {
+                    beforeComparison?.Invoke();
+                    if (!MatchesExpectedFile(path, expected))
+                        throw new ConfigurationConflictException();
+                }
                 try
                 {
                     File.Replace(tmp, path, backup);
@@ -223,6 +263,10 @@ namespace MCPForUnity.Editor.Helpers
                     File.Move(tmp, path);
                     writeDone = true;
                 }
+            }
+            catch (ConfigurationConflictException)
+            {
+                throw;
             }
             catch (Exception ex)
             {

@@ -32,7 +32,7 @@ Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` 
 Normally the Editor manages launch/configuration. This beta checkout uses the exact `mcpServerSource` recorded in [`MCPForUnity/package.json`](../MCPForUnity/package.json). Published stable releases keep their own immutable source pins; use the value from the installed package:
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/0cb61e83be14096de3341a98b892073662bcc9e9.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/095404a63a76d88b367012ff4b07657e196efc3f.zip#subdirectory=Server" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
 ```
 
 Use that installed package's value for other revisions. Do not replace the pin with an upstream PyPI package or a moving branch. First launch can require dependency downloads; a source pin is not an offline-install guarantee. The commit-addressed archive avoids Git checkout and its Windows long-path limit; it still downloads the repository archive and builds only `Server`. Existing full-commit Git and explicit local development overrides remain supported.
@@ -133,8 +133,8 @@ The routing middleware checks built-in tool signatures before instance discovery
 ## CLI and environment reference
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/0cb61e83be14096de3341a98b892073662bcc9e9.zip#subdirectory=Server" mcp-for-unity --help
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/0cb61e83be14096de3341a98b892073662bcc9e9.zip#subdirectory=Server" unity-mcp --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/095404a63a76d88b367012ff4b07657e196efc3f.zip#subdirectory=Server" mcp-for-unity --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/095404a63a76d88b367012ff4b07657e196efc3f.zip#subdirectory=Server" unity-mcp --help
 ```
 
 The server and Editor-control CLI have different options. `unity-mcp` requires local HTTP and accepts `--host`, `--port`, `--timeout`, `--format`, and `--instance`. Place global options before subcommands; see [CLI examples](../website/docs/guides/cli.md).
@@ -198,6 +198,13 @@ string values. Text/range/anchor/regex payloads are literal: include every desir
 space and newline. Preserve exact candidate bytes when using a native file tool;
 CRLF, BOM or a missing final newline may require a byte-preserving tool or direct
 Unity edit fallback. Never normalize string bytes or invent file events.
+
+## Bounded Editor workflows
+
+- **Session object handles:** capture the original loaded GameObject or Component for repeated requests. Handles expire after 600 seconds, earlier eviction or Editor lifecycle changes. They never persist an identity, load assets/scenes or rediscover a replacement. See [session object handles](../website/docs/guides/object-handles.md).
+- **Client configuration:** preview a redacted change to the Unity MCP entry before applying it. Apply refuses stale file, target or connection settings. One session-local restore changes only that entry when the written entry still matches; it preserves other configuration entries.
+- **Asset metadata pages:** opt into `metadata_only=true` (CLI `--metadata-only`) and continue with `search_snapshot` (`--search-snapshot`). Pages use the same bounded, short-lived captured query. Stale or mismatched tokens refuse without a loading-search fallback. The initial FindAssets allocation and Unity internal work are outside retained-data limits. See [asset search](../website/docs/guides/asset-search.md).
+- **Current uGUI projection:** `diagnose_projection` reports camera/world-quad geometry without rendering or forcing layout. Select an explicit camera for World Space. Normalized geometry may remain usable when target pixels are unavailable; the result does not establish visibility, occlusion or input delivery. See [projection diagnostics](../docs/UGUI_PROJECTION_DIAGNOSTICS.md).
 
 ## Privacy, limits and diagnosis
 

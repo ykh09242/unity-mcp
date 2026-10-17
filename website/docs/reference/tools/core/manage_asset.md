@@ -14,7 +14,7 @@ description: "Performs asset operations (import, create, modify, delete, etc.) i
 
 Performs asset operations (import, create, modify, delete, etc.) in Unity. Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase assignments, not built bundle files; use bundle_name and pages of at most 100.
 
-Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep `generate_preview=false` (previews can add large base64 blobs).
+Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep `generate_preview=false` (previews can add large base64 blobs). Opt-in metadata_only search avoids explicit object/preview loads and returns a short-lived search_snapshot for reusable pages; keep query, scope, date and page_size unchanged.
 
 ## Parameters
 
@@ -33,6 +33,8 @@ Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_n
 | `page_number` | `int \| str \| None` | — | Page number for pagination (1-based). |
 | `bundle_name` | `str \| None` | — | Registered bundle assignment name for get_bundle_* actions. |
 | `recursive` | `bool` | — | Include indirect bundle dependencies (default false). |
+| `metadata_only` | `bool` | — | Search only: return metadata with instanceID=0 and a bounded 60-second Editor-session snapshot; no explicit object/preview loads. Default false preserves legacy behavior. |
+| `search_snapshot` | `str \| None` | — | Search only: opaque token from metadata_only=true; repeat the effective query and page_size. |
 
 ## Returns
 
