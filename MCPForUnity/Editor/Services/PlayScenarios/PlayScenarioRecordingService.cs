@@ -29,7 +29,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static PlayScenarioRecordingDraft draft;
         private static IPlayScenarioRecordingSession session;
         private static readonly List<(string Path, string State)> PendingScenes = new List<(string, string)>();
-        private static readonly Dictionary<int, string> ScenePaths = new Dictionary<int, string>();
+        private static readonly Dictionary<Scene, string> ScenePaths = new Dictionary<Scene, string>();
         private static string sceneScope = "active";
         private static double deadline;
         private static double nextScan;
@@ -85,7 +85,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 for (int i = 0; i < SceneManager.sceneCount; i++)
                 {
                     Scene selected = SceneManager.GetSceneAt(i);
-                    ScenePaths.Add(selected.handle, selected.path);
+                    ScenePaths.Add(selected, selected.path);
                 }
             if (sceneScope == "active" && SceneManager.sceneCount > 1)
                 draft.Diagnose(
@@ -223,9 +223,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     if (!PlayScenarioSceneScope.Normal(scene) || ScenePaths.Count >= 32 || SceneManager.sceneCount > 32)
                         throw new InvalidOperationException("Unsupported or excessive loaded scene context.");
                     UnityPlayScenarioHost.RequireSceneAsset(scene.path);
-                    if (ScenePaths.Values.Contains(scene.path, StringComparer.Ordinal) && !ScenePaths.ContainsKey(scene.handle))
+                    if (ScenePaths.Values.Contains(scene.path, StringComparer.Ordinal) && !ScenePaths.ContainsKey(scene))
                         throw new InvalidOperationException("Duplicate loaded scene path.");
-                    ScenePaths[scene.handle] = scene.path;
+                    ScenePaths[scene] = scene.path;
                     QueueScene(scene.path, "loaded");
                 }
                 catch (Exception error)
@@ -244,12 +244,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (sceneScope != "all_loaded" || draft?.Recording != true)
                 return;
-            if (!ScenePaths.TryGetValue(scene.handle, out string path))
+            if (!ScenePaths.TryGetValue(scene, out string path))
             {
                 Interrupt("scene_context_unavailable");
                 return;
             }
-            ScenePaths.Remove(scene.handle);
+            ScenePaths.Remove(scene);
             QueueScene(path, "unloaded");
         }
 
