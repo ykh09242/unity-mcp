@@ -5,10 +5,12 @@ Defines the manage_asset tool for interacting with Unity assets.
 import asyncio
 import json
 import logging
+import re
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -27,7 +29,9 @@ logger = logging.getLogger("mcp-for-unity-server")
         "Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase "
         "assignments, not built bundle files; use bundle_name and pages of at most 100.\n\n"
         'Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep '
-        "`generate_preview=false` (previews can add large base64 blobs)."
+        "`generate_preview=false` (previews can add large base64 blobs). "
+        "Opt-in metadata_only search avoids explicit object/preview loads and returns a short-lived "
+        "search_snapshot for reusable pages; keep query, scope, date and page_size unchanged."
     ),
     annotations=ToolAnnotations(
         title="Manage Asset",
@@ -95,8 +99,48 @@ async def manage_asset(
     bundle_name: Annotated[str, "Registered bundle assignment name for get_bundle_* actions."]
     | None = None,
     recursive: Annotated[bool, "Include indirect bundle dependencies (default false)."] = False,
+    metadata_only: Annotated[
+        bool,
+        Field(strict=True),
+        "Search only: return metadata with instanceID=0 and a bounded 60-second Editor-session snapshot; "
+        "no explicit object/preview loads. Default false preserves legacy behavior.",
+    ] = False,
+    search_snapshot: Annotated[
+        str,
+        "Search only: opaque token from metadata_only=true; repeat the effective query and page_size.",
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     action_l = (action or "").lower()
+    if type(metadata_only) is not bool:
+        return {
+            "success": False,
+            "code": "invalid_metadata_search",
+            "message": "metadata_only must be a boolean.",
+        }
+    if (metadata_only or search_snapshot is not None) and action_l != "search":
+        return {
+            "success": False,
+            "code": "invalid_metadata_search",
+            "message": "Snapshot options require action='search'.",
+        }
+    if search_snapshot is not None and (
+        not metadata_only
+        or not isinstance(search_snapshot, str)
+        or len(search_snapshot) != 75
+        or re.fullmatch(r"mcp-as-v1_[0-9a-f]{32}_[0-9a-f]{32}", search_snapshot) is None
+    ):
+        return {
+            "success": False,
+            "code": "invalid_search_snapshot",
+            "message": "A valid search_snapshot requires metadata_only=true.",
+        }
+    if metadata_only and generate_preview:
+        return {
+            "success": False,
+            "code": "invalid_metadata_search",
+            "message": "Metadata search does not generate previews.",
+        }
     if action_l not in {
         "import",
         "create",
@@ -213,6 +257,10 @@ async def manage_asset(
 
     # Remove None values to avoid sending unnecessary nulls
     params_dict = {k: v for k, v in params_dict.items() if v is not None}
+    if metadata_only:
+        params_dict["action"] = "search_metadata_v1"
+        if search_snapshot is not None:
+            params_dict["searchSnapshot"] = search_snapshot
     if bundle_inspection:
         if bundle_name is not None:
             params_dict["bundleName"] = bundle_name
