@@ -14,7 +14,7 @@ from hashlib import sha256
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass
 from contextvars import ContextVar
-from contextlib import contextmanager
+from contextlib import AsyncExitStack, contextmanager, asynccontextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from collections.abc import Callable
 
@@ -59,6 +59,12 @@ from transport.large_result_assembler import (
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
 from services.api_key_service import ApiKeyService
+from services.credential_lease import (
+    CredentialLease,
+    CredentialLeaseError,
+    require_credential_lease,
+)
+from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 
 if TYPE_CHECKING:
@@ -503,53 +509,150 @@ class PluginHub(WebSocketEndpoint):
                     response_limit_error("result_transfer_timeout")
                 )
 
+    @staticmethod
+    def _socket_lease(websocket: WebSocket) -> CredentialLease | None:
+        if not config.http_remote_hosted:
+            return None
+        lease = getattr(websocket.state, AUTHENTICATED_LEASE_STATE, None)
+        if (
+            not isinstance(lease, CredentialLease)
+            or getattr(websocket.state, "plugin_auth_retired", False)
+            or lease.user_id != getattr(websocket.state, "user_id", None)
+        ):
+            raise CredentialLeaseError()
+        return lease
+
+    @classmethod
+    @asynccontextmanager
+    async def _authorized_socket_lock(cls, websocket, lock, requester=None):
+        """Renew outside the Hub lock; check both exact generations without yielding inside."""
+        plugin = cls._socket_lease(websocket)
+        leases = tuple(lease for lease in (requester, plugin) if lease is not None)
+        while True:
+            for lease in leases:
+                await lease.check()
+            async with lock:
+                try:
+                    for lease in leases:
+                        lease.check_now()
+                except CredentialLeaseError:
+                    if any(lease.retired for lease in leases):
+                        raise
+                    continue
+                yield
+                return
+
+    @classmethod
+    def _fence_plugin_owners(cls) -> None:
+        """Retire old socket ownership before reconfiguration/cleanup can suspend."""
+        sockets = {id(ws): ws for ws in cls._connections.values()}
+        sockets.update({key: value[0] for key, value in cls._admitted.items()})
+        for websocket in sockets.values():
+            websocket.state.plugin_auth_retired = True
+            task = getattr(websocket.state, "plugin_auth_task", None)
+            if task is not None:
+                task.cancel()
+
     async def dispatch(self) -> None:
         """Own admission through connect failures, registration and disconnect."""
-        websocket = WebSocket(self.scope, receive=self.receive, send=self.send)
+        websocket = None
+
+        async def guarded_send(message):
+            lease = (
+                getattr(websocket.state, AUTHENTICATED_LEASE_STATE, None)
+                if websocket is not None
+                else None
+            )
+            if isinstance(lease, CredentialLease):
+                await lease.check()
+                lease.check_now()
+            await self.send(message)
+            if isinstance(lease, CredentialLease):
+                await lease.check()
+
+        websocket = WebSocket(self.scope, receive=self.receive, send=guarded_send)
         close_code = 1000
-        try:
-            # Include welcome write in the registration deadline.
-            deadline = asyncio.get_running_loop().time() + self.REGISTRATION_TIMEOUT
-            await asyncio.wait_for(self.on_connect(websocket), self.REGISTRATION_TIMEOUT)
-            while websocket.application_state == WebSocketState.CONNECTED:
-                registered = getattr(websocket.state, "plugin_registered", False)
-                message = data = None
-                try:
-                    if registered:
-                        message = await websocket.receive()
-                    else:
-                        remaining = max(0.0, deadline - asyncio.get_running_loop().time())
-                        message = await asyncio.wait_for(websocket.receive(), remaining)
-                    if message["type"] == "websocket.disconnect":
-                        close_code = int(message.get("code") or 1000)
-                        break
-                    if message["type"] == "websocket.receive":
-                        data = await self.decode(websocket, message)
-                        if websocket.application_state == WebSocketState.CONNECTED:
-                            if registered:
-                                await self.on_receive(websocket, data)
-                            else:
-                                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
-                                await asyncio.wait_for(self.on_receive(websocket, data), remaining)
-                finally:
-                    # Delivery owns accepted results; idle dispatch must not
-                    # retain an uncharged raw frame or its decoded graph.
-                    message = data = None
-        except asyncio.TimeoutError:
-            close_code = 4408
+        # Owner exit follows every close path and the actual captured disconnect cleanup.
+        async with AsyncExitStack() as lifetime:
+            self._credential_lifetime = lifetime
+            lifetime.callback(setattr, self, "_credential_lifetime", None)
+            websocket.state.plugin_auth_task = asyncio.current_task()
             try:
-                await asyncio.wait_for(
-                    websocket.close(code=close_code, reason="Plugin registration timeout"),
-                    self.CLOSE_TIMEOUT,
-                )
-            except (asyncio.TimeoutError, RuntimeError):
-                pass
-        finally:
-            # Level cancellation may interrupt every await: release admission
-            # synchronously, then shield the bounded routing cleanup.
-            type(self)._admitted.pop(id(websocket), None)
-            with anyio.CancelScope(shield=True):
-                await self.on_disconnect(websocket, close_code)
+                # Include welcome write in the registration deadline.
+                deadline = asyncio.get_running_loop().time() + self.REGISTRATION_TIMEOUT
+                # Connect and cleanup must belong to the same actual owner task and
+                # Context. A wait_for child cannot transfer its ContextVar token here.
+                async with asyncio.timeout_at(deadline):
+                    await self.on_connect(websocket)
+                if websocket.application_state != WebSocketState.CONNECTED:
+                    return
+                lease = type(self)._socket_lease(websocket)
+                while websocket.application_state == WebSocketState.CONNECTED:
+                    registered = getattr(websocket.state, "plugin_registered", False)
+                    message = data = None
+                    try:
+                        if registered:
+                            if lease is not None:
+                                await lease.check()
+                            message = await websocket.receive()
+                            if lease is not None:
+                                await lease.check()
+                        else:
+                            remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                            if lease is not None:
+                                await lease.check()
+                            message = await asyncio.wait_for(websocket.receive(), remaining)
+                            if lease is not None:
+                                await lease.check()
+                        if message["type"] == "websocket.disconnect":
+                            close_code = int(message.get("code") or 1000)
+                            break
+                        if message["type"] == "websocket.receive":
+                            data = await self.decode(websocket, message)
+                            if websocket.application_state == WebSocketState.CONNECTED:
+                                if registered:
+                                    await self.on_receive(websocket, data)
+                                else:
+                                    remaining = max(
+                                        0.0, deadline - asyncio.get_running_loop().time()
+                                    )
+                                    await asyncio.wait_for(
+                                        self.on_receive(websocket, data), remaining
+                                    )
+                    finally:
+                        # Delivery owns accepted results; idle dispatch must not
+                        # retain an uncharged raw frame or its decoded graph.
+                        message = data = None
+            except CredentialLeaseError:
+                close_code = 4403
+                if websocket.application_state == WebSocketState.CONNECTED:
+                    with anyio.move_on_after(self.CLOSE_TIMEOUT, shield=True):
+                        await self.send({"type": "websocket.close", "code": close_code})
+            except asyncio.CancelledError:
+                lease = getattr(websocket.state, AUTHENTICATED_LEASE_STATE, None)
+                if not (isinstance(lease, CredentialLease) and lease.retired) and not getattr(
+                    websocket.state, "plugin_auth_retired", False
+                ):
+                    raise
+                close_code = 4403
+                if websocket.application_state == WebSocketState.CONNECTED:
+                    with anyio.move_on_after(self.CLOSE_TIMEOUT, shield=True):
+                        await self.send({"type": "websocket.close", "code": close_code})
+            except asyncio.TimeoutError:
+                close_code = 4408
+                try:
+                    await asyncio.wait_for(
+                        websocket.close(code=close_code, reason="Plugin registration timeout"),
+                        self.CLOSE_TIMEOUT,
+                    )
+                except (asyncio.TimeoutError, RuntimeError):
+                    pass
+            finally:
+                # Level cancellation may interrupt every await: release admission
+                # synchronously, then shield the bounded routing cleanup.
+                type(self)._admitted.pop(id(websocket), None)
+                with anyio.CancelScope(shield=True):
+                    await self.on_disconnect(websocket, close_code)
 
     async def decode(self, websocket: WebSocket, message: dict[str, Any]) -> Any:
         raw = message.get("text")
@@ -636,6 +739,7 @@ class PluginHub(WebSocketEndpoint):
         loop: asyncio.AbstractEventLoop | None = None,
         mcp: FastMCP | None = None,
     ) -> None:
+        cls._fence_plugin_owners()
         cls._catalog_notifications.reset()
         previous_registry = cls._registry
         cls._registry = registry
@@ -695,6 +799,7 @@ class PluginHub(WebSocketEndpoint):
     @classmethod
     async def shutdown(cls) -> None:
         """Release the plugin resources owned by the current server lifespan."""
+        cls._fence_plugin_owners()
         await cls._catalog_notifications.close()
         lock = cls._lock
         if lock is None:
@@ -804,44 +909,33 @@ class PluginHub(WebSocketEndpoint):
                 await websocket.close(code=1013, reason="Try again later")
                 return
 
-            api_key = websocket.headers.get(API_KEY_HEADER)
-
-            if not api_key:
-                logger.debug("WebSocket connection rejected: API key required")
-                await websocket.close(code=4401, reason="API key required")
-                return
-
-            service = ApiKeyService.get_instance()
-            source_id = websocket.client.host if websocket.client is not None else "unknown"
-            result = await service.validate(api_key, source_id=source_id)
-
-            if result.overloaded:
-                await websocket.close(code=1013, reason="Authentication temporarily busy")
-                return
-
-            if not result.valid:
-                # Transient auth failures are retryable (1013)
-                if result.error and any(
-                    indicator in result.error.lower()
-                    for indicator in ("unavailable", "timeout", "service error")
-                ):
-                    logger.debug("WebSocket connection rejected: auth service unavailable")
-                    await websocket.close(code=1013, reason="Try again later")
+            lease = getattr(websocket.state, AUTHENTICATED_LEASE_STATE, None)
+            if not isinstance(lease, CredentialLease):
+                keys = websocket.headers.getlist(API_KEY_HEADER)
+                if len(keys) != 1 or not keys[0]:
+                    await websocket.close(code=4401, reason="API key required")
                     return
-
-                logger.debug("WebSocket connection rejected: invalid API key")
-                await websocket.close(code=4403, reason="Invalid API key")
-                return
-
-            # Both valid and user_id must be present to accept
-            if not result.user_id:
-                logger.debug("WebSocket connection rejected: validated key missing user_id")
-                await websocket.close(code=4403, reason="Invalid API key")
-                return
-
-            # Store user_id in websocket state for later use during registration
-            websocket.state.user_id = result.user_id
-            websocket.state.api_key_metadata = result.metadata
+                service = ApiKeyService.get_instance()
+                source_id = websocket.client.host if websocket.client is not None else "unknown"
+                result = await service.validate(keys[0], source_id=source_id)
+                del keys
+                if not result.valid or result.lease is None:
+                    await websocket.close(
+                        code=1013 if result.overloaded or not result.cacheable else 4403,
+                        reason="Try again later"
+                        if result.overloaded or not result.cacheable
+                        else "Invalid API key",
+                    )
+                    return
+                lease = result.lease
+            setattr(websocket.state, AUTHENTICATED_LEASE_STATE, lease)
+            websocket.state.user_id = lease.user_id
+            lifetime = getattr(self, "_credential_lifetime", None)
+            if lifetime is not None:
+                # Acquire at the authenticated boundary, before any suspended check
+                # or welcome I/O. Dispatch releases only after captured cleanup exits.
+                await lifetime.enter_async_context(lease.owner_lifetime())
+            await lease.check()
 
         cls = type(self)
         user_id = getattr(websocket.state, "user_id", None)
@@ -851,7 +945,7 @@ class PluginHub(WebSocketEndpoint):
             await websocket.close(code=1013, reason="Plugin server unavailable")
             return
         async with lock:
-            # Authentication never changes; only its validated principal owns
+            # The immutable principal of this live credential owns
             # per-user capacity. Local sockets share the local principal.
             user_count = sum(
                 owner == user_id for ws, owner in cls._admitted.values() if ws is not websocket
@@ -862,15 +956,20 @@ class PluginHub(WebSocketEndpoint):
         if not accepted:
             await websocket.close(code=4429, reason="Plugin user connection limit reached")
             return
-        await websocket.accept()
-        msg = WelcomeMessage(
-            serverTimeout=self.SERVER_TIMEOUT,
-            keepAliveInterval=self.KEEP_ALIVE_INTERVAL,
-            capabilities=sorted(self.CAPABILITIES),
-        )
-        await websocket.send_json(msg.model_dump())
+        lease = cls._socket_lease(websocket)
+        async with lease.own() if lease is not None else nullcontext():
+            await websocket.accept()
+            msg = WelcomeMessage(
+                serverTimeout=self.SERVER_TIMEOUT,
+                keepAliveInterval=self.KEEP_ALIVE_INTERVAL,
+                capabilities=sorted(self.CAPABILITIES),
+            )
+            await websocket.send_json(msg.model_dump())
 
     async def on_receive(self, websocket: WebSocket, data: Any) -> None:
+        lease = type(self)._socket_lease(websocket)
+        if lease is not None:
+            await lease.check()
         if isinstance(data, bytes):
             await self._handle_large_result(websocket, data)
             return
@@ -1192,8 +1291,7 @@ class PluginHub(WebSocketEndpoint):
         """Read only a fresh snapshot owned by the currently routed connection."""
         if cls._registry is None or cls._lock is None:
             return None
-        if config.http_remote_hosted and not user_id:
-            return None
+        requester = await require_credential_lease(user_id) if config.http_remote_hosted else None
         try:
             session_id = await cls._resolve_session_id(
                 unity_instance, user_id=user_id, retry_on_reload=False
@@ -1203,8 +1301,13 @@ class PluginHub(WebSocketEndpoint):
         lock = cls._lock
         if lock is None:
             return None
-        async with lock:
-            websocket = cls._connections.get(session_id)
+        try:
+            websocket = await cls._get_connection(session_id)
+        except RuntimeError:
+            return None
+        async with cls._authorized_socket_lock(websocket, lock, requester):
+            if cls._connections.get(session_id) is not websocket:
+                return None
             if websocket is None or not cls._supports(websocket, "editor_state_v1"):
                 return None
             if (
@@ -1375,16 +1478,29 @@ class PluginHub(WebSocketEndpoint):
         budget.dispatched = False
         budget.command_id = None
         budget.session_id = session_id
+        lease = await require_credential_lease() if config.http_remote_hosted else None
         try:
-            async with asyncio.timeout_at(budget.expires_at):
-                return await cls._send_command(
-                    session_id,
+            async with lease.own() if lease is not None else nullcontext():
+                async with asyncio.timeout_at(budget.expires_at):
+                    return await cls._send_command(
+                        session_id,
+                        command_type,
+                        params,
+                        budget,
+                        _expected_read=_expected_read,
+                        _catalog_guard=_catalog_guard,
+                    )
+        except CredentialLeaseError:
+            if budget.dispatched:
+                return command_outcome_unknown(
                     command_type,
-                    params,
-                    budget,
-                    _expected_read=_expected_read,
-                    _catalog_guard=_catalog_guard,
+                    "Remote authorization ended",
+                    session_id=session_id,
+                    command_id=budget.command_id,
+                    phase=budget.phase,
+                    cause="authentication_ended",
                 )
+            return MCPResponse(success=False, error="auth_required").model_dump()
         except TimeoutError:
             return budget.timeout_response(command_type)
 
@@ -1399,6 +1515,7 @@ class PluginHub(WebSocketEndpoint):
         _expected_read: _ConnectionReadIdentity | None = None,
         _catalog_guard=None,
     ) -> dict[str, Any]:
+        requester = await require_credential_lease() if config.http_remote_hosted else None
         context = local_project_context.get()
         if context is not None and (
             context.selection is None or context.selection.session_id != session_id
@@ -1416,6 +1533,8 @@ class PluginHub(WebSocketEndpoint):
         session = await registry.get_session(session_id) if registry is not None else None
         # Admission follows the registered principal, never caller parameters.
         user_id = session.user_id if session is not None else None
+        if requester is not None and requester.user_id != user_id:
+            raise CredentialLeaseError()
         unity_timeout_s, _ = cls._command_timeouts(command_type, params)
         lock = cls._lock
         if lock is None:
@@ -1423,7 +1542,7 @@ class PluginHub(WebSocketEndpoint):
                 return context.refuse("project_context_unavailable", params)
             raise CommandNotDispatchedError("PluginHub not configured")
 
-        async with lock:
+        async with cls._authorized_socket_lock(websocket, lock, requester):
             if context is not None and (
                 context.selection is None
                 or cls._connections.get(session_id) is not websocket
@@ -1514,8 +1633,22 @@ class PluginHub(WebSocketEndpoint):
             phase = budget.phase = "send"
             budget.command_id = command_id
             try:
-                budget.dispatched = True
-                send_task = asyncio.create_task(websocket.send_json(payload))
+
+                async def authorized_send():
+                    plugin = cls._socket_lease(websocket)
+                    for lease in (requester, plugin):
+                        if lease is not None:
+                            await lease.check()
+                    for lease in (requester, plugin):
+                        if lease is not None:
+                            lease.check_now()
+                    budget.dispatched = True
+                    await websocket.send_json(payload)
+                    for lease in (requester, plugin):
+                        if lease is not None:
+                            await lease.check()
+
+                send_task = asyncio.create_task(authorized_send())
                 done, _ = await asyncio.wait(
                     {send_task, future},
                     timeout=budget.remaining(),
@@ -1523,6 +1656,9 @@ class PluginHub(WebSocketEndpoint):
                 )
                 # A disconnect must also interrupt a blocked socket write.
                 if future in done:
+                    for lease in (requester, cls._socket_lease(websocket)):
+                        if lease is not None:
+                            await lease.check()
                     return future.result()
                 if send_task not in done:
                     raise asyncio.TimeoutError
@@ -1530,7 +1666,22 @@ class PluginHub(WebSocketEndpoint):
                 phase = budget.phase = "response"
                 remaining = max(0.0, deadline - asyncio.get_running_loop().time())
                 result = await asyncio.wait_for(future, timeout=remaining)
+                for lease in (requester, cls._socket_lease(websocket)):
+                    if lease is not None:
+                        await lease.check()
                 return result
+            except CredentialLeaseError:
+                canceled = True
+                if not budget.dispatched:
+                    return MCPResponse(success=False, error="auth_required").model_dump()
+                return command_outcome_unknown(
+                    command_type,
+                    "Remote authorization ended",
+                    session_id=session_id,
+                    command_id=command_id,
+                    phase=phase,
+                    cause="authentication_ended",
+                )
             except asyncio.CancelledError:
                 # Preserve cancellation of the caller. Cancellation of just the
                 # socket writer is instead an uncertain transport outcome.
@@ -1757,7 +1908,7 @@ class PluginHub(WebSocketEndpoint):
             await websocket.close(code=1011)
             raise RuntimeError("PluginHub not configured")
 
-        async with lock:
+        async with cls._authorized_socket_lock(websocket, lock):
             if cls._shutdown_requested or cls._registry is not registry:
                 await websocket.close(code=1013, reason="Plugin server closing")
                 return
@@ -1785,7 +1936,7 @@ class PluginHub(WebSocketEndpoint):
         evicted_ws = None
         catalog_outcome = None
         catalog_scope = None
-        async with lock:
+        async with cls._authorized_socket_lock(websocket, lock):
             # The registry and routing insertion form one transaction. There is
             # no cancellation point after register mutates its maps and before
             # this socket becomes discoverable by disconnect cleanup.
@@ -1795,6 +1946,9 @@ class PluginHub(WebSocketEndpoint):
             try:
 
                 def publish_registration(new_session, prospective):
+                    lease = cls._socket_lease(websocket)
+                    if lease is not None:
+                        lease.check_now()
                     nonlocal catalog_outcome, catalog_scope
                     catalog_outcome = cls._publish_session_catalog(
                         new_session,
@@ -1984,7 +2138,7 @@ class PluginHub(WebSocketEndpoint):
         scope = None
         committed = None
         try:
-            async with lock:
+            async with cls._authorized_socket_lock(websocket, lock):
                 session_id = next(
                     (sid for sid, ws in cls._connections.items() if ws is websocket), None
                 )
@@ -1993,6 +2147,9 @@ class PluginHub(WebSocketEndpoint):
                     return
 
                 def publish(session, prepared):
+                    lease = cls._socket_lease(websocket)
+                    if lease is not None:
+                        lease.check_now()
                     nonlocal outcome, scope, committed
                     outcome = cls._publish_session_catalog(
                         session,
@@ -2261,11 +2418,13 @@ class PluginHub(WebSocketEndpoint):
         if lock is None or not cls._supports(websocket, "editor_state_v1"):
             return
         session_id = getattr(websocket.state, "plugin_session_id", None)
-        async with lock:
-            registry = cls._registry
+        registry = cls._registry
+        if registry is None:
+            return
+        session = await registry.get_session(session_id)
+        async with cls._authorized_socket_lock(websocket, lock):
             if cls._connections.get(session_id) is not websocket or registry is None:
                 return
-            session = await registry.get_session(session_id)
             if (
                 cls._registry is not registry
                 or cls._lock is not lock
@@ -2274,6 +2433,9 @@ class PluginHub(WebSocketEndpoint):
                 or session.user_id != getattr(websocket.state, "user_id", None)
             ):
                 return
+            lease = cls._socket_lease(websocket)
+            if lease is not None:
+                lease.check_now()
             before = cls._editor_states.change_token(session_id)
             cls._editor_states.accept(session_id, data)
             after = cls._editor_states.change_token(session_id)
@@ -2295,7 +2457,7 @@ class PluginHub(WebSocketEndpoint):
         command_id = None
         close_invalid = False
         try:
-            async with lock:
+            async with cls._authorized_socket_lock(websocket, lock):
                 cls._expire_large_results()
                 if isinstance(data, dict):
                     start = ResultStartMessage(**data)
@@ -2372,7 +2534,7 @@ class PluginHub(WebSocketEndpoint):
             return
 
         close_offender = False
-        async with lock:
+        async with cls._authorized_socket_lock(websocket, lock):
             entry = cls._pending.get(command_id)
             if entry is None or cls._connections.get(entry["session_id"]) is not websocket:
                 return
@@ -2449,7 +2611,7 @@ class PluginHub(WebSocketEndpoint):
             return
         session_id = payload.session_id
         if session_id:
-            async with lock:
+            async with cls._authorized_socket_lock(websocket, lock):
                 if cls._connections.get(session_id) is not websocket:
                     return
                 cls._last_pong[session_id] = time.monotonic()
@@ -2911,6 +3073,8 @@ class PluginHub(WebSocketEndpoint):
         editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
         _catalog_guard=None,
     ) -> dict[str, Any]:
+        if config.http_remote_hosted:
+            await require_credential_lease(user_id)
         context = local_project_context.get()
         if context is not None:
             selected = context.selection

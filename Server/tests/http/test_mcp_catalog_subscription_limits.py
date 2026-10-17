@@ -123,6 +123,7 @@ class PluginStream:
         self.registered = anyio.Event()
         self.done = anyio.Event()
         self.session_id = None
+        self.close_codes = []
 
     async def run(self, *, task_status=anyio.TASK_STATUS_IGNORED):
         processed = None
@@ -146,6 +147,7 @@ class PluginStream:
                     self.session_id = payload["session_id"]
                     self.registered.set()
             elif message["type"] == "websocket.close":
+                self.close_codes.append(message["code"])
                 await self.input.send(({"type": "websocket.disconnect", "code": 1000}, None))
 
         scope = scope_for(
@@ -238,9 +240,10 @@ def hosted_catalog(monkeypatch, prepared_tool_factory, request):
             user_id={"alice-key": "alice", "bob-key": "bob"}.get(key),
         )
     )
-    monkeypatch.setattr(
-        ApiKeyService, "_instance", SimpleNamespace(validate=validation, aclose=AsyncMock())
-    )
+    # Stable catalog identities use normal positive caching. Cold-miss source
+    # admission and TTL0 semantics have dedicated real-service auth scenarios.
+    service = ApiKeyService("https://fixture.invalid/validate")
+    monkeypatch.setattr(service, "_validate_external", validation)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(Tool, "from_function", prepared_tool_factory)
         server = create_mcp_server(project_scoped)
@@ -858,7 +861,7 @@ def publish_state(runtime, *, project="a", user="alice", session="session", revi
 @pytest.mark.asyncio
 @pytest.mark.parametrize("hosted_catalog", [(True, True)], indirect=True)
 async def test_editor_state_wire_events_are_scoped_committed_and_generation_owned(
-    hosted_catalog, monkeypatch
+    hosted_catalog,
 ):
     # Given: actual authenticated plugin sockets for two Alice editors and Bob's same project.
     app, runtime = hosted_catalog
@@ -931,13 +934,6 @@ async def test_editor_state_wire_events_are_scoped_committed_and_generation_owne
             await anyio.wait_all_tasks_blocked()
             assert len(resource_notifications(streams[0])) == first_count
             socket = PluginHub._connections[peers[0].session_id]
-            with monkeypatch.context() as patch:
-                patch.setattr(socket.state, "user_id", "bob")
-                await peers[0].send_json(
-                    editor_state_message(sequence=2, observed=payload["observed_at_unix_ms"] + 2)
-                )
-            await anyio.wait_all_tasks_blocked()
-            assert len(resource_notifications(streams[0])) == first_count
 
             # A rejected epoch change invalidates the old cache and still notifies its own scope.
             streams[0].changed = anyio.Event()
@@ -979,6 +975,85 @@ async def test_editor_state_wire_events_are_scoped_committed_and_generation_owne
         assert not runtime._resource_dirty
         assert not runtime._resource_stamps
         assert not runtime._leases
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hosted_catalog", [(True, True)], indirect=True)
+async def test_foreign_socket_principal_closes_before_editor_state_commit(
+    hosted_catalog, monkeypatch
+):
+    # Given: three authenticated peers with committed state and scoped subscribers.
+    app, runtime = hosted_catalog
+    peers = [
+        PluginStream(app, "alice-key", "a", "A", capabilities=("editor_state_v1",)),
+        PluginStream(app, "alice-key", "other", "Other", capabilities=("editor_state_v1",)),
+        PluginStream(app, "bob-key", "a", "A", capabilities=("editor_state_v1",)),
+    ]
+    streams = [
+        ListenStream(app, "foreign-a", notifications=resource_filter()),
+        ListenStream(app, "foreign-other", instance="Other@other", notifications=resource_filter()),
+        ListenStream(app, "foreign-bob", principal="bob-key", notifications=resource_filter()),
+    ]
+    async with app.router.lifespan_context(app):
+        async with anyio.create_task_group() as group:
+            for peer in peers:
+                await peer.connect(group)
+            for stream in streams:
+                group.start_soon(stream.run)
+                await wait(stream.acknowledged)
+            for peer, stream in zip(peers, streams):
+                await peer.send_json(editor_state_message(observed=int(time.time() * 1000)))
+                await wait(stream.changed)
+            await anyio.wait_all_tasks_blocked()
+            counts = [len(resource_notifications(stream)) for stream in streams]
+            for stream in streams:
+                stream.changed = anyio.Event()
+            healthy = {
+                peer.session_id: PluginHub._connections[peer.session_id] for peer in peers[1:]
+            }
+            healthy_states = {
+                peer.session_id: PluginHub._editor_states.get(peer.session_id, user)
+                for peer, user in zip(peers[1:], ("alice", "bob"))
+            }
+            socket = PluginHub._connections[peers[0].session_id]
+            accept = Mock(wraps=PluginHub._editor_states.accept)
+            forged = editor_state_message(sequence=2, observed=int(time.time() * 1000))
+            # When: a live socket's mutable principal disagrees with its immutable lease.
+            with monkeypatch.context() as patch:
+                patch.setattr(socket.state, "user_id", "bob")
+                patch.setattr(PluginHub._editor_states, "accept", accept)
+                # Rejection ends the peer, so a next-receive processing barrier is invalid.
+                await peers[0].input.send(
+                    ({"type": "websocket.receive", "text": json.dumps(forged)}, None)
+                )
+                await wait(peers[0].done)
+                accept.assert_not_called()
+            # Then: policy close precedes any store mutation and invalidates only its own scope.
+            assert peers[0].close_codes == [4403]
+            assert peers[0].session_id not in PluginHub._connections
+            assert PluginHub._editor_states.get(peers[0].session_id, "alice") is None
+            await wait(streams[0].changed)
+            await anyio.wait_all_tasks_blocked()
+            assert len(resource_notifications(streams[0])) > counts[0]
+            assert [len(resource_notifications(stream)) for stream in streams[1:]] == counts[1:]
+            for peer, user in zip(peers[1:], ("alice", "bob")):
+                assert not peer.done.is_set()
+                assert PluginHub._connections[peer.session_id] is healthy[peer.session_id]
+                assert (
+                    PluginHub._editor_states.get(peer.session_id, user)
+                    == healthy_states[peer.session_id]
+                )
+            for peer, stream in zip(peers[1:], streams[1:]):
+                await peer.send_json(
+                    editor_state_message(sequence=2, observed=int(time.time() * 1000))
+                )
+                await wait(stream.changed)
+            for peer in peers:
+                await peer.close()
+            for stream in streams:
+                stream.disconnect.set()
+                await wait(stream.done)
+        assert not runtime._resource_dirty and not runtime._resource_stamps and not runtime._leases
 
 
 @pytest.mark.asyncio

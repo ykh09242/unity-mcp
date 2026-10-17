@@ -28,6 +28,7 @@ from transport.test_job_tasks import (
 )
 from services.test_wait_journal import DeadlineCheckpoint, WaitJournal, WaitOperation
 from services.api_key_service import ApiKeyService, ValidationResult
+from services.credential_lease import require_credential_lease
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE, RemoteControlAuthMiddleware
 from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
 
@@ -159,15 +160,16 @@ async def test_captured_ordinary_get_test_job_oracle(
 @asynccontextmanager
 async def isolated_tasks(tmp_path, monkeypatch, execute):
     """Actual auth/SDK/extension, injected bounded wait; this is not main.py."""
-    validator = SimpleNamespace(
-        validate=AsyncMock(
-            side_effect=lambda key, **_: ValidationResult(
+    validator = ApiKeyService("https://fixture.invalid/validate", cache_ttl=0)
+    monkeypatch.setattr(
+        validator,
+        "_validate_external",
+        AsyncMock(
+            side_effect=lambda key: ValidationResult(
                 valid=key in {"alice", "bob"}, user_id=key if key in {"alice", "bob"} else None
             )
-        )
+        ),
     )
-    monkeypatch.setattr(ApiKeyService, "is_initialized", lambda: True)
-    monkeypatch.setattr(ApiKeyService, "get_instance", lambda: validator)
     server = FastMCP("isolated-test-wait")
     journal = WaitJournal(tmp_path / "waits")
 
@@ -195,6 +197,7 @@ async def isolated_tasks(tmp_path, monkeypatch, execute):
                 "isError": True,
                 "structuredContent": {"reason": "ordinary-outer-deadline"},
             },
+            credential_lease=await require_credential_lease(),
         )
 
     extension = TestJobTasks(
@@ -211,11 +214,14 @@ async def isolated_tasks(tmp_path, monkeypatch, execute):
 
     sdk = server.http_app(path="/mcp", stateless_http=True, json_response=True)
     app = RemoteControlAuthMiddleware(WaitTaskDeliveryMiddleware(sdk))
-    async with sdk.router.lifespan_context(sdk):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://fixture"
-        ) as client:
-            yield client, extension, validator
+    try:
+        async with sdk.router.lifespan_context(sdk):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://fixture"
+            ) as client:
+                yield client, extension, validator
+    finally:
+        await validator.aclose()
 
 
 async def wire(client, method, params, *, owner="alice", opt_in=True, name=None):

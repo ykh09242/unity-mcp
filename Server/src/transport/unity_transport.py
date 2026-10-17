@@ -12,7 +12,11 @@ from transport.plugin_hub import (
     command_outcome_unknown,
 )
 from core.config import config
-from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
+from services.credential_lease import (
+    CredentialLeaseError,
+    current_credential_lease,
+    require_credential_lease,
+)
 from models.models import MCPResponse
 from models.unity_response import normalize_unity_response
 
@@ -28,13 +32,11 @@ async def _resolve_user_id_from_request() -> str | None:
     """Read identity validated by the outer HTTP authentication boundary."""
     if not config.http_remote_hosted:
         return None
-    try:
-        from fastmcp.server.dependencies import get_http_request
-
-        user_id = getattr(get_http_request().state, AUTHENTICATED_USER_STATE, None)
-        return user_id if isinstance(user_id, str) and user_id else None
-    except (ImportError, LookupError, RuntimeError):
+    lease = current_credential_lease()
+    if lease is None:
         return None
+    await lease.check()
+    return lease.user_id
 
 
 async def send_with_unity_instance(
@@ -54,19 +56,19 @@ async def send_with_unity_instance(
         if not isinstance(params, dict):
             raise TypeError("Command parameters must be a dict for HTTP transport")
 
-        # Auto-resolve user_id from HTTP request API key (remote-hosted mode)
-        if user_id is None:
-            user_id = await _resolve_user_id_from_request()
-
-        # Auth check
-        if config.http_remote_hosted and not user_id:
-            return normalize_unity_response(
-                MCPResponse(
-                    success=False,
-                    error="auth_required",
-                    message="API key required",
-                ).model_dump()
-            )
+        # An explicit principal alone is not a remote authorization capability.
+        if config.http_remote_hosted:
+            try:
+                lease = await require_credential_lease(user_id)
+            except CredentialLeaseError:
+                return normalize_unity_response(
+                    MCPResponse(
+                        success=False,
+                        error="auth_required",
+                        message="API key authentication required",
+                    ).model_dump()
+                )
+            user_id = lease.user_id
 
         retry_on_reload = kwargs.pop("retry_on_reload", True)
         if not isinstance(retry_on_reload, bool):
@@ -79,6 +81,7 @@ async def send_with_unity_instance(
         if "editor_state_read_mode" in kwargs:
             read_options["editor_state_read_mode"] = kwargs.pop("editor_state_read_mode")
 
+        transport_returned = False
         try:
             raw = await PluginHub.send_command_for_instance(
                 unity_instance,
@@ -88,7 +91,25 @@ async def send_with_unity_instance(
                 retry_on_reload=retry_on_reload,
                 **read_options,
             )
+            transport_returned = True
+            if config.http_remote_hosted:
+                await lease.check()
             return normalize_unity_response(raw)
+        except CredentialLeaseError:
+            if transport_returned:
+                return normalize_unity_response(
+                    command_outcome_unknown(
+                        command_type,
+                        "Remote authorization ended before delivery",
+                        unity_instance=unity_instance,
+                        cause="authentication_ended",
+                    )
+                )
+            return normalize_unity_response(
+                MCPResponse(
+                    success=False, error="auth_required", message="Remote authorization ended"
+                ).model_dump()
+            )
         except InstanceSelectionRequiredError as exc:
             # Not retryable: a blind retry fails identically. The client must pick
             # an instance, so hint at selection and hand over the ids structurally.

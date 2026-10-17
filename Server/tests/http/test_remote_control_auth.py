@@ -1,6 +1,5 @@
 """Exercise remote authentication across the actual MCP HTTP protocol boundary."""
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -30,9 +29,8 @@ def remote_app(monkeypatch, prepared_tool_factory):
             user_id={"alice-key": "alice", "bob-key": "bob"}.get(key),
         )
     )
-    monkeypatch.setattr(
-        ApiKeyService, "_instance", SimpleNamespace(validate=validator, aclose=AsyncMock())
-    )
+    service = ApiKeyService("https://fixture.invalid/validate", cache_ttl=0)
+    monkeypatch.setattr(service, "_validate_external", validator)
     from fastmcp.tools.base import Tool
 
     with pytest.MonkeyPatch.context() as patch:
@@ -164,8 +162,11 @@ def test_plugin_upgrade_requires_authentication(remote_app, headers):
     assert denied.value.code == 1008
 
 
-def test_authenticated_session_catalogs_and_resource_identity(remote_app):
+def test_authenticated_session_catalogs_and_resource_identity(remote_app, monkeypatch):
     app, validator = remote_app
+    service = ApiKeyService.get_instance()
+    close = AsyncMock(wraps=service.aclose)
+    monkeypatch.setattr(service, "aclose", close)
     headers = {"X-API-Key": "alice-key", "Accept": "application/json, text/event-stream"}
     with TestClient(app) as client:
         response = client.post(
@@ -239,4 +240,6 @@ def test_authenticated_session_catalogs_and_resource_identity(remote_app):
         validator.side_effect = lambda key, **kwargs: ValidationResult(valid=False)
         headers["X-API-Key"] = "alice-key"
         assert client.post("/mcp", headers=headers, content="not-json").status_code == 401
-    ApiKeyService.get_instance().aclose.assert_awaited_once()
+    close.assert_awaited_once()
+    assert service._closed
+    assert not ApiKeyService.is_initialized()

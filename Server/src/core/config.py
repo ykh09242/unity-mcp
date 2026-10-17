@@ -49,6 +49,7 @@ class ServerConfig:
     api_key_validation_url: str | None = None  # POST endpoint to validate keys
     api_key_login_url: str | None = None  # URL for users to get/manage keys
     # Cache TTL in seconds (5 min default)
+    api_key_max_auth_age: float = 300.0  # Finite positive connected authorization age
     api_key_cache_ttl: float = 300.0
     # Optional service token for authenticating to the validation endpoint
     api_key_service_token_header: str | None = None  # e.g. "X-Service-Token"

@@ -69,6 +69,7 @@ from functools import partial
 import sys
 
 import logging
+import math
 from contextlib import asynccontextmanager, nullcontext
 import os
 from pathlib import Path
@@ -988,6 +989,7 @@ def create_mcp_server(
         ApiKeyService(
             validation_url=config.api_key_validation_url,
             cache_ttl=config.api_key_cache_ttl,
+            max_auth_age=config.api_key_max_auth_age,
             service_token_header=config.api_key_service_token_header,
             service_token=config.api_key_service_token,
         )
@@ -1210,9 +1212,22 @@ Examples:
     try:
         cache_ttl_env = os.environ.get("UNITY_MCP_API_KEY_CACHE_TTL")
         config.api_key_cache_ttl = float(cache_ttl_env) if cache_ttl_env else args.api_key_cache_ttl
+        if not math.isfinite(config.api_key_cache_ttl) or config.api_key_cache_ttl < 0:
+            raise ValueError("Cache TTL must be finite and nonnegative")
     except ValueError:
         logger.warning("Invalid UNITY_MCP_API_KEY_CACHE_TTL value, using default 300.0")
         config.api_key_cache_ttl = 300.0
+
+    try:
+        max_age_env = os.environ.get("UNITY_MCP_API_KEY_MAX_AUTH_AGE")
+        config.api_key_max_auth_age = (
+            float(max_age_env) if max_age_env else config.api_key_max_auth_age
+        )
+        if not math.isfinite(config.api_key_max_auth_age) or config.api_key_max_auth_age <= 0:
+            raise ValueError("Maximum authentication age must be finite and positive")
+    except ValueError:
+        logger.warning("Invalid maximum authentication age, using default 300.0")
+        config.api_key_max_auth_age = 300.0
 
     # Service token for authenticating to validation endpoint
     config.api_key_service_token_header = args.api_key_service_token_header or os.environ.get(

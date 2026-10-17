@@ -9,6 +9,8 @@ import pytest
 from core.config import config
 from core.constants import API_KEY_HEADER
 from services.api_key_service import ApiKeyService, ValidationResult
+from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
+from starlette.datastructures import Headers
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 
@@ -44,7 +46,7 @@ def _reset_plugin_hub():
 def _make_mock_websocket(headers=None, state_attrs=None):
     """Create a mock WebSocket with configurable headers and state."""
     ws = AsyncMock()
-    ws.headers = headers or {}
+    ws.headers = Headers(headers or {})
     ws.state = SimpleNamespace(**(state_attrs or {}))
     ws.accept = AsyncMock()
     ws.close = AsyncMock()
@@ -66,7 +68,7 @@ def _init_api_key_service(validate_result=None):
     """Initialize ApiKeyService with a mocked validate method."""
     svc = ApiKeyService(validation_url="https://auth.example.com/validate")
     if validate_result is not None:
-        svc.validate = AsyncMock(return_value=validate_result)
+        svc._validate_external = AsyncMock(return_value=validate_result)
     return svc
 
 
@@ -115,7 +117,7 @@ class TestWebSocketAuthGate:
         ws.accept.assert_called_once()
         ws.close.assert_not_called()
         assert ws.state.user_id == "user-42"
-        assert ws.state.api_key_metadata == {"plan": "pro"}
+        assert getattr(ws.state, AUTHENTICATED_LEASE_STATE).user_id == "user-42"
         # Should have sent welcome message
         ws.send_json.assert_called_once()
 

@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from contextvars import Context
 from typing import Any
+
+from services.credential_lease import CredentialLease, CredentialLeaseError
 from urllib.parse import urlsplit
 
 import httpx
@@ -25,12 +29,32 @@ class ValidationResult:
     error: str | None = None
     cacheable: bool = True
     overloaded: bool = False
+    lease: CredentialLease | None = field(default=None, repr=False)
 
 
 @dataclass
 class _ValidationFlight:
     task: asyncio.Task[ValidationResult]
     waiters: int = 0
+    generation: object = field(default_factory=object)
+    invalidated: bool = False
+
+
+@dataclass
+class _LeaseRecord:
+    """Mutable service-owned state; only this private record retains credential material."""
+
+    lease: CredentialLease
+    api_key: str = field(repr=False)
+    digest: str = field(repr=False)
+    deadline: float
+    owners: dict[object, asyncio.Task] = field(default_factory=dict, repr=False)
+    owner_refs: dict[object, int] = field(default_factory=dict, repr=False)
+    retired: bool = False
+    renewal: asyncio.Task[None] | None = field(default=None, repr=False)
+    renewal_deadline: float | None = None
+    monitor: asyncio.Task[None] | None = field(default=None, repr=False)
+    changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
 
 @dataclass
@@ -47,6 +71,10 @@ class ApiKeyService:
     """
 
     _instance: "ApiKeyService | None" = None
+    _global_lease_owners: int = 0
+    _global_leases: int = 0
+    _global_validations: int = 0
+    _global_validation_waiters: int = 0
 
     # Request defaults (sensible hardening)
     REQUEST_TIMEOUT: float = 5.0
@@ -55,6 +83,10 @@ class ApiKeyService:
     # Confirmed-invalid keys are cached too, so a bad key does not re-hit the auth service on
     # every call. That also means an unauthenticated caller grows the cache by one entry per
     # random key it tries; the cap keeps that bounded and negatives are the first to go.
+    MAX_ACTIVE_LEASES: int = 1024
+    MAX_LEASE_OWNERS: int = 128
+    MAX_OWNERS_PER_LEASE: int = 16
+    REVALIDATION_TIMEOUT: float = 11.0
     MAX_CACHE_ENTRIES: int = 1024
     MAX_KEY_LENGTH: int = 4096
     MAX_INFLIGHT_VALIDATIONS: int = 16
@@ -72,6 +104,8 @@ class ApiKeyService:
         cache_ttl: float = 300.0,
         service_token_header: str | None = None,
         service_token: str | None = None,
+        *,
+        max_auth_age: float = 300.0,
     ):
         """Initialize the API key service.
 
@@ -98,6 +132,14 @@ class ApiKeyService:
             raise ValueError(error) from None
         if not allowed:
             raise ValueError(error)
+        if not math.isfinite(cache_ttl) or cache_ttl < 0:
+            raise ValueError("API key cache TTL must be finite and nonnegative")
+        if not math.isfinite(max_auth_age) or max_auth_age <= 0:
+            raise ValueError("API key maximum authentication age must be finite and positive")
+        self._max_auth_age = max_auth_age
+        self._lease_records: dict[object, _LeaseRecord] = {}
+        self._key_leases: dict[str, object] = {}
+        self._lease_owners = 0
         self._validation_url = validation_url
         self._cache_ttl = cache_ttl
         self._service_token_header = service_token_header
@@ -111,6 +153,9 @@ class ApiKeyService:
         self._client: httpx.AsyncClient | None = None
         self._closed = False
         self._close_task: asyncio.Task[None] | None = None
+        previous = ApiKeyService._instance
+        if previous is not None:
+            previous._retire_service()
         ApiKeyService._instance = self
 
     @classmethod
@@ -129,7 +174,9 @@ class ApiKeyService:
         """Check if the service has been initialized."""
         return cls._instance is not None
 
-    async def validate(self, api_key: str, *, source_id: str | None = None) -> ValidationResult:
+    async def validate(
+        self, api_key: str, *, source_id: str | None = None, _fresh: bool = False
+    ) -> ValidationResult:
         """Validate an API key.
 
         Returns:
@@ -147,12 +194,25 @@ class ApiKeyService:
                 return ValidationResult(
                     valid=False, error="Auth service unavailable", cacheable=False
                 )
-            cached = self._cache.get(api_key)
+            self._collect_leases()
+            cached = self._cache.get(api_key) if not _fresh and self._cache_ttl > 0 else None
             if cached is not None:
                 valid, user_id, metadata, expires_at = cached
                 if time.time() < expires_at:
                     if valid:
-                        return ValidationResult(valid=True, user_id=user_id, metadata=metadata)
+                        digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+                        generation = self._key_leases.get(digest)
+                        record = self._lease_records.get(generation)
+                        if (
+                            record is not None
+                            and not record.retired
+                            and self._now() < record.deadline
+                        ):
+                            return ValidationResult(
+                                valid=True, user_id=user_id, metadata=metadata, lease=record.lease
+                            )
+                        # A cache TTL cannot extend the original authorization age.
+                        self._cache.pop(api_key, None)
                     else:
                         return ValidationResult(valid=False, error="Invalid API key")
                 else:
@@ -162,34 +222,51 @@ class ApiKeyService:
             # Admit without a queue: both unique work and coalesced callers are bounded.
             digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
             flight = self._inflight.get(digest)
-            if self._validation_waiters >= self.MAX_VALIDATION_WAITERS:
+            if ApiKeyService._global_validation_waiters >= self.MAX_VALIDATION_WAITERS:
                 return self._overload()
             if flight is not None:
-                if flight.waiters == 0 or flight.waiters >= self.MAX_WAITERS_PER_KEY:
+                if (
+                    flight.invalidated
+                    or flight.waiters == 0
+                    or flight.waiters >= self.MAX_WAITERS_PER_KEY
+                ):
                     return self._overload()
-            elif len(self._inflight) >= self.MAX_INFLIGHT_VALIDATIONS:
+            elif ApiKeyService._global_validations >= self.MAX_INFLIGHT_VALIDATIONS:
                 return self._overload()
             if source_id is not None and not self._admit_source(source_id):
                 return self._overload()
             if flight is None:
+                generation = object()
                 flight = _ValidationFlight(
-                    asyncio.create_task(self._validate_and_cache(api_key, digest))
+                    asyncio.create_task(
+                        self._validate_and_cache(api_key, digest, generation), context=Context()
+                    ),
+                    generation=generation,
                 )
                 self._inflight[digest] = flight
+                ApiKeyService._global_validations += 1
                 flight.task.add_done_callback(lambda task: self._finish_flight(digest, flight))
             source_budget = self._sources[source_id] if source_id is not None else None
             flight.waiters += 1
             self._validation_waiters += 1
+            ApiKeyService._global_validation_waiters += 1
 
         try:
             # A cancelled caller must not cancel another caller's shared validation.
-            return await asyncio.shield(flight.task)
+            result = await asyncio.shield(flight.task)
+            # Invalidation fences returned positives as well as cache publication.
+            if self._closed or flight.invalidated or self._inflight.get(digest) is not flight:
+                return ValidationResult(
+                    valid=False, error="Authentication changed", cacheable=False
+                )
+            return result
         finally:
             # No checkpoint here: repeated/level cancellation cannot strand admission.
             # These event-loop-owned mutations, like the locked transitions above,
             # are synchronous and never yield to another validator.
             flight.waiters -= 1
             self._validation_waiters -= 1
+            ApiKeyService._global_validation_waiters -= 1
             if source_budget is not None:
                 source_budget.waiters -= 1
             if flight.waiters == 0:
@@ -205,6 +282,8 @@ class ApiKeyService:
             flight.task.exception()  # Retrieve orphaned failures; active waiters still receive them.
         if flight.waiters == 0 and self._inflight.get(digest) is flight:
             del self._inflight[digest]
+            ApiKeyService._global_validations -= 1
+            self._collect_leases()
 
     @staticmethod
     def _overload() -> ValidationResult:
@@ -242,19 +321,40 @@ class ApiKeyService:
         budget.waiters += 1
         return True
 
-    async def _validate_and_cache(self, api_key: str, digest: str) -> ValidationResult:
+    async def _validate_and_cache(
+        self, api_key: str, digest: str, generation: object
+    ) -> ValidationResult:
 
         # Call external validation URL
         result = await self._validate_external(api_key)
 
+        flight = self._inflight.get(digest)
+        if (
+            self._closed
+            or flight is None
+            or flight.generation is not generation
+            or flight.invalidated
+            or flight.waiters == 0
+        ):
+            return ValidationResult(valid=False, error="Authentication changed", cacheable=False)
+        result = self._lease_verdict(api_key, digest, result)
+
         # Only cache definitive results (valid keys and confirmed-invalid keys).
         # Transient failures (auth service unavailable, timeouts, etc.) should
         # not be cached to avoid locking out users during service outages.
-        if result.cacheable:
+        if result.cacheable and self._cache_ttl > 0:
             async with self._cache_lock:
                 flight = self._inflight.get(digest)
-                if self._closed or flight is None or flight.waiters == 0:
-                    return result
+                if (
+                    self._closed
+                    or flight is None
+                    or flight.generation is not generation
+                    or flight.invalidated
+                    or flight.waiters == 0
+                ):
+                    return ValidationResult(
+                        valid=False, error="Authentication changed", cacheable=False
+                    )
                 now = time.time()
                 if len(self._cache) >= self.MAX_CACHE_ENTRIES:
                     for stale in [k for k, v in self._cache.items() if v[3] <= now]:
@@ -282,19 +382,27 @@ class ApiKeyService:
         """Reject new work, cancel outstanding validation and close the pooled client once."""
         async with self._cache_lock:
             if self._close_task is None:
-                self._closed = True
+                self._retire_service()
                 tasks = [flight.task for flight in self._inflight.values()]
+                tasks.extend(
+                    task
+                    for record in self._lease_records.values()
+                    for task in (record.monitor, record.renewal)
+                    if task is not None
+                )
                 # Cancel before yielding: admitted tasks must not create a client
                 # after shutdown has captured the client it owns.
                 for task in tasks:
                     task.cancel()
                 client, self._client = self._client, None
-                self._close_task = asyncio.create_task(self._close_resources(tasks, client))
+                self._close_task = asyncio.create_task(
+                    self._close_resources(tasks, client), context=Context()
+                )
             close_task = self._close_task
         await asyncio.shield(close_task)
 
     async def _close_resources(
-        self, tasks: list[asyncio.Task[ValidationResult]], client: httpx.AsyncClient | None
+        self, tasks: list[asyncio.Task], client: httpx.AsyncClient | None
     ) -> None:
         try:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -304,9 +412,12 @@ class ApiKeyService:
                     await client.aclose()
             finally:
                 async with self._cache_lock:
-                    self._inflight.clear()
+                    for digest, flight in tuple(self._inflight.items()):
+                        if flight.task.done():
+                            self._finish_flight(digest, flight)
                     self._cache.clear()
                     self._sources.clear()
+                    self._collect_leases()
                     if ApiKeyService._instance is self:
                         ApiKeyService._instance = None
 
@@ -437,15 +548,232 @@ class ApiKeyService:
         # Should not reach here, but fail closed
         return ValidationResult(valid=False, error="Auth service error", cacheable=False)
 
+    def _now(self) -> float:
+        return time.monotonic()
+
+    def _record(self, lease: CredentialLease) -> _LeaseRecord:
+        record = self._lease_records.get(lease.generation)
+        if (
+            lease.service is not self
+            or record is None
+            or record.lease is not lease
+            or record.retired
+            or self._closed
+        ):
+            raise CredentialLeaseError()
+        return record
+
+    def lease_retired(self, lease: CredentialLease) -> bool:
+        record = self._lease_records.get(lease.generation)
+        return self._closed or record is None or record.lease is not lease or record.retired
+
+    def check_lease_now(self, lease: CredentialLease) -> None:
+        record = self._record(lease)
+        if record.renewal is not None or self._now() >= record.deadline:
+            raise CredentialLeaseError()
+
+    async def check_lease(self, lease: CredentialLease) -> None:
+        record = self._record(lease)
+        if self._now() >= record.deadline and record.renewal is None:
+            record.changed = asyncio.Event()
+            record.renewal_deadline = asyncio.get_running_loop().time() + self.REVALIDATION_TIMEOUT
+            record.renewal = asyncio.create_task(self._renew_lease(record), context=Context())
+        renewal = record.renewal
+        if renewal is not None:
+            # One state transition owns one validator waiter, regardless of consumers.
+            await record.changed.wait()
+        self.check_lease_now(lease)
+
+    def acquire_lease_owner(self, lease: CredentialLease) -> object:
+        record = self._record(lease)
+        task = asyncio.current_task()
+        if task is None:
+            raise CredentialLeaseError()
+        for owner, existing in record.owners.items():
+            if existing is task:
+                record.owner_refs[owner] += 1
+                return owner
+        if (
+            ApiKeyService._global_lease_owners >= self.MAX_LEASE_OWNERS
+            or len(record.owners) >= self.MAX_OWNERS_PER_LEASE
+        ):
+            raise CredentialLeaseError(overloaded=True)
+        owner = object()
+        record.owners[owner] = task
+        record.owner_refs[owner] = 1
+        self._lease_owners += 1
+        ApiKeyService._global_lease_owners += 1
+        if record.monitor is None or record.monitor.done() or record.monitor.cancelling():
+            record.monitor = asyncio.create_task(self._monitor_lease(record), context=Context())
+        return owner
+
+    def release_lease_owner(self, lease: CredentialLease, owner: object) -> None:
+        record = self._lease_records.get(lease.generation)
+        if record is not None and owner in record.owners:
+            record.owner_refs[owner] -= 1
+            if record.owner_refs[owner]:
+                return
+            del record.owner_refs[owner]
+            del record.owners[owner]
+            self._lease_owners -= 1
+            ApiKeyService._global_lease_owners -= 1
+            if not record.owners and record.monitor is not None:
+                record.monitor.cancel()
+        self._collect_leases()
+
+    def _retire_lease(self, record: _LeaseRecord) -> None:
+        if record.retired:
+            return
+        record.retired = True
+        record.changed.set()
+        flight = self._inflight.get(record.digest)
+        if flight is not None:
+            flight.invalidated = True
+        self._cache.pop(record.api_key, None)
+        if self._key_leases.get(record.digest) is record.lease.generation:
+            del self._key_leases[record.digest]
+        # Fence first, then request cancellation. Charges remain until owner finally.
+        for task in set(record.owners.values()):
+            task.cancel()
+        monitor = record.monitor
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if monitor is not None and monitor is not current:
+            monitor.cancel()
+
+    def _retire_service(self) -> None:
+        self._closed = True
+        self._cache.clear()
+        for source, budget in tuple(self._sources.items()):
+            if budget.waiters == 0:
+                del self._sources[source]
+        for flight in self._inflight.values():
+            flight.invalidated = True
+        for record in tuple(self._lease_records.values()):
+            self._retire_lease(record)
+        self._collect_leases()
+
+    def _collect_leases(self) -> None:
+        for token, record in tuple(self._lease_records.items()):
+            pending = any(
+                task is not None and not task.done() for task in (record.monitor, record.renewal)
+            )
+            if record.owners or pending or record.digest in self._inflight:
+                continue
+            if not record.retired and self._now() < record.deadline:
+                continue
+            self._lease_records.pop(token, None)
+            ApiKeyService._global_leases -= 1
+            if self._key_leases.get(record.digest) is token:
+                del self._key_leases[record.digest]
+
+    def _lease_verdict(
+        self, api_key: str, digest: str, result: ValidationResult
+    ) -> ValidationResult:
+        token = self._key_leases.get(digest)
+        record = self._lease_records.get(token)
+        principal = result.user_id
+        if (
+            not result.valid
+            or not isinstance(principal, str)
+            or not principal
+            or (record is not None and record.lease.user_id != principal)
+        ):
+            if record is not None:
+                self._retire_lease(record)
+            return replace(result, valid=False, lease=None)
+        if record is None or record.retired:
+            self._collect_leases()
+            if ApiKeyService._global_leases >= self.MAX_ACTIVE_LEASES:
+                return self._overload()
+            token = object()
+            lease = CredentialLease(self, token, principal)
+            record = _LeaseRecord(lease, api_key, digest, 0)
+            self._lease_records[token] = record
+            ApiKeyService._global_leases += 1
+            self._key_leases[digest] = token
+        age = (
+            min(self._cache_ttl, self._max_auth_age) if self._cache_ttl > 0 else self._max_auth_age
+        )
+        deadline = self._now() + age
+        if not math.isfinite(deadline) or deadline <= self._now():
+            self._retire_lease(record)
+            return ValidationResult(
+                valid=False, error="Authentication age exhausted", cacheable=False
+            )
+        record.deadline = deadline
+        return replace(result, lease=record.lease)
+
+    async def _renew_lease(self, record: _LeaseRecord) -> None:
+        validation = asyncio.create_task(
+            self.validate(record.api_key, _fresh=True), context=Context()
+        )
+        try:
+            # asyncio.wait has a finite independent deadline even when the provider
+            # suppresses cancellation. The underlying validation slot remains charged.
+            deadline = record.renewal_deadline
+            assert deadline is not None
+            remaining = max(0, deadline - asyncio.get_running_loop().time())
+            done, _ = await asyncio.wait({validation}, timeout=remaining)
+            if not done or asyncio.get_running_loop().time() >= deadline:
+                self._retire_lease(record)
+                validation.cancel()
+                return
+            if validation.cancelled() or validation.exception() is not None:
+                self._retire_lease(record)
+                return
+            result = validation.result()
+            if not result.valid or result.lease is not record.lease or record.retired:
+                self._retire_lease(record)
+        except asyncio.CancelledError:
+            self._retire_lease(record)
+            validation.cancel()
+            raise
+        finally:
+            record.renewal = None
+            record.renewal_deadline = None
+            record.changed.set()
+            validation.add_done_callback(self._consume_renewal)
+            self._collect_leases()
+
+    @staticmethod
+    def _consume_renewal(task: asyncio.Task) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    async def _monitor_lease(self, record: _LeaseRecord) -> None:
+        try:
+            while record.owners and not record.retired:
+                await asyncio.sleep(max(0, record.deadline - self._now()))
+                await self.check_lease(record.lease)
+        except CredentialLeaseError:
+            self._retire_lease(record)
+        finally:
+            if record.monitor is asyncio.current_task():
+                record.monitor = None
+            self._collect_leases()
+
     async def invalidate_cache(self, api_key: str) -> None:
-        """Remove an API key from the cache."""
+        """Fence current authorization; a later fresh validation may create a new generation."""
         async with self._cache_lock:
             self._cache.pop(api_key, None)
+            digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+            flight = self._inflight.get(digest)
+            if flight is not None:
+                flight.invalidated = True
+            record = self._lease_records.get(self._key_leases.get(digest))
+            if record is not None:
+                self._retire_lease(record)
+            self._collect_leases()
 
     async def clear_cache(self) -> None:
-        """Clear all cached validations."""
+        """Invalidate all captured generations without permanently revoking credentials."""
         async with self._cache_lock:
             self._cache.clear()
-
-
-__all__ = ["ApiKeyService", "ValidationResult"]
+            for flight in self._inflight.values():
+                flight.invalidated = True
+            for record in tuple(self._lease_records.values()):
+                self._retire_lease(record)
+            self._collect_leases()

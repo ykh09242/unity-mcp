@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine, Hashable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 from weakref import WeakKeyDictionary, WeakValueDictionary, finalize
+
+from core.config import config
+from services.credential_lease import current_credential_lease, require_credential_lease
 
 from models.response_limits import ResponseOwner, response_owner, response_size
 from services.tools.shared_read_budget import shared_read_budget
@@ -52,15 +55,23 @@ class _ReadFlight(Generic[T]):
         token = response_owner.set(self.owner)
         received = False
         try:
-            value = await factory()
-            if not self.owner.entries:
-                # HTTP results already carry Hub reservations; stdio and small
-                # transport errors need their own aggregate retained-copy budget.
-                charge = response_size(value)
-                if charge is None or not shared_read_budget.reserve(self.owner, charge):
-                    raise SharedReadCapacityError()
-            received = True
-            return _CompletedRead(value, asyncio.get_running_loop().time())
+            lease = (
+                await require_credential_lease()
+                if (config.http_remote_hosted and config.transport_mode.lower() == "http")
+                else None
+            )
+            async with lease.own() if lease is not None else nullcontext():
+                value = await factory()
+                if lease is not None:
+                    await lease.check()
+                if not self.owner.entries:
+                    # HTTP results already carry Hub reservations; stdio and small
+                    # transport errors need their own aggregate retained-copy budget.
+                    charge = response_size(value)
+                    if charge is None or not shared_read_budget.reserve(self.owner, charge):
+                        raise SharedReadCapacityError()
+                received = True
+                return _CompletedRead(value, asyncio.get_running_loop().time())
         finally:
             response_owner.reset(token)
             if not received:
@@ -88,6 +99,11 @@ class SharedRead(Generic[T]):
         on_flight: Callable[[asyncio.Task], None] | None = None,
     ) -> T:
         """Share a fresh read and optionally observe the actual owning task."""
+        lease = (
+            await require_credential_lease()
+            if (config.http_remote_hosted and config.transport_mode.lower() == "http")
+            else None
+        )
         flight = self._flight
         if flight is not None and flight.task.done() and not flight.task.cancelled():
             if (
@@ -108,6 +124,8 @@ class SharedRead(Generic[T]):
             if on_flight is not None:
                 on_flight(flight.task)
             completed = await asyncio.shield(flight.task)
+            if lease is not None:
+                await lease.check()
             consumer = response_owner.get()
             copy_owner = flight.owner.reserve_copy()
             if copy_owner is None:
@@ -124,6 +142,8 @@ class SharedRead(Generic[T]):
                     transferred = consumer.adopt(copy_owner)
                     if not transferred:
                         raise SharedReadCapacityError()
+                if lease is not None:
+                    await lease.check()
                 return value
             finally:
                 if not transferred:
@@ -191,6 +211,13 @@ class SharedToolReads(Generic[T]):
 
     async def invalidate(self, key: Hashable | None) -> None:
         """Detach a cached identity; active readers finish without republishing it."""
+        lease = (
+            current_credential_lease()
+            if (config.http_remote_hosted and config.transport_mode.lower() == "http")
+            else None
+        )
+        if lease is not None and key is not None:
+            key = (lease.service, lease.generation, key)
         entries = self._loops.get(asyncio.get_running_loop())
         read = entries.pop(key, None) if entries is not None else None
         if read is not None and read.callers == 0:
@@ -202,6 +229,10 @@ class SharedToolReads(Generic[T]):
     @asynccontextmanager
     async def session(self, key: Hashable | None) -> AsyncIterator[SharedRead[T]]:
         """Lease loop-local state, or use an untracked read at the capacity limit."""
+        if config.http_remote_hosted and config.transport_mode.lower() == "http":
+            lease = await require_credential_lease()
+            if key is not None:
+                key = (lease.service, lease.generation, key)
         loop = asyncio.get_running_loop()
         entries = self._loops.get(loop)
         if entries is None:
