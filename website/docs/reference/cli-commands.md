@@ -561,6 +561,7 @@ Generate a 3D model with an AI provider. Examples: unity-mcp asset-gen generate-
 | --prompt | text | optional | nargs=1 | — | — | Text prompt for text-&gt;3D. |
 | --image-path | text | optional | nargs=1 | — | — | Source image path for image-&gt;3D. |
 | --image-url | text | optional | nargs=1 | — | — | Source image URL for image-&gt;3D. |
+| --allow-image-upload | boolean | optional | nargs=1, flag | false | — | Consent to upload a local PNG/JPEG including metadata to Tripo for potentially billable generation. |
 | --format | text | optional | nargs=1 | — | — | Output format: glb, fbx, obj, usdz. |
 | --target-size | float | optional | nargs=1 | — | — | Normalize largest dimension (meters). |
 | --texture / --no-texture | boolean | optional | nargs=1, flag | — | — | Generate textures. |
