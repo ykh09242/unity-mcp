@@ -30,11 +30,11 @@
                     <ui:Button name="browse-project-dir-button" text="Browse" class="icon-button" />
                     <ui:Button name="clear-project-dir-button" text="Clear" class="icon-button" />
                 </ui:VisualElement>
-                <ui:VisualElement style="margin-top: 8px;">
+                <ui:VisualElement class="client-configuration-review">
                         <ui:Label text="Review a redacted Unity MCP entry change. Other settings are preserved." />
                         <ui:TextField name="configuration-preview" readonly="true" multiline="true" />
                         <ui:Label name="configuration-change-status" text="No reviewed change prepared." />
-                        <ui:VisualElement style="flex-direction: row; flex-wrap: wrap;">
+                        <ui:VisualElement class="client-configuration-review-actions">
                             <ui:Button name="preview-configuration" text="Preview change" />
                             <ui:Button name="apply-configuration" text="Apply reviewed change" enabled="false" />
                             <ui:Button name="cancel-configuration-preview" text="Cancel preview" />
