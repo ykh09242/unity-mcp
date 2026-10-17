@@ -21,6 +21,20 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         public void ReleaseInput() => inputSession.Release();
 
         private readonly PlayScenarioLogPolicy _logPolicy;
+        private readonly bool sceneSemantics;
+        private readonly PlayScenarioSceneOperation sceneOperation;
+        private readonly PlayScenarioSceneScope sceneScope = new PlayScenarioSceneScope();
+        private const string SceneUnknownKey = "MCPForUnity.PlayScenario.SceneOperationUnknown";
+
+        static UnityPlayScenarioHost()
+        {
+            PlayScenarioSceneOperation.RestoreReloadUnknown(SessionState.GetBool(SceneUnknownKey, false));
+            // This observer deliberately outlives Service.Detach and host Release while a native lease is pending.
+            AssemblyReloadEvents.beforeAssemblyReload += RetainSceneUncertainty;
+        }
+
+        private static void RetainSceneUncertainty() => SessionState.SetBool(SceneUnknownKey, PlayScenarioSceneOperation.CaptureReloadUnknown());
+
         private PlayScenarioQueryCounts _queryCounts;
 
         public PlayScenarioQueryCounts CaptureQueryCounts() => _queryCounts;
@@ -31,13 +45,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private string _targetId;
         private string[] _targetSegments;
 
-        public UnityPlayScenarioHost(PlayScenarioLogPolicy logPolicy = null)
+        public UnityPlayScenarioHost(PlayScenarioLogPolicy logPolicy = null, bool sceneSemantics = false)
         {
             _logPolicy = logPolicy ?? new PlayScenarioLogPolicy();
+            this.sceneSemantics = sceneSemantics;
+            sceneOperation = new PlayScenarioSceneOperation(
+                sceneSemantics,
+                (path, mode) => EditorSceneManager.LoadSceneAsyncInPlayMode(RequireSceneAsset(path), new LoadSceneParameters(mode))
+            );
         }
 
         public PlayScenarioMetricsSnapshot CaptureMetrics(int iteration, long now) =>
-            UnityPlayScenarioDiagnostics.CaptureMetrics(iteration, now, _loadOperation == null ? 0 : 1);
+            UnityPlayScenarioDiagnostics.CaptureMetrics(iteration, now, (_loadOperation == null ? 0 : 1) + sceneOperation.HandleCount);
 
         public static JObject Preflight(PlayScenarioDefinition definition) => PlayScenarioPreflight.Check(definition);
 
@@ -48,7 +67,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             try
             {
                 PlayScenarioObjectCondition.ValidateSelector(step);
-                Scene scene = SceneManager.GetActiveScene();
+                Scene scene = step.Scene == null ? SceneManager.GetActiveScene() : PlayScenarioSceneScope.Find(step.Scene);
                 var matches =
                     step.TargetId != null
                         ? PlayScenarioObjectCondition.ResolveId(scene, step.TargetId)
@@ -70,6 +89,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (step == null)
                 throw new ArgumentNullException(nameof(step));
+            if (
+                sceneSemantics
+                && (step.Action == "load_scene" || step.Action == "wait_scene" || step.Action == "unload_scene" || step.Action == "set_active_scene")
+            )
+                return sceneOperation.Evaluate(step, firstPoll);
             switch (step.Action)
             {
                 case "input":
@@ -92,7 +116,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                             throw CapabilityFailure(step, "The optional uGUI backend does not support raycast-verified clicks.");
                     }
                     Type componentType = PlayScenarioObjectCondition.ValidateCondition(step);
-                    Scene scene = SceneManager.GetActiveScene();
+                    Scene scene = step.Scene == null ? SceneManager.GetActiveScene() : sceneScope.Resolve(step.Scene, firstPoll);
                     if (!scene.IsValid() || !scene.isLoaded)
                         return new PlayScenarioObservation(false, "Waiting for a loaded active scene.");
                     var matches =
@@ -164,8 +188,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             string containedPath = AssetPathUtility.GetContainedAssetPath(scenePath);
             if (containedPath != scenePath)
                 throw new ArgumentException("Scene must be a canonical Assets/*.unity path.");
-            if (AssetDatabase.LoadAssetAtPath<SceneAsset>(containedPath) == null)
+            SceneAsset asset = AssetDatabase.LoadAssetAtPath<SceneAsset>(containedPath);
+            if (asset == null)
                 throw new InvalidOperationException("The scenario scene asset was not found.");
+            if (!string.Equals(AssetDatabase.GetAssetPath(asset), containedPath, StringComparison.Ordinal))
+                throw new ArgumentException("Scene must use its exact canonical asset path.");
             return containedPath;
         }
 
@@ -245,6 +272,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         public void Release()
         {
             ReleaseInput();
+            sceneOperation.Release();
+            sceneScope.Release();
             // Releasing a reference does not cancel Unity's scene load or destroy scene objects.
             _loadOperation = null;
             _loadPath = null;

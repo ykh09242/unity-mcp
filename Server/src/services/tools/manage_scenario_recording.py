@@ -4,16 +4,16 @@ from typing import Annotated
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import JsonValue, ValidationError
-
 from models.models import MCPResponse
 from models.play_scenarios import JobId, ScenarioName
 from models.scenario_recording import (
     RecordingAction,
     RecordingDuration,
     RecordingMaxEvents,
+    RecordingSceneScope,
     ScenarioRecordingCommand,
 )
+from pydantic import MISSING, JsonValue, ValidationError
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -33,12 +33,14 @@ class ScenarioRecordingResponse(TypedDict, total=False):
 @mcp_for_unity_tool(
     group="testing",
     description=(
-        "Record observed uGUI Button pointer clicks and active-scene changes during unpaused "
+        "Record observed uGUI Button pointer clicks and scene changes during unpaused "
         "Editor Play Mode into a bounded scenario draft. start returns recording_id immediately; "
         "status polls explicitly. stop saves a NEW scenario with draft=true and requires review "
         "before running; cancel discards it. max_events counts clicks, transitions and explicitly "
         "requested checkpoints, plus one initial load_scene step (at most 32 total steps). "
         "checkpoint requests a named screenshot in the future replay, never an inferred assertion. "
+        "Opt-in all_loaded captures a bounded initial scene context and exact scene-qualified clicks; "
+        "transitions are observed waits, never inferred loading/unloading effects. "
         "No timing, expected game state, raw input, keyboard, drag, scroll or UI Toolkit steps are "
         "invented. Diagnostics identify ambiguous targets and incomplete coverage. The optional "
         "com.unity.ugui backend is required. Reload or Play Mode exit stops observation and retains "
@@ -61,6 +63,9 @@ async def manage_scenario_recording(
     duration_seconds: Annotated[
         RecordingDuration | None, "start wall-clock limit in seconds; default 300"
     ] = None,
+    scene_scope: Annotated[
+        RecordingSceneScope | MISSING, "start-only scene scope: active (default) or all_loaded"
+    ] = MISSING,
     checkpoint_name: Annotated[
         ScenarioName | None, "Explicit named screenshot checkpoint; required for checkpoint"
     ] = None,
@@ -73,6 +78,7 @@ async def manage_scenario_recording(
             max_events=max_events,
             duration_seconds=duration_seconds,
             checkpoint_name=checkpoint_name,
+            **({"scene_scope": scene_scope} if scene_scope is not MISSING else {}),
         )
     except ValidationError as error:
         return {"success": False, "error": f"Invalid scenario recording parameters: {error}"}

@@ -144,7 +144,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _processedUnexpectedLogCount = 0;
             return new PlayScenarioEngine(
                 state,
-                new UnityPlayScenarioHost(state.Scenario.LogPolicy),
+                new UnityPlayScenarioHost(state.Scenario.LogPolicy, state.Scenario.UsesExplicitSceneSemantics),
                 CaptureFailure,
                 DrainAndApplyErrors,
                 new UnityPlayScenarioResources(),

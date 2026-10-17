@@ -26,11 +26,12 @@ namespace MCPForUnity.Editor.Tools
                 switch (action)
                 {
                     case "start":
-                        Allow(parameters, "action", "name", "max_events", "duration_seconds");
+                        Allow(parameters, "action", "name", "max_events", "duration_seconds", "scene_scope");
                         result = PlayScenarioRecordingService.Start(
                             Text(parameters, "name"),
                             Integer(parameters, "max_events", 1, 31, 31),
-                            Integer(parameters, "duration_seconds", 1, 600, 300)
+                            Integer(parameters, "duration_seconds", 1, 600, 300),
+                            parameters.Property("scene_scope") == null ? "active" : Text(parameters, "scene_scope")
                         );
                         break;
                     case "status":

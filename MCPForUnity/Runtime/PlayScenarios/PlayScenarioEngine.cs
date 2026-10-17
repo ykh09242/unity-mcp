@@ -314,7 +314,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         public void Cancel(long now) =>
             RequestOutcome(
                 "cancelled",
-                "Cancelled by caller. Play Mode and any in-flight scene load are unchanged.",
+                "Cancelled by caller. Play Mode and any in-flight scene operation are unchanged.",
                 now,
                 Failure("cancelled", "Cancelled by caller.")
             );

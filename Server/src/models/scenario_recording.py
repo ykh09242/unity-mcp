@@ -2,9 +2,10 @@
 
 from typing import Annotated, Literal
 
+from models.play_scenarios import JobId, ScenarioName
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from models.play_scenarios import JobId, ScenarioName
+RecordingSceneScope = Literal["active", "all_loaded"]
 
 RecordingAction = Literal["start", "status", "stop", "cancel", "checkpoint"]
 RecordingMaxEvents = Annotated[int, Field(strict=True, ge=1, le=31)]
@@ -22,17 +23,22 @@ class ScenarioRecordingCommand(BaseModel):
     max_events: RecordingMaxEvents | None = None
     duration_seconds: RecordingDuration | None = None
     checkpoint_name: ScenarioName | None = None
+    scene_scope: RecordingSceneScope | None = None
 
     @model_validator(mode="after")
     def validate_action(self):
+        if "scene_scope" in self.model_fields_set and (
+            self.scene_scope is None or self.action != "start"
+        ):
+            raise ValueError("scene_scope must be a non-null start option")
         allowed = {
-            "start": {"name", "max_events", "duration_seconds"},
+            "start": {"name", "max_events", "duration_seconds", "scene_scope"},
             "status": {"recording_id"},
             "stop": {"recording_id"},
             "cancel": {"recording_id"},
             "checkpoint": {"recording_id", "checkpoint_name"},
         }[self.action]
-        for key in type(self).model_fields.keys():
+        for key in self.model_fields_set:
             if key != "action" and getattr(self, key) is not None and key not in allowed:
                 raise ValueError(f"{key} is not permitted for {self.action}")
         if self.action == "start" and self.name is None:

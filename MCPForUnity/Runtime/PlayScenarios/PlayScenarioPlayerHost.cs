@@ -23,6 +23,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public void ReleaseInput() => inputSession.Release();
 
         private readonly HashSet<string> scenes;
+        private readonly bool sceneSemantics;
+        private readonly PlayScenarioSceneOperation sceneOperation;
+        private readonly PlayScenarioSceneScope sceneScope = new PlayScenarioSceneScope();
         private AsyncOperation load;
         private PlayScenarioQueryCounts counts;
         private string preparedTarget;
@@ -32,10 +35,12 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private Type componentType;
         private Func<int> subscriptionCount;
 
-        public PlayScenarioPlayerHost(IEnumerable<string> scenePaths, Func<int> subscriptionCount = null)
+        public PlayScenarioPlayerHost(IEnumerable<string> scenePaths, Func<int> subscriptionCount = null, bool sceneSemantics = false)
         {
             scenes = new HashSet<string>(scenePaths, StringComparer.Ordinal);
             this.subscriptionCount = subscriptionCount;
+            this.sceneSemantics = sceneSemantics;
+            sceneOperation = new PlayScenarioSceneOperation(sceneSemantics, (path, mode) => SceneManager.LoadSceneAsync(path, mode));
         }
 
         public PlayScenarioQueryCounts CaptureQueryCounts() => counts;
@@ -50,7 +55,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             {
                 Iteration = iteration,
                 TimestampUnixMs = now,
-                RunnerHandleCount = load == null ? 0 : 1,
+                RunnerHandleCount = (load == null ? 0 : 1) + sceneOperation.HandleCount,
             };
             try
             {
@@ -107,6 +112,13 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public PlayScenarioObservation Evaluate(PlayScenarioStep step, bool firstPoll)
         {
+            if (step.Scene != null && !scenes.Contains(step.Scene))
+                throw new ArgumentException("Scene is absent from the frozen Player bundle: " + step.Scene);
+            if (
+                sceneSemantics
+                && (step.Action == "load_scene" || step.Action == "wait_scene" || step.Action == "unload_scene" || step.Action == "set_active_scene")
+            )
+                return sceneOperation.Evaluate(step, firstPoll);
             if (step.Action == "input")
                 return inputSession.Evaluate(step, firstPoll);
             if (step.Action == "load_scene" || step.Action == "wait_scene")
@@ -133,7 +145,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 throw new InvalidOperationException("Player property capability must be rejected before execution.");
             counts.TargetSearches++;
             PrepareCondition(step);
-            Scene active = SceneManager.GetActiveScene();
+            Scene active = step.Scene == null ? SceneManager.GetActiveScene() : sceneScope.Resolve(step.Scene, firstPoll);
+            if (step.Scene != null && (!active.IsValid() || !active.isLoaded))
+                return Pending(step, "Waiting for the selected scene to be loaded.", "condition_unmet");
             int inspected = 0;
             int matched = 0,
                 activeCount = 0;
@@ -242,6 +256,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public void Release()
         {
             ReleaseInput();
+            sceneOperation.Release();
+            sceneScope.Release();
             load = null;
             preparedTarget = null;
             preparedTargetId = null;

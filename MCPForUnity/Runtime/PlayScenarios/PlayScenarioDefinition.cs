@@ -51,6 +51,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("query_budget")]
         public PlayScenarioQueryBudgetOptions QueryBudget = new PlayScenarioQueryBudgetOptions();
 
+        [JsonIgnore]
+        public bool UsesExplicitSceneSemantics =>
+            SetupSteps
+                .Concat(Steps)
+                .Concat(CleanupSteps)
+                .Any(step =>
+                    step.LoadMode != null
+                    || step.SceneState != null
+                    || step.Action == "unload_scene"
+                    || step.Action == "set_active_scene"
+                    || ((step.Action == "wait_object" || step.Action == "click_ui") && step.Scene != null)
+                );
+
         public static void ValidateName(string name)
         {
             if (name == null || !Regex.IsMatch(name, @"\A[a-z0-9][a-z0-9_-]{0,63}\z"))
@@ -99,6 +112,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             };
             if ((result.SetupSteps.Count > 0 ? result.SetupSteps[0] : result.Steps[0]).Action != "load_scene")
                 throw new ArgumentException("The first executed setup or main step must load_scene.");
+            if ((result.SetupSteps.Count > 0 ? result.SetupSteps[0] : result.Steps[0]).LoadMode == "additive")
+                throw new ArgumentException("The first executed scene anchor must use Single loading.");
             return result;
         }
 
@@ -116,6 +131,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "name",
                     "action",
                     "scene",
+                    "load_mode",
+                    "scene_state",
                     "target",
                     "timeout_seconds",
                     "count",
@@ -148,6 +165,22 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     Performance = step.Property("performance") == null ? null : PlayScenarioPerformanceOptions.Parse(Object(step, "performance")),
                     Screenshot = step.Property("screenshot") == null ? null : PlayScenarioScreenshotOptions.Parse(Object(step, "screenshot")),
                 };
+                if (step.Property("load_mode") != null)
+                {
+                    if (parsed.Action != "load_scene")
+                        throw new ArgumentException("load_mode is only permitted on load_scene.");
+                    parsed.LoadMode = Text(step, "load_mode", 16);
+                    if (parsed.LoadMode != "single" && parsed.LoadMode != "additive")
+                        throw new ArgumentException("load_mode must be single or additive.");
+                }
+                if (step.Property("scene_state") != null)
+                {
+                    if (parsed.Action != "wait_scene")
+                        throw new ArgumentException("scene_state is only permitted on wait_scene.");
+                    parsed.SceneState = Text(step, "scene_state", 16);
+                    if (parsed.SceneState != "active" && parsed.SceneState != "loaded" && parsed.SceneState != "unloaded")
+                        throw new ArgumentException("scene_state must be active, loaded or unloaded.");
+                }
                 if (parsed.Action == "mark_events" || parsed.Action == "wait_events")
                 {
                     if (parsed.Action == "mark_events")
@@ -265,6 +298,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 {
                     case "load_scene":
                     case "wait_scene":
+                    case "unload_scene":
+                    case "set_active_scene":
                         if (step.Property("target") != null || step.Property("target_id") != null)
                             throw new ArgumentException("Scene actions cannot specify target.");
                         parsed.Scene = Text(step, "scene", 4096);
@@ -273,7 +308,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     case "click_ui":
                     case "wait_object":
                         if (step.Property("scene") != null)
-                            throw new ArgumentException("Object actions cannot specify scene.");
+                        {
+                            parsed.Scene = Text(step, "scene", 4096);
+                            ValidateScene(parsed.Scene);
+                        }
                         if ((step.Property("target") != null) == (step.Property("target_id") != null))
                             throw new ArgumentException("Exactly one target or target_id is required.");
                         if (step.Property("target") != null)
@@ -578,6 +616,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("scene", NullValueHandling = NullValueHandling.Ignore)]
         public string Scene;
+
+        [JsonProperty("load_mode", NullValueHandling = NullValueHandling.Ignore)]
+        public string LoadMode;
+
+        [JsonProperty("scene_state", NullValueHandling = NullValueHandling.Ignore)]
+        public string SceneState;
 
         [JsonProperty("target", NullValueHandling = NullValueHandling.Ignore)]
         public string Target;

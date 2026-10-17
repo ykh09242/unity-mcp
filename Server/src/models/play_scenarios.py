@@ -39,6 +39,8 @@ ScenarioAction = Literal[
 StepAction = Literal[
     "load_scene",
     "wait_scene",
+    "unload_scene",
+    "set_active_scene",
     "click_ui",
     "wait_object",
     "reset_state",
@@ -60,6 +62,8 @@ def normalize_native_definition(value: JsonValue) -> JsonValue:
         normalized.pop("draft", None)
     optional = {
         "scene",
+        "load_mode",
+        "scene_state",
         "target",
         "target_id",
         "reset_ids",
@@ -378,7 +382,7 @@ class ScenarioInput(BaseModel):
 
 
 class ScenarioStep(BaseModel):
-    """One bounded active-scene condition or effect; targets are paths, never Unity IDs."""
+    """One bounded condition/effect with optional exact scene scope; no native IDs."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
@@ -386,6 +390,12 @@ class ScenarioStep(BaseModel):
     input: ScenarioInput | None = None
     wait_frames: Annotated[int, Field(strict=True, ge=1, le=600)] | None = None
     scene: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
+    load_mode: Literal["single", "additive"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    scene_state: Literal["active", "loaded", "unloaded"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     target: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
     target_id: TargetId | None = None
     reset_ids: Annotated[list[TargetId], Field(min_length=1, max_length=16)] | None = None
@@ -415,6 +425,28 @@ class ScenarioStep(BaseModel):
         Annotated[list[EventName], Field(strict=True, min_length=1, max_length=16)] | None
     ) = Field(default=None, exclude_if=lambda value: value is None)
 
+    @field_validator("scene")
+    @classmethod
+    def check_scene_path(cls, value: str | None) -> str | None:
+        """Use the exact canonical asset-path policy for every selected scene."""
+        match value:
+            case None:
+                return None
+            case str():
+                segments = _path_segments(value)
+                if (
+                    len(segments) < 2
+                    or segments[0] != "Assets"
+                    or not value.endswith(".unity")
+                    or any(segment.casefold() == "gamedata" for segment in segments)
+                    or any(char in segment for segment in segments for char in ':*?"<>|')
+                    or any(segment.endswith((".", " ")) for segment in segments)
+                ):
+                    raise ValueError("Scene must be an Assets/... .unity path outside GameData")
+                return value
+            case unreachable:
+                assert_never(unreachable)
+
     @field_validator("state_equals", mode="before")
     @classmethod
     def check_state_scalar(cls, value: JsonValue) -> JsonValue:
@@ -436,6 +468,14 @@ class ScenarioStep(BaseModel):
     @model_validator(mode="after")
     def check_arguments(self) -> "ScenarioStep":
         """Reject unused selectors, invalid conditions and unsafe scene/object paths."""
+        if "load_mode" in self.model_fields_set and (
+            self.action != "load_scene" or self.load_mode is None
+        ):
+            raise ValueError("load_mode is a non-null option only for load_scene")
+        if "scene_state" in self.model_fields_set and (
+            self.action != "wait_scene" or self.scene_state is None
+        ):
+            raise ValueError("scene_state is a non-null option only for wait_scene")
         event_fields = {
             "event_id",
             "event_mark",
@@ -530,7 +570,15 @@ class ScenarioStep(BaseModel):
                     raise ValueError(
                         "wait_state requires state_id and exactly one non-null state_equals or state_compare"
                     )
-            case "load_scene" | "wait_scene" | "click_ui" | "wait_object" | "input":
+            case (
+                "load_scene"
+                | "wait_scene"
+                | "unload_scene"
+                | "set_active_scene"
+                | "click_ui"
+                | "wait_object"
+                | "input"
+            ):
                 if "reset_ids" in self.model_fields_set:
                     message = "reset_ids is only valid for reset_state"
                     raise ValueError(message)
@@ -579,7 +627,14 @@ class ScenarioStep(BaseModel):
                 if authored_fields & object_fields:
                     message = "Object conditions are only valid for wait_object"
                     raise ValueError(message)
-            case "load_scene" | "click_ui" | "reset_state" | "input":
+            case (
+                "load_scene"
+                | "unload_scene"
+                | "set_active_scene"
+                | "click_ui"
+                | "reset_state"
+                | "input"
+            ):
                 if condition_fields:
                     message = "Effect steps do not accept wait conditions"
                     raise ValueError(message)
@@ -592,25 +647,15 @@ class ScenarioStep(BaseModel):
         ):
             raise ValueError("Step name has an invalid character")
         match self.action:
-            case "load_scene" | "wait_scene":
+            case "load_scene" | "wait_scene" | "unload_scene" | "set_active_scene":
                 if self.scene is None or self.model_fields_set & {"target", "target_id"}:
                     raise ValueError("Scene steps require scene and do not accept target")
-                segments = _path_segments(self.scene)
-                if (
-                    len(segments) < 2
-                    or segments[0] != "Assets"
-                    or not self.scene.endswith(".unity")
-                    or any(segment.casefold() == "gamedata" for segment in segments)
-                    or any(char in segment for segment in segments for char in ':*?"<>|')
-                    or any(segment.endswith((".", " ")) for segment in segments)
-                ):
-                    raise ValueError("Scene must be an Assets/... .unity path outside GameData")
             case "click_ui" | "wait_object":
-                if (self.target is None) == (
-                    self.target_id is None
-                ) or "scene" in self.model_fields_set:
-                    message = "Object steps require exactly one target or target_id and no scene"
+                if (self.target is None) == (self.target_id is None):
+                    message = "Object steps require exactly one target or target_id"
                     raise ValueError(message)
+                if "scene" in self.model_fields_set and self.scene is None:
+                    raise ValueError("scene must be omitted rather than null")
                 if "target" in self.model_fields_set and self.target is None:
                     message = "target must be omitted rather than null"
                     raise ValueError(message)
@@ -692,8 +737,8 @@ class PlayScenario(BaseModel):
                 elif step.action == "wait_events" and step.event_since not in marks:
                     raise ValueError("event_since must name a prior mark in the same stage")
         first = self.setup_steps[0] if self.setup_steps else self.steps[0]
-        if first.action != "load_scene":
-            message = "The first executed step must be load_scene"
+        if first.action != "load_scene" or first.load_mode == "additive":
+            message = "The first executed step must be a Single load_scene anchor"
             raise ValueError(message)
         if len(self.setup_steps) + len(self.steps) + len(self.cleanup_steps) > 64:
             message = "The combined step count must not exceed 64"

@@ -12,7 +12,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private static readonly Regex IdentifierPattern = new Regex(@"\A[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\z", RegexOptions.CultureInvariant);
 
         [SerializeField]
-        [Tooltip("Unique within the active scene. Scenario IDs are exact and case-sensitive.")]
+        [Tooltip("Unique within its own scene. Scenario IDs are exact and case-sensitive.")]
         private string _targetId = "";
 
         public string TargetId
