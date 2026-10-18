@@ -136,7 +136,7 @@ _ACTIONS: Final = {
         Permission.READ: _names(
             "ping get_hierarchy diagnose diagnose_projection diagnose_text diagnose_raycast"
         ),
-        Permission.EDIT: _names("create set_rect set_layout set_text set_canvas"),
+        Permission.EDIT: _names("create set_rect set_layout set_text set_canvas set_image"),
     },
     "manage_ui": {
         Permission.READ: _names("ping read get_visual_tree diagnose list"),

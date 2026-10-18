@@ -1,6 +1,8 @@
 """UI CLI commands - placeholder for future implementation."""
 
 import sys
+import json
+import math
 import click
 from typing import Optional, Any
 
@@ -339,3 +341,38 @@ def create_image(name: str, parent: str, sprite: Optional[str]):
     click.echo(format_output(result, config.format))
     if config.format != "json":
         print_success(f"Created Image: {name}")
+
+
+@ui.command("set-image")
+@click.argument("target")
+@click.option(
+    "--properties",
+    required=True,
+    help="Image JSON properties; sprite accepts null, asset path, or {path,name}.",
+)
+@handle_unity_errors
+def set_image(target: str, properties: str) -> None:
+    """Edit one existing uGUI Image through a single native Undo transaction."""
+
+    def reject_nonfinite(_value: str) -> None:
+        raise click.BadParameter("Finite JSON numbers are required.", param_hint="--properties")
+
+    def parse_finite_float(value: str) -> float:
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            reject_nonfinite(value)
+        return parsed
+
+    try:
+        parsed = json.loads(
+            properties, parse_constant=reject_nonfinite, parse_float=parse_finite_float
+        )
+    except json.JSONDecodeError as error:
+        raise click.BadParameter("Expected a JSON object.", param_hint="--properties") from error
+    if not isinstance(parsed, dict) or not parsed:
+        raise click.BadParameter("Expected a non-empty JSON object.", param_hint="--properties")
+    config = get_config()
+    result = run_command(
+        "manage_ugui", {"action": "set_image", "target": target, "properties": parsed}, config
+    )
+    click.echo(format_output(result, config.format))

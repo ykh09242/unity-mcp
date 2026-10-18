@@ -4176,6 +4176,16 @@ Create a UI Text element (TextMeshPro). Examples: unity-mcp ui create-text "Titl
 | --position | float | optional | nargs=2 | — | — | Anchored position X Y. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp ui set-image`
+
+Edit one existing uGUI Image through a single native Undo transaction.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| target | text | required | nargs=1 | — | — |  |
+| --properties | text | required | nargs=1 | — | — | Image JSON properties; sprite accepts null, asset path, or &#123;path,name&#125;. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp vfx`
 
 VFX operations - particle systems, line renderers, trails.

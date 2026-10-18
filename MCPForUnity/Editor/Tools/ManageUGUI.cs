@@ -35,6 +35,9 @@ namespace MCPForUnity.Editor.Tools
             "ignoreLayout minWidth minHeight preferredWidth preferredHeight flexibleWidth flexibleHeight layoutPriority"
         );
         private static readonly HashSet<string> FitterKeys = Keys("horizontalFit verticalFit");
+        private static readonly HashSet<string> ImageKeys = Keys(
+            "sprite type fillMethod fillOrigin fillAmount fillClockwise preserveAspect fillCenter color raycastTarget"
+        );
 
         public static object HandleCommand(JObject @params)
         {
@@ -64,9 +67,9 @@ namespace MCPForUnity.Editor.Tools
                     );
                 if (action == "create")
                     return Create(p, includeInactive);
-                if (!new[] { "get_hierarchy", "set_rect", "set_layout", "set_text", "set_canvas", "diagnose" }.Contains(action))
+                if (!new[] { "get_hierarchy", "set_rect", "set_layout", "set_text", "set_canvas", "set_image", "diagnose" }.Contains(action))
                     return new ErrorResponse(
-                        "Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, diagnose, diagnose_projection, diagnose_text, diagnose_raycast."
+                        "Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, set_image, diagnose, diagnose_projection, diagnose_text, diagnose_raycast."
                     );
                 var go = Resolve(p.GetRaw("target"), includeInactive);
                 if (action == "get_hierarchy")
@@ -94,6 +97,9 @@ namespace MCPForUnity.Editor.Tools
 
                     case "set_canvas":
                         return SetCanvas(go, properties);
+
+                    case "set_image":
+                        return SetImage(go, properties);
 
                     default:
                         throw new ArgumentException("Unknown action.");
@@ -423,6 +429,208 @@ namespace MCPForUnity.Editor.Tools
                 throw new ArgumentException("Target has no TMP or legacy Text component. Create text with element_type=text after configuring TMP essentials.");
             ValidateTextRange(c, props);
             return Edit(c, Prepare(c.GetType(), props, TextKeys), go, "Set uGUI text");
+        }
+
+        private static object SetImage(GameObject go, JObject props)
+        {
+            CheckKeys(props, ImageKeys);
+            Type type = RequireType(Ui + "Image");
+            var image = go.GetComponent(type);
+            if (image == null)
+                throw new ArgumentException("Target has no UnityEngine.UI.Image; set_image does not add components.");
+            // Use the known Image API rather than properties hidden by a user subclass.
+            var ordinary = (JObject)props.DeepClone();
+            ordinary.Remove("sprite");
+            var values = Prepare(type, ordinary, ImageKeys);
+            if (props.TryGetValue("sprite", out JToken selector))
+            {
+                var property = type.GetProperty("sprite");
+                if (property == null || !property.CanWrite || property.PropertyType != typeof(Sprite))
+                    throw new ArgumentException("Image.sprite is unavailable in this uGUI version.");
+                Sprite sprite = ResolveImageSprite(selector);
+                ImageSpriteInfo(sprite); // Bound identity metadata before opening the Undo group.
+                values.Add(new Assignment { Property = property, Value = sprite });
+            }
+            object Projected(string key)
+            {
+                var assigned = values.FirstOrDefault(value => value.Property.Name == key);
+                if (assigned != null)
+                    return assigned.Value;
+                var property = type.GetProperty(key);
+                if (property == null || !property.CanRead)
+                    throw new ArgumentException("Image." + key + " is unavailable in this uGUI version.");
+                return property.GetValue(image);
+            }
+            string imageType = Projected("type").ToString();
+            if (!new[] { "Simple", "Sliced", "Tiled", "Filled" }.Contains(imageType))
+                throw new ArgumentException("Unsupported Image.type in this uGUI version.");
+            string method = Projected("fillMethod").ToString();
+            int origin = (int)Projected("fillOrigin");
+            float amount = (float)Projected("fillAmount");
+            if (amount < 0 || amount > 1)
+                throw new ArgumentException("fillAmount must be 0..1; values are not silently clamped.");
+            int maxOrigin;
+            switch (method)
+            {
+                case "Horizontal":
+                case "Vertical":
+                    maxOrigin = 1;
+                    break;
+                case "Radial90":
+                case "Radial180":
+                case "Radial360":
+                    maxOrigin = 3;
+                    break;
+                default:
+                    throw new ArgumentException("Unsupported Image.fillMethod in this uGUI version.");
+            }
+            if (origin < 0 || origin > maxOrigin)
+                throw new ArgumentException("fillOrigin is incompatible with the final fillMethod; supply a valid explicit origin.");
+            if (props.Properties().Any(p => p.Name.StartsWith("fill", StringComparison.Ordinal) && p.Name != "fillCenter") && imageType != "Filled")
+                throw new ArgumentException("Fill properties require final type=Filled.");
+            if (props["fillCenter"] != null && imageType != "Sliced" && imageType != "Tiled")
+                throw new ArgumentException("fillCenter requires final type=Sliced or Tiled.");
+            if (props["preserveAspect"] != null && imageType != "Simple" && imageType != "Filled")
+                throw new ArgumentException("preserveAspect requires final type=Simple or Filled.");
+            if (imageType == "Sliced")
+            {
+                var sprite = (Sprite)Projected("sprite");
+                if (sprite == null || sprite.border == Vector4.zero)
+                    throw new ArgumentException("Sliced editing requires a base sprite with a nonzero border.");
+            }
+            if (props["fillMethod"] != null && props["fillOrigin"] == null)
+            {
+                // Unity's fillMethod setter resets origin. Preserve the unrequested valid value.
+                values.Add(new Assignment { Property = type.GetProperty("fillOrigin"), Value = origin });
+            }
+            ImageState(image, type); // Verify readback API/metadata availability before mutation.
+            values = values.OrderBy(value => ImageOrder(value.Property.Name)).ToList();
+            return Mutate(
+                "Set uGUI Image",
+                () =>
+                {
+                    Apply(image, values);
+                    return new SuccessResponse(
+                        "Updated uGUI Image.",
+                        new
+                        {
+                            instance_id = go.GetInstanceIDCompat(),
+                            path = PathOf(go),
+                            applied = new JArray(props.Properties().Select(p => p.Name)),
+                            image = ImageState(image, type),
+                        }
+                    );
+                }
+            );
+        }
+
+        private static int ImageOrder(string key)
+        {
+            switch (key)
+            {
+                case "sprite":
+                    return 0;
+                case "type":
+                    return 1;
+                case "fillMethod":
+                    return 2;
+                case "fillOrigin":
+                    return 3;
+                default:
+                    return 4;
+            }
+        }
+
+        private static Sprite ResolveImageSprite(JToken selector)
+        {
+            if (selector.Type == JTokenType.Null)
+                return null;
+            string path,
+                name = null;
+            if (selector.Type == JTokenType.String)
+                path = selector.Value<string>();
+            else if (selector is JObject selected)
+            {
+                CheckKeys(selected, Keys("path name"));
+                if (selected["path"]?.Type != JTokenType.String || (selected["name"] != null && selected["name"].Type != JTokenType.String))
+                    throw new ArgumentException("sprite requires path and optional exact name strings.");
+                path = selected.Value<string>("path");
+                name = selected.Value<string>("name");
+                if (name != null && (name.Length == 0 || name.Length > 256 || name.IndexOf('\0') >= 0))
+                    throw new ArgumentException("sprite.name must contain 1..256 characters without NUL.");
+                if (name != null)
+                    new UTF8Encoding(false, true).GetByteCount(name);
+            }
+            else
+                throw new ArgumentException("sprite must be null, an asset path, or {path,name}.");
+            if (
+                string.IsNullOrEmpty(path)
+                || path.Length > 1024
+                || path.IndexOfAny(new[] { '\\', ':', '\0' }) >= 0
+                || !(path.StartsWith("Assets/", StringComparison.Ordinal) || path.StartsWith("Packages/", StringComparison.Ordinal))
+                || path.Split('/').Any(part => part.Length == 0 || part == "." || part == "..")
+            )
+                throw new ArgumentException("sprite.path must be a bounded canonical Assets/ or Packages/ asset path.");
+            new UTF8Encoding(false, true).GetByteCount(path);
+            var assets = AssetDatabase.LoadAllAssetsAtPath(path);
+            if (assets.Length > 4096)
+                throw new ArgumentException("Sprite asset contains too many sub-assets for this selector.");
+            var sprites = assets.OfType<Sprite>().Where(sprite => name == null || string.Equals(sprite.name, name, StringComparison.Ordinal)).ToArray();
+            if (sprites.Length != 1)
+                throw new ArgumentException("Sprite selector must identify exactly one Sprite; use {path,name} for a multi-sprite asset.");
+            return sprites[0];
+        }
+
+        private static JToken ImageSpriteInfo(Sprite sprite)
+        {
+            if (sprite == null)
+                return JValue.CreateNull();
+            string path = AssetDatabase.GetAssetPath(sprite),
+                name = sprite.name;
+            if (path.Length > 1024 || name.Length > 256)
+                throw new ArgumentException("Sprite identity metadata is too large for Image readback.");
+            new UTF8Encoding(false, true).GetByteCount(path);
+            new UTF8Encoding(false, true).GetByteCount(name);
+            bool persistent = EditorUtility.IsPersistent(sprite);
+            string guid = null;
+            long localId = 0;
+            if (persistent && !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(sprite, out guid, out localId))
+                throw new ArgumentException("Sprite persistent identity is unavailable.");
+            return new JObject
+            {
+                ["path"] = path,
+                ["name"] = name,
+                ["persistent"] = persistent,
+                ["guid"] = guid == null ? JValue.CreateNull() : new JValue(guid),
+                ["local_id"] = persistent ? new JValue(localId.ToString(CultureInfo.InvariantCulture)) : JValue.CreateNull(),
+            };
+        }
+
+        private static JObject ImageState(Component image, Type type)
+        {
+            var state = new JObject();
+            foreach (string key in ImageKeys.Concat(new[] { "overrideSprite" }).OrderBy(key => key, StringComparer.Ordinal))
+            {
+                var property = type.GetProperty(key);
+                if (property == null || !property.CanRead || property.GetIndexParameters().Length != 0)
+                    throw new ArgumentException("Image." + key + " readback is unavailable in this uGUI version.");
+                object value = property.GetValue(image);
+                if (property.PropertyType == typeof(Sprite))
+                    state[key] = ImageSpriteInfo((Sprite)value);
+                else if (value is Color color)
+                {
+                    if (new[] { color.r, color.g, color.b, color.a }.Any(number => float.IsNaN(number) || float.IsInfinity(number)))
+                        throw new ArgumentException("Image color readback is nonfinite.");
+                    state[key] = new JArray(color.r, color.g, color.b, color.a);
+                }
+                else
+                {
+                    if (value is float number && (float.IsNaN(number) || float.IsInfinity(number)))
+                        throw new ArgumentException("Image numeric readback is nonfinite.");
+                    state[key] = property.PropertyType.IsEnum ? new JValue(value.ToString()) : JToken.FromObject(value);
+                }
+            }
+            return state;
         }
 
         private static object SetCanvas(GameObject go, JObject props)
