@@ -18,6 +18,7 @@ from fastmcp.tools.base import ToolResult
 
 from core.config import config
 from services.registry import get_registered_tools
+from services.test_results_app import TEST_RESULTS_URI, project_test_results_tools
 from services.operation_permissions import authorize_remote_operation, authorize_remote_resource
 from transport.plugin_hub import (
     NoUnitySessionError,
@@ -643,6 +644,10 @@ class UnityInstanceMiddleware(Middleware):
         """Inject active Unity instance into resource context if available."""
         uri = str(getattr(context.message, "uri", ""))
         await authorize_remote_resource(uri)
+        if uri == TEST_RESULTS_URI:
+            return await call_next(context)
+        if uri.startswith("ui:"):
+            raise ValueError("Unsupported Apps resource URI")
         if uri in {
             "mcpforunity://capabilities",
             "mcpforunity://doctor",
@@ -683,7 +688,8 @@ class UnityInstanceMiddleware(Middleware):
             )
 
         tools = await call_next(context)
-        return await self.filter_tools_for_context(context.fastmcp_context, tools)
+        tools = await self.filter_tools_for_context(context.fastmcp_context, tools)
+        return project_test_results_tools(context.fastmcp_context, tools)
 
     async def filter_tools_for_context(self, ctx, tools):
         """Filter an inventory using this request's already-resolved routing state."""

@@ -285,7 +285,7 @@ _ACTIONS: Final = {
 }
 
 _READ_COMMANDS: Final = _names(
-    "ping get_editor_state get_test_job get_compile_job get_tests get_tests_for_mode export_test_job find_gameobjects find_in_file get_sha manage_script_capabilities validate_script capture_ui_snapshot debug_request_context set_active_instance inspect_serialized_object inspect_serialized_object_v1 get_project_info get_selection get_active_tool get_windows get_menu_items get_tags get_layers get_prefab_stage get_gameobject get_gameobject_components get_gameobject_component get_gameobject_component_selected get_gameobject_by_handle_v2 get_rendering_stats get_cameras get_volumes get_renderer_features get_tool_states inspect_menu_item tail_console"
+    "ping get_editor_state get_test_job view_test_results get_compile_job get_tests get_tests_for_mode export_test_job find_gameobjects find_in_file get_sha manage_script_capabilities validate_script capture_ui_snapshot debug_request_context set_active_instance inspect_serialized_object inspect_serialized_object_v1 get_project_info get_selection get_active_tool get_windows get_menu_items get_tags get_layers get_prefab_stage get_gameobject get_gameobject_components get_gameobject_component get_gameobject_component_selected get_gameobject_by_handle_v2 get_rendering_stats get_cameras get_volumes get_renderer_features get_tool_states inspect_menu_item tail_console"
 )
 _TEST_COMMANDS: Final = _names("run_tests cancel_test_job")
 _EDIT_COMMANDS: Final = _names(
@@ -455,6 +455,13 @@ def authorize_operation(
 
 def authorize_resource(authority: OperationGrants, uri: str | None = None) -> None:
     """Resource reads/listings/subscriptions require read and an exact supported route."""
+    # This static Apps route is exact even for legacy unscoped credentials.
+    if isinstance(uri, str) and uri.startswith("ui:"):
+        if uri != "ui://unity-mcp/test-results-v1":
+            raise OperationPermissionError()
+        if authority.scoped and Permission.READ not in authority.permissions:
+            raise OperationPermissionError()
+        return
     if not authority.scoped:
         return
     if Permission.READ not in authority.permissions:

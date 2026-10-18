@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Unity test results</title>
+<style>
+  :root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
+  body { margin: 0; background: Canvas; color: CanvasText; }
+  main { padding: 20px; max-width: 960px; margin: auto; }
+  h1 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+  .muted { opacity: .72; } p { margin: 8px 0 16px; }
+  #summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+  .count { border: 1px solid GrayText; border-radius: 8px; padding: 5px 10px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  input { box-sizing: border-box; width: 100%; font: inherit; padding: 9px 12px; border: 1px solid GrayText; border-radius: 6px; background: Canvas; color: CanvasText; }
+  input:focus-visible, summary:focus-visible { outline: 2px solid Highlight; outline-offset: 3px; }
+  details { border-top: 1px solid GrayText; padding: 10px 0; overflow-wrap: anywhere; }
+  summary { cursor: pointer; font-weight: 600; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; border-left: 2px solid GrayText; padding-left: 12px; }
+  #results { max-height: 550px; overflow: auto; margin-top: 12px; }
+  [hidden] { display: none !important; }
+  @media (max-width: 400px) { main { padding: 12px; } }
+</style>
+<main>
+  <h1>Unity test results</h1>
+  <p id="status" role="status" aria-live="polite">Connecting to the host…</p>
+  <section id="view" hidden aria-label="Completed test-result page">
+    <div id="summary" aria-label="Whole job summary"></div>
+    <p id="limit" class="muted"></p>
+    <label for="filter">Filter this page</label>
+    <input id="filter" type="search" placeholder="Test name, state, or message" autocomplete="off">
+    <p id="matches" class="muted" role="status" aria-live="polite"></p>
+    <div id="results" aria-label="Failed and skipped test details"></div>
+  </section>
+</main>
+<script>
+(() => {
+  'use strict';
+  const host = window.parent;
+  const version = '2026-01-26';
+  const initId = `test-results-${Array.from(crypto.getRandomValues(new Uint32Array(4)),
+    value => value.toString(16)).join('-')}`;
+  const el = id => document.getElementById(id);
+  const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const text = value => typeof value === 'string';
+  const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  const integer = value => number(value) && Number.isInteger(value);
+  const id = value => text(value) || (typeof value === 'number' && Number.isFinite(value));
+  const summaryKeys = ['total', 'passed', 'failed', 'skipped'];
+  let phase = 'initializing';
+  let jobId = null;
+  let rows = [];
+  let observer = null;
+  let sizeTimer = null;
+  let sizeCount = 0;
+  let previousSize = '';
+  let deadline = null;
+  const send = message => host.postMessage({ jsonrpc: '2.0', ...message }, '*');
+  const notify = (method, params = {}) => send({ method, params });
+  function stop(message, teardown = false) {
+    phase = 'closed';
+    rows = [];
+    jobId = null;
+    clearTimeout(deadline);
+    clearTimeout(sizeTimer);
+    observer?.disconnect();
+    window.removeEventListener('message', receive);
+    el('filter').removeEventListener('input', filter);
+    el('filter').value = '';
+    el('results').replaceChildren();
+    el('summary').replaceChildren();
+    el('limit').textContent = '';
+    el('matches').textContent = '';
+    el('view').hidden = true;
+    el('status').textContent = teardown ? '' : message;
+    if (teardown) document.querySelector('main').replaceChildren();
+  }
+  function resize() {
+    if (phase === 'closed' || sizeCount >= 64) return;
+    clearTimeout(sizeTimer);
+    sizeTimer = setTimeout(() => {
+      const height = Math.max(180, Math.min(900, document.documentElement.scrollHeight));
+      const width = Math.max(240, Math.min(1200, document.documentElement.clientWidth));
+      const key = `${width}:${height}`;
+      if (key !== previousSize && sizeCount < 64 && phase !== 'closed') {
+        previousSize = key;
+        sizeCount += 1;
+        notify('ui/notifications/size-changed', { width, height });
+      }
+    }, 100);
+  }
+  function paragraph(parent, label, value) {
+    if (!value) return;
+    const title = document.createElement('p');
+    title.textContent = label;
+    const body = document.createElement('pre');
+    body.textContent = value;
+    parent.append(title, body);
+  }
+  function filter() {
+    const query = el('filter').value.toLocaleLowerCase();
+    const selected = rows.filter(row => [row.fullName, row.state, row.message || '']
+      .some(value => value.toLocaleLowerCase().includes(query)));
+    el('results').replaceChildren();
+    for (const row of selected) {
+      const detail = document.createElement('details');
+      const title = document.createElement('summary');
+      title.textContent = `${row.state} · ${row.fullName} · ${row.durationSeconds}s`;
+      detail.append(title);
+      paragraph(detail, 'Message', row.message);
+      paragraph(detail, 'Stack trace', row.stackTrace);
+      paragraph(detail, 'Output', row.output);
+      if (row.truncated_fields.length) {
+        paragraph(detail, 'Native truncation', row.truncated_fields.map(key => {
+          const bytes = row.original_field_bytes[key];
+          return bytes === undefined ? key : `${key}: ${bytes} original bytes`;
+        }).join('\n'));
+      }
+      el('results').append(detail);
+    }
+    el('matches').textContent = `${selected.length} of ${rows.length} delivered details match.`;
+    resize();
+  }
+  function validRow(row) {
+    return record(row) && ['name', 'fullName', 'state'].every(key => text(row[key]))
+      && number(row.durationSeconds)
+      && ['message', 'stackTrace', 'output'].every(key => row[key] == null || text(row[key]))
+      && Array.isArray(row.truncated_fields) && row.truncated_fields.every(text)
+      && record(row.original_field_bytes) && Object.values(row.original_field_bytes).every(integer);
+  }
+  function render(result) {
+    if (!record(result) || result.isError === true || !record(result.structuredContent)) {
+      stop('Results are unavailable. See the ordinary tool response for details.');
+      return;
+    }
+    const envelope = result.structuredContent;
+    const data = envelope.data;
+    const page = data?.result_page;
+    const summary = data?.result?.summary;
+    if (envelope.success !== true || !record(data) || data.job_id !== jobId
+      || !['succeeded', 'failed'].includes(data.status) || data.completion_kind !== 'completed'
+      || data.result_availability !== 'available' || !record(summary)
+      || !summaryKeys.every(key => integer(summary[key])) || !number(summary.durationSeconds)
+      || !text(summary.resultState) || !record(page) || !Array.isArray(page.items)
+      || page.items.length > 100 || !page.items.every(validRow) || !integer(page.total_count)
+      || page.total_count < page.items.length || typeof page.has_more !== 'boolean'
+      || !(page.next_cursor == null || text(page.next_cursor))
+      || page.has_more !== (typeof page.next_cursor === 'string')
+      || !text(page.generation) || !page.generation
+      || !integer(data.result_truncated_count ?? 0)) {
+      stop('The host delivered an invalid or mismatched completed result page.');
+      return;
+    }
+    phase = 'rendered';
+    clearTimeout(deadline);
+    rows = page.items;
+    el('status').textContent = `Job ${jobId} · ${data.status} · ${summary.durationSeconds}s`;
+    for (const key of summaryKeys) {
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = `${key}: ${summary[key]}`;
+      el('summary').append(count);
+    }
+    el('limit').textContent = `First page: ${rows.length} of ${page.total_count} failed/skipped details. `
+      + (page.has_more ? 'More details exist and are not loaded. ' : 'No further page reported. ')
+      + `${data.result_truncated_count ?? 0} result rows truncated by native retention. `
+      + 'The summary covers the whole job; filtering and expansion cover this page only.';
+    el('view').hidden = false;
+    filter();
+  }
+  function receive(event) {
+    if (event.source !== host || phase === 'closed') return;
+    const message = event.data;
+    if (!record(message) || message.jsonrpc !== '2.0') return;
+    let bytes;
+    try { bytes = JSON.stringify(message).length; } catch { return; }
+    if (bytes > 2097152) { stop('Host message exceeds the supported page size.'); return; }
+    const request = Object.hasOwn(message, 'id');
+    if (request && !id(message.id)) return;
+    if (Object.hasOwn(message, 'method')) {
+      if (!text(message.method) || !record(message.params ?? {})
+        || Object.hasOwn(message, 'result') || Object.hasOwn(message, 'error')) return;
+      if (request) {
+        if (message.method === 'ping') send({ id: message.id, result: {} });
+        else if (message.method === 'ui/resource-teardown') {
+          send({ id: message.id, result: {} });
+          stop('', true);
+        } else send({ id: message.id, error: { code: -32601, message: 'Method not found' } });
+        return;
+      }
+      if (message.method === 'ui/notifications/tool-cancelled') {
+        if (phase !== 'initializing') stop('The tool invocation was cancelled.');
+        return;
+      }
+      if (message.method === 'ui/notifications/tool-input') {
+        const args = message.params?.arguments;
+        if (phase !== 'ready' || !record(args) || !text(args.job_id) || !args.job_id
+          || args.job_id.length > 256 || Object.keys(args).some(key => key !== 'job_id')) {
+          stop('Invalid, premature, or duplicate tool input.');
+          return;
+        }
+        jobId = args.job_id;
+        phase = 'input';
+        el('status').textContent = 'Waiting for the completed result page…';
+      } else if (message.method === 'ui/notifications/tool-result') {
+        if (phase !== 'input') stop('Premature or duplicate tool result.');
+        else render(message.params);
+      }
+      return;
+    }
+    if (!request || message.id !== initId || phase !== 'initializing') return;
+    const result = message.result;
+    const hostContext = record(result) && Object.hasOwn(result, 'hostContext') ? result.hostContext : {};
+    if (Object.hasOwn(message, 'error') || !record(result) || result.protocolVersion !== version
+      || !record(result.hostInfo) || !text(result.hostInfo.name) || !text(result.hostInfo.version)
+      || !record(result.hostCapabilities) || !record(hostContext)
+      || (Object.hasOwn(hostContext, 'displayMode') && hostContext.displayMode !== 'inline')) {
+      stop('The host did not negotiate the supported Apps protocol.');
+      return;
+    }
+    phase = 'ready';
+    notify('ui/notifications/initialized');
+    observer = new ResizeObserver(resize);
+    observer.observe(document.documentElement);
+    resize();
+  }
+  window.addEventListener('message', receive);
+  el('filter').addEventListener('input', filter);
+  deadline = setTimeout(() => stop('Host initialization or result delivery timed out.'), 15000);
+  if (host === window) { stop('Open this view through an MCP Apps host.'); return; }
+  send({ id: initId, method: 'ui/initialize', params: {
+    appInfo: { name: 'Unity test results', version: '1.0.0' },
+    appCapabilities: { availableDisplayModes: ['inline'] },
+    protocolVersion: version
+  } });
+})();
+</script>
+</html>

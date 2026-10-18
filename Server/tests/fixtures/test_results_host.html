@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Controlled test-results Apps host</title>
+<style>
+  body { font: 14px/1.5 system-ui; max-width: 1000px; margin: 24px auto; padding: 0 16px; }
+  iframe { width: 100%; min-height: 500px; border: 1px solid #888; }
+  pre { white-space: pre-wrap; } button, input { font: inherit; margin: 8px 0; }
+</style>
+<h1>Controlled Apps host fixture</h1>
+<p>Select the exact packaged <code>test_results_view.html</code> file. This local fixture has no network requests.
+  Results apply only to this controlled host; they do not prove real host interoperability.</p>
+<input id="source" type="file" accept=".html,text/html" aria-label="App HTML source">
+<button id="run" disabled>Run controlled lifecycle cases</button>
+<pre id="report" role="status">UNRUN</pre>
+<div id="surface"></div>
+<script>
+(() => {
+  'use strict';
+  let source = '';
+  const surface = document.getElementById('surface');
+  const report = document.getElementById('report');
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const rpc = message => ({ jsonrpc: '2.0', ...message });
+  const init = request => rpc({ id: request.id, result: {
+    protocolVersion: '2026-01-26',
+    hostInfo: { name: 'Controlled offline fixture', version: '1' },
+    hostCapabilities: {}, hostContext: { displayMode: 'inline' }
+  } });
+  const input = job => rpc({ method: 'ui/notifications/tool-input', params: { arguments: { job_id: job } } });
+  const result = (job = 'fixture-job') => rpc({ method: 'ui/notifications/tool-result', params: {
+    structuredContent: { success: true, data: {
+      job_id: job, status: 'failed', completion_kind: 'completed', result_availability: 'available',
+      result_truncated_count: 1,
+      result: { summary: { total: 103, passed: 1, failed: 101, skipped: 1, durationSeconds: 2, resultState: 'Failed' } },
+      result_page: { items: [
+        { name: '한글 🌙', fullName: 'Fixture.한글 🌙', state: 'Failed', durationSeconds: .1,
+          message: '<img src=x onerror=alert(1)> 실패', stackTrace: 'a\nb', output: 'safe text',
+          truncated_fields: ['message'], original_field_bytes: { message: 13000 } },
+        { name: 'Skipped', fullName: 'Fixture.Skipped', state: 'Skipped', durationSeconds: 0,
+          truncated_fields: [], original_field_bytes: {} }
+      ], total_count: 102, has_more: true, next_cursor: 'opaque-unread-cursor', generation: 'fixture-generation' }
+    } }
+  } });
+  async function create(opaque = false) {
+    surface.replaceChildren();
+    const frame = document.createElement('iframe');
+    frame.title = 'App under controlled host';
+    frame.setAttribute('sandbox', opaque ? 'allow-scripts' : 'allow-scripts allow-same-origin');
+    const outbound = [];
+    let initialize;
+    const received = event => {
+      if (event.source !== frame.contentWindow) return;
+      outbound.push(event.data);
+      if (event.data?.method === 'ui/initialize') initialize = event.data;
+    };
+    window.addEventListener('message', received);
+    frame.srcdoc = source;
+    surface.append(frame);
+    for (let tick = 0; tick < 100 && !initialize; tick += 1) await sleep(10);
+    assert(initialize, 'App sent no initialize request');
+    const send = packet => frame.contentWindow.postMessage(packet, '*');
+    const status = () => frame.contentDocument.getElementById('status')?.textContent || '';
+    const ready = async () => {
+      send(init(initialize));
+      await sleep(30);
+      assert(outbound.some(packet => packet.method === 'ui/notifications/initialized'), 'Missing initialized');
+    };
+    const cleanup = () => {
+      window.removeEventListener('message', received);
+      surface.replaceChildren();
+    };
+    return { frame, outbound, initialize, send, ready, status, cleanup };
+  }
+  const cases = [
+    ['completed Unicode page, local filter, safe expansion, bounds', async host => {
+      await host.ready(); host.send(input('fixture-job')); host.send(result()); await sleep(60);
+      const doc = host.frame.contentDocument;
+      assert(doc.getElementById('view').hidden === false, 'Page did not render');
+      assert(doc.body.textContent.includes('한글 🌙'), 'Unicode lost');
+      assert(doc.body.textContent.includes('More details exist'), 'Paging limitation absent');
+      assert(doc.body.textContent.includes('13000 original bytes'), 'Truncation lost');
+      assert(!doc.querySelector('img'), 'Untrusted HTML interpreted');
+      doc.querySelector('details').open = true;
+      const field = doc.getElementById('filter'); field.value = 'Skipped';
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      assert(doc.querySelectorAll('details').length === 1, 'Filter escaped page or failed');
+      assert(doc.querySelector('details summary').textContent.includes('Skipped'), 'Wrong match');
+      await sleep(160);
+      const sizes = host.outbound.filter(packet => packet.method === 'ui/notifications/size-changed');
+      assert(sizes.every(packet => packet.params.height <= 900 && packet.params.width <= 1200), 'Unbounded size');
+      assert(host.outbound.every(packet => !['tools/call', 'resources/read'].includes(packet.method)), 'Outgoing tool call');
+    }],
+    ['wrong response id ignored', async host => {
+      const packet = init(host.initialize); packet.id = 'wrong'; host.send(packet); await sleep(30);
+      assert(!host.outbound.some(item => item.method === 'ui/notifications/initialized'), 'Wrong id accepted');
+      await host.ready();
+    }],
+    ['omitted host context permits inline results', async host => {
+      const packet = init(host.initialize); delete packet.result.hostContext;
+      host.send(packet); await sleep(30);
+      assert(host.outbound.some(item => item.method === 'ui/notifications/initialized'), 'Missing context rejected');
+      host.send(input('fixture-job')); host.send(result()); await sleep(30);
+      assert(host.frame.contentDocument.getElementById('view').hidden === false, 'Inline results did not render');
+    }],
+    ...[
+      ['null', null], ['array', []], ['string', 'invalid'],
+      ['non-inline display mode', { displayMode: 'fullscreen' }],
+      ['null display mode', { displayMode: null }]
+    ].map(([name, context]) => [`supplied ${name} host context refuses initialization`, async host => {
+      const packet = init(host.initialize); packet.result.hostContext = context;
+      host.send(packet); await sleep(30);
+      assert(host.status().includes('did not negotiate'), 'Malformed supplied context accepted');
+      assert(!host.outbound.some(item => item.method === 'ui/notifications/initialized'), 'Invalid initialized emitted');
+    }]),
+    ['wrong protocol version closes', async host => {
+      const packet = init(host.initialize); packet.result.protocolVersion = '2099-01-01';
+      host.send(packet); await sleep(30); assert(host.status().includes('did not negotiate'), 'Wrong version accepted');
+    }],
+    ['malformed JSON-RPC ignored', async host => {
+      host.send('invalid'); host.send({ ...init(host.initialize), jsonrpc: '1.0' });
+      host.send({ jsonrpc: '2.0', id: null, result: {} });
+      host.send({ ...init(host.initialize), method: 'bad', params: {}, error: {} });
+      await sleep(30); assert(!host.outbound.some(item => item.method === 'ui/notifications/initialized'), 'Malformed accepted');
+      await host.ready();
+    }],
+    ['premature input closes', async host => {
+      host.send(input('fixture-job')); await sleep(30); assert(host.status().includes('premature'), 'Input accepted early');
+    }],
+    ['premature result closes', async host => {
+      await host.ready(); host.send(result()); await sleep(30); assert(host.status().includes('Premature'), 'Result accepted early');
+    }],
+    ['duplicate input closes', async host => {
+      await host.ready(); host.send(input('fixture-job')); host.send(input('fixture-job'));
+      await sleep(30); assert(host.status().includes('duplicate'), 'Duplicate input accepted');
+    }],
+    ['duplicate result clears prior job data', async host => {
+      await host.ready(); host.send(input('fixture-job')); host.send(result()); await sleep(30); host.send(result());
+      await sleep(30); assert(host.status().includes('duplicate'), 'Duplicate result accepted');
+      assert(!host.frame.contentDocument.body.textContent.includes('한글'), 'Old data retained after failure');
+    }],
+    ['mismatched job closes', async host => {
+      await host.ready(); host.send(input('fixture-job')); host.send(result('another-job')); await sleep(30);
+      assert(host.status().includes('mismatched'), 'Wrong job accepted');
+    }],
+    ['cancelled invocation clears and rejects result', async host => {
+      await host.ready(); host.send(input('fixture-job'));
+      host.send(rpc({ method: 'ui/notifications/tool-cancelled', params: { reason: 'Fixture cancellation' } }));
+      host.send(result()); await sleep(30); assert(host.status().includes('cancelled'), 'Cancellation ignored');
+      assert(host.frame.contentDocument.getElementById('results').children.length === 0, 'Cancelled data rendered');
+    }],
+    ['teardown request replies by id and detaches', async host => {
+      await host.ready(); host.send(input('fixture-job')); host.send(result()); await sleep(30);
+      host.send(rpc({ id: 'teardown-id', method: 'ui/resource-teardown', params: {} })); await sleep(30);
+      assert(host.outbound.some(packet => packet.id === 'teardown-id' && packet.result), 'No teardown response');
+      assert(!host.frame.contentDocument.body.textContent.includes('한글'), 'Teardown retained data');
+      const count = host.outbound.length;
+      host.send(rpc({ id: 'after-teardown', method: 'ping', params: {} })); await sleep(140);
+      assert(host.outbound.length === count, 'Listener or resize timer survived teardown');
+    }],
+    ['ping and unknown request method', async host => {
+      await host.ready(); host.send(rpc({ id: 7, method: 'ping', params: {} }));
+      host.send(rpc({ id: 8, method: 'tools/call', params: {} }));
+      host.send(rpc({ method: 'unknown/notification', params: {} })); await sleep(30);
+      assert(host.outbound.some(packet => packet.id === 7 && packet.result), 'Ping failed');
+      assert(host.outbound.some(packet => packet.id === 8 && packet.error?.code === -32601), 'Unknown request not rejected');
+    }],
+    ['opaque sibling cannot initialize an opaque app', async host => {
+      const sibling = document.createElement('iframe'); sibling.setAttribute('sandbox', 'allow-scripts');
+      // The real sender is a sibling WindowProxy, even though both origins are opaque.
+      const packet = JSON.stringify(init(host.initialize)).replaceAll('<', '\\u003c');
+      sibling.srcdoc = `<script>parent.frames[0].postMessage(${packet}, '*');<\/script>`;
+      surface.append(sibling); await sleep(60);
+      assert(!host.outbound.some(item => item.method === 'ui/notifications/initialized'), 'Sibling source accepted');
+      await host.ready();
+    }, true],
+    ['sibling cannot initialize a same-origin app', async host => {
+      const sibling = document.createElement('iframe');
+      const packet = JSON.stringify(init(host.initialize)).replaceAll('<', '\\u003c');
+      sibling.srcdoc = `<script>parent.frames[0].postMessage(${packet}, '*');<\/script>`;
+      surface.append(sibling); await sleep(60);
+      assert(!host.outbound.some(item => item.method === 'ui/notifications/initialized'), 'Sibling source accepted');
+      await host.ready();
+    }],
+    ['initialization deadline closes', async host => {
+      await sleep(15100); assert(host.status().includes('timed out'), 'Initialization timeout absent');
+    }]
+  ];
+  document.getElementById('source').addEventListener('change', async event => {
+    source = await event.target.files[0].text(); document.getElementById('run').disabled = false;
+  });
+  document.getElementById('run').addEventListener('click', async event => {
+    event.target.disabled = true; report.textContent = '';
+    for (const [name, execute, opaque = false] of cases) {
+      let host;
+      try {
+        host = await create(opaque); await execute(host); report.textContent += `PASS ${name}\n`;
+      } catch (error) { report.textContent += `FAIL ${name}: ${error.message}\n`; }
+      finally { host?.cleanup(); }
+    }
+    event.target.disabled = false;
+  });
+})();
+</script>
+</html>

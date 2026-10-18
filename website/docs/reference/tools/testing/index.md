@@ -16,3 +16,4 @@ Test runner, async test jobs & bounded Play Mode input simulation
 - **[`manage_play_scenario`](./manage_play_scenario.md)** — Save/get/list/delete scenarios and suites; reports history and run/status/cancel Unity-owned jobs.
 - **[`manage_scenario_recording`](./manage_scenario_recording.md)** — Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode into a bounded scenario draft. start returns recording_id immediately; status polls explicitly. stop saves a NEW scenario with draft=true and r…
 - **[`run_tests`](./run_tests.md)** — Starts a Unity test run asynchronously and returns a job_id immediately.
+- **[`view_test_results`](./view_test_results.md)** — Read one completed Unity test-result page (up to 100 failed/skipped details).
