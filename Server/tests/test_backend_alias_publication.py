@@ -25,6 +25,8 @@ from core.config import config
 from transport.models import RegisterMessage, RegisterToolsMessage
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
+from contextlib import AsyncExitStack
+from tests.remote_credentials import remote_credentials
 import services.custom_tool_service as custom
 console = importlib.import_module("services.tools.read_console")
 source = pathlib.Path(sys.argv[1]).resolve()
@@ -61,9 +63,15 @@ async def scenario():
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     PluginHub._notify_mcp_tool_list_changed = AsyncMock()
     user = "synthetic-owner" if hosted else None
-    socket = AsyncMock()
-    socket.state = SimpleNamespace(user_id=user)
-    try:
+    async with AsyncExitStack() as credentials:
+        if hosted:
+            auth = await credentials.enter_async_context(remote_credentials({"requester:owner": "synthetic-owner", "plugin:owned": "synthetic-owner"}))
+            await credentials.enter_async_context(auth.requester("requester:owner"))
+        credentials.push_async_callback(PluginHub.shutdown)
+        socket = AsyncMock()
+        socket.state = SimpleNamespace(user_id=user)
+        if hosted:
+            await auth.attach_socket(socket, "plugin:owned")
         await hub._handle_register(socket, RegisterMessage(project_name="Owned", project_hash="owned"))
         await hub._handle_register_tools(socket, RegisterToolsMessage(tools=[
             {"name": name} for name in sorted(aliases | {"read_console", "execute_menu_item", "manage_components", "owned_public"})
@@ -90,13 +98,11 @@ async def scenario():
         if not public_wrapper_names.issubset(public_names): failures.append("parent public wrappers disappeared: " + repr(sorted(public_wrapper_names - public_names)))
         print("PLAY04_CATALOG", json.dumps({"mode":mode,"hosted":hosted,"public":sorted(public_names),"project":sorted(project_names),"raw":sorted(raw_names),"failures":failures}))
         assert not failures, failures
-    finally:
-        await PluginHub.shutdown()
 anyio.run(scenario)
 """
     env = {
         **os.environ,
-        "PYTHONPATH": str(source),
+        "PYTHONPATH": os.pathsep.join((str(source.parent), str(source))),
         "PYTHONDONTWRITEBYTECODE": "1",
         "UNITY_MCP_DISABLE_TELEMETRY": "true",
     }

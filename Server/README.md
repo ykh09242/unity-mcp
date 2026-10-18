@@ -54,6 +54,38 @@ Clients must initialize a new session after expiry. `FASTMCP_HTTP_SESSION_IDLE_T
 accepts a positive number of seconds, `auto` for the SDK default, or `none` to disable
 idle expiry. This does not expire the Unity plugin's WebSocket connection or affect stdio.
 
+## Connected remote authentication
+
+Remote HTTP and plugin WebSocket connections retain a private, in-memory authorization
+lease for their exact credential and authentication service. `UNITY_MCP_API_KEY_MAX_AUTH_AGE`
+sets the finite positive maximum age in seconds (default `300`); embedded applications
+can set `config.api_key_max_auth_age` before server creation. A positive cache TTL limits
+lease age to the smaller of that TTL and maximum age. A cache hit keeps the original
+monotonic deadline. A zero cache TTL still validates every new caller and gives existing
+connections a finite lease using maximum age.
+
+At the deadline, reads, writes and dispatch park behind one fresh revalidation, with an
+independent 11-second limit. A valid response for the same principal renews the lease.
+Invalid or missing identity, a changed principal, transient failure, timeout, renewal
+capacity refusal, shutdown or service replacement retires it. Invalidation/clear also
+fence in-progress cache writes and validation results; they require fresh authentication,
+without claiming permanent provider revocation or a provider-specific expiry field.
+
+Process-wide limits retain at most 1,024 lease generations, 128 actual lease owners,
+16 owners per generation, 16 outbound validations and 128 validation waiters. Existing
+per-key and peer validation budgets still apply. Retired work keeps its charges until
+its actual exit, including a writer or validator that resists cancellation. A new
+connection can receive a capacity refusal while old work drains. Different credentials
+for the same user have independent lifetimes and shared-read caches.
+
+Authorization loss terminates established streams rather than sending a second HTTP
+response or successful subscription completion. Reconnect and authenticate again for
+future work. A command whose write may already have started keeps an unknown outcome;
+inspect state before retrying a mutation. Detached test waits retain only an in-memory
+lease, stop future polling on retirement and report interruption without claiming that
+the native test job was cancelled. Credentials and leases never enter the wait journal.
+Local HTTP and stdio authentication are unchanged.
+
 ## Targeting and tool visibility
 
 Discover `mcpforunity://instances`. Modern sessionless calls use `unity_instance` for tools and `_meta.unity_instance` for resources. Explicit targeting is required for ambiguous local selection and all hosted calls. Legacy stateful clients can persist selection with `set_active_instance`; sessionless requests cannot.

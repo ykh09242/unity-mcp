@@ -111,6 +111,9 @@ def test_get_tests_http_catalog_visibility_keeps_resource_tenant_routing(tmp_pat
         from transport.unity_instance_middleware import UnityInstanceMiddleware
         import transport.unity_transport as transport
         import services.tools.run_tests
+        from contextlib import AsyncExitStack
+        from tests.remote_credentials import remote_credentials
+        from services.credential_lease import bind_credential_lease
         from mcp.shared.exceptions import MCPError
 
         def deny_outbound(*args, **kwargs):
@@ -124,64 +127,73 @@ def test_get_tests_http_catalog_visibility_keeps_resource_tenant_routing(tmp_pat
             tools.get_registered_tools = lambda: metadata
             for hosted in (False, True):
                 for protocol in ("2026-07-28", "legacy"):
-                    config.transport_mode = "http"
-                    config.http_remote_hosted = hosted
-                    registry = PluginRegistry()
-                    PluginHub.configure(registry)
-                    await registry.register("owned", "Owned", "owned-hash", "test",
-                        user_id="alice" if hosted else None)
-                    await registry.register("foreign", "Foreign", "foreign-hash", "test",
-                        user_id="bob" if hosted else None)
-                    catalog = [ToolDefinitionModel(name="run_tests")]
-                    await registry.register_tools_for_session("owned", catalog)
-                    await registry.register_tools_for_session("foreign", catalog)
-                    for sid, owner in (("owned", "alice"), ("foreign", "bob")):
-                        PluginHub._connections[sid] = SimpleNamespace(
-                            state=SimpleNamespace(user_id=owner, plugin_generation=sid + "-generation",
-                                plugin_registered=True, plugin_session_id=sid),
-                            client_state=WebSocketState.CONNECTED,
-                            application_state=WebSocketState.CONNECTED)
-                    middleware = UnityInstanceMiddleware()
-                    principal = AsyncMock(return_value="alice" if hosted else None)
-                    middleware._resolve_user_id = principal
-                    transport._resolve_user_id_from_request = principal
-                    server = FastMCP("discovery-http-catalog")
-                    server.add_middleware(middleware)
-                    tools.register_all_tools(server)
-                    PluginHub._mcp = server
-                    PluginHub._sync_server_tool_visibility(catalog)
-                    page = {"items": [], "cursor": 0, "nextCursor": None,
-                        "totalCount": 0, "pageSize": 50, "hasMore": False}
-                    routed = []
-                    async def dispatch(instance, command, params, *, user_id, **kwargs):
-                        session_id = await PluginHub._resolve_session_id(instance, user_id=user_id)
-                        routed.append((session_id, command, user_id))
-                        return {"success": True, "data": page}
-                    PluginHub.send_command_for_instance = dispatch
-                    async with Client(server, mode=protocol) as client:
-                        assert "get_tests" in {t.name for t in await client.list_tools()}, (hosted, protocol)
-                        result = await client.call_tool("get_tests", {"unity_instance": "Owned@owned-hash"})
-                        content = result.structured_content
-                        assert content.get("result", content)["success"] is True
-                        assert routed == [("owned", "get_tests", "alice" if hosted else None)]
+                    async with AsyncExitStack() as credentials:
                         if hosted:
-                            before = len(routed)
-                            try:
-                                result = await client.call_tool("get_tests",
-                                    {"unity_instance": "Foreign@foreign-hash"}, raise_on_error=False)
-                            except MCPError:
-                                pass
-                            else:
-                                assert result.is_error
-                            assert len(routed) == before
-                            principal.return_value = None
-                            try:
-                                result = await client.call_tool("get_tests",
-                                    {"unity_instance": "Owned@owned-hash"}, raise_on_error=False)
-                            except MCPError:
-                                pass
-                            else:
-                                assert result.is_error
+                            auth = await credentials.enter_async_context(remote_credentials({"requester:alice": "alice", "plugin:owned": "alice", "plugin:foreign": "bob"}))
+                        credentials.push_async_callback(PluginHub.shutdown)
+                        config.transport_mode = "http"
+                        config.http_remote_hosted = hosted
+                        registry = PluginRegistry()
+                        PluginHub.configure(registry)
+                        await registry.register("owned", "Owned", "owned-hash", "test",
+                            user_id="alice" if hosted else None)
+                        await registry.register("foreign", "Foreign", "foreign-hash", "test",
+                            user_id="bob" if hosted else None)
+                        catalog = [ToolDefinitionModel(name="run_tests")]
+                        await registry.register_tools_for_session("owned", catalog)
+                        await registry.register_tools_for_session("foreign", catalog)
+                        for sid, owner in (("owned", "alice"), ("foreign", "bob")):
+                            PluginHub._connections[sid] = SimpleNamespace(
+                                state=SimpleNamespace(user_id=owner, plugin_generation=sid + "-generation",
+                                    plugin_registered=True, plugin_session_id=sid),
+                                client_state=WebSocketState.CONNECTED,
+                                application_state=WebSocketState.CONNECTED, close=AsyncMock())
+                            if hosted:
+                                await auth.attach_socket(PluginHub._connections[sid], "plugin:" + sid)
+                        middleware = UnityInstanceMiddleware()
+                        if hosted:
+                            await credentials.enter_async_context(auth.requester("requester:alice"))
+                        server = FastMCP("discovery-http-catalog")
+                        server.add_middleware(middleware)
+                        tools.register_all_tools(server)
+                        PluginHub._mcp = server
+                        PluginHub._sync_server_tool_visibility(catalog)
+                        page = {"items": [], "cursor": 0, "nextCursor": None,
+                            "totalCount": 0, "pageSize": 50, "hasMore": False}
+                        routed = []
+                        async def dispatch(instance, command, params, *, user_id, **kwargs):
+                            session_id = await PluginHub._resolve_session_id(instance, user_id=user_id)
+                            routed.append((session_id, command, user_id))
+                            return {"success": True, "data": page}
+                        PluginHub.send_command_for_instance = dispatch
+                        async with Client(server, mode=protocol) as client:
+                            assert "get_tests" in {t.name for t in await client.list_tools()}, (hosted, protocol)
+                            result = await client.call_tool("get_tests", {"unity_instance": "Owned@owned-hash"})
+                            content = result.structured_content
+                            assert content.get("result", content)["success"] is True
+                            assert routed == [("owned", "get_tests", "alice" if hosted else None)]
+                            if hosted:
+                                before = len(routed)
+                                try:
+                                    result = await client.call_tool("get_tests",
+                                        {"unity_instance": "Foreign@foreign-hash"}, raise_on_error=False)
+                                except MCPError:
+                                    pass
+                                else:
+                                    assert result.is_error
+                                assert len(routed) == before
+                        if hosted:
+                            # The first SDK server task inherited the requester lease.
+                            # Create a fresh client/server task with no lease for this negative.
+                            with bind_credential_lease(None):
+                                async with Client(server, mode=protocol) as anonymous:
+                                    try:
+                                        result = await anonymous.call_tool("get_tests",
+                                            {"unity_instance": "Owned@owned-hash"}, raise_on_error=False)
+                                    except MCPError:
+                                        pass
+                                    else:
+                                        assert result.is_error
                             assert len(routed) == before
         anyio.run(scenario)
         """,

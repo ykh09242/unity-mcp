@@ -53,17 +53,20 @@ def client(monkeypatch):
     monkeypatch.setattr(PluginHub, "_editor_states", EditorStateStore(), raising=False)
     monkeypatch.setattr(PluginHub, "KEEP_ALIVE_INTERVAL", 3600)
 
-    async def validate(key, **kwargs):
-        return ValidationResult(valid=True, user_id=key)
-
-    monkeypatch.setattr(
-        ApiKeyService, "_instance", SimpleNamespace(validate=validate, aclose=AsyncMock())
-    )
+    monkeypatch.setattr(ApiKeyService, "_instance", None)
     registry = PluginRegistry()
     clock = {"wall": 100.0, "mono": 10.0}
 
     @asynccontextmanager
     async def lifespan(app):
+        service = ApiKeyService("https://fixture.invalid/validate")
+
+        async def validate(key):
+            user = key.removeprefix("requester:")
+            return ValidationResult(valid=user in {"alice", "bob"}, user_id=user)
+
+        monkeypatch.setattr(service, "_validate_external", validate)
+        app.state.credential_service = service
         PluginHub.configure(registry)
         PluginHub._editor_states = EditorStateStore(
             wall_time=lambda: clock["wall"], monotonic=lambda: clock["mono"]
@@ -71,7 +74,10 @@ def client(monkeypatch):
         try:
             yield
         finally:
-            await PluginHub.shutdown()
+            try:
+                await PluginHub.shutdown()
+            finally:
+                await service.aclose()
 
     app = Starlette(routes=[WebSocketRoute("/plugin", PluginHub)], lifespan=lifespan)
     app.state.clock = clock
@@ -90,11 +96,23 @@ def register(wire, project="owner", capabilities=None):
     return registered["session_id"], welcome, registered
 
 
+async def requester_call(client, user, function, *args):
+    """Run a direct test caller under its own credential, on the TestClient loop."""
+    lease = (await client.app.state.credential_service.validate(f"requester:{user}")).lease
+    assert lease is not None and lease.user_id == user
+    async with lease.own():
+        return await function(*args)
+
+
 def start_command(client, wire, session_id, *, owner=None, done=None):
     async def execute():
         token = response_owner.set(owner)
         try:
-            return await PluginHub.send_command(session_id, "run_tests", {})
+            session = await PluginHub._registry.get_session(session_id)
+            assert session is not None
+            return await requester_call(
+                client, session.user_id, PluginHub.send_command, session_id, "run_tests", {}
+            )
         finally:
             response_owner.reset(token)
             if done is not None:
@@ -156,7 +174,9 @@ def state_message(sequence=7, observed=100000, *, reload_pending=False):
 
 
 def cached(client, project="owner", user="alice"):
-    return client.portal.call(PluginHub.get_cached_editor_state, project, user)
+    return client.portal.call(
+        requester_call, client, user, PluginHub.get_cached_editor_state, project, user
+    )
 
 
 def test_old_peer_gets_empty_features_and_unchanged_text_result(client):
@@ -430,15 +450,19 @@ def test_cached_resource_reads_reuse_push_but_strict_and_stale_reads_use_rpc(cli
         sid, _, _ = register(wire, capabilities=FEATURES)
         wire.send_json(state_message())
         barrier(client, wire, sid)
-        pushed = client.portal.call(resource.get_editor_state, ctx)
+        pushed = client.portal.call(requester_call, client, "alice", resource.get_editor_state, ctx)
         assert pushed.data["sequence"] == 7
         rpc.assert_not_awaited()
-        strict = client.portal.call(resource.get_editor_state_authoritative, ctx)
+        strict = client.portal.call(
+            requester_call, client, "alice", resource.get_editor_state_authoritative, ctx
+        )
         assert strict.data["sequence"] == 99
         assert rpc.await_count == 1
         assert rpc.call_args.kwargs["editor_state_read_mode"] == "authoritative"
         client.app.state.clock.update(wall=103, mono=13)
-        expired = client.portal.call(resource.get_editor_state, ctx)
+        expired = client.portal.call(
+            requester_call, client, "alice", resource.get_editor_state, ctx
+        )
         assert expired.data["sequence"] == 99
         assert rpc.await_count == 2
         assert rpc.call_args.kwargs["editor_state_read_mode"] == "ordinary"

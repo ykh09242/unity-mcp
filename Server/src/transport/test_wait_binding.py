@@ -19,6 +19,8 @@ from mcp.shared.exceptions import MCPError
 from mcp_types import INTERNAL_ERROR, INVALID_PARAMS
 from pydantic import ValidationError
 
+from services.credential_lease import require_credential_lease
+
 from services.test_wait_journal import (
     DeadlineCheckpoint,
     JournalUnavailable,
@@ -131,7 +133,10 @@ def install_test_job_tasks(
             raise MCPError(INVALID_PARAMS, "Authenticated HTTP is required for wait Tasks")
         state = request.scope.get("state", {})
         if remote_hosted:
+            lease = await require_credential_lease()
             user_id = state.get(AUTHENTICATED_USER_STATE)
+            if user_id != lease.user_id:
+                raise MCPError(INVALID_PARAMS, "Authenticated wait owner is required")
             if not isinstance(user_id, str) or not user_id:
                 raise MCPError(INVALID_PARAMS, "Authenticated wait owner is required")
             return f"hosted:v1:{user_id}"
@@ -171,7 +176,10 @@ def install_test_job_tasks(
             )
         except ValidationError:
             return None
-        return CapturedWait(operation, inner, snapshot.expires_at, {}, snapshot)
+        lease = await require_credential_lease(user_id) if remote_hosted else None
+        return CapturedWait(
+            operation, inner, snapshot.expires_at, {}, snapshot, credential_lease=lease
+        )
 
     async def fallback(captured, call_next):
         token = test_job_wait_deadline.set(captured.wait_deadline)

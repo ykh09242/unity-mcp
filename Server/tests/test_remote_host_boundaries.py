@@ -65,6 +65,7 @@ async def test_remote_editor_and_jobs_never_touch_host(
     from services.resources import editor_state, _serialize_pydantic
     from services.tools import run_tests
     from transport.plugin_hub import PluginHub
+    from tests.remote_credentials import remote_credentials
 
     monkeypatch.setattr(config, "transport_mode", "http")
     monkeypatch.setattr(config, "http_remote_hosted", True)
@@ -115,12 +116,6 @@ async def test_remote_editor_and_jobs_never_touch_host(
 
     monkeypatch.setattr(PluginHub, "send_command_for_instance", send)
 
-    async def authenticated():
-        return "fixture-user"
-
-    monkeypatch.setattr(
-        editor_state.unity_transport, "_resolve_user_id_from_request", authenticated
-    )
     monkeypatch.setattr(editor_state.external_changes_scanner, "set_project_root", root)
     monkeypatch.setattr(editor_state.external_changes_scanner, "update_and_get", scan)
     monkeypatch.setattr(run_tests, "nudge_unity_focus", focus)
@@ -128,19 +123,24 @@ async def test_remote_editor_and_jobs_never_touch_host(
     app.add_middleware(Selected())
     app.resource("mcpforunity://editor/state")(_serialize_pydantic(editor_state.get_editor_state))
     app.tool(name="get_test_job")(run_tests.get_test_job)
-    async with Client(app, mode=protocol) as client:
-        result = await client.read_resource("mcpforunity://editor/state")
-        response = json.loads(result[0].text)
-        assert response["success"] is True, response
-        native_dirty = response["data"]["assets"]["external_changes_dirty"]
-        result = await client.call_tool(
-            "get_test_job", {"job_id": "fixture-job", "wait_timeout": wait}
-        )
-        assert json.loads(result.content[0].text)["success"] is True
-    if run_tests._background_tasks:
-        await asyncio.gather(*run_tests._background_tasks)
-    assert counts == {"project": 0, "scan": 0, "root": 0, "focus": 0}
-    assert native_dirty is True
+    async with remote_credentials({"requester:fixture": "fixture-user"}) as auth:
+        async with auth.requester("requester:fixture"):
+            try:
+                async with Client(app, mode=protocol) as client:
+                    result = await client.read_resource("mcpforunity://editor/state")
+                    response = json.loads(result[0].text)
+                    assert response["success"] is True, response
+                    native_dirty = response["data"]["assets"]["external_changes_dirty"]
+                    result = await client.call_tool(
+                        "get_test_job", {"job_id": "fixture-job", "wait_timeout": wait}
+                    )
+                    assert json.loads(result.content[0].text)["success"] is True
+                if run_tests._background_tasks:
+                    await asyncio.gather(*run_tests._background_tasks)
+                assert counts == {"project": 0, "scan": 0, "root": 0, "focus": 0}
+                assert native_dirty is True
+            finally:
+                await PluginHub.shutdown()
 
 
 @pytest.mark.asyncio
@@ -462,6 +462,7 @@ if __name__ == "__main__":
         "gethostbyaddr",
     ):
         setattr(socket, name, denied)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
     _install_baseline_overlay()
     raise SystemExit(

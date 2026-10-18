@@ -11,6 +11,7 @@ from mcp.types import ToolAnnotations
 
 from core.config import config
 from models.response_limits import ResponseOwner, response_limit_error, response_owner
+from services.credential_lease import CredentialLeaseError, require_credential_lease
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
@@ -32,7 +33,7 @@ ABSOLUTE_MAX_COMMANDS_PER_BATCH = 100
 # Settings are mutable and belong to a selected user's editor instance.
 _LIMIT_CACHE_TTL_SECONDS = 5.0
 _LIMIT_CACHE_MAX_ENTRIES = 128
-_cached_max_commands: dict[tuple[str, str | None, str, str | None], tuple[int, float]] = {}
+_cached_max_commands: dict[tuple, tuple[int, float]] = {}
 _limit_cache_generation = 0
 # Share only the validated setting; unrelated editor snapshots are request-local.
 _limit_reads: SharedToolReads[int | None] = SharedToolReads(freshness_s=_LIMIT_CACHE_TTL_SECONDS)
@@ -43,6 +44,11 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
     Attempt to read the configured batch limit from the Unity editor state.
     Falls back to DEFAULT_MAX_COMMANDS_PER_BATCH if unavailable.
     """
+    lease = (
+        await require_credential_lease()
+        if config.http_remote_hosted and config.transport_mode.lower() == "http"
+        else None
+    )
     cache_key = None
     if unity_instance:
         try:
@@ -59,6 +65,8 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
                     cache_key = (config.transport_mode, user_id, unity_instance, http_session)
         except Exception:
             pass
+    if lease is not None and cache_key is not None:
+        cache_key = (lease.service, lease.generation, *cache_key)
     cached = _cached_max_commands.get(cache_key) if cache_key is not None else None
     if cached is not None and time.monotonic() < cached[1]:
         return cached[0]
@@ -115,6 +123,8 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
                     time.monotonic() + _LIMIT_CACHE_TTL_SECONDS,
                 )
             return limit
+    except CredentialLeaseError:
+        raise
     except SharedReadCapacityError:
         raise
     except Exception as exc:

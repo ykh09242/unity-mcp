@@ -19,6 +19,7 @@ import httpx
 from core.config import config
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
+from tests.remote_credentials import remote_credentials
 
 
 @pytest_asyncio.fixture
@@ -41,13 +42,24 @@ async def admission_hub(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Plugin
         monkeypatch.setattr(PluginHub, name, value, raising=False)
     registry = PluginRegistry()
     PluginHub.configure(registry)
-    yield registry
-    await PluginHub.shutdown()
+    users = ("alice", "bob", "a", "b", "c", "d", "e")
+    keys = {f"{role}:{user}": user for user in users for role in ("requester", "plugin")}
+    async with remote_credentials(keys) as auth:
+        registry._test_credentials = auth
+        try:
+            yield registry
+        finally:
+            await PluginHub.shutdown()
 
 
 async def register_socket(registry: PluginRegistry, session: str, user: str) -> AsyncMock:
     await registry.register(session, session, session, "test", user_id=user)
     socket = AsyncMock()
+    socket.state = SimpleNamespace(
+        user_id=user, plugin_registered=True, plugin_session_id=session, plugin_generation=session
+    )
+    if config.http_remote_hosted:
+        await registry._test_credentials.attach_socket(socket, f"plugin:{user}")
     socket.client_state = WebSocketState.CONNECTED
     socket.application_state = WebSocketState.CONNECTED
     PluginHub._connections[session] = socket
@@ -55,19 +67,38 @@ async def register_socket(registry: PluginRegistry, session: str, user: str) -> 
     return socket
 
 
-async def start_command(session: str, params: dict | None = None) -> asyncio.Task:
-    task = asyncio.create_task(PluginHub.send_command(session, "run_tests", params or {}))
-    for _ in range(20):
-        if (
-            any(entry["session_id"] == session for entry in PluginHub._pending.values())
-            and PluginHub._connections[session].send_json.await_count
-        ):
-            return task
-        await asyncio.sleep(0)
-    assert False, "Command never entered pending transport state"
+async def _send_command(session, command, params, *, user="alice"):
+    if not config.http_remote_hosted:
+        return await PluginHub.send_command(session, command, params)
+    return await PluginHub._registry._test_credentials.call(
+        f"requester:{user}", PluginHub.send_command, session, command, params
+    )
 
 
-async def reject_without_send(session: str, socket: AsyncMock, params: dict) -> dict:
+async def start_command(session: str, params: dict | None = None, *, user="alice") -> asyncio.Task:
+    task = asyncio.create_task(_send_command(session, "run_tests", params or {}, user=user))
+    admitted = False
+    try:
+        for _ in range(20):
+            if task.done():
+                raise AssertionError(f"Command exited before pending admission: {task.result()!r}")
+            if (
+                any(entry["session_id"] == session for entry in PluginHub._pending.values())
+                and PluginHub._connections[session].send_json.await_count
+            ):
+                admitted = True
+                return task
+            await asyncio.sleep(0)
+        assert False, "Command never entered pending transport state"
+    finally:
+        if not admitted:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def reject_without_send(
+    session: str, socket: AsyncMock, params: dict, *, user="alice"
+) -> dict:
     before_pending = len(PluginHub._pending)
     before_sends = socket.send_json.await_count
     loop = asyncio.get_running_loop()
@@ -81,7 +112,7 @@ async def reject_without_send(session: str, socket: AsyncMock, params: dict) -> 
         return create_future()
 
     loop.create_future = counted_create_future
-    task = asyncio.create_task(PluginHub.send_command(session, "run_tests", params))
+    task = asyncio.create_task(_send_command(session, "run_tests", params, user=user))
     try:
         done, _ = await asyncio.wait({task}, timeout=0.1)
         assert task in done, "Overloaded commands must finish without waiting for Unity"
@@ -148,7 +179,7 @@ async def test_user_capacity_spans_sessions_and_preserves_other_tenant(admission
     try:
         result = await reject_without_send("a3", sockets["a3"], {"user_id": "bob"})
         assert result["data"]["reason"] == "command_capacity"
-        tasks.append(await start_command("b1"))
+        tasks.append(await start_command("b1", user="bob"))
         assert len(PluginHub._pending) == 3
     finally:
         for task in tasks:
@@ -162,9 +193,9 @@ async def test_global_capacity_bounds_distinct_tenants(admission_hub):
     sockets = {
         sid: await register_socket(admission_hub, sid, sid) for sid in ("a", "b", "c", "d", "e")
     }
-    tasks = [await start_command(sid) for sid in ("a", "b", "c", "d")]
+    tasks = [await start_command(sid, user=sid) for sid in ("a", "b", "c", "d")]
     try:
-        await reject_without_send("e", sockets["e"], {})
+        await reject_without_send("e", sockets["e"], {}, user="e")
         assert len(PluginHub._pending) == 4
     finally:
         for task in tasks:
@@ -205,10 +236,10 @@ async def test_each_retained_payload_budget_rejects_before_send(
         assert size > 0, "Retained payload must have a recorded admission charge"
         monkeypatch.setattr(PluginHub, ceiling, size)
         if ceiling == "MAX_PENDING_PAYLOAD_BYTES":
-            await reject_without_send("b", socket_b, {})
+            await reject_without_send("b", socket_b, {}, user="bob")
         elif ceiling == "MAX_PENDING_PAYLOAD_BYTES_PER_USER":
             await reject_without_send("a2", socket_a2, {})
-            other = await start_command("b")
+            other = await start_command("b", user="bob")
             other.cancel()
             await asyncio.gather(other, return_exceptions=True)
         else:
@@ -271,7 +302,7 @@ async def test_level_cancellation_releases_pending_before_cleanup_await(admissio
 
     socket.send_json.side_effect = blocked_send
     async with anyio.create_task_group() as group:
-        group.start_soon(PluginHub.send_command, "a", "run_tests", {})
+        group.start_soon(_send_command, "a", "run_tests", {})
         await started.wait()
         assert len(PluginHub._pending) == 1
         group.cancel_scope.cancel()
@@ -282,7 +313,7 @@ async def test_level_cancellation_releases_pending_before_cleanup_await(admissio
 async def test_send_failure_releases_quota_for_the_next_command(admission_hub):
     socket = await register_socket(admission_hub, "a", "alice")
     socket.send_json.side_effect = RuntimeError("controlled socket failure")
-    result = await PluginHub.send_command("a", "run_tests", {})
+    result = await _send_command("a", "run_tests", {})
     assert result["data"]["reason"] == "outcome_unknown"
     assert "controlled socket failure" in result["error"]
     assert PluginHub._pending == {}
@@ -300,7 +331,15 @@ async def test_readiness_probe_propagates_capacity_without_retry_wait(admission_
     try:
         before = socket.send_json.await_count
         result = await asyncio.wait_for(
-            PluginHub.send_command_for_instance("a", "get_editor_state", {}, user_id="alice"), 0.3
+            admission_hub._test_credentials.call(
+                "requester:alice",
+                PluginHub.send_command_for_instance,
+                "a",
+                "get_editor_state",
+                {},
+                user_id="alice",
+            ),
+            0.3,
         )
         assert result["data"]["reason"] == "command_capacity"
         assert socket.send_json.await_count == before
@@ -319,6 +358,7 @@ async def test_replacement_session_releases_old_user_payload_quota(admission_hub
     monkeypatch.setattr(PluginHub, "MAX_PENDING_PAYLOAD_BYTES_PER_USER", charge or 25_000)
     replacement = AsyncMock()
     replacement.state = SimpleNamespace(user_id="alice", plugin_registered=False)
+    await admission_hub._test_credentials.attach_socket(replacement, "plugin:alice")
     replacement.client_state = replacement.application_state = WebSocketState.CONNECTED
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     try:

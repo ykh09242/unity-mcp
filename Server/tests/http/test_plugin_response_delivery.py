@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 from starlette.websockets import WebSocketState
 
 from core.config import config
@@ -181,8 +182,8 @@ class Wire:
         return await asyncio.wait_for(wait(), 2)
 
 
-@pytest.fixture
-def remote_delivery(monkeypatch):
+@pytest_asyncio.fixture
+async def remote_delivery(monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", True)
     monkeypatch.setattr(config, "http_behind_tls_proxy", True)
     for name in (
@@ -194,17 +195,19 @@ def remote_delivery(monkeypatch):
         "_retained_results",
     ):
         monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == "_retained_results" else {})
-    monkeypatch.setattr(
-        ApiKeyService,
-        "_instance",
-        SimpleNamespace(
-            validate=AsyncMock(return_value=ValidationResult(valid=True, user_id="alice")),
-            aclose=AsyncMock(),
-        ),
-    )
+    monkeypatch.setattr(ApiKeyService, "_instance", None)
+    service = ApiKeyService("https://fixture.invalid/validate")
+
+    async def validate(key):
+        return ValidationResult(valid=key in {"alice-key", "plugin-key"}, user_id="alice")
+
+    monkeypatch.setattr(service, "_validate_external", validate)
     _http_response_owners.clear()
-    yield
-    _http_response_owners.clear()
+    try:
+        yield service
+    finally:
+        await service.aclose()
+        _http_response_owners.clear()
 
 
 @pytest.mark.asyncio
@@ -221,6 +224,12 @@ async def test_real_sdk_retains_results_until_http_or_sse_delivery(
     await registry.register("unity", "inert", "inert", "test", user_id="alice")
     ws = AsyncMock()
     ws.client_state = ws.application_state = WebSocketState.CONNECTED
+    plugin_lease = (await remote_delivery.validate("plugin-key")).lease
+    assert plugin_lease is not None
+    from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
+
+    ws.state = SimpleNamespace(user_id="alice")
+    setattr(ws.state, AUTHENTICATED_LEASE_STATE, plugin_lease)
     PluginHub._connections["unity"] = ws
     PluginHub._last_pong["unity"] = time.monotonic()
     hub = PluginHub({"type": "websocket"}, None, None)
@@ -242,11 +251,11 @@ async def test_real_sdk_retains_results_until_http_or_sse_delivery(
 
     @server.tool
     async def failing() -> dict:
-        from mcp import McpError
+        from mcp import MCPError
         from mcp.types import ErrorData
 
         await PluginHub.send_command("unity", "run_tests", {})
-        raise McpError(ErrorData(code=-32603, message="Inert producer failure"))
+        raise MCPError.from_error_data(ErrorData(code=-32603, message="Inert producer failure"))
 
     app = server.http_app(transport=transport, json_response=True)
     stream = stream_task = blocked_task = None

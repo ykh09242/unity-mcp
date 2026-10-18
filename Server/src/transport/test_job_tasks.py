@@ -11,9 +11,9 @@ import json
 import math
 from collections import Counter
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from contextvars import Context
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Lock
 from typing import TYPE_CHECKING, Literal
@@ -46,6 +46,8 @@ from services.test_wait_journal import (
     WaitRecord,
 )
 from models.response_limits import ResponseOwner, response_owner, response_size
+
+from services.credential_lease import CredentialLease, CredentialLeaseError
 
 if TYPE_CHECKING:
     from transport.plugin_hub import HttpBudgetSnapshot
@@ -157,6 +159,7 @@ class CapturedWait:
     outer_deadline: float
     outer_timeout_result: dict
     budget_snapshot: HttpBudgetSnapshot | None = None
+    credential_lease: CredentialLease | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         if not math.isfinite(self.wait_deadline) or not math.isfinite(self.outer_deadline):
@@ -411,9 +414,26 @@ class TestJobTasks(ServerExtension):
         return task_handle(record)
 
     async def _run(self, task_id: str, captured: CapturedWait, admission: object):
+        """The lease owner spans execution, journal cleanup and final admission release."""
+        started = False
+        lease = captured.credential_lease
+        try:
+            async with lease.own() if lease is not None else nullcontext():
+                started = True
+                await self._run_owned(task_id, captured, admission)
+        except CredentialLeaseError:
+            if started:
+                raise
+            await self._run_owned(task_id, captured, admission, authorization_failed=True)
+
+    async def _run_owned(
+        self, task_id: str, captured: CapturedWait, admission: object, *, authorization_failed=False
+    ):
         result_owner = ResponseOwner()
         owner_token = response_owner.set(result_owner)
         try:
+            if authorization_failed:
+                raise CredentialLeaseError()
             # The original wait runner owns the inner deadline and ordinary last
             # observation semantics. This hard outer guard never refreshes time.
             result = None
@@ -433,6 +453,8 @@ class TestJobTasks(ServerExtension):
                         if not guard.expired():
                             raise
                         result = captured.outer_timeout_result
+            if captured.credential_lease is not None:
+                await captured.credential_lease.check()
             if result is not None:
                 await self._io(self.journal.finish, task_id, "completed", result=result)
             elif task_id in self._cancelled:
@@ -444,9 +466,24 @@ class TestJobTasks(ServerExtension):
                     "failed",
                     error={
                         "code": INTERNAL_ERROR,
-                        "message": "Bounded wait interrupted by server shutdown; native job state is unchanged",
+                        "message": (
+                            "Remote authorization ended; native job state is unchanged"
+                            if captured.credential_lease is not None
+                            and captured.credential_lease.retired
+                            else "Bounded wait interrupted by server shutdown; native job state is unchanged"
+                        ),
                     },
                 )
+        except CredentialLeaseError:
+            await self._io(
+                self.journal.finish,
+                task_id,
+                "failed",
+                error={
+                    "code": INTERNAL_ERROR,
+                    "message": "Remote authorization ended; native job state is unchanged",
+                },
+            )
         except asyncio.CancelledError:
             if task_id in self._cancelled:
                 await self._io(self.journal.finish, task_id, "cancelled")
@@ -457,7 +494,12 @@ class TestJobTasks(ServerExtension):
                     "failed",
                     error={
                         "code": INTERNAL_ERROR,
-                        "message": "Bounded wait interrupted by server shutdown; native job state is unchanged",
+                        "message": (
+                            "Remote authorization ended; native job state is unchanged"
+                            if captured.credential_lease is not None
+                            and captured.credential_lease.retired
+                            else "Bounded wait interrupted by server shutdown; native job state is unchanged"
+                        ),
                     },
                 )
         except MCPError as error:

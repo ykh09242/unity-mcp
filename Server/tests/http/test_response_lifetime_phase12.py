@@ -6,6 +6,7 @@ import json
 import time
 import weakref
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 from starlette.websockets import WebSocketState
@@ -16,13 +17,14 @@ from transport.models import CommandResultMessage
 from models.response_limits import ResponseOwner, response_owner, response_size
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
+from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 from transport.response_limit_middleware import (
     ResponseLimitMiddleware,
     ResponseRetentionMiddleware,
     _http_response_owners,
     _owner_key,
 )
-from test_plugin_response_delivery import Wire, remote_delivery  # pylint: disable=unused-import
+from tests.http.test_plugin_response_delivery import Wire, remote_delivery  # pylint: disable=unused-import
 
 
 @pytest.mark.asyncio
@@ -40,6 +42,15 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
     PluginHub.configure(registry)
     await registry.register("unity", "inert", "inert", "test", user_id="alice")
     ws = AsyncMock()
+    ws.state = SimpleNamespace(
+        user_id="alice",
+        plugin_registered=True,
+        plugin_session_id="unity",
+        plugin_generation="unity",
+    )
+    plugin_lease = (await remote_delivery.validate("plugin-key")).lease
+    assert plugin_lease is not None
+    setattr(ws.state, AUTHENTICATED_LEASE_STATE, plugin_lease)
     ws.client_state = ws.application_state = WebSocketState.CONNECTED
     PluginHub._connections["unity"] = ws
     PluginHub._last_pong["unity"] = time.monotonic()

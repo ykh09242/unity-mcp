@@ -642,9 +642,8 @@ async def test_actual_factory_hosted_waits_capture_current_tenant_and_project_an
             user_id={"alice-key": "alice", "bob-key": "bob"}.get(key),
         )
     )
-    monkeypatch.setattr(
-        ApiKeyService, "_instance", SimpleNamespace(validate=validate, aclose=AsyncMock())
-    )
+    service = ApiKeyService("https://fixture.invalid/validate", cache_ttl=0)
+    monkeypatch.setattr(service, "_validate_external", validate)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(Tool, "from_function", prepared_tool_factory)
         server = create_mcp_server(False, test_wait_tasks_root=tmp_path / "private")
@@ -691,6 +690,8 @@ async def test_actual_factory_hosted_waits_capture_current_tenant_and_project_an
                         ),
                     )
 
+            plugin_lease = (await service.validate(f"{user}-key")).lease
+            setattr(socket.state, "unity_mcp_authenticated_credential_lease", plugin_lease)
             socket.send_json = answer
             PluginHub._connections[sid] = socket
         async with httpx.AsyncClient(

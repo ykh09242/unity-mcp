@@ -9,6 +9,7 @@ from fastmcp import FastMCP
 from pydantic import ValidationError
 
 from core.config import config
+from tests.remote_credentials import remote_credentials
 from models.models import ToolDefinitionModel
 from services.custom_tool_service import CustomToolService
 from transport.models import RegisterToolsMessage
@@ -35,46 +36,75 @@ def tenant_state(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_remote_registration_does_not_mutate_global_catalog(tenant_state, monkeypatch):
-    registry, mcp, service = tenant_state
-    notifications = AsyncMock(wraps=PluginHub._notify_mcp_tool_list_changed)
-    monkeypatch.setattr(PluginHub, "_notify_mcp_tool_list_changed", notifications)
-    legacy_broadcast = Mock()
-    monkeypatch.setattr(PluginHub._catalog_notifications, "publish", legacy_broadcast)
-    hub = PluginHub({"type": "websocket"}, receive=AsyncMock(), send=AsyncMock())
-    transforms = list(mcp._transforms)
-    for user in ("alice", "bob"):
-        ws = SimpleNamespace(state=SimpleNamespace(user_id=user))
-        await registry.register(user, "Project", "shared-hash", "6000", user_id=user)
-        PluginHub._connections[user] = ws
-        await hub._handle_register_tools(
-            ws,
-            RegisterToolsMessage(
-                tools=[
-                    ToolDefinitionModel(name="shared_tool", description=user),
-                ]
-            ),
+    async with remote_credentials(
+        {
+            "requester:alice": "alice",
+            "plugin:alice": "alice",
+            "requester:bob": "bob",
+            "plugin:bob": "bob",
+        }
+    ) as auth:
+        registry, mcp, service = tenant_state
+        notifications = AsyncMock(wraps=PluginHub._notify_mcp_tool_list_changed)
+        monkeypatch.setattr(PluginHub, "_notify_mcp_tool_list_changed", notifications)
+        legacy_broadcast = Mock()
+        monkeypatch.setattr(PluginHub._catalog_notifications, "publish", legacy_broadcast)
+        hub = PluginHub({"type": "websocket"}, receive=AsyncMock(), send=AsyncMock())
+        transforms = list(mcp._transforms)
+        for user in ("alice", "bob"):
+            ws = SimpleNamespace(state=SimpleNamespace(user_id=user))
+            await auth.attach_socket(ws, f"plugin:{user}")
+            await registry.register(user, "Project", "shared-hash", "6000", user_id=user)
+            PluginHub._connections[user] = ws
+            await hub._handle_register_tools(
+                ws,
+                RegisterToolsMessage(
+                    tools=[
+                        ToolDefinitionModel(name="shared_tool", description=user),
+                    ]
+                ),
+            )
+
+        assert await mcp.list_tools() == []
+        assert mcp._transforms == transforms
+        assert service._global_tools == {}
+        expected_scopes = [
+            call(user_id=user, project_hash="shared-hash", session_id=user, catalog_revision=1)
+            for user in ("alice", "bob")
+        ]
+        assert notifications.await_args_list == expected_scopes
+        legacy_broadcast.assert_not_called()
+        for user in ("alice", "bob"):
+            tool = await auth.call(
+                f"requester:{user}",
+                service.get_tool_definition,
+                "shared-hash",
+                "shared_tool",
+                user_id=user,
+            )
+            assert tool.description == user
+
+        await hub.on_disconnect(PluginHub._connections["alice"], 1000)
+        assert notifications.await_args_list == expected_scopes + [
+            call(
+                user_id="alice", project_hash="shared-hash", session_id="alice", catalog_revision=2
+            )
+        ]
+        legacy_broadcast.assert_not_called()
+        assert (
+            await auth.call(
+                "requester:alice", service.list_registered_tools, "shared-hash", user_id="alice"
+            )
+            == []
         )
-
-    assert await mcp.list_tools() == []
-    assert mcp._transforms == transforms
-    assert service._global_tools == {}
-    expected_scopes = [
-        call(user_id=user, project_hash="shared-hash", session_id=user, catalog_revision=1)
-        for user in ("alice", "bob")
-    ]
-    assert notifications.await_args_list == expected_scopes
-    legacy_broadcast.assert_not_called()
-    for user in ("alice", "bob"):
-        tool = await service.get_tool_definition("shared-hash", "shared_tool", user_id=user)
-        assert tool.description == user
-
-    await hub.on_disconnect(PluginHub._connections["alice"], 1000)
-    assert notifications.await_args_list == expected_scopes + [
-        call(user_id="alice", project_hash="shared-hash", session_id="alice", catalog_revision=2)
-    ]
-    legacy_broadcast.assert_not_called()
-    assert await service.list_registered_tools("shared-hash", user_id="alice") == []
-    assert len(await service.list_registered_tools("shared-hash", user_id="bob")) == 1
+        assert (
+            len(
+                await auth.call(
+                    "requester:bob", service.list_registered_tools, "shared-hash", user_id="bob"
+                )
+            )
+            == 1
+        )
 
 
 @pytest.mark.asyncio
@@ -96,52 +126,85 @@ def test_tool_registration_count_is_bounded():
 
 @pytest.mark.asyncio
 async def test_oversized_tool_metadata_is_rejected_before_storage(tenant_state):
-    registry, mcp, service = tenant_state
-    ws = AsyncMock()
-    await registry.register("alice", "Project", "hash", "6000", user_id="alice")
-    PluginHub._connections["alice"] = ws
-    hub = PluginHub({"type": "websocket"}, receive=AsyncMock(), send=AsyncMock())
+    async with remote_credentials(
+        {
+            "requester:alice": "alice",
+            "plugin:alice": "alice",
+            "requester:bob": "bob",
+            "plugin:bob": "bob",
+        }
+    ) as auth:
+        registry, mcp, service = tenant_state
+        ws = AsyncMock()
+        ws.state = SimpleNamespace(user_id="alice")
+        await auth.attach_socket(ws, "plugin:alice")
+        await registry.register("alice", "Project", "hash", "6000", user_id="alice")
+        PluginHub._connections["alice"] = ws
+        hub = PluginHub({"type": "websocket"}, receive=AsyncMock(), send=AsyncMock())
 
-    await hub._handle_register_tools(
-        ws,
-        RegisterToolsMessage(
-            tools=[
-                ToolDefinitionModel(name="oversized", description="x" * (512 * 1024)),
-            ]
-        ),
-    )
+        await hub._handle_register_tools(
+            ws,
+            RegisterToolsMessage(
+                tools=[
+                    ToolDefinitionModel(name="oversized", description="x" * (512 * 1024)),
+                ]
+            ),
+        )
 
-    ws.close.assert_awaited_once()
-    assert await service.list_registered_tools("hash", user_id="alice") == []
+        ws.close.assert_awaited_once()
+        assert (
+            await auth.call(
+                "requester:alice", service.list_registered_tools, "hash", user_id="alice"
+            )
+            == []
+        )
 
 
 @pytest.mark.asyncio
 async def test_tool_listing_filters_each_users_enabled_set(tenant_state, monkeypatch):
-    registry, mcp, service = tenant_state
-    metadata = [
-        {"name": "manage_scene", "unity_target": "manage_scene"},
-        {"name": "manage_gameobject", "unity_target": "manage_gameobject"},
-        {"name": "execute_custom_tool", "unity_target": None},
-    ]
-    monkeypatch.setattr(
-        "transport.unity_instance_middleware.get_registered_tools", lambda: metadata
-    )
-    middleware = UnityInstanceMiddleware()
-    monkeypatch.setattr(middleware, "_inject_unity_instance", AsyncMock())
-    tools = [
-        SimpleNamespace(name=name)
-        for name in ("manage_scene", "manage_gameobject", "execute_custom_tool", "foreign_custom")
-    ]
-    for user, enabled in (("alice", "manage_scene"), ("bob", "manage_gameobject")):
-        await registry.register(user, "Project", "hash", "6000", user_id=user)
-        await registry.register_tools_for_session(user, [ToolDefinitionModel(name=enabled)])
-
-    for user, enabled in (("alice", "manage_scene"), ("bob", "manage_gameobject")):
-        state = {"user_id": user, "unity_instance": "Project@hash"}
-        context = SimpleNamespace(
-            fastmcp_context=SimpleNamespace(get_state=AsyncMock(side_effect=state.get))
+    async with remote_credentials(
+        {
+            "requester:alice": "alice",
+            "plugin:alice": "alice",
+            "requester:bob": "bob",
+            "plugin:bob": "bob",
+        }
+    ) as auth:
+        registry, mcp, service = tenant_state
+        metadata = [
+            {"name": "manage_scene", "unity_target": "manage_scene"},
+            {"name": "manage_gameobject", "unity_target": "manage_gameobject"},
+            {"name": "execute_custom_tool", "unity_target": None},
+        ]
+        monkeypatch.setattr(
+            "transport.unity_instance_middleware.get_registered_tools", lambda: metadata
         )
+        middleware = UnityInstanceMiddleware()
+        monkeypatch.setattr(middleware, "_inject_unity_instance", AsyncMock())
+        tools = [
+            SimpleNamespace(name=name)
+            for name in (
+                "manage_scene",
+                "manage_gameobject",
+                "execute_custom_tool",
+                "foreign_custom",
+            )
+        ]
+        for user, enabled in (("alice", "manage_scene"), ("bob", "manage_gameobject")):
+            await registry.register(user, "Project", "hash", "6000", user_id=user)
+            await registry.register_tools_for_session(user, [ToolDefinitionModel(name=enabled)])
 
-        visible = await middleware.on_list_tools(context, AsyncMock(return_value=tools))
+        for user, enabled in (("alice", "manage_scene"), ("bob", "manage_gameobject")):
+            state = {"user_id": user, "unity_instance": "Project@hash"}
+            context = SimpleNamespace(
+                fastmcp_context=SimpleNamespace(get_state=AsyncMock(side_effect=state.get))
+            )
 
-        assert {tool.name for tool in visible} == {enabled, "execute_custom_tool"}
+            visible = await auth.call(
+                f"requester:{user}",
+                middleware.on_list_tools,
+                context,
+                AsyncMock(return_value=tools),
+            )
+
+            assert {tool.name for tool in visible} == {enabled, "execute_custom_tool"}

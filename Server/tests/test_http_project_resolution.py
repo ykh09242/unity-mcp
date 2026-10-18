@@ -107,9 +107,11 @@ def test_sdk_resource_and_execution_follow_http_reconnect_catalog(tmp_path, mode
     # Collection-time SDK shims in legacy tests require a fresh real-SDK process.
     source = r"""
     import asyncio, json, sys, time
+    from contextlib import AsyncExitStack
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     sys.path.insert(0, "src")
+    from tests.remote_credentials import remote_credentials
     from fastmcp import Client, FastMCP
     from starlette.websockets import WebSocketState
     from core.config import config
@@ -130,81 +132,87 @@ def test_sdk_resource_and_execution_follow_http_reconnect_catalog(tmp_path, mode
         config.transport_mode = "http"
         config.http_remote_hosted = HOSTED
         user = "alice" if HOSTED else None
-        scans = []
-        def forbidden_pool():
-            scans.append(1)
-            # A local stdio editor may share the HTTP name/hash prefix but is not
-            # part of the HTTP registry, including on a remotely hosted server.
-            return SimpleNamespace(discover_all_instances=lambda: [
-                SimpleNamespace(id="Remote@aabbccddff", name="Remote", hash="aabbccddff"),
-                SimpleNamespace(id="Local@aabb0000", name="Local", hash="aabb0000")])
-        service_module.get_unity_connection_pool = forbidden_pool
-        execute.get_unity_instance_from_context = AsyncMock(return_value="Remote@aabbccdd")
-        listing.get_unity_instance_from_context = AsyncMock(return_value="Remote@aabbccdd")
-        execute.get_user_id_from_context = AsyncMock(return_value=user)
-        listing.get_user_id_from_context = AsyncMock(return_value=user)
-        server = FastMCP("http-project-resolution")
-        server.add_middleware(ResponseLimitMiddleware())
-        service_module.CustomToolService(server)
-        tool_metadata = [t for t in get_registered_tools() if t["name"] == "execute_custom_tool"]
-        resource_metadata = [r for r in get_registered_resources() if r["name"] == "custom_tools"]
-        tools.discover_modules = resources.discover_modules = lambda *_a: []
-        tools.get_registered_tools = lambda: tool_metadata
-        resources.get_registered_resources = lambda: resource_metadata
-        tools.register_all_tools(server)
-        resources.register_all_resources(server)
-        registry = PluginRegistry()
-        PluginHub.configure(registry)
-        endpoint = PluginHub.__new__(PluginHub)
-        calls = []
-        generation = [1]
+        async with AsyncExitStack() as credentials:
+            if HOSTED:
+                auth = await credentials.enter_async_context(remote_credentials({"requester:alice": "alice", "plugin:owned": "alice", "plugin:foreign": "bob"}))
+                await credentials.enter_async_context(auth.requester("requester:alice"))
+            scans = []
+            def forbidden_pool():
+                scans.append(1)
+                # A local stdio editor may share the HTTP name/hash prefix but is not
+                # part of the HTTP registry, including on a remotely hosted server.
+                return SimpleNamespace(discover_all_instances=lambda: [
+                    SimpleNamespace(id="Remote@aabbccddff", name="Remote", hash="aabbccddff"),
+                    SimpleNamespace(id="Local@aabb0000", name="Local", hash="aabb0000")])
+            service_module.get_unity_connection_pool = forbidden_pool
+            execute.get_unity_instance_from_context = AsyncMock(return_value="Remote@aabbccdd")
+            listing.get_unity_instance_from_context = AsyncMock(return_value="Remote@aabbccdd")
+            execute.get_user_id_from_context = AsyncMock(return_value=user)
+            listing.get_user_id_from_context = AsyncMock(return_value=user)
+            server = FastMCP("http-project-resolution")
+            server.add_middleware(ResponseLimitMiddleware())
+            service_module.CustomToolService(server)
+            tool_metadata = [t for t in get_registered_tools() if t["name"] == "execute_custom_tool"]
+            resource_metadata = [r for r in get_registered_resources() if r["name"] == "custom_tools"]
+            tools.discover_modules = resources.discover_modules = lambda *_a: []
+            tools.get_registered_tools = lambda: tool_metadata
+            resources.get_registered_resources = lambda: resource_metadata
+            tools.register_all_tools(server)
+            resources.register_all_resources(server)
+            registry = PluginRegistry()
+            PluginHub.configure(registry)
+            credentials.push_async_callback(PluginHub.shutdown)
+            endpoint = PluginHub.__new__(PluginHub)
+            calls = []
+            generation = [1]
 
-        async def register(session_id):
-            websocket = SimpleNamespace(state=SimpleNamespace(plugin_registered=True,
-                plugin_session_id=session_id, plugin_generation=session_id, user_id=user),
-                application_state=WebSocketState.CONNECTED, client_state=WebSocketState.CONNECTED,
-                close=AsyncMock())
-            async def send_json(message):
-                calls.append((session_id, message["params"]))
-                await endpoint._handle_command_result(websocket,
-                    CommandResultMessage(id=message["id"], result={"success":True,
-                        "data":{"generation":generation[0]}}))
-            websocket.send_json = send_json
-            await registry.register(session_id, "Remote", "aabbccdd", "6000", user_id=user)
-            await registry.register_tools_for_session(session_id, [ToolDefinitionModel(name="probe")])
-            PluginHub._connections[session_id] = websocket
-            PluginHub._last_pong[session_id] = time.monotonic()
+            async def register(session_id):
+                websocket = SimpleNamespace(state=SimpleNamespace(plugin_registered=True,
+                    plugin_session_id=session_id, plugin_generation=session_id, user_id=user),
+                    application_state=WebSocketState.CONNECTED, client_state=WebSocketState.CONNECTED,
+                    close=AsyncMock())
+                async def send_json(message):
+                    calls.append((session_id, message["params"]))
+                    await endpoint._handle_command_result(websocket,
+                        CommandResultMessage(id=message["id"], result={"success":True,
+                            "data":{"generation":generation[0]}}))
+                websocket.send_json = send_json
+                if HOSTED:
+                    await auth.attach_socket(websocket, "plugin:owned")
+                await registry.register(session_id, "Remote", "aabbccdd", "6000", user_id=user)
+                await registry.register_tools_for_session(session_id, [ToolDefinitionModel(name="probe")])
+                PluginHub._connections[session_id] = websocket
+                PluginHub._last_pong[session_id] = time.monotonic()
 
-        async def read(client):
-            return json.loads((await client.read_resource("mcpforunity://custom-tools"))[0].text)
-        async def call(client):
-            result = await client.call_tool("execute_custom_tool", {"tool_name":"probe"})
-            return json.loads(result.content[0].text)
-        await register("first")
-        middleware = UnityInstanceMiddleware()
-        selector_ctx = SimpleNamespace(get_state=AsyncMock(return_value=user))
-        if HOSTED:
-            await registry.register("bob", "OtherTenant", "aabbffff", "6000", user_id="bob")
-        resolved = await middleware._resolve_instance_value("AABB", selector_ctx)
-        assert resolved == "Remote@aabbccdd"
-        execute.get_unity_instance_from_context.return_value = resolved
-        listing.get_unity_instance_from_context.return_value = resolved
-        for rejected, message in (("Remote@aabb", "not found"), ("ffff", "No running Unity instance matches")):
+            async def read(client):
+                return json.loads((await client.read_resource("mcpforunity://custom-tools"))[0].text)
+            async def call(client):
+                result = await client.call_tool("execute_custom_tool", {"tool_name":"probe"})
+                return json.loads(result.content[0].text)
+            await register("first")
+            middleware = UnityInstanceMiddleware()
+            selector_ctx = SimpleNamespace(get_state=AsyncMock(return_value=user))
+            if HOSTED:
+                await registry.register("bob", "OtherTenant", "aabbffff", "6000", user_id="bob")
+            resolved = await middleware._resolve_instance_value("AABB", selector_ctx)
+            assert resolved == "Remote@aabbccdd"
+            execute.get_unity_instance_from_context.return_value = resolved
+            listing.get_unity_instance_from_context.return_value = resolved
+            for rejected, message in (("Remote@aabb", "not found"), ("ffff", "No running Unity instance matches")):
+                try:
+                    await middleware._resolve_instance_value(rejected, selector_ctx)
+                except ValueError as exc:
+                    assert message in str(exc), str(exc)
+                else:
+                    raise AssertionError(f"unexpected selector resolution: {rejected}")
+            await registry.register("collision", "Other", "aabb1234", "6000", user_id=user)
             try:
-                await middleware._resolve_instance_value(rejected, selector_ctx)
+                await middleware._resolve_instance_value("aabb", selector_ctx)
             except ValueError as exc:
-                assert message in str(exc), str(exc)
+                assert "ambiguous" in str(exc), str(exc)
             else:
-                raise AssertionError(f"unexpected selector resolution: {rejected}")
-        await registry.register("collision", "Other", "aabb1234", "6000", user_id=user)
-        try:
-            await middleware._resolve_instance_value("aabb", selector_ctx)
-        except ValueError as exc:
-            assert "ambiguous" in str(exc), str(exc)
-        else:
-            raise AssertionError("HTTP hash prefix must reject registry ambiguity")
-        await registry.unregister("collision")
-        try:
+                raise AssertionError("HTTP hash prefix must reject registry ambiguity")
+            await registry.unregister("collision")
             async with Client(server, mode=MODE) as client:
                 assert (await read(client))["data"]["tools"][0]["name"] == "probe"
                 assert (await call(client))["data"]["generation"] == 1
@@ -219,8 +227,6 @@ def test_sdk_resource_and_execution_follow_http_reconnect_catalog(tmp_path, mode
                 assert [session for session, _ in calls] == ["first", "replacement"]
                 assert not scans, len(scans)
                 assert not PluginHub._pending
-        finally:
-            await PluginHub.shutdown()
     asyncio.run(scenario())
     """.replace("HOSTED", repr(hosted)).replace("mode=MODE", "mode=" + repr(mode))
     env = {

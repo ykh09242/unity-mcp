@@ -17,13 +17,14 @@ from tests.http.test_project_capabilities import (
     read_capabilities,
 )
 from core.config import config
+from tests.remote_credentials import remote_credentials
 from transport.models import CommandResultMessage
 from transport.unity_instance_middleware import UnityInstanceMiddleware
 from transport.plugin_hub import PluginHub
 
 
 @asynccontextmanager
-async def pending_mutations(hub, count=2, session_id="session"):
+async def pending_mutations(hub, count=2, session_id="session", *, auth=None, user=None):
     """Retain actual admitted commands while their controlled peer withholds results."""
     sent = anyio.Event()
     original_send = hub.websocket.send_json
@@ -38,10 +39,19 @@ async def pending_mutations(hub, count=2, session_id="session"):
                 sent.set()
 
     hub.websocket.send_json = hold
-    tasks = [
-        asyncio.create_task(PluginHub.send_command(session_id, "manage_scene", {"name": str(i)}))
-        for i in range(count)
-    ]
+
+    async def dispatch(index):
+        if auth is None:
+            return await PluginHub.send_command(session_id, "manage_scene", {"name": str(index)})
+        return await auth.call(
+            f"requester:{user}",
+            PluginHub.send_command,
+            session_id,
+            "manage_scene",
+            {"name": str(index)},
+        )
+
+    tasks = [asyncio.create_task(dispatch(i)) for i in range(count)]
     try:
         with anyio.fail_after(1):
             await sent.wait()
@@ -251,11 +261,17 @@ async def test_canceling_status_wait_does_not_cancel_mutations(command_hub, monk
             assert all(not task.done() for task in mutations)
 
 
-def tenant_server(monkeypatch, user_id):
+def tenant_server(monkeypatch, user_id, auth):
     from services.resources import _serialize_pydantic
     from services.resources.capabilities import get_capabilities
 
-    middleware = UnityInstanceMiddleware()
+    class TenantRequesterMiddleware(UnityInstanceMiddleware):
+        async def on_read_resource(self, context, call_next):
+            return await auth.call(
+                f"requester:{user_id}", super().on_read_resource, context, call_next
+            )
+
+    middleware = TenantRequesterMiddleware()
 
     async def authenticated_user():
         return user_id
@@ -268,7 +284,7 @@ def tenant_server(monkeypatch, user_id):
     return server
 
 
-async def tenant_socket(hub, session, user, project_hash="hash"):
+async def tenant_socket(hub, session, user, auth, project_hash="hash"):
     await hub.registry.register(session, "Fixture", project_hash, "6000", user_id=user)
     socket = SimpleNamespace(
         state=SimpleNamespace(
@@ -283,6 +299,7 @@ async def tenant_socket(hub, session, user, project_hash="hash"):
         send_json=hub.websocket.send_json,
         close=hub.websocket.close,
     )
+    await auth.attach_socket(socket, f"plugin:{user}")
     PluginHub._connections[session] = socket
     return SimpleNamespace(websocket=socket, sent=hub.sent)
 
@@ -291,43 +308,54 @@ async def tenant_socket(hub, session, user, project_hash="hash"):
 async def test_saturated_sdk_counts_are_owned_by_authenticated_tenant_and_current_generation(
     command_hub, monkeypatch
 ):
-    monkeypatch.setattr(config, "http_remote_hosted", True)
-    monkeypatch.setattr(PluginHub, "MAX_PENDING_PER_USER", 2)
-    monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 3)
-    a = await tenant_socket(command_hub, "alice-main", "alice")
-    a2 = await tenant_socket(command_hub, "alice-other", "alice", "other")
-    b = await tenant_socket(command_hub, "bob-main", "bob")
-    async with pending_mutations(a, 1, "alice-main"), pending_mutations(a2, 1, "alice-other"):
-        # Alice's full user quota does not prevent Bob's separate first admission.
-        async with pending_mutations(b, 1, "bob-main"):
-            before, sends = accounting(), list(command_hub.sent)
-            async with (
-                Client(tenant_server(monkeypatch, "alice")) as alice,
-                Client(tenant_server(monkeypatch, "bob")) as bob,
-            ):
+    async with remote_credentials(
+        {
+            "requester:alice": "alice",
+            "plugin:alice": "alice",
+            "requester:bob": "bob",
+            "plugin:bob": "bob",
+        }
+    ) as auth:
+        monkeypatch.setattr(config, "http_remote_hosted", True)
+        monkeypatch.setattr(PluginHub, "MAX_PENDING_PER_USER", 2)
+        monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 3)
+        a = await tenant_socket(command_hub, "alice-main", "alice", auth)
+        a2 = await tenant_socket(command_hub, "alice-other", "alice", auth, "other")
+        b = await tenant_socket(command_hub, "bob-main", "bob", auth)
+        async with (
+            pending_mutations(a, 1, "alice-main", auth=auth, user="alice"),
+            pending_mutations(a2, 1, "alice-other", auth=auth, user="alice"),
+        ):
+            # Alice's full user quota does not prevent Bob's separate first admission.
+            async with pending_mutations(b, 1, "bob-main", auth=auth, user="bob"):
+                before, sends = accounting(), list(command_hub.sent)
+                async with (
+                    Client(tenant_server(monkeypatch, "alice", auth)) as alice,
+                    Client(tenant_server(monkeypatch, "bob", auth)) as bob,
+                ):
 
-                async def read(client, **meta):
-                    result = await client.read_resource(
-                        "mcpforunity://capabilities",
-                        meta={"unity_instance": "Fixture@hash", **meta},
+                    async def read(client, **meta):
+                        result = await client.read_resource(
+                            "mcpforunity://capabilities",
+                            meta={"unity_instance": "Fixture@hash", **meta},
+                        )
+                        return json.loads(result[0].text)["data"]
+
+                    owned = await read(alice, user_id="bob")
+                    other = await read(bob)
+                    assert (
+                        owned["connection"]["pending_commands"]
+                        == other["connection"]["pending_commands"]
+                        == 1
                     )
-                    return json.loads(result[0].text)["data"]
-
-                owned = await read(alice, user_id="bob")
-                other = await read(bob)
-                assert (
-                    owned["connection"]["pending_commands"]
-                    == other["connection"]["pending_commands"]
-                    == 1
-                )
-                assert owned["connection"]["tenant_pending_commands"] == 2
-                assert other["connection"]["tenant_pending_commands"] == 1
-                assert owned["connection"]["generation"] != other["connection"]["generation"]
-                assert "global_pending_commands" not in owned["connection"]
-                assert "command_ids" not in owned["connection"]
-                b.websocket.state.plugin_generation = "new-bob-generation"
-                current = await read(bob)
-                assert current["connection"]["generation"] != other["connection"]["generation"]
-                assert current["connection"]["tenant_pending_commands"] == 1
-                assert accounting() == before
-                assert command_hub.sent == sends
+                    assert owned["connection"]["tenant_pending_commands"] == 2
+                    assert other["connection"]["tenant_pending_commands"] == 1
+                    assert owned["connection"]["generation"] != other["connection"]["generation"]
+                    assert "global_pending_commands" not in owned["connection"]
+                    assert "command_ids" not in owned["connection"]
+                    b.websocket.state.plugin_generation = "new-bob-generation"
+                    current = await read(bob)
+                    assert current["connection"]["generation"] != other["connection"]["generation"]
+                    assert current["connection"]["tenant_pending_commands"] == 1
+                    assert accounting() == before
+                    assert command_hub.sent == sends

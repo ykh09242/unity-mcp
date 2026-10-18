@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from core.config import config
+from tests.remote_credentials import remote_credentials
 from transport import unity_transport
 from transport.legacy import unity_connection
 
@@ -50,9 +51,16 @@ async def test_script_operations_stay_in_authenticated_plugin_session(monkeypatc
     edits = (
         [structured] if mode == "structured" else [text, structured] if mode == "mixed" else [text]
     )
-    result = await edits_tool.script_apply_edits(
-        ctx, "Foo", "Assets", edits, {"preview": mode == "preview"}
-    )
+    async with remote_credentials({"requester:tenant-a": "tenant-a"}) as auth:
+        result = await auth.call(
+            "requester:tenant-a",
+            edits_tool.script_apply_edits,
+            ctx,
+            "Foo",
+            "Assets",
+            edits,
+            {"preview": mode == "preview"},
+        )
     assert result["success"], result
     assert calls[0] == (
         "get_sha" if mode == "structured" else "validate_edit" if mode == "mixed" else "read"

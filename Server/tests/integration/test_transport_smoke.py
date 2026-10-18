@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from core.config import config
+from tests.remote_credentials import remote_credentials
 from transport import unity_transport
 
 
@@ -34,7 +35,7 @@ async def test_http_local_smoke(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_http_remote_smoke(monkeypatch):
-    """HTTP remote-hosted should route through PluginHub when user_id is provided."""
+    """HTTP remote-hosted routes through PluginHub under the captured requester lease."""
     monkeypatch.setattr(config, "transport_mode", "http")
     monkeypatch.setattr(config, "http_remote_hosted", True)
 
@@ -50,9 +51,16 @@ async def test_http_remote_smoke(monkeypatch):
     async def _unused_send_fn(*_args, **_kwargs):
         raise AssertionError("send_fn should not be used in HTTP mode")
 
-    result = await unity_transport.send_with_unity_instance(
-        _unused_send_fn, None, "ping", {}, user_id="user-1"
-    )
+    async with remote_credentials({"requester:user-1": "user-1"}) as auth:
+        result = await auth.call(
+            "requester:user-1",
+            unity_transport.send_with_unity_instance,
+            _unused_send_fn,
+            None,
+            "ping",
+            {},
+            user_id="user-1",
+        )
 
     assert result["success"] is True
     assert result["data"] == {"via": "http-remote"}

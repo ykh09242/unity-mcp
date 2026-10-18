@@ -14,6 +14,9 @@ import weakref
 
 import anyio
 import pytest
+import pytest_asyncio
+
+from tests.remote_credentials import remote_credentials
 from starlette.websockets import WebSocketState
 
 from core.config import config
@@ -33,8 +36,8 @@ class TrackedPayload(str):
     """Track producer strings without retaining the response in test observers."""
 
 
-@pytest.fixture
-def polling(monkeypatch):
+@pytest_asyncio.fixture
+async def polling(monkeypatch):
     class OwnedHub(PluginHub):
         _lock = asyncio.Lock()
         _registry = SimpleNamespace(
@@ -128,9 +131,19 @@ def polling(monkeypatch):
     monkeypatch.setattr(editor.unity_transport, "send_with_unity_instance", dispatch)
     monkeypatch.setattr(prefabs, "get_unity_instance_from_context", instance)
     monkeypatch.setattr(prefabs, "send_with_unity_instance", dispatch)
-    yield state
-    for entry in OwnedHub._pending.values():
-        entry["future"].cancel()
+    async with remote_credentials({"requester:alice": "alice", "plugin:alice": "alice"}) as auth:
+        await auth.attach_socket(websocket, "plugin:alice")
+        state.auth = auth
+
+        async def request(function, *args, **kwargs):
+            return await auth.call("requester:alice", function, *args, **kwargs)
+
+        state.request = request
+        try:
+            yield state
+        finally:
+            for entry in OwnedHub._pending.values():
+                entry["future"].cancel()
 
 
 def narrow_budget(polling, monkeypatch):
@@ -156,7 +169,7 @@ async def test_compile_wait_finishes_under_two_response_budget(polling, monkeypa
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        assert await module.preflight(None, wait_for_no_compile=True) is None
+        assert await polling.request(module.preflight, None, wait_for_no_compile=True) is None
         assert polling.calls == 12
         assert max(polling.observations) <= 1
         assert_discarded(polling, owner)
@@ -170,7 +183,7 @@ async def test_nonwaiting_preflight_discards_internal_snapshot(polling):
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        assert await module.preflight(None) is None
+        assert await polling.request(module.preflight, None) is None
         assert polling.calls == 1
         assert_discarded(polling, owner)
     finally:
@@ -185,7 +198,7 @@ async def test_unknown_state_fallback_releases_observations(polling, failure):
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        assert await module.preflight(None, wait_for_no_compile=True) is None
+        assert await polling.request(module.preflight, None, wait_for_no_compile=True) is None
         assert polling.dispatched == 2
         assert_discarded(polling, owner)
     finally:
@@ -198,9 +211,9 @@ async def test_snapshot_cleanup_preserves_sibling_response(polling):
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        sibling = await polling.hub.send_command("session", "sibling", {})
+        sibling = await polling.request(polling.hub.send_command, "session", "sibling", {})
         entry = owner.entries[0]
-        assert await module.preflight(None, wait_for_no_compile=True) is None
+        assert await polling.request(module.preflight, None, wait_for_no_compile=True) is None
         assert owner.entries == [entry]
         assert len(polling.hub._retained_results) == 1
         assert sibling["data"]["command"] == "sibling"
@@ -216,7 +229,7 @@ async def test_snapshot_cleanup_preserves_nested_refresh_response(polling, monke
     success = error is None
 
     async def nested(_ctx, **_kwargs):
-        response = await polling.hub.send_command("session", "refresh", {})
+        response = await polling.request(polling.hub.send_command, "session", "refresh", {})
         response["success"] = success
         if not success:
             response["error"] = error
@@ -226,7 +239,9 @@ async def test_snapshot_cleanup_preserves_nested_refresh_response(polling, monke
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        result = await module.preflight(None, refresh_if_dirty=True, wait_for_no_compile=True)
+        result = await polling.request(
+            module.preflight, None, refresh_if_dirty=True, wait_for_no_compile=True
+        )
         assert (result is None) is success
         if not success:
             assert result.data == {"command": "refresh"}
@@ -244,8 +259,8 @@ async def test_local_busy_payload_discards_internal_snapshot(polling, kind):
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        result = await module.preflight(
-            None, wait_for_no_compile=True, requires_no_tests=True, max_wait_s=0
+        result = await polling.request(
+            module.preflight, None, wait_for_no_compile=True, requires_no_tests=True, max_wait_s=0
         )
         assert result.error == "busy"
         assert result.data["reason"] == ("tests_running" if kind == "tests" else "compiling")
@@ -261,7 +276,7 @@ async def test_diagnostic_delivery_adopts_current_observation(polling):
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        result = await module.preflight(None)
+        result = await polling.request(module.preflight, None)
         assert result.error == "editor_unresponsive"
         assert result.data["diagnostics"]["status"] == "unresponsive"
         assert len(polling.hub._retained_results) == len(owner.entries) == 1
@@ -284,9 +299,9 @@ async def test_cancel_discards_observations_without_closing_parent(polling, oute
         if outer_scope:
             with anyio.CancelScope() as scope:
                 scopes.append(scope)
-                await module.preflight(None, wait_for_no_compile=True)
+                await polling.request(module.preflight, None, wait_for_no_compile=True)
         else:
-            await module.preflight(None, wait_for_no_compile=True)
+            await polling.request(module.preflight, None, wait_for_no_compile=True)
         done.set()
 
     task = asyncio.create_task(caller())
@@ -323,32 +338,35 @@ from transport.response_limit_middleware import ResponseLimitMiddleware
 async def scenario():
     with MonkeyPatch.context() as monkeypatch:
         fixture = regression.polling.__wrapped__(monkeypatch)
-        state = next(fixture)
-        regression.narrow_budget(state, monkeypatch)
-        if CANCEL:
-            state.blocked_at = 3
-        app = FastMCP("prefab-preflight-ownership")
-        app.add_middleware(ResponseLimitMiddleware())
-        app.tool(regression.prefabs.manage_prefabs)
-        async with Client(app, mode=MODE) as client:
-            call = asyncio.create_task(client.call_tool("manage_prefabs", {"action":"get_info", "prefab_path":"Assets/Fixture.prefab"}))
-            if CANCEL:
-                await asyncio.wait_for(state.blocked.wait(), 2)
-                call.cancel()
-                await asyncio.gather(call, return_exceptions=True)
-                for _ in range(100):
-                    if not state.hub._pending and not state.hub._retained_results:
-                        break
-                    await asyncio.sleep(0.01)
-                assert not state.tool_calls
-            else:
-                result = await call
-                assert json.loads(result.content[0].text)["success"] is True
-                assert state.calls == 12
-                assert state.tool_calls == [("manage_prefabs", 12)]
-                assert max(state.observations) <= 1
-            assert not state.hub._pending and not state.hub._retained_results
-        fixture.close()
+        state = await anext(fixture)
+        try:
+            async with state.auth.requester("requester:alice"):
+                regression.narrow_budget(state, monkeypatch)
+                if CANCEL:
+                    state.blocked_at = 3
+                app = FastMCP("prefab-preflight-ownership")
+                app.add_middleware(ResponseLimitMiddleware())
+                app.tool(regression.prefabs.manage_prefabs)
+                async with Client(app, mode=MODE) as client:
+                    call = asyncio.create_task(client.call_tool("manage_prefabs", {"action":"get_info", "prefab_path":"Assets/Fixture.prefab"}))
+                    if CANCEL:
+                        await asyncio.wait_for(state.blocked.wait(), 2)
+                        call.cancel()
+                        await asyncio.gather(call, return_exceptions=True)
+                        for _ in range(100):
+                            if not state.hub._pending and not state.hub._retained_results:
+                                break
+                            await asyncio.sleep(0.01)
+                        assert not state.tool_calls
+                    else:
+                        result = await call
+                        assert json.loads(result.content[0].text)["success"] is True
+                        assert state.calls == 12
+                        assert state.tool_calls == [("manage_prefabs", 12)]
+                        assert max(state.observations) <= 1
+                    assert not state.hub._pending and not state.hub._retained_results
+        finally:
+            await fixture.aclose()
 asyncio.run(scenario())
 """
     source = source.replace("MODE", repr(mode)).replace("CANCEL", repr(cancel))

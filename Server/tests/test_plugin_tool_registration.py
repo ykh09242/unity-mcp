@@ -90,8 +90,10 @@ def test_unregistered_and_hosted_plugins_do_not_publish_global_tools(tmp_path):
         import asyncio
         import sys
         from unittest.mock import AsyncMock, patch
+        from types import SimpleNamespace
 
         sys.path.insert(0, "src")
+        from tests.remote_credentials import remote_credentials
         from fastmcp import FastMCP
         from core.config import config
         from services.custom_tool_service import CustomToolService
@@ -105,6 +107,7 @@ def test_unregistered_and_hosted_plugins_do_not_publish_global_tools(tmp_path):
             registry = PluginRegistry()
             PluginHub.configure(registry, mcp=mcp)
             socket = AsyncMock()
+            socket.state = SimpleNamespace(plugin_registered=False, plugin_auth_task=None)
             hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
             payload = {"type": "register_tools", "tools": [{"name": "private_custom"}]}
 
@@ -115,15 +118,23 @@ def test_unregistered_and_hosted_plugins_do_not_publish_global_tools(tmp_path):
                 notify.assert_not_awaited()
 
                 config.http_remote_hosted = True
-                await registry.register("session", "Project", "hash", "6000", user_id="owner")
-                PluginHub._connections["session"] = socket
-                await hub.on_receive(socket, payload)
-                assert "private_custom" in (await registry.get_session("session")).tools
-                assert await mcp.list_tools() == []
-                assert service._global_tools == {}
-                notify.assert_awaited_once_with(user_id="owner", project_hash="hash", session_id="session", catalog_revision=1)
+                async with remote_credentials({"plugin:owner": "owner"}) as auth:
+                    try:
+                        await registry.register("session", "Project", "hash", "6000", user_id="owner")
+                        await auth.attach_socket(socket, "plugin:owner")
+                        socket.state.plugin_registered = True
+                        socket.state.plugin_session_id = "session"
+                        socket.state.plugin_generation = "fixture-generation"
+                        PluginHub._connections["session"] = socket
+                        await hub.on_receive(socket, payload)
+                        assert "private_custom" in (await registry.get_session("session")).tools
+                        assert await mcp.list_tools() == []
+                        assert service._global_tools == {}
+                        notify.assert_awaited_once_with(user_id="owner", project_hash="hash", session_id="session", catalog_revision=1)
 
-            await PluginHub.shutdown()
+                    finally:
+                        await PluginHub.shutdown()
+
 
         asyncio.run(scenario())
     """,

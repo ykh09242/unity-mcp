@@ -3,7 +3,7 @@
 import asyncio
 import importlib
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -160,11 +160,17 @@ async def test_missing_remote_owner_does_not_share_or_cache_settings(batch, monk
         return {"success": True, "data": {"settings": {"batch_execute_max_commands": 3}}}
 
     monkeypatch.setattr(batch, "send_with_unity_instance", send)
+    shared_session = Mock(wraps=batch._limit_reads.session)
+    monkeypatch.setattr(batch._limit_reads, "session", shared_session)
     ctx = context(user=None)
-    await asyncio.gather(
-        *(batch._get_max_commands_from_editor_state(ctx, ctx.instance) for _ in range(2))
+    results = await asyncio.gather(
+        *(batch._get_max_commands_from_editor_state(ctx, ctx.instance) for _ in range(2)),
+        return_exceptions=True,
     )
-    assert calls == 2
+    assert len(results) == 2
+    assert all(isinstance(result, batch.CredentialLeaseError) for result in results)
+    assert calls == 0
+    shared_session.assert_not_called()
     assert batch._cached_max_commands == {}
 
 

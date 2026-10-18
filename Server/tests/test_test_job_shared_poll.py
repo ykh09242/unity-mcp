@@ -4,10 +4,14 @@ import asyncio
 import importlib
 import time
 from copy import deepcopy
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+
+from services.api_key_service import ApiKeyService, ValidationResult
+from services.credential_lease import CredentialLeaseError
 
 jobs = importlib.import_module("services.tools.run_tests")
 RUNNING = {"success": True, "data": {"job_id": "job", "status": "running"}}
@@ -23,6 +27,33 @@ def transport(monkeypatch):
     monkeypatch.setattr(jobs, "_update_job_nudge", AsyncMock())
     monkeypatch.setattr(jobs.unity_transport, "send_with_unity_instance", sender)
     return sender
+
+
+@asynccontextmanager
+async def remote_callers(monkeypatch, *principals):
+    """Authenticate only the explicitly remote scenarios with real service leases."""
+    monkeypatch.setattr(ApiKeyService, "_instance", None)
+    service = ApiKeyService("https://fixture.invalid/validate")
+    allowed = {f"requester:{principal}": principal for principal in principals}
+
+    async def validate(key):
+        return ValidationResult(valid=key in allowed, user_id=allowed.get(key))
+
+    monkeypatch.setattr(service, "_validate_external", validate)
+    try:
+        leases = {}
+        for key, principal in allowed.items():
+            lease = (await service.validate(key)).lease
+            assert lease is not None and lease.user_id == principal
+            leases[principal] = lease
+
+        async def call(principal, ctx, job_id="job", **kwargs):
+            async with leases[principal].own():
+                return await jobs.get_test_job(ctx, job_id, **kwargs)
+
+        yield call
+    finally:
+        await service.aclose()
 
 
 def context():
@@ -110,15 +141,16 @@ async def test_user_instance_job_and_detail_flags_are_isolated(transport, monkey
     owner_a = SimpleNamespace(instance="Game@one", get_state=AsyncMock(return_value="a"))
     owner_b = SimpleNamespace(instance="Game@one", get_state=AsyncMock(return_value="b"))
     editor_b = SimpleNamespace(instance="Game@two", get_state=AsyncMock(return_value="a"))
-    await asyncio.gather(
-        jobs.get_test_job(owner_a, "job", wait_timeout=1),
-        jobs.get_test_job(owner_a, "job", wait_timeout=1),
-        jobs.get_test_job(owner_b, "job", wait_timeout=1),
-        jobs.get_test_job(editor_b, "job", wait_timeout=1),
-        jobs.get_test_job(owner_a, "other", wait_timeout=1),
-        jobs.get_test_job(owner_a, "job", include_details=True, wait_timeout=1),
-        jobs.get_test_job(owner_a, "job", include_failed_tests=True, wait_timeout=1),
-    )
+    async with remote_callers(monkeypatch, "a", "b") as call:
+        await asyncio.gather(
+            call("a", owner_a, "job", wait_timeout=1),
+            call("a", owner_a, "job", wait_timeout=1),
+            call("b", owner_b, "job", wait_timeout=1),
+            call("a", editor_b, "job", wait_timeout=1),
+            call("a", owner_a, "other", wait_timeout=1),
+            call("a", owner_a, "job", include_details=True, wait_timeout=1),
+            call("a", owner_a, "job", include_failed_tests=True, wait_timeout=1),
+        )
     assert transport.await_count == 6
 
 
@@ -216,8 +248,16 @@ async def test_unknown_selection_or_remote_owner_keeps_reads_private(
 
     transport.side_effect = fetch
     ctx = SimpleNamespace(get_state=AsyncMock(return_value=None))
-    await asyncio.gather(*(jobs.get_test_job(ctx, "job", wait_timeout=1) for _ in range(2)))
-    assert transport.await_count == 2
+    replies = await asyncio.gather(
+        *(jobs.get_test_job(ctx, "job", wait_timeout=1) for _ in range(2)),
+        return_exceptions=True,
+    )
+    if missing_identity == "owner":
+        assert all(isinstance(reply, CredentialLeaseError) for reply in replies)
+        transport.assert_not_awaited()
+    else:
+        assert all(reply.data.status == "succeeded" for reply in replies)
+        assert transport.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -245,12 +285,25 @@ async def test_replacement_http_session_does_not_join_previous_job_snapshot(tran
         )
 
     transport.side_effect = fetch
-    old = asyncio.create_task(jobs.get_test_job(context("old-session"), "job", wait_timeout=0.2))
-    await received.wait()
-    fresh = await jobs.get_test_job(context("new-session"), "job", wait_timeout=0.05)
-    assert fresh.success is False and "replacement" in fresh.error
-    assert (await old).data.status == "running"
-    assert len(calls) == 2
+    async with remote_callers(monkeypatch, "owned-user") as call:
+        old = asyncio.create_task(call("owned-user", context("old-session"), wait_timeout=0.2))
+        ready = asyncio.create_task(received.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {old, ready}, timeout=1.0, return_when=asyncio.FIRST_COMPLETED
+            )
+            if old in done:
+                await old  # Surface an early caller exception instead of waiting for its event.
+            assert ready in done, "The first polling observation did not start within one second"
+            fresh = await call("owned-user", context("new-session"), wait_timeout=0.05)
+            assert fresh.success is False and "replacement" in fresh.error
+            assert (await old).data.status == "running"
+            assert len(calls) == 2
+        finally:
+            for task in (old, ready):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(old, ready, return_exceptions=True)
 
 
 @pytest.mark.asyncio
