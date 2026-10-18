@@ -3113,6 +3113,17 @@ class PluginHub(WebSocketEndpoint):
                     cause="permission_ended",
                 )
             return MCPResponse(success=False, error="permission_denied").model_dump()
+        except CredentialLeaseError:
+            if budget.dispatched:
+                return command_outcome_unknown(
+                    command_type,
+                    "Remote authorization ended",
+                    session_id=budget.session_id,
+                    command_id=budget.command_id,
+                    phase=budget.phase,
+                    cause="authentication_ended",
+                )
+            return MCPResponse(success=False, error="auth_required").model_dump()
         except TimeoutError:
             return budget.timeout_response(command_type)
 

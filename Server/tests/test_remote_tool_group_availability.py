@@ -26,6 +26,7 @@ def test_remote_optional_groups_follow_each_tenants_catalog_through_real_sdk():
         from fastmcp import Client, Context, FastMCP
         from core.config import config
         from models.models import ToolDefinitionModel
+        from tests.remote_credentials import remote_credentials
         import services.tools as tools
         import transport.unity_instance_middleware as routing
         from transport.plugin_hub import PluginHub
@@ -48,26 +49,33 @@ def test_remote_optional_groups_follow_each_tenants_catalog_through_real_sdk():
         config.http_remote_hosted = True
 
         async def scenario():
-            mcp = FastMCP("remote-optional-groups")
-            tools.register_all_tools(mcp)
-            registry = PluginRegistry()
-            PluginHub._registry = registry
-            PluginHub._mcp = mcp
-            PluginHub._lock = asyncio.Lock()
-            for user, enabled in (("alice", "manage_vfx"), ("bob", "manage_scene")):
-                await registry.register(user, "Project", "shared", "6000", user_id=user)
-                await registry.register_tools_for_session(user, [ToolDefinitionModel(name=enabled)])
-            middleware = routing.UnityInstanceMiddleware()
-            mcp.add_middleware(middleware)
-            for mode in ("2026-07-28", "legacy"):
-                for user, expected in (("alice", "manage_vfx"), ("bob", "manage_scene")):
-                    middleware._resolve_user_id = AsyncMock(return_value=user)
-                    async with Client(mcp, mode=mode) as client:
-                        names = {tool.name for tool in await client.list_tools()}
-                        assert names == {expected}, (mode, user, names)
-                        result = await client.call_tool(expected, {"unity_instance": "Project@shared"})
-                        assert not result.is_error
-                        assert result.content[0].text == user
+            async with remote_credentials({"requester:alice": "alice", "requester:bob": "bob"}) as credentials:
+                class AuthenticatedRouting(routing.UnityInstanceMiddleware):
+                    async def on_message(self, context, call_next):
+                        async with credentials.requester(self.requester_key):
+                            return await super().on_message(context, call_next)
+
+                mcp = FastMCP("remote-optional-groups")
+                tools.register_all_tools(mcp)
+                registry = PluginRegistry()
+                PluginHub._registry = registry
+                PluginHub._mcp = mcp
+                PluginHub._lock = asyncio.Lock()
+                for user, enabled in (("alice", "manage_vfx"), ("bob", "manage_scene")):
+                    await registry.register(user, "Project", "shared", "6000", user_id=user)
+                    await registry.register_tools_for_session(user, [ToolDefinitionModel(name=enabled)])
+                middleware = AuthenticatedRouting()
+                mcp.add_middleware(middleware)
+                for mode in ("2026-07-28", "legacy"):
+                    for user, expected in (("alice", "manage_vfx"), ("bob", "manage_scene")):
+                        middleware.requester_key = f"requester:{user}"
+                        middleware._resolve_user_id = AsyncMock(return_value=user)
+                        async with Client(mcp, mode=mode) as client:
+                            names = {tool.name for tool in await client.list_tools()}
+                            assert names == {expected}, (mode, user, names)
+                            result = await client.call_tool(expected, {"unity_instance": "Project@shared"})
+                            assert not result.is_error
+                            assert result.content[0].text == user
         asyncio.run(scenario())
     """)
 

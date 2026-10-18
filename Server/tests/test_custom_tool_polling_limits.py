@@ -10,6 +10,8 @@ from core.config import config
 from models.models import ToolDefinitionModel
 import services.custom_tool_service as module
 from services.custom_tool_service import CustomToolService
+from services.credential_lease import CredentialLeaseError
+from tests.remote_credentials import remote_credentials
 
 
 class _Mcp:
@@ -170,10 +172,11 @@ async def test_missing_remote_principal_cannot_dispatch(service, monkeypatch):
     send = AsyncMock(return_value={"_mcp_status": "complete"})
     monkeypatch.setattr(service, "get_tool_definition", lookup)
     monkeypatch.setattr(module, "send_with_unity_instance", send)
-    # When: execution is attempted without a user.
-    result = await service.execute_tool("project", "build", "Project@hash", {})
-    # Then: neither catalog lookup nor plugin dispatch can cross tenants.
-    assert not result.success
+    # When: execution is attempted without a user or credential owner.
+    with pytest.raises(CredentialLeaseError, match="^Remote authorization unavailable$") as denied:
+        await service.execute_tool("project", "build", "Project@hash", {})
+    # Then: exact authorization denial occurs before catalog lookup or dispatch.
+    assert denied.value.overloaded is False
     lookup.assert_not_awaited()
     send.assert_not_awaited()
 
@@ -280,25 +283,59 @@ async def test_same_target_budgets_are_isolated_between_users(service, monkeypat
         return {"_mcp_status": "complete", "data": {"owner": kwargs["user_id"]}}
 
     monkeypatch.setattr(module, "send_with_unity_instance", send)
-    tasks = []
-    try:
-        for index in range(16):
-            tasks.append(
-                asyncio.create_task(
-                    service.execute_tool("project", "build", "Project@hash", {}, user_id="user-a")
+    async with remote_credentials(
+        {"requester:a": "user-a", "requester:a-capacity": "user-a", "requester:b": "user-b"}
+    ) as credentials:
+        tasks = []
+        try:
+            for index in range(16):
+                tasks.append(
+                    asyncio.create_task(
+                        credentials.call(
+                            "requester:a",
+                            service.execute_tool,
+                            "project",
+                            "build",
+                            "Project@hash",
+                            {},
+                            user_id="user-a",
+                        )
+                    )
                 )
+                await asyncio.wait_for(entered.get(), timeout=1)
+            assert service._active_polls == 16
+            capacity = await asyncio.wait_for(
+                credentials.call(
+                    "requester:a-capacity",
+                    service.execute_tool,
+                    "project",
+                    "build",
+                    "Project@hash",
+                    {},
+                    user_id="user-a",
+                ),
+                timeout=1,
             )
-            await asyncio.wait_for(entered.get(), timeout=1)
-        # When: the other tenant executes its own tool on its own same-hash target.
-        result = await service.execute_tool(
-            "project", "build", "Project@hash", {}, user_id="user-b"
-        )
-        # Then: first-user capacity and responses cannot leak to the other user.
-        assert result.success
-        assert result.data == {"owner": "user-b"}
-    finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+            assert not capacity.success
+            assert capacity.hint == "retry" and "capacity" in capacity.message.lower()
+            assert entered.empty()
+            # When: the other tenant executes its own tool on its own same-hash target.
+            result = await credentials.call(
+                "requester:b",
+                service.execute_tool,
+                "project",
+                "build",
+                "Project@hash",
+                {},
+                user_id="user-b",
+            )
+            # Then: first-user capacity and responses cannot leak to the other user.
+            assert result.success
+            assert result.data == {"owner": "user-b"}
+            assert service._active_polls == 16
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     assert service._active_polls == 0
     assert service._polls_by_session == service._polls_by_user == {}

@@ -11,9 +11,22 @@ from mcp.shared.exceptions import MCPError
 
 from core.config import config
 from models.models import ToolDefinitionModel
+from tests.remote_credentials import remote_credentials
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 from transport.unity_instance_middleware import UnityInstanceMiddleware
+
+
+class RequesterMiddleware(UnityInstanceMiddleware):
+    """Own the real caller lease inside each server-side SDK request task."""
+
+    def __init__(self, lease):
+        super().__init__()
+        self.requester_lease = lease
+
+    async def on_message(self, context, call_next):
+        async with self.requester_lease.own():
+            return await super().on_message(context, call_next)
 
 
 @pytest_asyncio.fixture
@@ -32,34 +45,37 @@ async def tenant_servers(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "transport.unity_instance_middleware.get_registered_tools", lambda: metadata
     )
-    servers = {}
-    for user in ("alice", "bob", "empty"):
-        if user != "empty":
-            await registry.register(user, user.title(), user, "6000", user_id=user)
-        if user == "alice":
-            await registry.register_tools_for_session(
-                user, [ToolDefinitionModel(name="manage_vfx")]
-            )
-        server = FastMCP(user)
-        middleware = UnityInstanceMiddleware()
-        monkeypatch.setattr(middleware, "_resolve_user_id", AsyncMock(return_value=user))
-        server.add_middleware(middleware)
+    async with remote_credentials(
+        {"requester:alice": "alice", "requester:bob": "bob", "requester:empty": "empty"}
+    ) as auth:
+        servers = {}
+        for user in ("alice", "bob", "empty"):
+            if user != "empty":
+                await registry.register(user, user.title(), user, "6000", user_id=user)
+            if user == "alice":
+                await registry.register_tools_for_session(
+                    user, [ToolDefinitionModel(name="manage_vfx")]
+                )
+            server = FastMCP(user)
+            middleware = RequesterMiddleware(await auth.lease(f"requester:{user}"))
+            monkeypatch.setattr(middleware, "_resolve_user_id", AsyncMock(return_value=user))
+            server.add_middleware(middleware)
 
-        @server.tool
-        def effect_probe() -> str:
-            return "effect"
+            @server.tool
+            def effect_probe() -> str:
+                return "effect"
 
-        @server.tool
-        def disabled_probe() -> str:
-            pytest.fail("Disabled Unity tool must never execute")
+            @server.tool
+            def disabled_probe() -> str:
+                pytest.fail("Disabled Unity tool must never execute")
 
-        @server.tool
-        def helper_probe() -> str:
-            return "helper"
+            @server.tool
+            def helper_probe() -> str:
+                return "helper"
 
-        servers[user] = server
-    await registry.register("alice-off", "AliceOff", "alice-off", "6000", user_id="alice")
-    return servers
+            servers[user] = server
+        await registry.register("alice-off", "AliceOff", "alice-off", "6000", user_id="alice")
+        yield servers
 
 
 @pytest.mark.asyncio

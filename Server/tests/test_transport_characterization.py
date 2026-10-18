@@ -42,6 +42,7 @@ from transport.models import (
 )
 from models.models import ToolDefinitionModel
 from core.config import config
+from tests.remote_credentials import remote_credentials
 
 
 # ============================================================================
@@ -223,6 +224,9 @@ class TestUnityInstanceMiddlewareInjection:
         # Create middleware context wrapper
         middleware_ctx = Mock()
         middleware_ctx.fastmcp_context = mock_context
+        middleware_ctx.message = SimpleNamespace(
+            name="manage_scene", arguments={"action": "get_active"}
+        )
 
         call_next_called = False
 
@@ -268,6 +272,9 @@ class TestUnityInstanceMiddlewareInjection:
         # Don't set any instance (will try auto-select and fail)
         middleware_ctx = Mock()
         middleware_ctx.fastmcp_context = mock_context
+        middleware_ctx.message = SimpleNamespace(
+            name="manage_scene", arguments={"action": "get_active"}
+        )
 
         async def mock_call_next(_ctx):
             return {"status": "ok"}
@@ -590,7 +597,13 @@ class TestUnityInstanceMiddlewareInjection:
                             )
                             mock_get_tools.return_value = [SimpleNamespace(name="manage_scene")]
 
-                            filtered = await middleware.on_list_tools(middleware_ctx, call_next)
+                            async with remote_credentials(
+                                {"requester:user-123": "user-123"}
+                            ) as credentials:
+                                async with credentials.requester("requester:user-123"):
+                                    filtered = await middleware.on_list_tools(
+                                        middleware_ctx, call_next
+                                    )
 
         assert [tool.name for tool in filtered] == ["manage_scene"]
         mock_get_tools.assert_awaited_once_with("abc123", user_id="user-123")
