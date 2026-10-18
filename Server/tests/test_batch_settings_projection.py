@@ -14,6 +14,9 @@ from unittest.mock import AsyncMock
 import weakref
 
 import pytest
+import pytest_asyncio
+
+from tests.remote_credentials import remote_credentials
 from starlette.websockets import WebSocketState
 
 from core.config import config
@@ -26,8 +29,8 @@ from transport.plugin_hub import PluginHub
 module = importlib.import_module("services.tools.batch_execute")
 
 
-@pytest.fixture
-def settings(monkeypatch):
+@pytest_asyncio.fixture
+async def settings(monkeypatch):
     state = SimpleNamespace(
         copies=[],
         refs=[],
@@ -122,10 +125,20 @@ def settings(monkeypatch):
     monkeypatch.setattr(module, "send_with_unity_instance", dispatch)
     monkeypatch.setattr(module, "get_unity_instance_from_context", selector)
     module.invalidate_cached_max_commands()
-    yield state
-    module.invalidate_cached_max_commands()
-    for entry in OwnedHub._pending.values():
-        entry["future"].cancel()
+    async with remote_credentials({"requester:alice": "alice", "plugin:alice": "alice"}) as auth:
+        await auth.attach_socket(socket, "plugin:alice")
+        state.auth = auth
+
+        async def request(function, *args, **kwargs):
+            return await auth.call("requester:alice", function, *args, **kwargs)
+
+        state.request = request
+        try:
+            yield state
+        finally:
+            module.invalidate_cached_max_commands()
+            for entry in OwnedHub._pending.values():
+                entry["future"].cancel()
 
 
 def context():
@@ -158,7 +171,9 @@ async def test_eight_batches_only_copy_scalar_and_keep_all_results(settings, mon
         owners.append(owner)
         token = response_owner.set(owner)
         try:
-            return await module.batch_execute(context(), [{"tool": "read_console"}])
+            return await settings.request(
+                module.batch_execute, context(), [{"tool": "read_console"}]
+            )
         finally:
             response_owner.reset(token)
 
@@ -193,7 +208,12 @@ async def test_invalid_projection_preserves_uncached_default(settings, limit):
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        assert await module._get_max_commands_from_editor_state(context(), "Selected@fixture") == 25
+        assert (
+            await settings.request(
+                module._get_max_commands_from_editor_state, context(), "Selected@fixture"
+            )
+            == 25
+        )
         assert not module._cached_max_commands
         assert not settings.copies and not settings.hub._retained_results
     finally:
@@ -208,7 +228,12 @@ async def test_rpc_exception_preserves_default_and_releases_raw_owner(settings, 
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        assert await module._get_max_commands_from_editor_state(context(), "Selected@fixture") == 25
+        assert (
+            await settings.request(
+                module._get_max_commands_from_editor_state, context(), "Selected@fixture"
+            )
+            == 25
+        )
         assert not settings.hub._retained_results and not owner.entries
         assert not owner.released
     finally:
@@ -224,7 +249,12 @@ async def test_actual_rpc_capacity_refusal_keeps_existing_default_policy(setting
     try:
         # A settings RPC refusal has always used the uncached default. Only
         # SharedRead capacity failures have a separate fail-closed batch response.
-        assert await module._get_max_commands_from_editor_state(context(), "Selected@fixture") == 25
+        assert (
+            await settings.request(
+                module._get_max_commands_from_editor_state, context(), "Selected@fixture"
+            )
+            == 25
+        )
         assert not module._cached_max_commands and not settings.hub._retained_results
     finally:
         response_owner.reset(token)
@@ -237,7 +267,12 @@ async def test_valid_settings_projection_preserves_existing_success_flag_contrac
     owner = ResponseOwner()
     token = response_owner.set(owner)
     try:
-        assert await module._get_max_commands_from_editor_state(context(), "Selected@fixture") == 3
+        assert (
+            await settings.request(
+                module._get_max_commands_from_editor_state, context(), "Selected@fixture"
+            )
+            == 3
+        )
         assert not settings.copies and not settings.hub._retained_results
     finally:
         response_owner.reset(token)
@@ -255,7 +290,9 @@ async def test_settings_cancellation_keeps_active_read_or_closes_final_owner(set
         owners.append(owner)
         token = response_owner.set(owner)
         try:
-            return await module.batch_execute(context(), [{"tool": "read_console"}])
+            return await settings.request(
+                module.batch_execute, context(), [{"tool": "read_console"}]
+            )
         finally:
             response_owner.reset(token)
 
@@ -298,18 +335,21 @@ from transport.response_limit_middleware import ResponseLimitMiddleware
 async def scenario():
     with MonkeyPatch.context() as monkeypatch:
         fixture = regression.settings.__wrapped__(monkeypatch)
-        state = next(fixture)
-        app = FastMCP("batch-settings-projection")
-        app.add_middleware(ResponseLimitMiddleware())
-        app.tool(regression.module.batch_execute)
-        async with Client(app, mode=MODE) as client:
-            result = await client.call_tool("batch_execute", {"commands":[{"tool":"read_console"}]})
-            assert json.loads(result.content[0].text)["success"] is True
-            assert not state.copies
-            assert state.hub_at_batch == [0]
-            assert state.reads == state.batches == 1
-            assert not state.hub._retained_results and not state.hub._pending
-        fixture.close()
+        state = await anext(fixture)
+        try:
+            async with state.auth.requester("requester:alice"):
+                app = FastMCP("batch-settings-projection")
+                app.add_middleware(ResponseLimitMiddleware())
+                app.tool(regression.module.batch_execute)
+                async with Client(app, mode=MODE) as client:
+                    result = await client.call_tool("batch_execute", {"commands":[{"tool":"read_console"}]})
+                    assert json.loads(result.content[0].text)["success"] is True
+                    assert not state.copies
+                    assert state.hub_at_batch == [0]
+                    assert state.reads == state.batches == 1
+                    assert not state.hub._retained_results and not state.hub._pending
+        finally:
+            await fixture.aclose()
 asyncio.run(scenario())
 """
     source = source.replace("MODE", repr(mode))

@@ -1,11 +1,13 @@
 """Only commands that consume a connection read snapshot should capture one."""
 
 import asyncio
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
 import pytest_asyncio
+from tests.remote_credentials import remote_credentials
 from core.config import config
 from starlette.websockets import WebSocketState
 from transport.charge_ledger import ChargeLedger
@@ -98,25 +100,33 @@ async def test_non_fast_commands_keep_admission_without_unused_snapshot(
     user = "alice" if hosted else None
     await wire.registry.register("session", "Fixture", "owned-hash", "test", user_id=user)
     wire.websocket.state.user_id = user
-    for command in (
-        "manage_camera",
-        "manage_graphics",
-        "manage_asset",
-        "manage_scene",
-        "batch_execute",
-        "execute_custom_tool",
+    async with (
+        remote_credentials({"requester:alice": "alice", "plugin:alice": "alice"})
+        if hosted
+        else nullcontext() as auth
     ):
-        before = wire.counts.copy()
-        result = await wire.hub.send_command_for_instance(
-            "Fixture@owned-hash", command, {}, user_id=user, retry_on_reload=retry_on_reload
-        )
-        assert result == {"success": True, "data": {"command": command}}
-        assert wire.counts["session"] - before["session"] == 1
-        assert wire.counts["hash"] - before["hash"] == 1
-        assert wire.counts["list"] == 0
-        assert not wire.hub._pending and not wire.hub._retained_results
-    assert wire.hub.identity_calls == 0
-    assert len(wire.commands) == 6
+        if hosted:
+            await auth.attach_socket(wire.websocket, "plugin:alice")
+        async with auth.requester("requester:alice") if hosted else nullcontext():
+            for command in (
+                "manage_camera",
+                "manage_graphics",
+                "manage_asset",
+                "manage_scene",
+                "batch_execute",
+                "execute_custom_tool",
+            ):
+                before = wire.counts.copy()
+                result = await wire.hub.send_command_for_instance(
+                    "Fixture@owned-hash", command, {}, user_id=user, retry_on_reload=retry_on_reload
+                )
+                assert result == {"success": True, "data": {"command": command}}
+                assert wire.counts["session"] - before["session"] == 1
+                assert wire.counts["hash"] - before["hash"] == 1
+                assert wire.counts["list"] == 0
+                assert not wire.hub._pending and not wire.hub._retained_results
+            assert wire.hub.identity_calls == 0
+            assert len(wire.commands) == 6
 
 
 @pytest.mark.asyncio

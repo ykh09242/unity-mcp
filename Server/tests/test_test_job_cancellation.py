@@ -96,6 +96,8 @@ async def test_invalid_direct_deadline_has_no_preflight_or_native_side_effect(mo
 def test_cancel_catalog_and_selected_tenant_enforcement_in_production_middleware(tmp_path):
     program = r"""
         import anyio, json, socket
+        from contextlib import AsyncExitStack
+        from tests.remote_credentials import remote_credentials
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
         from fastmcp import Client, FastMCP
@@ -119,55 +121,66 @@ def test_cancel_catalog_and_selected_tenant_enforcement_in_production_middleware
             for hosted in (False, True):
                 config.transport_mode = "http"
                 config.http_remote_hosted = hosted
-                registry = PluginRegistry()
-                PluginHub.configure(registry)
-                for sid, owner in (("owned", "alice"), ("foreign", "bob")):
-                    await registry.register(sid, sid, sid + "-hash", "test", user_id=owner if hosted else None)
-                    await registry.register_tools_for_session(sid, [ToolDefinitionModel(name="cancel_test_job")])
-                    PluginHub._connections[sid] = SimpleNamespace(state=SimpleNamespace(user_id=owner,
-                        plugin_generation=sid + "-generation", plugin_registered=True, plugin_session_id=sid),
-                        client_state=WebSocketState.CONNECTED, application_state=WebSocketState.CONNECTED)
-                middleware = UnityInstanceMiddleware()
-                principal = AsyncMock(return_value="alice" if hosted else None)
-                middleware._resolve_user_id = principal
-                transport._resolve_user_id_from_request = principal
-                app = FastMCP("test-cancel-catalog")
-                app.add_middleware(middleware)
-                tools.register_all_tools(app)
-                PluginHub._mcp = app
-                PluginHub._sync_server_tool_visibility([ToolDefinitionModel(name="cancel_test_job")])
-                calls = []
-                async def dispatch(instance, command, params, *, user_id, **kwargs):
-                    sid = await PluginHub._resolve_session_id(instance, user_id=user_id)
-                    calls.append((sid, command, user_id))
-                    return {"success": True, "data": {"job_id": "a" * 32, "status": "running", "native_control": {"request_state": "accepted", "termination": "cleanup_pending"}}}
-                PluginHub.send_command_for_instance = dispatch
-                for protocol in ("legacy", "2026-07-28"):
-                    calls.clear()
-                    async with Client(app, mode=protocol) as client:
-                        assert "cancel_test_job" in {t.name for t in await client.list_tools()}
-                        reply = await client.call_tool("cancel_test_job", {"job_id": "a" * 32, "unity_instance": "owned@owned-hash"})
-                        assert json.loads(reply.content[0].text)["success"] is True
-                        assert calls == [("owned", "cancel_test_job", "alice" if hosted else None)]
+                async with AsyncExitStack() as credentials:
+                    if hosted:
+                        auth = await credentials.enter_async_context(remote_credentials({"requester:alice": "alice", "plugin:owned": "alice", "plugin:foreign": "bob"}))
+                    credentials.push_async_callback(PluginHub.shutdown)
+                    registry = PluginRegistry()
+                    PluginHub.configure(registry)
+                    for sid, owner in (("owned", "alice"), ("foreign", "bob")):
+                        await registry.register(sid, sid, sid + "-hash", "test", user_id=owner if hosted else None)
+                        await registry.register_tools_for_session(sid, [ToolDefinitionModel(name="cancel_test_job")])
+                        PluginHub._connections[sid] = SimpleNamespace(state=SimpleNamespace(user_id=owner,
+                            plugin_generation=sid + "-generation", plugin_registered=True, plugin_session_id=sid),
+                            client_state=WebSocketState.CONNECTED, application_state=WebSocketState.CONNECTED,
+                            close=AsyncMock())
                         if hosted:
-                            try:
-                                reply = await client.call_tool("cancel_test_job", {"job_id": "a" * 32, "unity_instance": "foreign@foreign-hash"}, raise_on_error=False)
-                            except MCPError: pass
-                            else: assert reply.is_error
-                            assert len(calls) == 1
-                # A connected populated catalog must not grant an absent native tool.
-                await registry.register_tools_for_session("owned", [ToolDefinitionModel(name="run_tests")])
-                PluginHub._sync_server_tool_visibility([ToolDefinitionModel(name="run_tests")])
-                async with Client(app) as client:
-                    try:
-                        reply = await client.call_tool("cancel_test_job", {"job_id": "a" * 32, "unity_instance": "owned@owned-hash"}, raise_on_error=False)
-                    except MCPError: pass
-                    else: assert reply.is_error
+                            await auth.attach_socket(PluginHub._connections[sid], "plugin:" + sid)
+                    middleware = UnityInstanceMiddleware()
+                    if hosted:
+                        await credentials.enter_async_context(auth.requester("requester:alice"))
+                    app = FastMCP("test-cancel-catalog")
+                    app.add_middleware(middleware)
+                    tools.register_all_tools(app)
+                    PluginHub._mcp = app
+                    PluginHub._sync_server_tool_visibility([ToolDefinitionModel(name="cancel_test_job")])
+                    calls = []
+                    async def dispatch(instance, command, params, *, user_id, **kwargs):
+                        sid = await PluginHub._resolve_session_id(instance, user_id=user_id)
+                        calls.append((sid, command, user_id))
+                        return {"success": True, "data": {"job_id": "a" * 32, "status": "running", "native_control": {"request_state": "accepted", "termination": "cleanup_pending"}}}
+                    PluginHub.send_command_for_instance = dispatch
+                    for protocol in ("legacy", "2026-07-28"):
+                        calls.clear()
+                        async with Client(app, mode=protocol) as client:
+                            assert "cancel_test_job" in {t.name for t in await client.list_tools()}
+                            reply = await client.call_tool("cancel_test_job", {"job_id": "a" * 32, "unity_instance": "owned@owned-hash"})
+                            assert json.loads(reply.content[0].text)["success"] is True
+                            assert calls == [("owned", "cancel_test_job", "alice" if hosted else None)]
+                            if hosted:
+                                try:
+                                    reply = await client.call_tool("cancel_test_job", {"job_id": "a" * 32, "unity_instance": "foreign@foreign-hash"}, raise_on_error=False)
+                                except MCPError: pass
+                                else: assert reply.is_error
+                                assert len(calls) == 1
+                    # A connected populated catalog must not grant an absent native tool.
+                    await registry.register_tools_for_session("owned", [ToolDefinitionModel(name="run_tests")])
+                    PluginHub._sync_server_tool_visibility([ToolDefinitionModel(name="run_tests")])
+                    async with Client(app) as client:
+                        try:
+                            reply = await client.call_tool("cancel_test_job", {"job_id": "a" * 32, "unity_instance": "owned@owned-hash"}, raise_on_error=False)
+                        except MCPError: pass
+                        else: assert reply.is_error
         anyio.run(scenario)
     """
     env = dict(
         os.environ,
-        PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"),
+        PYTHONPATH=os.pathsep.join(
+            (
+                str(Path(__file__).resolve().parents[1]),
+                str(Path(__file__).resolve().parents[1] / "src"),
+            )
+        ),
         HOME=str(tmp_path),
         UNITY_MCP_TELEMETRY_ENABLED="false",
     )

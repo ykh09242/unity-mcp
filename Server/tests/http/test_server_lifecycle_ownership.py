@@ -11,6 +11,7 @@ from fastmcp import Client, FastMCP
 
 import main
 from core.config import config
+from tests.remote_credentials import remote_credentials
 from transport.models import RegisterMessage
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
@@ -20,14 +21,15 @@ from transport.plugin_registry import PluginRegistry
 async def lifecycle_state(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "1")
-    monkeypatch.setattr(main.threading, "Timer", Mock())
+    timer = Mock()
+    monkeypatch.setattr(main.threading, "Timer", timer)
     monkeypatch.setattr(main, "_plugin_registry", None)
     monkeypatch.setattr(main, "_unity_connection_pool", None)
     for name in ("_connections", "_pending", "_ping_tasks", "_last_pong"):
         monkeypatch.setattr(PluginHub, name, {})
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
-    yield
+    yield timer
     tasks = list(PluginHub._ping_tasks.values())
     for task in tasks:
         task.cancel()
@@ -132,7 +134,7 @@ async def test_cancelled_startup_releases_configured_hub_and_pool(
     assert not PluginHub.is_configured()
     pool.disconnect_all.assert_called_once()
     assert main._unity_connection_pool is None
-    main.threading.Timer.return_value.cancel.assert_called()
+    lifecycle_state.return_value.cancel.assert_called()
 
 
 @pytest.mark.asyncio
@@ -278,13 +280,18 @@ async def test_remote_shutdown_clears_all_tenants_without_unscoped_listing(
     monkeypatch.setattr(config, "http_remote_hosted", True)
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     sockets = []
-    async with main.server_lifespan(FastMCP("tenant-shutdown")) as state:
+    async with (
+        remote_credentials({"plugin:alice": "alice", "plugin:bob": "bob"}) as auth,
+        main.server_lifespan(FastMCP("tenant-shutdown")) as state,
+    ):
         registry = state["plugin_registry"]
         for user in ("alice", "bob"):
             ws = socket_stub()
             ws.state.user_id = user
+            await auth.attach_socket(ws, f"plugin:{user}")
             sockets.append(ws)
             await hub._handle_register(ws, RegisterMessage(project_hash="shared"))
+            assert await registry.get_session_id_by_hash("shared", user_id=user) is not None
     for user, ws in zip(("alice", "bob"), sockets):
         assert await registry.list_sessions(user_id=user) == {}
         assert await registry.get_session_id_by_hash("shared", user_id=user) is None

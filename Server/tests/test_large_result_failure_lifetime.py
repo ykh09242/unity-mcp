@@ -9,6 +9,7 @@ import weakref
 
 import pytest
 import pytest_asyncio
+from tests.remote_credentials import remote_credentials
 from unittest.mock import AsyncMock
 
 from core.config import config
@@ -74,14 +75,17 @@ async def owned_hub(monkeypatch):
         release=release,
         buffers=references,
     )
-    try:
-        yield state
-    finally:
-        release.set()
-        await OwnedHub.on_disconnect(state.hub, socket, 4400)
-        if future.done() and not future.cancelled():
-            future.exception()
-        await OwnedHub.shutdown()
+    async with remote_credentials({"plugin:alice": "alice", "plugin:bob": "bob"}) as auth:
+        await auth.attach_socket(socket, "plugin:alice")
+        state.auth = auth
+        try:
+            yield state
+        finally:
+            release.set()
+            await OwnedHub.on_disconnect(state.hub, socket, 4400)
+            if future.done() and not future.cancelled():
+                future.exception()
+            await OwnedHub.shutdown()
 
 
 async def failed_transfer(state, kind):
@@ -172,6 +176,7 @@ async def test_failure_close_keeps_other_generation_allocation_and_owner_charge(
     other_socket = SimpleNamespace(
         state=SimpleNamespace(plugin_generation="bob-generation"), close=AsyncMock()
     )
+    await state.auth.attach_socket(other_socket, "plugin:bob")
     state.cls._connections["bob-session"] = other_socket
     future = asyncio.get_running_loop().create_future()
     state.cls._pending[other] = {"future": future, "session_id": "bob-session", "user_id": "bob"}

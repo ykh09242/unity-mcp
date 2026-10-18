@@ -12,6 +12,7 @@ from tests.test_http_command_outcome import command_hub  # pylint: disable=unuse
 from tests.http.test_http_request_deadline import request_server
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
+from tests.remote_credentials import remote_credentials
 
 
 def capability_server():
@@ -260,41 +261,55 @@ async def test_slow_probe_spends_one_bounded_budget_and_keeps_verified_partial_r
 
 @pytest.mark.asyncio
 async def test_known_negotiated_flags_and_counters_are_tenant_scoped(command_hub, monkeypatch):
-    # Given: two authenticated tenants own the same project hash with different sessions.
-    from core.config import config
+    async with remote_credentials(
+        {
+            "requester:user-a": "user-a",
+            "plugin:user-a": "user-a",
+            "requester:user-b": "user-b",
+            "plugin:user-b": "user-b",
+        }
+    ) as auth:
+        # Given: two authenticated tenants own the same project hash with different sessions.
+        from core.config import config
 
-    monkeypatch.setattr(config, "http_remote_hosted", True)
-    await command_hub.registry.register("owned", "Owned", "hash", "6000", user_id="user-a")
-    await command_hub.registry.register("foreign", "Foreign", "hash", "6000", user_id="user-b")
-    owned = command_hub.websocket
-    owned.state.plugin_session_id = "owned"
-    owned.state.user_id = "user-a"
-    owned.state.plugin_features = frozenset({"command_cancel_v1", "unknown-peer-secret"})
-    PluginHub._connections["owned"] = owned
-    PluginHub._pending["owned-command"] = {
-        "user_id": "user-a",
-        "session_id": "owned",
-        "payload_bytes": 1,
-    }
-    PluginHub._pending["foreign-command"] = {
-        "user_id": "user-b",
-        "session_id": "foreign",
-        "payload_bytes": 1,
-    }
-    try:
-        # When: the existing registry and current socket establish one tenant's snapshot.
-        result = await PluginHub.get_capability_snapshot("Owned@hash", user_id="user-a")
-        denied = await PluginHub.get_capability_snapshot("Owned@hash")
+        monkeypatch.setattr(config, "http_remote_hosted", True)
+        await command_hub.registry.register("owned", "Owned", "hash", "6000", user_id="user-a")
+        await command_hub.registry.register("foreign", "Foreign", "hash", "6000", user_id="user-b")
+        owned = command_hub.websocket
+        owned.state.plugin_session_id = "owned"
+        owned.state.user_id = "user-a"
+        await auth.attach_socket(owned, "plugin:user-a")
+        owned.state.plugin_features = frozenset({"command_cancel_v1", "unknown-peer-secret"})
+        PluginHub._connections["owned"] = owned
+        PluginHub._pending["owned-command"] = {
+            "user_id": "user-a",
+            "session_id": "owned",
+            "payload_bytes": 1,
+        }
+        PluginHub._pending["foreign-command"] = {
+            "user_id": "user-b",
+            "session_id": "foreign",
+            "payload_bytes": 1,
+        }
+        try:
+            # When: the existing registry and current socket establish one tenant's snapshot.
+            result = await auth.call(
+                "requester:user-a",
+                PluginHub.get_capability_snapshot,
+                "Owned@hash",
+                user_id="user-a",
+            )
+            denied = await PluginHub.get_capability_snapshot("Owned@hash")
 
-        # Then: foreign counters, unknown flags and unauthenticated metadata are never exposed.
-        assert result.instance_id == "Owned@hash"
-        assert result.negotiated == ["command_cancel_v1"]
-        assert result.pending_commands == result.tenant_pending_commands == 1
-        assert "unknown-peer-secret" not in result.model_dump_json()
-        assert denied.status == "auth_required"
-        assert denied.instance_id is None
-    finally:
-        PluginHub._pending.clear()
+            # Then: foreign counters, unknown flags and unauthenticated metadata are never exposed.
+            assert result.instance_id == "Owned@hash"
+            assert result.negotiated == ["command_cancel_v1"]
+            assert result.pending_commands == result.tenant_pending_commands == 1
+            assert "unknown-peer-secret" not in result.model_dump_json()
+            assert denied.status == "auth_required"
+            assert denied.instance_id is None
+        finally:
+            PluginHub._pending.clear()
 
 
 @pytest.mark.asyncio
@@ -325,35 +340,52 @@ async def test_legacy_stdio_without_authenticated_generation_stays_unknown(monke
 
 @pytest.mark.asyncio
 async def test_principal_change_discards_selected_project_identity(command_hub, monkeypatch):
-    # Given: request ownership changes before aggregate evidence can be verified.
-    from core.config import config
-    import services.capabilities as capabilities
+    async with remote_credentials(
+        {
+            "requester:user-a": "user-a",
+            "plugin:user-a": "user-a",
+            "requester:user-b": "user-b",
+            "plugin:user-b": "user-b",
+        }
+    ) as auth:
+        # Given: request ownership changes before aggregate evidence can be verified.
+        from core.config import config
+        import services.capabilities as capabilities
 
-    monkeypatch.setattr(config, "http_remote_hosted", True)
-    await command_hub.registry.register("session", "PrivateOwned", "hash", "6000", user_id="user-a")
-    command_hub.websocket.state.user_id = "user-a"
-    owner = {"user_id": "user-a", "unity_instance": "Selected@hash"}
-    await install_native_replies(command_hub, native_observations())
-    reply = command_hub.websocket.send_json
+        monkeypatch.setattr(config, "http_remote_hosted", True)
+        await command_hub.registry.register(
+            "session", "PrivateOwned", "hash", "6000", user_id="user-a"
+        )
+        command_hub.websocket.state.user_id = "user-a"
+        await auth.attach_socket(command_hub.websocket, "plugin:user-a")
+        owner = {"user_id": "user-a", "unity_instance": "Selected@hash"}
+        await install_native_replies(command_hub, native_observations())
+        reply = command_hub.websocket.send_json
 
-    async def change_owner(message):
-        await reply(message)
-        owner["user_id"] = "user-b"
+        async def change_owner(message):
+            await reply(message)
+            owner["user_id"] = "user-b"
 
-    async def state(name):
-        return owner.get(name)
+        async def state(name):
+            return owner.get(name)
 
-    command_hub.websocket.send_json = change_owner
+        command_hub.websocket.send_json = change_owner
 
-    # When: the composition service observes that its authenticated owner no longer matches.
-    data = await capabilities.query_project_capabilities(SimpleNamespace(get_state=state))
+        # When: the composition service observes that its authenticated owner no longer matches.
+        data = await auth.call(
+            "requester:user-a",
+            capabilities.query_project_capabilities,
+            SimpleNamespace(get_state=state),
+        )
 
-    # Then: even previously captured project identity is absent from the invalidated result.
-    assert data.connection.status == "unknown"
-    assert data.connection.instance_id is None
-    assert data.target.instance_id is None
-    assert data.target.project_hash is None
-    assert "PrivateOwned" not in data.model_dump_json()
+        assert command_hub.sent, "Principal-change fixture must reach a real native observation"
+
+        # Then: even previously captured project identity is absent from the invalidated result.
+        assert data.connection.status == "unknown"
+        assert data.connection.instance_id is None
+        assert data.target.instance_id is None
+        assert data.target.project_hash is None
+        assert "PrivateOwned" not in data.model_dump_json()
 
 
 @pytest.mark.asyncio

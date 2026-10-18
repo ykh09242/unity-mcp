@@ -152,15 +152,14 @@ def test_actual_http_native_catalog_controls_handle_alias(mode, tmp_path):
         from transport.plugin_hub import PluginHub
         from transport.plugin_registry import PluginRegistry
         from transport.unity_instance_middleware import UnityInstanceMiddleware
+        from contextlib import AsyncExitStack
+        from tests.remote_credentials import remote_credentials
 
         async def main():
             def deny(*args, **kwargs): raise AssertionError("Application network forbidden")
             socket.socket.connect = deny
             config.transport_mode = "http"
             config.http_remote_hosted = True
-            import transport.unity_transport as transport
-            # The SDK fixture has no HTTP request/API key; inject its authenticated user only.
-            transport._resolve_user_id_from_request = AsyncMock(return_value="reader")
             module.preflight = AsyncMock(return_value=None)
             metadata = [x for x in get_registered_tools() if x["name"] == "manage_object_handles"]
             tools.discover_modules = lambda *args: []
@@ -169,20 +168,23 @@ def test_actual_http_native_catalog_controls_handle_alias(mode, tmp_path):
             tools.register_all_tools(server)
             registry = PluginRegistry()
             PluginHub.configure(registry)
-            await registry.register("fixture", "Owned", "fixture", "6000", user_id="reader")
-            await registry.register_tools_for_session("fixture", [ToolDefinitionModel(name="manage_object_handles_v2")])
-            websocket = SimpleNamespace(state=SimpleNamespace(plugin_registered=True, plugin_session_id="fixture", plugin_generation="fixture-generation", user_id="reader"), application_state=WebSocketState.CONNECTED, client_state=WebSocketState.CONNECTED, close=AsyncMock())
-            PluginHub._connections["fixture"] = websocket
-            PluginHub._last_pong["fixture"] = time.monotonic()
-            middleware = UnityInstanceMiddleware()
-            middleware._resolve_user_id = AsyncMock(return_value="reader")
-            server.add_middleware(middleware)
-            requests = []
-            async def send(instance, command, params, **kwargs):
-                requests.append((instance, command, copy.deepcopy(params)))
-                return {"success":True,"data":{"handle":"opaque-native"}}
-            PluginHub.send_command_for_instance = send
-            try:
+            async with AsyncExitStack() as credentials:
+                auth = await credentials.enter_async_context(remote_credentials({"requester:reader": "reader", "plugin:owned": "reader"}))
+                await credentials.enter_async_context(auth.requester("requester:reader"))
+                credentials.push_async_callback(PluginHub.shutdown)
+                await registry.register("fixture", "Owned", "fixture", "6000", user_id="reader")
+                await registry.register_tools_for_session("fixture", [ToolDefinitionModel(name="manage_object_handles_v2")])
+                websocket = SimpleNamespace(state=SimpleNamespace(plugin_registered=True, plugin_session_id="fixture", plugin_generation="fixture-generation", user_id="reader"), application_state=WebSocketState.CONNECTED, client_state=WebSocketState.CONNECTED, close=AsyncMock())
+                await auth.attach_socket(websocket, "plugin:owned")
+                PluginHub._connections["fixture"] = websocket
+                PluginHub._last_pong["fixture"] = time.monotonic()
+                middleware = UnityInstanceMiddleware()
+                server.add_middleware(middleware)
+                requests = []
+                async def send(instance, command, params, **kwargs):
+                    requests.append((instance, command, copy.deepcopy(params)))
+                    return {"success":True,"data":{"handle":"opaque-native"}}
+                PluginHub.send_command_for_instance = send
                 async with Client(server, mode=MODE) as client:
                     assert {x.name for x in await client.list_tools()} == {"manage_object_handles"}
                     args = {"action":"capture","instance_id":-123,"unity_instance":"Owned@fixture"}
@@ -204,8 +206,6 @@ def test_actual_http_native_catalog_controls_handle_alias(mode, tmp_path):
                     await registry.register_tools_for_session("fixture", [ToolDefinitionModel(name="manage_object_handles_v2")])
                     assert "manage_object_handles" in {x.name for x in await client.list_tools()}
                 print("HANDLE_HTTP_CATALOG_PASS", MODE)
-            finally:
-                await PluginHub.shutdown()
         asyncio.run(main())
     """
     env = {
@@ -214,7 +214,12 @@ def test_actual_http_native_catalog_controls_handle_alias(mode, tmp_path):
         "APPDATA": str(tmp_path / "appdata"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
         "UNITY_MCP_LOG_DIR": str(tmp_path / "log"),
-        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        "PYTHONPATH": os.pathsep.join(
+            (
+                str(Path(__file__).resolve().parents[1]),
+                str(Path(__file__).resolve().parents[1] / "src"),
+            )
+        ),
     }
     result = subprocess.run(
         [sys.executable, "-B", "-c", "MODE = " + repr(mode) + "\n" + textwrap.dedent(source)],

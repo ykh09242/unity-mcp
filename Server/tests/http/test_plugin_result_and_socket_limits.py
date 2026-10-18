@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from core.config import config
+from tests.remote_credentials import remote_credentials
 from models.unity_response import normalize_unity_response
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
@@ -161,6 +162,7 @@ def test_preaccept_delay_distinguishes_registration_timeout_from_raw_limit(
 async def test_invalid_result_replaced_with_small_error(isolated, monkeypatch, kind):
     PluginHub.configure(isolated)
     ws = AsyncMock()
+    ws.state = SimpleNamespace()
     PluginHub._connections["owner"] = ws
     future = asyncio.get_running_loop().create_future()
     PluginHub._pending["command"] = {"future": future, "session_id": "owner", "user_id": "alice"}
@@ -199,60 +201,84 @@ def test_final_response_bound_before_normalization():
 async def test_retained_results_budget_spans_delayed_consumers(isolated, monkeypatch, scope):
     from models.response_limits import ResponseOwner, response_owner, response_size
 
-    PluginHub.configure(isolated)
-    monkeypatch.setattr(config, "http_remote_hosted", True)
-    first_owner = ResponseOwner()
-    next_owner = ResponseOwner()
-    token = response_owner.set(first_owner)
-    hub = PluginHub({"type": "websocket"}, None, None)
-    result = {"success": True, "data": "base64-preview" * 100}
-    charge = response_size(result)
-    ceiling = {
-        "session": "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
-        "user": "MAX_RETAINED_RESULT_BYTES_PER_USER",
-        "global": "MAX_RETAINED_RESULT_BYTES",
-    }[scope]
-    monkeypatch.setattr(PluginHub, ceiling, charge + 100)
+    async with remote_credentials(
+        {
+            "requester:alice": "alice",
+            "plugin:alice": "alice",
+            "requester:bob": "bob",
+            "plugin:bob": "bob",
+        }
+    ) as auth:
+        PluginHub.configure(isolated)
+        monkeypatch.setattr(config, "http_remote_hosted", True)
+        first_owner = ResponseOwner()
+        next_owner = ResponseOwner()
+        token = response_owner.set(first_owner)
+        hub = PluginHub({"type": "websocket"}, None, None)
+        result = {"success": True, "data": "base64-preview" * 100}
+        charge = response_size(result)
+        ceiling = {
+            "session": "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
+            "user": "MAX_RETAINED_RESULT_BYTES_PER_USER",
+            "global": "MAX_RETAINED_RESULT_BYTES",
+        }[scope]
+        monkeypatch.setattr(PluginHub, ceiling, charge + 100)
 
-    async def socket(session, user):
-        await isolated.register(session, session, session, "test", user_id=user)
-        ws = AsyncMock()
-        ws.client_state = ws.application_state = WebSocketState.CONNECTED
-        PluginHub._connections[session] = ws
-        PluginHub._last_pong[session] = time.monotonic()
-
-        async def answer(payload):
-            await hub._handle_command_result(
-                ws, CommandResultMessage(id=payload["id"], result=result)
+        async def socket(session, user):
+            await isolated.register(session, session, session, "test", user_id=user)
+            ws = AsyncMock()
+            ws.state = SimpleNamespace(
+                user_id=user,
+                plugin_registered=True,
+                plugin_session_id=session,
+                plugin_generation=session,
             )
+            await auth.attach_socket(ws, f"plugin:{user}")
+            ws.client_state = ws.application_state = WebSocketState.CONNECTED
+            PluginHub._connections[session] = ws
+            PluginHub._last_pong[session] = time.monotonic()
 
-        ws.send_json.side_effect = answer
-        return ws
+            async def answer(payload):
+                await hub._handle_command_result(
+                    ws, CommandResultMessage(id=payload["id"], result=result)
+                )
 
-    await socket("a", "alice")
-    second = "a" if scope == "session" else "b"
-    if second == "b":
-        await socket("b", "alice" if scope == "user" else "bob")
-    try:
-        assert (await PluginHub.send_command("a", "run_tests", {}))["success"]
-        assert len(PluginHub._retained_results) == 1
-        # A finished transport command is still owned by its delayed response consumer.
-        reply = await PluginHub.send_command(second, "run_tests", {})
-        assert reply["data"]["reason"] == "result_capacity"
-        assert len(PluginHub._retained_results) == 1
-        first_owner.release()
-        # The previous delivery is closed; a fresh request owns the next result.
-        next_token = response_owner.set(next_owner)
+            ws.send_json.side_effect = answer
+            return ws
+
+        await socket("a", "alice")
+        second = "a" if scope == "session" else "b"
+        second_user = "bob" if scope == "global" else "alice"
+        if second == "b":
+            await socket("b", "alice" if scope == "user" else "bob")
         try:
-            assert (await PluginHub.send_command(second, "run_tests", {}))["success"]
+            assert (
+                await auth.call("requester:alice", PluginHub.send_command, "a", "run_tests", {})
+            )["success"]
+            assert len(PluginHub._retained_results) == 1
+            # A finished transport command is still owned by its delayed response consumer.
+            reply = await auth.call(
+                f"requester:{second_user}", PluginHub.send_command, second, "run_tests", {}
+            )
+            assert reply["data"]["reason"] == "result_capacity"
+            assert len(PluginHub._retained_results) == 1
+            first_owner.release()
+            # The previous delivery is closed; a fresh request owns the next result.
+            next_token = response_owner.set(next_owner)
+            try:
+                assert (
+                    await auth.call(
+                        f"requester:{second_user}", PluginHub.send_command, second, "run_tests", {}
+                    )
+                )["success"]
+            finally:
+                next_owner.release()
+                response_owner.reset(next_token)
         finally:
-            next_owner.release()
-            response_owner.reset(next_token)
-    finally:
-        first_owner.release()
-        response_owner.reset(token)
-        await PluginHub.shutdown()
-    assert PluginHub._retained_results == {}
+            first_owner.release()
+            response_owner.reset(token)
+            await PluginHub.shutdown()
+        assert PluginHub._retained_results == {}
 
 
 @pytest.mark.asyncio
@@ -312,6 +338,7 @@ async def test_raw_graph_rejected_before_json_decoder(isolated, monkeypatch, raw
     monkeypatch.setattr(module.json, "loads", forbidden_decode)
     hub = PluginHub({"type": "websocket"}, None, None)
     ws = AsyncMock()
+    ws.state = SimpleNamespace()
     assert await hub.decode(ws, {"text": raw}) is None
     ws.close.assert_awaited_once_with(code=1009, reason="Plugin message exceeds supported limits")
 
