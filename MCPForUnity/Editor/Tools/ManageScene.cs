@@ -19,6 +19,61 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_scene", AutoRegister = false)]
     public static class ManageScene
     {
+        // One native action catalogue is shared by preview and actual dispatch.
+        private enum ActionKind
+        {
+            Unknown,
+            Create,
+            Load,
+            Save,
+            GetHierarchy,
+            GetActive,
+            GetBuildSettings,
+            Screenshot,
+            SceneViewFrame,
+            CloseScene,
+            SetActiveScene,
+            GetLoadedScenes,
+            MoveToScene,
+            ModifyBuildSettings,
+            Validate,
+        }
+
+        private static string NormalizeAction(JToken token) => (token?.ToString() ?? string.Empty).Trim().ToLowerInvariant();
+
+        private static ActionKind ResolveAction(string action) =>
+            action switch
+            {
+                "create" => ActionKind.Create,
+                "load" => ActionKind.Load,
+                "save" => ActionKind.Save,
+                "get_hierarchy" => ActionKind.GetHierarchy,
+                "get_active" => ActionKind.GetActive,
+                "get_build_settings" => ActionKind.GetBuildSettings,
+                "screenshot" => ActionKind.Screenshot,
+                "scene_view_frame" => ActionKind.SceneViewFrame,
+                "close_scene" => ActionKind.CloseScene,
+                "set_active_scene" => ActionKind.SetActiveScene,
+                "get_loaded_scenes" => ActionKind.GetLoadedScenes,
+                "move_to_scene" => ActionKind.MoveToScene,
+                "modify_build_settings" => ActionKind.ModifyBuildSettings,
+                "validate" => ActionKind.Validate,
+                _ => ActionKind.Unknown,
+            };
+
+        internal static BatchActionValidation ValidateBatchAction(JObject parameters)
+        {
+            string action = NormalizeAction(parameters?["action"]);
+            if (string.IsNullOrEmpty(action))
+                return BatchActionValidation.Rejected("missing_action");
+            ActionKind resolved = ResolveAction(action);
+            if (resolved == ActionKind.Unknown)
+                return BatchActionValidation.Rejected("unsupported_action");
+            if (resolved == ActionKind.ModifyBuildSettings)
+                return BatchActionValidation.Rejected("action_moved");
+            return BatchActionValidation.Valid;
+        }
+
         private sealed class SceneCommand
         {
             public string action { get; set; } = string.Empty;
@@ -104,7 +159,7 @@ namespace MCPForUnity.Editor.Tools
             var toolParams = new ToolParams(p);
             return new SceneCommand
             {
-                action = (p["action"]?.ToString() ?? string.Empty).Trim().ToLowerInvariant(),
+                action = NormalizeAction(p["action"]),
                 name = p["name"]?.ToString() ?? string.Empty,
                 path = p["path"]?.ToString() ?? string.Empty,
                 buildIndex = ParamCoercion.CoerceIntNullable(p["buildIndex"] ?? p["build_index"]),
@@ -286,9 +341,9 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
             catch { }
-            switch (action)
+            switch (ResolveAction(action))
             {
-                case "create":
+                case ActionKind.Create:
                     if (string.IsNullOrEmpty(name))
                         return new ErrorResponse("'name' parameter is required for 'create' action. 'path' is optional (defaults to 'Assets/Scenes/').");
                     if (
@@ -313,7 +368,7 @@ namespace MCPForUnity.Editor.Tools
                     if (!string.IsNullOrEmpty(cmd.template))
                         return CreateSceneFromTemplate(fullPath, relativePath, cmd.template);
                     return CreateScene(fullPath, relativePath);
-                case "load":
+                case ActionKind.Load:
                     // Loading can be done by path/name or build index
                     // When path ends with .unity and no name is given, use path directly as the scene path
                     string loadPath = relativePath;
@@ -329,10 +384,10 @@ namespace MCPForUnity.Editor.Tools
                         return LoadScene(buildIndex.Value, cmd.additive == true);
                     else
                         return new ErrorResponse("Either 'name'/'path' or 'buildIndex' must be provided for 'load' action.");
-                case "save":
+                case ActionKind.Save:
                     // Save current scene, optionally to a new path
                     return SaveScene(fullPath, relativePath);
-                case "get_hierarchy":
+                case ActionKind.GetHierarchy:
                     try
                     {
                         McpLog.Info("[ManageScene] get_hierarchy: entering", always: false);
@@ -345,7 +400,7 @@ namespace MCPForUnity.Editor.Tools
                     }
                     catch { }
                     return gh;
-                case "get_active":
+                case ActionKind.GetActive:
                     try
                     {
                         McpLog.Info("[ManageScene] get_active: entering", always: false);
@@ -358,30 +413,30 @@ namespace MCPForUnity.Editor.Tools
                     }
                     catch { }
                     return ga;
-                case "get_build_settings":
+                case ActionKind.GetBuildSettings:
                     return GetBuildSettingsScenes();
-                case "screenshot":
+                case ActionKind.Screenshot:
                     return CaptureScreenshot(cmd);
-                case "scene_view_frame":
+                case ActionKind.SceneViewFrame:
                     return FrameSceneView(cmd);
 
                 // Multi-scene editing
-                case "close_scene":
+                case ActionKind.CloseScene:
                     return CloseScene(cmd);
-                case "set_active_scene":
+                case ActionKind.SetActiveScene:
                     return SetActiveScene(cmd);
-                case "get_loaded_scenes":
+                case ActionKind.GetLoadedScenes:
                     return GetLoadedScenes();
-                case "move_to_scene":
+                case ActionKind.MoveToScene:
                     return MoveToScene(cmd);
-                case "modify_build_settings":
+                case ActionKind.ModifyBuildSettings:
                     return new ErrorResponse(
                         "Build settings management has moved to manage_build (action='scenes'). "
                             + "Use manage_build to add, remove, or configure scenes in build settings."
                     );
 
                 // Scene validation
-                case "validate":
+                case ActionKind.Validate:
                     return ValidateScene(cmd.autoRepair == true);
 
                 default:

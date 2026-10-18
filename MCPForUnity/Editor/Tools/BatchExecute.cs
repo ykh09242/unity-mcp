@@ -12,6 +12,23 @@ using UnityEditor;
 
 namespace MCPForUnity.Editor.Tools
 {
+    internal readonly struct BatchActionValidation
+    {
+        internal string Status { get; }
+        internal string Reason { get; }
+
+        private BatchActionValidation(string status, string reason)
+        {
+            Status = status;
+            Reason = reason;
+        }
+
+        internal static BatchActionValidation Valid => new BatchActionValidation("valid", "ok");
+        internal static BatchActionValidation Unavailable => new BatchActionValidation("incomplete", "action_validation_unavailable");
+
+        internal static BatchActionValidation Rejected(string reason) => new BatchActionValidation("rejected", reason);
+    }
+
     /// <summary>
     /// Executes multiple MCP commands within a single Unity-side handler. Commands are executed sequentially
     /// on the main thread to preserve determinism and Unity API safety.
@@ -36,31 +53,110 @@ namespace MCPForUnity.Editor.Tools
 
         public static Task<object> HandleCommand(JObject @params) => HandleCommand(@params, CancellationToken.None);
 
-        public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken)
+        private static bool IsBatchName(string name) =>
+            string.Equals(name, "batch_execute", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, "batch_validate", StringComparison.OrdinalIgnoreCase);
+
+        private static string EchoTool(string name) => name == null || name.Length <= 128 ? name : name.Substring(0, 128);
+
+        private static JArray NewOutcomes(JArray commands, string state, string reason)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var rows = new JArray();
+            for (int index = 0; index < commands.Count; index++)
+            {
+                string tool = (commands[index] as JObject)?["tool"]?.Type == JTokenType.String ? commands[index]["tool"].Value<string>() : null;
+                rows.Add(
+                    new JObject
+                    {
+                        ["index"] = index,
+                        ["tool"] = EchoTool(tool),
+                        ["toolTruncated"] = tool?.Length > 128,
+                        ["state"] = state,
+                        ["reason"] = reason,
+                    }
+                );
+            }
+            return rows;
+        }
+
+        private static void SetOutcome(JArray outcomes, int index, string state, string reason)
+        {
+            outcomes[index]["state"] = state;
+            outcomes[index]["reason"] = reason;
+        }
+
+        private static JObject ValidationData(JArray items, bool complete, bool valid) =>
+            new JObject
+            {
+                ["contractVersion"] = 1,
+                ["validateOnly"] = true,
+                ["scope"] = "action_names",
+                ["complete"] = complete,
+                ["valid"] = valid,
+                ["items"] = items,
+            };
+
+        private static object InvalidBatch(string message, JArray commands, object legacyData = null, bool preview = false)
+        {
+            if (commands == null || commands.Count > AbsoluteMaxCommandsPerBatch)
+                return new ErrorResponse(message, legacyData);
+            var data = legacyData == null ? new JObject() : JObject.FromObject(legacyData);
+            data["outcomes"] = NewOutcomes(commands, "not_run", "invalid_batch");
+            data["requestedCount"] = commands.Count;
+            data["attemptedCount"] = 0;
+            data["notRunCount"] = commands.Count;
+            data["executionStatus"] = "not_started";
+            data["rollbackPerformed"] = false;
+            if (preview)
+            {
+                var items = NewOutcomes(commands, "not_run", "invalid_batch");
+                foreach (JObject row in items)
+                {
+                    row.Remove("state");
+                    row["status"] = "rejected";
+                }
+                data["validation"] = ValidationData(items, true, false);
+            }
+            return new ErrorResponse(message, data);
+        }
+
+        private static object ReadEnvelope(
+            JObject @params,
+            bool preview,
+            out JArray commandsToken,
+            out bool failFast,
+            out bool parallelRequested,
+            out int? maxParallel
+        )
+        {
+            commandsToken = null;
+            failFast = false;
+            parallelRequested = false;
+            maxParallel = null;
             if (@params == null)
             {
-                return new ErrorResponse("'commands' payload is required.");
+                return InvalidBatch("'commands' payload is required.", commandsToken, preview: preview);
             }
 
-            var commandsToken = @params["commands"] as JArray;
+            commandsToken = @params["commands"] as JArray;
             if (commandsToken == null || commandsToken.Count == 0)
             {
-                return new ErrorResponse("Provide at least one command entry in 'commands'.");
+                return InvalidBatch("Provide at least one command entry in 'commands'.", commandsToken, preview: preview);
             }
 
             int maxCommands = GetMaxCommandsPerBatch();
             if (commandsToken.Count > maxCommands)
             {
-                return new ErrorResponse(
-                    $"A maximum of {maxCommands} commands are allowed per batch (configurable in MCP Tools window, hard max {AbsoluteMaxCommandsPerBatch})."
+                return InvalidBatch(
+                    $"A maximum of {maxCommands} commands are allowed per batch (configurable in MCP Tools window, hard max {AbsoluteMaxCommandsPerBatch}).",
+                    commandsToken,
+                    preview: preview
                 );
             }
 
-            bool failFast = @params.ReadScalar<bool?>("failFast") ?? false;
-            bool parallelRequested = @params.ReadScalar<bool?>("parallel") ?? false;
-            int? maxParallel = @params.ReadScalar<int?>("maxParallelism");
+            failFast = @params.ReadScalar<bool?>("failFast") ?? false;
+            parallelRequested = @params.ReadScalar<bool?>("parallel") ?? false;
+            maxParallel = @params.ReadScalar<int?>("maxParallelism");
 
             // Validate every command's envelope before dispatching any command. Operational
             // failures from otherwise valid commands retain the best-effort behavior below.
@@ -78,8 +174,8 @@ namespace MCPForUnity.Editor.Tools
                         toolName = toolToken.Value<string>();
                     if (string.IsNullOrWhiteSpace(toolName))
                         error = "Each command must include a non-empty string 'tool' field.";
-                    else if (string.Equals(toolName, "batch_execute", StringComparison.OrdinalIgnoreCase))
-                        return new ErrorResponse("Nested batch_execute commands are not allowed.");
+                    else if (IsBatchName(toolName))
+                        return InvalidBatch("Nested batch_execute commands are not allowed.", commandsToken, preview: preview);
                     else if (entry["params"] is JToken parameters && parameters.Type != JTokenType.Null && parameters is not JObject)
                         error = "Command 'params' must be a JSON object or null when provided.";
                 }
@@ -94,8 +190,9 @@ namespace MCPForUnity.Editor.Tools
                     );
             }
             if (validationFailures.Count > 0)
-                return new ErrorResponse(
+                return InvalidBatch(
                     "One or more commands failed validation.",
+                    commandsToken,
                     new
                     {
                         results = validationFailures,
@@ -104,21 +201,95 @@ namespace MCPForUnity.Editor.Tools
                         parallelRequested,
                         parallelApplied = false,
                         maxParallelism = maxParallel,
-                    }
+                    },
+                    preview
                 );
 
+            return null;
+        }
+
+        // Internal registry alias only: no new tool metadata, default or public duplicate.
+        public static object ValidateCommand(JObject @params)
+        {
+            object rejected = ReadEnvelope(@params, true, out var commands, out _, out _, out _);
+            if (rejected != null)
+                return rejected;
+            var items = new JArray();
+            bool complete = true,
+                valid = true;
+            bool batchEnabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled("batch_execute");
+            CommandRegistry.Initialize();
+            for (int index = 0; index < commands.Count; index++)
+            {
+                var command = (JObject)commands[index];
+                string name = command.Value<string>("tool");
+                BatchActionValidation result;
+                if (!batchEnabled)
+                    result = BatchActionValidation.Rejected("batch_disabled");
+                else if (!CommandRegistry.HasHandler(name))
+                    result = BatchActionValidation.Rejected("unknown_command");
+                else if (MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(name) != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(name))
+                    result = BatchActionValidation.Rejected("resource_disabled");
+                else if (MCPServiceLocator.ToolDiscovery.GetToolMetadata(name) != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(name))
+                    result = BatchActionValidation.Rejected("tool_disabled");
+                else
+                {
+                    try
+                    {
+                        result = CommandRegistry.ValidateBatchAction(name, NormalizeParameterKeys(command["params"] as JObject ?? new JObject()));
+                    }
+                    catch (Exception)
+                    {
+                        result = BatchActionValidation.Rejected("invalid_action");
+                    }
+                }
+                complete &= result.Status != "incomplete";
+                valid &= result.Status == "valid";
+                items.Add(
+                    new JObject
+                    {
+                        ["index"] = index,
+                        ["tool"] = EchoTool(name),
+                        ["toolTruncated"] = name.Length > 128,
+                        ["status"] = result.Status,
+                        ["reason"] = result.Reason,
+                    }
+                );
+            }
+            var data = new
+            {
+                validation = ValidationData(items, complete, valid),
+                outcomes = NewOutcomes(commands, "not_run", "validation_only"),
+                requestedCount = commands.Count,
+                attemptedCount = 0,
+                notRunCount = commands.Count,
+                executionStatus = "not_started",
+                rollbackPerformed = false,
+            };
+            return valid ? new SuccessResponse("Batch action validation completed.", data) : new ErrorResponse("Batch action validation did not pass.", data);
+        }
+
+        public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            object rejected = ReadEnvelope(@params, false, out var commandsToken, out bool failFast, out bool parallelRequested, out int? maxParallel);
+            if (rejected != null)
+                return rejected;
             if (parallelRequested)
             {
                 McpLog.Warn("batch_execute parallel mode requested, but commands will run sequentially on the main thread for safety.");
             }
 
+            var outcomes = NewOutcomes(commandsToken, "not_run", "fail_fast");
             var commandResults = new List<object>(commandsToken.Count);
             int invocationSuccessCount = 0;
             int invocationFailureCount = 0;
             bool anyCommandFailed = false;
 
+            int inputIndex = 0;
             foreach (var token in commandsToken)
             {
+                int index = inputIndex++;
                 cancellationToken.ThrowIfCancellationRequested();
                 var commandObj = (JObject)token;
                 string toolName = commandObj.Value<string>("tool");
@@ -127,6 +298,7 @@ namespace MCPForUnity.Editor.Tools
                 var resourceMeta = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(toolName);
                 if (resourceMeta != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(toolName))
                 {
+                    SetOutcome(outcomes, index, "failed", "resource_disabled");
                     invocationFailureCount++;
                     anyCommandFailed = true;
                     commandResults.Add(
@@ -146,6 +318,7 @@ namespace MCPForUnity.Editor.Tools
                 var toolMeta = MCPServiceLocator.ToolDiscovery.GetToolMetadata(toolName);
                 if (toolMeta != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(toolName))
                 {
+                    SetOutcome(outcomes, index, "failed", "tool_disabled");
                     invocationFailureCount++;
                     anyCommandFailed = true;
                     commandResults.Add(
@@ -168,6 +341,7 @@ namespace MCPForUnity.Editor.Tools
                     var result = await CommandRegistry.InvokeCommandAsync(toolName, commandParams, cancellationToken).ConfigureAwait(true);
                     cancellationToken.ThrowIfCancellationRequested();
                     bool callSucceeded = DetermineCallSucceeded(result);
+                    SetOutcome(outcomes, index, callSucceeded ? "succeeded" : "failed", callSucceeded ? "ok" : "handler_failed");
                     if (callSucceeded)
                     {
                         invocationSuccessCount++;
@@ -198,6 +372,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 catch (Exception ex)
                 {
+                    SetOutcome(outcomes, index, "failed", "handler_exception");
                     invocationFailureCount++;
                     anyCommandFailed = true;
                     commandResults.Add(
@@ -220,6 +395,12 @@ namespace MCPForUnity.Editor.Tools
             var data = new
             {
                 results = commandResults,
+                outcomes,
+                requestedCount = commandsToken.Count,
+                attemptedCount = commandResults.Count,
+                notRunCount = commandsToken.Count - commandResults.Count,
+                executionStatus = commandResults.Count == commandsToken.Count ? "completed" : "partial",
+                rollbackPerformed = false,
                 callSuccessCount = invocationSuccessCount,
                 callFailureCount = invocationFailureCount,
                 parallelRequested,

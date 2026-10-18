@@ -143,6 +143,87 @@ def invalidate_cached_max_commands() -> None:
     _cached_max_commands.clear()
 
 
+def _preview_reply_is_exact(reply: Any, commands: list[dict[str, Any]]) -> bool:
+    """Accept only the dedicated peer's complete, ordered action-name receipt."""
+    if not isinstance(reply, dict) or type(reply.get("success")) is not bool:
+        return False
+    data = reply.get("data")
+    validation = data.get("validation") if isinstance(data, dict) else None
+    if not isinstance(validation, dict) or set(validation) != {
+        "contractVersion",
+        "validateOnly",
+        "scope",
+        "complete",
+        "valid",
+        "items",
+    }:
+        return False
+    if (
+        type(validation["contractVersion"]) is not int
+        or validation["contractVersion"] != 1
+        or validation["validateOnly"] is not True
+        or validation["scope"] != "action_names"
+    ):
+        return False
+    if type(validation["complete"]) is not bool or type(validation["valid"]) is not bool:
+        return False
+    items = validation["items"]
+    if not isinstance(items, list) or len(items) != len(commands):
+        return False
+    allowed_reasons = {
+        "valid": {"ok"},
+        "incomplete": {"action_validation_unavailable"},
+        "rejected": {
+            "invalid_batch",
+            "batch_disabled",
+            "unknown_command",
+            "resource_disabled",
+            "tool_disabled",
+            "invalid_action",
+            "missing_action",
+            "unsupported_action",
+            "action_moved",
+        },
+    }
+    for index, (item, command) in enumerate(zip(items, commands)):
+        if not isinstance(item, dict) or set(item) != {
+            "index",
+            "tool",
+            "toolTruncated",
+            "status",
+            "reason",
+        }:
+            return False
+        if (
+            type(item["index"]) is not int
+            or item["index"] != index
+            or type(item["toolTruncated"]) is not bool
+        ):
+            return False
+        raw_name = command["tool"].encode("utf-16-le", errors="surrogatepass")
+        expected_name = raw_name[:256].decode("utf-16-le", errors="surrogatepass")
+        if (
+            type(item["tool"]) is not str
+            or item["tool"] != expected_name
+            or item["toolTruncated"] != (len(raw_name) > 256)
+        ):
+            return False
+        status, reason = item["status"], item["reason"]
+        if (
+            type(status) is not str
+            or type(reason) is not str
+            or reason not in allowed_reasons.get(status, set())
+        ):
+            return False
+    complete = all(item["status"] != "incomplete" for item in items)
+    valid = all(item["status"] == "valid" for item in items)
+    return (
+        validation["complete"] == complete
+        and validation["valid"] == valid
+        and reply["success"] == valid
+    )
+
+
 @mcp_for_unity_tool(
     name="batch_execute",
     description=(
@@ -166,8 +247,20 @@ async def batch_execute(
     max_parallelism: Annotated[
         int | None, "Hint for the maximum number of parallel workers"
     ] = None,
+    validate_only: Annotated[
+        bool,
+        "Validate action names without executing children; requires the peer preview capability",
+    ] = False,
 ) -> dict[str, Any]:
-    """Proxy the batch_execute tool to the Unity Editor transporter."""
+    """Execute sequentially, or request a read-only action-name preview.
+
+    Preview uses a distinct native command and the same full member authorization.
+    It does not validate targets/parameters or reserve future permissions. Ordinary
+    settled responses add indexed outcomes; cancellation/lost replies retain their
+    existing unknown-outcome contract and never imply rollback.
+    """
+    if type(validate_only) is not bool:
+        raise ValueError("validate_only must be a boolean")
     parallel = coerce_bool(parallel)
     fail_fast = coerce_bool(fail_fast)
     max_parallelism = coerce_int(max_parallelism)
@@ -191,7 +284,7 @@ async def batch_execute(
 
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise ValueError(f"Command at index {index} is missing a valid 'tool' name")
-        if tool_name.casefold() == "batch_execute":
+        if tool_name.casefold() in {"batch_execute", "batch_validate"}:
             raise ValueError("Nested batch_execute commands are not allowed")
 
         if params is None:
@@ -237,9 +330,23 @@ async def batch_execute(
     if max_parallelism is not None:
         payload["maxParallelism"] = max_parallelism
 
-    return await send_with_unity_instance(
+    reply = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
-        "batch_execute",
+        "batch_validate" if validate_only else "batch_execute",
         payload,
     )
+    if validate_only and not _preview_reply_is_exact(reply, normalized_commands):
+        if isinstance(reply, dict) and reply.get("success") is False:
+            data = reply.get("data")
+            if reply.get("error") in ("permission_denied", "auth_required") or (
+                isinstance(data, dict) and data.get("reason") == "outcome_unknown"
+            ):
+                return reply
+        return {
+            "success": False,
+            "error": "batch_validation_unavailable",
+            "message": "The selected peer did not provide the dedicated batch action validation contract; no execution fallback was attempted.",
+            "data": {"reason": "batch_validation_unavailable"},
+        }
+    return reply

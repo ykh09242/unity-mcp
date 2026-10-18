@@ -492,9 +492,11 @@ namespace MCPForUnity.Editor.Services.Transport
                     return;
                 }
 
+                string admissionName = CommandRegistry.GetAdmissionName(command.type);
+
                 // Block execution of disabled resources
-                var resourceMeta = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(command.type);
-                if (resourceMeta != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(command.type))
+                var resourceMeta = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(admissionName);
+                if (resourceMeta != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(admissionName))
                 {
                     pending.TrySetResult(SerializeError($"Resource '{command.type}' is disabled in the Unity Editor."));
                     RemovePending(id, pending);
@@ -502,8 +504,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 }
 
                 // Block execution of disabled tools
-                var toolMeta = MCPServiceLocator.ToolDiscovery.GetToolMetadata(command.type);
-                if (toolMeta != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(command.type))
+                var toolMeta = MCPServiceLocator.ToolDiscovery.GetToolMetadata(admissionName);
+                if (toolMeta != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(admissionName))
                 {
                     pending.TrySetResult(SerializeError($"Tool '{command.type}' is disabled in the Unity Editor."));
                     RemovePending(id, pending);
