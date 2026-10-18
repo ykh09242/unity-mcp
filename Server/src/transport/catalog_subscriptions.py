@@ -272,6 +272,20 @@ class CatalogSubscriptions:
     async def listen(
         self, ctx: ServerRequestContext, params: SubscriptionsListenRequestParams
     ) -> SubscriptionsListenResult:
+        from services.operation_permissions import OperationPermissionError, authorize_resource
+        from services.credential_lease import require_credential_lease
+
+        if self.remote_hosted:
+            credential = await require_credential_lease()
+            try:
+                authorize_resource(credential.permissions)
+                if credential.permissions.scoped and any(
+                    uri != EDITOR_STATE_URI
+                    for uri in params.notifications.resource_subscriptions or []
+                ):
+                    raise OperationPermissionError()
+            except OperationPermissionError as error:
+                raise MCPError(INVALID_PARAMS, "Remote operation permission denied") from error
         if self._closed:
             raise MCPError(INTERNAL_ERROR, "Catalog subscriptions are closed")
         resources = EDITOR_STATE_URI in (params.notifications.resource_subscriptions or [])

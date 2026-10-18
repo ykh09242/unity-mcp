@@ -11,6 +11,7 @@ from fastmcp import Client, Context, FastMCP
 from mcp.shared.exceptions import MCPError
 
 from core.config import config
+from tests.remote_credentials import remote_credentials
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 from transport.unity_instance_middleware import UnityInstanceMiddleware
@@ -240,10 +241,21 @@ async def test_resource_metadata_cannot_select_another_tenants_instance(
     async def resource_probe(ctx: Context) -> str:
         return await ctx.get_state("unity_instance")
 
-    async with Client(routing_server) as client:
-        own = await client.read_resource(
-            "routing://tenant", meta={"unity_instance": "Alice@aaaa1111"}
-        )
-        assert own[0].text == "Alice@aaaa1111"
-        with pytest.raises(MCPError):
-            await client.read_resource("routing://tenant", meta={"unity_instance": "Bob@bbbb2222"})
+    async with remote_credentials({"requester:alice": "alice"}) as auth:
+        on_message = UnityInstanceMiddleware.on_message
+
+        async def owned_request(self, context, call_next):
+            # SDK child tasks must own the real Alice lease at the handler boundary.
+            async with auth.requester("requester:alice"):
+                return await on_message(self, context, call_next)
+
+        monkeypatch.setattr(UnityInstanceMiddleware, "on_message", owned_request)
+        async with Client(routing_server) as client:
+            own = await client.read_resource(
+                "routing://tenant", meta={"unity_instance": "Alice@aaaa1111"}
+            )
+            assert own[0].text == "Alice@aaaa1111"
+            with pytest.raises(MCPError):
+                await client.read_resource(
+                    "routing://tenant", meta={"unity_instance": "Bob@bbbb2222"}
+                )

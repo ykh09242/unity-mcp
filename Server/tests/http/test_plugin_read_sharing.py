@@ -13,6 +13,7 @@ from core.config import config
 from models.response_limits import ResponseOwner, response_owner, response_size
 from services.tools.shared_tool_reads import SharedToolReads
 from services.api_key_service import ApiKeyService, ValidationResult
+from services.credential_lease import CredentialLeaseError
 from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
@@ -382,6 +383,43 @@ async def test_unverified_identity_keeps_readiness_private(peer, invalid):
     # Then: lack of a verified identity never shares their state.
     assert all(result["success"] for result in await asyncio.gather(*callers))
     assert peer.counts() == {"ping": 2, "read_console": 2}
+
+
+@pytest.mark.asyncio
+async def test_authorization_loss_after_real_dispatch_keeps_outer_outcome_unknown(
+    peer, monkeypatch
+):
+    # Given: the real Hub path has dispatched a command under actual requester/plugin leases.
+    send = PluginHub._send_command_for_instance
+    phases = []
+
+    async def authorization_ended(*args, **kwargs):
+        await send(*args, **kwargs)
+        assert kwargs["budget"].dispatched
+        phases.append(kwargs["budget"].phase)
+        # Inject only the outer-boundary failure, after real native admission and reply.
+        raise CredentialLeaseError()
+
+    monkeypatch.setattr(PluginHub, "_send_command_for_instance", staticmethod(authorization_ended))
+    caller = asyncio.create_task(read(peer, "get_project_info", retry_on_reload=False))
+    command = await peer.next_command()
+    # When: native completion reaches a boundary whose authorization has ended.
+    await peer.reply(command)
+    result = await caller
+    # Then: a dispatched command is uncertain, never a claim that it was refused.
+    assert result["success"] is False
+    assert result["hint"] == "inspect_state_before_retry"
+    assert result["data"] == {
+        "reason": "outcome_unknown",
+        "command": "get_project_info",
+        "session_id": "owned-session",
+        "command_id": command["id"],
+        "phase": phases[0],
+        "cause": "authentication_ended",
+    }
+    assert phases[0] in {"send", "response"}
+    assert peer.counts() == {"get_project_info": 1}
+    assert PluginHub._pending == {}
 
 
 @pytest.mark.asyncio

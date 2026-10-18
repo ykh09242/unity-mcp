@@ -12,6 +12,7 @@ from contextvars import Context
 from typing import Any
 
 from services.credential_lease import CredentialLease, CredentialLeaseError
+from services.operation_permissions import PermissionClaimError, parse_permissions
 from urllib.parse import urlsplit
 
 import httpx
@@ -106,6 +107,7 @@ class ApiKeyService:
         service_token: str | None = None,
         *,
         max_auth_age: float = 300.0,
+        permissions_strict: bool = False,
     ):
         """Initialize the API key service.
 
@@ -137,6 +139,7 @@ class ApiKeyService:
         if not math.isfinite(max_auth_age) or max_auth_age <= 0:
             raise ValueError("API key maximum authentication age must be finite and positive")
         self._max_auth_age = max_auth_age
+        self._permissions_strict = permissions_strict
         self._lease_records: dict[object, _LeaseRecord] = {}
         self._key_leases: dict[str, object] = {}
         self._lease_owners = 0
@@ -675,6 +678,14 @@ class ApiKeyService:
         token = self._key_leases.get(digest)
         record = self._lease_records.get(token)
         principal = result.user_id
+        try:
+            permissions = parse_permissions(result.metadata, strict=self._permissions_strict)
+        except PermissionClaimError:
+            if record is not None:
+                self._retire_lease(record)
+            return ValidationResult(
+                valid=False, error="Invalid operation permissions", cacheable=False
+            )
         if (
             not result.valid
             or not isinstance(principal, str)
@@ -684,12 +695,17 @@ class ApiKeyService:
             if record is not None:
                 self._retire_lease(record)
             return replace(result, valid=False, lease=None)
+        if record is not None and not record.retired and record.lease.permissions != permissions:
+            # Retire before cancelling owners; invalidating this validation flight
+            # also prevents its positive result from crossing CORE07's cache fence.
+            self._retire_lease(record)
+            return ValidationResult(valid=False, error="Authentication changed", cacheable=False)
         if record is None or record.retired:
             self._collect_leases()
             if ApiKeyService._global_leases >= self.MAX_ACTIVE_LEASES:
                 return self._overload()
             token = object()
-            lease = CredentialLease(self, token, principal)
+            lease = CredentialLease(self, token, principal, permissions)
             record = _LeaseRecord(lease, api_key, digest, 0)
             self._lease_records[token] = record
             ApiKeyService._global_leases += 1

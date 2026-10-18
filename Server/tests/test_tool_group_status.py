@@ -72,6 +72,7 @@ def test_group_status_honors_remote_tenants_project_selection_and_empty_catalogs
         from fastmcp import Client, Context, FastMCP
         from core.config import config
         from models.models import ToolDefinitionModel
+        from tests.remote_credentials import remote_credentials
         from services.registry import tool_registry
         from services.tools.manage_tools import manage_tools
         from transport.plugin_hub import PluginHub
@@ -96,43 +97,50 @@ def test_group_status_honors_remote_tenants_project_selection_and_empty_catalogs
             return response
 
         async def scenario():
-            registry = PluginRegistry()
-            PluginHub._registry = registry
-            PluginHub._lock = asyncio.Lock()
-            for session, project, user, enabled in (
-                ("first", "First", "alice", "manage_vfx"),
-                ("second", "Second", "alice", "manage_scene"),
-                ("bob", "Bob", "bob", "manage_docs"),
-                ("empty", "Empty", "empty", None),
-            ):
-                await registry.register(session, project, session, "6000", user_id=user)
-                if enabled:
-                    await registry.register_tools_for_session(session, [ToolDefinitionModel(name=enabled)])
-            for user, expected in (("alice", {"core", "vfx"}), ("bob", {"docs"}), ("empty", set()), ("missing", set())):
-                mcp = FastMCP(user)
-                for name, group in (("effect_probe", "vfx"), ("scene_probe", "core"), ("docs_probe", "docs")):
-                    mcp.tool(name=name, tags={f"group:{group}"})(lambda: "value")
-                mcp.tool(name="unregistered_custom", tags={"group:testing"})(lambda: "custom")
-                mcp.tool(name="manage_tools")(check_groups)
-                middleware = UnityInstanceMiddleware()
-                middleware._resolve_user_id = AsyncMock(return_value=user)
-                mcp.add_middleware(middleware)
-                for mode in ("2026-07-28", "legacy"):
-                    async with Client(mcp, mode=mode) as client:
-                        response = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content
-                        enabled = {group["name"] for group in response["groups"] if group["enabled"]}
-                        assert enabled == expected, (mode, user, enabled)
-                        assert sum(group["tool_count"] for group in response["groups"]) == 3
-                        if user == "alice":
-                            for target, groups in (("First@first", {"vfx"}), ("Second@second", {"core"})):
-                                selected = (await client.call_tool("manage_tools", {"action": "list_groups", "unity_instance": target})).structured_content
-                                assert {group["name"] for group in selected["groups"] if group["enabled"]} == groups
-                            if mode == "legacy":
-                                await client.call_tool("manage_tools", {"action": "deactivate", "group": "vfx"})
-                                hidden = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content
-                                assert {group["name"] for group in hidden["groups"] if group["enabled"]} == {"core"}
-                                await client.call_tool("manage_tools", {"action": "reset"})
-                                reset = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content
-                                assert {group["name"] for group in reset["groups"] if group["enabled"]} == expected
+            async with remote_credentials({"requester:alice": "alice", "requester:bob": "bob", "requester:empty": "empty", "requester:missing": "missing"}) as credentials:
+                class AuthenticatedRouting(UnityInstanceMiddleware):
+                    async def on_message(self, context, call_next):
+                        async with credentials.requester(self.requester_key):
+                            return await super().on_message(context, call_next)
+
+                registry = PluginRegistry()
+                PluginHub._registry = registry
+                PluginHub._lock = asyncio.Lock()
+                for session, project, user, enabled in (
+                    ("first", "First", "alice", "manage_vfx"),
+                    ("second", "Second", "alice", "manage_scene"),
+                    ("bob", "Bob", "bob", "manage_docs"),
+                    ("empty", "Empty", "empty", None),
+                ):
+                    await registry.register(session, project, session, "6000", user_id=user)
+                    if enabled:
+                        await registry.register_tools_for_session(session, [ToolDefinitionModel(name=enabled)])
+                for user, expected in (("alice", {"core", "vfx"}), ("bob", {"docs"}), ("empty", set()), ("missing", set())):
+                    mcp = FastMCP(user)
+                    for name, group in (("effect_probe", "vfx"), ("scene_probe", "core"), ("docs_probe", "docs")):
+                        mcp.tool(name=name, tags={f"group:{group}"})(lambda: "value")
+                    mcp.tool(name="unregistered_custom", tags={"group:testing"})(lambda: "custom")
+                    mcp.tool(name="manage_tools")(check_groups)
+                    middleware = AuthenticatedRouting()
+                    middleware.requester_key = f"requester:{user}"
+                    middleware._resolve_user_id = AsyncMock(return_value=user)
+                    mcp.add_middleware(middleware)
+                    for mode in ("2026-07-28", "legacy"):
+                        async with Client(mcp, mode=mode) as client:
+                            response = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content
+                            enabled = {group["name"] for group in response["groups"] if group["enabled"]}
+                            assert enabled == expected, (mode, user, enabled)
+                            assert sum(group["tool_count"] for group in response["groups"]) == 3
+                            if user == "alice":
+                                for target, groups in (("First@first", {"vfx"}), ("Second@second", {"core"})):
+                                    selected = (await client.call_tool("manage_tools", {"action": "list_groups", "unity_instance": target})).structured_content
+                                    assert {group["name"] for group in selected["groups"] if group["enabled"]} == groups
+                                if mode == "legacy":
+                                    await client.call_tool("manage_tools", {"action": "deactivate", "group": "vfx"})
+                                    hidden = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content
+                                    assert {group["name"] for group in hidden["groups"] if group["enabled"]} == {"core"}
+                                    await client.call_tool("manage_tools", {"action": "reset"})
+                                    reset = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content
+                                    assert {group["name"] for group in reset["groups"] if group["enabled"]} == expected
         asyncio.run(scenario())
     """)
