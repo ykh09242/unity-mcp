@@ -40,35 +40,28 @@ def test_ui_file_contents_including_empty_are_encoded(monkeypatch, action, conte
     ],
 )
 def test_ui_cli_configures_created_identity_instead_of_duplicate_name(monkeypatch, command, args):
+    # Given: the native transaction returns an ID different from any name lookup.
+    import json
+
     ui_module = importlib.import_module("cli.commands.ui")
     connection = importlib.import_module("cli.utils.connection")
-    config = SimpleNamespace(format="json")
-    monkeypatch.setattr(ui_module, "get_config", lambda: config)
+    monkeypatch.setattr(ui_module, "get_config", lambda: SimpleNamespace(format="json"))
     calls = []
 
     async def send(command_type, params, *_args, **_kwargs):
         calls.append((command_type, dict(params)))
-        if command_type == "manage_gameobject":
-            return {
-                "success": True,
-                "data": {"instanceID": 202 if params["name"].endswith("_Label") else 101},
-            }
-        return {"success": True, "data": {}}
+        return {"success": True, "data": {"name": "Duplicate", "instanceID": 101}}
 
     monkeypatch.setattr(connection, "send_command", send)
+    # When
     result = CliRunner().invoke(ui_module.ui, [command, "Duplicate", *args])
+    # Then: one operation, with the returned identity retained in CLI output.
     assert result.exit_code == 0, result.output
-    for command_type, params in calls:
-        if command_type == "manage_components":
-            expected_id = (
-                202
-                if command == "create-button" and params["componentType"] == "TextMeshProUGUI"
-                else 101
-            )
-            assert params["target"] == expected_id, params
-            assert params["searchMethod"] == "by_id", params
-        elif params["name"].endswith("_Label"):
-            assert params["parent"] == 101
+    assert json.loads(result.output)["data"]["instanceID"] == 101
+    assert len(calls) == 1
+    assert calls[0][0] == "manage_ugui"
+    assert calls[0][1]["action"] == "create_cli"
+    assert calls[0][1]["name"] == "Duplicate"
 
 
 @pytest.mark.parametrize(
@@ -90,14 +83,12 @@ def test_ui_cli_actual_shared_runner_stops_on_component_failure(monkeypatch, com
 
     async def send(command_type, params, *_args, **_kwargs):
         calls.append(command_type)
-        if command_type == "manage_gameobject":
-            return {"success": True, "data": {"instanceID": 101}}
         return {"success": False, "error": "component rejected", "data": {"componentAdded": True}}
 
     monkeypatch.setattr(connection, "send_command", send)
     result = CliRunner().invoke(ui_module.ui, [command, "Name", *args])
     assert result.exit_code == 1
-    assert calls == ["manage_gameobject", "manage_components"]
+    assert calls == ["manage_ugui"]
     assert "Created " not in result.output
 
 
@@ -125,7 +116,7 @@ def test_ui_cli_missing_created_id_stops_before_name_based_followups(monkeypatch
     monkeypatch.setattr(connection, "send_command", send)
     result = CliRunner().invoke(ui_module.ui, [command, "Duplicate", *args])
     assert result.exit_code == 1
-    assert calls == ["manage_gameobject"]
+    assert calls == ["manage_ugui"]
     assert "no valid instanceID" in result.output
 
 
