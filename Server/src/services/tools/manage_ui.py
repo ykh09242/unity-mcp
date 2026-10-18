@@ -307,8 +307,9 @@ async def manage_ui(
     | None = None,
     style: Annotated[
         dict[str, Any],
-        "Inline styles to set (e.g., {'backgroundColor': '#FF0000', 'fontSize': 24}). "
-        "For modify_visual_element.",
+        "Inline styles for modify_visual_element. Legacy scalar values remain supported. "
+        "Typed lengths: {'value': 50, 'unit': '%'} or {'keyword': 'auto'} where supported. "
+        "Inspect data.style_results for every applied/rejected entry and final inline overrides.",
     ]
     | None = None,
     enabled: Annotated[bool, "Set element enabled/disabled state. For modify_visual_element."]
@@ -318,8 +319,20 @@ async def manage_ui(
     ]
     | None = None,
     tooltip: Annotated[str, "Set element tooltip text. For modify_visual_element."] | None = None,
+    strict_style: Annotated[
+        bool,
+        Field(
+            strict=True,
+            description="Reject every requested mutation before application if any inline style is rejected. "
+            "Only modify_visual_element; default false preserves lenient compatibility. Validation is not callback rollback.",
+        ),
+    ] = False,
 ) -> dict[str, Any]:
     action_lower = action.lower()
+    if type(strict_style) is not bool:
+        return {"success": False, "message": "strict_style must be a Boolean."}
+    if strict_style and action_lower != "modify_visual_element":
+        return {"success": False, "message": "strict_style requires modify_visual_element."}
 
     if action_lower in ("get_visual_tree", "diagnose"):
         for key, value, minimum, maximum in (
@@ -523,6 +536,8 @@ async def manage_ui(
         params_dict["toggleClasses"] = toggle_classes
     if style is not None:
         params_dict["style"] = style
+    if strict_style:
+        params_dict["strict_style"] = True
     if enabled is not None:
         params_dict["enabled"] = enabled
     if visible is not None:

@@ -743,6 +743,283 @@ namespace MCPForUnityTests.Editor.Tools
             );
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void InlineStyleRejectionsAreCompleteAndStrictPreflightProtectsEveryMutation(bool strict)
+        {
+            var go = InlineStyleLabel(out var label);
+            var response = InlineStyleRequest(
+                go,
+                label,
+                new JObject
+                {
+                    ["width"] = new JObject { ["value"] = 50, ["unit"] = "%" },
+                    ["color"] = "private-invalid-color",
+                    ["display"] = "private-invalid-enum",
+                    ["paddingLeft"] = new JObject { ["keyword"] = "auto" },
+                    ["unknown"] = new JObject { ["private"] = "do-not-echo" },
+                },
+                strict,
+                false
+            );
+            Assert.AreEqual(!strict, response.Value<bool>("success"), response.ToString());
+            var report = response["data"]["style_results"];
+            Assert.AreEqual(1, report.Value<int>("schema_version"));
+            Assert.AreEqual(strict ? 0 : 1, ((JArray)report["applied"]).Count);
+            Assert.AreEqual(strict ? 5 : 4, ((JArray)report["rejected"]).Count);
+            Assert.That(report.ToString(), Does.Not.Contain("do-not-echo"));
+            Assert.That(report.ToString(), Does.Not.Contain("private-invalid"));
+            if (strict)
+            {
+                Assert.AreEqual("original", label.text);
+                Assert.IsTrue(label.ClassListContains("keep"));
+                Assert.IsFalse(label.ClassListContains("new"));
+                Assert.AreEqual(12f, label.style.width.value.value);
+                Assert.IsTrue(label.enabledSelf);
+                Assert.AreEqual("before", label.tooltip);
+                Assert.AreEqual(DisplayStyle.Flex, label.style.display.value);
+            }
+            else
+            {
+                Assert.AreEqual("changed", label.text);
+                Assert.AreEqual(LengthUnit.Percent, label.style.width.value.unit);
+                Assert.AreEqual(50f, label.style.width.value.value);
+                Assert.AreEqual(1, ((JArray)response["data"]["skipped"]).Count);
+            }
+        }
+
+        [Test]
+        public void TypedInlineLengthsKeepUnitsAndOnlyPropertySpecificAuto()
+        {
+            var go = InlineStyleLabel(out var label);
+            var response = InlineStyleRequest(
+                go,
+                label,
+                new JObject
+                {
+                    ["width"] = new JObject { ["keyword"] = "auto" },
+                    ["height"] = new JObject { ["value"] = 25, ["unit"] = "%" },
+                    ["margin-left"] = new JObject { ["keyword"] = "auto" },
+                    ["paddingRight"] = new JObject { ["value"] = 8, ["unit"] = "px" },
+                    ["borderRadius"] = new JObject { ["value"] = 10, ["unit"] = "%" },
+                    ["fontSize"] = new JObject { ["value"] = 20, ["unit"] = "%" },
+                    ["opacity"] = new JObject { ["value"] = 0 },
+                    ["backgroundColor"] = new JObject { ["value"] = "#FF0000" },
+                    ["color"] = new JObject { ["value"] = "#0000FF" },
+                    ["display"] = new JObject { ["value"] = "none" },
+                    ["visibility"] = new JObject { ["value"] = "hidden" },
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(Color.red, label.style.backgroundColor.value);
+            Assert.AreEqual(Color.blue, label.style.color.value);
+            Assert.AreEqual(DisplayStyle.Flex, label.style.display.value);
+            Assert.AreEqual(Visibility.Hidden, label.style.visibility.value);
+            Assert.AreEqual(StyleKeyword.Auto, label.style.width.keyword);
+            Assert.AreEqual(LengthUnit.Percent, label.style.height.value.unit);
+            Assert.AreEqual(StyleKeyword.Auto, label.style.marginLeft.keyword);
+            Assert.AreEqual(8f, label.style.paddingRight.value.value);
+            Assert.AreEqual(LengthUnit.Percent, label.style.borderBottomRightRadius.value.unit);
+            Assert.AreEqual(0f, label.style.opacity.value);
+            Assert.AreEqual("unsupported_unit", response["data"]["style_results"]["rejected"][0].Value<string>("reason"));
+        }
+
+        [TestCase(false, "string")]
+        [TestCase(true, "string")]
+        [TestCase(false, "null")]
+        [TestCase(true, "null")]
+        [TestCase(false, "boolean")]
+        [TestCase(true, "boolean")]
+        public void MalformedTypedNumericStyleStillAbortsBeforeEveryMutation(bool strict, string kind)
+        {
+            var go = InlineStyleLabel(out var label);
+            JToken invalid =
+                kind == "null" ? JValue.CreateNull()
+                : kind == "boolean" ? new JValue(true)
+                : new JValue("not-a-number");
+            var response = InlineStyleRequest(
+                go,
+                label,
+                new JObject
+                {
+                    ["width"] = 64,
+                    ["height"] = new JObject { ["value"] = invalid, ["unit"] = "px" },
+                    ["opacity"] = 0,
+                },
+                strict
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("original", label.text);
+            Assert.AreEqual(12f, label.style.width.value.value);
+            Assert.AreEqual("before", label.tooltip);
+            Assert.IsTrue(label.enabledSelf);
+            Assert.AreEqual(0, ((JArray)response["data"]["style_results"]["applied"]).Count);
+            Assert.AreEqual(3, ((JArray)response["data"]["style_results"]["rejected"]).Count);
+            Assert.AreEqual("malformed_numeric", response["data"]["style_results"]["rejected"][1].Value<string>("reason"));
+        }
+
+        [Test]
+        public void TypedNumericOverflowIsFatalBeforeMixedKeywordShapeRefusal()
+        {
+            var go = InlineStyleLabel(out var label);
+            label.style.height = 13;
+            var originalClasses = new List<string>(label.GetClasses());
+            var response = InlineStyleRequest(
+                go,
+                label,
+                new JObject
+                {
+                    ["width"] = 64,
+                    ["height"] = new JObject { ["value"] = 1e100, ["keyword"] = "auto" },
+                },
+                false,
+                false
+            );
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("original", label.text);
+            CollectionAssert.AreEquivalent(originalClasses, label.GetClasses());
+            Assert.AreEqual(12f, label.style.width.value.value);
+            Assert.AreEqual(13f, label.style.height.value.value);
+            Assert.IsTrue(label.enabledSelf);
+            Assert.AreEqual(DisplayStyle.Flex, label.style.display.value);
+            Assert.AreEqual("before", label.tooltip);
+            var report = response["data"]["style_results"];
+            Assert.AreEqual(0, ((JArray)report["applied"]).Count);
+            var rejected = (JArray)report["rejected"];
+            Assert.AreEqual(2, rejected.Count);
+            Assert.AreEqual(0, rejected[0].Value<int>("index"));
+            Assert.AreEqual("request_aborted_before_mutation", rejected[0].Value<string>("reason"));
+            Assert.AreEqual(1, rejected[1].Value<int>("index"));
+            Assert.AreEqual("height", rejected[1].Value<string>("property"));
+            Assert.AreEqual("malformed_numeric", rejected[1].Value<string>("reason"));
+        }
+
+        [Test]
+        public void InlineStyleReceiptsDistinguishAssignedValuesFromFinalInlineOverrides()
+        {
+            var go = InlineStyleLabel(out var label);
+            var response = InlineStyleRequest(
+                go,
+                label,
+                new JObject
+                {
+                    ["width"] = 20,
+                    ["WIDTH"] = new JObject { ["value"] = 40, ["unit"] = "%" },
+                    ["display"] = "None",
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var applied = (JArray)response["data"]["style_results"]["applied"];
+            Assert.AreEqual(3, applied.Count);
+            Assert.AreEqual(20f, applied[0]["assigned_value"].Value<float>("value"));
+            Assert.AreEqual(40f, applied[0]["final_inline_value"].Value<float>("value"));
+            Assert.AreEqual("%", applied[0]["final_inline_value"].Value<string>("unit"));
+            Assert.AreEqual(1, applied[0]["superseded_by"].Value<int>("index"));
+            Assert.AreEqual("None", applied[2].Value<string>("assigned_value"));
+            Assert.AreEqual("Flex", applied[2].Value<string>("final_inline_value"));
+            Assert.AreEqual("visible", applied[2]["superseded_by"].Value<string>("parameter"));
+        }
+
+        [TestCase(false, false, true)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        public void UndefinedInlineEnumsRemainLabelledLegacyOnly(bool strict, bool typed, bool expected)
+        {
+            var go = InlineStyleLabel(out var label);
+            JToken value = typed ? (JToken)new JObject { ["value"] = "999" } : new JValue("999");
+            var response = JObject.FromObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_visual_element",
+                        ["target"] = go.name,
+                        ["element_name"] = label.name,
+                        ["strict_style"] = strict,
+                        ["style"] = new JObject { ["display"] = value },
+                    }
+                )
+            );
+            Assert.AreEqual(expected, response.Value<bool>("success"), response.ToString());
+            var report = response["data"]["style_results"];
+            Assert.AreEqual(expected ? "legacy_undefined_enum" : "invalid_enum", report[expected ? "applied" : "rejected"][0].Value<string>("reason"));
+        }
+
+        [TestCase("entries")]
+        [TestCase("key")]
+        [TestCase("scalar")]
+        public void InlineStyleBoundsRefuseBeforeMutation(string overflow)
+        {
+            var go = InlineStyleLabel(out var label);
+            var styles = new JObject { ["width"] = 64 };
+            if (overflow == "entries")
+                for (int i = 0; i < 64; i++)
+                    styles["unknown" + i] = i;
+            else if (overflow == "key")
+                styles[new string('k', 129)] = 1;
+            else
+                styles["color"] = new string('x', 257);
+            var response = InlineStyleRequest(go, label, styles);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("inline_style_limit_exceeded", response.Value<string>("error"));
+            Assert.AreEqual("original", label.text);
+            Assert.AreEqual(12f, label.style.width.value.value);
+        }
+
+        [TestCase("true")]
+        [TestCase("1")]
+        [TestCase("null")]
+        public void DirectNativeStrictStyleRequiresBooleanBeforeTargetResolution(string json)
+        {
+            var response = JObject.FromObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_visual_element",
+                        ["target"] = "missing-target",
+                        ["element_name"] = "missing",
+                        ["strict_style"] = JToken.Parse(json == "true" ? "\"true\"" : json),
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.AreEqual("strict_style must be a Boolean.", response.Value<string>("error"));
+        }
+
+        private GameObject InlineStyleLabel(out Label label)
+        {
+            var go = new GameObject("__McpInlineStyle_" + Guid.NewGuid().ToString("N"));
+            allocated.Add(go);
+            label = new Label("original") { name = "owned-style-label", tooltip = "before" };
+            label.AddToClassList("keep");
+            label.style.width = 12;
+            label.style.display = DisplayStyle.Flex;
+            go.AddComponent<UIDocument>().rootVisualElement.Add(label);
+            return go;
+        }
+
+        private static JObject InlineStyleRequest(GameObject go, Label label, JObject styles, bool strict = false, bool visible = true)
+        {
+            return JObject.FromObject(
+                ManageUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_visual_element",
+                        ["target"] = go.name,
+                        ["element_name"] = label.name,
+                        ["text"] = "changed",
+                        ["add_classes"] = new JArray("new"),
+                        ["remove_classes"] = new JArray("keep"),
+                        ["style"] = styles,
+                        ["strict_style"] = strict,
+                        ["enabled"] = false,
+                        ["visible"] = visible,
+                        ["tooltip"] = "after",
+                    }
+                )
+            );
+        }
+
         private GameObject MutationTree(out VisualElement root, out Label first, out Label second)
         {
             var go = new GameObject("__McpMutation_" + Guid.NewGuid().ToString("N"));
