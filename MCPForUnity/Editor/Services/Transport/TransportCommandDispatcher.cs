@@ -33,7 +33,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 CancellationTokenRegistration registration,
                 TransportMode? origin,
                 CommandPhaseTiming timing,
-                bool ownsTiming
+                bool ownsTiming,
+                ICommandProgress progress
             )
             {
                 CommandJson = commandJson;
@@ -43,6 +44,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 Origin = origin;
                 Timing = timing;
                 OwnsTiming = ownsTiming;
+                Progress = progress;
                 CancellationToken = cancellationToken;
                 CancellationRegistration = registration;
                 QueuedAt = DateTime.UtcNow;
@@ -53,6 +55,7 @@ namespace MCPForUnity.Editor.Services.Transport
             public TransportMode? Origin { get; }
             public CommandPhaseTiming Timing { get; }
             public bool OwnsTiming { get; }
+            public ICommandProgress Progress { get; }
             public TaskCompletionSource<string> CompletionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public TaskCompletionSource<TransportCommandResponse> ResponseSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public TaskCompletionSource<bool> ExecutionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -172,11 +175,19 @@ namespace MCPForUnity.Editor.Services.Transport
             CancellationToken cancellationToken,
             TransportMode? origin,
             CommandPhaseTiming timing
+        ) => ExecuteTimedCommandAsync(command, cancellationToken, origin, timing, null);
+
+        internal static TransportCommandOperation ExecuteTimedCommandAsync(
+            Command command,
+            CancellationToken cancellationToken,
+            TransportMode? origin,
+            CommandPhaseTiming timing,
+            ICommandProgress progress
         )
         {
             if (command == null)
                 throw new ArgumentNullException(nameof(command));
-            return Enqueue(null, command, cancellationToken, origin, timing, true);
+            return Enqueue(null, command, cancellationToken, origin, timing, true, progress);
         }
 
         private static TransportCommandOperation Enqueue(
@@ -185,7 +196,8 @@ namespace MCPForUnity.Editor.Services.Transport
             CancellationToken cancellationToken,
             TransportMode? origin = null,
             CommandPhaseTiming timing = null,
-            bool transportOwnsTiming = false
+            bool transportOwnsTiming = false,
+            ICommandProgress progress = null
         )
         {
             EnsureInitialised();
@@ -198,7 +210,7 @@ namespace MCPForUnity.Editor.Services.Transport
             if (ownsTiming)
                 timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.Direct);
             timing?.Start(CommandPhaseTiming.Phase.Queue);
-            var pending = new PendingCommand(commandJson, command, cancellationToken, registration, origin, timing, ownsTiming);
+            var pending = new PendingCommand(commandJson, command, cancellationToken, registration, origin, timing, ownsTiming, progress);
             var operation = new TransportCommandOperation(pending.ResponseSource.Task, pending.ExecutionSource.Task, pending.JsonResponseSource?.Task);
 
             lock (PendingLock)
@@ -520,7 +532,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 var sw = McpLogRecord.IsEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
                 pending.Timing?.Stop(CommandPhaseTiming.Phase.Queue);
                 pending.Timing?.Start(CommandPhaseTiming.Phase.Handler);
-                var result = CommandRegistry.ExecuteCommand(command.type, parameters, pending.CompletionSource, pending.CancellationToken);
+                var result = CommandRegistry.ExecuteCommand(command.type, parameters, pending.CompletionSource, pending.CancellationToken, pending.Progress);
 
                 if (result == null)
                 {

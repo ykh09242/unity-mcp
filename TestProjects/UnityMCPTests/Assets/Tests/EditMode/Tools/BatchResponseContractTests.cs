@@ -154,6 +154,147 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase("domain", false)]
+        [TestCase("domain", true)]
+        [TestCase("exception", false)]
+        [TestCase("exception", true)]
+        [TestCase("tool_disabled", false)]
+        [TestCase("tool_disabled", true)]
+        [TestCase("resource_disabled", false)]
+        [TestCase("resource_disabled", true)]
+        public async Task Progress_CountsSettledFailuresButNeverFailFastSuffix(string failure, bool failFast)
+        {
+            const string first = "__core06_prefix";
+            const string middle = "__core06_failure";
+            const string last = "__core06_suffix";
+            using var handlers = new MCPForUnityTests.Editor.Services.ProgressHandlerScope();
+            using var progress = new MCPForUnityTests.Editor.Services.NativeProgressProbe();
+            using var settings = MCPForUnityTests.Editor.Services.NativeProgressProbe.EnableTools("batch_execute", "manage_gameobject");
+            var resources = MCPServiceLocator.ResourceDiscovery;
+            int prefixCalls = 0,
+                failureCalls = 0,
+                suffixCalls = 0;
+            handlers.Set(
+                first,
+                new HandlerInfo(
+                    first,
+                    _ =>
+                    {
+                        prefixCalls++;
+                        return new SuccessResponse("settled");
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                last,
+                new HandlerInfo(
+                    last,
+                    _ =>
+                    {
+                        suffixCalls++;
+                        return new SuccessResponse("settled");
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                middle,
+                new HandlerInfo(
+                    middle,
+                    _ =>
+                    {
+                        failureCalls++;
+                        if (failure == "exception")
+                            throw new InvalidOperationException("owned CORE06 child failure");
+                        return new ErrorResponse("owned CORE06 domain failure");
+                    },
+                    null
+                )
+            );
+            string failedTool =
+                failure == "tool_disabled" ? "manage_gameobject"
+                : failure == "resource_disabled" ? "get_project_info"
+                : middle;
+            if (failure == "tool_disabled" || failure == "resource_disabled")
+                handlers.Set(
+                    failedTool,
+                    new HandlerInfo(
+                        failedTool,
+                        _ =>
+                        {
+                            failureCalls++;
+                            return new SuccessResponse("must not run");
+                        },
+                        null
+                    )
+                );
+            if (failure == "tool_disabled")
+                MCPServiceLocator.ToolDiscovery.SetToolEnabled("manage_gameobject", false);
+            if (failure == "resource_disabled")
+                resources.SetResourceEnabled("get_project_info", false);
+            var request = new JObject
+            {
+                ["failFast"] = failFast,
+                ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = failedTool }, new JObject { ["tool"] = last }),
+            };
+            var before = request.DeepClone();
+            var response = JObject.FromObject(
+                await MCPForUnityTests.Editor.Services.NativeProgressProbe.InvokeBatch(request, System.Threading.CancellationToken.None, progress)
+            );
+            int attempted = failFast ? 2 : 3;
+            Assert.IsTrue(JToken.DeepEquals(before, request), "Adding progress must not rewrite batch business arguments.");
+            Assert.AreEqual(attempted, response.SelectToken("data.attemptedCount").Value<int>());
+            Assert.AreEqual(failFast ? 1 : 0, response.SelectToken("data.notRunCount").Value<int>());
+            Assert.AreEqual("failed", response.SelectToken("data.outcomes[1].state").Value<string>());
+            Assert.AreEqual(
+                failure == "domain" ? "handler_failed"
+                    : failure == "exception" ? "handler_exception"
+                    : failure,
+                response.SelectToken("data.outcomes[1].reason").Value<string>()
+            );
+            Assert.AreEqual(failFast ? "not_run" : "succeeded", response.SelectToken("data.outcomes[2].state").Value<string>());
+            Assert.IsTrue(progress.TryTake(out var update), "Error and disabled branches must report their actual settled attempt.");
+            Assert.AreEqual(attempted, update.Completed);
+            Assert.AreEqual(3, update.Total, "Fail-fast must not renormalize its admitted total to the executed prefix.");
+            Assert.IsFalse(progress.TryTake(out _));
+            Assert.AreEqual(1, prefixCalls);
+            Assert.AreEqual(failure.EndsWith("_disabled", StringComparison.Ordinal) ? 0 : 1, failureCalls);
+            Assert.AreEqual(failFast ? 0 : 1, suffixCalls);
+        }
+
+        [Test]
+        public async Task Progress_WholeEnvelopeRejectionDoesNotInvokeOrReport()
+        {
+            const string first = "__core06_rejected_prefix";
+            using var handlers = new MCPForUnityTests.Editor.Services.ProgressHandlerScope();
+            using var progress = new MCPForUnityTests.Editor.Services.NativeProgressProbe();
+            int calls = 0;
+            handlers.Set(
+                first,
+                new HandlerInfo(
+                    first,
+                    _ =>
+                    {
+                        calls++;
+                        return new SuccessResponse("must not run");
+                    },
+                    null
+                )
+            );
+            var response = JObject.FromObject(
+                await MCPForUnityTests.Editor.Services.NativeProgressProbe.InvokeBatch(
+                    new JObject { ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = "batch_validate" }) },
+                    System.Threading.CancellationToken.None,
+                    progress
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.AreEqual(0, response.SelectToken("data.attemptedCount").Value<int>());
+            Assert.AreEqual(0, calls);
+            Assert.IsFalse(progress.TryTake(out _));
+        }
+
         private static JObject Preview(JObject request)
         {
             var method = typeof(BatchExecute).GetMethod("ValidateCommand", BindingFlags.Public | BindingFlags.Static);

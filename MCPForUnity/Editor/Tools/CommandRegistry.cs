@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
@@ -23,14 +24,18 @@ namespace MCPForUnity.Editor.Tools
         public Func<JObject, object> SyncHandler { get; }
         public Func<JObject, Task<object>> AsyncHandler { get; }
         public Func<JObject, CancellationToken, Task<object>> CooperativeAsyncHandler { get; private set; }
+        public Func<JObject, CancellationToken, ICommandProgress, Task<object>> ProgressiveAsyncHandler { get; private set; }
 
         internal Func<JObject, BatchActionValidation> BatchValidator { get; set; }
         internal HandlerInfo AliasOwner { get; set; }
 
-        public bool IsAsync => AsyncHandler != null || CooperativeAsyncHandler != null;
+        public bool IsAsync => AsyncHandler != null || CooperativeAsyncHandler != null || ProgressiveAsyncHandler != null;
 
         internal static HandlerInfo Cooperative(string name, Func<JObject, CancellationToken, Task<object>> handler) =>
             new HandlerInfo(name, null, null) { CooperativeAsyncHandler = handler };
+
+        internal static HandlerInfo Progressive(string name, Func<JObject, CancellationToken, ICommandProgress, Task<object>> handler) =>
+            new HandlerInfo(name, null, null) { ProgressiveAsyncHandler = handler };
 
         public HandlerInfo(string commandName, Func<JObject, object> syncHandler, Func<JObject, Task<object>> asyncHandler)
         {
@@ -114,8 +119,17 @@ namespace MCPForUnity.Editor.Tools
 
         internal static MethodInfo GetCommandMethod(Type type)
         {
-            // Cancellation is an explicit opt-in async signature. Existing one-argument
-            // handlers remain unchanged, including tools called directly by other tools.
+            // Optional progress and cancellation are explicit async signatures. Preserve
+            // legacy entry points and never infer an ambient reporter for nested calls.
+            var progressive = type.GetMethod(
+                "HandleCommand",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(JObject), typeof(CancellationToken), typeof(ICommandProgress) },
+                null
+            );
+            if (progressive != null && !progressive.ContainsGenericParameters && typeof(Task).IsAssignableFrom(progressive.ReturnType))
+                return progressive;
             var cooperative = type.GetMethod(
                 "HandleCommand",
                 BindingFlags.Public | BindingFlags.Static,
@@ -215,7 +229,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     McpLog.Warn(
                         $"MCP {typeLabel} {type.Name} is marked with [McpForUnity{(isResource ? "Resource" : "Tool")}] "
-                            + $"but has no supported closed public static HandleCommand(JObject) or async HandleCommand(JObject, CancellationToken) method"
+                            + $"but has no supported closed public static HandleCommand(JObject) or explicit async cancellation/progress signature"
                     );
                     return false;
                 }
@@ -224,7 +238,9 @@ namespace MCPForUnity.Editor.Tools
 
                 if (typeof(Task).IsAssignableFrom(method.ReturnType))
                 {
-                    if (method.GetParameters().Length == 2)
+                    if (method.GetParameters().Length == 3)
+                        handlerInfo = HandlerInfo.Progressive(commandName, CreateProgressiveAsyncHandlerInvoker(method, commandName));
+                    else if (method.GetParameters().Length == 2)
                         handlerInfo = HandlerInfo.Cooperative(commandName, CreateAsyncHandlerInvoker(method, commandName));
                     else
                         handlerInfo = new HandlerInfo(commandName, null, CreateAsyncHandlerDelegate(method, commandName));
@@ -321,14 +337,23 @@ namespace MCPForUnity.Editor.Tools
             ExecuteCommand(commandName, @params, tcs, CancellationToken.None);
 
         // Additive token overload: never replace actual handler settlement with a canceled wait.
-        public static object ExecuteCommand(string commandName, JObject @params, TaskCompletionSource<string> tcs, CancellationToken cancellationToken)
+        public static object ExecuteCommand(string commandName, JObject @params, TaskCompletionSource<string> tcs, CancellationToken cancellationToken) =>
+            ExecuteCommand(commandName, @params, tcs, cancellationToken, null);
+
+        public static object ExecuteCommand(
+            string commandName,
+            JObject @params,
+            TaskCompletionSource<string> tcs,
+            CancellationToken cancellationToken,
+            ICommandProgress progress
+        )
         {
             cancellationToken.ThrowIfCancellationRequested();
             var handlerInfo = GetHandlerInfo(commandName);
 
             if (handlerInfo.IsAsync)
             {
-                ExecuteAsyncHandler(handlerInfo, @params, tcs, cancellationToken);
+                ExecuteAsyncHandler(handlerInfo, @params, tcs, cancellationToken, progress);
                 return null;
             }
 
@@ -343,7 +368,7 @@ namespace MCPForUnity.Editor.Tools
             // another Task type should be declared async, which registration handles.
             if (result is Task<object> returnedTask)
             {
-                ExecuteAsyncHandler(new HandlerInfo(commandName, null, _ => returnedTask), @params, tcs, cancellationToken);
+                ExecuteAsyncHandler(new HandlerInfo(commandName, null, _ => returnedTask), @params, tcs, cancellationToken, progress);
                 return null;
             }
 
@@ -366,6 +391,9 @@ namespace MCPForUnity.Editor.Tools
 
             if (handlerInfo.IsAsync)
             {
+                // Composed child invocations do not inherit the outer batch reporter.
+                if (handlerInfo.ProgressiveAsyncHandler != null)
+                    return handlerInfo.ProgressiveAsyncHandler(payload, cancellationToken, null);
                 if (handlerInfo.CooperativeAsyncHandler != null)
                     return handlerInfo.CooperativeAsyncHandler(payload, cancellationToken);
                 if (handlerInfo.AsyncHandler == null)
@@ -407,6 +435,15 @@ namespace MCPForUnity.Editor.Tools
 
         private static Func<JObject, CancellationToken, Task<object>> CreateAsyncHandlerInvoker(MethodInfo method, string commandName)
         {
+            var invoke = CreateProgressiveAsyncHandlerInvoker(method, commandName);
+            return (parameters, cancellationToken) => invoke(parameters, cancellationToken, null);
+        }
+
+        private static Func<JObject, CancellationToken, ICommandProgress, Task<object>> CreateProgressiveAsyncHandlerInvoker(
+            MethodInfo method,
+            string commandName
+        )
+        {
             // The declared Task contract determines whether a result exists; runtime
             // implementations of plain Task can be Task<VoidTaskResult> internally.
             Type resultTaskType = method.ReturnType;
@@ -414,15 +451,19 @@ namespace MCPForUnity.Editor.Tools
                 resultTaskType = resultTaskType.BaseType;
             var resultProperty = resultTaskType?.GetProperty("Result");
 
-            bool cooperative = method.GetParameters().Length == 2;
-            return async (JObject parameters, CancellationToken cancellationToken) =>
+            int arity = method.GetParameters().Length;
+            return async (JObject parameters, CancellationToken cancellationToken, ICommandProgress progress) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 object rawResult;
 
                 try
                 {
-                    rawResult = method.Invoke(null, cooperative ? new object[] { parameters, cancellationToken } : new object[] { parameters });
+                    object[] arguments =
+                        arity == 3 ? new object[] { parameters, cancellationToken, progress }
+                        : arity == 2 ? new object[] { parameters, cancellationToken }
+                        : new object[] { parameters };
+                    rawResult = method.Invoke(null, arguments);
                 }
                 catch (TargetInvocationException ex)
                 {
@@ -449,7 +490,8 @@ namespace MCPForUnity.Editor.Tools
             HandlerInfo handlerInfo,
             JObject parameters,
             TaskCompletionSource<string> tcs,
-            CancellationToken cancellationToken
+            CancellationToken cancellationToken,
+            ICommandProgress progress
         )
         {
             string commandName = handlerInfo.CommandName;
@@ -459,27 +501,31 @@ namespace MCPForUnity.Editor.Tools
             }
 
             Task<object> handlerTask;
+            void CloseTransportProgress() => (progress as CommandProgressBuffer)?.Close();
 
             try
             {
                 handlerTask =
-                    handlerInfo.CooperativeAsyncHandler != null
-                        ? handlerInfo.CooperativeAsyncHandler(parameters, cancellationToken)
-                        : handlerInfo.AsyncHandler(parameters);
+                    handlerInfo.ProgressiveAsyncHandler != null ? handlerInfo.ProgressiveAsyncHandler(parameters, cancellationToken, progress)
+                    : handlerInfo.CooperativeAsyncHandler != null ? handlerInfo.CooperativeAsyncHandler(parameters, cancellationToken)
+                    : handlerInfo.AsyncHandler(parameters);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                CloseTransportProgress();
                 tcs.TrySetCanceled(cancellationToken);
                 return;
             }
             catch (Exception ex)
             {
+                CloseTransportProgress();
                 ReportAsyncFailure(commandName, tcs, ex);
                 return;
             }
 
             if (handlerTask == null)
             {
+                CloseTransportProgress();
                 CompleteAsyncCommand(commandName, tcs, null);
                 return;
             }
@@ -489,14 +535,17 @@ namespace MCPForUnity.Editor.Tools
                 try
                 {
                     var finalResult = await handlerTask.ConfigureAwait(true);
+                    CloseTransportProgress();
                     CompleteAsyncCommand(commandName, tcs, finalResult);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
+                    CloseTransportProgress();
                     tcs.TrySetCanceled(cancellationToken);
                 }
                 catch (Exception ex)
                 {
+                    CloseTransportProgress();
                     ReportAsyncFailure(commandName, tcs, ex);
                 }
             }

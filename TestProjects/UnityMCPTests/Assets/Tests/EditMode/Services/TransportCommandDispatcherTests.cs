@@ -389,6 +389,85 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [Test]
+        public async Task ProgressiveDispatch_CloseAndResponseCancellationDoNotReleaseActualChild()
+        {
+            const string first = "__core06_dispatch_first";
+            const string second = "__core06_dispatch_held";
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            using var progress = new NativeProgressProbe();
+            using var cancellation = new CancellationTokenSource();
+            var gate = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int firstCalls = 0,
+                secondCalls = 0;
+            handlers.Set(
+                first,
+                new HandlerInfo(
+                    first,
+                    _ =>
+                    {
+                        firstCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                second,
+                new HandlerInfo(
+                    second,
+                    null,
+                    async _ =>
+                    {
+                        secondCalls++;
+                        entered.TrySetResult(true);
+                        return await gate.Task.ConfigureAwait(true);
+                    }
+                )
+            );
+            TransportCommandOperation operation = null;
+            try
+            {
+                operation = NativeProgressProbe.Dispatch(
+                    new Command
+                    {
+                        type = "batch_execute",
+                        @params = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = second }) },
+                    },
+                    cancellation.Token,
+                    progress
+                );
+                _context.Drain();
+                Dispatcher.GetMethod("ProcessQueue", StaticPrivate).Invoke(null, null);
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                Assert.IsFalse(operation.Response.IsCompleted);
+                Assert.IsTrue(progress.TryTake(out var update));
+                Assert.AreEqual(1, update.Completed);
+                Assert.AreEqual(2, update.Total);
+                progress.Close();
+                Assert.IsFalse(operation.Completion.IsCompleted, "Closing an observer never settles a mutation.");
+                cancellation.Cancel();
+                Assert.AreSame(operation.Response, await Task.WhenAny(operation.Response, Task.Delay(5000)));
+                Assert.IsTrue(operation.Response.IsCanceled);
+                Assert.IsFalse(operation.Completion.IsCompleted, "Response cancellation preserves the actual legacy child owner.");
+                gate.TrySetResult(new { done = true });
+                await NativeProgressProbe.AwaitOwned(operation.Completion);
+                Assert.IsFalse(progress.TryTake(out _));
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(1, secondCalls);
+            }
+            finally
+            {
+                cancellation.Cancel();
+                gate.TrySetResult(new { done = true });
+                _context.Drain();
+                if (operation != null)
+                    await NativeProgressProbe.AwaitOwned(operation.Completion);
+            }
+        }
+
         [UnityTest]
         public IEnumerator UnknownCommand_IsAnsweredWithoutAnErrorInTheConsole()
         {

@@ -674,6 +674,510 @@ namespace MCPForUnityTests.Editor.Services
             return sb.ToString();
         }
 
+        [Test]
+        public async Task CommandProgress_NegotiatedBatchReportsBeforeGatedSecondAndKeepsFifo()
+        {
+            RequireOwnedProgressEditor();
+            const string first = "__core06_ws_first",
+                second = "__core06_ws_second",
+                queued = "__core06_ws_queued";
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            var gate = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int firstCalls = 0,
+                secondCalls = 0,
+                queuedCalls = 0;
+            handlers.Set(
+                first,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    first,
+                    _ =>
+                    {
+                        firstCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                second,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    second,
+                    null,
+                    async _ =>
+                    {
+                        secondCalls++;
+                        entered.TrySetResult(true);
+                        return await gate.Task.ConfigureAwait(true);
+                    }
+                )
+            );
+            handlers.Set(
+                queued,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    queued,
+                    _ =>
+                    {
+                        queuedCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            string id = Guid.NewGuid().ToString("D"),
+                queuedId = Guid.NewGuid().ToString("D");
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                JObject registration = await peer.Negotiate(true);
+                peer.Execute(
+                    id,
+                    "batch_execute",
+                    new JObject { ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = second }) },
+                    true
+                );
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                peer.Execute(queuedId, queued, new JObject(), false);
+                var update = await peer.Message(message =>
+                    message.Value<string>("id") == id
+                    && (message.Value<string>("type") == "command_progress" || message.Value<string>("type") == "command_result")
+                );
+                Assert.AreEqual("command_progress", update.Value<string>("type"), "The real settled1/2 frame must precede the held final result.");
+                CollectionAssert.AreEquivalent(new[] { "type", "id", "completed", "total", "stage" }, update.Properties().Select(property => property.Name));
+                Assert.AreEqual(id, update.Value<string>("id"));
+                Assert.AreEqual(1, update.Value<int>("completed"));
+                Assert.AreEqual(2, update.Value<int>("total"));
+                Assert.AreEqual("batch_items", update.Value<string>("stage"));
+                Assert.LessOrEqual(Encoding.UTF8.GetByteCount(update.ToString(Newtonsoft.Json.Formatting.None)), 512);
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(1, secondCalls);
+                Assert.AreEqual(0, queuedCalls, "Progress does not split the admitted batch or release its FIFO owner.");
+                CollectionAssert.Contains(registration["capabilities"].Values<string>().ToArray(), "command_progress_v1");
+                gate.TrySetResult(new { done = true });
+                int lastCompleted = 1;
+                JObject result;
+                while (true)
+                {
+                    result = await peer.Message(message => message.Value<string>("id") == id);
+                    if (result.Value<string>("type") == "command_result")
+                        break;
+                    Assert.AreEqual("command_progress", result.Value<string>("type"));
+                    Assert.Greater(result.Value<int>("completed"), lastCompleted);
+                    lastCompleted = result.Value<int>("completed");
+                    Assert.LessOrEqual(lastCompleted, 2);
+                    Assert.AreEqual(2, result.Value<int>("total"));
+                }
+                Assert.AreEqual(2, result.SelectToken("result.result.data.attemptedCount").Value<int>());
+                Assert.AreEqual(0, result.SelectToken("result.result.data.notRunCount").Value<int>());
+                Assert.IsNotNull(await peer.Result(queuedId));
+                Assert.AreEqual(1, queuedCalls);
+                await Task.Delay(200);
+                await peer.Barrier();
+                Assert.IsFalse(
+                    peer.Remaining().Any(message => message.Value<string>("id") == id),
+                    "No optional frame or second final response may follow the terminal response."
+                );
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                gate.TrySetResult(new { done = true });
+                await StopOwnedProgressClient(client);
+            }
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        public async Task CommandProgress_NoOptInOrOldPeerPreservesOrdinaryResult(bool supported, bool requested)
+        {
+            RequireOwnedProgressEditor();
+            const string child = "__core06_ws_compat";
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            int calls = 0;
+            handlers.Set(
+                child,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    child,
+                    _ =>
+                    {
+                        calls++;
+                        return new { stable = "unchanged" };
+                    },
+                    null
+                )
+            );
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(supported);
+                var parameters = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = child }) };
+                string baselineId = Guid.NewGuid().ToString("D"),
+                    id = Guid.NewGuid().ToString("D");
+                peer.Execute(baselineId, "batch_execute", parameters, false);
+                var baseline = await peer.Result(baselineId);
+                peer.Execute(id, "batch_execute", parameters, requested);
+                var result = await peer.Result(id);
+                Assert.IsTrue(JToken.DeepEquals(baseline["result"], result["result"]), "Optional progress cannot change any ordinary business result field.");
+                CollectionAssert.AreEquivalent(new[] { "type", "id", "result" }, result.Properties().Select(property => property.Name));
+                Assert.AreEqual(2, calls);
+                await peer.Barrier();
+                Assert.IsFalse(peer.Remaining().Any(message => message.Value<string>("type") == "command_progress"));
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                await StopOwnedProgressClient(client);
+            }
+        }
+
+        [Test]
+        public async Task CommandProgress_CancelClosesForegroundBeforeLegacyChildSettles()
+        {
+            RequireOwnedProgressEditor();
+            const string first = "__core06_ws_cancel_first",
+                held = "__core06_ws_cancel_held",
+                next = "__core06_ws_cancel_next";
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            var gate = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int activeCalls = 0,
+                nextCalls = 0;
+            handlers.Set(first, new MCPForUnity.Editor.Tools.HandlerInfo(first, _ => new { done = true }, null));
+            handlers.Set(
+                held,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    held,
+                    null,
+                    async _ =>
+                    {
+                        activeCalls++;
+                        entered.TrySetResult(true);
+                        return await gate.Task.ConfigureAwait(true);
+                    }
+                )
+            );
+            handlers.Set(
+                next,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    next,
+                    _ =>
+                    {
+                        nextCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            string id = Guid.NewGuid().ToString("D"),
+                nextId = Guid.NewGuid().ToString("D");
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(true);
+                peer.Execute(
+                    id,
+                    "batch_execute",
+                    new JObject { ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = held }) },
+                    true
+                );
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                var update = await peer.Message(message => message.Value<string>("type") == "command_progress" && message.Value<string>("id") == id);
+                Assert.AreEqual(1, update.Value<int>("completed"));
+                peer.Send(new JObject { ["type"] = "cancel", ["id"] = id });
+                var cancelled = await peer.Result(id);
+                Assert.AreEqual("error", cancelled["result"].Value<string>("status"));
+                Assert.That(cancelled["result"].Value<string>("error"), Does.Contain("canceled"));
+                Assert.IsFalse(gate.Task.IsCompleted, "Foreground cancellation cannot pretend the legacy mutation settled.");
+                peer.Execute(nextId, next, new JObject(), false);
+                await peer.Barrier();
+                Assert.AreEqual(0, nextCalls);
+                gate.TrySetResult(new { done = true });
+                await peer.Result(nextId);
+                await peer.Barrier();
+                Assert.AreEqual(1, activeCalls);
+                Assert.AreEqual(1, nextCalls);
+                Assert.IsFalse(
+                    peer.Remaining().Any(message => message.Value<string>("id") == id),
+                    "Neither late progress nor a second final response may follow foreground cancellation."
+                );
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                gate.TrySetResult(new { done = true });
+                await StopOwnedProgressClient(client);
+            }
+        }
+
+        [Test]
+        public async Task CommandProgress_BusyOptionalWriterDoesNotBlockItemsOrChangeFinalResult()
+        {
+            RequireOwnedProgressEditor();
+            const string child = "__core06_ws_busy_writer";
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            var gate = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int calls = 0;
+            handlers.Set(
+                child,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    child,
+                    null,
+                    async _ =>
+                    {
+                        if (++calls < 20)
+                            return new { done = true };
+                        entered.TrySetResult(true);
+                        var result = await gate.Task.ConfigureAwait(true);
+                        settled.TrySetResult(true);
+                        return result;
+                    }
+                )
+            );
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            SemaphoreSlim writer = null;
+            bool ownsWriter = false;
+            string id = Guid.NewGuid().ToString("D");
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(true);
+                writer = (SemaphoreSlim)GetField(client, "_sendLock");
+                await NativeProgressProbe.AwaitOwned(writer.WaitAsync());
+                ownsWriter = true;
+                var commands = new JArray();
+                for (int i = 0; i < 20; i++)
+                    commands.Add(new JObject { ["tool"] = child });
+                peer.Execute(id, "batch_execute", new JObject { ["commands"] = commands }, true);
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                Assert.AreEqual(20, calls, "Optional writer backpressure must not block the native batch loop.");
+                gate.TrySetResult(new { done = true });
+                await NativeProgressProbe.AwaitOwned(settled.Task);
+                writer.Release();
+                ownsWriter = false;
+                int previous = 0,
+                    optionalFrames = 0;
+                JObject final;
+                while (true)
+                {
+                    final = await peer.Message(message => message.Value<string>("id") == id);
+                    if (final.Value<string>("type") == "command_result")
+                        break;
+                    Assert.AreEqual("command_progress", final.Value<string>("type"));
+                    Assert.Greater(final.Value<int>("completed"), previous);
+                    Assert.AreEqual(20, final.Value<int>("total"));
+                    previous = final.Value<int>("completed");
+                    Assert.LessOrEqual(previous, 20);
+                    Assert.LessOrEqual(++optionalFrames, 2, "A blocked burst must coalesce instead of queuing one send per item.");
+                }
+                Assert.AreEqual(20, final.SelectToken("result.result.data.attemptedCount").Value<int>());
+                Assert.AreEqual(20, calls);
+                await Task.Delay(200);
+                await peer.Barrier();
+                Assert.IsFalse(peer.Remaining().Any(message => message.Value<string>("id") == id));
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                gate.TrySetResult(new { done = true });
+                if (ownsWriter)
+                    writer.Release();
+                await StopOwnedProgressClient(client);
+            }
+        }
+
+        [Test]
+        public async Task CommandProgress_ObsoleteExecuteCannotRunOrSubscribeToCurrentOwner()
+        {
+            RequireOwnedProgressEditor();
+            const string name = "__core06_ws_obsolete",
+                barrier = "__core06_ws_current";
+            using var handlers = new ProgressHandlerScope();
+            int obsoleteCalls = 0,
+                currentCalls = 0;
+            handlers.Set(
+                name,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    name,
+                    _ =>
+                    {
+                        obsoleteCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                barrier,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    barrier,
+                    _ =>
+                    {
+                        currentCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            using var obsolete = new CancellationTokenSource();
+            string id = Guid.NewGuid().ToString("D"),
+                barrierId = Guid.NewGuid().ToString("D");
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(true);
+                Assert.IsNotNull(GetField(client, "_commandWork"), "A missing command owner would make the obsolete-execute oracle vacuous.");
+                var execute = typeof(WebSocketTransportClient).GetMethod("HandleExecuteAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+                var payload = new JObject
+                {
+                    ["type"] = "execute",
+                    ["id"] = id,
+                    ["name"] = name,
+                    ["params"] = new JObject(),
+                    ["progress"] = new JObject { ["version"] = 1 },
+                };
+                await NativeProgressProbe.AwaitOwned((Task)execute.Invoke(client, new object[] { payload, obsolete.Token }));
+                peer.Execute(barrierId, barrier, new JObject(), false);
+                await peer.Result(barrierId);
+                Assert.AreEqual(1, currentCalls, "The live connection and its FIFO owner must still execute real work.");
+                Assert.AreEqual(0, obsoleteCalls, "A stale token cannot enter the live owner's FIFO or acquire a reporter.");
+                Assert.IsFalse(peer.Remaining().Any(message => message.Value<string>("id") == id));
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                await StopOwnedProgressClient(client);
+            }
+        }
+
+        private static void RequireOwnedProgressEditor()
+        {
+            if (Environment.GetEnvironmentVariable("UNITY_MCP_OWNED_TRANSPORT_TESTS") != "1")
+                Assert.Ignore("CORE06 loopback tests require the existing isolated owned-transport Editor lane.");
+            Assert.IsTrue(UnityEngine.Application.isBatchMode);
+            Assert.IsTrue(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")));
+            Assert.IsFalse(StdioBridgeHost.IsRunning, "These tests must not share a global bridge.");
+        }
+
+        private static async Task StopOwnedProgressClient(WebSocketTransportClient client)
+        {
+            Task stop = client.StopAsync();
+            if (await Task.WhenAny(stop, Task.Delay(5000)) != stop)
+            {
+                client.ForceStop();
+                await NativeProgressProbe.AwaitOwned(stop);
+                Assert.Fail("Owned WebSocket client required forced cleanup after its released child.");
+            }
+            await stop;
+        }
+
+        // Reuse the existing owned RFC6455 peer without changing its non-owned fixture.
+        // This adapter contains no socket implementation and owns only that peer instance.
+        private sealed class ProgressWirePeer : IDisposable
+        {
+            private const string Token = "owned-core06-progress-synthetic-token-only";
+            private readonly Type _type = typeof(TransportEditorIntegrationTests).GetNestedType("OwnedWebSocketPeer", BindingFlags.NonPublic);
+            private readonly object _peer;
+
+            internal ProgressWirePeer() => _peer = Activator.CreateInstance(_type, new object[] { Token, false, false });
+
+            private object Call(string name, params object[] arguments) =>
+                _type.GetMethod(name, BindingFlags.Public | BindingFlags.Instance).Invoke(_peer, arguments);
+
+            internal WebSocketTransportClient CreateClient() =>
+                new WebSocketTransportClient(
+                    null,
+                    new WebSocketTransportClient.OwnedConnectionOptions(
+                        (Uri)_type.GetProperty("Uri").GetValue(_peer),
+                        Token,
+                        "Core06Progress",
+                        new string('6', 40),
+                        "/owned/core06",
+                        "6000.0"
+                    )
+                );
+
+            internal void Send(JObject message) => Call("Send", message);
+
+            internal Task<JObject> Message(Func<JObject, bool> predicate) => (Task<JObject>)Call("Message", predicate);
+
+            internal Task<JObject> Result(string id) => (Task<JObject>)Call("Result", id);
+
+            internal async Task<JObject> Negotiate(bool supported)
+            {
+                await (Task)Call("WaitRegistered", 1);
+                JObject registration = await Message(message => message.Value<string>("type") == "register");
+                var capabilities = new JArray("large_result_v1", "command_cancel_v1");
+                if (supported)
+                    capabilities.Add("command_progress_v1");
+                Send(new JObject { ["type"] = "welcome", ["capabilities"] = capabilities.DeepClone() });
+                Send(
+                    new JObject
+                    {
+                        ["type"] = "registered",
+                        ["session_id"] = "owned-editor-session-1",
+                        ["capabilities"] = capabilities,
+                    }
+                );
+                await Barrier();
+                return registration;
+            }
+
+            internal void Execute(string id, string name, JObject parameters, bool requested)
+            {
+                if (name == "batch_execute")
+                    NativeProgressProbe.RequireBatchCapacity(parameters);
+                var message = new JObject
+                {
+                    ["type"] = "execute",
+                    ["id"] = id,
+                    ["name"] = name,
+                    ["params"] = parameters,
+                    ["timeout"] = 30,
+                };
+                if (requested)
+                    message["progress"] = new JObject { ["version"] = 1 };
+                Send(message);
+            }
+
+            internal async Task Barrier()
+            {
+                Send(new JObject { ["type"] = "ping" });
+                await Message(message => message.Value<string>("type") == "pong");
+            }
+
+            internal JObject[] Remaining()
+            {
+                var queued = (IEnumerable<JObject>)_type.GetField("_messages", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(_peer);
+                var collected = (IEnumerable<JObject>)_type.GetField("_collected", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(_peer);
+                return collected.Concat(queued).ToArray();
+            }
+
+            internal void AssertHealthy()
+            {
+                var error = _type.GetField("_error", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(_peer);
+                Assert.IsNull(error, "Owned loopback peer must not encounter malformed/interleaved framing.");
+                Assert.IsTrue((bool)_type.GetField("AllAuthHeadersMatch").GetValue(_peer));
+            }
+
+            public void Dispose() => ((IDisposable)_peer).Dispose();
+        }
+
         private static string NormalizeHostForComparison(string host)
         {
             if (string.IsNullOrEmpty(host))
