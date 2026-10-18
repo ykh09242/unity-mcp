@@ -285,6 +285,10 @@
     {
       "name": "validate_script",
       "description": "Validate C# script syntax and compilation"
+    },
+    {
+      "name": "view_test_results",
+      "description": "Read one completed selected-Editor test-result page with an optional offline MCP Apps view (group: testing)"
     }
   ]
 }

@@ -25,14 +25,14 @@ class TestResultsExtension(ServerExtension):
         return {"mimeTypes": [APP_MIME_TYPE]}
 
 
-def supports_test_results_app(ctx: Context) -> bool:
+def supports_test_results_app(ctx: Context | None) -> bool:
     """Use SDK unified session capabilities for both legacy and modern clients."""
-    if ctx.request_context is None:
+    if getattr(ctx, "request_context", None) is None:
         return False
     return client_supports_apps(ctx)
 
 
-def project_test_results_tools(ctx: Context, tools: list[Tool]) -> list[Tool]:
+def project_test_results_tools(ctx: Context | None, tools: list[Tool]) -> list[Tool]:
     """Copy only this tool's metadata; never mutate a registered component."""
     if supports_test_results_app(ctx):
         return tools

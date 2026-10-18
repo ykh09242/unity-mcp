@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from fastmcp import Client, FastMCP
+from fastmcp import Client, Context, FastMCP
 from fastmcp.server.middleware import Middleware
 from mcp.client.extension import ClientExtension
 from mcp.server.apps import APP_MIME_TYPE, EXTENSION_ID
@@ -275,6 +275,48 @@ async def test_selected_plugin_intersection_and_tenant_are_preserved(
             await admit()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("context_kind", ["missing", "partial", "unavailable", "sdk_unbound"])
+async def test_unavailable_request_context_keeps_fallback_and_registered_metadata(context_kind):
+    # Given real descriptors and no negotiated request context, including existing partial callers.
+    app = FastMCP("test-results-unavailable-context")
+
+    @app.tool(
+        name="view_test_results",
+        meta={"ui": {"resourceUri": TEST_RESULTS_URI}, "preserved": "value"},
+    )
+    def result_view() -> str:
+        return "unused"
+
+    @app.tool(name="other_tool", meta={"ui": {"resourceUri": "ui://other/view"}})
+    def other_view() -> str:
+        return "unused"
+
+    registered = await app.get_tool("view_test_results")
+    other = await app.get_tool("other_tool")
+    original = copy.deepcopy(registered.meta)
+    match context_kind:
+        case "missing":
+            ctx = None
+        case "partial":
+            ctx = SimpleNamespace()
+        case "unavailable":
+            ctx = SimpleNamespace(request_context=None)
+        case "sdk_unbound":
+            ctx = Context(app)
+        case _:
+            raise AssertionError("Unknown context fixture")
+
+    # When the Apps descriptor is projected without an active capability-bearing request.
+    projected = project_test_results_tools(ctx, [registered, other])
+    # Then ordinary fallback is safe, isolated, and leaves all other descriptors alone.
+    assert projected[0] is not registered
+    assert projected[0].meta == {"preserved": "value"}
+    assert registered.meta == original
+    assert projected[1] is other
+    assert other.meta == {"ui": {"resourceUri": "ui://other/view"}}
+
+
 class AppsClient(ClientExtension):
     """Advertise the capability through the real public client API."""
 
@@ -325,7 +367,7 @@ async def test_public_modern_and_legacy_capability_metadata_and_fallback(monkeyp
     assert registered.meta == metadata
     assert result.structured_content["success"] is True
     assert "한글" in result.content[0].text
-    assert resources[0].mimeType == APP_MIME_TYPE
+    assert resources[0].model_dump(by_alias=True)["mimeType"] == APP_MIME_TYPE
     assert resources[0].meta["ui"]["csp"]["connectDomains"] == []
     assert "owned-job" not in resources[0].text
 
