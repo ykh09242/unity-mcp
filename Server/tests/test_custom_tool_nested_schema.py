@@ -313,8 +313,11 @@ def test_refresh_captures_output_policy_and_revalidates_new_nested_contract(mode
 def test_project_and_tenant_fallback_uses_selected_rich_contract(mode, hosted):
     source = """
         import asyncio, importlib, json
+        from contextlib import nullcontext
         from unittest.mock import AsyncMock
         from fastmcp import FastMCP, Client
+        from fastmcp.server.middleware import Middleware
+        from tests.remote_credentials import remote_credentials
         from core.config import config
         from models.models import ToolDefinitionModel
         import services.custom_tool_service as module
@@ -332,6 +335,19 @@ def test_project_and_tenant_fallback_uses_selected_rich_contract(mode, hosted):
             selected = ["A@a", "tenant-a"]
             async def instance(ctx): return selected[0]
             async def user(ctx): return selected[1] if __HOSTED__ else None
+            class RequesterMiddleware(Middleware):
+                async def on_message(self, context, call_next):
+                    if __HOSTED__:
+                        # Ownership belongs to the server request task, not the client task.
+                        async with auth.requester("requester:" + selected[1]) as lease:
+                            assert lease.user_id == selected[1]
+                            return await call_next(context)
+                    return await call_next(context)
+            app.add_middleware(RequesterMiddleware())
+            auth_context = remote_credentials({
+                "requester:tenant-a": "tenant-a", "requester:tenant-b": "tenant-b",
+                "requester:tenant-unknown": "tenant-unknown",
+            }) if __HOSTED__ else nullcontext(None)
             module.get_unity_instance_from_context = execute.get_unity_instance_from_context = instance
             module.get_user_id_from_context = execute.get_user_id_from_context = user
             module.resolve_project_id_for_unity_instance = execute.resolve_project_id_for_unity_instance = lambda value: value.rsplit("@", 1)[1]
@@ -358,7 +374,7 @@ def test_project_and_tenant_fallback_uses_selected_rich_contract(mode, hosted):
             else:
                 service.replace_project_catalog("a", [first], kind="manual", publish_global=True)
                 service.replace_project_catalog("b", [second], kind="manual", publish_global=True)
-            async with Client(app, mode=__MODE__) as client:
+            async with auth_context as auth, Client(app, mode=__MODE__) as client:
                 if __HOSTED__:
                     assert [tool.name for tool in await client.list_tools()] == ["execute_custom_tool"]
                 else:

@@ -11,6 +11,8 @@ DESIGN: Single source of truth via middleware state:
 - All tools (GameObject, Script, Asset, etc.) use get_unity_instance_from_context()
 """
 
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import AsyncMock, Mock, MagicMock, patch
 from fastmcp import Context
@@ -92,6 +94,9 @@ class TestInstanceRoutingIntegration:
 
         middleware_ctx = Mock()
         middleware_ctx.fastmcp_context = ctx
+        middleware_ctx.message = SimpleNamespace(
+            name="manage_scene", arguments={"action": "get_active"}
+        )
 
         await middleware.set_active_instance(ctx, "TestProject@abc123")
 
@@ -309,6 +314,9 @@ class TestInstanceRoutingRaceConditions:
             # Create middleware context
             middleware_ctx = Mock()
             middleware_ctx.fastmcp_context = ctx
+            middleware_ctx.message = SimpleNamespace(
+                name="manage_scene", arguments={"action": "get_active"}
+            )
 
             async def mock_call_next(ctx):
                 return {"success": True}
@@ -342,6 +350,13 @@ class TestInstanceRoutingRaceConditions:
         # Simulate middleware intercepting create_script call
         middleware_ctx = Mock()
         middleware_ctx.fastmcp_context = ctx
+        middleware_ctx.message = SimpleNamespace(
+            name="create_script",
+            arguments={
+                "path": "Assets/Scripts/ImmediateScript.cs",
+                "contents": "public class ImmediateScript {}",
+            },
+        )
 
         async def mock_create_script_call(ctx):
             # This simulates what create_script does
@@ -385,6 +400,13 @@ class TestInstanceRoutingSequentialOperations:
             # Inject state via middleware
             middleware_ctx = Mock()
             middleware_ctx.fastmcp_context = ctx
+            middleware_ctx.message = SimpleNamespace(
+                name="create_script",
+                arguments={
+                    "path": f"Assets/Scripts/{script_name}.cs",
+                    "contents": f"public class {script_name} {{}}",
+                },
+            )
 
             async def mock_tool_call(middleware_ctx):
                 # The middleware passes the middleware_ctx, we need the fastmcp_context
