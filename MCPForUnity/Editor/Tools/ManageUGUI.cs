@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -47,6 +48,8 @@ namespace MCPForUnity.Editor.Tools
                     return UguiProjectionDiagnostics.Diagnose(@params);
                 if (action == "diagnose_text")
                     return UguiTmpLayoutDiagnostics.Diagnose(@params);
+                if (action == "diagnose_raycast")
+                    return DiagnoseRaycast(@params);
                 bool includeInactive = ReadBool(p.GetRaw("include_inactive"), false, "include_inactive");
                 int maxNodes = ReadInt(p.GetRaw("max_nodes"), 200, 1, 1000, "max_nodes");
                 if (action == "ping")
@@ -63,7 +66,7 @@ namespace MCPForUnity.Editor.Tools
                     return Create(p, includeInactive);
                 if (!new[] { "get_hierarchy", "set_rect", "set_layout", "set_text", "set_canvas", "diagnose" }.Contains(action))
                     return new ErrorResponse(
-                        "Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, diagnose, diagnose_projection, diagnose_text."
+                        "Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, diagnose, diagnose_projection, diagnose_text, diagnose_raycast."
                     );
                 var go = Resolve(p.GetRaw("target"), includeInactive);
                 if (action == "get_hierarchy")
@@ -98,8 +101,175 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception e)
             {
+                if (
+                    @params["action"]?.Type == JTokenType.String
+                    && string.Equals((string)@params["action"], "diagnose_raycast", StringComparison.OrdinalIgnoreCase)
+                )
+                    return new ErrorResponse("raycast_unavailable");
                 return new ErrorResponse(e is TargetInvocationException && e.InnerException != null ? e.InnerException.Message : e.Message);
             }
+        }
+
+        private static JObject InvalidRaycastRequest() =>
+            new JObject
+            {
+                ["success"] = false,
+                ["message"] = "invalid_raycast_request",
+                ["data"] = null,
+            };
+
+        private static object DiagnoseRaycast(JObject raw)
+        {
+            GameObject target;
+            int maximum,
+                spent = 0;
+            try
+            {
+                CheckKeys(raw, Keys("action target screen_position allow_custom_filters max_nodes max_depth max_evaluations max_characters"));
+                var point = raw["screen_position"] as JArray;
+                if (point == null || point.Count != 2 || (raw["allow_custom_filters"] != null && raw["allow_custom_filters"].Type != JTokenType.Boolean))
+                    throw new ArgumentException();
+                foreach (var coordinate in point)
+                {
+                    if (coordinate.Type != JTokenType.Integer && coordinate.Type != JTokenType.Float)
+                        throw new ArgumentException();
+                    double number = coordinate.Value<double>();
+                    if (double.IsNaN(number) || double.IsInfinity(number) || Math.Abs(number) > float.MaxValue)
+                        throw new ArgumentException();
+                }
+                maximum = ReadInt(raw["max_evaluations"], 20000, 1, 200000, "max_evaluations");
+                ReadInt(raw["max_nodes"], 200, 1, 1000, "max_nodes");
+                ReadInt(raw["max_depth"], 10, 0, 24, "max_depth");
+                ReadInt(raw["max_characters"], 65536, 1, 262144, "max_characters");
+                target = ResolveRaycastTarget(raw["target"], maximum, ref spent);
+            }
+            catch (ArgumentException)
+            {
+                return InvalidRaycastRequest();
+            }
+            catch (OverflowException)
+            {
+                return InvalidRaycastRequest();
+            }
+            // The helper's existing metadata budget is the remainder, not a second full budget.
+            var request = (JObject)raw.DeepClone();
+            request["action"] = "diagnose_raycast";
+            request["target"] = target.GetInstanceIDCompat();
+            request["max_evaluations"] = maximum - spent;
+            var reply = UguiRaycastDiagnostics.Diagnose(target, request);
+            if (reply["data"] is JObject data && data["budget"] is JObject budget)
+            {
+                budget["max_evaluations"] = maximum;
+                budget["evaluations"] = budget.Value<int>("evaluations") + spent;
+            }
+            return reply;
+        }
+
+        private static void ChargeRaycastSelector(ref int spent, int maximum, int amount)
+        {
+            // Reserve one unit for the unchanged helper to report its own budget refusal.
+            if (amount < 0 || amount > maximum - spent - 1)
+                throw new ArgumentException();
+            spent += amount;
+        }
+
+        private sealed class RaycastSelectorFrame
+        {
+            internal Transform Transform;
+            internal string ParentPath,
+                Path;
+            internal bool Entered;
+            internal int NextChild;
+        }
+
+        private static GameObject ResolveRaycastTarget(JToken token, int maximum, ref int spent)
+        {
+            if (token == null || (token.Type != JTokenType.Integer && token.Type != JTokenType.String))
+                throw new ArgumentException();
+            string selector = token is JValue scalar ? scalar.ToString(CultureInfo.InvariantCulture) : null;
+            if (string.IsNullOrWhiteSpace(selector) || selector.Length > 4096)
+                throw new ArgumentException();
+            new UTF8Encoding(false, true).GetByteCount(selector);
+            if (int.TryParse(selector, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id))
+            {
+                ChargeRaycastSelector(ref spent, maximum, 1);
+                var direct = GameObjectLookup.FindById(id);
+                ChargeRaycastSelector(ref spent, maximum, 8);
+                RequireSceneObject(direct, false);
+                return direct;
+            }
+            if (token.Type == JTokenType.Integer)
+                throw new ArgumentException();
+            bool pathSelector = selector.Contains("/");
+            selector = selector.TrimStart('/');
+            int visited = 0;
+            GameObject found = null;
+            ChargeRaycastSelector(ref spent, maximum, 2);
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            int scenes = stage == null ? SceneManager.sceneCount : 1;
+            for (int sceneIndex = 0; sceneIndex < scenes; sceneIndex++)
+            {
+                GameObject[] roots;
+                ChargeRaycastSelector(ref spent, maximum, 4);
+                if (stage != null)
+                    roots = new[] { stage.prefabContentsRoot };
+                else
+                {
+                    var scene = SceneManager.GetSceneAt(sceneIndex);
+                    if (!scene.IsValid() || !scene.isLoaded || EditorSceneManager.IsPreviewScene(scene))
+                        continue;
+                    if (scene.rootCount > 1000 - visited)
+                        throw new ArgumentException();
+                    ChargeRaycastSelector(ref spent, maximum, scene.rootCount + 1);
+                    roots = scene.GetRootGameObjects();
+                }
+                foreach (var root in roots)
+                {
+                    var stack = new Stack<RaycastSelectorFrame>();
+                    stack.Push(new RaycastSelectorFrame { Transform = root.transform, ParentPath = "" });
+                    while (stack.Count > 0)
+                    {
+                        ChargeRaycastSelector(ref spent, maximum, 1);
+                        if (stack.Count > 64)
+                            throw new ArgumentException();
+                        var frame = stack.Peek();
+                        if (!frame.Entered)
+                        {
+                            if (visited++ >= 1000)
+                                throw new ArgumentException();
+                            ChargeRaycastSelector(ref spent, maximum, 4);
+                            var go = frame.Transform.gameObject;
+                            if (!go.activeInHierarchy)
+                            {
+                                stack.Pop();
+                                continue;
+                            }
+                            string name = go.name;
+                            if (name.Length > 4096 || (frame.ParentPath.Length == 0 ? name.Length : frame.ParentPath.Length + name.Length + 1) > 4096)
+                                throw new ArgumentException();
+                            frame.Path = frame.ParentPath.Length == 0 ? name : frame.ParentPath + "/" + name;
+                            frame.Entered = true;
+                            if (string.Equals(pathSelector ? frame.Path : name, selector, StringComparison.Ordinal))
+                            {
+                                if (found != null)
+                                    throw new ArgumentException();
+                                found = go;
+                            }
+                        }
+                        ChargeRaycastSelector(ref spent, maximum, 2);
+                        if (frame.NextChild >= frame.Transform.childCount)
+                        {
+                            stack.Pop();
+                            continue;
+                        }
+                        var child = frame.Transform.GetChild(frame.NextChild++);
+                        stack.Push(new RaycastSelectorFrame { Transform = child, ParentPath = frame.Path });
+                    }
+                }
+            }
+            ChargeRaycastSelector(ref spent, maximum, 8);
+            RequireSceneObject(found, false);
+            return found;
         }
 
         private static object Create(ToolParams p, bool includeInactive)

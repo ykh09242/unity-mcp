@@ -17,6 +17,11 @@ from services.registry import get_group_tool_names, get_registered_tools
 from services.tools.manage_ugui import manage_ugui
 from services.tools.refresh_unity import send_mutation
 from transport.unity_transport import send_with_unity_instance
+from .test_ugui_raycast_diagnostics import (
+    sample as raycast_sample,
+    refusal as raycast_refusal,
+    opted_in_failure as raycast_failure,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -827,3 +832,137 @@ async def test_tmp_read_uses_closed_read_transport_and_refuses_old_peer(boundary
     boundary.read.assert_awaited_once()
     boundary.mutate.assert_not_awaited()
     assert boundary.read.call_args.args[3]["action"] == "diagnose_text"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "factory,allow", [(raycast_sample, False), (raycast_refusal, False), (raycast_failure, True)]
+)
+async def test_raycast_preserves_closed_receipts_and_only_null_adapter_fields(
+    boundary, factory, allow
+):
+    # A current read can fail after opted-in user code; never convert that receipt to success.
+    native = factory()
+    boundary.read.return_value = MCPResponse(**native)
+    result = await manage_ugui(
+        SimpleNamespace(),
+        action="diagnose_raycast",
+        target=7,
+        screen_position=[100.0, 80.0],
+        allow_custom_filters=allow,
+    )
+    assert result == native
+    assert boundary.read.await_args.args[3] == {
+        "action": "diagnose_raycast",
+        "target": 7,
+        "screen_position": [100.0, 80.0],
+        "allow_custom_filters": allow,
+        "max_nodes": 200,
+        "max_depth": 10,
+        "max_evaluations": 20000,
+        "max_characters": 65536,
+    }
+    boundary.preflight.assert_awaited_once_with(
+        SimpleNamespace(), requires_no_tests=False, wait_for_no_compile=True
+    )
+    boundary.mutate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"target": None},
+        {"target": True},
+        {"target": " "},
+        {"target": "\ud800"},
+        {"screen_position": None},
+        {"screen_position": [1]},
+        {"screen_position": [True, 2]},
+        {"screen_position": [float("nan"), 2]},
+        {"allow_custom_filters": "yes"},
+        {"include_inactive": True},
+        {"properties": {}},
+        {"camera": "View"},
+        {"max_evaluations": 0},
+        {"max_nodes": True},
+        {"max_depth": 25},
+        {"max_characters": 262145},
+    ],
+)
+async def test_raycast_invalid_request_stops_before_editor_access(boundary, options):
+    request = {
+        "action": "diagnose_raycast",
+        "target": 7,
+        "screen_position": [100.0, 80.0],
+        **options,
+    }
+    assert await manage_ugui(SimpleNamespace(), **request) == {
+        "success": False,
+        "message": "invalid_raycast_request",
+        "data": None,
+    }
+    for seam in (boundary.read, boundary.mutate, boundary.preflight, boundary.instance):
+        seam.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["ping", "diagnose_projection", "diagnose_text"])
+@pytest.mark.parametrize("options", [{"screen_position": [1, 2]}, {"allow_custom_filters": True}])
+async def test_raycast_only_options_cannot_change_other_actions(boundary, action, options):
+    assert await manage_ugui(SimpleNamespace(), action=action, target=7, **options) == {
+        "success": False,
+        "message": "invalid_raycast_request",
+        "data": None,
+    }
+    for seam in (boundary.read, boundary.mutate, boundary.preflight, boundary.instance):
+        seam.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("error",), "PRIVATE_SENTINEL"),
+        (("hint",), "PRIVATE_SENTINEL"),
+        (("extra",), None),
+        (("data", "policy", "allow_custom_filters"), True),
+        (("data", "target_id"), 8),
+        (("data", "screen_position"), [101.0, 80.0]),
+        (("data", "budget", "max_nodes"), 201),
+        (("data", "budget", "max_depth"), 11),
+        (("data", "budget", "max_evaluations"), 20001),
+        (("data", "budget", "max_characters"), 65537),
+    ],
+)
+async def test_raycast_rejects_peer_extras_and_scope_echo_drift_without_private_text(
+    boundary, path, value
+):
+    native = raycast_sample()
+    cursor = native
+    for key in path[:-1]:
+        cursor = cursor[key]
+    cursor[path[-1]] = value
+    boundary.read.return_value = native
+    result = await manage_ugui(
+        SimpleNamespace(), action="diagnose_raycast", target=7, screen_position=[100.0, 80.0]
+    )
+    assert result == {"success": False, "message": "unsupported_raycast_response"}
+    assert "PRIVATE_SENTINEL" not in str(result)
+    boundary.read.assert_awaited_once()
+    boundary.mutate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_raycast_preflight_refusal_does_not_send_a_read_or_mutation(boundary):
+    blocked = MCPResponse(success=False, error="compile pending", hint="retry")
+    boundary.preflight.return_value = blocked
+    assert (
+        await manage_ugui(
+            SimpleNamespace(), action="diagnose_raycast", target=7, screen_position=[100.0, 80.0]
+        )
+        == blocked.model_dump()
+    )
+    boundary.instance.assert_not_awaited()
+    boundary.read.assert_not_awaited()
+    boundary.mutate.assert_not_awaited()

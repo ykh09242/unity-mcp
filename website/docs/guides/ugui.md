@@ -81,3 +81,15 @@ Diagnostics evaluate a sanitized, disposable layout preview using supported buil
 A candidate does not prove a rendered defect or a runtime input failure. Arbitrary scripts, custom layout controllers, material effects, transparent graphic pixels, runtime animation, camera projection and device-specific safe areas can change the result. Preview text/layout measurements also depend on available component and font support. Use an actual Game View capture and the application's interaction flow to confirm consequential findings. These diagnostics do not generate screenshots or modify the Game View resolution.
 
 For instance selection, see [Multiple Unity instances](./multi-instance.md). For generic tool invocation, see the [CLI guide](./cli.md); a dedicated uGUI CLI command is not required.
+
+## Inspect current raycast evidence
+
+```text
+manage_ugui(action="diagnose_raycast", target=12345, screen_position=[640,360])
+```
+
+This action reports the current native hit order and separate handler/input-module facts. It does not move the pointer, select an object or dispatch pointer/selection events. A hit or input module does not guarantee event receipt or visible content. Overlay, assigned-camera and world-space routing must be unambiguous and supported by the current native shape; unsupported raycasters/Graphics, displays, physics-blocking or uninitialized state remain unknown.
+
+Custom ICanvasRaycastFilter implementations are refused before their potentially applicable callbacks by default. Set allow_custom_filters=True only to permit the native query to evaluate that user code. The receipt reports policy, presence, native-query attempt and whether user code may have run; it does not instrument exact callback counts. Opted-in code can mutate, dispatch events, throw or never return. There is no rollback, interruptibility or hard deadline, and the package still dispatches no events itself.
+
+max_nodes caps initial registered Graphics, max_depth caps filter ancestry, and max_evaluations is shared by admitted target lookup, package inspection/results and handler metadata. Handler lookups have a separate private 64-ancestor cap; an unadmitted first-hit relationship is null while admitted hit evidence remains. Name/path selectors require a complete bounded active-scene search; use the current instance ID if a large hierarchy cannot be admitted. Camera/resolution overrides, edits and include_inactive=True are rejected for this action.
