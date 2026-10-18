@@ -18,6 +18,13 @@ from pydantic import (
 from typing_extensions import assert_never
 
 from models import MCPResponse
+from models.ugui_device_profile_diagnostics import (
+    DEVICE_PROFILES,
+    DeviceProfiles,
+    positive_unity_float,
+    unity_float,
+    validate_ugui_device_profile_diagnostics,
+)
 from models.ugui_projection_diagnostics import validate_ugui_projection_diagnostics
 from models.ugui_tmp_layout_diagnostics import validate_ugui_tmp_layout_diagnostics
 from models.ugui_raycast_diagnostics import validate_ugui_raycast_response
@@ -42,6 +49,7 @@ UGUIAction = Literal[
     "diagnose_projection",
     "diagnose_text",
     "diagnose_raycast",
+    "diagnose_device_profiles",
 ]
 ElementType = Literal["canvas", "panel", "image", "button", "text"]
 _ACTIONS: Final = get_args(UGUIAction)
@@ -400,6 +408,119 @@ def _validate_unicode_strings(value: JsonValue) -> None:
             assert_never(value)
 
 
+async def _diagnose_device_profiles(
+    ctx,
+    target,
+    camera,
+    include_inactive,
+    max_nodes,
+    max_depth,
+    max_evaluations,
+    max_characters,
+    device_profiles,
+    minimum_touch_target_mm,
+):
+    """Admit the closed profile contract before any preflight or transport call."""
+    invalid = {"success": False, "message": "invalid_device_profile_request"}
+    try:
+        profiles = DEVICE_PROFILES.validate_python(device_profiles)
+        normalized = [profile.model_dump(mode="json") for profile in profiles]
+        threshold = None
+        if minimum_touch_target_mm is not None:
+            if type(minimum_touch_target_mm) not in (int, float):
+                return invalid
+            threshold = positive_unity_float(minimum_touch_target_mm)
+    except (ValidationError, ValueError, TypeError, OverflowError):
+        return invalid
+    if type(include_inactive) is not bool:
+        return invalid
+    for value, optional in ((target, False), (camera, True)):
+        if optional and value is None:
+            continue
+        if type(value) is int:
+            if not -(2**31) <= value < 2**31:
+                return invalid
+        elif type(value) is str:
+            try:
+                if not value.strip() or len(value.encode("utf-16-le")) // 2 > 4096:
+                    return invalid
+            except UnicodeError:
+                return invalid
+        else:
+            return invalid
+    budgets = {
+        "max_nodes": (max_nodes, 200, 1, 1000),
+        "max_depth": (max_depth, 10, 0, 24),
+        "max_evaluations": (max_evaluations, 20000, 1, 200000),
+        "max_characters": (max_characters, 65536, 1, 262144),
+    }
+    params = {
+        "action": "diagnose_device_profiles",
+        "target": target,
+        "include_inactive": include_inactive,
+        "device_profiles": normalized,
+    }
+    for key, (value, default, low, high) in budgets.items():
+        value = default if value is None else value
+        if type(value) is not int or not low <= value <= high:
+            return invalid
+        params[key] = value
+    if camera is not None:
+        params["camera"] = camera
+    if threshold is not None:
+        params["minimum_touch_target_mm"] = threshold
+    blocked = await preflight(ctx, requires_no_tests=False, wait_for_no_compile=True)
+    if blocked is not None:
+        return blocked.model_dump()
+    instance = await get_unity_instance_from_context(ctx)
+    result = await send_with_unity_instance(
+        async_send_command_with_retry, instance, "manage_ugui", params
+    )
+    result = result.model_dump() if isinstance(result, MCPResponse) else result
+    if type(result) is not dict or result.get("success") is not True:
+        allowed = {
+            "invalid_device_profile_request",
+            "invalid_device_profile_target",
+            "device_profile_canvas_unavailable",
+            "device_profiles_unavailable",
+            "device_profiles_artifact_limit",
+        }
+        code = result.get("error") if type(result) is dict else None
+        return {
+            "success": False,
+            "message": code
+            if type(code) is str and code in allowed
+            else "device_profiles_unavailable",
+        }
+    try:
+        data = validate_ugui_device_profile_diagnostics(result.get("data"))
+        if any(data["budget"][key] != params[key] for key in budgets):
+            raise ValueError("budget_echo")
+        if data["minimum_touch_target_mm"] != threshold:
+            raise ValueError("threshold_echo")
+        retained = data["profiles"]
+        if len(retained) > len(normalized) or (
+            data["status"] == "complete" and len(retained) != len(normalized)
+        ):
+            raise ValueError("profile_count_echo")
+        for expected, actual in zip(normalized, retained):
+            if actual["source"] != expected["source"]:
+                raise ValueError("profile_source_echo")
+            if expected["source"] == "virtual":
+                for key in ("width", "height", "orientation"):
+                    if actual[key] != expected[key]:
+                        raise ValueError("profile_value_echo")
+                if actual["dpi"] is None or unity_float(actual["dpi"]) != unity_float(
+                    expected["dpi"]
+                ):
+                    raise ValueError("profile_dpi_echo")
+                if actual["safe_area"] != [unity_float(v) for v in expected["safe_area"]]:
+                    raise ValueError("safe_area_echo")
+        return {"success": True, "data": data}
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return {"success": False, "message": "unsupported_device_profile_response"}
+
+
 async def _diagnose_projection(
     ctx, target, camera, include_inactive, max_nodes, max_depth, max_evaluations, max_characters
 ):
@@ -621,13 +742,14 @@ async def _diagnose_raycast(
     group="ui",
     description=(
         "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. "
-        "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast. Mutating actions: create, set_rect, set_layout, "
+        "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast, diagnose_device_profiles. Mutating actions: create, set_rect, set_layout, "
         "set_text, set_canvas, set_image. Optional uGUI and TextMeshPro support is detected in the Editor. "
         "diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera "
         "geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. "
         "diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes. "
         "diagnose_raycast reports one current native hit order and separate module/handler facts, not event receipt. "
         "Custom filters are refused by default; explicit allow_custom_filters may run user code without rollback or a hard deadline. "
+        "diagnose_device_profiles assesses 1..8 explicit virtual/observed profiles: built-in-only owned Overlay preview or same-resolution current camera geometry, with DPI/safe-area provenance and caller touch thresholds. "
         "The package dispatches no pointer/selection events or explicit source edits."
     ),
     annotations=ToolAnnotations(
@@ -719,6 +841,19 @@ async def manage_ugui(
         "For diagnose: 1 to 8 {width,height} objects, or a JSON array string. Integer dimensions 64 to 8192. "
         "Omit to use Editor diagnostic defaults.",
     ] = None,
+    device_profiles: Annotated[
+        DeviceProfiles | None,
+        "For diagnose_device_profiles: 1..8 closed records. Virtual requires source,width,height,dpi,safe_area=[x,y,width,height] in bottom-left pixels and concrete orientation; observed accepts source only.",
+    ] = None,
+    minimum_touch_target_mm: Annotated[
+        float | None,
+        Field(
+            strict=True,
+            gt=0,
+            allow_inf_nan=False,
+            description="For diagnose_device_profiles only: explicit caller threshold in millimetres; no universal threshold is assumed.",
+        ),
+    ] = None,
     screen_position: Annotated[
         ScreenPosition | None,
         "For diagnose_raycast: required [x,y] in current-screen pixels from the bottom-left; no camera/resolution edit.",
@@ -737,6 +872,29 @@ async def manage_ugui(
     action-specific inputs rather than an opaque options object.
     """
     action_lower = action.strip().lower()
+    if action_lower == "diagnose_device_profiles":
+        if (
+            screen_position is not None
+            or allow_custom_filters is not False
+            or any(
+                value is not None for value in (parent, name, element_type, properties, resolutions)
+            )
+        ):
+            return {"success": False, "message": "invalid_device_profile_request"}
+        return await _diagnose_device_profiles(
+            ctx,
+            target,
+            camera,
+            include_inactive,
+            max_nodes,
+            max_depth,
+            max_evaluations,
+            max_characters,
+            device_profiles,
+            minimum_touch_target_mm,
+        )
+    if device_profiles is not None or minimum_touch_target_mm is not None:
+        return {"success": False, "message": "invalid_device_profile_request"}
     if action_lower == "diagnose_raycast":
         if include_inactive is not False or any(
             value is not None
