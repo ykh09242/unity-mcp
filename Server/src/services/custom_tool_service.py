@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from services.execution_receipt_context import owned_to_thread
 from core.config import config
 from models.models import (
     MCPResponse,
@@ -1342,7 +1343,7 @@ class CustomToolService:
                     message="No active Unity instance. Call set_active_instance with Name@hash from mcpforunity://instances.",
                 )
 
-            project_id = await asyncio.to_thread(
+            project_id = await owned_to_thread(
                 resolve_project_id_for_unity_instance, unity_instance
             )
             if project_id is None:

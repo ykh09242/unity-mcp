@@ -147,7 +147,9 @@ async def run_work(
     # Submit before awaiting so even a queued cancelled request eventually
     # releases admission in the worker.
     try:
-        future = asyncio.get_running_loop().run_in_executor(None, run)
+        from services.execution_receipt_context import submit_owned_executor
+
+        future = submit_owned_executor(asyncio.get_running_loop(), None, run)
     except BaseException:
         workers.release()
         raise

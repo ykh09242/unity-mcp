@@ -13,10 +13,24 @@ import time
 
 import anyio
 from fastmcp.server.middleware import Middleware, MiddlewareContext
-from fastmcp.exceptions import ValidationError
+from fastmcp.exceptions import ToolError, ValidationError
 from fastmcp.tools.base import ToolResult
 
 from core.config import config
+from services.execution_receipt_context import owned_to_thread
+from transport.execution_receipts import (
+    PreparedExecution,
+    component_version,
+    execution_options,
+    reject_continuation,
+)
+from services.execution_receipt_identity import (
+    ReceiptConflict,
+    ReceiptInvalid,
+    ReceiptNotFound,
+    ReceiptUnavailable,
+)
+from transport.local_project_context import full_hash
 from services.registry import get_registered_tools
 from services.test_results_app import TEST_RESULTS_URI, project_test_results_tools
 from services.operation_permissions import authorize_remote_operation, authorize_remote_resource
@@ -166,7 +180,7 @@ class UnityInstanceMiddleware(Middleware):
 
                 pool = get_unity_connection_pool()
                 # Status files, probes and the discovery lock may all block.
-                results = await asyncio.to_thread(pool.discover_all_instances, force_refresh=True)
+                results = await owned_to_thread(pool.discover_all_instances, force_refresh=True)
             except Exception as exc:
                 if isinstance(exc, (SystemExit, KeyboardInterrupt)):
                     raise
@@ -205,15 +219,13 @@ class UnityInstanceMiddleware(Middleware):
             if UnityConnectionPool.is_exact_instance_id(value):
                 pool = get_unity_connection_pool()
                 try:
-                    target = await asyncio.to_thread(
-                        pool.resolve_instance, value, force_refresh=True
-                    )
+                    target = await owned_to_thread(pool.resolve_instance, value, force_refresh=True)
                     if target.id == value:
                         return value
                 except ConnectionError:
                     pass  # Preserve the middleware's full inventory error below.
                 # A missing exact ID already triggered full fallback discovery.
-                instances = await asyncio.to_thread(pool.discover_all_instances)
+                instances = await owned_to_thread(pool.discover_all_instances)
 
         # Port number (stdio only) — resolve to Name@hash via status file lookup
         if value.isdigit():
@@ -328,7 +340,7 @@ class UnityInstanceMiddleware(Middleware):
                     from transport.legacy.unity_connection import get_unity_connection_pool
 
                     pool = get_unity_connection_pool()
-                    instances = await asyncio.to_thread(
+                    instances = await owned_to_thread(
                         pool.discover_all_instances, force_refresh=True
                     )
                     ids = [getattr(inst, "id", None) for inst in instances]
@@ -490,6 +502,13 @@ class UnityInstanceMiddleware(Middleware):
                 await ctx.set_state("unity_session_id", session_id, serializable=False)
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
+        """Expose deliberate receipt refusals as tool errors at the public boundary."""
+        try:
+            return await self._call_tool_with_receipts(context, call_next)
+        except (ReceiptConflict, ReceiptInvalid, ReceiptNotFound, ReceiptUnavailable) as error:
+            raise ToolError(str(error)) from error
+
+    async def _call_tool_with_receipts(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into tool context if available."""
         user_id = None
         if config.http_remote_hosted:
@@ -504,7 +523,12 @@ class UnityInstanceMiddleware(Middleware):
         arguments = getattr(context.message, "arguments", None)
         tool = None
         if server is not None and hasattr(type(server), "get_tool") and isinstance(name, str):
-            tool = await server.get_tool(name)
+            options = execution_options(ctx)
+            tool = (
+                await server.get_tool(name, version=component_version(ctx))
+                if options is not None
+                else await server.get_tool(name)
+            )
             if tool is not None:
                 supplied = dict(arguments or {})
                 selector = supplied.pop("unity_instance", None)
@@ -530,6 +554,44 @@ class UnityInstanceMiddleware(Middleware):
         public_custom = tool is not None and name not in builtin_names
         public_params = params
         await authorize_remote_operation(name, public_params, custom=public_custom)
+        if name == "get_execution_receipt":
+            if execution_options(ctx) is not None:
+                raise ReceiptUnavailable("receipt_control_cannot_create_receipt")
+            return await call_next(context)
+        receipt = None
+        options = execution_options(ctx)
+        if options is not None:
+            reject_continuation(ctx)
+            runtime = getattr(server, "_execution_receipts", None)
+            if runtime is None:
+                raise ReceiptUnavailable("execution_receipts_unavailable")
+            receipt = await runtime.prepare(
+                options=options,
+                surface="mcp-tool",
+                name=name,
+                arguments=arguments or {},
+                semantic_context={},
+                policy_params=public_params,
+                custom=public_custom,
+                ctx=ctx,
+                version_selector=component_version(ctx),
+            )
+            if isinstance(receipt, ToolResult):
+                return receipt
+            context = context.copy(
+                message=context.message.model_copy(update={"arguments": receipt.identity.arguments})
+            )
+        try:
+            return await self._route_validated_tool(
+                context, call_next, user_id, name, params, public_params, public_custom, receipt
+            )
+        finally:
+            if receipt is not None:
+                receipt.close()
+
+    async def _route_validated_tool(
+        self, context, call_next, user_id, name, params, public_params, public_custom, receipt
+    ):
         # Authentication and SDK schema validation precede the execution clock.
         # Selection, tenant membership and the tool's transport work share it.
         from transport.unity_transport import _is_http_transport
@@ -542,6 +604,7 @@ class UnityInstanceMiddleware(Middleware):
                 public_name=name,
                 public_params=public_params,
                 public_custom=public_custom,
+                receipt=receipt,
             )
         self._refresh_tool_visibility_metadata_from_registry()
         command = self._tool_alias_to_unity_target.get(name, name)
@@ -570,6 +633,7 @@ class UnityInstanceMiddleware(Middleware):
                     public_name=name,
                     public_params=public_params,
                     public_custom=public_custom,
+                    receipt=receipt,
                 )
         except TimeoutError:
             if not scope.expired():
@@ -587,6 +651,7 @@ class UnityInstanceMiddleware(Middleware):
         public_name,
         public_params,
         public_custom,
+        receipt: PreparedExecution | None = None,
     ):
         ctx = context.fastmcp_context
         await self._inject_unity_instance(context, authenticated_user_id=user_id)
@@ -614,6 +679,51 @@ class UnityInstanceMiddleware(Middleware):
             await authorize_remote_operation(
                 public_name, public_params, custom=public_custom, ctx=ctx
             )
+        if receipt is not None:
+            selected = await ctx.get_state("unity_instance")
+            if not isinstance(selected, str) or full_hash(selected) != receipt.options.project_hash:
+                raise ReceiptUnavailable("execution_receipt_project_mismatch")
+            captured_session = await ctx.get_state("unity_session_id")
+            captured_identity = await ctx.get_state(self._TOOL_IDENTITY_STATE_KEY)
+            if captured_identity is None and isinstance(captured_session, str):
+                captured_identity = await PluginHub.capture_tool_identity(captured_session)
+            if isinstance(captured_identity, _ConnectionReadIdentity):
+                receipt.target = captured_identity.session_id, captured_identity.generation
+
+            def matches_selected(identity):
+                return (
+                    isinstance(identity, _ConnectionReadIdentity)
+                    and isinstance(captured_identity, _ConnectionReadIdentity)
+                    and (
+                        identity.session_id,
+                        identity.user_id,
+                        identity.socket_id,
+                        identity.generation,
+                    )
+                    == (
+                        captured_identity.session_id,
+                        captured_identity.user_id,
+                        captured_identity.socket_id,
+                        captured_identity.generation,
+                    )
+                )
+
+            async def before_handler():
+                if isinstance(captured_session, str):
+                    if not matches_selected(
+                        await PluginHub.capture_tool_identity(captured_session)
+                    ):
+                        raise ReceiptUnavailable("execution_receipt_generation_changed")
+                if config.http_remote_hosted:
+                    await authorize_remote_operation(
+                        public_name, public_params, custom=public_custom, ctx=ctx
+                    )
+                    if not matches_selected(
+                        await PluginHub.capture_tool_identity(captured_session)
+                    ):
+                        raise ReceiptUnavailable("execution_receipt_generation_changed")
+
+            return await receipt.execute(lambda: call_next(context), before_handler=before_handler)
         return await call_next(context)
 
     async def _selected_tool_is_visible(
@@ -694,7 +804,9 @@ class UnityInstanceMiddleware(Middleware):
     async def filter_tools_for_context(self, ctx, tools):
         """Filter an inventory using this request's already-resolved routing state."""
         if config.http_remote_hosted:
-            builtin_names = {tool["name"] for tool in get_registered_tools()}
+            builtin_names = {tool["name"] for tool in get_registered_tools()} | {
+                "get_execution_receipt"
+            }
             tools = [tool for tool in tools if getattr(tool, "name", None) in builtin_names]
 
         tool_names_from_fastmcp = sorted(getattr(t, "name", "?") for t in tools)
@@ -856,7 +968,7 @@ class UnityInstanceMiddleware(Middleware):
 
             unity_managed_tool_names: set[str] = set()
             tool_alias_to_unity_target: dict[str, str] = {}
-            server_only_tool_names: set[str] = set()
+            server_only_tool_names: set[str] = {"get_execution_receipt"}
             signature_entries: list[tuple[str, str]] = []
 
             for tool_info in registry_tools:

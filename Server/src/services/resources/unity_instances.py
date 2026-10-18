@@ -10,6 +10,7 @@ from fastmcp import Context
 from services.registry import mcp_for_unity_resource
 from transport.legacy.unity_connection import get_unity_connection_pool
 from transport.plugin_hub import PluginHub
+from services.execution_receipt_context import owned_to_thread
 from core.config import config
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -94,7 +95,7 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
         else:
             # Stdio/TCP transport: query connection pool
             pool = get_unity_connection_pool()
-            instances = await asyncio.to_thread(pool.discover_all_instances, force_refresh=False)
+            instances = await owned_to_thread(pool.discover_all_instances, force_refresh=False)
 
             # Check for duplicate project names
             name_counts = {}

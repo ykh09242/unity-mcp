@@ -22,6 +22,7 @@ import anyio
 from starlette.endpoints import WebSocketEndpoint
 from starlette.websockets import WebSocket, WebSocketState
 
+from services.execution_receipt_context import execution_owner, observe_native_result, own_future
 from core.config import config
 from core.constants import API_KEY_HEADER
 from models.models import MCPResponse
@@ -1472,9 +1473,34 @@ class PluginHub(WebSocketEndpoint):
         _expected_read: _ConnectionReadIdentity | None = None,
         _catalog_guard=None,
     ) -> dict[str, Any]:
+        result = await cls._send_command_response(
+            session_id,
+            command_type,
+            params,
+            _budget=_budget,
+            _expected_read=_expected_read,
+            _catalog_guard=_catalog_guard,
+        )
+        observe_native_result(result)
+        return result
+
+    @classmethod
+    async def _send_command_response(
+        cls,
+        session_id: str,
+        command_type: str,
+        params: dict[str, Any],
+        *,
+        _budget: _CommandBudget | None = None,
+        _expected_read: _ConnectionReadIdentity | None = None,
+        _catalog_guard=None,
+    ) -> dict[str, Any]:
         budget = _budget or _CommandBudget(
             asyncio.get_running_loop().time() + cls._command_timeouts(command_type, params)[1]
         )
+        receipt = execution_owner.get()
+        if receipt is not None:
+            budget.expires_at = min(budget.expires_at, receipt.expires_at)
         budget.phase = "admission"
         budget.dispatched = False
         budget.command_id = None
@@ -1634,6 +1660,7 @@ class PluginHub(WebSocketEndpoint):
                 "payload_bytes": payload_bytes,
                 "response_owner": response_owner.get(),
                 "result_ledger": result_ledger,
+                "receipt_owner": execution_owner.get(),
             }
             generation = getattr(websocket.state, "plugin_generation", None)
 
@@ -1672,13 +1699,79 @@ class PluginHub(WebSocketEndpoint):
                                 custom=_catalog_guard is not None,
                                 native=True,
                             )
+                    receipt = execution_owner.get()
+                    if receipt is not None:
+                        await receipt.native_async(
+                            payload["name"],
+                            payload["params"],
+                            custom=_catalog_guard is not None,
+                            kind="http",
+                            attempt_id=command_id,
+                            session_id=session_id,
+                            generation=generation,
+                            project_hash=session.project_hash if session is not None else None,
+                        )
+                        # Durable journal I/O yields. Repeat the original exact
+                        # target/catalog/lease fences before admitting socket I/O.
+                        current_session = (
+                            await registry.get_session(session_id) if registry is not None else None
+                        )
+                        async with cls._authorized_socket_lock(websocket, lock, requester):
+                            if (
+                                cls._connections.get(session_id) is not websocket
+                                or getattr(websocket.state, "plugin_generation", None) != generation
+                                or current_session is None
+                                or current_session.project_hash != session.project_hash
+                            ):
+                                raise PluginDisconnectedError("Receipt target generation changed")
+                            if context is not None and (
+                                context.selection is None
+                                or not context.selection.matches(
+                                    registry, session_id, websocket, current_session
+                                )
+                            ):
+                                raise CommandNotDispatchedError("Receipt project context changed")
+                            if _expected_read is not None and not cls._matches_read_identity(
+                                websocket, user_id, _expected_read
+                            ):
+                                raise CommandNotDispatchedError("Receipt read identity changed")
+                            if _catalog_guard is not None and not _catalog_guard.check_http(
+                                session_id, user_id
+                            ):
+                                raise CommandNotDispatchedError("Receipt custom catalog changed")
+                            for lease in (requester, cls._socket_lease(websocket)):
+                                if lease is not None:
+                                    lease.check_now()
+                                    authorize_operation(
+                                        lease.permissions,
+                                        payload["name"],
+                                        payload["params"],
+                                        custom=_catalog_guard is not None,
+                                        native=True,
+                                    )
+                    if receipt is not None:
+                        receipt.dispatch_started(
+                            kind="http",
+                            attempt_id=command_id,
+                            session_id=session_id,
+                            generation=generation,
+                        )
                     budget.dispatched = True
                     await websocket.send_json(payload)
                     for lease in (requester, plugin):
                         if lease is not None:
                             await lease.check()
 
-                send_task = asyncio.create_task(authorized_send())
+                receipt = execution_owner.get()
+                receipt_pin = receipt.acquire_worker() if receipt is not None else None
+                try:
+                    send_task = asyncio.create_task(authorized_send())
+                except BaseException:
+                    if receipt_pin is not None:
+                        receipt_pin.close()
+                    raise
+                if receipt_pin is not None:
+                    own_future(send_task, receipt_pin)
                 done, _ = await asyncio.wait(
                     {send_task, future},
                     timeout=budget.remaining(),
@@ -2578,6 +2671,28 @@ class PluginHub(WebSocketEndpoint):
             logger.warning("Command result missing id")
             return
 
+        # Capture only an already-owned receipt under the existing socket fence.
+        # Its journal I/O runs outside the Hub lock and outside the owner loop.
+        candidate = cls._pending.get(command_id)
+        receipt = candidate.get("receipt_owner") if candidate is not None else None
+        if receipt is not None:
+            async with cls._authorized_socket_lock(websocket, lock):
+                if (
+                    cls._pending.get(command_id) is not candidate
+                    or cls._connections.get(candidate["session_id"]) is not websocket
+                ):
+                    return
+                receipt_session = candidate["session_id"]
+                receipt_generation = getattr(websocket.state, "plugin_generation", None)
+            await receipt.observe_async(
+                kind="http",
+                attempt_id=command_id,
+                session_id=receipt_session,
+                generation=receipt_generation,
+                dispatched=True,
+                observed=True,
+                cause="observed",
+            )
         close_offender = False
         async with cls._authorized_socket_lock(websocket, lock):
             entry = cls._pending.get(command_id)
@@ -3092,7 +3207,7 @@ class PluginHub(WebSocketEndpoint):
         )
         try:
             async with asyncio.timeout_at(budget.expires_at):
-                return await cls._send_command_for_instance(
+                result = await cls._send_command_for_instance(
                     unity_instance,
                     command_type,
                     params,
@@ -3104,7 +3219,7 @@ class PluginHub(WebSocketEndpoint):
                 )
         except OperationPermissionError:
             if budget.dispatched:
-                return command_outcome_unknown(
+                result = command_outcome_unknown(
                     command_type,
                     "Remote operation permission ended",
                     session_id=budget.session_id,
@@ -3112,10 +3227,11 @@ class PluginHub(WebSocketEndpoint):
                     phase=budget.phase,
                     cause="permission_ended",
                 )
-            return MCPResponse(success=False, error="permission_denied").model_dump()
+            else:
+                result = MCPResponse(success=False, error="permission_denied").model_dump()
         except CredentialLeaseError:
             if budget.dispatched:
-                return command_outcome_unknown(
+                result = command_outcome_unknown(
                     command_type,
                     "Remote authorization ended",
                     session_id=budget.session_id,
@@ -3123,9 +3239,12 @@ class PluginHub(WebSocketEndpoint):
                     phase=budget.phase,
                     cause="authentication_ended",
                 )
-            return MCPResponse(success=False, error="auth_required").model_dump()
+            else:
+                result = MCPResponse(success=False, error="auth_required").model_dump()
         except TimeoutError:
-            return budget.timeout_response(command_type)
+            result = budget.timeout_response(command_type)
+        observe_native_result(result)
+        return result
 
     @classmethod
     async def _send_command_for_instance(

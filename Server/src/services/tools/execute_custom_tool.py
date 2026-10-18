@@ -1,3 +1,4 @@
+from services.execution_receipt_context import owned_to_thread
 import asyncio
 from typing import Any
 
@@ -42,7 +43,7 @@ async def execute_custom_tool(
             message="No active Unity instance. Call set_active_instance with Name@hash from mcpforunity://instances.",
         )
 
-    project_id = await asyncio.to_thread(resolve_project_id_for_unity_instance, unity_instance)
+    project_id = await owned_to_thread(resolve_project_id_for_unity_instance, unity_instance)
     if project_id is None:
         return MCPResponse(
             success=False,

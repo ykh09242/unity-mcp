@@ -494,6 +494,10 @@ async def authorize_remote_operation(
     if not config.http_remote_hosted:
         return
     lease = await require_credential_lease()
+    if name == "get_execution_receipt":
+        # This server-only control operation authorizes the stored policy floor
+        # in its handler, before and after I/O. It is not an unconditional read.
+        return
     authorize_operation(lease.permissions, name, params, custom=custom)
     if ctx is not None and callable(getattr(ctx, "get_state", None)):
         from transport.plugin_hub import PluginHub

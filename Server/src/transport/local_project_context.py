@@ -35,12 +35,23 @@ class ProjectExpectation(BaseModel):
     root: str = Field(min_length=1, max_length=4096)
 
 
+class ReceiptCommand(BaseModel):
+    """Strict envelope used only by explicit optional receipt requests."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    type: str = Field(min_length=1, max_length=256)
+    params: dict[str, JsonValue] = Field(default_factory=dict)
+    unity_instance: str = Field(min_length=1, max_length=256)
+    execution: dict[str, JsonValue] | None = None
+
+
 class ContextCommand(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     type: str = Field(min_length=1, max_length=256)
     params: dict[str, JsonValue] = Field(default_factory=dict)
     unity_instance: str = Field(min_length=1, max_length=256)
     expected_project: ProjectExpectation
+    execution: dict[str, JsonValue] | None = None
 
 
 @dataclass(frozen=True, slots=True)

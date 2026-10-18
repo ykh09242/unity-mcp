@@ -11,6 +11,7 @@ from transport.plugin_hub import (
     PluginHub,
     command_outcome_unknown,
 )
+from services.execution_receipt_context import observe_native_result
 from core.config import config
 from services.credential_lease import (
     CredentialLeaseError,
@@ -26,6 +27,12 @@ T = TypeVar("T")
 
 def _is_http_transport() -> bool:
     return config.transport_mode.lower() == "http"
+
+
+def _observed_unity_response(raw):
+    """Observe the final canonical response, including outer error construction."""
+    observe_native_result(raw)
+    return normalize_unity_response(raw)
 
 
 async def _resolve_user_id_from_request() -> str | None:
@@ -61,7 +68,7 @@ async def send_with_unity_instance(
             try:
                 lease = await require_credential_lease(user_id)
             except CredentialLeaseError:
-                return normalize_unity_response(
+                return _observed_unity_response(
                     MCPResponse(
                         success=False,
                         error="auth_required",
@@ -94,10 +101,10 @@ async def send_with_unity_instance(
             transport_returned = True
             if config.http_remote_hosted:
                 await lease.check()
-            return normalize_unity_response(raw)
+            return _observed_unity_response(raw)
         except CredentialLeaseError:
             if transport_returned:
-                return normalize_unity_response(
+                return _observed_unity_response(
                     command_outcome_unknown(
                         command_type,
                         "Remote authorization ended before delivery",
@@ -105,7 +112,7 @@ async def send_with_unity_instance(
                         cause="authentication_ended",
                     )
                 )
-            return normalize_unity_response(
+            return _observed_unity_response(
                 MCPResponse(
                     success=False, error="auth_required", message="Remote authorization ended"
                 ).model_dump()
@@ -113,7 +120,7 @@ async def send_with_unity_instance(
         except InstanceSelectionRequiredError as exc:
             # Not retryable: a blind retry fails identically. The client must pick
             # an instance, so hint at selection and hand over the ids structurally.
-            return normalize_unity_response(
+            return _observed_unity_response(
                 MCPResponse(
                     success=False,
                     error=str(exc),
@@ -125,7 +132,7 @@ async def send_with_unity_instance(
                 ).model_dump()
             )
         except CommandNotDispatchedError as exc:
-            return normalize_unity_response(
+            return _observed_unity_response(
                 MCPResponse(
                     success=False,
                     error=str(exc),
@@ -141,10 +148,12 @@ async def send_with_unity_instance(
             # NOTE: asyncio.TimeoutError has an empty str() by default, which is confusing for clients.
             err = str(exc) or f"{type(exc).__name__}"
             # Unknown failures do not prove the command stayed on this server.
-            return normalize_unity_response(
+            return _observed_unity_response(
                 command_outcome_unknown(command_type, err, unity_instance=unity_instance)
             )
 
     if unity_instance:
         kwargs.setdefault("instance_id", unity_instance)
-    return await send_fn(*args, **kwargs)
+    result = await send_fn(*args, **kwargs)
+    observe_native_result({"data": result.data} if isinstance(result, MCPResponse) else result)
+    return result

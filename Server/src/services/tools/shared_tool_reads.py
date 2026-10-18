@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Generic, TypeVar
 from weakref import WeakKeyDictionary, WeakValueDictionary, finalize
 
+from services.execution_receipt_context import execution_owner, own_future
 from core.config import config
 from services.credential_lease import current_credential_lease, require_credential_lease
 
@@ -74,6 +75,9 @@ class _ReadFlight(Generic[T]):
                 return _CompletedRead(value, asyncio.get_running_loop().time())
         finally:
             response_owner.reset(token)
+            # Completed flights may remain cached. Do not retain the owning
+            # receipt's argument graph in this finished task's Context.
+            execution_owner.set(None)
             if not received:
                 self.owner.release()
 
@@ -104,6 +108,8 @@ class SharedRead(Generic[T]):
             if (config.http_remote_hosted and config.transport_mode.lower() == "http")
             else None
         )
+        receipt = execution_owner.get()
+        receipt_pin = receipt.acquire_worker() if receipt is not None else None
         flight = self._flight
         if flight is not None and flight.task.done() and not flight.task.cancelled():
             if (
@@ -116,9 +122,18 @@ class SharedRead(Generic[T]):
         if flight is None or flight.task.cancelled():
             if flight is not None:
                 flight.release()
-            flight = _ReadFlight(factory)
+            try:
+                flight = _ReadFlight(factory)
+            except BaseException:
+                if receipt_pin is not None:
+                    receipt_pin.close()
+                raise
             self._flight = flight
             flight.task.add_done_callback(self._finish_fetch)
+        if receipt_pin is not None:
+            # Joining keeps this receipt charged through actual flight exit;
+            # creator-native provenance is not attributed to the joining receipt.
+            own_future(flight.task, receipt_pin)
         flight.references += 1
         try:
             if on_flight is not None:
@@ -265,7 +280,11 @@ class SharedToolReads(Generic[T]):
                     and entries.get(key) is read
                     and self._retention_s > 0
                 ):
-                    read.expiry_task = asyncio.create_task(self._expire(entries, key, read))
+                    receipt_token = execution_owner.set(None)
+                    try:
+                        read.expiry_task = asyncio.create_task(self._expire(entries, key, read))
+                    finally:
+                        execution_owner.reset(receipt_token)
                 else:
                     if key is not None and entries.get(key) is read:
                         del entries[key]
