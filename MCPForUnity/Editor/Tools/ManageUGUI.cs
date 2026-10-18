@@ -47,6 +47,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 var p = new ToolParams(@params);
                 string action = p.Get("action")?.ToLowerInvariant();
+                if (action == "diagnose_device_profiles")
+                    return UguiDeviceProfileDiagnostics.Diagnose(@params);
                 if (action == "diagnose_projection")
                     return UguiProjectionDiagnostics.Diagnose(@params);
                 if (action == "diagnose_text")
@@ -69,7 +71,7 @@ namespace MCPForUnity.Editor.Tools
                     return Create(p, includeInactive);
                 if (!new[] { "get_hierarchy", "set_rect", "set_layout", "set_text", "set_canvas", "set_image", "diagnose" }.Contains(action))
                     return new ErrorResponse(
-                        "Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, set_image, diagnose, diagnose_projection, diagnose_text, diagnose_raycast."
+                        "Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, set_image, diagnose, diagnose_projection, diagnose_text, diagnose_raycast, diagnose_device_profiles."
                     );
                 var go = Resolve(p.GetRaw("target"), includeInactive);
                 if (action == "get_hierarchy")

@@ -12,13 +12,13 @@ description: "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, la
 
 ## Description
 
-Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast. Mutating actions: create, set_rect, set_layout, set_text, set_canvas, set_image. Optional uGUI and TextMeshPro support is detected in the Editor. diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes. diagnose_raycast reports one current native hit order and separate module/handler facts, not event receipt. Custom filters are refused by default; explicit allow_custom_filters may run user code without rollback or a hard deadline. The package dispatches no pointer/selection events or explicit source edits.
+Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast, diagnose_device_profiles. Mutating actions: create, set_rect, set_layout, set_text, set_canvas, set_image. Optional uGUI and TextMeshPro support is detected in the Editor. diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes. diagnose_raycast reports one current native hit order and separate module/handler facts, not event receipt. Custom filters are refused by default; explicit allow_custom_filters may run user code without rollback or a hard deadline. diagnose_device_profiles assesses 1..8 explicit virtual/observed profiles: built-in-only owned Overlay preview or same-resolution current camera geometry, with DPI/safe-area provenance and caller touch thresholds. The package dispatches no pointer/selection events or explicit source edits.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['ping', 'get_hierarchy', 'create', 'set_rect', 'set_layout', 'set_text', 'set_canvas', 'set_image', 'diagnose', 'diagnose_projection', 'diagnose_text', 'diagnose_raycast']` | yes | Action to perform. |
+| `action` | `Literal['ping', 'get_hierarchy', 'create', 'set_rect', 'set_layout', 'set_text', 'set_canvas', 'set_image', 'diagnose', 'diagnose_projection', 'diagnose_text', 'diagnose_raycast', 'diagnose_device_profiles']` | yes | Action to perform. |
 | `target` | `str \| int \| None` | — | GameObject name, hierarchy path, or instance ID. Required for get_hierarchy, setters and diagnose. |
 | `parent` | `str \| int \| None` | — | Parent GameObject for create, resolved by name, hierarchy path, or instance ID. |
 | `name` | `str \| None` | — | Name of the created GameObject. |
@@ -31,6 +31,8 @@ Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and
 | `max_evaluations` | `int \| None` | — | For diagnose_projection, diagnose_text or diagnose_raycast: shared precharged package work, default 20000, range 1..200000. Raycast includes selector/handler work; native callbacks have no hard deadline. |
 | `max_characters` | `int \| None` | — | For diagnose_projection, diagnose_text or diagnose_raycast: shared output metadata UTF-16 budget, default 65536, range 1..262144. |
 | `resolutions` | `list[dict[str, int]] \| str \| None` | — | For diagnose: 1 to 8 {width,height} objects, or a JSON array string. Integer dimensions 64 to 8192. Omit to use Editor diagnostic defaults. |
+| `device_profiles` | `list[VirtualProfile \| ObservedProfile] \| None` | — | For diagnose_device_profiles: 1..8 closed records. Virtual requires source,width,height,dpi,safe_area=[x,y,width,height] in bottom-left pixels and concrete orientation; observed accepts source only. |
+| `minimum_touch_target_mm` | `float \| None` | — | For diagnose_device_profiles only: explicit caller threshold in millimetres; no universal threshold is assumed. |
 | `screen_position` | `list[float] \| None` | — | For diagnose_raycast: required [x,y] in current-screen pixels from the bottom-left; no camera/resolution edit. |
 | `allow_custom_filters` | `bool` | — | For diagnose_raycast only: explicitly permit native ICanvasRaycastFilter user code. Default false refuses before applicable custom callbacks; opt-in is not transactional or interruptible. |
 
