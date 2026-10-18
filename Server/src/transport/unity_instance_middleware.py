@@ -18,6 +18,7 @@ from fastmcp.tools.base import ToolResult
 
 from core.config import config
 from services.registry import get_registered_tools
+from services.operation_permissions import authorize_remote_operation, authorize_remote_resource
 from transport.plugin_hub import (
     NoUnitySessionError,
     PluginHub,
@@ -517,14 +518,6 @@ class UnityInstanceMiddleware(Middleware):
                 validate_tool_arguments(
                     tool, supplied, strict=True if server.strict_input_validation else None
                 )
-        # Authentication and SDK schema validation precede the execution clock.
-        # Selection, tenant membership and the tool's transport work share it.
-        from transport.unity_transport import _is_http_transport
-
-        if not _is_http_transport() or not PluginHub.is_configured():
-            return await self._call_selected_tool(context, call_next, user_id)
-        self._refresh_tool_visibility_metadata_from_registry()
-        command = self._tool_alias_to_unity_target.get(name, name)
         schema = getattr(tool, "parameters", {}) or {}
         params = {
             key: value["default"]
@@ -532,6 +525,25 @@ class UnityInstanceMiddleware(Middleware):
             if "default" in value
         }
         params.update(arguments or {})
+        builtin_names = {entry["name"] for entry in get_registered_tools()}
+        public_custom = tool is not None and name not in builtin_names
+        public_params = params
+        await authorize_remote_operation(name, public_params, custom=public_custom)
+        # Authentication and SDK schema validation precede the execution clock.
+        # Selection, tenant membership and the tool's transport work share it.
+        from transport.unity_transport import _is_http_transport
+
+        if not _is_http_transport() or not PluginHub.is_configured():
+            return await self._call_selected_tool(
+                context,
+                call_next,
+                user_id,
+                public_name=name,
+                public_params=public_params,
+                public_custom=public_custom,
+            )
+        self._refresh_tool_visibility_metadata_from_registry()
+        command = self._tool_alias_to_unity_target.get(name, name)
         if name == "execute_custom_tool":
             command = params.get("tool_name", name)
             params = params.get("parameters") or {}
@@ -550,7 +562,14 @@ class UnityInstanceMiddleware(Middleware):
         token = http_request_budget.set(_HttpRequestBudget(started_at, budget, scope))
         try:
             async with scope:
-                return await self._call_selected_tool(context, call_next, user_id)
+                return await self._call_selected_tool(
+                    context,
+                    call_next,
+                    user_id,
+                    public_name=name,
+                    public_params=public_params,
+                    public_custom=public_custom,
+                )
         except TimeoutError:
             if not scope.expired():
                 raise
@@ -558,7 +577,16 @@ class UnityInstanceMiddleware(Middleware):
         finally:
             http_request_budget.reset(token)
 
-    async def _call_selected_tool(self, context: MiddlewareContext, call_next, user_id):
+    async def _call_selected_tool(
+        self,
+        context: MiddlewareContext,
+        call_next,
+        user_id,
+        *,
+        public_name,
+        public_params,
+        public_custom,
+    ):
         ctx = context.fastmcp_context
         await self._inject_unity_instance(context, authenticated_user_id=user_id)
         if config.http_remote_hosted:
@@ -579,6 +607,12 @@ class UnityInstanceMiddleware(Middleware):
                 raise ValueError(
                     f"Tool '{tool_name}' is disabled or unavailable for this Unity instance"
                 )
+            # Native payloads omit public wrapper work such as ready waits.
+            # Admit the selected plugin's complete normalized public operation
+            # before the handler can start any of that work.
+            await authorize_remote_operation(
+                public_name, public_params, custom=public_custom, ctx=ctx
+            )
         return await call_next(context)
 
     async def _selected_tool_is_visible(
@@ -608,6 +642,7 @@ class UnityInstanceMiddleware(Middleware):
     async def on_read_resource(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into resource context if available."""
         uri = str(getattr(context.message, "uri", ""))
+        await authorize_remote_resource(uri)
         if uri in {
             "mcpforunity://capabilities",
             "mcpforunity://doctor",
@@ -623,15 +658,18 @@ class UnityInstanceMiddleware(Middleware):
         return await call_next(context)
 
     async def on_list_resources(self, context: MiddlewareContext, call_next):
+        await authorize_remote_resource()
         await self._inject_unity_instance(context)
         return await call_next(context)
 
     async def on_list_resource_templates(self, context: MiddlewareContext, call_next):
+        await authorize_remote_resource()
         await self._inject_unity_instance(context)
         return await call_next(context)
 
     async def on_list_tools(self, context: MiddlewareContext, call_next):
         """Filter MCP tool listing to the Unity-enabled set when session data is available."""
+        await authorize_remote_resource()
         try:
             await self._inject_unity_instance(context)
         except Exception as exc:

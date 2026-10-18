@@ -26,6 +26,14 @@ def _env_float(name: str, default: float) -> float:
     return default
 
 
+def _permissions_strict_from_env() -> bool:
+    """An invalid server migration setting must not silently enable legacy authority."""
+    value = os.environ.get("UNITY_MCP_API_KEY_PERMISSIONS_STRICT", "false").strip().lower()
+    if value not in {"true", "false", "1", "0"}:
+        raise ValueError("UNITY_MCP_API_KEY_PERMISSIONS_STRICT must be true/false or 1/0")
+    return value in {"true", "1"}
+
+
 @dataclass
 class ServerConfig:
     """Main configuration class for the MCP server."""
@@ -50,6 +58,7 @@ class ServerConfig:
     api_key_login_url: str | None = None  # URL for users to get/manage keys
     # Cache TTL in seconds (5 min default)
     api_key_max_auth_age: float = 300.0  # Finite positive connected authorization age
+    api_key_permissions_strict: bool = field(default_factory=_permissions_strict_from_env)
     api_key_cache_ttl: float = 300.0
     # Optional service token for authenticating to the validation endpoint
     api_key_service_token_header: str | None = None  # e.g. "X-Service-Token"

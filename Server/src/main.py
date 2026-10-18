@@ -990,6 +990,7 @@ def create_mcp_server(
             validation_url=config.api_key_validation_url,
             cache_ttl=config.api_key_cache_ttl,
             max_auth_age=config.api_key_max_auth_age,
+            permissions_strict=config.api_key_permissions_strict,
             service_token_header=config.api_key_service_token_header,
             service_token=config.api_key_service_token,
         )

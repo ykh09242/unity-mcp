@@ -12,6 +12,7 @@ from mcp.types import ToolAnnotations
 from core.config import config
 from models.response_limits import ResponseOwner, response_limit_error, response_owner
 from services.credential_lease import CredentialLeaseError, require_credential_lease
+from services.operation_permissions import authorize_remote_operation, remote_operation_allowed
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
@@ -44,6 +45,8 @@ async def _get_max_commands_from_editor_state(ctx: Context, unity_instance: str 
     Attempt to read the configured batch limit from the Unity editor state.
     Falls back to DEFAULT_MAX_COMMANDS_PER_BATCH if unavailable.
     """
+    if not await remote_operation_allowed("get_editor_state", {}, ctx=ctx):
+        return DEFAULT_MAX_COMMANDS_PER_BATCH
     lease = (
         await require_credential_lease()
         if config.http_remote_hosted and config.transport_mode.lower() == "http"
@@ -210,6 +213,9 @@ async def batch_execute(
             }
         )
 
+    # The entire normalized batch is admitted before context/settings/preflight
+    # work. A later forbidden member cannot leave earlier native side effects.
+    await authorize_remote_operation("batch_execute", {"commands": normalized_commands}, ctx=ctx)
     unity_instance = await get_unity_instance_from_context(ctx)
     try:
         max_commands = await _get_max_commands_from_editor_state(ctx, unity_instance)

@@ -378,6 +378,9 @@ class CustomToolService:
         omit_nulls: bool = False,
         _expected_contract: str | None = None,
     ) -> MCPResponse:
+        from services.operation_permissions import authorize_remote_operation
+
+        await authorize_remote_operation(tool_name, params or {}, custom=True)
         params = params or {}
         logger.info("Executing custom tool")
         if config.http_remote_hosted and not user_id:

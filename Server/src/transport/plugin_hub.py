@@ -59,6 +59,7 @@ from transport.large_result_assembler import (
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
 from services.api_key_service import ApiKeyService
+from services.operation_permissions import OperationPermissionError, authorize_operation
 from services.credential_lease import (
     CredentialLease,
     CredentialLeaseError,
@@ -1490,6 +1491,17 @@ class PluginHub(WebSocketEndpoint):
                         _expected_read=_expected_read,
                         _catalog_guard=_catalog_guard,
                     )
+        except OperationPermissionError:
+            if budget.dispatched:
+                return command_outcome_unknown(
+                    command_type,
+                    "Remote operation permission ended",
+                    session_id=session_id,
+                    command_id=budget.command_id,
+                    phase=budget.phase,
+                    cause="permission_ended",
+                )
+            return MCPResponse(success=False, error="permission_denied").model_dump()
         except CredentialLeaseError:
             if budget.dispatched:
                 return command_outcome_unknown(
@@ -1562,6 +1574,15 @@ class PluginHub(WebSocketEndpoint):
                 websocket, user_id, _expected_read
             ):
                 return cls._unavailable_retry_response("read_invalidated")
+            for authority in (requester, cls._socket_lease(websocket)):
+                if authority is not None:
+                    authorize_operation(
+                        authority.permissions,
+                        command_type,
+                        params,
+                        custom=_catalog_guard is not None,
+                        native=True,
+                    )
             # _pending is the single source of accounting: every existing pop on
             # result/cancel/timeout/disconnect/eviction/shutdown returns capacity.
             user_count = session_count = total_bytes = user_bytes = session_bytes = 0
@@ -1642,6 +1663,15 @@ class PluginHub(WebSocketEndpoint):
                     for lease in (requester, plugin):
                         if lease is not None:
                             lease.check_now()
+                            # Recheck the serialized canonical operation immediately
+                            # before socket I/O, after all yielding authorization checks.
+                            authorize_operation(
+                                lease.permissions,
+                                payload["name"],
+                                payload["params"],
+                                custom=_catalog_guard is not None,
+                                native=True,
+                            )
                     budget.dispatched = True
                     await websocket.send_json(payload)
                     for lease in (requester, plugin):
@@ -1670,6 +1700,21 @@ class PluginHub(WebSocketEndpoint):
                     if lease is not None:
                         await lease.check()
                 return result
+            except OperationPermissionError:
+                # Admission may differ after canonical serialization. A refusal
+                # before dispatch must not manufacture an unknown outcome or
+                # send a native cancellation for work that never started.
+                canceled = budget.dispatched
+                if not budget.dispatched:
+                    return MCPResponse(success=False, error="permission_denied").model_dump()
+                return command_outcome_unknown(
+                    command_type,
+                    "Remote operation permission ended",
+                    session_id=session_id,
+                    command_id=command_id,
+                    phase=phase,
+                    cause="permission_ended",
+                )
             except CredentialLeaseError:
                 canceled = True
                 if not budget.dispatched:
@@ -3057,6 +3102,17 @@ class PluginHub(WebSocketEndpoint):
                     budget=budget,
                     _catalog_guard=_catalog_guard,
                 )
+        except OperationPermissionError:
+            if budget.dispatched:
+                return command_outcome_unknown(
+                    command_type,
+                    "Remote operation permission ended",
+                    session_id=budget.session_id,
+                    command_id=budget.command_id,
+                    phase=budget.phase,
+                    cause="permission_ended",
+                )
+            return MCPResponse(success=False, error="permission_denied").model_dump()
         except TimeoutError:
             return budget.timeout_response(command_type)
 
@@ -3073,8 +3129,15 @@ class PluginHub(WebSocketEndpoint):
         editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
         _catalog_guard=None,
     ) -> dict[str, Any]:
-        if config.http_remote_hosted:
-            await require_credential_lease(user_id)
+        requester = await require_credential_lease(user_id) if config.http_remote_hosted else None
+        if requester is not None:
+            authorize_operation(
+                requester.permissions,
+                command_type,
+                params,
+                custom=_catalog_guard is not None,
+                native=True,
+            )
         context = local_project_context.get()
         if context is not None:
             selected = context.selection
@@ -3124,6 +3187,28 @@ class PluginHub(WebSocketEndpoint):
             if not await cls._ensure_live_connection(session_id):
                 return cls._unavailable_retry_response("stale_connection")
 
+        probe_allowed = True
+        if requester is not None:
+            websocket = cls._connections.get(session_id)
+            if websocket is None:
+                return cls._unavailable_retry_response("stale_connection")
+            plugin = cls._socket_lease(websocket)
+            if plugin is None or plugin.user_id != requester.user_id:
+                raise CredentialLeaseError()
+            await plugin.check()
+            # Admit the operation before shared reads or optional native probes.
+            authorize_operation(
+                plugin.permissions,
+                command_type,
+                params,
+                custom=_catalog_guard is not None,
+                native=True,
+            )
+            try:
+                for authority in (requester, plugin):
+                    authorize_operation(authority.permissions, "ping", {}, native=True)
+            except OperationPermissionError:
+                probe_allowed = False
         budget.phase = "readiness"
         share_state = (
             command_type == "get_editor_state"
@@ -3141,7 +3226,12 @@ class PluginHub(WebSocketEndpoint):
         # the Unity Editor is unfocused). For fast-path commands, we do a bounded readiness probe using
         # a main-thread ping command (handled by TransportCommandDispatcher) rather than waiting on
         # register_tools (which can be delayed by EditorApplication.delayCall).
-        if retry_on_reload and command_type in cls._FAST_FAIL_COMMANDS and command_type != "ping":
+        if (
+            retry_on_reload
+            and probe_allowed
+            and command_type in cls._FAST_FAIL_COMMANDS
+            and command_type != "ping"
+        ):
             max_wait_s = _read_bounded_wait_env(
                 "UNITY_MCP_SESSION_READY_WAIT_SECONDS", default_s=6.0, max_s=120.0
             )

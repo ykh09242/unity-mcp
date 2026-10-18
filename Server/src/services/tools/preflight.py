@@ -7,6 +7,7 @@ from typing import Any
 
 from models import MCPResponse
 from models.response_lifetime import ResponsePollLifetime
+from services.operation_permissions import remote_operation_allowed
 
 
 def _in_pytest() -> bool:
@@ -55,6 +56,13 @@ async def preflight(
     """
     if _in_pytest():
         return None
+
+    # These are optional observations/refreshes. A test/edit/run grant does not
+    # imply read, and read must never acquire importing/compilation authority.
+    if not await remote_operation_allowed("get_editor_state", {}, ctx=ctx):
+        return None
+    if refresh_if_dirty and not await remote_operation_allowed("refresh_unity", {}, ctx=ctx):
+        refresh_if_dirty = False
 
     async with ResponsePollLifetime() as observations:
         result = await _preflight(

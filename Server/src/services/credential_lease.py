@@ -7,6 +7,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from services.operation_permissions import LEGACY_GRANTS, OperationGrants
+
 if TYPE_CHECKING:
     from services.api_key_service import ApiKeyService
 
@@ -26,6 +28,7 @@ class CredentialLease:
     service: ApiKeyService = field(repr=False)
     generation: object = field(repr=False)
     user_id: str
+    permissions: OperationGrants = LEGACY_GRANTS
 
     async def check(self) -> None:
         """Park at expiry until the one bounded renewal has a definitive outcome."""

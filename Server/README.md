@@ -65,7 +65,8 @@ monotonic deadline. A zero cache TTL still validates every new caller and gives 
 connections a finite lease using maximum age.
 
 At the deadline, reads, writes and dispatch park behind one fresh revalidation, with an
-independent 11-second limit. A valid response for the same principal renews the lease.
+independent 11-second limit. A valid response for the same principal and unchanged
+operation grants renews the lease.
 Invalid or missing identity, a changed principal, transient failure, timeout, renewal
 capacity refusal, shutdown or service replacement retires it. Invalidation/clear also
 fence in-progress cache writes and validation results; they require fresh authentication,
@@ -85,6 +86,14 @@ inspect state before retrying a mutation. Detached test waits retain only an in-
 lease, stop future polling on retirement and report interruption without claiming that
 the native test job was cancelled. Credentials and leases never enter the wait journal.
 Local HTTP and stdio authentication are unchanged.
+
+Remote validation can provide independent `read`, `test`, `edit` and `run` grants
+in the server-owned `metadata.unity_mcp_permissions` array. An absent claim keeps
+legacy access by default; `UNITY_MCP_API_KEY_PERMISSIONS_STRICT=true` makes an
+absent claim grant nothing. Explicit empty and malformed claims never inherit
+legacy access. Grant changes retire the old connected lease generation. See
+[Remote Operation Permissions](../docs/remote-operation-permissions.md) for the
+closed operation policy, requester/plugin intersection and migration limits.
 
 ## Targeting and tool visibility
 
