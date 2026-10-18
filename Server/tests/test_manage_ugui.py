@@ -818,3 +818,12 @@ async def test_projection_only_options_cannot_change_legacy_actions(
     boundary.instance.assert_not_awaited()
     boundary.read.assert_not_awaited()
     boundary.mutate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tmp_read_uses_closed_read_transport_and_refuses_old_peer(boundary):
+    result = await manage_ugui(None, action="diagnose_text", target="Label")
+    assert result == {"success": False, "message": "unsupported_text_response"}
+    boundary.read.assert_awaited_once()
+    boundary.mutate.assert_not_awaited()
+    assert boundary.read.call_args.args[3]["action"] == "diagnose_text"

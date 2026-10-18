@@ -19,6 +19,7 @@ from typing_extensions import assert_never
 
 from models import MCPResponse
 from models.ugui_projection_diagnostics import validate_ugui_projection_diagnostics
+from models.ugui_tmp_layout_diagnostics import validate_ugui_tmp_layout_diagnostics
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
@@ -37,6 +38,7 @@ UGUIAction = Literal[
     "set_canvas",
     "diagnose",
     "diagnose_projection",
+    "diagnose_text",
 ]
 ElementType = Literal["canvas", "panel", "image", "button", "text"]
 _ACTIONS: Final = get_args(UGUIAction)
@@ -382,14 +384,77 @@ async def _diagnose_projection(
     return {"success": True, "data": data}
 
 
+async def _diagnose_text(
+    ctx, target, include_inactive, max_nodes, max_depth, max_evaluations, max_characters
+):
+    """Publish only bounded native cached-layout evidence, without changing old actions."""
+    invalid = {"success": False, "message": "invalid_text_request"}
+    if type(include_inactive) is not bool:
+        return invalid
+    if type(target) is int:
+        if not -(2**31) <= target < 2**31:
+            return invalid
+    elif type(target) is str:
+        try:
+            if not target.strip() or len(target.encode("utf-16-le")) // 2 > 4096:
+                return invalid
+        except UnicodeError:
+            return invalid
+    else:
+        return invalid
+    budgets = {
+        "max_nodes": (max_nodes, 200, 1, 1000),
+        "max_depth": (max_depth, 10, 0, 24),
+        "max_evaluations": (max_evaluations, 20000, 1, 200000),
+        "max_characters": (max_characters, 65536, 1, 262144),
+    }
+    params = {"action": "diagnose_text", "target": target, "include_inactive": include_inactive}
+    for key, (value, default, low, high) in budgets.items():
+        value = default if value is None else value
+        if type(value) is not int or not low <= value <= high:
+            return invalid
+        params[key] = value
+    blocked = await preflight(ctx, requires_no_tests=False, wait_for_no_compile=True)
+    if blocked is not None:
+        return blocked.model_dump()
+    instance = await get_unity_instance_from_context(ctx)
+    result = await send_with_unity_instance(
+        async_send_command_with_retry, instance, "manage_ugui", params
+    )
+    result = result.model_dump() if isinstance(result, MCPResponse) else result
+    if not isinstance(result, dict) or result.get("success") is not True:
+        allowed = {
+            "invalid_text_request",
+            "invalid_text_target",
+            "unsupported_tmp_version",
+            "tmp_unavailable",
+            "privacy_unavailable",
+            "layout_in_progress",
+            "text_response_too_large",
+        }
+        code = result.get("error") if isinstance(result, dict) else None
+        return {
+            "success": False,
+            "message": code if isinstance(code, str) and code in allowed else "text_unavailable",
+        }
+    try:
+        data = validate_ugui_tmp_layout_diagnostics(result.get("data"))
+        if any(data["traversal"][key] != params[key] for key in budgets):
+            raise ValueError("budget echo")
+    except ValueError:
+        return {"success": False, "message": "unsupported_text_response"}
+    return {"success": True, "data": data}
+
+
 @mcp_for_unity_tool(
     group="ui",
     description=(
         "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. "
-        "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection. Mutating actions: create, set_rect, set_layout, "
+        "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text. Mutating actions: create, set_rect, set_layout, "
         "set_text, set_canvas. Optional uGUI and TextMeshPro support is detected in the Editor. "
         "diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera "
-        "geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility."
+        "geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. "
+        "diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes."
     ),
     annotations=ToolAnnotations(
         title="Manage uGUI",
@@ -451,7 +516,7 @@ async def manage_ugui(
             strict=True,
             ge=0,
             le=24,
-            description="For diagnose_projection: maximum physical transform depth, default 10, range 0..24.",
+            description="For diagnose_projection or diagnose_text: maximum physical transform depth, default 10, range 0..24.",
         ),
     ] = None,
     max_evaluations: Annotated[
@@ -460,7 +525,7 @@ async def manage_ugui(
             strict=True,
             ge=1,
             le=200000,
-            description="For diagnose_projection: shared precharged observations/math budget, default 20000, range 1..200000.",
+            description="For diagnose_projection or diagnose_text: shared precharged observations/math budget, default 20000, range 1..200000.",
         ),
     ] = None,
     max_characters: Annotated[
@@ -469,7 +534,7 @@ async def manage_ugui(
             strict=True,
             ge=1,
             le=262144,
-            description="For diagnose_projection: shared metadata/name/path UTF-16 budget, default 65536, range 1..262144.",
+            description="For diagnose_projection or diagnose_text: shared metadata/name/path UTF-16 budget, default 65536, range 1..262144.",
         ),
     ] = None,
     resolutions: Annotated[
@@ -484,6 +549,15 @@ async def manage_ugui(
     action-specific inputs rather than an opaque options object.
     """
     action_lower = action.strip().lower()
+    if action_lower == "diagnose_text":
+        if any(
+            value is not None
+            for value in (parent, name, element_type, properties, resolutions, camera)
+        ):
+            return {"success": False, "message": "invalid_text_request"}
+        return await _diagnose_text(
+            ctx, target, include_inactive, max_nodes, max_depth, max_evaluations, max_characters
+        )
     if action_lower == "diagnose_projection":
         if any(
             value is not None for value in (parent, name, element_type, properties, resolutions)
