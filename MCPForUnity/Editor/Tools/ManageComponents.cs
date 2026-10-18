@@ -28,6 +28,50 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_components")]
     public static class ManageComponents
     {
+        // One native action catalogue is shared by preview and actual dispatch.
+        private enum ActionKind
+        {
+            Unknown,
+            Add,
+            Remove,
+            SetProperty,
+        }
+
+        private static string NormalizeAction(JToken token) => ParamCoercion.CoerceString(token, null)?.ToLowerInvariant();
+
+        private static string NormalizeSelectedAction(JToken token) => token.ToString().ToLowerInvariant();
+
+        private static ActionKind ResolveAction(string action) =>
+            action switch
+            {
+                "add" => ActionKind.Add,
+                "remove" => ActionKind.Remove,
+                "set_property" => ActionKind.SetProperty,
+                _ => ActionKind.Unknown,
+            };
+
+        internal static BatchActionValidation ValidateBatchAction(JObject parameters)
+        {
+            string action;
+            try
+            {
+                bool selected = ComponentSelection.IsRequested(parameters, false);
+                if (selected && parameters["action"]?.Type != JTokenType.String)
+                    return BatchActionValidation.Rejected("invalid_action");
+                action = selected ? NormalizeSelectedAction(parameters["action"]) : NormalizeAction(parameters["action"]);
+            }
+            catch (ComponentSelection.Failure)
+            {
+                return BatchActionValidation.Rejected("invalid_action");
+            }
+            if (string.IsNullOrEmpty(action))
+                return BatchActionValidation.Rejected("missing_action");
+            ActionKind resolved = ResolveAction(action);
+            if (resolved == ActionKind.Unknown)
+                return BatchActionValidation.Rejected("unsupported_action");
+            return BatchActionValidation.Valid;
+        }
+
         /// <summary>
         /// Handles the manage_components command.
         /// </summary>
@@ -50,7 +94,7 @@ namespace MCPForUnity.Editor.Tools
                 return failure.Response();
             }
 
-            string action = ParamCoercion.CoerceString(@params["action"], null)?.ToLowerInvariant();
+            string action = NormalizeAction(@params["action"]);
             if (string.IsNullOrEmpty(action))
             {
                 return new ErrorResponse("'action' parameter is required (add, remove, set_property).");
@@ -67,11 +111,11 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                return action switch
+                return ResolveAction(action) switch
                 {
-                    "add" => AddComponent(@params, targetToken, searchMethod),
-                    "remove" => RemoveComponent(@params, targetToken, searchMethod),
-                    "set_property" => SetProperty(@params, targetToken, searchMethod),
+                    ActionKind.Add => AddComponent(@params, targetToken, searchMethod),
+                    ActionKind.Remove => RemoveComponent(@params, targetToken, searchMethod),
+                    ActionKind.SetProperty => SetProperty(@params, targetToken, searchMethod),
                     _ => new ErrorResponse($"Unknown action: '{action}'. Supported actions: add, remove, set_property"),
                 };
             }
@@ -98,8 +142,8 @@ namespace MCPForUnity.Editor.Tools
                 JToken actionToken = parameters["action"];
                 if (actionToken?.Type != JTokenType.String)
                     throw new ComponentSelection.Failure("invalid_selection", "action must be add, remove or set_property.");
-                string action = actionToken.ToString().ToLowerInvariant();
-                if (action != "add" && action != "remove" && action != "set_property")
+                string action = NormalizeSelectedAction(actionToken);
+                if (ResolveAction(action) == ActionKind.Unknown)
                     throw new ComponentSelection.Failure("invalid_selection", "action must be add, remove or set_property.");
                 if (action == "add" && (index.HasValue || componentId.HasValue))
                     throw new ComponentSelection.Failure("invalid_selection", "add creates a new component and cannot select an existing component.");
@@ -112,10 +156,10 @@ namespace MCPForUnity.Editor.Tools
                 Type addType = action == "add" ? ComponentSelection.ResolveType(typeName) : null;
                 ComponentSelection.Result selection = action == "add" ? null : ComponentSelection.Resolve(target, typeName, index, componentId);
                 JObject description = selection?.Describe();
-                object raw = action switch
+                object raw = ResolveAction(action) switch
                 {
-                    "add" => AddComponent(parameters, parameters["target"], null, target, addType),
-                    "remove" => RemoveComponent(parameters, parameters["target"], null, selection),
+                    ActionKind.Add => AddComponent(parameters, parameters["target"], null, target, addType),
+                    ActionKind.Remove => RemoveComponent(parameters, parameters["target"], null, selection),
                     _ => SetProperty(parameters, parameters["target"], null, selection),
                 };
                 JObject response = JObject.FromObject(raw);

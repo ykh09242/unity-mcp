@@ -16,6 +16,43 @@ namespace MCPForUnity.Editor.Tools.GameObjects
     [McpForUnityTool("manage_gameobject", AutoRegister = false)]
     public static class ManageGameObject
     {
+        // One native action catalogue is shared by preview and actual dispatch.
+        private enum ActionKind
+        {
+            Unknown,
+            Create,
+            Modify,
+            Delete,
+            Duplicate,
+            MoveRelative,
+            LookAt,
+        }
+
+        private static string NormalizeAction(JToken token) => token?.ToString().ToLowerInvariant();
+
+        private static ActionKind ResolveAction(string action) =>
+            action switch
+            {
+                "create" => ActionKind.Create,
+                "modify" => ActionKind.Modify,
+                "delete" => ActionKind.Delete,
+                "duplicate" => ActionKind.Duplicate,
+                "move_relative" => ActionKind.MoveRelative,
+                "look_at" => ActionKind.LookAt,
+                _ => ActionKind.Unknown,
+            };
+
+        internal static BatchActionValidation ValidateBatchAction(JObject parameters)
+        {
+            string action = NormalizeAction(parameters?["action"]);
+            if (string.IsNullOrEmpty(action))
+                return BatchActionValidation.Rejected("missing_action");
+            ActionKind resolved = ResolveAction(action);
+            if (resolved == ActionKind.Unknown)
+                return BatchActionValidation.Rejected("unsupported_action");
+            return BatchActionValidation.Valid;
+        }
+
         // --- Main Handler ---
 
         public static object HandleCommand(JObject @params)
@@ -25,7 +62,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse("Parameters cannot be null.");
             }
 
-            string action = @params["action"]?.ToString().ToLowerInvariant();
+            string action = NormalizeAction(@params["action"]);
             if (string.IsNullOrEmpty(action))
             {
                 return new ErrorResponse("Action parameter is required.");
@@ -86,20 +123,20 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             try
             {
-                switch (action)
+                switch (ResolveAction(action))
                 {
                     // --- Primary lifecycle actions (kept in manage_gameobject) ---
-                    case "create":
+                    case ActionKind.Create:
                         return GameObjectCreate.Handle(@params);
-                    case "modify":
+                    case ActionKind.Modify:
                         return GameObjectModify.Handle(@params, targetToken, searchMethod);
-                    case "delete":
+                    case ActionKind.Delete:
                         return GameObjectDelete.Handle(targetToken, searchMethod);
-                    case "duplicate":
+                    case ActionKind.Duplicate:
                         return GameObjectDuplicate.Handle(@params, targetToken, searchMethod);
-                    case "move_relative":
+                    case ActionKind.MoveRelative:
                         return GameObjectMoveRelative.Handle(@params, targetToken, searchMethod);
-                    case "look_at":
+                    case ActionKind.LookAt:
                         return GameObjectLookAt.Handle(@params, targetToken, searchMethod);
 
                     default:

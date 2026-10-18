@@ -206,3 +206,124 @@ async def test_batch_limit_cache_has_bounded_capacity(batch_module, monkeypatch)
     assert len(batch_module._cached_max_commands) == 128
     await batch_module.batch_execute(Context("Project@hash-0"), [{"tool": "read_console"}])
     assert sum(command == "get_editor_state" for _, command, _ in sends) == 130
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "native_reply",
+    [
+        {"success": False, "error": "Unknown or unsupported command type: batch_validate"},
+        {"success": True, "data": {"executed": 1}},
+        {"success": True, "data": {"validation": {"contractVersion": True, "validateOnly": True}}},
+        {"success": True, "data": {"validation": {"contractVersion": 1, "validateOnly": "true"}}},
+    ],
+)
+async def test_preview_old_or_malformed_peer_never_falls_back_to_execution(
+    batch_module, monkeypatch, native_reply
+):
+    sends = []
+
+    async def limit(ctx, instance):
+        return 25
+
+    async def send(fn, instance, command, params):
+        sends.append((command, params))
+        return native_reply
+
+    monkeypatch.setattr(batch_module, "_get_max_commands_from_editor_state", limit)
+    monkeypatch.setattr(batch_module, "send_with_unity_instance", send)
+    commands = [{"tool": "manage_gameobject", "params": {"action": "create"}}]
+    result = await batch_module.batch_execute(Context("A@hash-a"), commands, validate_only=True)
+    assert result["success"] is False
+    assert result["data"]["reason"] == "batch_validation_unavailable"
+    assert sends == [("batch_validate", {"commands": commands})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [None, "true", 0, 1, [], {}])
+async def test_direct_preview_nonboolean_refuses_before_any_lookup(batch_module, monkeypatch, bad):
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Invalid preview flag reached routing")
+
+    monkeypatch.setattr(batch_module, "get_unity_instance_from_context", forbidden)
+    with pytest.raises(ValueError, match="validate_only"):
+        await batch_module.batch_execute(Context("A@hash-a"), [{"tool": "ping"}], validate_only=bad)
+
+
+@pytest.mark.parametrize(
+    "change", ["row_count", "index_bool", "wrong_tool", "reason_graph", "false_valid", "scope"]
+)
+def test_preview_receipt_rejects_inexact_native_rows(batch_module, change):
+    reply = {
+        "success": True,
+        "data": {
+            "validation": {
+                "contractVersion": 1,
+                "validateOnly": True,
+                "scope": "action_names",
+                "complete": True,
+                "valid": True,
+                "items": [
+                    {
+                        "index": 0,
+                        "tool": "manage_components",
+                        "toolTruncated": False,
+                        "status": "valid",
+                        "reason": "ok",
+                    }
+                ],
+            }
+        },
+    }
+    validation = reply["data"]["validation"]
+    if change == "row_count":
+        validation["items"].append(dict(validation["items"][0]))
+    elif change == "index_bool":
+        validation["items"][0]["index"] = False
+    elif change == "wrong_tool":
+        validation["items"][0]["tool"] = "another"
+    elif change == "reason_graph":
+        validation["items"][0]["reason"] = {"secret": "not echoed"}
+    elif change == "false_valid":
+        validation["items"][0].update(status="incomplete", reason="action_validation_unavailable")
+    else:
+        validation["scope"] = "all_parameters"
+    assert not batch_module._preview_reply_is_exact(
+        reply, [{"tool": "manage_components", "params": {"action": "add"}}]
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"success": False, "error": "permission_denied"},
+        {"success": False, "error": "auth_required"},
+        {
+            "success": False,
+            "error": "Original transport uncertainty",
+            "data": {"reason": "outcome_unknown", "command": "batch_validate"},
+        },
+    ],
+)
+async def test_preview_preserves_existing_authorization_and_unknown_delivery_envelopes(
+    batch_module, monkeypatch, reply
+):
+    sent = []
+
+    async def limit(ctx, instance):
+        return 25
+
+    async def send(fn, instance, name, params):
+        sent.append(name)
+        return reply
+
+    monkeypatch.setattr(batch_module, "_get_max_commands_from_editor_state", limit)
+    monkeypatch.setattr(batch_module, "send_with_unity_instance", send)
+    result = await batch_module.batch_execute(
+        Context("A@hash-a"),
+        [{"tool": "manage_components", "params": {"action": "add"}}],
+        validate_only=True,
+    )
+    assert result is reply
+    assert sent == ["batch_validate"]

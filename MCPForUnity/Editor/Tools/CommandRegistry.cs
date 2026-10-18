@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -22,6 +23,9 @@ namespace MCPForUnity.Editor.Tools
         public Func<JObject, object> SyncHandler { get; }
         public Func<JObject, Task<object>> AsyncHandler { get; }
         public Func<JObject, CancellationToken, Task<object>> CooperativeAsyncHandler { get; private set; }
+
+        internal Func<JObject, BatchActionValidation> BatchValidator { get; set; }
+        internal HandlerInfo AliasOwner { get; set; }
 
         public bool IsAsync => AsyncHandler != null || CooperativeAsyncHandler != null;
 
@@ -202,6 +206,10 @@ namespace MCPForUnity.Editor.Tools
                 if (string.IsNullOrEmpty(commandName))
                     commandName = ToSnakeCase(type.Name);
 
+                // Reserved internal alias cannot be published or replaced by custom metadata.
+                if (string.Equals(commandName, "batch_validate", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
                 var method = GetCommandMethod(type);
                 if (method == null)
                 {
@@ -231,7 +239,19 @@ namespace MCPForUnity.Editor.Tools
                 {
                     McpLog.Warn($"Duplicate command name '{commandName}' detected. " + $"{typeLabel} {type.Name} will override previously registered handler.");
                 }
+                if (type == typeof(ManageGameObject))
+                    handlerInfo.BatchValidator = ManageGameObject.ValidateBatchAction;
+                else if (type == typeof(ManageComponents))
+                    handlerInfo.BatchValidator = ManageComponents.ValidateBatchAction;
+                else if (type == typeof(ManageScene))
+                    handlerInfo.BatchValidator = ManageScene.ValidateBatchAction;
+
+                // Replacing the owner never inherits its privileged alias or validator.
+                if (commandName == "batch_execute")
+                    _handlers.Remove("batch_validate");
                 _handlers[commandName] = handlerInfo;
+                if (type == typeof(BatchExecute) && commandName == "batch_execute")
+                    _handlers["batch_validate"] = new HandlerInfo("batch_validate", BatchExecute.ValidateCommand, null) { AliasOwner = handlerInfo };
                 return true;
             }
             catch (Exception ex)
@@ -244,14 +264,27 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// True when a tool or resource handler is registered under this name.
         /// </summary>
-        public static bool HasHandler(string commandName) => _handlers.ContainsKey(commandName);
+        public static bool HasHandler(string commandName) => _handlers.TryGetValue(commandName, out var handler) && IsCurrentAlias(handler);
+
+        private static bool IsCurrentAlias(HandlerInfo handler) =>
+            handler.AliasOwner == null
+            || (handler.CommandName == "batch_validate" && _handlers.TryGetValue("batch_execute", out var owner) && ReferenceEquals(owner, handler.AliasOwner));
+
+        internal static string GetAdmissionName(string commandName) =>
+            _handlers.TryGetValue(commandName, out var handler) && handler.AliasOwner != null && IsCurrentAlias(handler) ? "batch_execute" : commandName;
+
+        internal static BatchActionValidation ValidateBatchAction(string commandName, JObject parameters)
+        {
+            var handler = GetHandlerInfo(commandName);
+            return handler.BatchValidator == null ? BatchActionValidation.Unavailable : handler.BatchValidator(parameters);
+        }
 
         /// <summary>
         /// Get a command handler by name
         /// </summary>
         private static HandlerInfo GetHandlerInfo(string commandName)
         {
-            if (!_handlers.TryGetValue(commandName, out var handler))
+            if (!_handlers.TryGetValue(commandName, out var handler) || !IsCurrentAlias(handler))
             {
                 throw new InvalidOperationException($"Unknown or unsupported command type: {commandName}");
             }

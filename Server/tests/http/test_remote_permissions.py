@@ -955,3 +955,63 @@ async def test_mixed_raycast_batch_denies_before_settings_and_dispatch(
         with bind_credential_lease(requester), pytest.raises(OperationPermissionError):
             await batch.batch_execute(SimpleNamespace(get_state=state), commands)
         assert calls == [] and command_hub.sent == [] and PluginHub._pending == {}
+
+
+@pytest.mark.parametrize("outer", ["batch_execute", "batch_validate"])
+@pytest.mark.parametrize("nested", ["batch_execute", "batch_validate", "BATCH_VALIDATE"])
+def test_preview_and_execution_share_closed_member_policy(outer, nested):
+    scoped = parse_permissions(
+        {"unity_mcp_permissions": ["read", "test", "edit", "run"]}, strict=False
+    )
+    with pytest.raises(OperationPermissionError):
+        authorize_operation(
+            scoped, outer, {"commands": [{"tool": nested, "params": {}}]}, native=True
+        )
+
+
+def test_preview_requires_same_full_member_grants_as_execution():
+    commands = {"commands": [{"tool": "manage_gameobject", "params": {"action": "create"}}]}
+    readonly = parse_permissions({"unity_mcp_permissions": ["read"]}, strict=False)
+    editing = parse_permissions({"unity_mcp_permissions": ["edit"]}, strict=False)
+    for outer in ("batch_execute", "batch_validate"):
+        with pytest.raises(OperationPermissionError):
+            authorize_operation(readonly, outer, commands, native=True)
+        authorize_operation(editing, outer, commands, native=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_claim,plugin_claim,allowed",
+    [
+        (["edit"], ["edit"], True),
+        (["read"], ["edit"], False),
+        (["edit"], ["read"], False),
+        (None, ["read"], False),
+    ],
+)
+async def test_preview_alias_final_native_fence_retains_both_authorities(
+    command_hub, monkeypatch, request_claim, plugin_claim, allowed
+):
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    await command_hub.registry.unregister("session")
+    await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
+    claims = {
+        "request": None if request_claim is None else {"unity_mcp_permissions": request_claim},
+        "plugin": {"unity_mcp_permissions": plugin_claim},
+    }
+    async with permission_service(monkeypatch, claims) as fixture:
+        requester = (await fixture.service.validate("request")).lease
+        plugin = (await fixture.service.validate("plugin")).lease
+        command_hub.websocket.state.user_id = "alice"
+        setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, plugin)
+        with bind_credential_lease(requester):
+            result = await PluginHub.send_command(
+                "session",
+                "batch_validate",
+                {"commands": [{"tool": "manage_gameobject", "params": {"action": "create"}}]},
+            )
+        assert result["success"] is allowed
+        assert len(command_hub.sent) == (1 if allowed else 0)
+        assert PluginHub._pending == {}
+        if not allowed:
+            assert result["error"] == "permission_denied"

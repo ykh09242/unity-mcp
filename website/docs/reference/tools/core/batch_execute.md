@@ -22,6 +22,7 @@ Executes multiple MCP commands in a single batch for dramatically better perform
 | `parallel` | `bool \| None` | — | Attempt to run read-only commands in parallel |
 | `fail_fast` | `bool \| None` | — | Stop processing after the first failure |
 | `max_parallelism` | `int \| None` | — | Hint for the maximum number of parallel workers |
+| `validate_only` | `bool` | — | Validate action names without executing children; requires the peer preview capability |
 
 ## Returns
 
@@ -87,7 +88,7 @@ A batch can mix any tools, as long as ordering inside the batch doesn't depend o
 
 ### Stop on first failure vs continue
 
-Set `fail_fast: true` (default) to abort the rest on the first failed step. Pass `fail_fast: false` to attempt every operation and collect per-step results, useful for "best-effort cleanup" patterns.
+Set `fail_fast: true` to abort the rest on the first failed step. Pass `fail_fast: false` (the default) to attempt every operation and collect per-step results, useful for "best-effort cleanup" patterns.
 
 ### Parallel reads
 
@@ -96,5 +97,42 @@ Pass `parallel: true` to let the server run **read-only** commands concurrently.
 ### Limits
 
 Batch size is configurable in the Unity MCP Tools window (default 25, hard max 100). Past the limit, split into multiple batches — round-trip cost is still amortized.
+### Preview action names without executing children
+
+Set `validate_only: true` for a preview. It uses the separate native `batch_validate`
+capability, linked to the existing batch enable/consent gate. Older peers refuse
+this capability; the server never falls back to executing a batch. False or omitted
+preserves the existing execution wire. Both batch names are forbidden as members.
+
+Preview checks every command's envelope, registered handler, enabled state and the
+shared native action catalogue for `manage_gameobject`, `manage_components` and
+`manage_scene`. The scope is **action names**, not complete parameters, target
+existence, assets, future authorization or execution success. Other registered
+handlers/custom commands are explicitly incomplete, never approved by probing them.
+A moved scene action remains rejected. Names in new receipts are limited to 128 UTF-16
+code units with a truncation flag; input indices preserve duplicate names.
+
+The returned `data.validation` identifies `contractVersion: 1`, `validateOnly: true`
+and `scope: action_names`, with exactly one ordered item per request. Each item has a
+valid, rejected or incomplete status and a fixed reason. An incomplete preview is
+not valid. Preview invokes no requested handler, changes no supplied input, and
+requires the same full member grants and selected-plugin intersection as execution.
+Preview neither reserves permission nor bypasses the batch's explicit consent.
+
+### Read partial outcomes honestly
+
+A normally returned execution response retains its attempted-only `results`, raw
+handler payloads and `callSuccessCount`/`callFailureCount`. The additive `outcomes`
+contains every input index as succeeded, failed or not_run. Policy refusal rows
+count as attempted; a fail-fast suffix is not_run. `requestedCount`, `attemptedCount`
+and `notRunCount` explain this distinction. `executionStatus` describes processing
+completion, not whether every call succeeded. Bounded invalid envelopes have zero
+attempts and all outcomes not_run/invalid_batch while retaining existing error fields.
+
+`rollbackPerformed` is false. A failed handler can have changed state. Preview is
+read-only for child operations; ordinary execution may read or mutate according to
+each member. Cancellation, domain reload or a lost reply retains the existing unknown
+outcome contract; absent receipts do not prove that any particular item did not run.
+Inspect state before deciding whether to retry. Parallel requests still run sequentially.
 <!-- examples:end -->
 
