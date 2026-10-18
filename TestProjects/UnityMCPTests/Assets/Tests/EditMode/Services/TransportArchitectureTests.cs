@@ -117,6 +117,60 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void RawCommandAndAsyncResponse_PreserveDateShapedLiteral()
+        {
+            CommandRegistry.Initialize();
+            const string name = "architecture_literal_json";
+            const string literal = "2026-10-18T01:02:03.1234567+09:00";
+            var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            var previous = handlers[name];
+            var observed = new System.Collections.Generic.List<JToken>();
+            handlers[name] = new HandlerInfo(
+                name,
+                null,
+                parameters =>
+                {
+                    observed.Add(parameters["text"].DeepClone());
+                    return Task.FromResult<object>(new { text = (string)parameters["text"] });
+                }
+            );
+            try
+            {
+                var typed = TransportCommandDispatcher.ExecuteCommandAsync(
+                    new Command
+                    {
+                        type = name,
+                        @params = new JObject { ["text"] = literal },
+                    },
+                    CancellationToken.None
+                );
+                var raw = TransportCommandDispatcher.ExecuteCommandJsonAsync(
+                    "{\"type\":\"" + name + "\",\"params\":{\"text\":\"" + literal + "\"}}",
+                    CancellationToken.None
+                );
+                Assert.IsTrue(raw.Wait(TimeSpan.FromSeconds(5)));
+                Assert.AreEqual(2, observed.Count);
+                foreach (var token in observed)
+                {
+                    Assert.AreEqual(JTokenType.String, token.Type, "The raw dispatcher boundary must preserve a JSON string.");
+                    Assert.AreEqual(literal, (string)token);
+                }
+                var result = (JObject)((JObject)typed.Response.GetAwaiter().GetResult().Payload)["result"];
+                Assert.AreEqual(JTokenType.String, result["text"].Type, "The actual async response compatibility parse must also preserve strings.");
+                Assert.AreEqual(literal, (string)result["text"]);
+                Assert.AreEqual(raw.Result, typed.Response.Result.ToJson());
+                Assert.IsTrue(typed.Completion.IsCompleted);
+            }
+            finally
+            {
+                if (previous == null)
+                    handlers.Remove(name);
+                else
+                    handlers[name] = previous;
+            }
+        }
+
+        [Test]
         public async Task ActiveDeadline_CancelsResponseButTracksActualAsyncSettlement()
         {
             CommandRegistry.Initialize();

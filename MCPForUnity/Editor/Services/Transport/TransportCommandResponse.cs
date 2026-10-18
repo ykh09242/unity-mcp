@@ -23,7 +23,7 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             try
             {
-                return FromObject(JToken.Parse(json));
+                return FromObject(TransportJson.ParseToken(json));
             }
             catch (JsonException)
             {

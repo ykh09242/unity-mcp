@@ -809,7 +809,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             JObject payload;
             try
             {
-                payload = JObject.Parse(message);
+                payload = TransportJson.ParseObject(message);
             }
             catch (Exception ex)
             {

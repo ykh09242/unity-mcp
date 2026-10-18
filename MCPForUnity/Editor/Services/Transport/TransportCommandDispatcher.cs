@@ -451,7 +451,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             try
             {
-                var command = pending.Command ?? JsonConvert.DeserializeObject<Command>(commandText);
+                var command = pending.Command ?? TransportJson.DeserializeCommand(commandText);
                 if (command == null)
                 {
                     pending.TrySetResult(SerializeError("Command deserialized to null", "Unknown", commandText));
