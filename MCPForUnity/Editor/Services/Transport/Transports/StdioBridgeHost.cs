@@ -1278,7 +1278,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 cts.CancelAfter(commandTimeoutMs);
                 try
                 {
-                    var command = JsonConvert.DeserializeObject<MCPForUnity.Editor.Models.Command>(payload);
+                    var command = TransportJson.DeserializeCommand(payload);
                     operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(command, cts.Token, TransportMode.Stdio, queuedCommand.Timing);
                     var response = await operation.Response.ConfigureAwait(true);
                     queuedCommand.Timing?.Start(CommandPhaseTiming.Phase.Serialization);

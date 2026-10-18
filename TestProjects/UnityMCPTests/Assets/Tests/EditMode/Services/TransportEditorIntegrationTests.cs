@@ -639,6 +639,187 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        private const string LiteralCommand = "__editor_qa_literal_json";
+        private const string LiteralPayloadJson =
+            "{\"timestamp\":\"2026-10-19T01:02:03.1234567+09:30\","
+            + "\"nested\":{\"date\":\"2024-02-29\",\"values\":[\"2031-12-31T23:59:59.7654321Z\",{\"offset\":\"2025-06-07T08:09:10.9876543-04:30\"}]},"
+            + "\"unicode\":\"\\uD55C\\uAE00\\uD83D\\uDE00\",\"escaped\":\"quote\\\" slash\\\\ newline\\n tab\\t\","
+            + "\"integer\":17,\"number\":1.25,\"boolean\":true,\"nothing\":null}";
+
+        private sealed class LiteralObservation
+        {
+            public int Invocations;
+            public int Thread;
+        }
+
+        private LiteralObservation RegisterLiteralEcho(int mainThread)
+        {
+            var observed = new LiteralObservation();
+            // This fixed compact JSON is the closed response oracle, independent of incoming token instances.
+            var echo = ParseLiteralObject(LiteralPayloadJson);
+            Register(
+                LiteralCommand,
+                new HandlerInfo(
+                    LiteralCommand,
+                    null,
+                    parameters =>
+                    {
+                        observed.Invocations++;
+                        observed.Thread = Thread.CurrentThread.ManagedThreadId;
+                        Assert.AreEqual(mainThread, observed.Thread, "The authenticated wire request must reach the Editor dispatcher.");
+                        AssertLiteralPayload(parameters);
+                        return Task.FromResult<object>(echo.DeepClone());
+                    }
+                )
+            );
+            return observed;
+        }
+
+        private static JObject ParseLiteralObject(string json)
+        {
+            using var reader = new Newtonsoft.Json.JsonTextReader(new StringReader(json)) { DateParseHandling = Newtonsoft.Json.DateParseHandling.None };
+            var value = JObject.Load(reader);
+            while (reader.Read()) { }
+            return value;
+        }
+
+        private static JObject ReadPeerObject(string json, bool preserveJsonStrings) => preserveJsonStrings ? ParseLiteralObject(json) : JObject.Parse(json);
+
+        private static void AssertOrdinalString(JToken value, string expected)
+        {
+            Assert.IsNotNull(value);
+            Assert.AreEqual(JTokenType.String, value.Type);
+            Assert.IsTrue(
+                string.Equals(expected, value.Value<string>(), StringComparison.Ordinal),
+                "Wire JSON string must retain its exact decoded characters."
+            );
+        }
+
+        private static void AssertLiteralPayload(JObject value)
+        {
+            Assert.IsNotNull(value);
+            CollectionAssert.AreEquivalent(
+                new[] { "timestamp", "nested", "unicode", "escaped", "integer", "number", "boolean", "nothing" },
+                value.Properties().Select(p => p.Name)
+            );
+            AssertOrdinalString(value["timestamp"], "2026-10-19T01:02:03.1234567+09:30");
+            Assert.AreEqual(JTokenType.Object, value["nested"].Type);
+            var nested = (JObject)value["nested"];
+            CollectionAssert.AreEquivalent(new[] { "date", "values" }, nested.Properties().Select(p => p.Name));
+            AssertOrdinalString(nested["date"], "2024-02-29");
+            Assert.AreEqual(JTokenType.Array, nested["values"].Type);
+            var values = (JArray)nested["values"];
+            Assert.AreEqual(2, values.Count);
+            AssertOrdinalString(values[0], "2031-12-31T23:59:59.7654321Z");
+            Assert.AreEqual(JTokenType.Object, values[1].Type);
+            CollectionAssert.AreEquivalent(new[] { "offset" }, ((JObject)values[1]).Properties().Select(p => p.Name));
+            AssertOrdinalString(values[1]["offset"], "2025-06-07T08:09:10.9876543-04:30");
+            AssertOrdinalString(value["unicode"], "\uD55C\uAE00\uD83D\uDE00");
+            AssertOrdinalString(value["escaped"], "quote\" slash\\ newline\n tab\t");
+            Assert.AreEqual(JTokenType.Integer, value["integer"].Type);
+            Assert.AreEqual(17, value.Value<int>("integer"));
+            Assert.AreEqual(JTokenType.Float, value["number"].Type);
+            Assert.AreEqual(1.25, value.Value<double>("number"));
+            Assert.AreEqual(JTokenType.Boolean, value["boolean"].Type);
+            Assert.IsTrue(value.Value<bool>("boolean"));
+            Assert.AreEqual(JTokenType.Null, value["nothing"].Type);
+        }
+
+        private static void AssertLiteralResponse(JObject response)
+        {
+            CollectionAssert.AreEquivalent(new[] { "status", "result" }, response.Properties().Select(p => p.Name));
+            AssertOrdinalString(response["status"], "success");
+            Assert.AreEqual(JTokenType.Object, response["result"].Type);
+            AssertLiteralPayload((JObject)response["result"]);
+        }
+
+        private static async Task AwaitOwnedIo(Task operation, Action abort, string label)
+        {
+            if (await Task.WhenAny(operation, Task.Delay(10000)).ConfigureAwait(false) != operation)
+            {
+                abort();
+                if (await Task.WhenAny(operation, Task.Delay(2000)).ConfigureAwait(false) != operation)
+                {
+                    _ = operation.ContinueWith(
+                        t =>
+                        {
+                            _ = t.Exception;
+                        },
+                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously
+                    );
+                    throw new TimeoutException(label + " did not settle after closing its owned connection");
+                }
+                try
+                {
+                    await operation.ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    throw new TimeoutException(label + " exceeded its owned I/O deadline", error);
+                }
+                throw new TimeoutException(label + " exceeded its owned I/O deadline");
+            }
+            await operation.ConfigureAwait(false);
+        }
+
+        private static async Task<T> AwaitOwnedIo<T>(Task<T> operation, Action abort, string label)
+        {
+            await AwaitOwnedIo((Task)operation, abort, label).ConfigureAwait(false);
+            return await operation.ConfigureAwait(false);
+        }
+
+        [Test]
+        public async Task Stdio_ConnectedAsyncJson_PreservesStringKindsAndExactLiterals()
+        {
+            int mainThread = Thread.CurrentThread.ManagedThreadId;
+            var observed = RegisterLiteralEcho(mainThread);
+            using var peer = await StdioPeer.Connect(StartOwned(), Token, preserveJsonStrings: true);
+            Assert.IsFalse(string.IsNullOrEmpty(peer.Server));
+            Assert.IsFalse(string.IsNullOrEmpty(peer.Session));
+            string session = peer.Session;
+            AssertLiteralResponse(await peer.Command(LiteralCommand, ParseLiteralObject(LiteralPayloadJson)));
+            Assert.AreEqual(1, observed.Invocations);
+            Assert.AreEqual(mainThread, observed.Thread);
+            Assert.That(await peer.Ping(), Does.Contain("pong"));
+            Assert.AreEqual(session, peer.Session, "The same authenticated framed session remains usable.");
+            Assert.AreEqual(1, observed.Invocations, "The follow-up ping must not redispatch the echo handler.");
+        }
+
+        [Test]
+        public async Task LocalHttp_ConnectedAsyncJson_PreservesStringKindsAndExactLiterals()
+        {
+            int mainThread = Thread.CurrentThread.ManagedThreadId;
+            var observed = RegisterLiteralEcho(mainThread);
+            using var peer = new OwnedWebSocketPeer(Token, preserveJsonStrings: true);
+            using var client = OwnedWebSocket(peer);
+            try
+            {
+                Assert.IsTrue(await AwaitOwnedIo(client.StartAsync(), client.Dispose, "Owned websocket start"));
+                await peer.WaitRegistered(1);
+                string id = Guid.NewGuid().ToString("D");
+                peer.Execute(id, LiteralCommand, ParseLiteralObject(LiteralPayloadJson));
+                JObject response = await peer.Result(id);
+                CollectionAssert.AreEquivalent(new[] { "type", "id", "result" }, response.Properties().Select(p => p.Name));
+                AssertOrdinalString(response["type"], "command_result");
+                AssertOrdinalString(response["id"], id);
+                Assert.AreEqual(JTokenType.Object, response["result"].Type);
+                AssertLiteralResponse((JObject)response["result"]);
+                Assert.AreEqual(1, observed.Invocations);
+                Assert.AreEqual(mainThread, observed.Thread);
+                Assert.IsTrue(peer.AllAuthHeadersMatch, "The owned HTTP upgrade must carry the synthetic token.");
+                Assert.AreEqual(1, peer.RegisteredCount);
+                Assert.IsTrue(client.IsConnected);
+                peer.Send(new JObject { ["type"] = "ping" });
+                await peer.Message(message => message.Value<string>("type") == "pong");
+                Assert.IsTrue(client.IsConnected);
+                Assert.AreEqual(1, observed.Invocations, "A correlated result and subsequent pong use the same connection.");
+            }
+            finally
+            {
+                await AwaitOwnedIo(client.StopAsync(), client.Dispose, "Owned websocket stop");
+            }
+        }
+
         /// <summary>Independent RFC6455 loopback peer; it owns only its listener and accepted sockets.</summary>
         private sealed class OwnedWebSocketPeer : IDisposable
         {
@@ -649,6 +830,7 @@ namespace MCPForUnityTests.Editor.Services
             private readonly List<JObject> _collected = new List<JObject>();
             private readonly string _token;
             private readonly bool _gzip;
+            private readonly bool _preserveJsonStrings;
             private readonly Task _acceptTask;
             private readonly List<TcpClient> _ownedClients = new List<TcpClient>();
             private TcpClient _active;
@@ -660,10 +842,11 @@ namespace MCPForUnityTests.Editor.Services
             public int LargestBinaryFrame;
             public bool AllAuthHeadersMatch = true;
 
-            public OwnedWebSocketPeer(string token, bool gzip = false)
+            public OwnedWebSocketPeer(string token, bool gzip = false, bool preserveJsonStrings = false)
             {
                 _token = token;
                 _gzip = gzip;
+                _preserveJsonStrings = preserveJsonStrings;
                 _listener.Start();
                 Uri = new Uri("ws://127.0.0.1:" + ((IPEndPoint)_listener.LocalEndpoint).Port + "/owned-editor-qa");
                 Assert.That(Uri.Port, Is.Not.EqualTo(6400).And.Not.EqualTo(6401));
@@ -678,6 +861,8 @@ namespace MCPForUnityTests.Editor.Services
                     try
                     {
                         var client = _listener.AcceptTcpClient();
+                        if (_preserveJsonStrings)
+                            client.SendTimeout = 5000;
                         lock (_connectionGate)
                         {
                             _ownedClients.Add(client);
@@ -803,13 +988,13 @@ namespace MCPForUnityTests.Editor.Services
                                     if (decoded.Length != transfer.Descriptor.Value<int>("decoded_bytes"))
                                         throw new InvalidDataException("Invalid decoded size");
                                 }
-                                _messages.Enqueue(JObject.Parse(Encoding.UTF8.GetString(decoded)));
+                                _messages.Enqueue(ReadPeerObject(Encoding.UTF8.GetString(decoded), _preserveJsonStrings));
                                 transfers.Remove(id);
                             }
                         }
                         else if (fragmentOpcode == 1)
                         {
-                            var message = JObject.Parse(Encoding.UTF8.GetString(payload));
+                            var message = ReadPeerObject(Encoding.UTF8.GetString(payload), _preserveJsonStrings);
                             _messages.Enqueue(message);
                             if (message.Value<string>("type") == "register")
                             {
@@ -974,42 +1159,49 @@ namespace MCPForUnityTests.Editor.Services
         internal sealed class StdioPeer : IDisposable
         {
             private readonly TcpClient _client;
+            private readonly bool _preserveJsonStrings;
             public string Server { get; private set; }
             public string Session { get; private set; }
 
-            private StdioPeer(TcpClient client)
+            private StdioPeer(TcpClient client, bool preserveJsonStrings)
             {
                 _client = client;
+                _preserveJsonStrings = preserveJsonStrings;
             }
 
-            public static async Task<StdioPeer> Connect(int port, string token)
+            public static async Task<StdioPeer> Connect(int port, string token, bool preserveJsonStrings = false)
             {
                 var client = new TcpClient();
                 try
                 {
-                    await client.ConnectAsync(IPAddress.Loopback, port).ConfigureAwait(false);
-                    var peer = new StdioPeer(client);
-                    string banner = await ReadLine(client.GetStream()).ConfigureAwait(false);
+                    var peer = new StdioPeer(client, preserveJsonStrings);
+                    await peer.Io(client.ConnectAsync(IPAddress.Loopback, port), "connect").ConfigureAwait(false);
+                    string banner = await peer.Io(ReadLine(client.GetStream()), "authentication banner").ConfigureAwait(false);
                     Assert.That(banner, Does.StartWith("WELCOME UNITY-MCP 2 FRAMING=1 AUTH=HMAC-SHA256 "));
                     var values = banner.Split(' ').Where(part => part.Contains("=")).ToDictionary(part => part.Split('=')[0], part => part.Split('=')[1]);
                     peer.Server = values["SERVER"];
                     string challenge = values["CHALLENGE"];
                     string nonce = Hex(RandomBytes(32));
                     string clientProof = Proof(token, "unity-mcp-stdio-v2\nclient\n" + peer.Server + "\n" + challenge + "\n" + nonce);
-                    await WriteFrame(
-                            client.GetStream(),
-                            Encoding.UTF8.GetBytes(
-                                new JObject
-                                {
-                                    ["type"] = "authenticate",
-                                    ["version"] = 2,
-                                    ["client_nonce"] = nonce,
-                                    ["proof"] = clientProof,
-                                }.ToString(Newtonsoft.Json.Formatting.None)
-                            )
+                    await peer.Io(
+                            WriteFrame(
+                                client.GetStream(),
+                                Encoding.UTF8.GetBytes(
+                                    new JObject
+                                    {
+                                        ["type"] = "authenticate",
+                                        ["version"] = 2,
+                                        ["client_nonce"] = nonce,
+                                        ["proof"] = clientProof,
+                                    }.ToString(Newtonsoft.Json.Formatting.None)
+                                )
+                            ),
+                            "authentication proof"
                         )
                         .ConfigureAwait(false);
-                    var ack = JObject.Parse(Encoding.UTF8.GetString(await ReadFrame(client.GetStream()).ConfigureAwait(false)));
+                    var ack = JObject.Parse(
+                        Encoding.UTF8.GetString(await peer.Io(ReadFrame(client.GetStream()), "authentication acknowledgement").ConfigureAwait(false))
+                    );
                     Assert.AreEqual("authenticated", ack.Value<string>("type"));
                     Assert.AreEqual(2, ack.Value<int>("version"));
                     peer.Session = ack.Value<string>("session_id");
@@ -1044,19 +1236,30 @@ namespace MCPForUnityTests.Editor.Services
 
             public async Task<string> Ping()
             {
-                await WriteFrame(_client.GetStream(), Encoding.UTF8.GetBytes("ping")).ConfigureAwait(false);
-                return Encoding.UTF8.GetString(await ReadFrame(_client.GetStream()).ConfigureAwait(false));
+                await Io(WriteFrame(_client.GetStream(), Encoding.UTF8.GetBytes("ping")), "ping write").ConfigureAwait(false);
+                return Encoding.UTF8.GetString(await Io(ReadFrame(_client.GetStream()), "ping response").ConfigureAwait(false));
             }
 
             public async Task<JObject> Command(string name, JObject parameters)
             {
-                await WriteFrame(
-                        _client.GetStream(),
-                        Encoding.UTF8.GetBytes(new JObject { ["type"] = name, ["params"] = parameters }.ToString(Newtonsoft.Json.Formatting.None))
+                await Io(
+                        WriteFrame(
+                            _client.GetStream(),
+                            Encoding.UTF8.GetBytes(new JObject { ["type"] = name, ["params"] = parameters }.ToString(Newtonsoft.Json.Formatting.None))
+                        ),
+                        "command write"
                     )
                     .ConfigureAwait(false);
-                return JObject.Parse(Encoding.UTF8.GetString(await ReadFrame(_client.GetStream()).ConfigureAwait(false)));
+                return ReadPeerObject(
+                    Encoding.UTF8.GetString(await Io(ReadFrame(_client.GetStream()), "command response").ConfigureAwait(false)),
+                    _preserveJsonStrings
+                );
             }
+
+            private Task Io(Task operation, string label) => _preserveJsonStrings ? AwaitOwnedIo(operation, Dispose, "Owned stdio " + label) : operation;
+
+            private Task<T> Io<T>(Task<T> operation, string label) =>
+                _preserveJsonStrings ? AwaitOwnedIo(operation, Dispose, "Owned stdio " + label) : operation;
 
             internal static async Task<string> ReadLine(NetworkStream stream)
             {
