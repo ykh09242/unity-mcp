@@ -45,6 +45,8 @@ namespace MCPForUnity.Editor.Tools
                 string action = p.Get("action")?.ToLowerInvariant();
                 if (action == "diagnose_projection")
                     return UguiProjectionDiagnostics.Diagnose(@params);
+                if (action == "diagnose_text")
+                    return UguiTmpLayoutDiagnostics.Diagnose(@params);
                 bool includeInactive = ReadBool(p.GetRaw("include_inactive"), false, "include_inactive");
                 int maxNodes = ReadInt(p.GetRaw("max_nodes"), 200, 1, 1000, "max_nodes");
                 if (action == "ping")
@@ -61,7 +63,7 @@ namespace MCPForUnity.Editor.Tools
                     return Create(p, includeInactive);
                 if (!new[] { "get_hierarchy", "set_rect", "set_layout", "set_text", "set_canvas", "diagnose" }.Contains(action))
                     return new ErrorResponse(
-                        "Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, diagnose, diagnose_projection."
+                        "Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, diagnose, diagnose_projection, diagnose_text."
                     );
                 var go = Resolve(p.GetRaw("target"), includeInactive);
                 if (action == "get_hierarchy")
