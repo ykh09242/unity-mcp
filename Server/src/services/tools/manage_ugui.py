@@ -37,6 +37,7 @@ UGUIAction = Literal[
     "set_layout",
     "set_text",
     "set_canvas",
+    "set_image",
     "diagnose",
     "diagnose_projection",
     "diagnose_text",
@@ -44,7 +45,9 @@ UGUIAction = Literal[
 ]
 ElementType = Literal["canvas", "panel", "image", "button", "text"]
 _ACTIONS: Final = get_args(UGUIAction)
-_MUTATIONS: Final = frozenset({"create", "set_rect", "set_layout", "set_text", "set_canvas"})
+_MUTATIONS: Final = frozenset(
+    {"create", "set_rect", "set_layout", "set_text", "set_canvas", "set_image"}
+)
 ResolutionDimension = Annotated[int, Field(strict=True, ge=64, le=8192)]
 ScreenCoordinate = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 ScreenPosition = Annotated[list[ScreenCoordinate], Field(min_length=2, max_length=2)]
@@ -82,8 +85,11 @@ _ELEMENT_KEYS: Final = frozenset(
     "ignoreLayout minWidth minHeight preferredWidth preferredHeight flexibleWidth flexibleHeight layoutPriority".split()
 )
 _FITTER_KEYS: Final = frozenset("horizontalFit verticalFit".split())
+_IMAGE_KEYS: Final = frozenset(
+    "sprite type fillMethod fillOrigin fillAmount fillClockwise preserveAspect fillCenter color raycastTarget".split()
+)
 _BOOL_KEYS: Final = frozenset(
-    "enableAutoSizing raycastTarget overrideSorting pixelPerfect childControlWidth childControlHeight childForceExpandWidth childForceExpandHeight childScaleWidth childScaleHeight reverseArrangement ignoreLayout".split()
+    "enableAutoSizing raycastTarget overrideSorting pixelPerfect childControlWidth childControlHeight childForceExpandWidth childForceExpandHeight childScaleWidth childScaleHeight reverseArrangement ignoreLayout fillClockwise preserveAspect fillCenter".split()
 )
 _ENUM_KEYS: Final = frozenset(
     "alignment renderMode uiScaleMode screenMatchMode childAlignment startCorner startAxis constraint horizontalFit verticalFit".split()
@@ -158,6 +164,73 @@ def _create_offsets_finite(
     return True
 
 
+def _image_properties_error(props: dict[str, JsonValue]) -> str | None:
+    """Reject intrinsic Image errors; current component/sprite facts stay native."""
+    image_type, method = props.get("type"), props.get("fillMethod")
+    for key, names in (
+        ("type", {"simple", "sliced", "tiled", "filled"}),
+        ("fillMethod", {"horizontal", "vertical", "radial90", "radial180", "radial360"}),
+    ):
+        if key in props and (type(props[key]) is not str or props[key].lower() not in names):
+            return f"properties.{key} must be a supported Image enum name."
+    if "fillOrigin" in props and (
+        type(props["fillOrigin"]) is not int or not 0 <= props["fillOrigin"] <= 3
+    ):
+        return "properties.fillOrigin must be an integer in 0..3, further limited by fillMethod."
+    if "fillAmount" in props and (
+        not _finite_float(props["fillAmount"]) or not 0 <= _float32(props["fillAmount"]) <= 1
+    ):
+        return "properties.fillAmount must be a finite number in 0..1."
+    if isinstance(image_type, str):
+        image_type = image_type.lower()
+        if image_type != "filled" and set(props) & {
+            "fillMethod",
+            "fillOrigin",
+            "fillAmount",
+            "fillClockwise",
+        }:
+            return "Fill properties require final type=Filled."
+        if "fillCenter" in props and image_type not in {"sliced", "tiled"}:
+            return "fillCenter requires final type=Sliced or Tiled."
+        if "preserveAspect" in props and image_type not in {"simple", "filled"}:
+            return "preserveAspect requires final type=Simple or Filled."
+        if image_type == "sliced" and "sprite" in props and props["sprite"] is None:
+            return "Sliced editing requires a bordered base sprite, not null."
+    if (
+        isinstance(method, str)
+        and method.lower() in {"horizontal", "vertical"}
+        and props.get("fillOrigin", 0) > 1
+    ):
+        return "fillOrigin is incompatible with the selected fillMethod."
+    if "sprite" not in props or props["sprite"] is None:
+        return None
+    selector = props["sprite"]
+    match selector:
+        case str():
+            path = selector
+        case dict() if "path" in selector and set(selector) <= {"path", "name"}:
+            path = selector["path"]
+            if "name" in selector:
+                name = selector["name"]
+                if (
+                    type(name) is not str
+                    or not 1 <= len(name.encode("utf-16-le")) // 2 <= 256
+                    or "\x00" in name
+                ):
+                    return "sprite.name must contain 1..256 UTF-16 units without NUL."
+        case _:
+            return "sprite must be null, an asset path, or {path,name}."
+    if (
+        type(path) is not str
+        or not path.startswith(("Assets/", "Packages/"))
+        or len(path.encode("utf-16-le")) // 2 > 1024
+        or any(value in path for value in ("\\", ":", "\x00"))
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+    ):
+        return "sprite.path must be a canonical bounded Assets/ or Packages/ asset path."
+    return None
+
+
 def _properties_error(
     action: str, element_type: str | None, props: dict[str, JsonValue]
 ) -> str | None:
@@ -176,6 +249,11 @@ def _properties_error(
             allowed = _TEXT_KEYS
         case "set_canvas":
             allowed = _CANVAS_KEYS
+        case "set_image":
+            allowed = _IMAGE_KEYS
+            image_error = _image_properties_error(props)
+            if image_error:
+                return image_error
         case "set_layout":
             if not isinstance(kind, str):
                 return "properties.type is required for set_layout."
@@ -201,6 +279,14 @@ def _properties_error(
     numbers: dict[str, float] = {}
     for key, value in props.items():
         error = f"properties.{key} has an invalid value."
+        if action == "set_image" and key in {
+            "sprite",
+            "type",
+            "fillMethod",
+            "fillOrigin",
+            "fillAmount",
+        }:
+            continue
         if key == "type":
             continue
         if key in _BOOL_KEYS:
@@ -536,7 +622,7 @@ async def _diagnose_raycast(
     description=(
         "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. "
         "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast. Mutating actions: create, set_rect, set_layout, "
-        "set_text, set_canvas. Optional uGUI and TextMeshPro support is detected in the Editor. "
+        "set_text, set_canvas, set_image. Optional uGUI and TextMeshPro support is detected in the Editor. "
         "diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera "
         "geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. "
         "diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes. "
@@ -571,7 +657,10 @@ async def manage_ugui(
         "Action-specific camelCase properties, as a dict or JSON object string. Rect: anchorMin, anchorMax, "
         "pivot, anchoredPosition, sizeDelta, offsetMin, offsetMax, localScale, localEulerAngles. "
         "Create: all elements accept Rect properties; panel/image/button also accept color; text also accepts "
-        "Text properties. Image raycastTarget requires manage_components after creation. "
+        "Text properties. set_image edits an existing Image: sprite=null/path/{path,name}, type, fillMethod, "
+        "fillOrigin, fillAmount, fillClockwise, preserveAspect, fillCenter, color and raycastTarget. "
+        "Fill fields require final Filled type; origin is validated against final fillMethod. "
+        "Sliced requires a bordered base sprite. No importer edit, explicit import/refresh or component creation occurs. "
         "Layout: type must be vertical, horizontal, grid, layout_element or content_size_fitter, plus that "
         "component's properties. Text: text, fontSize, color, alignment, enableAutoSizing, fontSizeMin, "
         "fontSizeMax, raycastTarget. Canvas: Canvas and CanvasScaler properties via set_canvas.",
