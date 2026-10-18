@@ -76,7 +76,7 @@ where = ["src"]
 "" = "src"
 
 [tool.setuptools.package-data]
-services = ["skills_bundle.json"]
+services = ["skills_bundle.json", "test_results_view.html"]
 
 [tool.setuptools]
 py-modules = ["main"]

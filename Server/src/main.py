@@ -13,6 +13,7 @@ from core.telemetry import (
     RecordType,
 )
 from services.resources import register_all_resources
+from services.test_results_app import install_test_results_app
 from transport.plugin_registry import PluginRegistry
 from transport.plugin_hub import (
     PluginHub,
@@ -1017,6 +1018,7 @@ def create_mcp_server(
 
     # Register all resources
     register_all_resources(mcp, project_scoped_tools=project_scoped_tools)
+    install_test_results_app(mcp)
     install_skills(mcp)
 
     if test_wait_tasks_root is not None:

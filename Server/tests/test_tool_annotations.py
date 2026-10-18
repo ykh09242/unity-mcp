@@ -49,6 +49,8 @@ READ_ONLY = {
     "unity_docs",
     "unity_reflect",
     "validate_script",
+    # One completed-results page; no refresh, paging loop, run, cancel, or focus nudge.
+    "view_test_results",
 }
 
 NON_DESTRUCTIVE = {

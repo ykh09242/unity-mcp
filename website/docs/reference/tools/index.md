@@ -83,7 +83,7 @@ ScriptableObject management
 - **[`inspect_serialized_object`](./scripting_ext/inspect_serialized_object.md)** — Inspect one exact Component or ScriptableObject instance ID through SerializedObject.
 - **[`manage_scriptable_object`](./scripting_ext/manage_scriptable_object.md)** — Creates and modifies ScriptableObject assets using Unity SerializedObject property paths.
 
-## `testing` &nbsp; (8 tools)
+## `testing` &nbsp; (9 tools)
 Test runner, async test jobs & bounded Play Mode input simulation
 - **[`cancel_test_job`](./testing/cancel_test_job.md)** — Request cancellation of an owned native test job.
 - **[`export_test_job`](./testing/export_test_job.md)** — Export completed Unity test evidence as JSON or JUnit.
@@ -93,6 +93,7 @@ Test runner, async test jobs & bounded Play Mode input simulation
 - **[`manage_play_scenario`](./testing/manage_play_scenario.md)** — Save/get/list/delete scenarios and suites; reports history and run/status/cancel Unity-owned jobs.
 - **[`manage_scenario_recording`](./testing/manage_scenario_recording.md)** — Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode into a bounded scenario draft. start returns recording_id immediately; status polls explicitly. stop saves a NEW scenario with draft=true and r…
 - **[`run_tests`](./testing/run_tests.md)** — Starts a Unity test run asynchronously and returns a job_id immediately.
+- **[`view_test_results`](./testing/view_test_results.md)** — Read one completed Unity test-result page (up to 100 failed/skipped details).
 
 ## `ui` &nbsp; (3 tools)
 UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI editing and diagnostics
