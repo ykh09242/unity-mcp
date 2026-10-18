@@ -1,4 +1,10 @@
 from starlette.requests import Request
+from transport.execution_receipts import (
+    ExecutionReceipts,
+    execute_receipted_rest,
+    install_execution_receipts,
+    rest_receipt_control,
+)
 from transport.unity_instance_middleware import (
     UnityInstanceMiddleware,
     get_unity_instance_middleware,
@@ -35,6 +41,7 @@ from services.custom_tool_service import (
     resolve_project_id_for_unity_instance,
 )
 from core.server_build import RUNNING_SERVER
+from services.execution_receipt_context import owned_to_thread
 from core.config import config
 from core.custom_instructions import (
     CustomInstructionsError,
@@ -234,6 +241,9 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
         timer.start()
 
     try:
+        receipts = getattr(server, "_execution_receipts", None)
+        if receipts is not None:
+            await receipts.start()
         # Record server startup telemetry
         start_time = time.time()
         start_clk = time.perf_counter()
@@ -364,6 +374,9 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                 "plugin_registry": _plugin_registry,
             }
     finally:
+        receipts = getattr(server, "_execution_receipts", None)
+        if receipts is not None:
+            receipts.close()
         scene_inputs = getattr(server, "_scene_load_inputs", None)
         if scene_inputs is not None:
             scene_inputs.close()
@@ -497,6 +510,8 @@ def _select_local_session(
 class UnityMCP(FastMCP):
     """Protect the control plane for both run() and ASGI embedding."""
 
+    _execution_receipts: ExecutionReceipts
+
     def run(self, transport=None, show_banner=None, **transport_kwargs) -> None:
         if sys.platform != "win32":
             return super().run(transport, show_banner=show_banner, **transport_kwargs)
@@ -590,6 +605,8 @@ def create_mcp_server(
     managed_instance_token: str | None = None,
     custom_instructions: str | None = None,
     test_wait_tasks_root: Path | None = None,
+    execution_receipts_root: Path | None = None,
+    execution_receipts_private_root: bool = False,
 ) -> FastMCP:
     scene_inputs = prepare_scene_load_inputs()
     mcp = UnityMCP(
@@ -604,6 +621,9 @@ def create_mcp_server(
     mcp._scene_load_inputs = scene_inputs
     mcp.add_middleware(InventoryOrderingMiddleware())
     mcp.add_middleware(ResponseLimitMiddleware())
+    install_execution_receipts(
+        mcp, execution_receipts_root, private_root=execution_receipts_private_root
+    )
     install_catalog_subscriptions(mcp, remote_hosted=config.http_remote_hosted)
 
     global custom_tool_service
@@ -651,6 +671,12 @@ def create_mcp_server(
             """REST endpoint for CLI commands to Unity."""
             try:
                 body = await request.json()
+                if isinstance(body, dict) and "execution" in body:
+                    return await execute_receipted_rest(
+                        mcp._execution_receipts, request, body, "/api/command", cli_command_route
+                    )
+                if isinstance(body, dict) and body.get("type") == "get_execution_receipt":
+                    return await rest_receipt_control(mcp._execution_receipts, request, body)
 
                 command_type = body.get("type")
                 params = body.get("params", {})
@@ -697,7 +723,18 @@ def create_mcp_server(
             """Fail closed on old/mismatched registrations; never change MCP selection."""
             started_at = asyncio.get_running_loop().time()
             try:
-                body = ContextCommand.model_validate(await request.json())
+                raw_body = await request.json()
+                if isinstance(raw_body, dict) and "execution" in raw_body:
+                    return await execute_receipted_rest(
+                        mcp._execution_receipts,
+                        request,
+                        raw_body,
+                        "/api/context-command",
+                        context_command_route,
+                    )
+                if isinstance(raw_body, dict) and raw_body.get("type") == "get_execution_receipt":
+                    return await rest_receipt_control(mcp._execution_receipts, request, raw_body)
+                body = ContextCommand.model_validate(raw_body)
             except (ValueError, UnicodeError):
                 return JSONResponse(LocalProjectContext().refuse("project_context_invalid"))
             target_hash = full_hash(body.unity_instance)
@@ -849,7 +886,7 @@ def create_mcp_server(
                 if session_details and session_details.hash:
                     unity_instance_hint = session_details.hash
 
-                project_id = await asyncio.to_thread(
+                project_id = await owned_to_thread(
                     resolve_project_id_for_unity_instance, unity_instance_hint
                 )
                 if not project_id:
@@ -947,7 +984,7 @@ def create_mcp_server(
                 if session_details and session_details.hash:
                     unity_instance_hint = session_details.hash
 
-                project_id = await asyncio.to_thread(
+                project_id = await owned_to_thread(
                     resolve_project_id_for_unity_instance, unity_instance_hint
                 )
                 if not project_id:
@@ -1340,6 +1377,14 @@ Examples:
     mcp = create_mcp_server(
         project_scoped_tools,
         custom_instructions=custom_instructions,
+        execution_receipts_root=(
+            Path(os.environ["UNITY_MCP_EXECUTION_RECEIPTS_DIR"])
+            if os.environ.get("UNITY_MCP_EXECUTION_RECEIPTS_DIR")
+            else None
+        ),
+        execution_receipts_private_root=(
+            os.environ.get("UNITY_MCP_EXECUTION_RECEIPTS_PRIVATE_ROOT") == "1"
+        ),
         test_wait_tasks_root=(
             Path(os.environ["UNITY_MCP_TEST_WAIT_TASKS_DIR"])
             if config.transport_mode == "http" and os.environ.get("UNITY_MCP_TEST_WAIT_TASKS_DIR")

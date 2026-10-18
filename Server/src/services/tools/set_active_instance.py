@@ -9,6 +9,7 @@ from services.registry import mcp_for_unity_tool
 from transport.legacy.unity_connection import get_unity_connection_pool
 from transport.unity_instance_middleware import get_unity_instance_middleware
 from transport.plugin_hub import PluginHub
+from services.execution_receipt_context import owned_to_thread
 from core.config import config
 from transport.protocol import is_sessionless
 
@@ -57,7 +58,7 @@ async def set_active_instance(
             }
         port_int = int(value)
         pool = get_unity_connection_pool()
-        instances = await asyncio.to_thread(pool.discover_all_instances, force_refresh=True)
+        instances = await owned_to_thread(pool.discover_all_instances, force_refresh=True)
         match = next((inst for inst in instances if getattr(inst, "port", None) == port_int), None)
         if match is None:
             available = (
@@ -103,7 +104,7 @@ async def set_active_instance(
             )
     else:
         pool = get_unity_connection_pool()
-        instances = await asyncio.to_thread(pool.discover_all_instances, force_refresh=True)
+        instances = await owned_to_thread(pool.discover_all_instances, force_refresh=True)
 
     if not instances:
         return {

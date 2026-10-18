@@ -245,13 +245,27 @@ async def _update_job_nudge(
     progress["focus_nudge_status"] = "scheduled"
 
     async def perform_nudge() -> None:
-        await nudge_unity_focus(
-            unity_project_path=project_path,
-            force=True,
-            focus_duration_s=focus_nudge._DEFAULT_FOCUS_DURATION_S,
-        )
+        try:
+            await nudge_unity_focus(
+                unity_project_path=project_path,
+                force=True,
+                focus_duration_s=focus_nudge._DEFAULT_FOCUS_DURATION_S,
+            )
+        finally:
+            execution_owner.set(None)
 
-    task = asyncio.create_task(perform_nudge())
+    from services.execution_receipt_context import execution_owner, own_future
+
+    receipt = execution_owner.get()
+    receipt_pin = receipt.acquire_worker() if receipt is not None else None
+    try:
+        task = asyncio.create_task(perform_nudge())
+    except BaseException:
+        if receipt_pin is not None:
+            receipt_pin.close()
+        raise
+    if receipt_pin is not None:
+        own_future(task, receipt_pin)
     state.task = task
     _active_nudge_task = task
     _background_tasks.add(task)

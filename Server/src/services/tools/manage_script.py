@@ -586,9 +586,16 @@ async def apply_text_edits(
 
                 # The selected legacy command outlives this request and needs no
                 # request Context, released response owner, or delivery identity.
-                task = asyncio.create_task(_flip_async(), context=TaskContext())
-                _background_tasks.add(task)
-                task.add_done_callback(_background_tasks.discard, context=TaskContext())
+                from services.execution_receipt_context import execution_owner
+
+                if execution_owner.get() is not None:
+                    # Protected full invocations await this requested native work;
+                    # it must not escape into the empty-context background path.
+                    await _flip_async()
+                else:
+                    task = asyncio.create_task(_flip_async(), context=TaskContext())
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard, context=TaskContext())
             except Exception:
                 pass
             return resp

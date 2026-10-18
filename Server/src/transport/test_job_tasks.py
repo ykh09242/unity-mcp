@@ -340,6 +340,12 @@ class TestJobTasks(ServerExtension):
 
     async def intercept_tool_call(self, params, context, call_next):
         request_context = context.request_context
+        from transport.execution_receipts import has_execution_options
+
+        if has_execution_options(request_context):
+            # Receipts protect the complete ordinary invocation. Never detach it
+            # into the separate wait-Task durability domain.
+            return await call_next()
         # FastMCP exposes a compatibility wrapper; extension method handlers use
         # this same SDK request context directly. Never retain either in workers.
         ctx = request_context._srctx if request_context is not None else None

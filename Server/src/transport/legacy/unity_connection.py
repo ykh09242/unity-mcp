@@ -1,3 +1,9 @@
+from services.execution_receipt_context import (
+    execution_owner,
+    observe_native_result,
+    submit_owned_executor,
+)
+from uuid import uuid4
 from core.config import config
 from core.server_build import RUNNING_SERVER
 import contextlib
@@ -502,6 +508,13 @@ class UnityConnection:
             blender_command_timeout(params) if command_type == "blender_bridge" else None
         )
         command_sent = False
+        receipt_owner = execution_owner.get()
+        if receipt_owner is not None:
+            deadline = (
+                min(deadline, receipt_owner.expires_at)
+                if deadline is not None
+                else receipt_owner.expires_at
+            )
 
         # Cap total time across all retries so a wedged socket can't block unbounded.
         total_timeout = max(0.0, float(getattr(config, "command_total_timeout", 90.0)))
@@ -574,6 +587,24 @@ class UnityConnection:
 
                         return custom_catalog_changed().model_dump()
 
+                    receipt = execution_owner.get()
+                    receipt_attempt = uuid4().hex if receipt is not None else None
+                    receipt_project = (
+                        self.instance_id.rsplit("@", 1)[-1].lower()
+                        if receipt is not None and self.instance_id is not None
+                        else None
+                    )
+                    if receipt is not None:
+                        receipt.native(
+                            command_type,
+                            params,
+                            custom=_catalog_guard is not None,
+                            kind="stdio",
+                            attempt_id=receipt_attempt,
+                            session_id="stdio:" + receipt_project,
+                            generation=self.session_generation,
+                            project_hash=receipt_project,
+                        )
                     # Build payload
                     if command_type == "ping":
                         payload = b"ping"
@@ -597,6 +628,13 @@ class UnityConnection:
                         if blender_timeout is not None:
                             self.sock.settimeout(blender_timeout)
                         t_send_start = time.time()
+                        if receipt is not None:
+                            receipt.dispatch_started(
+                                kind="stdio",
+                                attempt_id=receipt_attempt,
+                                session_id="stdio:" + receipt_project,
+                                generation=self.session_generation,
+                            )
                         if self.use_framing:
                             header = struct.pack(">Q", len(payload))
                             self._set_socket_deadline(self.sock, deadline)
@@ -642,6 +680,16 @@ class UnityConnection:
                         if not isinstance(resp, dict):
                             raise _UnityProtocolError("Unity response must be a JSON object")
                         response_received = True
+                        if receipt is not None:
+                            receipt.observe(
+                                kind="stdio",
+                                attempt_id=receipt_attempt,
+                                session_id="stdio:" + receipt_project,
+                                generation=self.session_generation,
+                                dispatched=True,
+                                observed=True,
+                                cause="observed",
+                            )
                         if (
                             resp.get("status") == "success"
                             and resp.get("result", {}).get("message") == "pong"
@@ -653,6 +701,16 @@ class UnityConnection:
                     if not isinstance(resp, dict):
                         raise _UnityProtocolError("Unity response must be a JSON object")
                     response_received = True
+                    if receipt is not None:
+                        receipt.observe(
+                            kind="stdio",
+                            attempt_id=receipt_attempt,
+                            session_id="stdio:" + receipt_project,
+                            generation=self.session_generation,
+                            dispatched=True,
+                            observed=True,
+                            cause="observed",
+                        )
                     if resp.get("status") == "error":
                         err = resp.get("error") or resp.get("message", "Unknown Unity error")
                         raise Exception(err)
@@ -1169,7 +1227,7 @@ async def get_authenticated_stdio_generation(instance_id: str | None) -> str | N
         finally:
             conn._io_lock.release()
 
-    future = loop.run_in_executor(None, inspect)
+    future = submit_owned_executor(loop, None, inspect)
     future.add_done_callback(_consume_async_exception)
     try:
         async with asyncio.timeout(1.0):
@@ -1471,6 +1529,36 @@ async def async_send_command_with_retry(
     _catalog_guard=None,
     _catalog_capture=None,
 ) -> dict[str, Any] | MCPResponse:
+    """Preserve existing dispatch behavior and observe canonical uncertainty."""
+    result = await _async_send_command_response(
+        command_type,
+        params,
+        instance_id=instance_id,
+        loop=loop,
+        max_retries=max_retries,
+        retry_ms=retry_ms,
+        retry_on_reload=retry_on_reload,
+        _deadline=_deadline,
+        _catalog_guard=_catalog_guard,
+        _catalog_capture=_catalog_capture,
+    )
+    observe_native_result({"data": result.data} if isinstance(result, MCPResponse) else result)
+    return result
+
+
+async def _async_send_command_response(
+    command_type: str,
+    params: dict[str, Any],
+    *,
+    instance_id: str | None = None,
+    loop=None,
+    max_retries: int | None = None,
+    retry_ms: int | None = None,
+    retry_on_reload: bool = True,
+    _deadline: float | None = None,
+    _catalog_guard=None,
+    _catalog_capture=None,
+) -> dict[str, Any] | MCPResponse:
     """Admit one blocking command worker per actual connection and event loop.
 
     Selection and admission share the command deadline. Cancellation before
@@ -1496,6 +1584,11 @@ async def async_send_command_with_retry(
         if loop is None:
             loop = asyncio.get_running_loop()
         policy_deadline = _command_deadline(command_type, params)
+        receipt = execution_owner.get()
+        if receipt is not None:
+            _deadline = (
+                min(_deadline, receipt.expires_at) if _deadline is not None else receipt.expires_at
+            )
         # A bounded read may shorten the existing policy, never restart or extend it.
         deadline = (
             min(policy_deadline, _deadline)
@@ -1504,7 +1597,7 @@ async def async_send_command_with_retry(
             if _deadline is not None
             else policy_deadline
         )
-        selection = loop.run_in_executor(None, get_unity_connection, instance_id)
+        selection = submit_owned_executor(loop, None, get_unity_connection, instance_id)
         selection.add_done_callback(_consume_async_exception)
         if deadline is None:
             conn = await asyncio.shield(selection)
@@ -1563,7 +1656,7 @@ async def async_send_command_with_retry(
                 return result
 
         try:
-            completion = loop.run_in_executor(None, dispatch)
+            completion = submit_owned_executor(loop, None, dispatch)
         except Exception:
             gate.release()
             raise
@@ -1602,7 +1695,11 @@ async def async_send_command_with_retry(
             if conn.claim_tool_resync():
                 if command_type != "get_tool_states":
                     logger.info("Detected reconnection to Unity; scheduling tool re-sync")
-                    asyncio.ensure_future(_resync_tools_after_reconnect(conn.instance_id))
+                    receipt_token = execution_owner.set(None)
+                    try:
+                        asyncio.ensure_future(_resync_tools_after_reconnect(conn.instance_id))
+                    finally:
+                        execution_owner.reset(receipt_token)
         except Exception as exc:
             logger.debug(
                 "Failed to schedule post-reconnection tool re-sync: %s",

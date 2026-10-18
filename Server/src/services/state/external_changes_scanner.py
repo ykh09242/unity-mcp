@@ -319,10 +319,12 @@ class ExternalChangesScanner:
                 return self._cached_result(instance_id)
         stop = threading.Event()
         try:
-            future = asyncio.get_running_loop().run_in_executor(
-                None, self._run_update_locked, instance_id, stop
+            from services.execution_receipt_context import submit_owned_executor
+
+            future = submit_owned_executor(
+                asyncio.get_running_loop(), None, self._run_update_locked, instance_id, stop
             )
-        except (RuntimeError, OSError):
+        except BaseException:
             self._scan_lock.release()
             raise
         try:

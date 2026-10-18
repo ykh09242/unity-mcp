@@ -255,6 +255,18 @@ class SceneLoadInputs(Middleware):
         message = context.message
         if message.name != "manage_scene" or ctx is None or ctx.request_context is None:
             return await call_next(context)
+        from transport.execution_receipts import execution_options, reject_continuation
+        from services.execution_receipt_identity import ReceiptUnavailable
+
+        if execution_options(ctx) is not None:
+            reject_continuation(ctx)
+            # Explicit paths use ordinary execution; an ask is an unsupported leg.
+            args = message.arguments or {}
+            if args.get("action") == "load" and not any(
+                args.get(key) is not None for key in ("name", "path", "build_index")
+            ):
+                raise ReceiptUnavailable("execution_receipt_scene_input_unsupported")
+            return await call_next(context)
         args = message.arguments or {}
         if (
             args.get("action") != "load"
