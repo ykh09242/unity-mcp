@@ -20,6 +20,7 @@ from typing_extensions import assert_never
 from models import MCPResponse
 from models.ugui_projection_diagnostics import validate_ugui_projection_diagnostics
 from models.ugui_tmp_layout_diagnostics import validate_ugui_tmp_layout_diagnostics
+from models.ugui_raycast_diagnostics import validate_ugui_raycast_response
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
@@ -39,11 +40,14 @@ UGUIAction = Literal[
     "diagnose",
     "diagnose_projection",
     "diagnose_text",
+    "diagnose_raycast",
 ]
 ElementType = Literal["canvas", "panel", "image", "button", "text"]
 _ACTIONS: Final = get_args(UGUIAction)
 _MUTATIONS: Final = frozenset({"create", "set_rect", "set_layout", "set_text", "set_canvas"})
 ResolutionDimension = Annotated[int, Field(strict=True, ge=64, le=8192)]
+ScreenCoordinate = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+ScreenPosition = Annotated[list[ScreenCoordinate], Field(min_length=2, max_length=2)]
 
 
 class Resolution(BaseModel):
@@ -446,15 +450,99 @@ async def _diagnose_text(
     return {"success": True, "data": data}
 
 
+async def _diagnose_raycast(
+    ctx,
+    target,
+    screen_position,
+    allow_custom_filters,
+    max_nodes,
+    max_depth,
+    max_evaluations,
+    max_characters,
+):
+    """Preserve the full closed receipt, including an opted-in native query failure."""
+    invalid = {"success": False, "message": "invalid_raycast_request", "data": None}
+    if type(target) is int:
+        if not -(2**31) <= target < 2**31:
+            return invalid
+    elif type(target) is str:
+        try:
+            if not target.strip() or len(target.encode("utf-16-le")) // 2 > 4096:
+                return invalid
+        except UnicodeError:
+            return invalid
+    else:
+        return invalid
+    if (
+        type(allow_custom_filters) is not bool
+        or max_nodes is None
+        or type(screen_position) is not list
+        or len(screen_position) != 2
+        or not all(_finite_float(value) for value in screen_position)
+    ):
+        return invalid
+    budgets = {
+        "max_nodes": (max_nodes, 200, 1, 1000),
+        "max_depth": (max_depth, 10, 0, 24),
+        "max_evaluations": (max_evaluations, 20000, 1, 200000),
+        "max_characters": (max_characters, 65536, 1, 262144),
+    }
+    params = {
+        "action": "diagnose_raycast",
+        "target": target,
+        "screen_position": screen_position,
+        "allow_custom_filters": allow_custom_filters,
+    }
+    for key, (value, default, low, high) in budgets.items():
+        value = default if value is None else value
+        if type(value) is not int or not low <= value <= high:
+            return invalid
+        params[key] = value
+    blocked = await preflight(ctx, requires_no_tests=False, wait_for_no_compile=True)
+    if blocked is not None:
+        return blocked.model_dump()
+    instance = await get_unity_instance_from_context(ctx)
+    result = await send_with_unity_instance(
+        async_send_command_with_retry, instance, "manage_ugui", params
+    )
+    result = result.model_dump() if isinstance(result, MCPResponse) else result
+    try:
+        if type(result) is not dict:
+            raise ValueError("envelope")
+        # MCPResponse adds nullable adapter fields. Only these exact nulls are admitted.
+        if any(key in result and result[key] is not None for key in ("error", "hint")):
+            raise ValueError("adapter fields")
+        native = {key: value for key, value in result.items() if key not in {"error", "hint"}}
+        decoded = validate_ugui_raycast_response(native)
+        data = decoded["data"]
+        if data is not None:
+            if any(data["budget"][key] != params[key] for key in budgets):
+                raise ValueError("budget echo")
+            if data["policy"]["allow_custom_filters"] is not allow_custom_filters:
+                raise ValueError("policy echo")
+            if type(target) is int and data["target_id"] != target:
+                raise ValueError("target echo")
+            if any(
+                _float32(a) != _float32(b) for a, b in zip(data["screen_position"], screen_position)
+            ):
+                raise ValueError("point echo")
+        return decoded
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return {"success": False, "message": "unsupported_raycast_response"}
+
+
 @mcp_for_unity_tool(
     group="ui",
     description=(
         "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. "
-        "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text. Mutating actions: create, set_rect, set_layout, "
+        "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast. Mutating actions: create, set_rect, set_layout, "
         "set_text, set_canvas. Optional uGUI and TextMeshPro support is detected in the Editor. "
         "diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera "
         "geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. "
-        "diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes."
+        "diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes. "
+        "diagnose_raycast reports one current native hit order and separate module/handler facts, not event receipt. "
+        "Custom filters are refused by default; explicit allow_custom_filters may run user code without rollback or a hard deadline. "
+        "The package dispatches no pointer/selection events or explicit source edits."
     ),
     annotations=ToolAnnotations(
         title="Manage uGUI",
@@ -516,7 +604,7 @@ async def manage_ugui(
             strict=True,
             ge=0,
             le=24,
-            description="For diagnose_projection or diagnose_text: maximum physical transform depth, default 10, range 0..24.",
+            description="For diagnose_projection or diagnose_text: physical transform depth; for diagnose_raycast: filter ancestry only. Default 10, range 0..24.",
         ),
     ] = None,
     max_evaluations: Annotated[
@@ -525,7 +613,7 @@ async def manage_ugui(
             strict=True,
             ge=1,
             le=200000,
-            description="For diagnose_projection or diagnose_text: shared precharged observations/math budget, default 20000, range 1..200000.",
+            description="For diagnose_projection, diagnose_text or diagnose_raycast: shared precharged package work, default 20000, range 1..200000. Raycast includes selector/handler work; native callbacks have no hard deadline.",
         ),
     ] = None,
     max_characters: Annotated[
@@ -534,7 +622,7 @@ async def manage_ugui(
             strict=True,
             ge=1,
             le=262144,
-            description="For diagnose_projection or diagnose_text: shared metadata/name/path UTF-16 budget, default 65536, range 1..262144.",
+            description="For diagnose_projection, diagnose_text or diagnose_raycast: shared output metadata UTF-16 budget, default 65536, range 1..262144.",
         ),
     ] = None,
     resolutions: Annotated[
@@ -542,6 +630,17 @@ async def manage_ugui(
         "For diagnose: 1 to 8 {width,height} objects, or a JSON array string. Integer dimensions 64 to 8192. "
         "Omit to use Editor diagnostic defaults.",
     ] = None,
+    screen_position: Annotated[
+        ScreenPosition | None,
+        "For diagnose_raycast: required [x,y] in current-screen pixels from the bottom-left; no camera/resolution edit.",
+    ] = None,
+    allow_custom_filters: Annotated[
+        bool,
+        Field(
+            strict=True,
+            description="For diagnose_raycast only: explicitly permit native ICanvasRaycastFilter user code. Default false refuses before applicable custom callbacks; opt-in is not transactional or interruptible.",
+        ),
+    ] = False,
 ) -> dict[str, JsonValue]:  # noqa: DICT_OK - existing MCP/Unity JSON response contract
     """Validate a request and dispatch it through the selected Unity transport.
 
@@ -549,6 +648,24 @@ async def manage_ugui(
     action-specific inputs rather than an opaque options object.
     """
     action_lower = action.strip().lower()
+    if action_lower == "diagnose_raycast":
+        if include_inactive is not False or any(
+            value is not None
+            for value in (parent, name, element_type, properties, resolutions, camera)
+        ):
+            return {"success": False, "message": "invalid_raycast_request", "data": None}
+        return await _diagnose_raycast(
+            ctx,
+            target,
+            screen_position,
+            allow_custom_filters,
+            max_nodes,
+            max_depth,
+            max_evaluations,
+            max_characters,
+        )
+    if screen_position is not None or allow_custom_filters is not False:
+        return {"success": False, "message": "invalid_raycast_request", "data": None}
     if action_lower == "diagnose_text":
         if any(
             value is not None

@@ -12,13 +12,13 @@ description: "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, la
 
 ## Description
 
-Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text. Mutating actions: create, set_rect, set_layout, set_text, set_canvas. Optional uGUI and TextMeshPro support is detected in the Editor. diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes.
+Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast. Mutating actions: create, set_rect, set_layout, set_text, set_canvas. Optional uGUI and TextMeshPro support is detected in the Editor. diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes. diagnose_raycast reports one current native hit order and separate module/handler facts, not event receipt. Custom filters are refused by default; explicit allow_custom_filters may run user code without rollback or a hard deadline. The package dispatches no pointer/selection events or explicit source edits.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['ping', 'get_hierarchy', 'create', 'set_rect', 'set_layout', 'set_text', 'set_canvas', 'diagnose', 'diagnose_projection', 'diagnose_text']` | yes | Action to perform. |
+| `action` | `Literal['ping', 'get_hierarchy', 'create', 'set_rect', 'set_layout', 'set_text', 'set_canvas', 'diagnose', 'diagnose_projection', 'diagnose_text', 'diagnose_raycast']` | yes | Action to perform. |
 | `target` | `str \| int \| None` | — | GameObject name, hierarchy path, or instance ID. Required for get_hierarchy, setters and diagnose. |
 | `parent` | `str \| int \| None` | — | Parent GameObject for create, resolved by name, hierarchy path, or instance ID. |
 | `name` | `str \| None` | — | Name of the created GameObject. |
@@ -27,10 +27,12 @@ Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and
 | `include_inactive` | `bool` | — | Include inactive GameObjects in hierarchy and diagnostics. |
 | `max_nodes` | `int` | — | Maximum hierarchy nodes to inspect, 1 to 1000. |
 | `camera` | `str \| int \| None` | — | For diagnose_projection: explicit view camera required for World Space; Screen Camera uses only its assigned camera. Current scene GameObject name/path/Int32 ID; no camera fallback. |
-| `max_depth` | `int \| None` | — | For diagnose_projection or diagnose_text: maximum physical transform depth, default 10, range 0..24. |
-| `max_evaluations` | `int \| None` | — | For diagnose_projection or diagnose_text: shared precharged observations/math budget, default 20000, range 1..200000. |
-| `max_characters` | `int \| None` | — | For diagnose_projection or diagnose_text: shared metadata/name/path UTF-16 budget, default 65536, range 1..262144. |
+| `max_depth` | `int \| None` | — | For diagnose_projection or diagnose_text: physical transform depth; for diagnose_raycast: filter ancestry only. Default 10, range 0..24. |
+| `max_evaluations` | `int \| None` | — | For diagnose_projection, diagnose_text or diagnose_raycast: shared precharged package work, default 20000, range 1..200000. Raycast includes selector/handler work; native callbacks have no hard deadline. |
+| `max_characters` | `int \| None` | — | For diagnose_projection, diagnose_text or diagnose_raycast: shared output metadata UTF-16 budget, default 65536, range 1..262144. |
 | `resolutions` | `list[dict[str, int]] \| str \| None` | — | For diagnose: 1 to 8 {width,height} objects, or a JSON array string. Integer dimensions 64 to 8192. Omit to use Editor diagnostic defaults. |
+| `screen_position` | `list[float] \| None` | — | For diagnose_raycast: required [x,y] in current-screen pixels from the bottom-left; no camera/resolution edit. |
+| `allow_custom_filters` | `bool` | — | For diagnose_raycast only: explicitly permit native ICanvasRaycastFilter user code. Default false refuses before applicable custom callbacks; opt-in is not transactional or interruptible. |
 
 ## Returns
 
