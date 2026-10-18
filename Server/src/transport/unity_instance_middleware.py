@@ -18,6 +18,7 @@ from fastmcp.tools.base import ToolResult
 
 from core.config import config
 from services.execution_receipt_context import owned_to_thread
+from services.command_progress import foreground_progress
 from transport.execution_receipts import (
     PreparedExecution,
     component_version,
@@ -504,7 +505,8 @@ class UnityInstanceMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         """Expose deliberate receipt refusals as tool errors at the public boundary."""
         try:
-            return await self._call_tool_with_receipts(context, call_next)
+            async with foreground_progress(context.fastmcp_context):
+                return await self._call_tool_with_receipts(context, call_next)
         except (ReceiptConflict, ReceiptInvalid, ReceiptNotFound, ReceiptUnavailable) as error:
             raise ToolError(str(error)) from error
 

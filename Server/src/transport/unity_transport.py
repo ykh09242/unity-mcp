@@ -12,6 +12,7 @@ from transport.plugin_hub import (
     command_outcome_unknown,
 )
 from services.execution_receipt_context import observe_native_result
+from services.command_progress import ProgressSink
 from core.config import config
 from services.credential_lease import (
     CredentialLeaseError,
@@ -51,6 +52,7 @@ async def send_with_unity_instance(
     unity_instance: str | None,
     *args,
     user_id: str | None = None,
+    _progress: ProgressSink | None = None,
     **kwargs,
 ) -> T:
     if _is_http_transport():
@@ -81,7 +83,7 @@ async def send_with_unity_instance(
         if not isinstance(retry_on_reload, bool):
             retry_on_reload = True
 
-        read_options = {}
+        read_options = {"_progress": _progress} if _progress is not None else {}
         if "_catalog_guard" in kwargs:
             read_options["_catalog_guard"] = kwargs.pop("_catalog_guard")
             retry_on_reload = False
@@ -152,6 +154,9 @@ async def send_with_unity_instance(
                 command_outcome_unknown(command_type, err, unity_instance=unity_instance)
             )
 
+    # Task1 negotiates only HTTP/WS; stdio retains its existing wire contract.
+    if _progress is not None:
+        _progress.close()
     if unity_instance:
         kwargs.setdefault("instance_id", unity_instance)
     result = await send_fn(*args, **kwargs)

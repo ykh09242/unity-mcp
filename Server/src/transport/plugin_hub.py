@@ -19,10 +19,19 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from collections.abc import Callable
 
 import anyio
+from pydantic import ValidationError
 from starlette.endpoints import WebSocketEndpoint
 from starlette.websockets import WebSocket, WebSocketState
 
 from services.execution_receipt_context import execution_owner, observe_native_result, own_future
+from services.command_progress import (
+    CAPABILITY as PROGRESS_CAPABILITY,
+    MAX_PROGRESS_BYTES,
+    MAX_PROGRESS_FRAMES,
+    CommandProgressUpdate,
+    ProgressSink,
+    ProgressSource,
+)
 from core.config import config
 from core.constants import API_KEY_HEADER
 from models.models import MCPResponse
@@ -60,7 +69,11 @@ from transport.large_result_assembler import (
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
 from services.api_key_service import ApiKeyService
-from services.operation_permissions import OperationPermissionError, authorize_operation
+from services.operation_permissions import (
+    OperationPermissionError,
+    authorize_operation,
+    required_permissions,
+)
 from services.credential_lease import (
     CredentialLease,
     CredentialLeaseError,
@@ -84,6 +97,8 @@ from transport.models import (
     TOOL_SETTINGS_CAPABILITY,
     PongMessage,
     CommandResultMessage,
+    CommandProgressMessage,
+    CommandProgressRequest,
     ResultStartMessage,
     SessionList,
     SessionDetails,
@@ -410,6 +425,7 @@ class PluginHub(WebSocketEndpoint):
             COMPRESSION_CAPABILITY,
             CANCELLATION_CAPABILITY,
             TOOL_SETTINGS_CAPABILITY,
+            PROGRESS_CAPABILITY,
         }
     )
     _editor_states: ClassVar[EditorStateStore] = EditorStateStore()
@@ -991,6 +1007,8 @@ class PluginHub(WebSocketEndpoint):
                 await self._handle_register_tools_frame(websocket, data)
             elif message_type == "pong":
                 await self._handle_pong(websocket, PongMessage(**data))
+            elif message_type == "command_progress":
+                await self._handle_command_progress(websocket, data)
             elif message_type == "command_result":
                 await self._handle_command_result(websocket, CommandResultMessage(**data))
             elif message_type == "result_start":
@@ -1472,6 +1490,7 @@ class PluginHub(WebSocketEndpoint):
         _budget: _CommandBudget | None = None,
         _expected_read: _ConnectionReadIdentity | None = None,
         _catalog_guard=None,
+        _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
         result = await cls._send_command_response(
             session_id,
@@ -1480,6 +1499,7 @@ class PluginHub(WebSocketEndpoint):
             _budget=_budget,
             _expected_read=_expected_read,
             _catalog_guard=_catalog_guard,
+            **({"_progress": _progress} if _progress is not None else {}),
         )
         observe_native_result(result)
         return result
@@ -1494,6 +1514,7 @@ class PluginHub(WebSocketEndpoint):
         _budget: _CommandBudget | None = None,
         _expected_read: _ConnectionReadIdentity | None = None,
         _catalog_guard=None,
+        _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
         budget = _budget or _CommandBudget(
             asyncio.get_running_loop().time() + cls._command_timeouts(command_type, params)[1]
@@ -1516,6 +1537,7 @@ class PluginHub(WebSocketEndpoint):
                         budget,
                         _expected_read=_expected_read,
                         _catalog_guard=_catalog_guard,
+                        **({"_progress": _progress} if _progress is not None else {}),
                     )
         except OperationPermissionError:
             if budget.dispatched:
@@ -1552,6 +1574,7 @@ class PluginHub(WebSocketEndpoint):
         *,
         _expected_read: _ConnectionReadIdentity | None = None,
         _catalog_guard=None,
+        _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
         requester = await require_credential_lease() if config.http_remote_hosted else None
         context = local_project_context.get()
@@ -1674,7 +1697,93 @@ class PluginHub(WebSocketEndpoint):
                 timeout=unity_timeout_s,
             )
             # Admission, serialization and all earlier phases spend this same budget.
-            payload = msg.model_dump()
+            # Omit only the optional envelope field; preserve nested null values.
+            payload = msg.model_dump(exclude={"progress"})
+            progress = (
+                _progress
+                if _progress is not None
+                and command_type == "batch_execute"
+                and isinstance(generation, str)
+                and cls._supports(websocket, PROGRESS_CAPABILITY)
+                else None
+            )
+            if progress is not None:
+                entry = cls._pending[command_id]
+                plugin = cls._socket_lease(websocket)
+                floor = (
+                    required_permissions(command_type, payload["params"], native=True)
+                    if any(
+                        lease is not None and lease.permissions.scoped
+                        for lease in (requester, plugin)
+                    )
+                    else frozenset()
+                )
+
+                async def progress_authorized() -> bool:
+                    # This task may predate the request ContextVars. Use only the
+                    # exact admitted handles, canonical floor, deadline and owner.
+                    for lease in (requester, plugin):
+                        if lease is not None:
+                            await lease.check()
+                    async with lock:
+                        current = (
+                            await registry.get_session(session_id) if registry is not None else None
+                        )
+                        if (
+                            cls._lock is not lock
+                            or cls._registry is not registry
+                            or cls._pending.get(command_id) is not entry
+                            or future.done()
+                            or cls._connections.get(session_id) is not websocket
+                            or websocket.client_state != WebSocketState.CONNECTED
+                            or websocket.application_state != WebSocketState.CONNECTED
+                            or not getattr(websocket.state, "plugin_registered", False)
+                            or getattr(websocket.state, "plugin_session_id", None) != session_id
+                            or getattr(websocket.state, "plugin_generation", None) != generation
+                            or getattr(websocket.state, "user_id", None) != user_id
+                            or cls._socket_lease(websocket) is not plugin
+                            or budget.expires_at <= asyncio.get_running_loop().time()
+                        ):
+                            return False
+                        if current is None or current.user_id != user_id:
+                            return False
+                        if context is not None and (
+                            context.selection is None
+                            or not context.selection.matches(
+                                registry, session_id, websocket, current
+                            )
+                        ):
+                            return False
+                        if _catalog_guard is not None and not _catalog_guard.check_http(
+                            session_id, user_id
+                        ):
+                            return False
+                        for lease in (requester, plugin):
+                            if lease is not None:
+                                lease.check_now()
+                                if (
+                                    lease.permissions.scoped
+                                    and not floor <= lease.permissions.permissions
+                                ):
+                                    return False
+                        return True
+
+                bound = ProgressSource(
+                    transport="http",
+                    command_id=command_id,
+                    session_id=session_id,
+                    generation=generation,
+                    user_id=user_id,
+                    expires_at=budget.expires_at,
+                    guard=progress_authorized,
+                )
+                if progress.bind(bound):
+                    entry["progress_owner"] = progress
+                    entry["progress_generation"] = generation
+                    entry["progress_frames"] = 0
+                    payload["progress"] = CommandProgressRequest().model_dump()
+                else:
+                    progress.close()
             if budget.remaining() <= 0:
                 raise TimeoutError
             deadline = budget.expires_at
@@ -1855,6 +1964,9 @@ class PluginHub(WebSocketEndpoint):
             canceled = True
             raise
         finally:
+            # Progress ends at response/cancellation, never actual worker cleanup.
+            if _progress is not None:
+                _progress.close()
             # Release synchronously on the owner loop before cancellation-sensitive
             # I/O cleanup. AnyIO level cancellation can interrupt every await here.
             cls._pending.pop(command_id, None)
@@ -2657,6 +2769,54 @@ class PluginHub(WebSocketEndpoint):
             # Closing can suspend. Release rejected payloads and decoder tracebacks first.
             await websocket.close(code=4400, reason="Invalid large result transfer")
 
+    async def _handle_command_progress(self, websocket: WebSocket, data: dict[str, Any]) -> None:
+        """Drop invalid/late optional observations without changing command state."""
+        cls = type(self)
+        command_id = data.get("id")
+        lock = cls._lock
+        if type(command_id) is not str or len(command_id) > 36 or lock is None:
+            return
+        async with lock:
+            entry = cls._pending.get(command_id)
+            if (
+                entry is None
+                or entry.get("progress_owner") is None
+                or entry["future"].done()
+                or cls._connections.get(entry["session_id"]) is not websocket
+                or not getattr(websocket.state, "plugin_registered", False)
+                or getattr(websocket.state, "plugin_session_id", None) != entry["session_id"]
+                or getattr(websocket.state, "plugin_generation", None)
+                != entry["progress_generation"]
+                or getattr(websocket.state, "user_id", None) != entry["user_id"]
+                or not cls._supports(websocket, PROGRESS_CAPABILITY)
+            ):
+                return
+            frames = entry["progress_frames"]
+            if frames >= MAX_PROGRESS_FRAMES:
+                return
+            entry["progress_frames"] = frames + 1
+            progress = entry["progress_owner"]
+        if (
+            response_size(
+                # response_size charges decoded objects/copies, not only wire
+                # bytes. Keep a fixed working bound large enough for this 512-byte graph.
+                data,
+                max_bytes=MAX_PROGRESS_BYTES,
+                max_depth=2,
+                max_nodes=16,
+                max_retained=16 * 1024,
+            )
+            is None
+        ):
+            return
+        try:
+            message = CommandProgressMessage.model_validate(data)
+        except ValidationError:
+            return
+        # A single sender rechecks the captured fresh authority before every SDK
+        # notification. No SDK call, journal I/O or Future settlement under Hub lock.
+        progress.offer(CommandProgressUpdate(message.completed, message.total, message.stage))
+
     async def _handle_command_result(
         self, websocket: WebSocket, payload: CommandResultMessage
     ) -> None:
@@ -2674,6 +2834,13 @@ class PluginHub(WebSocketEndpoint):
         # Capture only an already-owned receipt under the existing socket fence.
         # Its journal I/O runs outside the Hub lock and outside the owner loop.
         candidate = cls._pending.get(command_id)
+        if candidate is not None and candidate.get("progress_owner") is not None:
+            async with cls._authorized_socket_lock(websocket, lock):
+                if (
+                    cls._pending.get(command_id) is candidate
+                    and cls._connections.get(candidate["session_id"]) is websocket
+                ):
+                    candidate["progress_owner"].close()
         receipt = candidate.get("receipt_owner") if candidate is not None else None
         if receipt is not None:
             async with cls._authorized_socket_lock(websocket, lock):
@@ -3184,6 +3351,7 @@ class PluginHub(WebSocketEndpoint):
         *,
         editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
         _catalog_guard=None,
+        _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
         """Send with one total execution budget, including recovery and admission.
 
@@ -3216,6 +3384,7 @@ class PluginHub(WebSocketEndpoint):
                     editor_state_read_mode=editor_state_read_mode,
                     budget=budget,
                     _catalog_guard=_catalog_guard,
+                    **({"_progress": _progress} if _progress is not None else {}),
                 )
         except OperationPermissionError:
             if budget.dispatched:
@@ -3258,6 +3427,7 @@ class PluginHub(WebSocketEndpoint):
         budget: _CommandBudget,
         editor_state_read_mode: Literal["ordinary", "authoritative"] | None = None,
         _catalog_guard=None,
+        _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
         requester = await require_credential_lease(user_id) if config.http_remote_hosted else None
         if requester is not None:
@@ -3283,6 +3453,7 @@ class PluginHub(WebSocketEndpoint):
                 params,
                 _budget=budget,
                 **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
+                **({"_progress": _progress} if _progress is not None else {}),
             )
         if _catalog_guard is not None:
             retry_on_reload = False
@@ -3423,6 +3594,7 @@ class PluginHub(WebSocketEndpoint):
             params,
             _budget=budget,
             **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
+            **({"_progress": _progress} if _progress is not None else {}),
         )
 
     # ------------------------------------------------------------------

@@ -1,5 +1,5 @@
 from typing import Annotated, Any, Literal
-from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 from models.models import ToolDefinitionModel
 
 PluginCapability = Annotated[str, Field(max_length=64)]
@@ -39,12 +39,27 @@ class RegisteredMessage(BaseModel):
     capabilities: list[PluginCapability] = Field(default_factory=list, max_length=16)
 
 
+class CommandProgressRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: Literal[1] = 1
+
+
+class CommandProgressMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["command_progress"] = "command_progress"
+    id: Annotated[StrictStr, Field(min_length=1, max_length=36)]
+    completed: Annotated[StrictInt, Field(ge=1, le=100)]
+    total: Annotated[StrictInt, Field(ge=1, le=100)]
+    stage: Literal["batch_items"]
+
+
 class ExecuteCommandMessage(BaseModel):
     type: str = "execute"
     id: str
     name: str
     params: dict[str, Any]
     timeout: float
+    progress: CommandProgressRequest | None = None
 
 
 class PingMessage(BaseModel):

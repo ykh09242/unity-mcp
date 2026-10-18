@@ -12,6 +12,7 @@ from mcp.types import ToolAnnotations
 from core.config import config
 from models.response_limits import ResponseOwner, response_limit_error, response_owner
 from services.credential_lease import CredentialLeaseError, require_credential_lease
+from services.command_progress import claim_command_progress
 from services.operation_permissions import authorize_remote_operation, remote_operation_allowed
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -330,11 +331,13 @@ async def batch_execute(
     if max_parallelism is not None:
         payload["maxParallelism"] = max_parallelism
 
+    progress = None if validate_only else claim_command_progress(len(normalized_commands))
     reply = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
         "batch_validate" if validate_only else "batch_execute",
         payload,
+        **({"_progress": progress} if progress is not None else {}),
     )
     if validate_only and not _preview_reply_is_exact(reply, normalized_commands):
         if isinstance(reply, dict) and reply.get("success") is False:
