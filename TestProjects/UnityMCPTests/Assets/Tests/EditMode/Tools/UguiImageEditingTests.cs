@@ -154,16 +154,8 @@ namespace MCPForUnityTests.EditMode.Tools
             if (preservedScenes == null)
                 return;
             Scene[] current = Enumerable.Range(0, SceneManager.sceneCount).Select(index => SceneManager.GetSceneAt(index)).ToArray();
-            int[] expected = preservedScenes
-                .Select(original => original.Scene.handle)
-                .Concat(expectOwnedScene ? new[] { scene.handle } : Array.Empty<int>())
-                .OrderBy(handle => handle)
-                .ToArray();
-            Assert.That(
-                current.Select(item => item.handle).OrderBy(handle => handle).ToArray(),
-                Is.EqualTo(expected),
-                "Preserve every previously open scene, including untitled scenes."
-            );
+            Scene[] expected = preservedScenes.Select(original => original.Scene).Concat(expectOwnedScene ? new[] { scene } : Array.Empty<Scene>()).ToArray();
+            Assert.That(current, Is.EquivalentTo(expected), "Preserve every previously open scene, including untitled scenes.");
             foreach (SceneSnapshot original in preservedScenes)
             {
                 Scene retained = current.Single(item => item.handle == original.Scene.handle);
