@@ -68,7 +68,9 @@ def context_for(name, instance="Project@hash"):
     context = SimpleNamespace(
         message=SimpleNamespace(name=name, arguments={}),
         fastmcp_context=SimpleNamespace(
-            get_state=AsyncMock(side_effect=state.get), set_state=set_state
+            request_context=None,
+            get_state=AsyncMock(side_effect=state.get),
+            set_state=set_state,
         ),
     )
     return context

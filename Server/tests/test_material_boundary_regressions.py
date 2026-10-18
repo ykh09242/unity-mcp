@@ -59,7 +59,7 @@ def registered_material(monkeypatch):
 
     def invoke(parameters):
         context = SimpleNamespace(
-            fastmcp_context=SimpleNamespace(fastmcp=server),
+            fastmcp_context=SimpleNamespace(fastmcp=server, request_context=None),
             message=SimpleNamespace(name=tool.name, arguments=parameters),
         )
         return inline(middleware.on_call_tool(context, next_call))
