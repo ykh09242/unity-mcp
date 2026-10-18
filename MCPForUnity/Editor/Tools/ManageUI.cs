@@ -65,6 +65,11 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                JToken strictStyleToken = @params["strict_style"];
+                if (strictStyleToken != null && strictStyleToken.Type != JTokenType.Boolean)
+                    return new ErrorResponse("strict_style must be a Boolean.");
+                if (strictStyleToken?.Value<bool>() == true && action != "modify_visual_element")
+                    return new ErrorResponse("strict_style requires modify_visual_element.");
                 switch (action)
                 {
                     case "ping":
@@ -2099,8 +2104,11 @@ namespace MCPForUnity.Editor.Tools
 
             // Parse all style values before changing text, classes or earlier styles.
             JToken styleToken = p.GetRaw("style") ?? p.GetRaw("inline_style") ?? p.GetRaw("inlineStyle");
-            var styleModifications = new List<string>();
-            var inlineStyles = styleToken is JObject styleObj ? PrepareInlineStyles(styleObj, styleModifications) : null;
+            bool strictStyle = @params["strict_style"]?.Value<bool>() == true;
+            bool includeStyleResults = styleToken != null || strictStyle;
+            var inlineStyles = PrepareInlineStyles(styleToken, strictStyle);
+            if (inlineStyles.Error != null)
+                return new ErrorResponse(inlineStyles.Error, new { style_results = inlineStyles.Report() });
             bool? enabled = p.GetNullableBool("enabled");
             bool? visibility = p.GetNullableBool("visible");
             var modifications = new List<string>();
@@ -2155,11 +2163,11 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Set inline styles
-            if (inlineStyles != null)
+            foreach (var entry in inlineStyles.Entries)
             {
-                foreach (var apply in inlineStyles)
-                    apply(element);
-                modifications.AddRange(styleModifications);
+                entry.Apply?.Invoke(element);
+                if (entry.Modification != null)
+                    modifications.Add(entry.Modification);
             }
 
             // Set enabled/disabled
@@ -2195,7 +2203,7 @@ namespace MCPForUnity.Editor.Tools
                     skipped.Count > 0
                         ? $"No modifications applied. Skipped unsupported styles: {string.Join(", ", skipped)}"
                         : "No modifications specified. Provide at least one of: text, add_classes, remove_classes, toggle_classes, style, enabled, visible, tooltip.";
-                return new ErrorResponse(msg);
+                return new ErrorResponse(msg, includeStyleResults ? new { style_results = inlineStyles.Report(element, visibility) } : null);
             }
 
             var responseData = new Dictionary<string, object>
@@ -2209,6 +2217,8 @@ namespace MCPForUnity.Editor.Tools
             };
             if (skipped.Count > 0)
                 responseData["skipped"] = skipped;
+            if (includeStyleResults)
+                responseData["style_results"] = inlineStyles.Report(element, visibility);
 
             return new SuccessResponse($"Modified element '{elementName}' on {go.name}: {string.Join(", ", applied)}", responseData);
         }
@@ -2334,163 +2344,453 @@ namespace MCPForUnity.Editor.Tools
             return match;
         }
 
-        private static List<Action<VisualElement>> PrepareInlineStyles(JObject styleObj, List<string> modifications)
+        private sealed class PreparedInlineStyle
         {
-            var setters = new List<Action<VisualElement>>();
-            foreach (var prop in styleObj)
+            public int Index;
+            public string Key;
+            public string Property;
+            public string Reason;
+            public string Modification;
+            public JToken Assigned;
+            public Action<VisualElement> Apply;
+            public Func<VisualElement, JToken> Read;
+
+            public JObject Receipt(string reason)
             {
-                string key = prop.Key;
-                JToken val = prop.Value;
-
-                switch (key.ToLowerInvariant())
+                return new JObject
                 {
-                    case "backgroundcolor":
-                    case "background-color":
-                        if (ColorUtility.TryParseHtmlString(val.ToString(), out Color bgColor))
-                        {
-                            setters.Add(element => element.style.backgroundColor = bgColor);
-                            modifications.Add($"backgroundColor={val}");
-                        }
-                        break;
+                    ["index"] = Index,
+                    ["key"] = Key,
+                    ["property"] = Property,
+                    ["reason"] = reason,
+                };
+            }
+        }
 
-                    case "color":
-                        if (ColorUtility.TryParseHtmlString(val.ToString(), out Color fgColor))
-                        {
-                            setters.Add(element => element.style.color = fgColor);
-                            modifications.Add($"color={val}");
-                        }
-                        break;
+        private sealed class PreparedInlineStyles
+        {
+            public readonly List<PreparedInlineStyle> Entries = new List<PreparedInlineStyle>();
+            public string Error;
+            public string RequestReason;
+            public bool Aborted;
 
-                    case "fontsize":
-                    case "font-size":
-                        float fontSize = val.ReadScalar<float>();
-                        setters.Add(element => element.style.fontSize = fontSize);
-                        modifications.Add($"fontSize={val}");
-                        break;
+            public JObject Report(VisualElement element = null, bool? visible = null)
+            {
+                var applied = new JArray();
+                var rejected = new JArray();
+                foreach (var entry in Entries)
+                {
+                    if (entry.Apply == null || Aborted)
+                    {
+                        var refusal = entry.Receipt(entry.Apply == null ? entry.Reason : "request_aborted_before_mutation");
+                        if (entry.Apply != null)
+                            refusal["prepared_value"] = entry.Assigned.DeepClone();
+                        rejected.Add(refusal);
+                        continue;
+                    }
+                    var receipt = entry.Receipt(entry.Reason);
+                    receipt["assigned_value"] = entry.Assigned.DeepClone();
+                    receipt["final_inline_value"] = entry.Read(element);
+                    var last = Entries.Last(candidate => candidate.Property == entry.Property && candidate.Apply != null);
+                    if (entry.Property == "display" && visible.HasValue)
+                        receipt["superseded_by"] = new JObject { ["parameter"] = "visible" };
+                    else if (last != entry)
+                        receipt["superseded_by"] = new JObject { ["index"] = last.Index, ["key"] = last.Key };
+                    applied.Add(receipt);
+                }
+                var report = new JObject
+                {
+                    ["schema_version"] = 1,
+                    ["applied"] = applied,
+                    ["rejected"] = rejected,
+                };
+                if (RequestReason != null)
+                    report["request_reason"] = RequestReason;
+                return report;
+            }
+        }
 
-                    case "width":
-                        float width = val.ReadScalar<float>();
-                        setters.Add(element => element.style.width = width);
-                        modifications.Add($"width={val}");
-                        break;
+        private static string InlineStyleProperty(string key)
+        {
+            switch (key.ToLowerInvariant())
+            {
+                case "backgroundcolor":
+                case "background-color":
+                    return "backgroundColor";
+                case "color":
+                    return "color";
+                case "fontsize":
+                case "font-size":
+                    return "fontSize";
+                case "width":
+                    return "width";
+                case "height":
+                    return "height";
+                case "opacity":
+                    return "opacity";
+                case "display":
+                    return "display";
+                case "visibility":
+                    return "visibility";
+                case "flexgrow":
+                case "flex-grow":
+                    return "flexGrow";
+                case "flexshrink":
+                case "flex-shrink":
+                    return "flexShrink";
+                case "marginleft":
+                case "margin-left":
+                    return "marginLeft";
+                case "marginright":
+                case "margin-right":
+                    return "marginRight";
+                case "margintop":
+                case "margin-top":
+                    return "marginTop";
+                case "marginbottom":
+                case "margin-bottom":
+                    return "marginBottom";
+                case "paddingleft":
+                case "padding-left":
+                    return "paddingLeft";
+                case "paddingright":
+                case "padding-right":
+                    return "paddingRight";
+                case "paddingtop":
+                case "padding-top":
+                    return "paddingTop";
+                case "paddingbottom":
+                case "padding-bottom":
+                    return "paddingBottom";
+                case "borderradius":
+                case "border-radius":
+                    return "borderRadius";
+                default:
+                    return null;
+            }
+        }
 
-                    case "height":
-                        float height = val.ReadScalar<float>();
-                        setters.Add(element => element.style.height = height);
-                        modifications.Add($"height={val}");
-                        break;
+        private static bool InlineStyleTextTooLong(JToken token)
+        {
+            if (token is JValue scalar)
+                return scalar.Type == JTokenType.String && scalar.Value<string>().Length > 256;
+            if (token is JObject typed)
+                return new[] { "value", "unit", "keyword" }.Any(key =>
+                    typed[key] is JValue value && value.Type == JTokenType.String && value.Value<string>().Length > 256
+                );
+            return false;
+        }
 
-                    case "opacity":
-                        float opacity = val.ReadScalar<float>();
-                        setters.Add(element => element.style.opacity = opacity);
-                        modifications.Add($"opacity={val}");
-                        break;
-
-                    case "display":
-                        if (Enum.TryParse<DisplayStyle>(val.ToString(), true, out var display))
-                        {
-                            setters.Add(element => element.style.display = display);
-                            modifications.Add($"display={val}");
-                        }
-                        break;
-
-                    case "visibility":
-                        if (Enum.TryParse<Visibility>(val.ToString(), true, out var vis))
-                        {
-                            setters.Add(element => element.style.visibility = vis);
-                            modifications.Add($"visibility={val}");
-                        }
-                        break;
-
-                    case "flexgrow":
-                    case "flex-grow":
-                        float flexGrow = val.ReadScalar<float>();
-                        setters.Add(element => element.style.flexGrow = flexGrow);
-                        modifications.Add($"flexGrow={val}");
-                        break;
-
-                    case "flexshrink":
-                    case "flex-shrink":
-                        float flexShrink = val.ReadScalar<float>();
-                        setters.Add(element => element.style.flexShrink = flexShrink);
-                        modifications.Add($"flexShrink={val}");
-                        break;
-
-                    case "marginleft":
-                    case "margin-left":
-                        float marginLeft = val.ReadScalar<float>();
-                        setters.Add(element => element.style.marginLeft = marginLeft);
-                        modifications.Add($"marginLeft={val}");
-                        break;
-
-                    case "marginright":
-                    case "margin-right":
-                        float marginRight = val.ReadScalar<float>();
-                        setters.Add(element => element.style.marginRight = marginRight);
-                        modifications.Add($"marginRight={val}");
-                        break;
-
-                    case "margintop":
-                    case "margin-top":
-                        float marginTop = val.ReadScalar<float>();
-                        setters.Add(element => element.style.marginTop = marginTop);
-                        modifications.Add($"marginTop={val}");
-                        break;
-
-                    case "marginbottom":
-                    case "margin-bottom":
-                        float marginBottom = val.ReadScalar<float>();
-                        setters.Add(element => element.style.marginBottom = marginBottom);
-                        modifications.Add($"marginBottom={val}");
-                        break;
-
-                    case "paddingleft":
-                    case "padding-left":
-                        float paddingLeft = val.ReadScalar<float>();
-                        setters.Add(element => element.style.paddingLeft = paddingLeft);
-                        modifications.Add($"paddingLeft={val}");
-                        break;
-
-                    case "paddingright":
-                    case "padding-right":
-                        float paddingRight = val.ReadScalar<float>();
-                        setters.Add(element => element.style.paddingRight = paddingRight);
-                        modifications.Add($"paddingRight={val}");
-                        break;
-
-                    case "paddingtop":
-                    case "padding-top":
-                        float paddingTop = val.ReadScalar<float>();
-                        setters.Add(element => element.style.paddingTop = paddingTop);
-                        modifications.Add($"paddingTop={val}");
-                        break;
-
-                    case "paddingbottom":
-                    case "padding-bottom":
-                        float paddingBottom = val.ReadScalar<float>();
-                        setters.Add(element => element.style.paddingBottom = paddingBottom);
-                        modifications.Add($"paddingBottom={val}");
-                        break;
-
-                    case "borderradius":
-                    case "border-radius":
-                        float radius = val.ReadScalar<float>();
-                        setters.Add(element =>
-                        {
-                            element.style.borderTopLeftRadius = radius;
-                            element.style.borderTopRightRadius = radius;
-                            element.style.borderBottomLeftRadius = radius;
-                            element.style.borderBottomRightRadius = radius;
-                        });
-                        modifications.Add($"borderRadius={val}");
-                        break;
-
-                    default:
-                        modifications.Add($"[skipped] {key} (unsupported inline style)");
-                        break;
+        private static PreparedInlineStyles PrepareInlineStyles(JToken token, bool strict)
+        {
+            var prepared = new PreparedInlineStyles();
+            if (token == null)
+                return prepared;
+            if (token is not JObject styles)
+            {
+                prepared.RequestReason = "invalid_style_object";
+                if (strict)
+                    prepared.Error = "strict_style_rejected";
+                prepared.Aborted = strict;
+                return prepared;
+            }
+            if (styles.Count > 64 || styles.Properties().Any(prop => prop.Name.Length > 128 || InlineStyleTextTooLong(prop.Value)))
+            {
+                prepared.Error = "inline_style_limit_exceeded";
+                prepared.RequestReason = "inline_style_limit_exceeded";
+                prepared.Aborted = true;
+                return prepared;
+            }
+            foreach (var prop in styles.Properties())
+            {
+                var entry = new PreparedInlineStyle
+                {
+                    Index = prepared.Entries.Count,
+                    Key = prop.Name,
+                    Property = InlineStyleProperty(prop.Name),
+                    Reason = "assigned",
+                };
+                prepared.Entries.Add(entry);
+                if (entry.Property == null)
+                {
+                    entry.Reason = "unsupported_property";
+                    entry.Modification = $"[skipped] {prop.Name} (unsupported inline style)";
+                    continue;
+                }
+                try
+                {
+                    PrepareInlineStyle(entry, prop.Value, strict);
+                }
+                catch (ArgumentException error)
+                {
+                    entry.Apply = null;
+                    entry.Reason = "malformed_numeric";
+                    if (prepared.Error == null)
+                        prepared.Error = error.Message;
                 }
             }
-            return setters;
+            if (prepared.Error == null && strict && prepared.Entries.Any(entry => entry.Apply == null))
+                prepared.Error = "strict_style_rejected";
+            prepared.Aborted = prepared.Error != null;
+            return prepared;
+        }
+
+        private static bool InlineObjectKeys(JObject value, params string[] keys)
+        {
+            return value.Count == keys.Length && keys.All(key => value.Property(key) != null);
+        }
+
+        private static void PrepareInlineStyle(PreparedInlineStyle entry, JToken value, bool strict)
+        {
+            var typed = value as JObject;
+            bool color = entry.Property == "color" || entry.Property == "backgroundColor";
+            bool enumeration = entry.Property == "display" || entry.Property == "visibility";
+            if (color || enumeration)
+            {
+                if (typed != null && !InlineObjectKeys(typed, "value"))
+                {
+                    entry.Reason = "invalid_typed_value";
+                    return;
+                }
+                var scalar = typed == null ? value : typed["value"];
+                if (typed != null && scalar.Type != JTokenType.String)
+                {
+                    entry.Reason = color ? "invalid_color" : "invalid_enum";
+                    return;
+                }
+                // Legacy scalars keep their original HTML/Enum.TryParse semantics.
+                string text = scalar is JValue ? scalar.ToString() : "";
+                if (color)
+                {
+                    if (!ColorUtility.TryParseHtmlString(text, out Color parsed))
+                    {
+                        entry.Reason = "invalid_color";
+                        return;
+                    }
+                    entry.Assigned = InlineColorValue(parsed);
+                    entry.Apply = element =>
+                    {
+                        if (entry.Property == "color")
+                            element.style.color = parsed;
+                        else
+                            element.style.backgroundColor = parsed;
+                    };
+                    entry.Read = element => InlineColorValue(entry.Property == "color" ? element.style.color.value : element.style.backgroundColor.value);
+                }
+                else if (entry.Property == "display")
+                {
+                    if (
+                        !Enum.TryParse<DisplayStyle>(text, true, out var parsed) || ((strict || typed != null) && !Enum.IsDefined(typeof(DisplayStyle), parsed))
+                    )
+                    {
+                        entry.Reason = "invalid_enum";
+                        return;
+                    }
+                    if (!Enum.IsDefined(typeof(DisplayStyle), parsed))
+                        entry.Reason = "legacy_undefined_enum";
+                    entry.Assigned = new JValue(parsed.ToString());
+                    entry.Apply = element => element.style.display = parsed;
+                    entry.Read = element => new JValue(element.style.display.value.ToString());
+                }
+                else
+                {
+                    if (!Enum.TryParse<Visibility>(text, true, out var parsed) || ((strict || typed != null) && !Enum.IsDefined(typeof(Visibility), parsed)))
+                    {
+                        entry.Reason = "invalid_enum";
+                        return;
+                    }
+                    if (!Enum.IsDefined(typeof(Visibility), parsed))
+                        entry.Reason = "legacy_undefined_enum";
+                    entry.Assigned = new JValue(parsed.ToString());
+                    entry.Apply = element => element.style.visibility = parsed;
+                    entry.Read = element => new JValue(element.style.visibility.value.ToString());
+                }
+                entry.Modification = $"{entry.Property}={text}";
+                return;
+            }
+
+            bool unitless = entry.Property == "opacity" || entry.Property == "flexGrow" || entry.Property == "flexShrink";
+            bool auto = entry.Property == "width" || entry.Property == "height" || entry.Property.StartsWith("margin", StringComparison.Ordinal);
+            if (typed != null && typed.Property("value") != null && (typed["value"].Type != JTokenType.Integer && typed["value"].Type != JTokenType.Float))
+                throw new ArgumentException("Invalid typed numeric inline style value.");
+            // Validate every supplied numeric value before shape/keyword/unit refusal.
+            if (typed != null && typed.Property("value") != null)
+                typed["value"].ReadScalar<float>();
+            if (typed != null && typed.Property("value") == null && typed.Property("keyword") == null)
+                value.ReadScalar<float>(); // Preserve the legacy malformed-object refusal.
+            float numeric = 0;
+            var length = new StyleLength(0f);
+            if (typed != null && typed.Property("keyword") != null)
+            {
+                if (!InlineObjectKeys(typed, "keyword"))
+                    entry.Reason = "invalid_typed_value";
+                else if (!auto || typed["keyword"].Type != JTokenType.String || typed.Value<string>("keyword") != "auto")
+                    entry.Reason = "unsupported_keyword";
+                else
+                    length = new StyleLength(StyleKeyword.Auto);
+                if (entry.Reason != "assigned")
+                    return;
+            }
+            else
+            {
+                // Missing/null remains zero only for the legacy scalar form.
+                JToken scalar = typed == null ? value : typed["value"];
+                if (typed != null && (scalar == null || (scalar.Type != JTokenType.Integer && scalar.Type != JTokenType.Float)))
+                    throw new ArgumentException("Invalid typed numeric inline style value.");
+                numeric = scalar.ReadScalar<float>();
+                if (typed != null)
+                {
+                    if (!InlineObjectKeys(typed, unitless ? new[] { "value" } : new[] { "value", "unit" }))
+                    {
+                        entry.Reason = "invalid_typed_value";
+                        return;
+                    }
+                    if (
+                        !unitless
+                        && (
+                            typed["unit"].Type != JTokenType.String
+                            || (typed.Value<string>("unit") != "px" && typed.Value<string>("unit") != "%")
+                            || (entry.Property == "fontSize" && typed.Value<string>("unit") != "px")
+                        )
+                    )
+                    {
+                        entry.Reason = "unsupported_unit";
+                        return;
+                    }
+                }
+                length = new StyleLength(new Length(numeric, typed != null && typed.Value<string>("unit") == "%" ? LengthUnit.Percent : LengthUnit.Pixel));
+            }
+            if (unitless)
+            {
+                entry.Assigned = new JValue(numeric);
+                entry.Apply = element =>
+                {
+                    switch (entry.Property)
+                    {
+                        case "opacity":
+                            element.style.opacity = numeric;
+                            break;
+                        case "flexGrow":
+                            element.style.flexGrow = numeric;
+                            break;
+                        case "flexShrink":
+                            element.style.flexShrink = numeric;
+                            break;
+                    }
+                };
+                entry.Read = element => new JValue(
+                    entry.Property == "opacity" ? element.style.opacity.value
+                    : entry.Property == "flexGrow" ? element.style.flexGrow.value
+                    : element.style.flexShrink.value
+                );
+            }
+            else
+            {
+                entry.Assigned = InlineLengthValue(length);
+                entry.Apply = element => AssignInlineLength(element, entry.Property, length);
+                entry.Read = element =>
+                    entry.Property == "borderRadius"
+                        ? new JObject
+                        {
+                            ["top_left"] = InlineLengthValue(element.style.borderTopLeftRadius),
+                            ["top_right"] = InlineLengthValue(element.style.borderTopRightRadius),
+                            ["bottom_left"] = InlineLengthValue(element.style.borderBottomLeftRadius),
+                            ["bottom_right"] = InlineLengthValue(element.style.borderBottomRightRadius),
+                        }
+                        : InlineLengthValue(ReadInlineLength(element, entry.Property));
+            }
+            entry.Modification = typed == null ? $"{entry.Property}={value}" : $"{entry.Property}={entry.Assigned.ToString(Newtonsoft.Json.Formatting.None)}";
+        }
+
+        private static JToken InlineColorValue(Color color)
+        {
+            return new JValue("#" + ColorUtility.ToHtmlStringRGBA(color));
+        }
+
+        private static JToken InlineLengthValue(StyleLength length)
+        {
+            if (length.keyword != StyleKeyword.Undefined)
+                return new JObject { ["keyword"] = length.keyword.ToString().ToLowerInvariant() };
+            return new JObject { ["value"] = length.value.value, ["unit"] = length.value.unit == LengthUnit.Percent ? "%" : "px" };
+        }
+
+        private static void AssignInlineLength(VisualElement element, string property, StyleLength value)
+        {
+            switch (property)
+            {
+                case "width":
+                    element.style.width = value;
+                    break;
+                case "height":
+                    element.style.height = value;
+                    break;
+                case "fontSize":
+                    element.style.fontSize = value;
+                    break;
+                case "marginLeft":
+                    element.style.marginLeft = value;
+                    break;
+                case "marginRight":
+                    element.style.marginRight = value;
+                    break;
+                case "marginTop":
+                    element.style.marginTop = value;
+                    break;
+                case "marginBottom":
+                    element.style.marginBottom = value;
+                    break;
+                case "paddingLeft":
+                    element.style.paddingLeft = value;
+                    break;
+                case "paddingRight":
+                    element.style.paddingRight = value;
+                    break;
+                case "paddingTop":
+                    element.style.paddingTop = value;
+                    break;
+                case "paddingBottom":
+                    element.style.paddingBottom = value;
+                    break;
+                case "borderRadius":
+                    element.style.borderTopLeftRadius = value;
+                    element.style.borderTopRightRadius = value;
+                    element.style.borderBottomLeftRadius = value;
+                    element.style.borderBottomRightRadius = value;
+                    break;
+            }
+        }
+
+        private static StyleLength ReadInlineLength(VisualElement element, string property)
+        {
+            switch (property)
+            {
+                case "width":
+                    return element.style.width;
+                case "height":
+                    return element.style.height;
+                case "fontSize":
+                    return element.style.fontSize;
+                case "marginLeft":
+                    return element.style.marginLeft;
+                case "marginRight":
+                    return element.style.marginRight;
+                case "marginTop":
+                    return element.style.marginTop;
+                case "marginBottom":
+                    return element.style.marginBottom;
+                case "paddingLeft":
+                    return element.style.paddingLeft;
+                case "paddingRight":
+                    return element.style.paddingRight;
+                case "paddingTop":
+                    return element.style.paddingTop;
+                case "paddingBottom":
+                    return element.style.paddingBottom;
+                case "borderRadius":
+                    return element.style.borderBottomRightRadius;
+                default:
+                    throw new InvalidOperationException("Unsupported prepared inline length.");
+            }
         }
 
         private static bool? GetNullableBool(this ToolParams p, string key)

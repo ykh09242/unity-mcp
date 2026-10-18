@@ -78,10 +78,11 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `add_classes` | `list[str] \| None` | — | USS class names to add to the element. For modify_visual_element. |
 | `remove_classes` | `list[str] \| None` | — | USS class names to remove from the element. For modify_visual_element. |
 | `toggle_classes` | `list[str] \| None` | — | USS class names to toggle on the element. For modify_visual_element. |
-| `style` | `dict[str, Any] \| None` | — | Inline styles to set (e.g., {'backgroundColor': '#FF0000', 'fontSize': 24}). For modify_visual_element. |
+| `style` | `dict[str, Any] \| None` | — | Inline styles for modify_visual_element. Legacy scalar values remain supported. Typed lengths: {'value': 50, 'unit': '%'} or {'keyword': 'auto'} where supported. Inspect data.style_results for every applied/rejected entry and final inline overrides. |
 | `enabled` | `bool \| None` | — | Set element enabled/disabled state. For modify_visual_element. |
 | `visible` | `bool \| None` | — | Set element visibility (display: flex/none). For modify_visual_element. |
 | `tooltip` | `str \| None` | — | Set element tooltip text. For modify_visual_element. |
+| `strict_style` | `bool` | — | Reject every requested mutation before application if any inline style is rejected. Only modify_visual_element; default false preserves lenient compatibility. Validation is not callback rollback. |
 
 ## Returns
 
