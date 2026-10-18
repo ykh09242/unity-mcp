@@ -177,7 +177,7 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             Assert.AreEqual(0, ownedScene.rootCount, "UI09 requires an empty owned case scene; never delete user objects to satisfy this prerequisite.");
             Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
             Assert.IsNull(EventSystem.current, "No existing EventSystem may be replaced.");
-            Assert.AreEqual(0, RaycasterManager.GetRaycasters().Count, "All query participants must be owned by this fixture.");
+            Assert.AreEqual(0, RegisteredRaycasters().Count, "All query participants must be owned by this fixture.");
             canvas = new GameObject("UI09Canvas", typeof(RectTransform), typeof(Canvas), typeof(GraphicRaycaster));
             canvas.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
             events = new GameObject("UI09Events", typeof(EventSystem));
@@ -227,7 +227,7 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                 UnityEngine.Object.DestroyImmediate(canvas);
                 UnityEngine.Object.DestroyImmediate(events);
                 Assert.IsNull(EventSystem.current);
-                Assert.AreEqual(0, RaycasterManager.GetRaycasters().Count);
+                Assert.AreEqual(0, RegisteredRaycasters().Count);
             }
             catch (Exception error)
             {
@@ -302,6 +302,29 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                 );
             }
             Assert.AreEqual(previousActiveScene.handle, SceneManager.GetActiveScene().handle);
+        }
+
+        private static List<BaseRaycaster> RegisteredRaycasters()
+        {
+            var manager = typeof(BaseRaycaster).Assembly.GetType("UnityEngine.EventSystems.RaycasterManager", false);
+            Assert.IsNotNull(manager, "The fixture requires the native raycaster registry type.");
+            var method = manager.GetMethod(
+                "GetRaycasters",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly,
+                null,
+                Type.EmptyTypes,
+                null
+            );
+            Assert.IsNotNull(method, "The fixture requires the native zero-argument raycaster registry accessor.");
+            Assert.AreEqual(manager, method.DeclaringType);
+            Assert.IsTrue(method.IsStatic);
+            Assert.IsFalse(method.IsGenericMethod);
+            Assert.AreEqual(0, method.GetParameters().Length);
+            Assert.AreEqual(typeof(List<BaseRaycaster>), method.ReturnType);
+            var result = method.Invoke(null, null);
+            Assert.IsNotNull(result);
+            Assert.AreEqual(typeof(List<BaseRaycaster>), result.GetType());
+            return (List<BaseRaycaster>)result;
         }
 
         private static GameObject Graphic(string name, Transform parent)
