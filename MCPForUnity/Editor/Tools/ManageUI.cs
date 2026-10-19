@@ -65,6 +65,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                if ((@params["warmup_updates"] != null || @params["warmupUpdates"] != null) && action != "render_ui")
+                    return new ErrorResponse("warmup_updates requires render_ui.");
                 JToken strictStyleToken = @params["strict_style"];
                 if (strictStyleToken != null && strictStyleToken.Type != JTokenType.Boolean)
                     return new ErrorResponse("strict_style must be a Boolean.");
@@ -1154,13 +1156,15 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        // One request owns the Play-mode capture and its completed texture until retrieval, cancellation or expiry.
+        // One request owns a deferred capture and its completed texture until retrieval, cancellation or expiry.
         private static Texture2D s_pendingCaptureTex;
         private static bool s_pendingCaptureDone;
         private static bool s_pendingCaptureStarted;
         private static int s_pendingCaptureGeneration;
         private static PendingUICapture s_pendingCaptureRequest;
         private static ScreenshotCapturer s_pendingCapturer;
+        private static PendingPanelCapture s_pendingPanelCapture;
+        private static string s_pendingCaptureFailure;
         private static double s_pendingCaptureExpiresAt;
         private const double PendingCaptureRetentionSeconds = 30;
 
@@ -1172,6 +1176,16 @@ namespace MCPForUnity.Editor.Tools
         private static string ReadRenderFileName(ToolParams p) => p.Get("file_name") ?? p.Get("fileName");
 
         private static string ReadRenderOutputFolder(ToolParams p) => p.Get("output_folder") ?? p.Get("outputFolder");
+
+        private static int ReadWarmupUpdates(JObject parameters)
+        {
+            JToken token = parameters["warmup_updates"] ?? parameters["warmupUpdates"];
+            if (token == null)
+                return 0;
+            if (token.Type != JTokenType.Integer || !int.TryParse(token.ToString(), out int value) || value < 0 || value > 4)
+                throw new ArgumentException("warmup_updates must be an integer from 0 to 4.");
+            return value;
+        }
 
         private sealed class PendingUICapture
         {
@@ -1188,10 +1202,16 @@ namespace MCPForUnity.Editor.Tools
             internal readonly string Folder;
             internal readonly string FullPath;
             internal readonly string ProjectPath;
+            internal readonly bool PlayMode;
+            internal readonly int WarmupUpdates;
+            internal int WarmupUpdatesObserved;
+            internal string CaptureSource => PlayMode ? "game_view" : "panel_render_texture";
 
             internal PendingUICapture(JObject parameters, UIComponentAdapter ui, Type componentType, string folderSpec)
             {
                 var p = new ToolParams(parameters);
+                PlayMode = Application.isPlaying;
+                WarmupUpdates = ReadWarmupUpdates(parameters);
                 Target = p.Get("target");
                 TargetId = ui == null ? 0 : ui.Component.gameObject.GetInstanceIDCompat();
                 SourceAsset = NormalizeSource(p.Get("path"));
@@ -1215,8 +1235,10 @@ namespace MCPForUnity.Editor.Tools
                 Folder = Path.GetDirectoryName(FullPath).Replace('\\', '/');
             }
 
-            internal bool Matches(ToolParams p)
+            internal bool Matches(ToolParams p, JObject parameters)
             {
+                if ((parameters["warmup_updates"] != null || parameters["warmupUpdates"] != null) && ReadWarmupUpdates(parameters) != WarmupUpdates)
+                    return false;
                 if (p.Get("target") is string target)
                 {
                     var go = ObjectResolver.Resolve(new JObject { ["find"] = target }, typeof(GameObject)) as GameObject;
@@ -1255,6 +1277,133 @@ namespace MCPForUnity.Editor.Tools
                 path == null ? null : AssetPathUtility.GetContainedAssetPath(path) ?? throw new ArgumentException("Invalid UXML path.");
         }
 
+        // Owns only this capture's panel binding and temporary objects. Editor updates are
+        // opportunities to render, not proof that UI Toolkit completed a layout/repaint.
+        private sealed class PendingPanelCapture : IDisposable
+        {
+            internal int Generation;
+            internal int PanelId;
+            internal UIComponentAdapter UI;
+            internal PanelSettings Panel;
+            internal RenderTexture Target;
+            internal GameObject TemporaryObject;
+            internal PanelSettings TemporarySettings;
+            internal AssetFolderScope Folders;
+
+            public void Dispose()
+            {
+                try
+                {
+                    FinishPanelRender(PanelId, Panel, Target, false, !ReferenceEquals(TemporarySettings, null));
+                }
+                finally
+                {
+                    try
+                    {
+                        if (TemporaryObject != null)
+                            UnityEngine.Object.DestroyImmediate(TemporaryObject);
+                        if (TemporarySettings != null)
+                        {
+                            string path = AssetDatabase.GetAssetPath(TemporarySettings);
+                            if (!string.IsNullOrEmpty(path))
+                                AssetDatabase.DeleteAsset(path);
+                            else
+                                UnityEngine.Object.DestroyImmediate(TemporarySettings, true);
+                        }
+                        else
+                            Folders.Complete();
+                    }
+                    finally
+                    {
+                        Folders.Dispose();
+                    }
+                }
+            }
+        }
+
+        private static void ReleasePendingPanelCapture()
+        {
+            EditorApplication.update -= AdvancePanelCapture;
+            var capture = s_pendingPanelCapture;
+            s_pendingPanelCapture = null;
+            capture?.Dispose();
+        }
+
+        private static Texture2D ReadPanelTexture(RenderTexture target)
+        {
+            ScreenshotUtility.ValidateFrameDimensions(target.width, target.height);
+            var previous = RenderTexture.active;
+            Texture2D texture = null;
+            try
+            {
+                RenderTexture.active = target;
+                texture = new Texture2D(target.width, target.height, TextureFormat.RGBA32, false);
+                texture.ReadPixels(new Rect(0, 0, target.width, target.height), 0, 0);
+                texture.Apply();
+                return texture;
+            }
+            catch
+            {
+                if (texture != null)
+                    UnityEngine.Object.DestroyImmediate(texture);
+                throw;
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+            }
+        }
+
+        private static void AdvancePanelCapture()
+        {
+            var capture = s_pendingPanelCapture;
+            var request = s_pendingCaptureRequest;
+            if (capture == null || request == null || capture.Generation != s_pendingCaptureGeneration)
+                return;
+            Texture2D texture = null;
+            try
+            {
+                if (
+                    Application.isPlaying
+                    || capture.UI.Component == null
+                    || capture.Panel == null
+                    || capture.Target == null
+                    || capture.UI.PanelSettings != capture.Panel
+                    || capture.Panel.targetTexture != capture.Target
+                    || capture.Target.width != request.Width
+                    || capture.Target.height != request.Height
+                    || !capture.Target.IsCreated()
+                    || !s_panelRTs.TryGetValue(capture.PanelId, out var cached)
+                    || !ReferenceEquals(cached, capture.Target)
+                )
+                    throw new InvalidOperationException("The owned panel capture binding changed during warmup.");
+                request.WarmupUpdatesObserved++;
+                if (request.WarmupUpdatesObserved < request.WarmupUpdates)
+                {
+                    capture.UI.Root?.MarkDirtyRepaint();
+                    EditorApplication.QueuePlayerLoopUpdate();
+                    return;
+                }
+                texture = ReadPanelTexture(capture.Target);
+            }
+            catch (Exception ex)
+            {
+                s_pendingCaptureFailure = ex.Message;
+            }
+            try
+            {
+                ReleasePendingPanelCapture();
+            }
+            catch (Exception ex)
+            {
+                s_pendingCaptureFailure = ex.Message;
+                if (texture != null)
+                    UnityEngine.Object.DestroyImmediate(texture);
+                texture = null;
+            }
+            CompletePendingCapture(capture.Generation, texture);
+        }
+
         private static void CleanupPendingCapture()
         {
             // Invalidate callbacks before releasing the result, including callbacks during play-mode teardown.
@@ -1263,16 +1412,24 @@ namespace MCPForUnity.Editor.Tools
                 s_pendingCaptureGeneration++;
             }
             EditorApplication.update -= ExpirePendingCapture;
-            var capturer = s_pendingCapturer;
-            s_pendingCapturer = null;
-            if (capturer != null)
-                UnityEngine.Object.DestroyImmediate(capturer.gameObject);
-            if (s_pendingCaptureTex != null)
-                UnityEngine.Object.DestroyImmediate(s_pendingCaptureTex);
-            s_pendingCaptureTex = null;
-            s_pendingCaptureDone = s_pendingCaptureStarted = false;
-            s_pendingCaptureRequest = null;
-            s_pendingCaptureExpiresAt = 0;
+            try
+            {
+                ReleasePendingPanelCapture();
+            }
+            finally
+            {
+                var capturer = s_pendingCapturer;
+                s_pendingCapturer = null;
+                if (capturer != null)
+                    UnityEngine.Object.DestroyImmediate(capturer.gameObject);
+                if (s_pendingCaptureTex != null)
+                    UnityEngine.Object.DestroyImmediate(s_pendingCaptureTex);
+                s_pendingCaptureTex = null;
+                s_pendingCaptureDone = s_pendingCaptureStarted = false;
+                s_pendingCaptureRequest = null;
+                s_pendingCaptureExpiresAt = 0;
+                s_pendingCaptureFailure = null;
+            }
         }
 
         private static int BeginPendingCapture()
@@ -1307,14 +1464,18 @@ namespace MCPForUnity.Editor.Tools
 
         private static object PendingCaptureResponse(PendingUICapture request) =>
             new SuccessResponse(
-                "Play-mode Game view capture is pending. Resume using the returned capture_id.",
+                "UI capture is pending. Resume using the returned capture_id.",
                 new Dictionary<string, object>
                 {
                     { "pending", true },
                     { "capture_id", request.Id },
                     { "componentType", request.ComponentKind },
                     { "gameObject", request.Target ?? request.SourceAsset },
-                    { "capture_source", "game_view" },
+                    { "capture_source", request.CaptureSource },
+                    { "full_game_view", request.PlayMode },
+                    { "readiness", request.PlayMode ? "awaiting_end_of_frame" : "awaiting_editor_updates" },
+                    { "warmup_updates_requested", request.WarmupUpdates },
+                    { "warmup_updates_observed", request.WarmupUpdatesObserved },
                     { "expires_in_seconds", Math.Max(0, s_pendingCaptureExpiresAt - EditorApplication.timeSinceStartup) },
                     {
                         "note",
@@ -1326,13 +1487,13 @@ namespace MCPForUnity.Editor.Tools
         private static object ResumePendingCapture(JObject parameters, string captureId)
         {
             var request = s_pendingCaptureRequest;
-            if (!Application.isPlaying || request == null || !string.Equals(request.Id, captureId, StringComparison.Ordinal))
-                return new ErrorResponse("No live Play-mode capture matches capture_id. Start a new render_ui request.", new { reason = "capture_not_found" });
+            if (request == null || request.PlayMode != Application.isPlaying || !string.Equals(request.Id, captureId, StringComparison.Ordinal))
+                return new ErrorResponse("No live UI capture matches capture_id. Start a new render_ui request.", new { reason = "capture_not_found" });
             ExpirePendingCapture();
             if (s_pendingCaptureRequest == null)
-                return new ErrorResponse("The Play-mode capture expired. Start a new render_ui request.", new { reason = "capture_expired" });
+                return new ErrorResponse("The UI capture expired. Start a new render_ui request.", new { reason = "capture_expired" });
             var p = new ToolParams(parameters);
-            if (!request.Matches(p))
+            if (!request.Matches(p, parameters))
                 return new ErrorResponse(
                     "Capture settings differ from the originating request. Resume with capture_id only.",
                     new { reason = "capture_settings_mismatch" }
@@ -1340,15 +1501,23 @@ namespace MCPForUnity.Editor.Tools
             if (p.GetBool("cancel_capture"))
             {
                 CleanupPendingCapture();
-                return new SuccessResponse("Cancelled the owned Play-mode capture.", new { capture_id = request.Id, cancelled = true });
+                return new SuccessResponse("Cancelled the owned UI capture.", new { capture_id = request.Id, cancelled = true });
             }
             if (!s_pendingCaptureDone)
                 return PendingCaptureResponse(request);
             var texture = s_pendingCaptureTex;
+            string failure = s_pendingCaptureFailure;
             s_pendingCaptureTex = null;
             CleanupPendingCapture();
             if (texture == null)
-                return new ErrorResponse("Play-mode screenshot timed out or captured nothing. Keep the Game view visible and the editor unpaused.");
+                return new ErrorResponse(
+                    failure
+                        ?? (
+                            request.PlayMode
+                                ? "Play-mode screenshot timed out or captured nothing. Keep the Game view visible and the editor unpaused."
+                                : "Panel readback did not complete during the bounded warmup."
+                        )
+                );
             return SavePendingCapture(request, texture);
         }
 
@@ -1357,9 +1526,17 @@ namespace MCPForUnity.Editor.Tools
             int width = texture.width;
             int height = texture.height;
             byte[] png;
+            Dictionary<string, object> evidence;
             try
             {
                 ScreenshotUtility.ValidateFrameDimensions(width, height);
+                evidence = UIRenderEvidence.Describe(
+                    texture,
+                    request.CaptureSource,
+                    request.PlayMode ? "end_of_frame_capture" : "bounded_editor_updates_elapsed",
+                    request.WarmupUpdates,
+                    request.WarmupUpdatesObserved
+                );
                 png = texture.EncodeToPNG();
             }
             finally
@@ -1372,14 +1549,16 @@ namespace MCPForUnity.Editor.Tools
             var data = new Dictionary<string, object>
             {
                 { "capture_id", request.Id },
-                { "capture_source", "game_view" },
+                { "capture_source", request.CaptureSource },
                 { "path", request.ProjectPath },
                 { "fullPath", request.FullPath },
                 { "width", width },
                 { "height", height },
-                { "hasContent", true },
+                { "hasContent", evidence["hasContent"] },
                 { "componentType", request.ComponentKind },
             };
+            foreach (var item in evidence)
+                data[item.Key] = item.Value;
             if (!string.IsNullOrEmpty(request.Target))
                 data["gameObject"] = request.Target;
             if (!string.IsNullOrEmpty(request.SourceAsset))
@@ -1421,20 +1600,20 @@ namespace MCPForUnity.Editor.Tools
         {
             var p = new ToolParams(@params);
 
+            int warmupUpdates = ReadWarmupUpdates(@params);
             string captureId = p.Get("capture_id");
             if (captureId != null)
                 return ResumePendingCapture(@params, captureId);
             if (p.GetBool("cancel_capture"))
                 return new ErrorResponse("cancel_capture requires the owning capture_id.");
-            if (Application.isPlaying)
-            {
-                ExpirePendingCapture();
-                if (s_pendingCaptureRequest != null)
-                    return new ErrorResponse(
-                        "Another request owns the Play-mode capture. Its caller must resume or cancel using capture_id, or wait for expiry.",
-                        new { retry_after_ms = 100, reason = s_pendingCaptureDone ? "capture_result_pending" : "capture_in_progress" }
-                    );
-            }
+            ExpirePendingCapture();
+            if (s_pendingCaptureRequest != null)
+                return new ErrorResponse(
+                    "Another request owns the UI capture. Its caller must resume or cancel using capture_id, or wait for expiry.",
+                    new { retry_after_ms = 100, reason = s_pendingCaptureDone ? "capture_result_pending" : "capture_in_progress" }
+                );
+            if (Application.isPlaying && warmupUpdates != 0)
+                return new ErrorResponse("warmup_updates is only supported for Edit-mode panel captures; Play mode already waits for end of frame.");
 
             string target = p.Get("target");
             string uxmlPath = p.Get("path");
@@ -1492,9 +1671,8 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // ── Play-mode capture via ScreenCapture coroutine ──────────────────────
-            // PanelSettings.targetTexture is read in the same frame it is assigned,
-            // so the RT is always blank in a synchronous tool call.  In play mode we
-            // dispatch a WaitForEndOfFrame coroutine that uses ScreenCapture, which
+            // A newly assigned panel target may not have rendered during a synchronous call.
+            // In play mode we dispatch a WaitForEndOfFrame coroutine that uses ScreenCapture, which
             // captures the fully-composited game view (including UI Toolkit overlays).
             // Each start returns an operation ID; only that ID may poll or cancel its result.
             if (Application.isPlaying)
@@ -1659,31 +1837,50 @@ namespace MCPForUnity.Editor.Tools
                     Canvas.ForceUpdateCanvases();
                 }
 
-                // Read pixels from the RT
-                RenderTexture prevActive = RenderTexture.active;
-                try
+                if (warmupUpdates > 0)
                 {
-                    RenderTexture.active = rt;
-                    tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
-                    tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                    tex.Apply();
-                }
-                finally
-                {
-                    RenderTexture.active = prevActive;
+                    var request = new PendingUICapture(@params, ui, renderComponentType, resolvedFolderSpec);
+                    int generation = BeginPendingCapture();
+                    s_pendingCaptureRequest = request;
+                    s_pendingPanelCapture = new PendingPanelCapture
+                    {
+                        Generation = generation,
+                        PanelId = renderPanelId,
+                        UI = ui,
+                        Panel = renderPanel,
+                        Target = renderTarget,
+                        TemporaryObject = tempGo,
+                        TemporarySettings = tempPs,
+                        Folders = renderAssetFolders,
+                    };
+                    // Transfer ownership before returning; the local finally must not release it.
+                    renderTarget = null;
+                    tempGo = null;
+                    tempPs = null;
+                    renderAssetFolders = null;
+                    try
+                    {
+                        EditorApplication.update += AdvancePanelCapture;
+                        ui.Root?.MarkDirtyRepaint();
+                        EditorApplication.QueuePlayerLoopUpdate();
+                    }
+                    catch
+                    {
+                        CleanupPendingCapture();
+                        throw;
+                    }
+                    return PendingCaptureResponse(request);
                 }
 
-                // Check if any content was rendered
-                bool hasContent = false;
-                var pixels = tex.GetPixels32();
-                for (int i = 0; i < pixels.Length; i += Mathf.Max(1, pixels.Length / 100))
-                {
-                    if (pixels[i].a > 0)
-                    {
-                        hasContent = true;
-                        break;
-                    }
-                }
+                tex = ReadPanelTexture(rt);
+                var evidence = UIRenderEvidence.Describe(
+                    tex,
+                    "panel_render_texture",
+                    rtJustAssigned ? "target_just_assigned" : "existing_target_readback",
+                    0,
+                    0
+                );
+                bool hasContent = (bool)evidence["hasContent"];
 
                 // Save to Screenshots folder
                 string resolvedName = string.IsNullOrWhiteSpace(fileName) ? $"ui-render-{DateTime.Now:yyyyMMdd-HHmmss}.png" : fileName.Trim();
@@ -1709,8 +1906,11 @@ namespace MCPForUnity.Editor.Tools
                     { "componentType", ui.Kind },
                 };
 
+                foreach (var item in evidence)
+                    data[item.Key] = item.Value;
                 if (rtJustAssigned)
-                    data["note"] = "RenderTexture was just assigned to PanelSettings. Call render_ui again to capture the rendered UI.";
+                    data["note"] =
+                        "The panel target was just assigned; a completed UI repaint is not observed. Opt into warmup_updates for a bounded deferred readback.";
 
                 if (!string.IsNullOrEmpty(target))
                     data["gameObject"] = target;
@@ -1746,8 +1946,8 @@ namespace MCPForUnity.Editor.Tools
 
                 string msg =
                     hasContent ? $"UI rendered to '{projectRelPath}'."
-                    : rtJustAssigned ? $"RenderTexture assigned to PanelSettings. Call render_ui again to capture the rendered content."
-                    : $"UI render saved to '{projectRelPath}' (no visible content detected).";
+                    : rtJustAssigned ? $"UI render saved to '{projectRelPath}' after assigning the panel target (all image alpha is zero)."
+                    : $"UI render saved to '{projectRelPath}' (all image alpha is zero).";
 
                 keepWarmupBinding = rtJustAssigned;
                 if (ReferenceEquals(tempPs, null))
@@ -1780,7 +1980,7 @@ namespace MCPForUnity.Editor.Tools
                 }
                 finally
                 {
-                    renderAssetFolders.Dispose();
+                    renderAssetFolders?.Dispose();
                 }
             }
         }

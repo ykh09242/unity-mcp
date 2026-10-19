@@ -68,7 +68,8 @@ def _canonical_ui_path(path: str) -> str:
         "   - In play mode: first call queues a WaitForEndOfFrame screen capture and returns pending=true;\n"
         "     resume with capture_id from that response to retrieve the PNG. Cancel with that ID and cancel_capture=true.\n"
         "     ID-less calls always start separate requests, including identical settings; another live owner is rejected.\n"
-        "   - In editor mode: assigns a RenderTexture to PanelSettings (best-effort; may stay blank).\n"
+        "   - In editor mode: immediate panel readback is best-effort; warmup_updates=1..4 opts into bounded deferred readback using capture_id.\n"
+        "     Results report capture source, readiness and full-image alpha occupancy; opaque pixels do not prove UI presence.\n"
         "9. Use detach_ui_document to remove the selected UI component from a GameObject\n"
         "10. Use delete to remove .uxml/.uss files\n\n"
         "Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not bare <Style>. "
@@ -213,13 +214,25 @@ async def manage_ui(
     # render_ui
     capture_id: Annotated[
         str,
-        "Play-mode capture ID returned by render_ui. Supply this ID alone to poll the original "
+        "Deferred capture ID returned by render_ui. Supply this ID alone to poll the original "
         "request; optional target/output settings must match the start request. Omit to start "
         "a separate capture even with identical settings. Results expire after 30 seconds.",
     ]
     | None = None,
     cancel_capture: Annotated[
-        bool, "Cancel the Play-mode capture owned by capture_id (default false). For render_ui."
+        bool, "Cancel the deferred capture owned by capture_id (default false). For render_ui."
+    ]
+    | None = None,
+    warmup_updates: Annotated[
+        int,
+        Field(
+            strict=True,
+            ge=0,
+            le=4,
+            description="Edit-mode panel readback delay in Editor updates, 0 to 4 (default 0). "
+            "Positive values return capture_id for polling/cancellation; no repaint guarantee or automatic retries. "
+            "Play mode requires 0 and already captures at end of frame. For render_ui.",
+        ),
     ]
     | None = None,
     width: Annotated[
@@ -333,6 +346,12 @@ async def manage_ui(
         return {"success": False, "message": "strict_style must be a Boolean."}
     if strict_style and action_lower != "modify_visual_element":
         return {"success": False, "message": "strict_style requires modify_visual_element."}
+
+    if warmup_updates is not None:
+        if type(warmup_updates) is not int or not 0 <= warmup_updates <= 4:
+            return {"success": False, "message": "warmup_updates must be an integer from 0 to 4."}
+        if action_lower != "render_ui":
+            return {"success": False, "message": "warmup_updates requires render_ui."}
 
     if action_lower in ("get_visual_tree", "diagnose"):
         for key, value, minimum, maximum in (
@@ -488,6 +507,8 @@ async def manage_ui(
             params_dict["maxFindings"] = max_findings
 
     # render_ui params
+    if warmup_updates is not None:
+        params_dict["warmup_updates"] = warmup_updates
     if capture_id is not None:
         params_dict["capture_id"] = capture_id
     if cancel_capture is not None:

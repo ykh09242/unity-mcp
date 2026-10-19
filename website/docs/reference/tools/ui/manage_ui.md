@@ -31,7 +31,8 @@ UI Toolkit workflow:
    - In play mode: first call queues a WaitForEndOfFrame screen capture and returns pending=true;
      resume with capture_id from that response to retrieve the PNG. Cancel with that ID and cancel_capture=true.
      ID-less calls always start separate requests, including identical settings; another live owner is rejected.
-   - In editor mode: assigns a RenderTexture to PanelSettings (best-effort; may stay blank).
+   - In editor mode: immediate panel readback is best-effort; warmup_updates=1..4 opts into bounded deferred readback using capture_id.
+     Results report capture source, readiness and full-image alpha occupancy; opaque pixels do not prove UI presence.
 9. Use detach_ui_document to remove the selected UI component from a GameObject
 10. Use delete to remove .uxml/.uss files
 
@@ -58,8 +59,9 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `max_characters` | `int \| None` | — | get_visual_tree / diagnose shared copied UTF-16 string budget including metadata (default 65536). get_visual_tree per-string limit 8192/class limit 64; diagnose name/type limit 256 and whole physical paths. |
 | `max_pairs` | `int \| None` | — | diagnose physical sibling pairs examined before filters (default 2000); zero disables overlap and yields partial evidence. |
 | `max_findings` | `int \| None` | — | diagnose retained candidate findings (default 200); reaching the cap reports partial coverage. |
-| `capture_id` | `str \| None` | — | Play-mode capture ID returned by render_ui. Supply this ID alone to poll the original request; optional target/output settings must match the start request. Omit to start a separate capture even with identical settings. Results expire after 30 seconds. |
-| `cancel_capture` | `bool \| None` | — | Cancel the Play-mode capture owned by capture_id (default false). For render_ui. |
+| `capture_id` | `str \| None` | — | Deferred capture ID returned by render_ui. Supply this ID alone to poll the original request; optional target/output settings must match the start request. Omit to start a separate capture even with identical settings. Results expire after 30 seconds. |
+| `cancel_capture` | `bool \| None` | — | Cancel the deferred capture owned by capture_id (default false). For render_ui. |
+| `warmup_updates` | `int \| None` | — | Edit-mode panel readback delay in Editor updates, 0 to 4 (default 0). Positive values return capture_id for polling/cancellation; no repaint guarantee or automatic retries. Play mode requires 0 and already captures at end of frame. For render_ui. |
 | `width` | `int \| None` | — | Render width in pixels, 1 to 8192 (default 1920). The frame may contain at most 33,554,432 pixels. For render_ui. |
 | `height` | `int \| None` | — | Render height in pixels, 1 to 8192 (default 1080). For render_ui. |
 | `include_image` | `bool \| None` | — | Return inline base64 PNG in the response (default false). For render_ui. |
