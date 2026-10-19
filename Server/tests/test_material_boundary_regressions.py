@@ -76,6 +76,8 @@ def registered_material(monkeypatch):
         ("properties", "null"),
         ("value", "undefined"),
         ("value", "[object Object]"),
+        ("render_state", "[]"),
+        ("render_state", "null"),
     ],
 )
 def test_invalid_material_inputs_return_local_error_before_discovery(
@@ -128,3 +130,58 @@ def test_valid_material_properties_preserve_falsy_nested_values(registered_mater
         {"action": "create", "materialPath": "", "shader": "", "properties": properties},
     ]
     assert result is response
+
+
+def test_render_state_patch_preserves_falsy_values_and_native_rejection(registered_material):
+    # Given native-owned validation, including an explicitly invalid null queue.
+    invoke, events, response = registered_material
+    patch = {"render_queue": None, "keywords": {"FIXTURE_LOCAL": False}, "empty": 0}
+    # When called through registered middleware.
+    result = invoke(
+        {
+            "action": "set_render_state",
+            "target": "Fixture",
+            "slot": 0,
+            "mode": "instance",
+            "render_state": patch,
+        }
+    )
+    # Then native validation sees the exact patch and its result returns unchanged.
+    assert events == [
+        "discover",
+        {
+            "action": "set_render_state",
+            "target": "Fixture",
+            "slot": 0,
+            "mode": "instance",
+            "renderState": patch,
+        },
+    ]
+    assert result is response
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_render_state_read_and_edit_admission_remain_distinct(native):
+    from services.operation_permissions import (
+        OperationGrants,
+        OperationPermissionError,
+        Permission,
+        authorize_operation,
+        required_permissions,
+    )
+
+    # Given a requester or plugin with only read permission.
+    authority = OperationGrants(frozenset({Permission.READ}), scoped=True)
+    # When render-state actions are admitted at either public or native boundary.
+    authorize_operation(authority, "manage_material", {"action": "get_render_state"}, native=native)
+    # Then inspection needs read permission and mutation cannot pass the read grant.
+    assert required_permissions(
+        "manage_material", {"action": "get_render_state"}, native=native
+    ) == {Permission.READ}
+    assert required_permissions(
+        "manage_material", {"action": "set_render_state"}, native=native
+    ) == {Permission.EDIT}
+    with pytest.raises(OperationPermissionError):
+        authorize_operation(
+            authority, "manage_material", {"action": "set_render_state"}, native=native
+        )

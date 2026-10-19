@@ -1,7 +1,7 @@
 ---
 title: manage_material
 sidebar_label: manage_material
-description: "Manages Unity materials (set properties, colors, shaders, etc)."
+description: "Manages Unity materials (properties, colors, shaders, render state)."
 ---
 
 # `manage_material`
@@ -12,13 +12,13 @@ description: "Manages Unity materials (set properties, colors, shaders, etc)."
 
 ## Description
 
-Manages Unity materials (set properties, colors, shaders, etc). Read-only actions: ping, get_material_info. Modifying actions: create, set_material_shader_property, set_material_color, assign_material_to_renderer, set_renderer_color.
+Manages Unity materials (properties, colors, shaders, render state). Read-only actions: ping, get_material_info, get_render_state. Modifying actions: create, set_material_shader_property, set_material_color, assign_material_to_renderer, set_renderer_color, set_render_state. Render-state edits require explicit shared/instance mode. Explicit render_mode presets support Built-in Standard shaders; URP/HDRP/custom presets are unsupported.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['ping', 'create', 'set_material_shader_property', 'set_material_color', 'assign_material_to_renderer', 'set_renderer_color', 'get_material_info']` | yes | Action to perform. |
+| `action` | `Literal['ping', 'create', 'set_material_shader_property', 'set_material_color', 'assign_material_to_renderer', 'set_renderer_color', 'get_material_info', 'get_render_state', 'set_render_state']` | yes | Action to perform. |
 | `material_path` | `str \| None` | — | Path to material asset (Assets/...) |
 | `property` | `str \| None` | — | Shader property name (e.g., _BaseColor, _MainTex) |
 | `shader` | `str \| None` | — | Shader name (default: Standard) |
@@ -29,6 +29,7 @@ Manages Unity materials (set properties, colors, shaders, etc). Read-only action
 | `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer', 'by_component'] \| None` | — | Search method for target |
 | `slot` | `int \| None` | — | Material slot index (0-based) |
 | `mode` | `Literal['shared', 'instance', 'property_block', 'create_unique'] \| None` | — | Assignment/modification mode; behavior when omitted is action-specific on the Unity side. |
+| `render_state` | `dict[str, Any] \| str \| None` | — | Render-state patch object or JSON object string: render_queue (-1 or 0..5000), keywords ({declared_name: bool}), shader_passes ({LightMode: bool}), texture_transforms ({exact_texture_property: {scale: [x,y], offset: [x,y]}}). render_mode is opaque/cutout/fade/transparent for Built-in Standard shaders only; it resets the queue and cannot coexist with render_queue or owned alpha keywords. Maps are limited to 128 entries. No automatic blending changes for raw edits. |
 
 ## Returns
 
