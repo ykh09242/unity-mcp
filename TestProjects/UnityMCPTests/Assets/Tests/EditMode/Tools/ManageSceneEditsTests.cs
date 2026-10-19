@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -15,10 +16,18 @@ namespace MCPForUnityTests.Editor.Tools
     public class ManageSceneEditsTests
     {
         private readonly List<GameObject> _objects = new List<GameObject>();
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
+
+        [OneTimeSetUp]
+        public void Bootstrap() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void Restore() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
         {
+            sceneFixture.Create("McpNativeSceneEdits_", Guid.NewGuid().ToString("N"));
             Undo.ClearAll();
             Cache().Clear();
         }
@@ -31,6 +40,7 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (GameObject go in _objects)
                 Object.DestroyImmediate(go);
             _objects.Clear();
+            sceneFixture.Close();
         }
 
         private GameObject Create(string name)
