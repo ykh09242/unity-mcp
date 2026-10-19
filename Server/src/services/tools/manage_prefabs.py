@@ -18,6 +18,8 @@ REQUIRED_PARAMS = {
     "get_hierarchy": ["prefab_path"],
     "create_from_gameobject": ["target", "prefab_path"],
     "modify_contents": ["prefab_path"],
+    "preview_modify_contents": ["prefab_path"],
+    "apply_preview": ["preview_id"],
     "open_prefab_stage": ["prefab_path"],
     "list_overrides": ["target"],
     "revert_overrides": ["target", "override_ids"],
@@ -49,7 +51,12 @@ REQUIRED_PARAMS = {
         "Use component_properties with modify_contents to set serialized fields on existing components "
         '(e.g. component_properties={"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}). '
         'Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. '
-        "Use manage_asset action=search filterType=Prefab to list prefabs."
+        "Use manage_asset action=search filterType=Prefab to list prefabs. "
+        "preview_modify_contents supports only root local position/rotation/scale and set_active "
+        "on a prefab without nested instances or custom components. Root name edits are refused because "
+        "Unity normalizes the name to the asset filename. It returns before/after impact "
+        "and a source/dependency hash. apply_preview accepts only its one-attempt token; source or "
+        "dependency drift rejects before saving. Asset saves do not promise Undo or callback rollback."
         " For scene prefab instances, list_overrides returns paged entries and groups with explicit overrideId values, "
         "property paths/current and prefab values, and added/removed components and GameObjects. "
         "revert_overrides/apply_overrides require override_ids from that listing; apply also requires the returned prefab_path. "
@@ -70,6 +77,8 @@ async def manage_prefabs(
             "get_info",
             "get_hierarchy",
             "modify_contents",
+            "preview_modify_contents",
+            "apply_preview",
             "open_prefab_stage",
             "save_prefab_stage",
             "close_prefab_stage",
@@ -152,12 +161,75 @@ async def manage_prefabs(
     | None = None,
     cursor: Annotated[str, "get_hierarchy opaque cursor; keep identical page_size/max_depth."]
     | None = None,
+    preview_id: Annotated[
+        str | None, "One-attempt token from preview_modify_contents, valid 10 minutes."
+    ] = None,
     max_depth: Annotated[
         int, "get_hierarchy inclusive depth scope, root=0; default 64, maximum 128."
     ] = 64,
 ) -> dict[str, Any]:
     if action not in {*REQUIRED_PARAMS, "save_prefab_stage", "close_prefab_stage"}:
         return {"success": False, "message": f"Unknown prefab action: '{action}'."}
+    if preview_id is not None and (
+        action != "apply_preview"
+        or type(preview_id) is not str
+        or not preview_id.strip()
+        or len(preview_id) > 64
+    ):
+        return {
+            "success": False,
+            "message": "preview_id requires apply_preview and 1-64 characters.",
+        }
+    if action == "apply_preview" and any(
+        value is not None
+        for value in (
+            prefab_path,
+            target,
+            position,
+            rotation,
+            scale,
+            name,
+            tag,
+            layer,
+            set_active,
+            parent,
+            components_to_add,
+            components_to_remove,
+            create_child,
+            delete_child,
+            component_properties,
+            allow_overwrite,
+            search_inactive,
+            unlink_if_instance,
+        )
+    ):
+        return {"success": False, "message": "apply_preview accepts only the preview token."}
+    if action == "preview_modify_contents" and name is not None:
+        return {
+            "success": False,
+            "message": "Safe prefab plans cannot edit the root name: Unity normalizes it to the asset filename.",
+        }
+    if action == "preview_modify_contents" and any(
+        value is not None
+        for value in (
+            target,
+            tag,
+            layer,
+            parent,
+            components_to_add,
+            components_to_remove,
+            create_child,
+            delete_child,
+            component_properties,
+            allow_overwrite,
+            search_inactive,
+            unlink_if_instance,
+        )
+    ):
+        return {
+            "success": False,
+            "message": "Safe prefab preview supports root position, rotation, scale and set_active only.",
+        }
     page_size = (50 if action == "get_hierarchy" else 100) if page_size is None else page_size
     if action == "get_hierarchy":
         if type(page_size) is not int or not 1 <= page_size <= 500:
@@ -249,6 +321,8 @@ async def manage_prefabs(
     try:
         # Build parameters dictionary
         params: dict[str, Any] = {"action": action}
+        if preview_id is not None:
+            params["preview_id"] = preview_id
         if action == "get_hierarchy":
             params.update(page_size=page_size, max_depth=max_depth)
             if cursor is not None:

@@ -54,7 +54,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_prefabs`](./core/manage_prefabs.md)** — Manages Unity Prefab assets. get_hierarchy returns bounded sibling-index depth-first pages: page_size defaults to 50 (1-500), max_depth defaults to 64 (0-128, root depth 0), and cursor continues the identical revision/options.
 - **[`manage_recording`](./core/manage_recording.md)** — Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. start returns job_id immediately; poll status explicitly or stop to finalize.
 - **[`manage_scene`](./core/manage_scene.md)** — Performs CRUD operations on Unity scenes.
-- **[`manage_scene_edits`](./core/manage_scene_edits.md)** — Preview or apply 1-64 allowlisted native Transform, BoxCollider, SphereCollider, or Rigidbody serialized property edits in a stable Edit-mode scene.
+- **[`manage_scene_edits`](./core/manage_scene_edits.md)** — Preview or apply 1-64 allowlisted native Transform, BoxCollider, SphereCollider, Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene.
 - **[`manage_script`](./core/manage_script.md)** — Compatibility router for legacy script operations.
 - **[`manage_script_capabilities`](./core/manage_script_capabilities.md)** — Get manage_script capabilities (supported ops, limits, and guards).
 - **[`manage_tools`](./core/manage_tools.md)** — Manage which tool groups are visible in this session.

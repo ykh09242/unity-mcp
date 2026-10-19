@@ -60,7 +60,14 @@ def _array_numeric_error(patches: list[Any]) -> str | None:
 
 @mcp_for_unity_tool(
     group="scripting_ext",
-    description="Creates and modifies ScriptableObject assets using Unity SerializedObject property paths.",
+    description=(
+        "Creates and modifies ScriptableObject assets using Unity SerializedObject property paths. "
+        "Patches are ordered best_effort: each result preserves its request index, ok and "
+        "applied/failed/skipped status; successful earlier patches remain and later ones are attempted. "
+        "A skipped successful patch left serialized values unchanged. Legacy top-level success is unchanged; "
+        "inspect individual results. dry_run validates without applying; arbitrary SO callbacks "
+        "do not have an atomic rollback contract."
+    ),
     annotations=ToolAnnotations(
         title="Manage Scriptable Object",
         destructiveHint=True,
