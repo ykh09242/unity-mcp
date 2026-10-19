@@ -25,6 +25,11 @@
             "name": "com.unity.visualeffectgraph",
             "expression": "0.0.0",
             "define": "UNITY_VFX_GRAPH"
+        },
+        {
+            "name": "com.unity.modules.ai",
+            "expression": "0.0.0",
+            "define": "MCP_FOR_UNITY_AI_MODULE"
         }
     ],
     "noEngineReferences": false
