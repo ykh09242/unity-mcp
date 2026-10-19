@@ -18,6 +18,19 @@ namespace MCPForUnity.Editor.Tools
             {
                 var p = new ToolParams(parameters ?? throw new ArgumentException("Parameters are required."));
                 string framework = p.Get("framework");
+                if (framework != "ugui" && framework != "uitoolkit")
+                    throw new ArgumentException("framework must be ugui or uitoolkit.");
+                bool componentSelected = parameters.Property("component_type") != null;
+                string componentType = "auto";
+                if (componentSelected)
+                {
+                    var selection = parameters["component_type"];
+                    if (framework != "uitoolkit" || selection.Type != JTokenType.String)
+                        throw new ArgumentException("component_type requires uitoolkit and a non-null string selector.");
+                    componentType = selection.Value<string>();
+                    if (componentType != "auto" && componentType != "ui_document" && componentType != "panel_renderer")
+                        throw new ArgumentException("component_type must be auto, ui_document, or panel_renderer.");
+                }
                 int limit = p.GetInt("max_nodes") ?? 200;
                 if (limit < 1 || limit > 1000)
                     throw new ArgumentException("max_nodes must be within 1..1000.");
@@ -25,13 +38,15 @@ namespace MCPForUnity.Editor.Tools
                 var root = ManageUGUI.Resolve(p.GetRaw("target"), true);
                 string identity = Identity(root);
                 JArray nodes;
+                UIComponentAdapter ui = null;
                 switch (framework)
                 {
                     case "ugui":
                         nodes = UguiSnapshotCapture.Capture(root, limit, identities);
                         break;
                     case "uitoolkit":
-                        nodes = UitoolkitSnapshotCapture.Capture(root, limit, identities);
+                        ui = UIComponentAdapter.Resolve(root, componentType);
+                        nodes = UitoolkitSnapshotCapture.Capture(root, ui, limit, identities);
                         break;
                     default:
                         throw new ArgumentException("framework must be ugui or uitoolkit.");
@@ -83,6 +98,8 @@ namespace MCPForUnity.Editor.Tools
                             : "UI Toolkit bounds use panel coordinates; ancestor display, visibility and opacity affect render eligibility, while clipping and overlapping elements remain untested."
                     ),
                 };
+                if (componentSelected)
+                    snapshot["evidence"]["component_type"] = ui.Kind;
                 if (identities != null)
                 {
                     snapshot["evidence"]["identity_method"] = "explicit_path_map_v1";

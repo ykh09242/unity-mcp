@@ -47,6 +47,11 @@ def _read_identity_map(source: Path):
 @click.option("--framework", required=True, type=click.Choice(["ugui", "uitoolkit"]))
 @click.option("--target", required=True, help="Unique scene hierarchy path or instance ID.")
 @click.option("--max-nodes", default=200, type=click.IntRange(1, 1000))
+@click.option(
+    "--component-type",
+    type=click.Choice(["auto", "ui_document", "panel_renderer"]),
+    help="UI Toolkit component to capture; explicit selection records the actual component kind.",
+)
 @click.option("--output", required=True, type=click.Path(dir_okay=False, path_type=Path))
 @click.option(
     "--identity-map-file",
@@ -55,15 +60,26 @@ def _read_identity_map(source: Path):
 )
 @handle_unity_errors
 def capture_ui_snapshot(
-    framework: str, target: str, max_nodes: int, output: Path, identity_map_file: Path | None
+    framework: str,
+    target: str,
+    max_nodes: int,
+    output: Path,
+    identity_map_file: Path | None,
+    component_type: str | None,
 ) -> None:
     """Save a complete bounded UI tree to a new file; missing evidence fails capture."""
     config = get_config()
     try:
+        arguments = {"framework": framework, "target": target, "max_nodes": max_nodes}
+        if component_type is not None:
+            arguments["component_type"] = component_type
+        try:
+            request = UiSnapshotRequest(**arguments)
+        except ValueError:
+            raise AnalysisError("Capture parameters or component selection are invalid") from None
         path = safe_local_path(output)
         if path.exists():
             raise AnalysisError("Snapshot output already exists")
-        arguments = {"framework": framework, "target": target, "max_nodes": max_nodes}
         if identity_map_file is not None:
             arguments["identity_map"] = _read_identity_map(identity_map_file)
             try:
@@ -79,7 +95,9 @@ def capture_ui_snapshot(
         if result.get("success") is not True:
             raise AnalysisError("UI snapshot capture failed; native evidence is unavailable.")
         snapshot = validate_ui_snapshot(
-            result.get("data"), expected_version=3 if identity_map_file is not None else 2
+            result.get("data"),
+            expected_version=3 if identity_map_file is not None else 2,
+            expected_component_type=request.component_type,
         )
         content = snapshot.model_dump_json(indent=2).encode("utf-8")
         if len(content) > 2 * 1024 * 1024:

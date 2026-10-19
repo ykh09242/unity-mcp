@@ -70,9 +70,12 @@ class UiSnapshotRequest(BaseModel):
     target: Annotated[str, Field(min_length=1, max_length=4096)] | StrictInt
     max_nodes: Annotated[int, Field(ge=1, le=1000)] = 200
     identity_map: Annotated[list[UiIdentityAssignment], Field(min_length=1, max_length=999)] = None
+    component_type: Literal["auto", "ui_document", "panel_renderer"] = None
 
     @model_validator(mode="after")
     def bounded_unique_map(self):
+        if self.component_type is not None and self.framework != "uitoolkit":
+            raise ValueError("component_type requires uitoolkit")
         if self.identity_map is not None:
             entries = self.identity_map
             if (
@@ -100,7 +103,11 @@ class UiSnapshotRequest(BaseModel):
         "Optional identity_map associates current child paths with nonsecret caller item IDs in either framework, "
         "emitting schema version 3 comparison identities. Update associations after row rebinding/reorder; "
         "valid stale associations cannot be detected. Mapped IDs are not mutation handles. "
-        "Omission preserves schema version 2 and semantic ambiguity refusal."
+        "Omission preserves schema version 2 and semantic ambiguity refusal. "
+        "For uitoolkit, optional component_type selects auto, ui_document or panel_renderer. "
+        "Explicit selection emits the actual component kind in evidence; missing or unsupported "
+        "components refuse without fallback. Omission retains legacy auto output. Snapshot IDs "
+        "remain mutation handles only for the canonical auto root without identity_map."
     ),
     annotations=ToolAnnotations(
         title="Capture UI Snapshot", readOnlyHint=True, destructiveHint=False
@@ -119,12 +126,20 @@ async def capture_ui_snapshot(
             description="Optional current-path to nonsecret item-ID map. At most max_nodes minus one entries and 65536 aggregate path/ID characters; duplicate paths/IDs refuse. Omit for semantic v2 capture; explicit null/empty refuse. Mapped v3 identities remain parent-scoped and require caller rebinding; they are not mutation handles.",
         ),
     ] = None,
+    component_type: Annotated[
+        Literal["auto", "ui_document", "panel_renderer"],
+        Field(
+            description="UI Toolkit only. Omit for compatible auto capture; explicit auto/ui_document/panel_renderer requires native resolved-kind evidence. Explicit null and unavailable components refuse. Noncanonical component IDs are not mutation handles.",
+        ),
+    ] = None,
 ) -> dict[str, JsonValue]:  # noqa: DICT_OK - MCP transport envelope
-    """Validate the capture boundary, then dispatch one selected Editor read."""
+    """Validate one Editor read; internal callable None means omitted, public null refuses."""
     try:
         arguments = {"framework": framework, "target": target, "max_nodes": max_nodes}
         if identity_map is not None:
             arguments["identity_map"] = identity_map
+        if component_type is not None:
+            arguments["component_type"] = component_type
         request = UiSnapshotRequest(**arguments)
         if type(target) is str:
             target.encode("utf-8")
@@ -157,7 +172,9 @@ async def capture_ui_snapshot(
     if isinstance(response, dict) and response.get("success") is True:
         try:
             validate_ui_snapshot(
-                response.get("data"), expected_version=3 if identity_map is not None else 2
+                response.get("data"),
+                expected_version=3 if identity_map is not None else 2,
+                expected_component_type=request.component_type,
             )
         except ValueError:
             return {

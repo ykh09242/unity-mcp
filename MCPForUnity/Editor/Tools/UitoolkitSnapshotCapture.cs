@@ -150,10 +150,9 @@ namespace MCPForUnity.Editor.Tools
             public bool Displayed;
         }
 
-        internal static JArray Capture(GameObject go, int limit, UISnapshotIdentityMap identities = null)
+        internal static JArray Capture(GameObject go, UIComponentAdapter ui, int limit, UISnapshotIdentityMap identities = null)
         {
-            // Resolve the same version-aware live root used by manage_ui.get_visual_tree.
-            var ui = UIComponentAdapter.Resolve(go, "auto");
+            // Read the selected adapter's current root once; never resolve or fall back during traversal.
             var root = ui.Root;
             if (root == null || root.panel == null || !(root.worldBound.width > 0) || !(root.worldBound.height > 0))
                 throw new ArgumentException("UI Toolkit live panel/layout is unavailable; build the visual tree before capture.");

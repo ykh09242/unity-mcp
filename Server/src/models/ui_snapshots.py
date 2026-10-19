@@ -212,6 +212,14 @@ class UiNodeV2(UiNode):
 class UiEvidenceV2(UiEvidence):
     control_state_method: Literal["typed_allowlist_v1"]
     input_privacy: Literal["recognized_input_ownership_v1"]
+    component_type: Literal["ui_document", "panel_renderer"] = None
+
+    @model_serializer(mode="wrap")
+    def sparse_component_evidence(self, serialize):
+        value = serialize(self)
+        if self.component_type is None:
+            value.pop("component_type", None)
+        return value
 
 
 class UiSnapshotV2(UiSnapshot):
@@ -221,6 +229,8 @@ class UiSnapshotV2(UiSnapshot):
 
     @model_validator(mode="after")
     def framework_scroll_units(self):
+        if self.framework == "ugui" and self.evidence.component_type is not None:
+            raise UiSnapshotError("Component evidence requires UI Toolkit")
         expected = "normalized" if self.framework == "ugui" else "panel_points"
         if any(
             node.state.scroll is not None and node.state.scroll.kind != expected
@@ -240,7 +250,10 @@ class UiSnapshotV3(UiSnapshotV2):
 
 
 def validate_ui_snapshot(
-    value, *, expected_version: Literal[2, 3] | None = None
+    value,
+    *,
+    expected_version: Literal[2, 3] | None = None,
+    expected_component_type: Literal["auto", "ui_document", "panel_renderer"] | None = None,
 ) -> UiSnapshot | UiSnapshotV2 | UiSnapshotV3:
     """Dispatch exact versions without echoing native/file payloads in validation errors."""
     try:
@@ -254,6 +267,19 @@ def validate_ui_snapshot(
                 "Unsupported UI snapshot schema_version for the requested identity mode"
             )
         model = {1: UiSnapshot, 2: UiSnapshotV2, 3: UiSnapshotV3}[version]
-        return model.model_validate_json(json.dumps(value, allow_nan=False))
+        snapshot = model.model_validate_json(json.dumps(value, allow_nan=False))
+        if expected_component_type is not None:
+            if not isinstance(snapshot, UiSnapshotV2) or snapshot.evidence.component_type is None:
+                raise UiSnapshotError(
+                    "Explicit component selection requires native component evidence"
+                )
+            if (
+                expected_component_type != "auto"
+                and snapshot.evidence.component_type != expected_component_type
+            ):
+                raise UiSnapshotError(
+                    "Native component evidence disagrees with the requested component"
+                )
+        return snapshot
     except (ValidationError, ValueError, TypeError):
         raise UiSnapshotError("UI snapshot schema/privacy/identity validation failed") from None
