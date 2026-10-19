@@ -172,7 +172,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // Given a patch with an invalid member, even after a valid queue edit.
             int queue = _material.renderQueue;
-            int materialCount = Resources.FindObjectsOfTypeAll<Material>().Length;
+            int materialCount = UnityEngine.Resources.FindObjectsOfTypeAll<Material>().Length;
             // When instance editing is requested.
             var result = ToJObject(ManageMaterial.HandleCommand(Request("set_render_state", "instance", JObject.Parse(json))));
             // Then validation rejects the entire patch before creating or assigning anything.
@@ -180,7 +180,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreSame(_material, _renderer.sharedMaterials[1]);
             Assert.AreSame(_material, _peerRenderer.sharedMaterial);
             Assert.AreEqual(queue, _material.renderQueue);
-            Assert.AreEqual(materialCount, Resources.FindObjectsOfTypeAll<Material>().Length);
+            Assert.AreEqual(materialCount, UnityEngine.Resources.FindObjectsOfTypeAll<Material>().Length);
         }
 
         [TestCase(null)]
