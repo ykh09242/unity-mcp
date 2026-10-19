@@ -353,6 +353,7 @@ class TelemetryCollector:
         self._queue: "queue.Queue[TelemetryRecord]" = queue.Queue(maxsize=1000)
         self._shutdown: bool = False
         self._worker: threading.Thread | None = None
+        self._http_client = None
         if not self.config.enabled:
             return
         # Load persistent data before starting worker so first events have UUID
@@ -451,22 +452,28 @@ class TelemetryCollector:
             logger.debug(f"Telemetry queue full; dropping {record.record_type}")
 
     def _worker_loop(self):
-        """Background worker that serializes telemetry sends."""
-        while not self._shutdown:
+        """Serialize sends and own one lazy HTTP client until the worker exits."""
+        with contextlib.ExitStack() as resources:
             try:
-                rec = self._queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            try:
-                # Run sender directly; do not reuse caller context/thread-locals
-                self._send_telemetry(rec)
-            except Exception:
-                logger.debug("Telemetry worker send failed", exc_info=True)
+                while not self._shutdown:
+                    try:
+                        rec = self._queue.get(timeout=0.5)
+                    except queue.Empty:
+                        continue
+                    try:
+                        if httpx and self._http_client is None:
+                            self._http_client = resources.enter_context(
+                                httpx.Client(timeout=self.config.timeout)
+                            )
+                        self._send_telemetry(rec)
+                    except Exception:
+                        logger.debug("Telemetry worker send failed", exc_info=True)
+                    finally:
+                        with contextlib.suppress(Exception):
+                            self._queue.task_done()
+                        del rec
             finally:
-                with contextlib.suppress(Exception):
-                    self._queue.task_done()
-                # Do not keep the completed record while the next queue read is idle.
-                del rec
+                self._http_client = None
 
     def shutdown(self):
         """Shutdown the telemetry collector and worker thread."""
@@ -504,7 +511,12 @@ class TelemetryCollector:
 
             # Prefer httpx when available; otherwise fall back to urllib
             if httpx:
-                with httpx.Client(timeout=self.config.timeout) as client:
+                scope = (
+                    contextlib.nullcontext(self._http_client)
+                    if self._http_client is not None
+                    else httpx.Client(timeout=self.config.timeout)
+                )
+                with scope as client:
                     # Re-validate endpoint at send time to handle dynamic changes
                     endpoint = self.config._validated_endpoint(
                         self.config.endpoint, self.config.default_endpoint
