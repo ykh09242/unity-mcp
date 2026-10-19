@@ -42,4 +42,4 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`refresh_unity`](./refresh_unity.md)** — Request a Unity asset database refresh and optionally a script compilation.
 - **[`script_apply_edits`](./script_apply_edits.md)** — Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text.
 - **[`set_active_instance`](./set_active_instance.md)** — Set the active Unity instance for this client/session.
-- **[`validate_script`](./validate_script.md)** — Validate a C# script and return diagnostics.
+- **[`validate_script`](./validate_script.md)** — Validate a C# script and report diagnostics, the effective validation engine, and context limitations.

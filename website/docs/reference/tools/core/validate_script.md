@@ -1,7 +1,7 @@
 ---
 title: validate_script
 sidebar_label: validate_script
-description: "Validate a C# script and return diagnostics."
+description: "Validate a C# script and report diagnostics, the effective validation engine, and context limitations."
 ---
 
 # `validate_script`
@@ -12,14 +12,14 @@ description: "Validate a C# script and return diagnostics."
 
 ## Description
 
-Validate a C# script and return diagnostics.
+Validate a C# script and report diagnostics, the effective validation engine, and context limitations. This does not trigger Unity project compilation.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `uri` | `str` | yes | URI of the script to validate under Assets/ directory, mcpforunity://path/Assets/... or file://... or Assets/... |
-| `level` | `Literal['basic', 'standard']` | — | Validation level |
+| `level` | `Literal['basic', 'standard']` | — | basic checks structure; standard adds available compiler syntax and heuristic Unity rules. See returned validation capabilities. |
 | `include_diagnostics` | `bool` | — | Include full diagnostics and summary |
 
 ## Returns
