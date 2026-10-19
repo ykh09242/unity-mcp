@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import ntpath
 
 import pytest
 
@@ -109,3 +110,22 @@ def test_relative_override_rejected_independently_of_working_directory(
         with pytest.raises(ValueError, match="absolute"):
             resolve_log_dir(env={"UNITY_MCP_LOG_DIR": override})
     assert list(first.iterdir()) == list(second.iterdir()) == []
+
+
+@pytest.mark.parametrize("override", [r"\logs", "/logs"])
+def test_windows_drive_relative_root_is_rejected_on_legacy_python(monkeypatch, override):
+    # Python 3.11/3.12 treated a single Windows slash as absolute. Emulate that
+    # documented runtime contract so current Python also exercises the regression.
+    original = ntpath.isabs
+    monkeypatch.setattr(
+        ntpath,
+        "isabs",
+        lambda value: os.fspath(value).startswith(("/", "\\")) or original(value),
+    )
+    with pytest.raises(ValueError, match="absolute"):
+        resolve_log_dir(platform="win32", env={"UNITY_MCP_LOG_DIR": override})
+
+
+@pytest.mark.parametrize("override", [r"C:\logs", "C:/logs", r"\\server\share\logs"])
+def test_windows_fully_qualified_override_remains_supported(override):
+    assert resolve_log_dir(platform="win32", env={"UNITY_MCP_LOG_DIR": override}) == override

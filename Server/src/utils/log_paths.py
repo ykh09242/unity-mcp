@@ -12,7 +12,7 @@ UNITY_MCP_LOG_DIR overrides all of the above and must be absolute after tilde ex
 from __future__ import annotations
 
 import os
-import ntpath
+from pathlib import PureWindowsPath
 import posixpath
 import sys
 from collections.abc import Mapping
@@ -32,8 +32,14 @@ def resolve_log_dir(
     override = env.get("UNITY_MCP_LOG_DIR")
     if override:
         resolved = os.path.expanduser(override)
-        path_api = ntpath if platform == "win32" else posixpath
-        if not path_api.isabs(resolved) and not os.path.isabs(resolved):
+        # A Windows root without a drive depends on the launcher's current drive.
+        # ntpath.isabs accepted those paths before Python 3.13.
+        if platform == "win32":
+            windows_path = PureWindowsPath(resolved)
+            absolute = bool(windows_path.drive and windows_path.root)
+        else:
+            absolute = posixpath.isabs(resolved) or os.path.isabs(resolved)
+        if not absolute:
             raise ValueError("UNITY_MCP_LOG_DIR must be an absolute path")
         return resolved
 
