@@ -25,7 +25,8 @@ MAX_PIXEL_FRAMES: Final = 2_000_000_000
         "capabilities reports support. Frames carry actual capture timestamps (variable frame rate); "
         "status reports actual frames and skipped sample slots. Output paths are local to the Unity host, "
         "inside project Captures/Recordings, with no overwrite or inline base64. Interrupted/failed jobs "
-        "discard partial video. Resolution is scaled to width/height (aspect ratio differences stretch). "
+        "discard partial video. aspect_mode defaults to stretch; fit preserves the full source with "
+        "black padding and crop fills the output with a centered crop. "
         "Both encoded pixels and source plus encoded pixels have a 2 billion total pixel-frame budget."
     ),
     annotations=ToolAnnotations(title="Manage Recording", readOnlyHint=False, destructiveHint=True),
@@ -50,6 +51,10 @@ async def manage_recording(
     file_name: Annotated[
         str | None, "New plain filename, optionally ending in .mp4; generated if omitted."
     ] = None,
+    aspect_mode: Annotated[
+        Literal["stretch", "fit", "crop"],
+        "Resize policy: stretch (default), fit with black padding, or centered crop.",
+    ] = "stretch",
 ) -> dict[str, Any]:
     """Validate recording bounds and route one operation to the selected Unity instance."""
     params: dict[str, Any] = {"action": action}
@@ -91,6 +96,8 @@ async def manage_recording(
                 params["output_folder"] = output_folder
             if file_name is not None:
                 params["file_name"] = file_name
+            if aspect_mode != "stretch":
+                params["aspect_mode"] = aspect_mode
         case "status" | "stop":
             if job_id is None or not job_id.strip():
                 return {"success": False, "error": "job_id is required for recording status/stop."}
