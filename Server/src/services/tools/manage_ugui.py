@@ -18,6 +18,7 @@ from pydantic import (
 from typing_extensions import assert_never
 
 from models import MCPResponse
+from models.ugui_compound_creation import validate_compound_creation
 from models.ugui_device_profile_diagnostics import (
     DEVICE_PROFILES,
     DeviceProfiles,
@@ -40,6 +41,7 @@ UGUIAction = Literal[
     "ping",
     "get_hierarchy",
     "create",
+    "create_control",
     "set_rect",
     "set_layout",
     "set_text",
@@ -51,10 +53,13 @@ UGUIAction = Literal[
     "diagnose_raycast",
     "diagnose_device_profiles",
 ]
-ElementType = Literal["canvas", "panel", "image", "button", "text"]
+BasicElementType = Literal["canvas", "panel", "image", "button", "text"]
+ElementType = Literal[
+    "canvas", "panel", "image", "button", "text", "scroll_view", "toggle", "slider", "tmp_input"
+]
 _ACTIONS: Final = get_args(UGUIAction)
 _MUTATIONS: Final = frozenset(
-    {"create", "set_rect", "set_layout", "set_text", "set_canvas", "set_image"}
+    {"create", "create_control", "set_rect", "set_layout", "set_text", "set_canvas", "set_image"}
 )
 ResolutionDimension = Annotated[int, Field(strict=True, ge=64, le=8192)]
 ScreenCoordinate = Annotated[float, Field(strict=True, allow_inf_nan=False)]
@@ -868,10 +873,46 @@ async def manage_ugui(
 ) -> dict[str, JsonValue]:  # noqa: DICT_OK - existing MCP/Unity JSON response contract
     """Validate a request and dispatch it through the selected Unity transport.
 
+    create_control builds closed scroll_view/toggle/slider/tmp_input graphs in the active parent scene.
+    Its properties are variant-specific; text is literal and EventSystem defaults to preserve.
+
     The explicit parameters define the public MCP schema, which needs separate
     action-specific inputs rather than an opaque options object.
     """
     action_lower = action.strip().lower()
+    if action_lower == "create_control":
+        if (
+            max_nodes != 200
+            or allow_custom_filters is not False
+            or any(
+                value is not None
+                for value in (
+                    target,
+                    camera,
+                    max_depth,
+                    max_evaluations,
+                    max_characters,
+                    resolutions,
+                    device_profiles,
+                    minimum_touch_target_mm,
+                    screen_position,
+                )
+            )
+        ):
+            return {"success": False, "message": "invalid_compound_control_request"}
+        try:
+            params = validate_compound_creation(
+                parent, name, element_type, properties, include_inactive
+            )
+        except (ValueError, TypeError, RecursionError):
+            return {"success": False, "message": "invalid_compound_control_request"}
+        blocked = await preflight(ctx, requires_no_tests=True, wait_for_no_compile=True)
+        if blocked is not None:
+            return blocked.model_dump()
+        unity_instance = await get_unity_instance_from_context(ctx)
+        result = await send_mutation(ctx, unity_instance, "manage_ugui", params)
+        result = result.model_dump() if isinstance(result, MCPResponse) else result
+        return result if isinstance(result, dict) else {"success": False, "message": str(result)}
     if action_lower == "diagnose_device_profiles":
         if (
             screen_position is not None
@@ -962,7 +1003,7 @@ async def manage_ugui(
         action_lower.startswith("set_") or action_lower in ("get_hierarchy", "diagnose")
     ) and target is None:
         return {"success": False, "message": f"target is required for {action_lower}."}
-    if action_lower == "create" and element_type not in get_args(ElementType):
+    if action_lower == "create" and element_type not in get_args(BasicElementType):
         return {
             "success": False,
             "message": "element_type is required for create: canvas, panel, image, button, or text.",
