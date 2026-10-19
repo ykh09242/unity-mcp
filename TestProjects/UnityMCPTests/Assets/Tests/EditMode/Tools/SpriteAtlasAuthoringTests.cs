@@ -29,6 +29,11 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
+#if !UNITY_2022_1_OR_NEWER
+            Assert.Ignore(
+                "SpriteAtlas V2 importer authoring requires Unity2022.1 or newer; the separate compatibility fixture covers older-Editor capability and prewrite refusal."
+            );
+#endif
             oldMode = EditorSettings.spritePackerMode;
             modeCaptured = true;
             EditorSettings.spritePackerMode = SpritePackerMode.SpriteAtlasV2;
@@ -180,6 +185,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void VariantAndPlatformSettings_PersistThroughNativeImport()
         {
+#if UNITY_2022_1_OR_NEWER
             // Given an explicit master reference and revision.
             var master = Create();
             var properties = new JObject
@@ -210,6 +216,9 @@ namespace MCPForUnityTests.Editor.Tools
             var packed = Data(Send("pack", variantPath, request));
             Assert.Greater(packed.Value<int>("packed_sprite_count"), 0);
             Assert.AreEqual(2, ((JArray)packed["packed_atlases"]).Count, "Variant preview declares both its master and variant scope.");
+#else
+            Assert.Ignore("This native V2 importer assertion requires the public Unity2022.1 or newer settings API.");
+#endif
         }
 
         [Test]
@@ -238,6 +247,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void ExternalWriterRevisionDrift_RejectsBeforeMutation()
         {
+#if UNITY_2022_1_OR_NEWER
             // Given a stale identity/revision and an external native importer write.
             var before = Create();
             var importer = (SpriteAtlasImporter)AssetImporter.GetAtPath(atlasPath);
@@ -253,6 +263,9 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Full(atlasPath) + ".meta"));
             CollectionAssert.AreEqual(source, File.ReadAllBytes(Full(atlasPath)));
             Assert.AreEqual(3, ((SpriteAtlasImporter)AssetImporter.GetAtPath(atlasPath)).textureSettings.anisoLevel);
+#else
+            Assert.Ignore("This native V2 importer assertion requires the public Unity2022.1 or newer settings API.");
+#endif
         }
 
         [TestCase("{include_in_build:true,packing:{padding:3}}")]
