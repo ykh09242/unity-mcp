@@ -12,13 +12,13 @@ description: "Performs CRUD operations on Unity scenes."
 
 ## Description
 
-Performs CRUD operations on Unity scenes. Read-only actions: get_hierarchy, get_active, get_build_settings, get_loaded_scenes, scene_view_frame. Modifying actions: create (with optional template), load (with optional additive flag), save, close_scene, set_active_scene, move_to_scene, validate (with optional auto_repair). For build settings management (add/remove/enable scenes), use manage_build(action='scenes'). For screenshots, use manage_camera (screenshot, screenshot_multiview actions).
+Performs CRUD operations on Unity scenes. Read-only validate_references pages broken serialized PPtrs in active_scene/loaded_scenes or an explicit prefab/scriptable_object asset; page_size<=100, max_objects<=4096, max_work<=1000000. Ordinary nulls are excluded; unavailable GUID/fileID evidence is explicit. Read-only actions: get_hierarchy, get_active, get_build_settings, get_loaded_scenes, scene_view_frame. Modifying actions: create (with optional template), load (with optional additive flag), save, close_scene, set_active_scene, move_to_scene, validate (with optional auto_repair). For build settings management (add/remove/enable scenes), use manage_build(action='scenes'). For screenshots, use manage_camera (screenshot, screenshot_multiview actions).
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['create', 'load', 'save', 'get_hierarchy', 'get_active', 'get_build_settings', 'scene_view_frame', 'close_scene', 'set_active_scene', 'get_loaded_scenes', 'move_to_scene', 'validate']` | yes | Perform CRUD operations on Unity scenes and control the Scene View camera. |
+| `action` | `Literal['create', 'load', 'save', 'get_hierarchy', 'get_active', 'get_build_settings', 'scene_view_frame', 'close_scene', 'set_active_scene', 'get_loaded_scenes', 'move_to_scene', 'validate', 'validate_references']` | yes | Perform CRUD operations on Unity scenes and control the Scene View camera. |
 | `name` | `str \| None` | — | Scene name. |
 | `path` | `str \| None` | — | Scene path, under Assets/ or Packages/. A bare path is treated as relative to Assets/. |
 | `build_index` | `int \| str \| None` | — | Unity build index (quote as string, e.g., '0'). |
@@ -37,6 +37,11 @@ Performs CRUD operations on Unity scenes. Read-only actions: get_hierarchy, get_
 | `additive` | `bool \| str \| None` | — | For load: true to open scene additively (keeps current scene). |
 | `template` | `str \| None` | — | For create: scene template ('empty', 'default', '3d_basic', '2d_basic'). Omit for empty scene. |
 | `auto_repair` | `bool \| str \| None` | — | For validate: true to auto-fix missing scripts (undoable). |
+| `reference_scope` | `Literal['active_scene', 'loaded_scenes', 'prefab', 'scriptable_object'] \| None` | — | validate_references only; loaded scopes never open scenes. |
+| `max_objects` | `int \| str \| None` | — | validate_references: maximum 1-4096 owners/objects, default 1024. |
+| `max_work` | `int \| str \| None` | — | validate_references: maximum 1-1000000 traversal/property steps, default 100000. |
+| `page_number` | `int \| str \| None` | — | validate_references: 1-based page, maximum page_size 100. |
+| `reference_revision` | `str \| None` | — | validate_references: refuse if the repeated observation has drifted. |
 
 ## Returns
 

@@ -12,7 +12,7 @@ description: "Performs asset operations (import, create, modify, delete, etc.) i
 
 ## Description
 
-Performs asset operations (import, create, modify, delete, etc.) in Unity. Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase assignments, not built bundle files; use bundle_name and pages of at most 100.
+Performs asset operations (import, create, modify, delete, etc.) in Unity. Read-only get_dependencies/get_reverse_references/preview_move/preview_delete use bounded AssetDatabase references, explicit scan_root, work/assets budgets and pages up to 100. reference_revision rechecks observations and optionally guards move/delete using matching scan options. String/custom-loader/Addressables references are not comprehensively discovered. Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase assignments, not built bundle files; use bundle_name and pages of at most 100.
 
 Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep `generate_preview=false` (previews can add large base64 blobs). Opt-in metadata_only search avoids explicit object/preview loads and returns a short-lived search_snapshot for reusable pages; keep query, scope, date and page_size unchanged. Label actions get/set/add/remove support 1-32 targets; mutations require observed revisions, are sequential rather than atomic, and never automatically retry an uncertain write.
 
@@ -20,7 +20,7 @@ Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_n
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['import', 'create', 'modify', 'delete', 'duplicate', 'move', 'rename', 'search', 'get_info', 'create_folder', 'get_components', 'list_asset_bundles', 'get_bundle_assets', 'get_bundle_dependencies', 'get_labels', 'set_labels', 'add_labels', 'remove_labels']` | yes | Perform CRUD operations on assets. |
+| `action` | `Literal['import', 'create', 'modify', 'delete', 'duplicate', 'move', 'rename', 'search', 'get_info', 'create_folder', 'get_components', 'list_asset_bundles', 'get_bundle_assets', 'get_bundle_dependencies', 'get_dependencies', 'get_reverse_references', 'preview_move', 'preview_delete', 'get_labels', 'set_labels', 'add_labels', 'remove_labels']` | yes | Perform CRUD operations on assets. |
 | `path` | `str \| None` | — | Asset path required for asset operations; search defaults to Assets. Ignored for bundle assignment inspection. |
 | `asset_type` | `str \| None` | — | Asset type (e.g., 'Material', 'Folder') - required for 'create'. Note: For ScriptableObjects, use manage_scriptable_object. |
 | `properties` | `dict[str, Any] \| str \| None` | — | Dictionary of properties for 'create'/'modify'. Keys are property names, values are property values. |
@@ -38,6 +38,10 @@ Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_n
 | `labels` | `list[str] \| None` | — | Exact labels; set replaces, empty set clears. |
 | `label_targets` | `list[AssetLabelTarget] \| None` | — | Common-operation batch; each mutation row requires revision. |
 | `label_revision` | `str \| None` | — | Opaque revision from get_labels for a single-target mutation. |
+| `scan_root` | `str \| None` | — | Reference actions: candidate/dependency folder (Assets by default). |
+| `max_assets` | `int \| str \| None` | — | Reference actions: at most 1-4096 candidate/visited assets; default 1024. |
+| `max_work` | `int \| str \| None` | — | Reference actions: at most 1-100000 node/edge work units; default 10000. |
+| `reference_revision` | `str \| None` | — | Recheck the same bounded read/preview or guard move/delete immediately before mutation. |
 
 ## Returns
 
