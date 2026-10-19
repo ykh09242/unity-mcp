@@ -1,4 +1,7 @@
+import json
 from typing import Annotated, Any, Literal
+
+from pydantic import JsonValue
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -20,6 +23,11 @@ ANIMATOR_ACTIONS = [
 ]
 
 CONTROLLER_ACTIONS = [
+    "controller_get_graph",
+    "controller_modify_state",
+    "controller_delete_state",
+    "controller_modify_transition",
+    "controller_delete_transition",
     "controller_create",
     "controller_add_state",
     "controller_add_transition",
@@ -35,6 +43,10 @@ CONTROLLER_ACTIONS = [
 ]
 
 CLIP_ACTIONS = [
+    "clip_get_curves",
+    "clip_get_curve",
+    "clip_replace_curve",
+    "clip_delete_curve",
     "clip_create",
     "clip_get_info",
     "clip_add_curve",
@@ -51,6 +63,75 @@ ALL_ACTIONS = (
 )  # Not loaded in the MCP context, but will return this in the error response (1 Shot)
 
 
+_ROUND_TRIPS = {
+    "clip_get_curves",
+    "clip_get_curve",
+    "clip_replace_curve",
+    "clip_delete_curve",
+    "controller_get_graph",
+    "controller_modify_state",
+    "controller_delete_state",
+    "controller_modify_transition",
+    "controller_delete_transition",
+}
+
+
+def _round_trip_error(action: str, properties: dict[str, JsonValue] | None) -> str | None:
+    """Check bounded request envelopes; Unity owns exact asset and field validation."""
+    if action not in _ROUND_TRIPS:
+        return None
+    values = properties or {}
+    try:
+        if len(json.dumps(values, allow_nan=False, ensure_ascii=True)) > 1_048_576:
+            return "Animation round-trip request exceeds 1 MiB."
+    except (ValueError, TypeError):
+        return "Animation round trips require finite JSON-compatible values."
+    offset = values.get("offset", 0)
+    size = values.get("page_size", values.get("pageSize", 50))
+    if type(offset) is not int or not 0 <= offset <= 16384:
+        return "offset must be a nonnegative integer at most 16384."
+    if type(size) is not int or not 1 <= size <= 100:
+        return "page_size must be an integer between 1 and 100."
+    revision = values.get("expected_revision", values.get("expectedRevision"))
+    write = action in {
+        "clip_replace_curve",
+        "clip_delete_curve",
+        "controller_modify_state",
+        "controller_delete_state",
+        "controller_modify_transition",
+        "controller_delete_transition",
+    }
+    if (write or offset > 0) and (
+        type(revision) is not str or not revision or len(revision) > 1024
+    ):
+        return "Writes and continuation pages require expected_revision from a fresh read."
+    selectors = {
+        "clip_get_curve": ("binding_id", "bindingId"),
+        "clip_replace_curve": ("binding_id", "bindingId"),
+        "clip_delete_curve": ("binding_id", "bindingId"),
+        "controller_modify_state": ("state_id", "stateId"),
+        "controller_delete_state": ("state_id", "stateId"),
+        "controller_modify_transition": ("transition_id", "transitionId"),
+        "controller_delete_transition": ("transition_id", "transitionId"),
+    }
+    if action in selectors:
+        snake, camel = selectors[action]
+        identity = values.get(snake, values.get(camel))
+        if type(identity) is not str or not identity or len(identity) > 1024:
+            return f"{snake} must be an exact identity string from a fresh read; names are not selectors."
+        if snake in values and camel in values and values[snake] != values[camel]:
+            return f"Conflicting aliases for {snake}."
+    if action == "clip_replace_curve":
+        keys = values.get("keys")
+        if type(keys) is not list or not 1 <= len(keys) <= 1024:
+            return "keys must contain 1-1024 replacements; use clip_delete_curve to remove a curve."
+    if action in {"controller_modify_state", "controller_modify_transition"}:
+        changes = values.get("changes")
+        if type(changes) is not dict or not 1 <= len(changes) <= 16:
+            return "changes must contain 1-16 supported fields."
+    return None
+
+
 @mcp_for_unity_tool(
     group="animation",
     description=(
@@ -58,7 +139,20 @@ ALL_ACTIONS = (
         "Action prefixes: animator_* (play, crossfade, set parameters, get info), "
         "controller_* (create AnimatorControllers, add states/transitions/parameters), "
         "clip_* (create clips, add keyframe curves, assign to GameObjects). "
-        "Action-specific parameters go in `properties` (keys match ManageAnimation.cs)."
+        "Action-specific parameters go in `properties` (keys match ManageAnimation.cs). "
+        "Round trips: clip_get_curves lists binding_id/kind/path/property/type; clip_get_curve returns "
+        "paged full float keys (tangents, weights, tangent modes) or exact asset object-reference keys "
+        "{guid,file_id}. clip_replace_curve replaces one existing binding with 1-1024 ordered keys; "
+        "clip_delete_curve removes that binding. Both require binding_id and expected_revision. "
+        "clip_file_id selects an exact clip subasset; imported clips are read-only. "
+        "controller_get_graph pages nested state machines, states and transition identities. "
+        "controller_modify_state/delete_state require state_id; controller_modify_transition/delete_transition "
+        "require transition_id. Writes require expected_revision and modify uses changes. State changes "
+        "support name/speed/exact motion refs; transition changes support duration/exit_time/offset/flags, "
+        "conditions and exact destination_state_id. State deletion refuses default or referenced states. "
+        "Pages use offset/page_size (1-100), with expected_revision required after offset zero. "
+        "New actions are bounded to contained Assets sources, support native Undo and preserve GUID/file IDs; "
+        "no arbitrary callback/filesystem transaction is promised."
     ),
     annotations=ToolAnnotations(
         title="Manage Animation",
@@ -114,6 +208,10 @@ async def manage_animation(
     properties, properties_error = normalize_properties(properties)
     if properties_error:
         return {"success": False, "message": properties_error}
+
+    round_trip_error = _round_trip_error(action_normalized, properties)
+    if round_trip_error:
+        return {"success": False, "message": round_trip_error}
 
     unity_instance = await get_unity_instance_from_context(ctx)
 
