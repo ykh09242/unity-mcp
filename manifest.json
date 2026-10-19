@@ -63,12 +63,12 @@
       "description": "Delete C# scripts"
     },
     {
-      "name": "execute_custom_tool",
-      "description": "Execute custom Unity Editor tools registered by the project"
-    },
-    {
       "name": "execute_code",
       "description": "Execute arbitrary C# code inside the Unity Editor with access to all Unity APIs"
+    },
+    {
+      "name": "execute_custom_tool",
+      "description": "Execute custom Unity Editor tools registered by the project"
     },
     {
       "name": "execute_menu_item",
@@ -143,6 +143,10 @@
       "description": "Manage player builds, platforms, settings and batch builds; inspect and clean restricted build output"
     },
     {
+      "name": "manage_camera",
+      "description": "Manage cameras (Unity Camera + Cinemachine) with presets, pipelines, and blending"
+    },
+    {
       "name": "manage_components",
       "description": "Add, remove, and configure GameObject components"
     },
@@ -153,10 +157,6 @@
     {
       "name": "manage_gameobject",
       "description": "Create, modify, transform, and delete GameObjects"
-    },
-    {
-      "name": "manage_camera",
-      "description": "Manage cameras (Unity Camera + Cinemachine) with presets, pipelines, and blending"
     },
     {
       "name": "manage_graphics",
@@ -237,6 +237,14 @@
     {
       "name": "manage_sprite",
       "description": "Slice 2D sprite sheets and build AnimationClips and an AnimatorController from the frames"
+    },
+    {
+      "name": "manage_sprite_atlas",
+      "description": "Inspect, author and explicitly pack bounded SpriteAtlas V2 assets with identity and revision guards"
+    },
+    {
+      "name": "manage_terrain",
+      "description": "Inspect and edit bounded Terrain regions, tree indices and layer references with identity and revision guards"
     },
     {
       "name": "manage_texture",

@@ -38,6 +38,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_scene_edits`](./manage_scene_edits.md)** — Preview or apply 1-64 allowlisted native Transform, BoxCollider, SphereCollider, Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene.
 - **[`manage_script`](./manage_script.md)** — Compatibility router for legacy script operations.
 - **[`manage_script_capabilities`](./manage_script_capabilities.md)** — Get manage_script capabilities (supported ops, limits, and guards).
+- **[`manage_terrain`](./manage_terrain.md)** — Inspect and edit existing TerrainData with bounded region/index requests. get_info lists identities/resolutions/layers/prototypes; get_region/set_region use heights, alphamaps, holes (true=surface) or details with exact [y][x] arrays.
 - **[`manage_tools`](./manage_tools.md)** — Manage which tool groups are visible in this session.
 - **[`read_console`](./read_console.md)** — Gets messages from or clears the Unity Editor console.
 - **[`refresh_unity`](./refresh_unity.md)** — Request a Unity asset database refresh and optionally a script compilation.

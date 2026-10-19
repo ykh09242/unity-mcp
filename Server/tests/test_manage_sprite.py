@@ -184,13 +184,15 @@ class TestSpriteImageContent:
         assert result == original
 
 
-def test_actions_are_the_documented_five():
+def test_actions_are_the_documented_seven():
     assert set(VALID_ACTIONS) == {
         "get_info",
         "slice_sheet",
         "setup_clips",
         "setup_controller",
         "full_setup",
+        "get_geometry",
+        "set_geometry",
     }
 
 
@@ -304,6 +306,11 @@ class TestParameterForwarding:
             "scene_target": "Hero",
             "page_size": 1,
             "cursor": 1,
+            "guid": "a" * 32,
+            "sprite_id": "b" * 32,
+            "file_id": "21300000",
+            "expected_revision": "fresh",
+            "geometry": {"pivot": [0, 1]},
         }
         optional = [
             name
@@ -455,6 +462,30 @@ class TestSpriteCLICommands:
         sent = set()
         for args in (
             ["info", "Assets/a.png", "--page-size", "1", "--cursor", "1"],
+            [
+                "get-geometry",
+                "Assets/a.png",
+                "--page-size",
+                "1",
+                "--cursor",
+                "1",
+                "--expected-revision",
+                "observed-revision",
+            ],
+            [
+                "set-geometry",
+                "Assets/a.png",
+                "--guid",
+                "a" * 32,
+                "--sprite-id",
+                "b" * 32,
+                "--file-id",
+                "21300000",
+                "--expected-revision",
+                "observed-revision",
+                "--geometry",
+                '{"pivot":[0,1]}',
+            ],
             ["setup-controller", "Assets/a.controller", "--clips", "[]", "--overwrite"],
             [
                 "full-setup",

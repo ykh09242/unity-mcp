@@ -40,6 +40,7 @@ VFX_ACTIONS = [
     "vfx_list_assets",
     # Runtime control
     "vfx_get_info",
+    "vfx_get_exposed_properties",
     "vfx_set_float",
     "vfx_set_int",
     "vfx_set_bool",
@@ -95,7 +96,9 @@ ALL_ACTIONS = ["ping"] + PARTICLE_ACTIONS + VFX_ACTIONS + LINE_ACTIONS + TRAIL_A
     description=(
         "Manage Unity VFX components (ParticleSystem, VisualEffect, LineRenderer, TrailRenderer). "
         "Action prefixes: particle_*, vfx_*, line_*, trail_*. "
-        "Action-specific parameters go in `properties` (keys match ManageVFX.cs)."
+        "Action-specific parameters go in `properties` (keys match ManageVFX.cs). "
+        "vfx_get_exposed_properties reads bounded exposed schema/current values with exact parameter filter, page_size/page_number, max_curve_keys/max_gradient_keys/max_characters. "
+        "Texture values are identities, curves/gradients are complete or explicitly unavailable under budgets; override state is unavailable. No simulation or writes."
     ),
     annotations=ToolAnnotations(
         title="Manage VFX",
@@ -157,6 +160,34 @@ async def manage_vfx(
     properties, properties_error = normalize_properties(properties)
     if properties_error:
         return {"success": False, "message": properties_error}
+
+    if action_normalized == "vfx_get_exposed_properties":
+        values = properties or {}
+        bounds = {
+            "page_size": (1, 200),
+            "page_number": (1, 1000000),
+            "max_curve_keys": (0, 256),
+            "max_gradient_keys": (0, 32),
+            "max_characters": (1024, 131072),
+        }
+        if any(key not in bounds and key != "parameter" for key in values):
+            return {"success": False, "message": "Unsupported exposed-property read parameter."}
+        for key, value in values.items():
+            if key == "parameter":
+                if type(value) is not str or not value or len(value) > 1024:
+                    return {
+                        "success": False,
+                        "message": "parameter must be an exact nonempty name up to 1024 characters.",
+                    }
+            else:
+                minimum, maximum = bounds[key]
+                if type(value) is not int or not minimum <= value <= maximum:
+                    return {"success": False, "message": f"{key} is outside its integer bounds."}
+        if component_index not in (None, 0):
+            return {
+                "success": False,
+                "message": "Exposed reads and existing VFX setters support component_index 0 only.",
+            }
 
     unity_instance = await get_unity_instance_from_context(ctx)
 

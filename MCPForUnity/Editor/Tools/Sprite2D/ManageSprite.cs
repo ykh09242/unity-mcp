@@ -6,7 +6,16 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
     [McpForUnityTool("manage_sprite", AutoRegister = false, Group = "animation")]
     public static class ManageSprite
     {
-        private static readonly string[] ValidActions = { "get_info", "slice_sheet", "setup_clips", "setup_controller", "full_setup" };
+        private static readonly string[] ValidActions =
+        {
+            "get_info",
+            "slice_sheet",
+            "setup_clips",
+            "setup_controller",
+            "full_setup",
+            "get_geometry",
+            "set_geometry",
+        };
 
         public static object HandleCommand(JObject @params)
         {
@@ -20,6 +29,10 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             {
                 switch (action)
                 {
+                    case "get_geometry":
+                        return SpriteGeometry.Handle(@params, false, diagnostics);
+                    case "set_geometry":
+                        return SpriteGeometry.Handle(@params, true, diagnostics);
                     case "get_info":
                         return SpriteImportSetup.GetInfo(@params, diagnostics);
 

@@ -181,9 +181,17 @@ _ACTIONS: Final = {
         Permission.READ: _names("capabilities status"),
         Permission.RUN: _names("start stop"),
     },
+    "manage_sprite_atlas": {
+        Permission.READ: _names("capabilities read"),
+        Permission.EDIT: _names("create configure add_packables remove_packables pack"),
+    },
+    "manage_terrain": {
+        Permission.READ: _names("get_info get_region get_trees get_layer"),
+        Permission.EDIT: _names("set_region set_trees set_layer"),
+    },
     "manage_sprite": {
-        Permission.READ: _names("get_info"),
-        Permission.EDIT: _names("slice_sheet setup_clips setup_controller full_setup"),
+        Permission.READ: _names("get_info get_geometry"),
+        Permission.EDIT: _names("slice_sheet setup_clips setup_controller full_setup set_geometry"),
     },
     "manage_scene_edits": {
         Permission.READ: _names("preview preview_structure"),
@@ -235,10 +243,10 @@ _ACTIONS: Final = {
     },
     "manage_profiler": {
         Permission.READ: _names(
-            "ping profiler_status get_frame_timing get_counters get_object_memory memory_list_snapshots memory_compare_snapshots frame_debugger_get_events"
+            "ping profiler_status get_frame_timing get_counters get_object_memory memory_list_snapshots memory_compare_snapshots frame_debugger_get_events window_status window_result"
         ),
         Permission.RUN: _names(
-            "profiler_start profiler_stop profiler_set_areas memory_take_snapshot frame_debugger_enable frame_debugger_disable"
+            "profiler_start profiler_stop profiler_set_areas memory_take_snapshot frame_debugger_enable frame_debugger_disable window_start window_cancel"
         ),
     },
     "blender_bridge": {
@@ -284,14 +292,14 @@ _ACTIONS: Final = {
         ),
     },
     "manage_probuilder": {
-        Permission.READ: _names("ping get_mesh_info validate_mesh"),
+        Permission.READ: _names("ping get_mesh_info validate_mesh get_topology"),
         Permission.EDIT: _names(
             "create_shape create_poly_shape extrude_faces extrude_edges bevel_edges subdivide delete_faces bridge_edges connect_elements detach_faces flip_normals merge_faces combine_meshes merge_objects duplicate_and_flip create_polygon merge_vertices weld_vertices split_vertices move_vertices insert_vertex append_vertices_to_edge select_faces set_face_material set_face_color set_face_uvs convert_to_probuilder set_smoothing auto_smooth center_pivot freeze_transform set_pivot repair_mesh"
         ),
     },
     "manage_vfx": {
         Permission.READ: _names(
-            "ping particle_get_info vfx_list_templates vfx_list_assets vfx_get_info line_get_info trail_get_info"
+            "ping particle_get_info vfx_list_templates vfx_list_assets vfx_get_info vfx_get_exposed_properties line_get_info trail_get_info"
         ),
         Permission.RUN: _names(
             "particle_play particle_stop particle_pause particle_restart particle_clear vfx_send_event vfx_play vfx_stop vfx_pause vfx_reinit vfx_set_playback_speed vfx_set_seed trail_emit"
@@ -322,7 +330,7 @@ _CANONICAL_ALIASES: Final = {
     "execute_menu_item_observed": "execute_menu_item",
 }
 _NATIVE_COMMANDS: Final = _names(
-    "batch_execute batch_validate blender_bridge cancel_test_job capture_ui_snapshot execute_code execute_menu_item execute_menu_item_observed export_test_job find_gameobjects generate_audio generate_image generate_model get_active_tool get_cameras get_compile_job get_editor_state get_gameobject get_gameobject_by_handle_v2 get_gameobject_component get_gameobject_component_selected get_gameobject_components get_layers get_menu_items get_prefab_stage get_project_info get_renderer_features get_rendering_stats get_selection get_tags get_test_job get_tests get_tests_for_mode get_tool_states get_volumes get_windows import_model import_model_file inspect_menu_item inspect_serialized_object_v1 manage_animation manage_asset manage_audio manage_build manage_camera manage_components manage_components_selected manage_editor manage_gameobject manage_graphics manage_input manage_material manage_navigation manage_object_handles_v2 manage_packages manage_physics manage_play_scenario manage_prefabs manage_probuilder manage_profiler manage_recording manage_scenario_recording manage_scene manage_scene_edits manage_script manage_scriptable_object manage_shader manage_sprite manage_texture manage_ugui manage_ui manage_vfx ping read_console refresh_unity run_tests tail_console unity_reflect"
+    "batch_execute batch_validate blender_bridge cancel_test_job capture_ui_snapshot execute_code execute_menu_item execute_menu_item_observed export_test_job find_gameobjects generate_audio generate_image generate_model get_active_tool get_cameras get_compile_job get_editor_state get_gameobject get_gameobject_by_handle_v2 get_gameobject_component get_gameobject_component_selected get_gameobject_components get_layers get_menu_items get_prefab_stage get_project_info get_renderer_features get_rendering_stats get_selection get_tags get_test_job get_tests get_tests_for_mode get_tool_states get_volumes get_windows import_model import_model_file inspect_menu_item inspect_serialized_object_v1 manage_animation manage_asset manage_audio manage_build manage_camera manage_components manage_components_selected manage_editor manage_gameobject manage_graphics manage_input manage_material manage_navigation manage_object_handles_v2 manage_packages manage_physics manage_play_scenario manage_prefabs manage_probuilder manage_profiler manage_recording manage_scenario_recording manage_scene manage_scene_edits manage_script manage_scriptable_object manage_shader manage_sprite manage_sprite_atlas manage_terrain manage_texture manage_ugui manage_ui manage_vfx ping read_console refresh_unity run_tests tail_console unity_reflect"
 )
 _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"}
 _RESOURCE_PATHS: Final = _names(

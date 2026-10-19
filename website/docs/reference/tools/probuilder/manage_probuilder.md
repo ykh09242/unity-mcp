@@ -52,6 +52,7 @@ UV & MATERIALS:
 
 QUERY:
 - get_mesh_info: Get ProBuilder mesh details. Use include parameter to control detail level: 'summary' (default: counts, bounds, materials), 'faces' (+ face normals/centers/directions), 'edges' (+ edge vertex pairs), 'all' (everything). Each face includes direction ('top','bottom','front','back','left','right') for semantic selection.
+- get_topology: Complete local-space faces/edges/vertices pages. properties: kind, page_size (1-100), cursor and mesh_revision (required together for continuation). Native indices are valid for that revision. Indexed mutations accept optional mesh_revision and reject stale state before writes. Full scans and responses are bounded; oversized meshes return an explicit budget error.
 - convert_to_probuilder: Convert a standard Unity mesh into ProBuilder for editing.
 
 SMOOTHING:

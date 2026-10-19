@@ -12,6 +12,7 @@ from services.operation_permissions import (
 
 READ = frozenset({Permission.READ})
 EDIT = frozenset({Permission.EDIT})
+RUN = frozenset({Permission.RUN})
 COMPILE = frozenset({Permission.EDIT, Permission.RUN})
 
 CASES = [
@@ -20,6 +21,16 @@ CASES = [
         ("manage_audio", "diagnose get_routing read_import_settings", READ),
         ("manage_audio", "set_routing apply_import_settings", EDIT),
         ("manage_physics", "diagnose_pair", READ),
+        ("manage_profiler", "window_status window_result", READ),
+        ("manage_profiler", "window_start window_cancel", RUN),
+        ("manage_sprite_atlas", "capabilities read", READ),
+        ("manage_sprite_atlas", "create configure add_packables remove_packables pack", EDIT),
+        ("manage_terrain", "get_info get_region get_trees get_layer", READ),
+        ("manage_terrain", "set_region set_trees set_layer", EDIT),
+        ("manage_sprite", "get_geometry", READ),
+        ("manage_sprite", "set_geometry", EDIT),
+        ("manage_probuilder", "get_topology", READ),
+        ("manage_vfx", "vfx_get_exposed_properties", READ),
         ("manage_build", "report_history report compare_reports", READ),
         ("manage_animation", "clip_get_curves clip_get_curve controller_get_graph", READ),
         (
@@ -84,7 +95,9 @@ def test_public_change_set_alias_does_not_bypass_compile_permission(action, expe
         )
 
 
-@pytest.mark.parametrize("tool", ["manage_navigation", "script_change_set"])
+@pytest.mark.parametrize(
+    "tool", ["manage_navigation", "script_change_set", "manage_sprite_atlas", "manage_terrain"]
+)
 @pytest.mark.parametrize("action", [None, "", "unknown", False, 1, [], {}])
 def test_new_tool_unknown_or_malformed_action_is_not_admitted(tool, action):
     with pytest.raises(OperationPermissionError):

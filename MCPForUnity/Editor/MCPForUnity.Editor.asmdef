@@ -30,6 +30,11 @@
             "name": "com.unity.modules.ai",
             "expression": "0.0.0",
             "define": "MCP_FOR_UNITY_AI_MODULE"
+        },
+        {
+            "name": "com.unity.modules.terrain",
+            "expression": "0.0.0",
+            "define": "MCP_FOR_UNITY_TERRAIN"
         }
     ],
     "noEngineReferences": false

@@ -214,6 +214,7 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                 "set_face_color" => SetFaceColor,
                 "set_face_uvs" => SetFaceUVs,
                 "get_mesh_info" => GetMeshInfo,
+                "get_topology" => ProBuilderTopology.GetTopology,
                 "convert_to_probuilder" => ConvertToProBuilder,
                 "set_smoothing" => ProBuilderSmoothing.SetSmoothing,
                 "auto_smooth" => ProBuilderSmoothing.AutoSmooth,
@@ -231,6 +232,9 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
 
             try
             {
+                object guardError = ProBuilderTopology.CheckGuard(action.ToLowerInvariant(), @params);
+                if (guardError != null)
+                    return guardError;
                 return handler(@params);
             }
             catch (Exception ex)

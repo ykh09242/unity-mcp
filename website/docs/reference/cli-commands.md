@@ -3950,6 +3950,18 @@ Slice a sheet, then build its clips and controller in one step. Examples: unity-
 | --scene-target | text | optional | nargs=1 | — | — | Name of exactly one existing GameObject (inactive ones count) for --add-to-scene. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp sprite get-geometry`
+
+Read Sprite geometry and exact IDs; continuation requires the observed revision.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| path | text | required | nargs=1 | — | — |  |
+| --page-size | integer range: [1..100] | optional | nargs=1 | — | — |  |
+| --cursor | integer range: [0..4096] | optional | nargs=1 | — | — |  |
+| --expected-revision | text | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp sprite info`
 
 Show a sheet's import settings, size and slices. The tool also sends the sheet as a base64 image for a model to look at. The CLI leaves it out: the image is the file at PATH. Examples: unity-mcp sprite info Assets/Sprites/hero.png unity-mcp sprite info Assets/Sprites/atlas.png --cursor 512
@@ -3959,6 +3971,20 @@ Show a sheet's import settings, size and slices. The tool also sends the sheet a
 | path | text | required | nargs=1 | — | — |  |
 | --page-size | integer | optional | nargs=1 | — | — | Slices to list (1-4096, default 512). |
 | --cursor | integer | optional | nargs=1 | — | — | Slice index to start at; pass back next_cursor. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp sprite set-geometry`
+
+Change only supplied rect/pivot/border/render outlines using exact observed guards.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| path | text | required | nargs=1 | — | — |  |
+| --guid | text | required | nargs=1 | — | — |  |
+| --sprite-id | text | required | nargs=1 | — | — |  |
+| --file-id | text | required | nargs=1 | — | — |  |
+| --expected-revision | text | required | nargs=1 | — | — |  |
+| --geometry | text | required | nargs=1 | — | — | Geometry JSON object. Accepts @file or -/@- stdin. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp sprite setup-clips`

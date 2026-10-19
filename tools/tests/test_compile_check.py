@@ -1191,18 +1191,27 @@ def test_staged_assembly_contract_matches_owned_asmdefs() -> None:
         "expression": "0.0.0",
         "define": "MCP_FOR_UNITY_AI_MODULE",
     }
+    terrain_module = {
+        "name": "com.unity.modules.terrain",
+        "expression": "0.0.0",
+        "define": "MCP_FOR_UNITY_TERRAIN",
+    }
     assert tests["versionDefines"] == [ai_module]
-    assert ai_module in editor["versionDefines"]
+    assert editor["versionDefines"] == [
+        {"name": "com.unity.visualeffectgraph", "expression": "0.0.0", "define": "UNITY_VFX_GRAPH"},
+        ai_module,
+        terrain_module,
+    ]
     assert tests["includePlatforms"] == ["Editor"]
     assert tests["overrideReferences"]
     assert set(tests["precompiledReferences"]) == {"nunit.framework.dll", "Newtonsoft.Json.dll"}
-    assert {"UNITY_INCLUDE_TESTS", ai_module["define"]} <= set(
+    assert {"UNITY_INCLUDE_TESTS", ai_module["define"], terrain_module["define"]} <= set(
         (ROOT / "tools/compile-defines.txt").read_text(encoding="utf-8").splitlines()
     )
 
 
 @pytest.mark.parametrize("version", ["2021.3.45f2", "6000.0.69f1", "7000.0.0a7"])
-def test_owned_ai_module_version_define_reaches_staged_editor_and_test_compilation(
+def test_owned_module_version_defines_reach_staged_editor_and_test_compilation(
     harness: CompileHarness, staged_tests: tuple[Path, Path], version: str
 ) -> None:
     # Given the real owned assembly metadata and captured shared compilation defines.
@@ -1212,6 +1221,10 @@ def test_owned_ai_module_version_define_reaches_staged_editor_and_test_compilati
         "MCPForUnityTests.EditMode": Path(
             "TestProjects/UnityMCPTests/Assets/Tests/EditMode/MCPForUnityTests.Editor.asmdef"
         ),
+    }
+    expected_module_defines = {
+        "MCPForUnity.Editor": {"MCP_FOR_UNITY_AI_MODULE", "MCP_FOR_UNITY_TERRAIN"},
+        "MCPForUnityTests.EditMode": {"MCP_FOR_UNITY_AI_MODULE"},
     }
     for name, relative in definitions.items():
         destination = (
@@ -1227,16 +1240,17 @@ def test_owned_ai_module_version_define_reaches_staged_editor_and_test_compilati
     assert result.returncode == 0, result.stdout + result.stderr
     for name, relative in definitions.items():
         definition = json.loads((ROOT / relative).read_text(encoding="utf-8"))
-        module_defines = [
+        module_defines = {
             row["define"]
             for row in definition["versionDefines"]
-            if row["name"] == "com.unity.modules.ai"
-        ]
-        assert module_defines == ["MCP_FOR_UNITY_AI_MODULE"]
+            if row["name"].startswith("com.unity.modules.")
+        }
+        assert module_defines == expected_module_defines[name]
         for platform in ("win", "osx", "linux"):
             response = (harness.output / platform / f"{name}.rsp").read_text(encoding="utf-8")
             lines = response.splitlines()
-            assert lines.count(f"-define:{module_defines[0]}") == 1
+            for symbol in module_defines:
+                assert lines.count(f"-define:{symbol}") == 1, (name, platform, symbol)
             assert "-define:UNITY_INCLUDE_TESTS" in lines
             assert "-warnaserror+" in lines
 

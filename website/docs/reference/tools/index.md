@@ -12,10 +12,11 @@ description: Auto-generated catalog of every MCP for Unity tool, grouped by doma
 
 Every tool MCP for Unity exposes, generated directly from the Python `@mcp_for_unity_tool` registry under `Server/src/services/tools/`.
 
-## `animation` &nbsp; (2 tools)
+## `animation` &nbsp; (3 tools)
 Animator control, AnimationClip creation & 2D sprite-sheet animation
 - **[`manage_animation`](./animation/manage_animation.md)** — Manage Unity animation: Animator control and AnimationClip creation.
 - **[`manage_sprite`](./animation/manage_sprite.md)** — Slice 2D sprite sheets and build AnimationClips and an AnimatorController from the frames.
+- **[`manage_sprite_atlas`](./animation/manage_sprite_atlas.md)** — Inspect and explicitly author SpriteAtlas V2 Assets/*.spriteatlasv2 files.
 
 ## `asset_gen` &nbsp; (6 tools)
 AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-your-own-key)
@@ -26,7 +27,7 @@ AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-you
 - **[`import_model`](./asset_gen/import_model.md)** — Import 3D models from the Sketchfab marketplace into the Unity project.
 - **[`import_model_file`](./asset_gen/import_model_file.md)** — Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project.
 
-## `core` &nbsp; (37 tools)
+## `core` &nbsp; (38 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`batch_execute`](./core/batch_execute.md)** — Executes multiple MCP commands in a single batch for dramatically better performance.
@@ -58,6 +59,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_scene_edits`](./core/manage_scene_edits.md)** — Preview or apply 1-64 allowlisted native Transform, BoxCollider, SphereCollider, Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene.
 - **[`manage_script`](./core/manage_script.md)** — Compatibility router for legacy script operations.
 - **[`manage_script_capabilities`](./core/manage_script_capabilities.md)** — Get manage_script capabilities (supported ops, limits, and guards).
+- **[`manage_terrain`](./core/manage_terrain.md)** — Inspect and edit existing TerrainData with bounded region/index requests. get_info lists identities/resolutions/layers/prototypes; get_region/set_region use heights, alphamaps, holes (true=surface) or details with exact [y][x] arrays.
 - **[`manage_tools`](./core/manage_tools.md)** — Manage which tool groups are visible in this session.
 - **[`read_console`](./core/read_console.md)** — Gets messages from or clears the Unity Editor console.
 - **[`refresh_unity`](./core/refresh_unity.md)** — Request a Unity asset database refresh and optionally a script compilation.
