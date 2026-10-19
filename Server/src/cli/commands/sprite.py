@@ -1,5 +1,7 @@
 """Sprite CLI commands - slice sprite sheets and build 2D animation from them."""
 
+import json
+
 import click
 from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
@@ -23,6 +25,77 @@ def _clips(value: Optional[str]) -> Optional[list[Any]]:
 def sprite():
     """Sprite sheet operations - slice sheets, build clips and Animator controllers."""
     pass
+
+
+def _geometry_command(action: str, path: str, **values: Any) -> None:
+    """Reuse the frozen wrapper's strict geometry contract before CLI transport."""
+    from services.tools.manage_sprite import _geometry_error
+
+    if not path:
+        raise click.BadParameter("An asset path is required.", param_hint="PATH")
+    params = _params(action, path=path, **values)
+    try:
+        error = _geometry_error(action, values)
+    except (OverflowError, RecursionError) as exc:
+        raise click.BadParameter("Geometry exceeds supported numeric or nesting bounds.") from exc
+    if error:
+        raise click.BadParameter(error)
+    config = get_config()
+    result = run_command("manage_sprite", params, config)
+    click.echo(format_output(result, config.format))
+
+
+@sprite.command("get-geometry")
+@click.argument("path")
+@click.option("--page-size", type=click.IntRange(1, 100), default=None)
+@click.option("--cursor", type=click.IntRange(0, 4096), default=None)
+@click.option("--expected-revision", type=str, default=None)
+@handle_unity_errors
+def get_geometry(
+    path: str, page_size: int | None, cursor: int | None, expected_revision: str | None
+) -> None:
+    """Read Sprite geometry and exact IDs; continuation requires the observed revision."""
+    _geometry_command(
+        "get_geometry",
+        path,
+        page_size=page_size,
+        cursor=cursor,
+        expected_revision=expected_revision,
+    )
+
+
+@sprite.command("set-geometry")
+@click.argument("path")
+@click.option("--guid", type=str, required=True)
+@click.option("--sprite-id", type=str, required=True)
+@click.option("--file-id", type=str, required=True)
+@click.option("--expected-revision", type=str, required=True)
+@click.option(
+    "--geometry", required=True, help="Geometry JSON object. Accepts @file or -/@- stdin."
+)
+@handle_unity_errors
+def set_geometry(
+    path: str, guid: str, sprite_id: str, file_id: str, expected_revision: str, geometry: str
+) -> None:
+    """Change only supplied rect/pivot/border/render outlines using exact observed guards."""
+    geometry = admit_json_inputs(geometry=geometry)["geometry"]
+    if len(geometry.encode("utf-8")) > 262144:
+        raise click.BadParameter("Geometry JSON exceeds 256 KiB.", param_hint="--geometry")
+    try:
+        parsed = json.loads(geometry)
+    except (ValueError, RecursionError) as exc:
+        raise click.BadParameter(
+            "Geometry must be a JSON object.", param_hint="--geometry"
+        ) from exc
+    _geometry_command(
+        "set_geometry",
+        path,
+        guid=guid,
+        sprite_id=sprite_id,
+        file_id=file_id,
+        expected_revision=expected_revision,
+        geometry=parsed,
+    )
 
 
 @sprite.command("info")

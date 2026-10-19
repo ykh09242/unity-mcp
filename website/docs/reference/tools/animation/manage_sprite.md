@@ -12,13 +12,13 @@ description: "Slice 2D sprite sheets and build AnimationClips and an AnimatorCon
 
 ## Description
 
-Slice 2D sprite sheets and build AnimationClips and an AnimatorController from the frames. Actions: get_info returns a sheet's import settings and slices (paged with page_size / cursor) and, for a PNG or JPEG source, the sheet as an image block for vision analysis; slice_sheet applies a grid, replacing the sheet's existing slices; setup_clips creates AnimationClips from the slices; setup_controller builds a controller from clip names (idle = default state, one walk/run clip = a plain state and two or more = a Speed-driven 1D blend tree, jump/attack/hurt-type names = trigger states that fire from any state, other names = plain states); full_setup runs slice → clips → controller in one call.
+Slice 2D sprite sheets and build AnimationClips and an AnimatorController from the frames. Actions: get_info returns a sheet's import settings and slices (paged with page_size / cursor) and, for a PNG or JPEG source, the sheet as an image block for vision analysis; slice_sheet applies a grid, replacing the sheet's existing slices; setup_clips creates AnimationClips from the slices; setup_controller builds a controller from clip names (idle = default state, one walk/run clip = a plain state and two or more = a Speed-driven 1D blend tree, jump/attack/hurt-type names = trigger states that fire from any state, other names = plain states); full_setup runs slice → clips → controller in one call. get_geometry reads paged exact Sprite identities, rect, pivot, border and render outlines. set_geometry edits an existing Multiple TextureImporter sprite using guid, sprite_id, file_id and expected_revision. It preserves omitted fields, names, siblings, physics outlines and AnimationClip references. Geometry requires optional 2D Sprite providers; capability_mode distinguishes advertised flags from the verified built-in legacy provider. Missing/denied modern capabilities and unknown providers are refused. Asset reimport does not promise Undo or arbitrary callback rollback.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['get_info', 'slice_sheet', 'setup_clips', 'setup_controller', 'full_setup']` | yes | Action to perform. |
+| `action` | `Literal['get_info', 'slice_sheet', 'setup_clips', 'setup_controller', 'full_setup', 'get_geometry', 'set_geometry']` | yes | Action to perform. |
 | `path` | `str \| None` | — | Sprite texture asset path (e.g. 'Assets/Sprites/hero_walk.png'). Required for get_info, slice_sheet, setup_clips, full_setup. |
 | `cols` | `int \| None` | — | Number of columns in the sprite sheet grid. Used by slice_sheet and full_setup. |
 | `rows` | `int \| None` | — | Number of rows in the sprite sheet grid. Default: 1, or derived from frame_height when that is given. |
@@ -33,8 +33,13 @@ Slice 2D sprite sheets and build AnimationClips and an AnimatorController from t
 | `overwrite` | `bool` | — | Replace an existing .anim or .controller at the target path. Off by default: an existing clip is skipped with a CLIP_EXISTS warning, and an existing controller fails the call with CONTROLLER_EXISTS. Slicing is not covered: it always replaces the sheet's slices. |
 | `add_to_scene` | `bool` | — | full_setup: give scene_target an Animator with the new controller, replacing any controller it had, and a SpriteRenderer if it has none (warning SCENE_SPRITE_RENDERER_ADDED). |
 | `scene_target` | `str \| None` | — | full_setup with add_to_scene: name of exactly one existing GameObject (inactive ones count). A missing, unmatched or ambiguous target fails at step 'add_to_scene', after the clips and controller are written. |
-| `page_size` | `int \| None` | — | get_info: how many entries of the 'slices' list to return (1-4096, default 512). A sheet sliced by hand can hold more slices than one response should carry. |
-| `cursor` | `int \| None` | — | get_info: index to start the 'slices' page at. Pass back the 'next_cursor' from the previous response; next_cursor is null on the last page. The image is returned only on the first page. |
+| `guid` | `str \| None` | — | set_geometry: exact texture GUID from get_geometry. |
+| `sprite_id` | `str \| None` | — | set_geometry: exact SpriteRect sprite ID; names are not selectors. |
+| `file_id` | `str \| None` | — | set_geometry: exact persistent local fileID string from get_geometry. |
+| `expected_revision` | `str \| None` | — | Geometry write or continuation: revision from the identical fresh read. |
+| `geometry` | `dict[str, JsonValue] \| None` | — | set_geometry: omitted fields stay unchanged. rect [x,y,width,height] in source pixels; pivot normalized [x,y]; border [left,bottom,right,top] in pixels; outlines 1-16 polygons of 3-256 centered source-pixel [x,y] points. Bounds are validated before writes; physics outlines are unchanged. |
+| `page_size` | `int \| None` | — | get_geometry uses 1-100 entries (default 50). get_info: how many entries of the 'slices' list to return (1-4096, default 512). A sheet sliced by hand can hold more slices than one response should carry. |
+| `cursor` | `int \| None` | — | get_geometry requires expected_revision on continuation. get_info: index to start the 'slices' page at. Pass back the 'next_cursor' from the previous response; next_cursor is null on the last page. The image is returned only on the first page. |
 
 ## Returns
 
