@@ -90,11 +90,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, selectedBackend);
 #pragma warning restore CS0618
                 Directory.CreateDirectory(Path.Combine(temporaryAbsolute, "Resources"));
-                File.WriteAllText(
-                    Path.Combine(temporaryAbsolute, "link.xml"),
-                    "<linker><assembly fullname=\"MCPForUnity.Runtime\" preserve=\"all\" /></linker>",
-                    new System.Text.UTF8Encoding(false)
-                );
+                File.WriteAllText(Path.Combine(temporaryAbsolute, "link.xml"), CreateLinkerDescriptor(), new System.Text.UTF8Encoding(false));
                 File.WriteAllText(
                     Path.Combine(temporaryAbsolute, "Resources", PlayScenarioPlayerBundle.ResourceName + ".json"),
                     manifestJson,
@@ -160,6 +156,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 }
             }
         }
+
+        private static string CreateLinkerDescriptor() =>
+            "<linker>"
+            + "<assembly fullname=\"MCPForUnity.Runtime\" preserve=\"all\" />"
+            // Optional backend assemblies have no scene references; retain their runtime registration roots.
+            + "<assembly fullname=\"MCPForUnity.Input.UGUI.Runtime\" ignoreIfMissing=\"1\">"
+            + "<type fullname=\"MCPForUnity.Editor.Tools.Input.UguiScenarioDispatch\" preserve=\"all\" />"
+            + "</assembly>"
+            + "<assembly fullname=\"MCPForUnity.Input.InputSystem.Runtime\" ignoreIfMissing=\"1\">"
+            + "<type fullname=\"MCPForUnity.Runtime.PlayScenarios.PlayScenarioInputSystemRegistration\" preserve=\"all\" />"
+            + "</assembly>"
+            + "</linker>";
 
         public static void BuildFromCommandLine()
         {
