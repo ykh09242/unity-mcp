@@ -26,7 +26,7 @@ AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-you
 - **[`import_model`](./asset_gen/import_model.md)** — Import 3D models from the Sketchfab marketplace into the Unity project.
 - **[`import_model_file`](./asset_gen/import_model_file.md)** — Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project.
 
-## `core` &nbsp; (35 tools)
+## `core` &nbsp; (37 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`batch_execute`](./core/batch_execute.md)** — Executes multiple MCP commands in a single batch for dramatically better performance.
@@ -40,7 +40,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`get_compile_job`](./core/get_compile_job.md)** — Read a compilation request outcome and bounded diagnostics by compile_id.
 - **[`get_sha`](./core/get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_asset`](./core/manage_asset.md)** — Performs asset operations (import, create, modify, delete, etc.) in Unity.
-- **[`manage_audio`](./core/manage_audio.md)** — Play or stop an existing scene AudioSource in Play mode.
+- **[`manage_audio`](./core/manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./core/manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_camera`](./core/manage_camera.md)** — Manage cameras (Unity Camera + Cinemachine).
 - **[`manage_components`](./core/manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.
@@ -48,6 +48,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_gameobject`](./core/manage_gameobject.md)** — Performs CRUD operations on GameObjects.
 - **[`manage_graphics`](./core/manage_graphics.md)** — Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features.
 - **[`manage_material`](./core/manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).
+- **[`manage_navigation`](./core/manage_navigation.md)** — Read and explicitly author navigation surfaces, agents, obstacles and links.
 - **[`manage_object_handles`](./core/manage_object_handles.md)** — Capture or resolve the original loaded GameObject/Component reference for this Editor session.
 - **[`manage_packages`](./core/manage_packages.md)** — Manage Unity packages: query, install, remove, embed, and configure registries.
 - **[`manage_physics`](./core/manage_physics.md)** — Manage physics settings, collision matrix, materials, joints, queries, and validation.
@@ -61,6 +62,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`read_console`](./core/read_console.md)** — Gets messages from or clears the Unity Editor console.
 - **[`refresh_unity`](./core/refresh_unity.md)** — Request a Unity asset database refresh and optionally a script compilation.
 - **[`script_apply_edits`](./core/script_apply_edits.md)** — Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text.
+- **[`script_change_set`](./core/script_change_set.md)** — Prepare, apply, inspect or recover 1–16 existing C# source replacements as one bounded change set.
 - **[`set_active_instance`](./core/set_active_instance.md)** — Set the active Unity instance for this client/session.
 - **[`validate_script`](./core/validate_script.md)** — Validate a C# script and report diagnostics, the effective validation engine, and context limitations.
 

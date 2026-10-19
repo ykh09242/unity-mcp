@@ -9,6 +9,7 @@ from mcp.types import ToolAnnotations
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_bool, parse_json_payload
+from services.tools.pagination import page_integer
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -24,6 +25,9 @@ ALL_ACTIONS = [
     "batch",
     "cancel",
     "clean_output",
+    "report_history",
+    "report",
+    "compare_reports",
 ]
 
 
@@ -77,11 +81,15 @@ async def _send_build_command(
     description=(
         "Manage Unity player builds — trigger builds, switch platforms, configure settings, "
         "manage build scenes and profiles, run batch builds across platforms. "
-        "Actions: plan, build_from_plan, build, status, platform, settings, scenes, profiles, batch, cancel, clean_output.  "
+        "Actions: plan, build_from_plan, build, status, platform, settings, scenes, profiles, batch, cancel, clean_output, report_history, report, compare_reports.  "
         "plan observes one ordinary build without applying settings; build_from_plan requires its expected_plan_sha256 and rejects drift. "
         "These actions do not support build profiles or batch targets. "
         "clean_output previews an explicit Builds/ descendant by default; dry_run=false deletes it. "
-        "Refuses links, active builds, project source paths, and scans over 5000 entries."
+        "Refuses links, active builds, project source paths, and scans over 5000 entries. "
+        "Read-only report_history/report/compare_reports retain bounded completed build summaries, "
+        "paged steps/packed_assets and semantic comparisons across domain reload. "
+        "Active observations after reload are interrupted, not resumed. Absolute paths/messages are omitted. "
+        "Reports expire after 30 days or bounded eviction; missing/corrupt/partial evidence is explicit."
     ),
     annotations=ToolAnnotations(
         title="Manage Build",
@@ -93,7 +101,7 @@ async def manage_build(
     ctx: Context,
     action: Annotated[
         str,
-        "Action: plan, build_from_plan, build, status, platform, settings, scenes, profiles, batch, cancel, clean_output",
+        "Action: plan, build_from_plan, build, status, platform, settings, scenes, profiles, batch, cancel, clean_output, report_history, report, compare_reports",
     ],
     target: Annotated[
         Optional[str],
@@ -130,8 +138,134 @@ async def manage_build(
         bool | str | None,
         "clean_output only: preview by default; explicitly false deletes the selected Builds/ descendant. No links allowed.",
     ] = None,
+    report_id: Annotated[
+        str | None, "Opaque retained report ID from report_history/status."
+    ] = None,
+    baseline_report_id: Annotated[str | None, "compare_reports baseline report identity."] = None,
+    candidate_report_id: Annotated[str | None, "compare_reports candidate report identity."] = None,
+    report_section: Annotated[
+        str | None, "report/compare_reports: summary (default), steps or packed_assets."
+    ] = None,
+    page_size: Annotated[
+        int | str | None, "Report reads/comparisons: 1-100 rows; default 50."
+    ] = None,
+    page_number: Annotated[int | str | None, "Report reads/comparisons: 1-based page."] = None,
+    report_revision: Annotated[
+        str | None, "report: exact 64-hex observation revision for stable repeated pages."
+    ] = None,
+    baseline_revision: Annotated[
+        str | None, "compare_reports: optional observed baseline revision."
+    ] = None,
+    candidate_revision: Annotated[
+        str | None, "compare_reports: optional observed candidate revision."
+    ] = None,
+    history_revision: Annotated[
+        str | None, "report_history: optional 64-hex inventory revision for repeated pages."
+    ] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
+    report_actions = {"report_history", "report", "compare_reports"}
+    report_values = (
+        report_id,
+        baseline_report_id,
+        candidate_report_id,
+        report_section,
+        page_size,
+        page_number,
+        report_revision,
+        baseline_revision,
+        candidate_revision,
+        history_revision,
+    )
+    if action_lower in report_actions:
+        try:
+            if any(
+                item is not None
+                for item in (
+                    target,
+                    output_path,
+                    scenes,
+                    development,
+                    options,
+                    subtarget,
+                    scripting_backend,
+                    profile,
+                    property,
+                    value,
+                    activate,
+                    targets,
+                    profiles,
+                    output_dir,
+                    job_id,
+                    expected_plan_sha256,
+                    dry_run,
+                )
+            ):
+                raise ValueError(
+                    "Report actions accept only report identity/section/page/revision options."
+                )
+            report_params = {
+                "action": action_lower,
+                "page_size": page_integer(page_size, 50, 1, 100, "page_size"),
+                "page_number": page_integer(page_number, 1, 1, 2147483647, "page_number"),
+            }
+            identities = {
+                "report_id": report_id,
+                "baseline_report_id": baseline_report_id,
+                "candidate_report_id": candidate_report_id,
+            }
+            required = {
+                "report": {"report_id"},
+                "compare_reports": {"baseline_report_id", "candidate_report_id"},
+                "report_history": set(),
+            }[action_lower]
+            for key, identity in identities.items():
+                if key in required:
+                    if (
+                        type(identity) is not str
+                        or re.fullmatch(r"br-[0-9a-f]{32}", identity) is None
+                    ):
+                        raise ValueError(f"{key} must be a retained report identity.")
+                    report_params[key] = identity
+                elif identity is not None:
+                    raise ValueError(f"{key} is unsupported for {action_lower}.")
+            if report_section is not None:
+                if action_lower == "report_history" or report_section not in {
+                    "summary",
+                    "steps",
+                    "packed_assets",
+                }:
+                    raise ValueError(
+                        "report_section must select summary, steps or packed_assets for report/comparison."
+                    )
+                report_params["report_section"] = report_section
+            for key, revision, owner in (
+                ("report_revision", report_revision, "report"),
+                ("baseline_revision", baseline_revision, "compare_reports"),
+                ("candidate_revision", candidate_revision, "compare_reports"),
+                ("history_revision", history_revision, "report_history"),
+            ):
+                if revision is not None:
+                    if (
+                        action_lower != owner
+                        or type(revision) is not str
+                        or re.fullmatch(r"[0-9a-f]{64}", revision) is None
+                    ):
+                        raise ValueError(f"Invalid {key} for this report action.")
+                    report_params[key] = revision
+        except (ValueError, TypeError) as exc:
+            return {
+                "success": False,
+                "code": "invalid_build_report_request",
+                "message": str(exc)[:512],
+            }
+        return await _send_build_command(ctx, report_params)
+    if any(item is not None for item in report_values):
+        return {
+            "success": False,
+            "code": "invalid_build_report_request",
+            "message": "Report options require a report action.",
+        }
     if action_lower not in ALL_ACTIONS:
         return {
             "success": False,

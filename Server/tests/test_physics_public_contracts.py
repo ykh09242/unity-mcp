@@ -163,6 +163,7 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
         async def main():
             global raw
             fields['page_size'] = 1
+            pair_fields = {"other_target":"OtherBody","other_collider_type":"BoxCollider2D","other_search_method":"by_name","other_component_index":0,"contact_limit":1,"observe_contacts":False}
             for mode in ("2026-07-28","legacy"):
                 async with Client(server,mode=mode) as client:
                     tools = {tool.name:tool for tool in await client.list_tools()}
@@ -170,15 +171,19 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
                     schema = tools["manage_physics"].inputSchema
                     print("FULL_SCHEMA",mode,json.dumps(schema,sort_keys=True))
                     check(set(schema["properties"]["action"]["enum"]) == set(ALL_ACTIONS),"all native actions/schema "+mode)
+                    check(set(pair_fields) <= set(schema["properties"]),"pair action fields/schema "+mode)
                     for failed in (False, True):
                         for wrapped in (False, True):
                             expected = {"success":not failed,"message":"Native rejected input" if failed else "Done","data":{"count":0,"enabled":False,"reference":None,"hits":[]}}
                             raw = {"status":"success","result":copy.deepcopy(expected)} if wrapped else copy.deepcopy(expected)
                             for action in ALL_ACTIONS:
-                                payload = {"action":action,**copy.deepcopy(fields)}
+                                action_fields = {**fields, **(pair_fields if action == "diagnose_pair" else {})}
+                                payload = {"action":action,**copy.deepcopy(action_fields)}
                                 before = len(requests)
                                 result = await client.call_tool("manage_physics",payload)
-                                wire = {"action":action,**{key:value for key,value in fields.items() if key != "component_index"},"componentIndex":0}
+                                wire = {"action":action,**{key:value for key,value in action_fields.items() if key not in {"component_index","other_component_index"}},"componentIndex":0}
+                                if action == "diagnose_pair":
+                                    wire["otherComponentIndex"] = 0
                                 label = action+mode+str(failed)+str(wrapped)
                                 check(result.structured_content == expected,"native response "+label)
                                 check(len(requests) == before+1 and requests[-1] == ("Project@fixture","manage_physics",wire),"all-field/false-zero-empty wire "+label)
@@ -187,6 +192,11 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
                     result = await client.call_tool("manage_physics", {"action":"validate","page_size":0})
                     check(result.structured_content['success'] is False and len(requests) == before,
                           "nonpositive page size rejected before transport " + mode)
+                    for selectors in ({"target":"Body"},{"other_target":"OtherBody"}):
+                        before = len(requests)
+                        result = await client.call_tool("manage_physics",{"action":"diagnose_pair",**selectors})
+                        check(result.structured_content['success'] is False and len(requests) == before,
+                              "incomplete pair selectors rejected before transport "+mode+repr(selectors))
                     for payload in ({"action":"ping"},{"action":"ping",**dict.fromkeys(fields)}):
                         result = await client.call_tool("manage_physics",payload)
                         check(result.structured_content == raw and requests[-1][2] == {"action":"ping"},"omitted/null parameters "+mode)

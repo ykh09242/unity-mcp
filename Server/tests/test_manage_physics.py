@@ -155,7 +155,8 @@ def test_simulate_forwards(mock_unity):
 
 
 def test_all_actions_list():
-    assert len(ALL_ACTIONS) == 21
+    assert len(ALL_ACTIONS) == 22
+    assert "diagnose_pair" in ALL_ACTIONS
     assert "ping" in ALL_ACTIONS
     assert "validate" in ALL_ACTIONS
     assert "simulate_step" in ALL_ACTIONS

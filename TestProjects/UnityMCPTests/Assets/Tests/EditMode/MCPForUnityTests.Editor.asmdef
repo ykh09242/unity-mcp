@@ -23,6 +23,12 @@
   "defineConstraints": [
     "UNITY_INCLUDE_TESTS"
   ],
-  "versionDefines": [],
+  "versionDefines": [
+    {
+      "name": "com.unity.modules.ai",
+      "expression": "0.0.0",
+      "define": "MCP_FOR_UNITY_AI_MODULE"
+    }
+  ],
   "noEngineReferences": false
 }

@@ -32,6 +32,7 @@ PhysicsAction = Literal[
     "apply_force",
     "get_rigidbody",
     "configure_rigidbody",
+    "diagnose_pair",
 ]
 
 ALL_ACTIONS: list[str] = list(get_args(PhysicsAction))
@@ -49,6 +50,7 @@ ALL_ACTIONS: list[str] = list(get_args(PhysicsAction))
         "FORCES: apply_force\n"
         "RIGIDBODY: get_rigidbody, configure_rigidbody\n"
         "VALIDATION: validate\n"
+        "PAIR DIAGNOSIS: diagnose_pair (read-only; unique collider selection, optional passive contact observation)\n"
         "SIMULATION: simulate_step\n"
     ),
     annotations=ToolAnnotations(title="Manage Physics", destructiveHint=True),
@@ -154,10 +156,73 @@ async def manage_physics(
             )
         ),
     ] = None,
+    other_target: Annotated[
+        str | None, "diagnose_pair: second GameObject name, path or instance ID."
+    ] = None,
+    other_collider_type: Annotated[
+        str | None, "diagnose_pair: exact second collider type when needed."
+    ] = None,
+    other_component_index: Annotated[
+        int | None, "diagnose_pair: zero-based second collider index after type filtering."
+    ] = None,
+    other_search_method: Annotated[
+        Literal["by_id", "by_name", "by_path"] | None,
+        "How to resolve other_target; inferred independently when omitted.",
+    ] = None,
+    contact_limit: Annotated[
+        int | None,
+        "diagnose_pair: 2D contact-point sample size, 1–128 (default16); 3D reports event counts.",
+    ] = None,
+    observe_contacts: Annotated[
+        bool | str | None,
+        "diagnose_pair: opt in to a60-second passive3D pair watch; false stops, omitted only reads. Never simulates or enables contact generation.",
+    ] = None,
 ) -> dict[str, Any]:
     """Manage 3D and 2D physics: settings, collision matrix, materials, joints, queries, validation, simulation."""
 
     action_lower = action.lower()
+    if action_lower == "diagnose_pair":
+        if (
+            not isinstance(target, str)
+            or not target.strip()
+            or not isinstance(other_target, str)
+            or not other_target.strip()
+        ):
+            return {
+                "success": False,
+                "message": "diagnose_pair requires nonempty target and other_target selectors.",
+            }
+        if dimension is not None and dimension not in {"2d", "3d"}:
+            return {"success": False, "message": "diagnose_pair dimension must be '2d' or '3d'."}
+        for field, value in (
+            ("component_index", component_index),
+            ("other_component_index", other_component_index),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                return {"success": False, "message": f"{field} must be a nonnegative integer."}
+        if contact_limit is not None and (
+            isinstance(contact_limit, bool)
+            or not isinstance(contact_limit, int)
+            or not 1 <= contact_limit <= 128
+        ):
+            return {"success": False, "message": "contact_limit must be an integer from1 to128."}
+        if search_method not in {
+            None,
+            "by_id",
+            "by_name",
+            "by_path",
+        } or other_search_method not in {None, "by_id", "by_name", "by_path"}:
+            return {
+                "success": False,
+                "message": "Pair search methods must be by_id, by_name or by_path.",
+            }
+        if observe_contacts is not None:
+            if isinstance(observe_contacts, str) and observe_contacts.lower() in {"true", "false"}:
+                observe_contacts = observe_contacts.lower() == "true"
+            elif not isinstance(observe_contacts, bool):
+                return {"success": False, "message": "observe_contacts must be true or false."}
     if action_lower == "validate":
         try:
             page_size, cursor = validate_page(page_size, cursor, cursor=True)
@@ -225,9 +290,16 @@ async def manage_physics(
         "step_size": step_size,
         "page_size": page_size,
         "cursor": cursor,
+        "other_target": other_target,
+        "other_collider_type": other_collider_type,
+        "other_search_method": other_search_method,
+        "contact_limit": contact_limit,
+        "observe_contacts": observe_contacts,
     }
     if component_index is not None:
         params_dict["componentIndex"] = component_index
+    if other_component_index is not None:
+        params_dict["otherComponentIndex"] = other_component_index
     for key, val in param_map.items():
         if val is not None:
             params_dict[key] = val

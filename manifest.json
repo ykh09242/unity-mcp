@@ -171,6 +171,10 @@
       "description": "Create and modify Unity materials and shaders"
     },
     {
+      "name": "manage_navigation",
+      "description": "Read navigation capabilities and explicitly author scene navigation agents, obstacles, surfaces and links"
+    },
+    {
       "name": "manage_object_handles",
       "description": "Capture or resolve bounded session handles to original loaded GameObject or Component references"
     },
@@ -269,6 +273,10 @@
     {
       "name": "script_apply_edits",
       "description": "Apply code edits to C# scripts with validation"
+    },
+    {
+      "name": "script_change_set",
+      "description": "Prepare, apply, inspect and recover bounded multi-file C# source replacements with explicit preconditions and conditional compensation"
     },
     {
       "name": "set_active_instance",

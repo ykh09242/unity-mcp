@@ -29,6 +29,8 @@ namespace MCPForUnity.Editor.Tools.Build
         public double TotalSizeMb { get; set; }
         public int TotalErrors { get; set; }
         public int TotalWarnings { get; set; }
+        public string ReportId { get; internal set; }
+        public string ReportPersistenceError { get; internal set; }
 
         public BuildJob(string jobId, BuildTarget target, string outputPath)
         {
@@ -46,6 +48,11 @@ namespace MCPForUnity.Editor.Tools.Build
                 ["platform"] = Target.ToString(),
                 ["output_path"] = OutputPath,
             };
+
+            if (ReportId != null)
+                data["report_id"] = ReportId;
+            if (ReportPersistenceError != null)
+                data["report_persistence_error"] = ReportPersistenceError;
 
             if (StartedAt != default)
                 data["started_at"] = StartedAt.ToString("O");
@@ -77,6 +84,8 @@ namespace MCPForUnity.Editor.Tools.Build
         public BuildJobState State { get; set; } = BuildJobState.Pending;
         public List<BuildJob> Children { get; } = new();
         public int CurrentIndex { get; set; } = -1;
+        public string ReportId { get; internal set; }
+        public string ReportPersistenceError { get; internal set; }
 
         public BatchJob(string jobId)
         {
@@ -103,7 +112,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 builds.Add(child.ToStatusResponse());
             }
 
-            return new Dictionary<string, object>
+            var data = new Dictionary<string, object>
             {
                 ["job_id"] = JobId,
                 ["result"] = State.ToString().ToLowerInvariant(),
@@ -112,16 +121,18 @@ namespace MCPForUnity.Editor.Tools.Build
                 ["current_build"] = currentBuild,
                 ["builds"] = builds,
             };
+            if (ReportId != null)
+                data["report_id"] = ReportId;
+            if (ReportPersistenceError != null)
+                data["report_persistence_error"] = ReportPersistenceError;
+            return data;
         }
     }
 
     /// <summary>
-    /// Static store for all build jobs. Note: static fields are cleared on domain reload,
-    /// but this is acceptable because BuildPipeline.BuildPlayer blocks the editor thread,
-    /// preventing domain reload during a build. For batch builds with platform switches,
-    /// the batch scheduling happens after each build completes via EditorApplication.update
-    /// callbacks (ScheduleOnNextUpdate / WaitForCompletion), so state is maintained within
-    /// a single domain lifecycle.
+    /// Live jobs remain domain-static and are never silently resumed after reload.
+    /// BuildReportStore separately retains bounded completion snapshots and interruption
+    /// observations. Native BuildPlayer still blocks the editor main thread.
     /// </summary>
     public static class BuildJobStore
     {
@@ -133,9 +144,17 @@ namespace MCPForUnity.Editor.Tools.Build
 
         public static string CreateBatchId() => $"batch-{Guid.NewGuid():N}".Substring(0, 16);
 
-        public static void AddBuildJob(BuildJob job) => _buildJobs[job.JobId] = job;
+        public static void AddBuildJob(BuildJob job)
+        {
+            _buildJobs[job.JobId] = job;
+            BuildReportStore.Observe(job);
+        }
 
-        public static void AddBatchJob(BatchJob job) => _batchJobs[job.JobId] = job;
+        public static void AddBatchJob(BatchJob job)
+        {
+            _batchJobs[job.JobId] = job;
+            BuildReportStore.Observe(job);
+        }
 
         public static BuildJob GetBuildJob(string jobId)
         {
@@ -169,6 +188,8 @@ namespace MCPForUnity.Editor.Tools.Build
         public static void SetLastCompleted(BuildJob job)
         {
             _lastCompletedJob = job;
+            if (job.ReportId == null && job.ReportPersistenceError == null)
+                BuildReportStore.Complete(job);
             PruneOldJobs();
         }
 

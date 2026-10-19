@@ -230,6 +230,13 @@ namespace MCPForUnity.Editor.Tools.Animation
         {
             switch (action)
             {
+                case "get_graph":
+                    return ControllerGraph.Page(@params);
+                case "modify_state":
+                case "delete_state":
+                case "modify_transition":
+                case "delete_transition":
+                    return ControllerRoundTrip.Handle(@params, action);
                 case "create":
                     return ControllerCreate.Create(@params);
                 case "add_state":
@@ -267,6 +274,11 @@ namespace MCPForUnity.Editor.Tools.Animation
         {
             switch (action)
             {
+                case "get_curves":
+                case "get_curve":
+                case "replace_curve":
+                case "delete_curve":
+                    return ClipRoundTrip.Handle(@params, action);
                 case "create":
                     return ClipCreate.Create(@params);
                 case "get_info":
