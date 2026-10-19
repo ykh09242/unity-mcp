@@ -378,6 +378,63 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                 {'action': 'get_material_info', 'materialPath': path},
             ),
             (
+                {'action': 'get_render_state', 'material_path': path},
+                {'action': 'get_render_state', 'materialPath': path},
+            ),
+            (
+                {
+                    'action': 'set_render_state',
+                    'material_path': path,
+                    'mode': 'shared',
+                    'render_state': {'render_mode': 'transparent'},
+                },
+                {
+                    'action': 'set_render_state',
+                    'materialPath': path,
+                    'mode': 'shared',
+                    'renderState': {'render_mode': 'transparent'},
+                },
+            ),
+            (
+                {'action': 'get_render_state', 'target': 'Fixture', 'slot': 0},
+                {'action': 'get_render_state', 'target': 'Fixture', 'slot': 0},
+            ),
+            (
+                {
+                    'action': 'set_render_state',
+                    'target': 'Fixture',
+                    'slot': 0,
+                    'mode': 'instance',
+                    'render_state': '{"render_queue":0,"keywords":{"FIXTURE_LOCAL":false},"shader_passes":{"FixtureForward":false},"texture_transforms":{"_MainTex":{"scale":[0,1],"offset":[0,0]}}}',
+                },
+                {
+                    'action': 'set_render_state',
+                    'target': 'Fixture',
+                    'slot': 0,
+                    'mode': 'instance',
+                    'renderState': {
+                        'render_queue': 0,
+                        'keywords': {'FIXTURE_LOCAL': False},
+                        'shader_passes': {'FixtureForward': False},
+                        'texture_transforms': {'_MainTex': {'scale': [0,1], 'offset': [0,0]}},
+                    },
+                },
+            ),
+            (
+                {
+                    'action': 'set_render_state',
+                    'material_path': path,
+                    'mode': 'shared',
+                    'render_state': {'render_queue': None},
+                },
+                {
+                    'action': 'set_render_state',
+                    'materialPath': path,
+                    'mode': 'shared',
+                    'renderState': {'render_queue': None},
+                },
+            ),
+            (
                 {
                     'action': 'set_material_shader_property',
                     'material_path': path,
@@ -622,6 +679,11 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                 async with Client(server, mode=mode) as client:
                     tools = {tool.name: tool for tool in await client.list_tools()}
                     check('manage_material' in tools, 'registry discovery ' + mode)
+                    action_enum = tools['manage_material'].inputSchema['properties']['action']['enum']
+                    check(
+                        {'get_render_state', 'set_render_state'} <= set(action_enum),
+                        'render-state registered schema ' + mode,
+                    )
                     print(
                         'FULL_SCHEMA',
                         mode,
@@ -639,6 +701,11 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                                         'enabled': False,
                                         'texture': None,
                                         'properties': [],
+                                        'material': {'instance_id': 123, 'asset_guid': None},
+                                        'render_queue': 0,
+                                        'keywords': [{'name': 'FIXTURE_LOCAL', 'local_enabled': False}],
+                                        'shader_passes': [{'light_mode': 'FixtureForward', 'enabled': False}],
+                                        'texture_transforms': {'_MainTex': {'scale': [0, 1], 'offset': [0, 0]}},
                                     },
                                 }
                                 raw = (
@@ -674,7 +741,7 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                                         ),
                                     )
                     raw = {'success': True, 'message': 'Controlled response'}
-                    for action in ('assign_material_to_renderer', 'set_renderer_color'):
+                    for action in ('assign_material_to_renderer', 'set_renderer_color', 'get_render_state', 'set_render_state'):
                         for slot in (True, False, 1.0, 0.5, '0', '1', '1e0'):
                             payload = {
                                 'action': action,
@@ -705,6 +772,7 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                         {'action': 'create', 'properties': 'bad'},
                         {'action': 'set_material_color', 'color': 'bad'},
                         {'action': 'set_material_shader_property', 'value': '[object Object]'},
+                        {'action': 'set_render_state', 'render_state': '[]'},
                     ):
                         before = len(requests)
                         result = await client.call_tool('manage_material', payload)

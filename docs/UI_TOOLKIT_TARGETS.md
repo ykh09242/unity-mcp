@@ -57,9 +57,33 @@ snapshot's URI-escaped `name:` or fallback `type:` encoding. Copy the ID exactly
 construct a CSS selector or decode/re-escape its segments.
 
 Semantic IDs require the canonical UI component selected by `component_type="auto"`,
-which is also what snapshot capture uses. If another component is explicitly selected,
+which snapshot capture selects by default. If another component is explicitly selected,
 use `element_path` instead. Snapshot IDs have no component discriminator, so this
 restriction avoids interpreting a document ID against a different component's root.
+
+## Select a snapshot component
+
+`capture_ui_snapshot(framework="uitoolkit", target="123", component_type="ui_document")`
+captures the selected component's current live tree. `component_type` accepts exactly
+`auto`, `ui_document` or `panel_renderer`, only for UI Toolkit. Omission retains auto
+selection and the existing snapshot output. Auto prefers an existing UIDocument.
+Missing components, unavailable PanelRenderer APIs and unsupported contracts refuse
+without creating components, falling back to another kind or forcing layout.
+
+Every explicit selector, including `auto`, adds `evidence.component_type` with the
+actual resolved kind (`ui_document` or `panel_renderer`) to the existing v2/v3 artifact.
+An updated server refuses an older plugin's missing or mismatched evidence. Explicit
+null and invalid selectors refuse at the public MCP boundary; internal Python callable
+`None` retains omission semantics. The CLI uses `--component-type` with the same choices
+and preserves the evidence in the saved artifact.
+
+Offline comparison requires equal component provenance: different kinds, or recorded
+kind versus an older artifact without a kind, are incompatible. Explicit auto and an
+explicit kind compare normally when both resolve to the same actual component kind.
+`identity_map` paths refer to the selected tree; their existing bounds and caller
+rebinding responsibilities still apply. Legacy v1 offline artifacts remain supported.
+Snapshot IDs do not encode component kind. Only IDs from the canonical auto root
+without `identity_map` can be reused for mutation; use current paths for another root.
 
 An ID refuses when its current semantic path is missing, foreign or ambiguous. Descendant
 renames/reparenting and GameObject identity changes can invalidate it. The root ID

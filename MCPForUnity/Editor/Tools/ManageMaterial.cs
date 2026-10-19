@@ -45,6 +45,12 @@ namespace MCPForUnity.Editor.Tools
                     case "get_material_info":
                         return GetMaterialInfo(@params);
 
+                    case "get_render_state":
+                        return MaterialRenderState.Handle(@params, false);
+
+                    case "set_render_state":
+                        return MaterialRenderState.Handle(@params, true);
+
                     default:
                         return new ErrorResponse($"Unknown action: {action}");
                 }

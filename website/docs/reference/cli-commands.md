@@ -2722,6 +2722,7 @@ Save a complete bounded UI tree to a new file; missing evidence fails capture.
 | --framework | choice: ugui, uitoolkit | required | nargs=1 | — | — |  |
 | --target | text | required | nargs=1 | — | — | Unique scene hierarchy path or instance ID. |
 | --max-nodes | integer range: [1..1000] | optional | nargs=1 | 200 | — |  |
+| --component-type | choice: auto, ui_document, panel_renderer | optional | nargs=1 | — | — | UI Toolkit component to capture; explicit selection records the actual component kind. |
 | --output | file/path (lexical only) | required | nargs=1 | — | — |  |
 | --identity-map-file | file/path (lexical only) | optional | nargs=1 | — | — | Optional bounded JSON object containing identity_map; emits v3 comparison IDs, not mutation handles. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |

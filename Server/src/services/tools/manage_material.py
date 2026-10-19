@@ -21,7 +21,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 
 @mcp_for_unity_tool(
-    description="Manages Unity materials (set properties, colors, shaders, etc). Read-only actions: ping, get_material_info. Modifying actions: create, set_material_shader_property, set_material_color, assign_material_to_renderer, set_renderer_color.",
+    description="Manages Unity materials (properties, colors, shaders, render state). Read-only actions: ping, get_material_info, get_render_state. Modifying actions: create, set_material_shader_property, set_material_color, assign_material_to_renderer, set_renderer_color, set_render_state. Render-state edits require explicit shared/instance mode. Explicit render_mode presets support Built-in Standard shaders; URP/HDRP/custom presets are unsupported.",
     annotations=ToolAnnotations(
         title="Manage Material",
         destructiveHint=True,
@@ -38,6 +38,8 @@ async def manage_material(
             "assign_material_to_renderer",
             "set_renderer_color",
             "get_material_info",
+            "get_render_state",
+            "set_render_state",
         ],
         "Action to perform.",
     ],
@@ -73,7 +75,29 @@ async def manage_material(
         "Assignment/modification mode; behavior when omitted is action-specific on the Unity side.",
     ]
     | None = None,
+    render_state: Annotated[
+        dict[str, Any] | str,
+        "Render-state patch object or JSON object string: render_queue (-1 or 0..5000), "
+        "keywords ({declared_name: bool}), shader_passes ({LightMode: bool}), "
+        "texture_transforms ({exact_texture_property: {scale: [x,y], offset: [x,y]}}). "
+        "render_mode is opaque/cutout/fade/transparent for Built-in Standard shaders only; "
+        "it resets the queue and cannot coexist with render_queue or owned alpha keywords. "
+        "Maps are limited to 128 entries. No automatic blending changes for raw edits.",
+    ]
+    | None = None,
 ) -> dict[str, Any]:
+    """Inspect or edit materials; render-state addressing is asset OR renderer target/slot.
+
+    get_render_state reads sharedMaterials without instantiation. set_render_state requires
+    mode shared or instance (asset addressing supports shared only). Instance edits clone
+    only the selected slot, with one Undo group; all patch members validate before mutation.
+    Returned keyword states distinguish local state and global overrides. Queue readback is
+    Unity's effective queue, including shader-default resolution after a -1 reset. LightMode
+    pass flags describe enablement, not proof that the active pipeline draws that pass.
+    Raw edits do not invoke ShaderGUI or configure opaque/transparent blending. Explicit
+    render_mode presets couple Built-in Standard mode/blend/depth/tag/alpha keywords/queue;
+    URP/HDRP/custom presets are unsupported. Presets reset queue to the mode default.
+    """
     # --- Normalize color with validation ---
     color, color_error = normalize_color(color, output_range="float")
     if color_error:
@@ -83,6 +107,10 @@ async def manage_material(
     properties, props_error = normalize_properties(properties)
     if props_error:
         return {"success": False, "message": props_error}
+
+    render_state, state_error = normalize_properties(render_state)
+    if state_error:
+        return {"success": False, "message": f"render_state: {state_error}"}
 
     # --- Normalize value (parse JSON if string) ---
     value = parse_json_payload(value)
@@ -105,6 +133,7 @@ async def manage_material(
         "searchMethod": search_method,
         "slot": slot,
         "mode": mode,
+        "renderState": render_state,
     }
 
     # Remove None values

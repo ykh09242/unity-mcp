@@ -121,9 +121,9 @@ _ACTIONS: Final = {
         )
     },
     "manage_material": {
-        Permission.READ: _names("ping get_material_info"),
+        Permission.READ: _names("ping get_material_info get_render_state"),
         Permission.EDIT: _names(
-            "create set_material_shader_property set_material_color assign_material_to_renderer set_renderer_color"
+            "create set_material_shader_property set_material_color assign_material_to_renderer set_renderer_color set_render_state"
         ),
     },
     "manage_prefabs": {

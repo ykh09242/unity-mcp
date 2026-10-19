@@ -47,7 +47,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_editor`](./core/manage_editor.md)** — Controls Unity editor state and settings. play optionally waits for scene_loaded or first_frame with a bounded persisted job. first_frame confirms simulation frame progress, not rendered pixels or application async initialization. get_pl…
 - **[`manage_gameobject`](./core/manage_gameobject.md)** — Performs CRUD operations on GameObjects.
 - **[`manage_graphics`](./core/manage_graphics.md)** — Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features.
-- **[`manage_material`](./core/manage_material.md)** — Manages Unity materials (set properties, colors, shaders, etc).
+- **[`manage_material`](./core/manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).
 - **[`manage_object_handles`](./core/manage_object_handles.md)** — Capture or resolve the original loaded GameObject/Component reference for this Editor session.
 - **[`manage_packages`](./core/manage_packages.md)** — Manage Unity packages: query, install, remove, embed, and configure registries.
 - **[`manage_physics`](./core/manage_physics.md)** — Manage physics settings, collision matrix, materials, joints, queries, and validation.
