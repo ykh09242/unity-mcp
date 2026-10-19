@@ -177,6 +177,9 @@ namespace MCPForUnity.Editor.Helpers
         {
             if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
                 return false;
+            // Package specs can contain characters that Mono rejects in file paths.
+            if (string.Equals(a.Trim(), b.Trim(), StringComparison.Ordinal))
+                return true;
             try
             {
                 string na = Path.GetFullPath(a.Trim());

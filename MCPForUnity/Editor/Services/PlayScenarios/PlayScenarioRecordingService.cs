@@ -45,6 +45,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static string sceneScope = "active";
         private static double deadline;
         private static double nextScan;
+        private static double nextHierarchyScan;
+        private static bool hierarchyDirty;
         private static bool hooked;
         public static IPlayScenarioRecordingBackend Backend { get; set; }
         public static IPlayScenarioInputRecordingBackend InputBackend { get; set; }
@@ -121,7 +123,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     draft.Diagnose("Optional Input System observation is unavailable; raw keyboard/mouse/touch/wheel input requires manual authoring.");
                 lastPointerUpdate = -1;
                 deadline = EditorApplication.timeSinceStartup + durationSeconds;
-                nextScan = EditorApplication.timeSinceStartup + 0.25;
+                nextScan = EditorApplication.timeSinceStartup + 2;
+                nextHierarchyScan = EditorApplication.timeSinceStartup + 0.25;
+                hierarchyDirty = false;
+                EditorApplication.hierarchyChanged += HierarchyChanged;
                 SceneManager.activeSceneChanged += SceneChanged;
                 SceneManager.sceneLoaded += SceneLoaded;
                 SceneManager.sceneUnloaded += SceneUnloaded;
@@ -343,15 +348,17 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Interrupt("duration_limit");
                 return;
             }
-            if (now >= nextScan)
-            {
-                nextScan = now + 0.25;
+            if (now >= nextScan || (hierarchyDirty && now >= nextHierarchyScan))
                 Refresh();
-            }
         }
+
+        private static void HierarchyChanged() => hierarchyDirty = true;
 
         private static void Refresh()
         {
+            hierarchyDirty = false;
+            nextScan = EditorApplication.timeSinceStartup + 2;
+            nextHierarchyScan = EditorApplication.timeSinceStartup + 0.25;
             try
             {
                 session?.Refresh();
@@ -403,6 +410,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 SceneManager.sceneLoaded -= SceneLoaded;
                 SceneManager.sceneUnloaded -= SceneUnloaded;
                 EditorApplication.update -= Tick;
+                EditorApplication.hierarchyChanged -= HierarchyChanged;
                 EditorApplication.playModeStateChanged -= PlayModeChanged;
                 EditorApplication.pauseStateChanged -= PauseChanged;
                 hooked = false;

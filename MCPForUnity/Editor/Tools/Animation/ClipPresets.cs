@@ -143,7 +143,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 AssetDatabase.CreateAsset(clip, clipPath);
                 if (!EditorUtility.IsPersistent(clip))
                     return new { success = false, message = $"Failed to create AnimationClip at '{clipPath}'." };
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(clip);
                 folders.Complete();
 
                 return new

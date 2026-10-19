@@ -33,11 +33,17 @@ namespace MCPForUnityTests.Editor.Clients
                 {
                     EditorPrefKeys.HttpTransportScope,
                     EditorPrefKeys.HttpRemoteBaseUrl,
+                    EditorPrefKeys.HttpBaseUrl,
                     EditorPrefKeys.ApiKey,
                     EditorPrefKeys.GitUrlOverride,
                 }
             )
                 _preferences[key] = EditorPrefs.HasKey(key) ? EditorPrefs.GetString(key) : null;
+            EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "local");
+            EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, string.Empty);
+            EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, "http://127.0.0.1:65430");
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+            EditorConfigurationCache.Instance.Refresh();
         }
 
         [TearDown]
@@ -118,8 +124,10 @@ namespace MCPForUnityTests.Editor.Clients
                     linuxConfigPath = path,
                 }
             );
+            string original = File.ReadAllText(path);
             Assert.AreEqual(McpStatus.IncorrectPath, codex.CheckStatus(attemptAutoRewrite: false));
-            StringAssert.Contains("transport", codex.Client.configStatus);
+            Assert.AreEqual(ConfiguredTransport.Stdio, codex.Client.configuredTransport);
+            Assert.AreEqual(original, File.ReadAllText(path), "Status must not rewrite the manual stdio entry");
         }
 
         [TestCase("synthetic-current", true, McpStatus.Configured)]
@@ -150,6 +158,97 @@ namespace MCPForUnityTests.Editor.Clients
             );
 
             Assert.AreEqual(expected, client.CheckStatus(attemptAutoRewrite: false));
+            Assert.AreEqual(text, File.ReadAllText(path));
+        }
+
+        // Prerelease packages expect "mcpforunityserver>=0.0.0a0". On Windows, Mono's
+        // Path.GetFullPath throws on '>', so a correct stdio config read as VersionMismatch
+        // and the auto-rewrite path rewrote it every startup.
+        [Test]
+        public void CheckStatus_Configured_WhenStdioUsesPrereleasePackageRange()
+        {
+            const string source = "mcpforunityserver>=0.0.0a0";
+            Assert.IsTrue(McpConfigurationHelper.PathsEqual(source, source), "Package specs must match before path parsing");
+            bool hadOverride = EditorPrefs.HasKey(EditorPrefKeys.GitUrlOverride);
+            string originalOverride = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, string.Empty);
+            try
+            {
+                EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, source);
+                EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, false);
+                EditorConfigurationCache.Instance.Refresh();
+                string configPath = Path.Combine(_tempDir, "stdio.json");
+                File.WriteAllText(
+                    configPath,
+                    "{\"mcpServers\":{\"unityMCP\":{\"command\":\"uvx\",\"args\":[\"--prerelease\",\"explicit\",\"--from\",\""
+                        + source
+                        + "\",\"mcp-for-unity\",\"--transport\",\"stdio\"]}}}"
+                );
+                var client = new McpClient
+                {
+                    name = "Fake",
+                    windowsConfigPath = configPath,
+                    macConfigPath = configPath,
+                    linuxConfigPath = configPath,
+                };
+
+                var status = new FakeJsonConfigurator(client).CheckStatus(attemptAutoRewrite: false);
+
+                Assert.AreEqual(McpStatus.Configured, status, client.configStatus);
+            }
+            finally
+            {
+                if (hadOverride)
+                    EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, originalOverride);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
+                EditorConfigurationCache.Instance.Refresh();
+            }
+        }
+
+        [Test]
+        public void CodexStdioStatusMatchesPrereleasePackageRange()
+        {
+            const string source = "mcpforunityserver>=0.0.0a0";
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, source);
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, false);
+            EditorConfigurationCache.Instance.Refresh();
+            string path = Path.Combine(_tempDir, "range.toml");
+            string text = "[mcp_servers.unityMCP]\ncommand = 'uvx'\nargs = ['--from', '" + source + "', 'mcp-for-unity']\n";
+            File.WriteAllText(path, text);
+            var client = new McpClient
+            {
+                name = "Codex",
+                windowsConfigPath = path,
+                macConfigPath = path,
+                linuxConfigPath = path,
+            };
+            Assert.AreEqual(McpStatus.Configured, new FakeCodexConfigurator(client).CheckStatus(attemptAutoRewrite: false), client.configStatus);
+            Assert.AreEqual(text, File.ReadAllText(path));
+        }
+
+        [TestCase(false, "")]
+        [TestCase(true, "")]
+        [TestCase(false, "ftp://synthetic.example.test")]
+        [TestCase(true, "ftp://synthetic.example.test")]
+        public void LocalHttpStatusDoesNotValidateUnusedRemoteUrl(bool codex, string remote)
+        {
+            EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, remote);
+            EditorConfigurationCache.Instance.Refresh();
+            string path = Path.Combine(_tempDir, codex ? "local.toml" : "local.json");
+            string text = codex
+                ? "[mcp_servers.unityMCP]\nurl = 'http://127.0.0.1:65431/mcp'\n"
+                : "{\"mcpServers\":{\"unityMCP\":{\"url\":\"http://127.0.0.1:65431/mcp\"}}}";
+            File.WriteAllText(path, text);
+            var client = new McpClient
+            {
+                name = "Synthetic",
+                windowsConfigPath = path,
+                macConfigPath = path,
+                linuxConfigPath = path,
+            };
+            McpClientConfiguratorBase configurator = codex ? new FakeCodexConfigurator(client) : new FakeJsonConfigurator(client);
+            Assert.AreEqual(McpStatus.IncorrectPath, configurator.CheckStatus(attemptAutoRewrite: false), client.configStatus);
+            Assert.AreEqual(ConfiguredTransport.Http, client.configuredTransport);
             Assert.AreEqual(text, File.ReadAllText(path));
         }
 

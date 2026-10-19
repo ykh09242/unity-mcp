@@ -685,7 +685,7 @@ async def test_recovers_legacy_status_file_rejection_before_sending_mutation(
     boundary.instance.return_value = "Safe@sixsafe"
     monkeypatch.setattr("services.tools.manage_ugui.send_mutation", send_mutation)
     monkeypatch.setattr(legacy, "get_unity_connection_pool", lambda: pool)
-    monkeypatch.setattr(legacy, "Path", SimpleNamespace(home=lambda: tmp_path))
+    monkeypatch.setattr(legacy.PortDiscovery, "get_registry_dir", lambda: status.parent)
     monkeypatch.setattr(connection, "connect", connect)
     monkeypatch.setattr(connection, "receive_full_response", receive)
     monkeypatch.setattr(recovery, "wait_for_editor_ready", ready)

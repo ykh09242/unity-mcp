@@ -200,12 +200,11 @@ async def verify_edit_by_sha(
     name: str,
     path: str,
     pre_sha: str | None,
+    *,
+    expected_sha: str | None = None,
 ) -> bool:
-    """Verify a script edit was applied by comparing SHA before and after.
-
-    Returns True if the file's SHA changed (edit likely applied).
-    """
-    if not pre_sha:
+    """Confirm the expected result, never infer ownership from an arbitrary change."""
+    if not pre_sha or not expected_sha:
         return False
     try:
         verify = await unity_transport.send_with_unity_instance(
@@ -216,7 +215,7 @@ async def verify_edit_by_sha(
         )
         if isinstance(verify, dict) and verify.get("success"):
             new_sha = (verify.get("data") or {}).get("sha256")
-            return bool(new_sha and new_sha != pre_sha)
+            return bool(new_sha and new_sha == expected_sha and new_sha != pre_sha)
     except Exception as exc:
         logger.debug(
             "Failed to verify edit after disconnect for %s at %s: %r",

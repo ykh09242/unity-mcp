@@ -52,12 +52,12 @@ def collector_factory(tmp_path, monkeypatch):
     monkeypatch.setattr(core.config.config, "telemetry_enabled", True)
     monkeypatch.setattr(core.config.config, "telemetry_endpoint", "https://owned.example/events")
     monkeypatch.setattr(telemetry.queue, "Queue", ObservedQueue)
-    state = {"posts": 0, "closed": 0, "worker_errors": 0}
+    state = {"posts": 0, "closed": 0, "created": 0, "worker_errors": 0}
     collectors = []
 
     class Client:
         def __init__(self, **kwargs):
-            pass
+            state["created"] += 1
 
         def __enter__(self):
             return self
@@ -104,7 +104,9 @@ def enqueue_payload(collector):
 def assert_finished_and_released(collector, state, references, sends):
     assert collector._queue.twice_idle.wait(5), "Worker did not retry its idle queue twice"
     gc.collect()
-    assert state["posts"] == state["closed"] == sends
+    assert state["posts"] == sends
+    assert state["created"] == 1
+    assert state["closed"] == 0
     assert collector._queue.empty()
     assert collector._queue.unfinished_tasks == 0
     assert collector._worker.is_alive()
@@ -122,7 +124,7 @@ def test_completed_send_releases_record_before_idle_queue_retries(collector_fact
     assert_finished_and_released(collector, state, [reference], sends=1)
 
 
-def test_worker_exception_releases_record_after_client_closes(collector_factory, monkeypatch):
+def test_worker_exception_releases_record_before_client_shutdown(collector_factory, monkeypatch):
     collector, state = collector_factory()
     send = collector._send_telemetry
 
@@ -140,3 +142,16 @@ def test_worker_processes_next_record_and_keeps_queue_accounting(collector_facto
     collector, state = collector_factory()
     references = [enqueue_payload(collector), enqueue_payload(collector)]
     assert_finished_and_released(collector, state, references, sends=2)
+
+
+def test_worker_reuses_one_client_and_closes_it_on_shutdown(collector_factory):
+    collector, state = collector_factory()
+    enqueue_payload(collector)
+    enqueue_payload(collector)
+    assert collector._queue.twice_idle.wait(5)
+    assert state["posts"] == 2
+    assert state["created"] == 1
+    assert state["closed"] == 0
+    collector.shutdown()
+    assert not collector._worker.is_alive()
+    assert state["closed"] == 1

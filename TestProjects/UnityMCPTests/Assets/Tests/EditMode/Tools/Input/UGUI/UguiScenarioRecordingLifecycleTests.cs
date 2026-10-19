@@ -21,6 +21,7 @@ namespace MCPForUnityTests.EditMode.Tools.Input
     {
         private const string SceneKey = "MCPForUnityTests.RecorderLifecycle.Scene";
         private const string NameKey = "MCPForUnityTests.RecorderLifecycle.Name";
+        private const string BootstrapKey = "MCPForUnityTests.RecorderLifecycle.Bootstrap";
         private const string ExitIdKey = "MCPForUnityTests.RecorderLifecycle.ExitId";
 
         [UnityTest]
@@ -30,7 +31,7 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             string scenePath = "Assets/McpRecorderLifecycle-" + suffix + ".unity";
             SessionState.SetString(SceneKey, scenePath);
             SessionState.SetString(NameKey, "recorder-native-" + suffix);
-            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            Scene scene = CreateOwnedScene(suffix);
             SceneManager.SetActiveScene(scene);
             Assert.That(EditorSceneManager.SaveScene(scene, scenePath), Is.True);
             yield return new EnterPlayMode();
@@ -73,6 +74,43 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                 Assert.That(ActiveObservers(), Is.Zero);
                 Assert.That(store.List(), Does.Not.Contain(name + "-cancel"));
 
+                // Hierarchy invalidation and slow reconciliation include runtime-created,
+                // additive and persistent roots without scanning all loaded assets.
+                started = PlayScenarioRecordingService.Start(name + "-dynamic", 20, 30);
+                id = (string)started["recording_id"];
+                var persistent = new GameObject("Persistent_" + Guid.NewGuid().ToString("N"), typeof(RectTransform), typeof(Button));
+                UnityEngine.Object.DontDestroyOnLoad(persistent);
+                Scene additive = SceneManager.CreateScene("RecorderAdditive_" + Guid.NewGuid().ToString("N"));
+                var dynamicButton = new GameObject("Dynamic_" + Guid.NewGuid().ToString("N"), typeof(RectTransform), typeof(Button));
+                SceneManager.MoveGameObjectToScene(dynamicButton, additive);
+                double discoveryDeadline = EditorApplication.timeSinceStartup + 5;
+                while (
+                    (persistent.GetComponent<UguiScenarioRecordingObserver>() == null || dynamicButton.GetComponent<UguiScenarioRecordingObserver>() == null)
+                    && EditorApplication.timeSinceStartup < discoveryDeadline
+                )
+                    yield return null;
+                Assert.IsNotNull(persistent.GetComponent<UguiScenarioRecordingObserver>());
+                Assert.IsNotNull(dynamicButton.GetComponent<UguiScenarioRecordingObserver>());
+                Assert.AreSame(persistent, InputTargetResolver.Resolve(new JValue(persistent.name)));
+                Assert.AreSame(dynamicButton, InputTargetResolver.Resolve(new JValue(dynamicButton.name)));
+                persistent.SetActive(false);
+                Assert.Throws<ArgumentException>(() => InputTargetResolver.Resolve(new JValue(persistent.name)));
+                persistent.SetActive(true);
+                var duplicate = new GameObject(persistent.name);
+                Assert.Throws<ArgumentException>(() => InputTargetResolver.Resolve(new JValue(persistent.name)));
+                UnityEngine.Object.Destroy(duplicate);
+                UnityEngine.Object.Destroy(persistent.GetComponent<Button>());
+                discoveryDeadline = EditorApplication.timeSinceStartup + 5;
+                while (persistent.GetComponent<UguiScenarioRecordingObserver>() != null && EditorApplication.timeSinceStartup < discoveryDeadline)
+                    yield return null;
+                Assert.IsNull(persistent.GetComponent<UguiScenarioRecordingObserver>());
+                yield return SceneManager.UnloadSceneAsync(additive);
+                Assert.IsTrue(dynamicButton == null);
+                PlayScenarioRecordingService.Cancel(id);
+                UnityEngine.Object.Destroy(persistent);
+                yield return null;
+                Assert.That(ActiveObservers(), Is.Zero);
+
                 // The real Editor timer stops capture at the duration bound without silently saving.
                 started = PlayScenarioRecordingService.Start(name + "-timeout", 10, 1);
                 id = (string)started["recording_id"];
@@ -102,6 +140,19 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             Assert.That(ActiveObservers(), Is.Zero);
         }
 
+        private static Scene CreateOwnedScene(string suffix)
+        {
+            // Reuse the scene ownership guard; never replace an arbitrary unsaved scene.
+            Type type = Type.GetType("MCPForUnityTests.Editor.Helpers.PrefabTestSceneFixture, MCPForUnityTests.EditMode", true);
+            object fixture = Activator.CreateInstance(type, true);
+            Scene before = SceneManager.GetActiveScene();
+            type.GetMethod("PrepareRunnerBootstrap").Invoke(fixture, null);
+            bool restoredBootstrap = SceneManager.GetActiveScene() != before;
+            Scene owned = (Scene)type.GetMethod("Create").Invoke(fixture, new object[] { "McpRecorderLifecycle_", suffix });
+            SessionState.SetBool(BootstrapKey, restoredBootstrap);
+            return owned;
+        }
+
         private static int ActiveObservers() =>
             UnityEngine.Resources.FindObjectsOfTypeAll<UguiScenarioRecordingObserver>().Count(observer => observer != null && observer.enabled);
 
@@ -122,7 +173,7 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             if (!string.IsNullOrEmpty(name))
             {
                 var store = new PlayScenarioStore(Path.GetDirectoryName(Application.dataPath));
-                foreach (string suffix in new[] { "", "-cancel", "-timeout", "-exit", "-replacement" })
+                foreach (string suffix in new[] { "", "-cancel", "-timeout", "-exit", "-replacement", "-dynamic" })
                     store.Delete(name + suffix);
             }
             string scenePath = SessionState.GetString(SceneKey, "");
@@ -146,6 +197,13 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                 }
                 AssetDatabase.DeleteAsset(scenePath);
             }
+            if (SessionState.GetBool(BootstrapKey, false))
+            {
+                Scene current = SceneManager.GetActiveScene();
+                Assert.IsTrue(SceneManager.sceneCount == 1 && current.rootCount == 0 && !current.isDirty && string.IsNullOrEmpty(current.path));
+                EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+            }
+            SessionState.EraseBool(BootstrapKey);
             SessionState.EraseString(SceneKey);
             SessionState.EraseString(NameKey);
             SessionState.EraseString(ExitIdKey);

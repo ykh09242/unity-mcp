@@ -1,4 +1,4 @@
-"""Mixed script recovery must distinguish each successfully applied phase."""
+"""Disconnected script phases require attributable result evidence before claiming success."""
 
 import os
 from pathlib import Path
@@ -48,6 +48,8 @@ async def wire(sender, target, command, params, **kwargs):
             return {"success": False, "error": "controlled text failure"}
         # Controlled text boundary; actual public normalization/recovery remain in use.
         state["text"] = tools._preview_text_spans(state["text"], params["edits"])
+        if case == "text_disconnect":
+            return {"success": False, "error": "connection closed"}
         sha = hashlib.sha256(state["text"].encode()).hexdigest()
         data = {"path": "Assets/Foo.cs", "editsApplied": 0 if case == "noop" else 1, "no_op": case == "noop", "sha256": sha, "scheduledRefresh": True}
         if case in ("missing", "missing_applied", "unavailable", "fallback_invalid", "fallback_empty"):
@@ -66,6 +68,8 @@ async def wire(sender, target, command, params, **kwargs):
             return {"success": True, "data": {"sha256": "not-a-sha" if case == "fallback_invalid" else ""}}
         return {"success": True, "data": {"sha256": hashlib.sha256(state["text"].encode()).hexdigest()}}
     if action == "edit":
+        if case == "unrelated":
+            state["text"] += "// unrelated writer\n"
         if case in ("applied", "missing_applied", "success"):
             state["text"] = state["text"].replace("class Foo {}", "class Foo { void M() {} }")
         if case == "success":
@@ -85,7 +89,7 @@ async def main():
     passed = failed = 0
     for mode in ("2026-07-28", "legacy"):
         async with Client(server, mode=mode) as client:
-            for case in ("not_applied", "applied", "missing", "missing_applied", "malformed", "unavailable", "noop", "text_failure", "success", "uppercase", "null_hash", "fallback_invalid", "fallback_empty"):
+            for case in ("not_applied", "applied", "missing", "missing_applied", "malformed", "unavailable", "noop", "text_failure", "success", "uppercase", "null_hash", "fallback_invalid", "fallback_empty", "text_disconnect", "unrelated"):
                 state.clear()
                 state.update(case=case, text="class Foo {}\n", calls=[])
                 result = await client.call_tool("script_apply_edits", {
@@ -96,20 +100,22 @@ async def main():
                 })
                 response = result.structured_content
                 try:
-                    assert response["success"] is (case in ("applied", "missing_applied", "success")), response
-                    if case == "text_failure":
+                    assert response["success"] is (case == "success"), response
+                    if case in ("text_failure", "text_disconnect"):
                         assert state["calls"] == ["validate_edit", "read", "apply_text_edits"]
-                        assert state["text"] == "class Foo {}\n"
-                    elif case in ("missing", "missing_applied", "malformed", "null_hash"):
-                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "get_sha", "edit", "get_sha"]
-                    elif case in ("unavailable", "fallback_invalid", "fallback_empty"):
+                        if case == "text_failure":
+                            assert state["text"] == "class Foo {}\n"
+                            assert response["error"] == "controlled text failure"
+                    elif case in ("missing", "missing_applied", "malformed", "null_hash", "unavailable", "fallback_invalid", "fallback_empty"):
                         assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "get_sha", "edit"]
-                    elif case == "success":
-                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "edit"]
                     else:
-                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "edit", "get_sha"]
-                    if case not in ("applied", "missing_applied", "success", "text_failure"):
-                        assert response["error"] == "connection closed"
+                        assert state["calls"] == ["validate_edit", "read", "apply_text_edits", "edit"]
+                    if case not in ("success", "text_failure"):
+                        assert response.get("code") == "edit_unconfirmed", response
+                        assert response["data"]["execution_status"] == "unknown", response
+                        assert response["data"]["retry_safe"] is False, response
+                    assert state["calls"].count("apply_text_edits") == 1
+                    assert state["calls"].count("edit") <= 1
                     passed += 1
                     verdict = "PASS"
                 except AssertionError as error:
@@ -139,7 +145,7 @@ def test_mixed_script_recovery_does_not_verify_prior_text_phase(tmp_path):
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "RESULT 26 passed 0 failed" in result.stdout
+    assert "RESULT 30 passed 0 failed" in result.stdout
 
 
 NEWLINE_PROGRAM = r"""

@@ -53,7 +53,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
             if (!string.Equals(AssetDatabase.GetAssetPath(controller), controllerPath, StringComparison.OrdinalIgnoreCase))
                 return new { success = false, message = $"AnimatorController was not persisted at the requested path '{controllerPath}'." };
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
             folders.Complete();
 
             return new
@@ -121,7 +121,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 rootStateMachine.defaultState = state;
 
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
 
             return new
             {
@@ -274,7 +274,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             int conditionCount = conditions.Count;
 
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
 
             return new
             {
@@ -374,7 +374,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
 
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
 
             return new
             {
@@ -523,7 +523,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             Undo.RecordObject(animator, "Assign AnimatorController");
             animator.runtimeAnimatorController = controller;
             EditorUtility.SetDirty(go);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(go);
 
             return new
             {

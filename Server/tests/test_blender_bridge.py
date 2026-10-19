@@ -75,6 +75,17 @@ class TestBlenderBridgeRegistration:
 
 
 class TestBlenderBridgeRouting:
+    @pytest.mark.parametrize("action", ["screenshot", "compare_screenshot"])
+    @pytest.mark.parametrize("size", [-1, 8193, 2**31 - 1])
+    def test_capture_budget_refuses_before_resolving_or_sending(self, action, size):
+        with patch.object(mod, "get_unity_instance_from_context", new=AsyncMock()) as resolve:
+            with patch.object(mod, "send_with_unity_instance", new=AsyncMock()) as send:
+                result = asyncio.run(blender_bridge(MagicMock(), action=action, max_size=size))
+        assert result["success"] is False
+        assert result["error"] == "capture_budget_exceeded"
+        resolve.assert_not_awaited()
+        send.assert_not_awaited()
+
     def test_status_sends_action_only(self):
         _, sent = _call_tool(action="status")
         assert _sent_command(sent) == COMMAND

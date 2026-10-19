@@ -79,15 +79,10 @@ namespace MCPForUnity.Editor.Clients.Configurators
                     return client.status;
                 }
 
-                if (attemptAutoRewrite)
-                {
-                    Configure();
-                }
-                else
-                {
-                    client.SetStatus(McpStatus.IncorrectPath);
-                    client.configuredTransport = ConfiguredTransport.Unknown;
-                }
+                // OpenClaw entries have no generated-owner receipt. Endpoint repair is an
+                // explicit Configure action, even for callers using the legacy default flag.
+                client.SetStatus(McpStatus.IncorrectPath);
+                client.configuredTransport = ConfiguredTransport.Unknown;
             }
             catch (Exception ex)
             {
@@ -358,13 +353,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
             else
             {
                 string configuredUrl = server["url"]?.ToString();
-                if (
-                    string.IsNullOrWhiteSpace(configuredUrl)
-                    || (
-                        !UrlsEqual(configuredUrl, HttpEndpointUtility.GetLocalMcpRpcUrl())
-                        && !UrlsEqual(configuredUrl, HttpEndpointUtility.GetRemoteMcpRpcUrl())
-                    )
-                )
+                if (string.IsNullOrWhiteSpace(configuredUrl) || !UrlsEqual(configuredUrl, HttpEndpointUtility.GetMcpRpcUrl()))
                 {
                     return false;
                 }
@@ -398,15 +387,9 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 return ConfiguredTransport.Stdio;
             }
 
-            if (UrlsEqual(configuredUrl, HttpEndpointUtility.GetRemoteMcpRpcUrl()))
-            {
-                return ConfiguredTransport.HttpRemote;
-            }
-
-            if (UrlsEqual(configuredUrl, HttpEndpointUtility.GetLocalMcpRpcUrl()))
-            {
-                return ConfiguredTransport.Http;
-            }
+            // Checking a local registration must not validate an unused remote URL.
+            if (UrlsEqual(configuredUrl, HttpEndpointUtility.GetMcpRpcUrl()))
+                return HttpEndpointUtility.GetCurrentServerTransport();
 
             return ConfiguredTransport.Unknown;
         }

@@ -701,7 +701,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--status-dir",
         default=None,
-        help="Status-file directory. Default: fresh tmp dir (local) / <workspace>/.unity-mcp (--ci).",
+        help="Fresh launches create an owned subdirectory under this parent; --reuse reads the exact directory. Default parent: system temp (local) / <workspace>/.unity-mcp (--ci).",
     )
     p.add_argument(
         "--reuse",
@@ -934,12 +934,11 @@ class LocalLauncher:
 
 
 class DockerLauncher:
-    """Reproduces e2e-bridge.yml's docker run exactly; docker-based liveness."""
-
-    CONTAINER = "unity-mcp"
+    """Launch an owned CI Editor container with shared license/cache mounts."""
 
     def __init__(self, args: argparse.Namespace):
         self.args = args
+        self._owned_containers: dict[str, Path] = {}
 
     def resolve_editor(self, project_path: Path) -> EditorSpec:
         # CI short-circuits to the fixed image entrypoint; never touches Hub.
@@ -955,13 +954,14 @@ class DockerLauncher:
         status_dir: Path,
         log_path: str,
         extra_editor_args: list[str],
-        container: str = "unity-mcp",
+        container: str | None = None,
         runner_temp: str | None = None,
     ) -> list[str]:
         # When RUNNER_TEMP is present (GitHub Actions), mount the same license /
         # config / cache volumes the warm-up + activation steps populated so the
         # resident bridge container sees the staged ULF/EBL seat. Locally these
         # mounts are simply omitted.
+        container = container or f"unity-mcp-{uuid.uuid4().hex}"
         license_mounts: list[str] = []
         if runner_temp:
             rt = str(runner_temp)
@@ -981,6 +981,8 @@ class DockerLauncher:
             "-d",
             "--name",
             container,
+            "--label",
+            f"com.ykh09242.unity-mcp.harness={container}",
             "--network",
             "host",
             "-e",
@@ -993,6 +995,8 @@ class DockerLauncher:
             "UNITY_MCP_BIND_HOST=127.0.0.1",
             "-v",
             f"{workspace}:{workspace}",
+            "-v",
+            f"{status_dir}:{status_dir}",
             "-w",
             str(workspace),
             *license_mounts,
@@ -1024,12 +1028,7 @@ class DockerLauncher:
         workspace = Path(os.environ.get("GITHUB_WORKSPACE", str(REPO_ROOT)))
         runner_temp = os.environ.get("RUNNER_TEMP")
         container_log = "/root/.config/unity3d/Editor.log"
-        subprocess.run(
-            ["docker", "rm", "-f", self.CONTAINER],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        container_name = f"unity-mcp-{uuid.uuid4().hex}"
         argv = self.docker_run_argv(
             image,
             workspace,
@@ -1037,26 +1036,35 @@ class DockerLauncher:
             status_dir,
             container_log,
             extra_editor_args,
-            self.CONTAINER,
+            container_name,
             runner_temp,
         )
-        subprocess.run(argv, check=True)
-        return Handle(container=self.CONTAINER, log_path=container_log)
+        result = subprocess.run(argv, check=True, capture_output=True, text=True)
+        container_id = result.stdout.strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", container_id):
+            raise RuntimeError("Docker did not return the launched container ID")
+        self._owned_containers[container_id] = status_dir.absolute()
+        return Handle(container=container_id, log_path=container_log)
 
     def is_alive(self, handle: Handle) -> bool:
+        if handle.container not in self._owned_containers:
+            return False
         try:
             out = subprocess.run(
-                ["docker", "inspect", "-f", "{{.State.Status}}", self.CONTAINER],
+                ["docker", "inspect", "-f", "{{.State.Status}}", handle.container],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-            return out.stdout.strip() == "running"
+            # An inspect failure cannot prove the owned process stopped.
+            return out.returncode != 0 or out.stdout.strip() not in ("exited", "dead")
         except OSError:
-            return False
+            return True
 
     def tail_log(self, handle: Handle, n: int) -> str:
-        container = handle.container or self.CONTAINER
+        container = handle.container
+        if not container:
+            return ""
         try:
             # Unity uses -logFile, so its diagnostics are not on Docker stdout.
             if handle.log_path:
@@ -1085,20 +1093,79 @@ class DockerLauncher:
             return ""
 
     def fixup_permissions(self, status_dir: Path) -> None:
-        subprocess.run(
-            ["docker", "exec", self.CONTAINER, "chmod", "-R", "a+rwx", str(status_dir)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
+        # Root in the Linux container can leave private status files unreadable
+        # by the host runner. Transfer only this run's files to that host owner.
+        owned = getattr(self.args, "_owned_status_dir", None)
+        if owned is None or Path(owned).absolute() != status_dir.absolute():
+            return
+        if _has_linked_ancestor(status_dir):
+            return
+        owner_uid = getattr(os, "getuid", lambda: None)()
+        owner_gid = getattr(os, "getgid", lambda: None)()
+        if owner_uid is None or owner_gid is None:
+            return
+        container = next(
+            (key for key, path in self._owned_containers.items() if path == status_dir.absolute()),
+            None,
         )
+        if container is None:
+            return
+        files = []
+        for candidate in status_dir.iterdir():
+            if (
+                not (
+                    candidate.name.startswith("unity-mcp-status-")
+                    or candidate.name.startswith("unity-mcp-port")
+                )
+                or candidate.suffix != ".json"
+            ):
+                continue
+            if (
+                candidate.is_file()
+                and not _has_linked_ancestor(candidate)
+                and candidate.stat().st_uid != owner_uid
+            ):
+                files.append(str(candidate))
+        if files:
+            subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    container,
+                    "chown",
+                    "--no-dereference",
+                    f"{owner_uid}:{owner_gid}",
+                    *files,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
 
     def teardown(self, handle: Handle, grace_s: float = 10.0) -> None:
-        subprocess.run(
-            ["docker", "rm", "-f", self.CONTAINER],
+        if handle.container not in self._owned_containers:
+            return
+        result = subprocess.run(
+            ["docker", "rm", "-f", handle.container],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
         )
+        if result.returncode == 0:
+            self._owned_containers.pop(handle.container, None)
+
+
+def _has_linked_ancestor(path: Path) -> bool:
+    for candidate in (path.absolute(), *path.absolute().parents):
+        try:
+            info = candidate.lstat()
+            if candidate.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+                return True
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return True
+    return False
 
 
 def make_launcher(args: argparse.Namespace):
@@ -1170,13 +1237,13 @@ def wait_for_ready(
                 raise SystemExit(3)
             raise SystemExit(2)
 
+        launcher.fixup_permissions(status_dir)
         status_file = newest_status_file(status_dir)
         if status_file:
             data = _read_status(status_file)
             port = port_from_status(data)
             if port and _tcp_probe(port):
                 instance_id = instance_id_from_status(status_file, data)
-                launcher.fixup_permissions(status_dir)
                 return ReadyInfo(port=port, instance_id=instance_id, status_file=status_file)
 
         time.sleep(2)
@@ -1315,6 +1382,28 @@ def run_smoke_leg(
     return LegOutcome("smoke", "error", blocking=True, detail="no bridge reachable", exit_code=2)
 
 
+def cleanup_ci_scene(args: argparse.Namespace, project_path: Path) -> None:
+    """Remove only this run's named scene after its Editor is confirmed stopped."""
+    scene = getattr(args, "_harness_scene", None)
+    if not scene or Path(scene["project"]).absolute() != project_path.absolute():
+        return
+    if not re.fullmatch(r"Scene_[0-9a-f]{32}", scene["name"]):
+        return
+    directory = project_path / "Assets" / "__MCPHarness"
+    if _has_linked_ancestor(directory):
+        return
+    target = directory / (scene["name"] + ".unity")
+    for file in (target, Path(str(target) + ".meta")):
+        if file.is_file() and not _has_linked_ancestor(file):
+            file.unlink()
+    if scene["directory_created"] and directory.is_dir() and not any(directory.iterdir()):
+        directory.rmdir()
+        meta = Path(str(directory) + ".meta")
+        if scene["directory_meta_created"] and meta.is_file() and not _has_linked_ancestor(meta):
+            meta.unlink()
+    args._harness_scene = None
+
+
 def prepare_ci_scene(args: argparse.Namespace, instance_id: str, *, send=None) -> bool:
     """Name the disposable CI scene before smoke can dirty it and block UTF's save task."""
     if not args.ci or args.reuse:
@@ -1322,10 +1411,30 @@ def prepare_ci_scene(args: argparse.Namespace, instance_id: str, *, send=None) -
     if send is None:
         _ensure_src_on_path()
         from transport.legacy.unity_connection import send_command_with_retry as send
+    project = Path(args.project_path)
+    project = (REPO_ROOT / project).absolute() if not project.is_absolute() else project.absolute()
+    directory = project / "Assets" / "__MCPHarness"
+    if _has_linked_ancestor(directory):
+        print("::error:: Linked CI scene destination refused.")
+        return False
+    if not getattr(args, "_harness_scene", None):
+        name = f"Scene_{uuid.uuid4().hex}"
+        target = directory / (name + ".unity")
+        if target.exists() or Path(str(target) + ".meta").exists():
+            return False
+        args._harness_scene = {
+            "project": str(project),
+            "name": name,
+            "directory_created": not directory.exists(),
+            "directory_meta_created": not Path(str(directory) + ".meta").exists(),
+        }
+    scene = args._harness_scene
+    if scene["project"] != str(project):
+        return False
     try:
         response = send(
             "manage_scene",
-            {"action": "save", "path": "Assets/__MCPHarness", "name": f"Scene_{uuid.uuid4().hex}"},
+            {"action": "save", "path": "Assets/__MCPHarness", "name": scene["name"]},
             instance_id=instance_id,
             max_retries=args.max_retries,
             retry_ms=args.retry_ms,
@@ -1716,7 +1825,9 @@ def main(argv: list[str] | None = None) -> int:
     # Resolve project path (repo-relative or absolute).
     project_path = Path(args.project_path)
     if not project_path.is_absolute():
-        project_path = (REPO_ROOT / project_path).resolve()
+        project_path = REPO_ROOT / project_path
+    project_path = Path(os.path.abspath(project_path))
+    args.project_path = str(project_path)
 
     # Reports / JUnit geometry.
     junit_path = Path(args.junit)
@@ -1724,20 +1835,23 @@ def main(argv: list[str] | None = None) -> int:
         junit_path = (REPO_ROOT / junit_path).resolve()
     reports_dir = Path(args.reports).resolve() if args.reports else junit_path.parent
 
-    # Status-dir + isolation. Default local: fresh tmp dir; --ci / --status-dir override.
-    owns_status_dir = False
-    if args.status_dir:
-        sd = Path(args.status_dir)
-        status_dir = sd if sd.is_absolute() else (REPO_ROOT / sd).resolve()
-        status_dir.mkdir(parents=True, exist_ok=True)
-    elif args.ci:
-        status_dir = (REPO_ROOT / ".unity-mcp").resolve()
-        status_dir.mkdir(parents=True, exist_ok=True)
-    elif args.reuse:
-        status_dir = Path.home() / ".unity-mcp"
+    owns_status_dir = not args.reuse
+    if args.reuse:
+        status_dir = Path(args.status_dir) if args.status_dir else Path.home() / ".unity-mcp"
+        if not status_dir.is_absolute():
+            status_dir = (REPO_ROOT / status_dir).absolute()
     else:
-        status_dir = Path(tempfile.mkdtemp(prefix="unity-mcp-harness-"))
-        owns_status_dir = True
+        base = None
+        if args.status_dir or args.ci:
+            base = Path(args.status_dir) if args.status_dir else REPO_ROOT / ".unity-mcp"
+            if not base.is_absolute():
+                base = (REPO_ROOT / base).absolute()
+            if _has_linked_ancestor(base):
+                print("::error:: Linked status directory refused.")
+                return 2
+            base.mkdir(parents=True, exist_ok=True)
+        status_dir = Path(tempfile.mkdtemp(prefix="unity-mcp-harness-", dir=base))
+    args._owned_status_dir = status_dir if owns_status_dir else None
 
     launcher = make_launcher(args)
     boot_start = time.time()
@@ -1773,22 +1887,38 @@ def main(argv: list[str] | None = None) -> int:
         write_reports(junit_path, reports_dir, outcomes)
 
     def do_teardown() -> None:
-        # Only kill the editor we started; clean only our own status files.
+        stopped = handle is None
         if handle is not None and owns_editor and not args.keep_alive:
             try:
                 launcher.teardown(handle)
+                stopped = not launcher.is_alive(handle)
             except Exception:
-                pass
-        if owns_status_dir:
+                stopped = False
+        if handle is not None and not stopped:
+            if owns_status_dir:
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                receipt = {
+                    "project_path": str(project_path),
+                    "status_dir": str(status_dir),
+                    "pid": handle.pid,
+                    "container": handle.container,
+                    "scene": getattr(args, "_harness_scene", None),
+                }
+                (reports_dir / "reuse.json").write_text(
+                    json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
+                )
+                print(
+                    f"== retained Editor registry: {status_dir}; reuse handle: {reports_dir / 'reuse.json'} =="
+                )
+            return
+        if stopped:
             try:
-                for p in glob.glob(str(status_dir / "unity-mcp-status-*.json")):
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
-                shutil.rmtree(status_dir, ignore_errors=True)
+                cleanup_ci_scene(args, project_path)
             except OSError:
-                pass
+                print("::warning:: Could not remove the owned CI scene.")
+        if owns_status_dir and stopped and not _has_linked_ancestor(status_dir):
+            # status_dir is the exact unique directory allocated above, never its supplied parent.
+            shutil.rmtree(status_dir, ignore_errors=True)
 
     def _signal_handler(signum, frame):  # pragma: no cover - signal path
         do_teardown()
@@ -1999,12 +2129,12 @@ def main(argv: list[str] | None = None) -> int:
         do_teardown()
 
 
-def _norm_project_root(p: str) -> str:
-    """Normalize a project path for comparison: strip a trailing Assets, case, sep."""
-    p = p.rstrip("/\\")
-    if p.lower().endswith("assets"):
-        p = p[:-6].rstrip("/\\")
-    return os.path.normcase(os.path.normpath(p))
+def _norm_project_root(p: str, *, strip_assets: bool = True) -> str:
+    """Normalize an absolute root; only status paths may end in an Assets segment."""
+    p = os.path.abspath(os.path.normpath(p.replace("\\", "/")))
+    if strip_assets and os.path.basename(p).lower() == "assets":
+        p = os.path.dirname(p)
+    return os.path.normcase(p)
 
 
 def _find_reuse_status(status_dir: Path, project_path: Path) -> str | None:
@@ -2014,7 +2144,7 @@ def _find_reuse_status(status_dir: Path, project_path: Path) -> str | None:
     two projects sharing a folder name never attach to the wrong resident editor.
     Refuses (returns None) rather than attach to a non-matching instance.
     """
-    want = _norm_project_root(str(project_path))
+    want = _norm_project_root(str(project_path), strip_assets=False)
     files = sorted(
         glob.glob(str(status_dir / "unity-mcp-status-*.json")),
         key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0,

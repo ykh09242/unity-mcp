@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Dependencies.Models;
 using MCPForUnity.Editor.Dependencies.PlatformDetectors;
 using MCPForUnity.Editor.Helpers;
@@ -43,35 +46,64 @@ namespace MCPForUnity.Editor.Dependencies
         /// <summary>
         /// Perform a comprehensive dependency check
         /// </summary>
-        public static DependencyCheckResult CheckAllDependencies()
+        private static readonly DependencyCheckCache checks = new(result => string.Join("|", result.Dependencies.Select(dep => FileIdentity(dep.Path))));
+
+        /// <summary>Called on the Editor thread; subprocess work runs on a worker.</summary>
+        public static Task<DependencyCheckResult> CheckAllDependenciesAsync(bool force = false)
+        {
+            var detector = ((PlatformDetectorBase)GetCurrentPlatformDetector()).CaptureForBackground();
+            string key = Environment.GetEnvironmentVariable("PATH") + "|" + detector.UvxInputIdentity + "|" + FileIdentity(detector.UvxInputPath);
+            return checks.Request(key, token => CheckDependencies(detector, token), force);
+        }
+
+        private static string FileIdentity(string path)
+        {
+            try
+            {
+                var file = new FileInfo(path);
+                return path + ":" + (file.Exists ? file.Length + ":" + file.LastWriteTimeUtc.Ticks : "missing");
+            }
+            catch
+            {
+                return path ?? "";
+            }
+        }
+
+        public static DependencyCheckResult CheckAllDependencies() => CheckDependencies(GetCurrentPlatformDetector(), CancellationToken.None);
+
+        private static DependencyCheckResult CheckDependencies(IPlatformDetector detector, CancellationToken token)
         {
             var result = new DependencyCheckResult();
 
             try
             {
-                var detector = GetCurrentPlatformDetector();
-                McpLog.Info($"Checking dependencies on {detector.PlatformName}...", always: false);
+                token.ThrowIfCancellationRequested();
 
                 // Check Python
                 var pythonStatus = detector.DetectPython();
                 result.Dependencies.Add(pythonStatus);
 
                 // Check uv
+                token.ThrowIfCancellationRequested();
                 var uvStatus = detector.DetectUv();
                 result.Dependencies.Add(uvStatus);
 
                 // Check git (optional: Package Manager Git-URL installs only)
+                token.ThrowIfCancellationRequested();
                 result.Dependencies.Add(detector.DetectGit());
 
                 // Generate summary and recommendations
                 result.GenerateSummary();
                 GenerateRecommendations(result, detector);
 
-                McpLog.Info($"Dependency check completed. System ready: {result.IsSystemReady}", always: false);
+                token.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                McpLog.Error($"Error during dependency check: {ex.Message}");
                 result.Summary = $"Dependency check failed: {ex.Message}";
                 result.IsSystemReady = false;
             }
@@ -140,6 +172,78 @@ namespace MCPForUnity.Editor.Dependencies
             if (result.GetMissingRequired().Count > 0)
             {
                 result.RecommendedActions.Add("Use the Setup Window (Window > MCP for Unity > Local Setup Window) for guided installation.");
+            }
+        }
+    }
+
+    /// <summary>One probe at a time; a changed input cancels the old snapshot before its successor runs.</summary>
+    internal sealed class DependencyCheckCache
+    {
+        private readonly object gate = new();
+        private string currentKey;
+        private Task<DependencyCheckResult> current;
+        private CancellationTokenSource cancellation;
+        private DateTime requested;
+        private readonly Func<DependencyCheckResult, string> resultIdentity;
+        private string completedIdentity;
+
+        public DependencyCheckCache()
+            : this(null) { }
+
+        internal DependencyCheckCache(Func<DependencyCheckResult, string> resultIdentity)
+        {
+            this.resultIdentity = resultIdentity;
+        }
+
+        public Task<DependencyCheckResult> Request(string key, Func<CancellationToken, DependencyCheckResult> probe, bool force = false)
+        {
+            lock (gate)
+            {
+                if (
+                    key == currentKey
+                    && current != null
+                    && (
+                        !current.IsCompleted
+                        || (
+                            !force
+                            && current.Status == TaskStatus.RanToCompletion
+                            && DateTime.UtcNow - requested < TimeSpan.FromSeconds(30)
+                            && (resultIdentity == null || resultIdentity(current.Result) == completedIdentity)
+                        )
+                    )
+                )
+                    return current;
+                var previous = current;
+                var previousCancellation = cancellation;
+                if (previous != null && !previous.IsCompleted)
+                    previousCancellation?.Cancel();
+                var source = new CancellationTokenSource();
+                cancellation = source;
+                var token = source.Token;
+                currentKey = key;
+                requested = DateTime.UtcNow;
+                current = Task.Run(async () =>
+                {
+                    if (previous != null)
+                    {
+                        try
+                        {
+                            await previous.ConfigureAwait(false);
+                        }
+                        catch (Exception) { /* The caller of the previous task still observes its failure. */ }
+                    }
+                    previousCancellation?.Dispose();
+                    token.ThrowIfCancellationRequested();
+                    var result = probe(token);
+                    token.ThrowIfCancellationRequested();
+                    lock (gate)
+                    {
+                        if (ReferenceEquals(cancellation, source))
+                            completedIdentity = resultIdentity?.Invoke(result);
+                    }
+                    return result;
+                });
+                return current;
             }
         }
     }

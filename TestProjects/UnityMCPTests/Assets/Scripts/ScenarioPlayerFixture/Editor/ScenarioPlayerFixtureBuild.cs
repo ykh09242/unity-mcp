@@ -244,7 +244,16 @@ namespace MCPForUnityTests.PlayScenarios.Player
                 if (backendIndex >= 0 && (backendIndex + 1 >= args.Length || Array.LastIndexOf(args, "--mcp-scenario-backend") != backendIndex))
                     throw new ArgumentException("Provide exactly one --mcp-scenario-backend value.");
                 string backend = backendIndex < 0 ? "mono" : args[backendIndex + 1];
-                PlayScenarioPlayerBuildResult result = PlayScenarioPlayerBuild.Build(definition.Name, args[outputIndex + 1], revision, backend: backend);
+                bool probeRefresh = Array.IndexOf(args, "--mcp-fixture-audit-refresh") >= 0;
+                PlayScenarioPlayerBuildResult result = probeRefresh
+                    ? ScenarioPlayerBuildRefreshProbe.Build(
+                        definition.Name,
+                        args[outputIndex + 1],
+                        revision,
+                        backend,
+                        Array.IndexOf(args, "--mcp-fixture-disable-auto-refresh") >= 0
+                    )
+                    : PlayScenarioPlayerBuild.Build(definition.Name, args[outputIndex + 1], revision, backend: backend);
                 Debug.Log("PLAYER_FIXTURE_BUILD_COMPLETED:" + result.BundlePath);
             }
             finally

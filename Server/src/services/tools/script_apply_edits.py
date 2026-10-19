@@ -1830,7 +1830,12 @@ async def script_apply_edits(
         async def _verify():
             if await verify_edit_by_sha(unity_instance, name, path, pre_sha):
                 return {"success": True, "message": "Edit applied (verified after domain reload)."}
-            return None
+            return {
+                "success": False,
+                "code": "edit_unconfirmed",
+                "message": "The edit response was lost; inspect the script before retrying.",
+                "data": {"execution_status": "unknown", "retry_safe": False},
+            }
 
         resp_struct = await send_mutation(
             ctx, unity_instance, "manage_script", params_struct, verify_after_disconnect=_verify
@@ -1966,7 +1971,12 @@ async def script_apply_edits(
                     "success": True,
                     "message": "Text edits applied (verified after domain reload).",
                 }
-            return None
+            return {
+                "success": False,
+                "code": "edit_unconfirmed",
+                "message": "The edit response was lost; inspect the script before retrying.",
+                "data": {"execution_status": "unknown", "retry_safe": False},
+            }
 
         response = await send_mutation(
             ctx, unity_instance, "manage_script", params_text, verify_after_disconnect=_verify_text
@@ -2024,7 +2034,12 @@ async def script_apply_edits(
         async def _verify_struct():
             if await verify_edit_by_sha(unity_instance, name, path, sha):
                 return {"success": True, "message": "Edit applied (verified after domain reload)."}
-            return None
+            return {
+                "success": False,
+                "code": "edit_unconfirmed",
+                "message": "The edit response was lost; inspect the script before retrying.",
+                "data": {"execution_status": "unknown", "retry_safe": False},
+            }
 
         response = await send_mutation(
             ctx,

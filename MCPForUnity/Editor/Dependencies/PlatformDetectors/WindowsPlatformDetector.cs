@@ -100,7 +100,7 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
 
             // If the user configured an override path but fallback was not used, keep the base result
             // (failure typically means the override path is invalid and no system fallback found)
-            if (MCPServiceLocator.Paths.HasUvxPathOverride && !MCPServiceLocator.Paths.HasUvxPathFallback)
+            if (HasExplicitUvxOverride && !HasUvxFallback)
             {
                 return status;
             }

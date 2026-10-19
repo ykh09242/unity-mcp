@@ -177,7 +177,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     TrySetMaterial(feature, materialPath);
 
                 EditorUtility.SetDirty(rendererData as UnityEngine.Object);
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
 
                 return new
                 {
@@ -276,7 +276,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             }
 
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
 
             return new { success = true, message = $"Removed renderer feature '{featureName}' at index {targetIndex}." };
         }
@@ -313,7 +313,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var result = ApplyFeatureProperties(feature, propertiesToken);
             EditorUtility.SetDirty(feature);
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
 
             return new
             {
@@ -359,7 +359,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             setActiveMethod.Invoke(feature, new object[] { newState });
             EditorUtility.SetDirty(feature);
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
 
             return new { success = true, message = $"Feature '{feature.name}' {(newState ? "enabled" : "disabled")}." };
         }
@@ -437,7 +437,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             }
 
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
 
             return new { success = true, message = $"Reordered {featuresList.Count} renderer features." };
         }

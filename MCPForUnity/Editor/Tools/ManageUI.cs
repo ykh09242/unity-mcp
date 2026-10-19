@@ -508,7 +508,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("No recognised properties were applied. Check the key names.");
 
             EditorUtility.SetDirty(ps);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(ps);
 
             return new SuccessResponse($"Updated PanelSettings at {path}", new { path, applied = changes });
         }
@@ -536,7 +536,7 @@ namespace MCPForUnity.Editor.Tools
                 )
                     return null;
 
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(ps);
                 return ps;
             }
             finally
@@ -1804,7 +1804,7 @@ namespace MCPForUnity.Editor.Tools
                         renderAssetFolders.EnsureFolder(rtFolder);
                         string rtAssetPath = $"{rtFolder}/RT_MCP_UI_Render_{psId}.renderTexture";
                         AssetDatabase.CreateAsset(rt, rtAssetPath);
-                        AssetDatabase.SaveAssets();
+                        AssetDatabase.SaveAssetIfDirty(rt);
 
                         s_panelRTs[psId] = rt;
                         renderTarget = rt;

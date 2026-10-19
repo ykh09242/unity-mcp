@@ -63,6 +63,10 @@ namespace MCPForUnity.Editor.Services.Transport
             public CancellationToken CancellationToken { get; }
             public CancellationTokenRegistration CancellationRegistration { get; }
             public bool IsExecuting { get; set; }
+            public CommandOutcome Outcome { get; set; }
+            public string LogTool { get; set; }
+            public string LogType { get; set; }
+            public System.Diagnostics.Stopwatch LogWatch { get; set; }
             public DateTime QueuedAt { get; }
 
             public void Dispose()
@@ -530,15 +534,24 @@ namespace MCPForUnity.Editor.Services.Transport
                     : "unknown";
                 var logName = resourceMeta?.Name ?? toolMeta?.Name ?? "unknown";
                 var sw = McpLogRecord.IsEnabled ? System.Diagnostics.Stopwatch.StartNew() : null;
+                pending.LogTool = logName;
+                pending.LogType = logType;
+                pending.LogWatch = sw;
                 pending.Timing?.Stop(CommandPhaseTiming.Phase.Queue);
                 pending.Timing?.Start(CommandPhaseTiming.Phase.Handler);
-                var result = CommandRegistry.ExecuteCommand(command.type, parameters, pending.CompletionSource, pending.CancellationToken, pending.Progress);
+                var result = CommandRegistry.ExecuteCommand(
+                    command.type,
+                    parameters,
+                    pending.CompletionSource,
+                    pending.CancellationToken,
+                    pending.Progress,
+                    McpLogRecord.IsEnabled ? outcome => pending.Outcome = outcome : null
+                );
 
                 if (result == null)
                 {
                     // Async cleanup only touches locked managed state; no editor frame is needed.
                     var capturedType = logName;
-                    var capturedParams = parameters;
                     var capturedLogType = logType;
                     void Complete(Task<string> t)
                     {
@@ -557,27 +570,11 @@ namespace MCPForUnity.Editor.Services.Transport
                         sw?.Stop();
                         if (McpLogRecord.IsEnabled)
                         {
-                            var logStatus = t.IsCanceled ? "CANCELED" : "SUCCESS";
-                            string logError = null;
-                            if (t.IsFaulted)
-                            {
-                                logStatus = "ERROR";
-                                logError = t.Exception?.InnerException?.Message;
-                            }
-                            else if (t.IsCompletedSuccessfully && t.Result != null)
-                            {
-                                try
-                                {
-                                    var resultObj = JObject.Parse(t.Result);
-                                    if (string.Equals(resultObj.Value<string>("status"), "error", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        logStatus = "ERROR";
-                                        logError = resultObj.Value<string>("error");
-                                    }
-                                }
-                                catch { }
-                            }
-                            McpLogRecord.Log(capturedType, capturedParams, capturedLogType, logStatus, sw?.ElapsedMilliseconds ?? 0, logError);
+                            string logStatus =
+                                t.IsCanceled ? "CANCELED"
+                                : t.IsFaulted ? "ERROR"
+                                : OutcomeStatus(pending.Outcome);
+                            McpLogRecord.Log(capturedType, null, capturedLogType, logStatus, sw?.ElapsedMilliseconds ?? 0);
                         }
                         RemovePending(id, pending);
                     }
@@ -592,23 +589,17 @@ namespace MCPForUnity.Editor.Services.Transport
                 pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
                 sw?.Stop();
 
-                string syncLogStatus = "SUCCESS";
-                string syncLogError = null;
-                if (result is ErrorResponse errResp)
-                {
-                    syncLogStatus = "ERROR";
-                    syncLogError = errResp.Error;
-                }
-                McpLogRecord.Log(logName, parameters, logType, syncLogStatus, sw?.ElapsedMilliseconds ?? 0, syncLogError);
-
                 var response = new { status = "success", result };
                 pending.TrySetResult(response);
+                if (McpLogRecord.IsEnabled)
+                    McpLogRecord.Log(logName, null, logType, OutcomeStatus(CommandOutcomeMetadata.FromResult(result)), sw?.ElapsedMilliseconds ?? 0);
                 RemovePending(id, pending);
             }
             catch (OperationCanceledException) when (pending.CancellationToken.IsCancellationRequested)
             {
                 pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
                 pending.TrySetCanceled();
+                LogThrownOutcome(pending, "CANCELED");
                 RemovePending(id, pending);
             }
             catch (Exception ex)
@@ -616,8 +607,21 @@ namespace MCPForUnity.Editor.Services.Transport
                 pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
                 McpLog.Error($"Error processing command: {ex.Message}\n{ex.StackTrace}");
                 pending.TrySetResult(SerializeError(ex.Message, "Unknown (error during processing)", ex.StackTrace));
+                LogThrownOutcome(pending, "ERROR");
                 RemovePending(id, pending);
             }
+        }
+
+        private static string OutcomeStatus(CommandOutcome outcome) =>
+            outcome == CommandOutcome.Error ? "ERROR"
+            : outcome == CommandOutcome.Success ? "SUCCESS"
+            : "UNKNOWN";
+
+        private static void LogThrownOutcome(PendingCommand pending, string status)
+        {
+            pending.LogWatch?.Stop();
+            if (pending.LogTool != null)
+                McpLogRecord.Log(pending.LogTool, null, pending.LogType, status, pending.LogWatch?.ElapsedMilliseconds ?? 0);
         }
 
         private static void CancelPending(string id, CancellationToken token)

@@ -250,7 +250,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (changed.Count > 0)
             {
                 EditorUtility.SetDirty(pipelineAsset);
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(pipelineAsset);
             }
 
             var msg = $"Updated {changed.Count} pipeline setting(s)";

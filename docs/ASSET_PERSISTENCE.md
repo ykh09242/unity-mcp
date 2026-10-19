@@ -1,0 +1,9 @@
+# Asset persistence boundaries
+
+Tool actions that modify an asset save only that asset file. Other dirty assets stay in memory and are not written. A controller, renderer data asset or other file with sub-assets is one persistence boundary: saving it includes dirty objects stored in that same file. Prefab save APIs already persist the selected prefab; creating a clip already serializes that clip. Multi-asset outputs save only the paths created or modified by the operation. Scene objects remain subject to the normal scene-save workflow.
+
+Targeted saves use `AssetDatabase.SaveAssetIfDirty`, which does not invoke `AssetModificationProcessor.OnWillSaveAssets`. The repository has no custom save-hook implementation that these tools depend on. Projects that rely on that global hook must run their explicit save workflow when they need it. Build preparation retains its explicit project-wide `SaveAssets` transaction and save hooks. Tag and layer operations serialize a detached copy of `ProjectSettings/TagManager.asset`, verify that the original file has not changed, and atomically replace only that file through checked project paths. `SaveAssetIfDirty` alone does not persist these native project settings.
+
+Read-only asset information and scoped searches accept registered package assets. Modification times are read from `PackageInfo.resolvedPath` plus the checked suffix of the virtual asset path. Assets use the checked project Assets root. `lastWriteTimeUtc` is null when no physical timestamp is available; date filters exclude such entries. Missing files never receive a fabricated 1601 timestamp. Package metadata does not make package write operations available.
+
+Unity API references: [SaveAssetIfDirty](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/AssetDatabase.SaveAssetIfDirty.html) and [PackageInfo](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/PackageManager.PackageInfo.html).

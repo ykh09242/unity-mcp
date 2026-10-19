@@ -1021,6 +1021,15 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             }
         }
 
+        internal static MCPForUnity.Runtime.Helpers.ScreenshotCaptureResult SaveMultiviewCapture(string base64, string folder, string fileName)
+        {
+            var output = MCPForUnity.Runtime.Helpers.ScreenshotUtility.PrepareCaptureResult(fileName, 1, true, folder, false);
+            MCPForUnity.Runtime.Helpers.ScreenshotUtility.WriteCaptureBytes(output.FullPath, Convert.FromBase64String(base64));
+            if (MCPForUnity.Runtime.Helpers.ScreenshotUtility.IsUnderAssets(output.ProjectRelativePath))
+                AssetDatabase.ImportAsset(output.ProjectRelativePath, ImportAssetOptions.ForceSynchronousImport);
+            return output;
+        }
+
         private void OnManageSceneMultiviewClicked()
         {
             try
@@ -1033,35 +1042,12 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                     string base64 = json["imageBase64"]?.ToString();
                     if (!string.IsNullOrEmpty(base64))
                     {
-                        string folderSpec = MCPForUnity.Editor.Helpers.ScreenshotPreferences.Resolve(null);
-                        string folder;
-                        try
-                        {
-                            folder = MCPForUnity.Runtime.Helpers.ScreenshotUtility.ResolveFolderAbsolute(folderSpec);
-                        }
-                        catch (System.InvalidOperationException ex)
-                        {
-                            McpLog.Error(ex.Message);
-                            return;
-                        }
-                        if (!System.IO.Directory.Exists(folder))
-                            System.IO.Directory.CreateDirectory(folder);
-
-                        string fileName = $"Multiview_{System.DateTime.Now:yyyyMMdd_HHmmss}.png";
-                        string filePath = System.IO.Path.Combine(folder, fileName);
-                        System.IO.File.WriteAllBytes(filePath, Convert.FromBase64String(base64));
-
-                        // Import only when the file landed under Assets/.
-                        string projectRoot = System.IO.Path.GetFullPath(System.IO.Path.Combine(UnityEngine.Application.dataPath, "..")).Replace('\\', '/');
-                        string normalizedFile = filePath.Replace('\\', '/');
-                        string normalizedRoot = projectRoot.EndsWith("/") ? projectRoot : projectRoot + "/";
-                        string projectRelative = normalizedFile.StartsWith(normalizedRoot, System.StringComparison.OrdinalIgnoreCase)
-                            ? normalizedFile.Substring(normalizedRoot.Length)
-                            : normalizedFile;
-                        if (MCPForUnity.Runtime.Helpers.ScreenshotUtility.IsUnderAssets(projectRelative))
-                            AssetDatabase.ImportAsset(projectRelative, ImportAssetOptions.ForceSynchronousImport);
-
-                        McpLog.Info($"Multiview contact sheet saved to {projectRelative}");
+                        var output = SaveMultiviewCapture(
+                            base64,
+                            MCPForUnity.Editor.Helpers.ScreenshotPreferences.Resolve(null),
+                            $"Multiview_{System.DateTime.Now:yyyyMMdd_HHmmss}"
+                        );
+                        McpLog.Info($"Multiview contact sheet saved to {output.ProjectRelativePath}");
                     }
                     else
                     {

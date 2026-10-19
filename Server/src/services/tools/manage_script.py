@@ -535,7 +535,12 @@ async def apply_text_edits(
                 "message": "Edit applied (verified after domain reload).",
                 "data": {"normalizedEdits": normalized_edits},
             }
-        return None
+        return {
+            "success": False,
+            "code": "edit_unconfirmed",
+            "message": "The edit response was lost; inspect the script before retrying.",
+            "data": {"execution_status": "unknown", "retry_safe": False},
+        }
 
     resp = await send_mutation(
         ctx, unity_instance, "manage_script", params, verify_after_disconnect=_verify_edit
@@ -550,28 +555,21 @@ async def apply_text_edits(
             try:
                 import asyncio
                 from contextvars import Context as TaskContext
-                import json
-                import glob
-                import os
+                import re
+                from services.execution_receipt_context import owned_to_thread
 
-                def _latest_status() -> dict | None:
-                    try:
-                        files = sorted(
-                            glob.glob(os.path.expanduser("~/.unity-mcp/unity-mcp-status-*.json")),
-                            key=os.path.getmtime,
-                            reverse=True,
-                        )
-                        if not files:
-                            return None
-                        with open(files[0], "r") as f:
-                            return json.loads(f.read())
-                    except Exception:
+                def _selected_status() -> dict | None:
+                    # Alias selections are checked by the selected connection;
+                    # never substitute another project's readiness state.
+                    target_hash = (unity_instance or "").rsplit("@", 1)[-1]
+                    if not re.fullmatch(r"[0-9a-fA-F]{8}(?:[0-9a-fA-F]{8})?", target_hash):
                         return None
+                    return transport.legacy.unity_connection.read_status_file(target_hash)
 
                 async def _flip_async():
                     try:
                         await asyncio.sleep(0.1)
-                        st = _latest_status()
+                        st = await owned_to_thread(_selected_status)
                         if st and st.get("reloading"):
                             return
                         await transport.legacy.unity_connection.async_send_command_with_retry(

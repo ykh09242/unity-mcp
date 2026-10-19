@@ -344,7 +344,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             }
 
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
             folders.Complete();
 
             return (controllerPath, rootSM.states.Length);

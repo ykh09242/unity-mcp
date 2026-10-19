@@ -254,6 +254,225 @@ namespace MCPForUnityTests.Editor.Helpers
             }
         }
 
+        [Test]
+        public void OpenClawStatusNeverRepairsAnUnownedEndpoint()
+        {
+            string path = _tokenPath + ".json";
+            var doc = new JObject
+            {
+                ["plugins"] = new JObject
+                {
+                    ["entries"] = new JObject
+                    {
+                        ["openclaw-mcp-bridge"] = new JObject
+                        {
+                            ["enabled"] = true,
+                            ["config"] = new JObject
+                            {
+                                ["timeout"] = 123,
+                                ["retries"] = 4,
+                                ["servers"] = new JObject
+                                {
+                                    ["unityMCP"] = new JObject
+                                    {
+                                        ["enabled"] = true,
+                                        ["transport"] = "http",
+                                        ["url"] = "http://localhost:54321/mcp",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            };
+            File.WriteAllText(path, doc.ToString());
+            var original = File.ReadAllBytes(path);
+            var mtime = File.GetLastWriteTimeUtc(path);
+            try
+            {
+                var configurator = new OwnedOpenClaw(path);
+                Assert.AreEqual(McpStatus.IncorrectPath, configurator.CheckStatus(), configurator.Client.configStatus);
+                Assert.AreEqual(McpStatus.IncorrectPath, configurator.CheckStatus(false));
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+                Assert.AreEqual(mtime, File.GetLastWriteTimeUtc(path));
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UnregisterHonorsLockBeforeAnyFileMutation(bool toml)
+        {
+            WithOwnedConfiguration(
+                toml,
+                (configurator, path) =>
+                {
+                    EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, true);
+                    var before = File.ReadAllBytes(path);
+                    Assert.Throws<InvalidOperationException>(configurator.Unregister);
+                    CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+                }
+            );
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UnregisterPreservesBomAndUnrelatedSettings(bool toml)
+        {
+            WithOwnedConfiguration(
+                toml,
+                (configurator, path) =>
+                {
+                    configurator.Unregister();
+                    var bytes = File.ReadAllBytes(path);
+                    CollectionAssert.AreEqual(new byte[] { 239, 187, 191 }, new[] { bytes[0], bytes[1], bytes[2] });
+                    StringAssert.Contains("other-owned-value", File.ReadAllText(path));
+                    StringAssert.DoesNotContain("unityMCP", File.ReadAllText(path));
+                    Assert.AreEqual(McpStatus.NotConfigured, configurator.Status);
+                }
+            );
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UnregisterFinalComparisonPreservesConcurrentChanges(bool failWrite)
+        {
+            WithOwnedConfiguration(
+                false,
+                (configurator, path) =>
+                {
+                    var service = MCPForUnity.Editor.Services.ClientConfigurationChangeService.Shared;
+                    var field = service
+                        .GetType()
+                        .GetField("beforeCommitComparison", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                    var original = field.GetValue(service);
+                    var expected = File.ReadAllBytes(path);
+                    try
+                    {
+                        field.SetValue(
+                            service,
+                            new Action(() =>
+                            {
+                                if (failWrite)
+                                    throw new IOException("synthetic write failure");
+                                File.AppendAllText(path, " ");
+                                expected = File.ReadAllBytes(path);
+                            })
+                        );
+                        Assert.Throws<InvalidOperationException>(configurator.Unregister);
+                        CollectionAssert.AreEqual(expected, File.ReadAllBytes(path));
+                        CollectionAssert.AreEquivalent(new[] { path }, Directory.GetFiles(Path.GetDirectoryName(path), Path.GetFileName(path) + "*"));
+                    }
+                    finally
+                    {
+                        field.SetValue(service, original);
+                    }
+                }
+            );
+        }
+
+        [TestCase("duplicate")]
+        [TestCase("encoding")]
+        [TestCase("large")]
+        public void JsonUnregisterRefusesAmbiguousOrUnboundedInput(string kind)
+        {
+            WithOwnedConfiguration(
+                false,
+                (configurator, path) =>
+                {
+                    if (kind == "duplicate")
+                        File.WriteAllText(path, "{\"mcpServers\":{\"unityMCP\":{},\"unityMCP\":{}}}");
+                    if (kind == "encoding")
+                        File.WriteAllBytes(path, new byte[] { 0xff, 0xfe, 0x00 });
+                    if (kind == "large")
+                        File.WriteAllText(path, new string(' ', 1024 * 1024 + 1));
+                    var bytes = File.ReadAllBytes(path);
+                    Assert.Throws<InvalidOperationException>(configurator.Unregister);
+                    CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+                }
+            );
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LockedConfigureDoesNotCreateMissingParentDirectory(bool toml)
+        {
+            string parent = _tokenPath + "-missing-parent";
+            string path = Path.Combine(parent, "config");
+            bool hadLock = EditorPrefs.HasKey(EditorPrefKeys.LockCursorConfig);
+            bool originalLock = EditorPrefs.GetBool(EditorPrefKeys.LockCursorConfig, false);
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, true);
+                MCPForUnity.Editor.Clients.IMcpClientConfigurator configurator = toml ? new OwnedCodex(path) : new OwnedJson(path);
+                Assert.Throws<InvalidOperationException>(configurator.Configure);
+                Assert.IsFalse(Directory.Exists(parent));
+            }
+            finally
+            {
+                if (Directory.Exists(parent))
+                    Directory.Delete(parent);
+                if (hadLock)
+                    EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, originalLock);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.LockCursorConfig);
+            }
+        }
+
+        private void WithOwnedConfiguration(bool toml, Action<MCPForUnity.Editor.Clients.IMcpClientConfigurator, string> action)
+        {
+            string path = _tokenPath + (toml ? ".toml" : ".json");
+            bool hadLock = EditorPrefs.HasKey(EditorPrefKeys.LockCursorConfig);
+            bool originalLock = EditorPrefs.GetBool(EditorPrefKeys.LockCursorConfig, false);
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, false);
+                string text = toml
+                    ? "theme = \"other-owned-value\"\n[mcp_servers.unityMCP]\nurl = \"http://localhost:54321/mcp\"\n"
+                    : "{\"other\":\"other-owned-value\",\"mcpServers\":{\"unityMCP\":{\"url\":\"http://localhost:54321/mcp\"}}}";
+                File.WriteAllText(path, text, new System.Text.UTF8Encoding(true));
+                MCPForUnity.Editor.Clients.IMcpClientConfigurator configurator = toml ? new OwnedCodex(path) : new OwnedJson(path);
+                action(configurator, path);
+            }
+            finally
+            {
+                File.Delete(path);
+                if (hadLock)
+                    EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, originalLock);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.LockCursorConfig);
+            }
+        }
+
+        private sealed class OwnedJson : MCPForUnity.Editor.Clients.JsonFileMcpConfigurator
+        {
+            private readonly string path;
+
+            public OwnedJson(string path)
+                : base(new McpClient { name = "Owned JSON" })
+            {
+                this.path = path;
+            }
+
+            public override string GetConfigPath() => path;
+        }
+
+        private sealed class OwnedCodex : MCPForUnity.Editor.Clients.CodexMcpConfigurator
+        {
+            private readonly string path;
+
+            public OwnedCodex(string path)
+                : base(new McpClient { name = "Owned Codex" })
+            {
+                this.path = path;
+            }
+
+            public override string GetConfigPath() => path;
+        }
+
         private sealed class OwnedOpenCode : OpenCodeConfigurator
         {
             private readonly string path;

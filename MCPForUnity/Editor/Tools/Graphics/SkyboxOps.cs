@@ -175,7 +175,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             }
 
             EditorUtility.SetDirty(skyMat);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(skyMat);
             MarkSceneDirty();
 
             return new

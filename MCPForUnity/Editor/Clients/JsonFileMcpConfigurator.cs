@@ -94,8 +94,7 @@ namespace MCPForUnity.Editor.Clients
                 else if (!string.IsNullOrEmpty(configuredUrl))
                 {
                     // Distinguish HTTP Local from HTTP Remote by matching against both URLs
-                    string localRpcUrl = HttpEndpointUtility.GetLocalMcpRpcUrl();
-                    string remoteRpcUrl = HttpEndpointUtility.GetRemoteMcpRpcUrl();
+                    string remoteRpcUrl = HttpEndpointUtility.GetStoredRemoteMcpRpcUrl();
                     if (!string.IsNullOrEmpty(remoteRpcUrl) && UrlsEqual(configuredUrl, remoteRpcUrl))
                     {
                         client.configuredTransport = Models.ConfiguredTransport.HttpRemote;
@@ -331,7 +330,6 @@ namespace MCPForUnity.Editor.Clients
             // when the user clicks while the client is already Configured; the bulk
             // "Configure All" path calls this directly and expects an unconditional write.
             string path = GetConfigPath();
-            McpConfigurationHelper.EnsureConfigDirectoryExists(path);
             string result = WriteGeneratedConfiguration(path);
             if (result == "Configured successfully")
             {
@@ -360,40 +358,27 @@ namespace MCPForUnity.Editor.Clients
             string path = GetConfigPath();
             try
             {
-                if (!File.Exists(path))
-                {
-                    client.SetStatus(McpStatus.NotConfigured);
-                    client.configuredTransport = Models.ConfiguredTransport.Unknown;
-                    return;
-                }
-
-                var root = JsonConvert.DeserializeObject<JToken>(File.ReadAllText(path)) as JObject;
-                if (root == null)
-                {
-                    client.SetStatus(McpStatus.NotConfigured);
-                    client.configuredTransport = Models.ConfiguredTransport.Unknown;
-                    return;
-                }
-
-                bool removed = false;
-                if (client.IsVsCodeLayout)
-                {
-                    if ((root["servers"] as JObject)?.Remove("unityMCP") == true)
-                        removed = true;
-                    if ((root["mcp"]?["servers"] as JObject)?.Remove("unityMCP") == true)
-                        removed = true;
-                }
-                else
-                {
-                    string containerKey = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
-                    if ((root[containerKey] as JObject)?.Remove("unityMCP") == true)
-                        removed = true;
-                }
-
-                if (removed)
-                {
-                    File.WriteAllText(path, root.ToString(Formatting.Indented));
-                }
+                ClientConfigurationChangeService.Shared.MutateFile(
+                    path,
+                    document =>
+                    {
+                        var root = JObject.Parse(document, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+                        bool removed = false;
+                        if (client.IsVsCodeLayout)
+                        {
+                            removed = RemoveEntry(root["servers"]);
+                            if (root["mcp"] != null && root["mcp"] is not JObject)
+                                throw new FormatException("Invalid MCP configuration container.");
+                            removed |= RemoveEntry(root["mcp"]?["servers"]);
+                        }
+                        else
+                        {
+                            string key = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
+                            removed = RemoveEntry(root[key]);
+                        }
+                        return removed ? root.ToString(Formatting.Indented) : document;
+                    }
+                );
 
                 client.SetStatus(McpStatus.NotConfigured);
                 client.configuredTransport = Models.ConfiguredTransport.Unknown;
@@ -403,6 +388,15 @@ namespace MCPForUnity.Editor.Clients
             {
                 throw new InvalidOperationException($"Failed to unregister: {ex.Message}", ex);
             }
+        }
+
+        private static bool RemoveEntry(JToken container)
+        {
+            if (container == null)
+                return false;
+            if (container is not JObject obj)
+                throw new FormatException("Invalid MCP configuration container.");
+            return obj.Remove("unityMCP");
         }
 
         public override string GetManualSnippet()

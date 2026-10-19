@@ -340,13 +340,11 @@ namespace MCPForUnityTests.Editor.Tools
 
             foreach (var toolName in expectedTools)
             {
-                var handler = CommandRegistry.GetHandler(toolName);
-                Assert.IsNotNull(handler, $"Handler for '{toolName}' should not be null");
-
-                // Verify the handler is actually callable (returns a result, not throws)
-                var emptyParams = new Newtonsoft.Json.Linq.JObject();
-                var result = handler(emptyParams);
-                Assert.IsNotNull(result, $"Handler for '{toolName}' should return a result even for empty params");
+                Assert.IsTrue(CommandRegistry.HasHandler(toolName), $"Handler for '{toolName}' should be registered");
+                // The common entry point supports both sync tools and execute_menu_item's async contract.
+                var response = CommandRegistry.InvokeCommandAsync(toolName, new JObject());
+                Assert.IsTrue(response.Wait(TimeSpan.FromSeconds(5)));
+                Assert.IsNotNull(response.Result, $"Handler for '{toolName}' should return a result even for empty params");
             }
         }
 

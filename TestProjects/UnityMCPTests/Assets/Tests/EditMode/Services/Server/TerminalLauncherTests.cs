@@ -156,6 +156,32 @@ namespace MCPForUnityTests.Editor.Services.Server
 
         #endregion
 
+#if UNITY_EDITOR_WIN
+        [Test]
+        public void CreateTerminalProcessStartInfo_UnicodeCommand_WritesUtf8WithoutBomAfterCodePageSwitch()
+        {
+            string path = System.IO.Path.Combine(_launcher.GetProjectRootPath(), "Library", "MCPForUnity", "TerminalScripts", "mcp-terminal.cmd");
+            byte[] original = System.IO.File.Exists(path) ? System.IO.File.ReadAllBytes(path) : null;
+            try
+            {
+                const string command = "echo \uD55C\uAE00 \u30C6\u30B9\u30C8 \u00E9";
+                _launcher.CreateTerminalProcessStartInfo(command);
+                byte[] bytes = System.IO.File.ReadAllBytes(path);
+                Assert.IsFalse(bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf);
+                string script = new System.Text.UTF8Encoding(false, true).GetString(bytes);
+                StringAssert.StartsWith("@echo off\r\nchcp 65001 >nul\r\n", script);
+                StringAssert.EndsWith(command + "\r\n", script);
+            }
+            finally
+            {
+                if (original != null)
+                    System.IO.File.WriteAllBytes(path, original);
+                else if (System.IO.File.Exists(path))
+                    System.IO.File.Delete(path);
+            }
+        }
+#endif
+
         #region CreateHeadlessProcessStartInfo Tests
 
         [Test]

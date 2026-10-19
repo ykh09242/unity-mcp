@@ -65,7 +65,7 @@ namespace MCPForUnityTests.EditMode.Tools
             GraphicsSettings.defaultRenderPipeline = pipeline;
             QualitySettings.renderPipeline = pipeline;
             Assert.AreSame(pipeline, GraphicsSettings.currentRenderPipeline);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(renderer);
         }
 
         [TearDown]
