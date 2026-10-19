@@ -50,7 +50,7 @@ Cancellation closes local socket work and prevents later local stages once obser
 | `ensure_bloom` | `bool \| None` | — | import_model: add a Bloom volume when the model has emissive materials. |
 | `game_object` | `str \| None` | — | compare_screenshot: name of the placed GameObject to frame in Unity. |
 | `code` | `str \| None` | — | run_python: Python source to execute inside Blender. |
-| `max_size` | `int \| None` | — | screenshot: max pixels on the longest side (default 1000). |
+| `max_size` | `int \| None` | — | screenshot / compare_screenshot: max pixels on the longest side, 0..8192 (default 1000). |
 | `force` | `bool \| None` | — | sync_addon: overwrite even when the installed addon already matches. |
 | `timeout_seconds` | `int \| None` | — | Seconds to wait for Blender (default 180; big exports can be slow). |
 
