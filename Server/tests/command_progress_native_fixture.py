@@ -314,7 +314,8 @@ async def websocket_probe(settings: dict, control_root: Path, mode: str) -> None
             assert 1 <= len(notifications) <= 2
             count = len(notifications)
             await asyncio.sleep(0.25)
-            assert await asyncio.wait_for(client.ping(), 2)
+            tools = await asyncio.wait_for(client.list_tools(cache_mode="bypass"), 2)
+            assert any(tool.name == "batch_execute" for tool in tools)
             assert not callback_errors, callback_errors
             assert len(notifications) == count
             publish_once(
