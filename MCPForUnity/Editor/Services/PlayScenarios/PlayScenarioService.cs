@@ -69,17 +69,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         internal static bool IsBusy => (_engine != null && (!_finalized || _engine.Running)) || _failureCapture?.Pending == true;
 
-        public static object Start(string name, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null)
+        public static object Start(string name, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null, string dataset = null)
         {
             PlayScenarioDefinition.ValidateName(name);
-            return StartCore(name, null, repeatCount, timeoutSeconds, jobId, sourceRevision);
+            PlayScenarioDefinition selected = dataset == null ? null : PlayScenarioParameters.Materialize(Store.Get(name), dataset);
+            return StartCore(selected?.Name ?? name, selected, repeatCount, timeoutSeconds, jobId, sourceRevision);
         }
 
         internal static object Start(PlayScenarioDefinition definition, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null)
         {
             if (definition == null)
                 throw new ArgumentNullException(nameof(definition));
-            PlayScenarioDefinition frozen = PlayScenarioDefinition.Parse(JObject.FromObject(definition));
+            PlayScenarioDefinition frozen = PlayScenarioParameters.Materialize(definition);
             return StartCore(frozen.Name, frozen, repeatCount, timeoutSeconds, jobId, sourceRevision);
         }
 
@@ -111,7 +112,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return new ErrorResponse("play_scenario_busy", new { job_id = _engine?.State.JobId });
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode)
                 return new ErrorResponse("Wait for the editor to finish compiling, importing or changing Play Mode.");
-            PlayScenarioDefinition definition = frozen ?? Store.Get(name);
+            PlayScenarioDefinition definition = frozen ?? PlayScenarioParameters.Materialize(Store.Get(name));
             var state = PlayScenarioEngine.Create(definition, jobId ?? Guid.NewGuid().ToString("N"), repeatCount, timeoutSeconds, Now);
             state.Reproduction.UnityVersion = Application.unityVersion;
             state.Reproduction.SourceRevision = sourceRevision;

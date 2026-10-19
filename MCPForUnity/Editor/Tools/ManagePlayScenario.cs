@@ -28,6 +28,8 @@ namespace MCPForUnity.Editor.Tools
                 var store = new PlayScenarioStore(Path.GetDirectoryName(Application.dataPath));
                 switch (action)
                 {
+                    case "player_suite_build":
+                        return PlayScenarioPlayerSuiteBuild.HandleCommand(parameters);
                     case "save":
                         Allow(parameters, "action", "scenario");
                         if (!(parameters["scenario"] is JObject definition))
@@ -49,13 +51,14 @@ namespace MCPForUnity.Editor.Tools
                         Allow(parameters, "action", "name");
                         return new SuccessResponse("Scenario deletion processed.", new { deleted = store.Delete(Name(parameters)) });
                     case "run":
-                        Allow(parameters, "action", "name", "job_id", "repeat_count", "timeout_seconds", "source_revision");
+                        Allow(parameters, "action", "name", "job_id", "repeat_count", "timeout_seconds", "source_revision", "dataset");
                         return PlayScenarioService.Start(
                             Name(parameters),
                             Integer(parameters, "repeat_count", 1, 10, 1),
                             Integer(parameters, "timeout_seconds", 1, 1800, 300),
                             JobId(parameters, false),
-                            SourceRevision(parameters)
+                            SourceRevision(parameters),
+                            parameters.Property("dataset") == null ? null : Text(parameters, "dataset")
                         );
                     case "status":
                         Allow(parameters, "action", "job_id");

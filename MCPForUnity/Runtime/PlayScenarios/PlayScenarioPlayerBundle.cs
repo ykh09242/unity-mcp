@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using MCPForUnity.Runtime.PlayScenarios.UIToolkit;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -26,6 +27,14 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public string[] ScenePaths { get; private set; }
         public string UnityVersion { get; private set; }
         public string PackageVersion { get; private set; }
+        public string BuildTarget { get; private set; } = "windows64";
+        public string ScriptingBackend { get; private set; } = "mono";
+        public string ExecutablePath { get; private set; } = ExecutableName;
+        public string SuiteName { get; private set; }
+        public string SuiteHash { get; private set; }
+        public string FailurePolicy { get; private set; }
+        public int SuiteChildIndex { get; private set; }
+        public IReadOnlyList<PlayScenarioPlayerBundle> Children { get; private set; }
 
         public static JObject Create(
             PlayScenarioDefinition definition,
@@ -35,7 +44,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             string buildSourceRevision = null
         )
         {
-            definition = PlayScenarioDefinition.Parse(JObject.FromObject(definition));
+            definition = PlayScenarioParameters.Materialize(definition);
             buildId = buildId ?? Guid.NewGuid().ToString("N");
             ValidateHex(buildId, 32, "build_id");
             PlayScenarioReproduction.ValidateSourceRevision(buildSourceRevision);
@@ -59,6 +68,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
         {
             JObject value = Read(json, Limit);
             int schema = Schema(value);
+            if (schema == 3)
+                return PlayScenarioPlayerSuite.Parse(value);
             string[] fields =
             {
                 "schema_version",
@@ -75,9 +86,26 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 value,
                 schema == 1
                     ? fields
-                    : fields.Concat(new[] { "build_id", "build_source_revision", "payload_inventory", "payload_inventory_json", "payload_hash" }).ToArray()
+                    : fields
+                        .Concat(
+                            new[]
+                            {
+                                "build_id",
+                                "build_source_revision",
+                                "payload_inventory",
+                                "payload_inventory_json",
+                                "payload_hash",
+                                "build_target",
+                                "scripting_backend",
+                            }
+                        )
+                        .ToArray()
             );
-            if (Text(value, "executable", 64) != ExecutableName)
+            string target = value.Property("build_target") == null ? "windows64" : Text(value, "build_target", 32);
+            string backend = value.Property("scripting_backend") == null ? "mono" : Text(value, "scripting_backend", 16);
+            PlayScenarioPlayerPlatform.Validate(target, backend);
+            string executable = Text(value, "executable", 128);
+            if (executable != PlayScenarioPlayerPlatform.Executable(target))
                 throw new ArgumentException("Unsupported Player executable.");
             string buildId = null,
                 buildRevision = null;
@@ -91,6 +119,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
             if (!(value["definition"] is JObject definitionJson))
                 throw new ArgumentException("Bundle definition must be an object.");
             PlayScenarioDefinition definition = PlayScenarioDefinition.Parse(definitionJson);
+            if (definition.Parameters != null || definition.ParameterBindings != null || definition.Datasets != null)
+                throw new ArgumentException("Frozen Player definitions must be materialized before execution.");
             string hash = Text(value, "definition_hash", 64);
             if (
                 Text(value, "scenario_name", 64) != definition.Name
@@ -115,7 +145,48 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 ScenePaths = scenes,
                 UnityVersion = Text(value, "unity_version", 128),
                 PackageVersion = Text(value, "package_version", 128),
+                BuildTarget = target,
+                ScriptingBackend = backend,
+                ExecutablePath = executable,
             };
+        }
+
+        internal static PlayScenarioPlayerBundle FromSuite(JObject value, IReadOnlyList<PlayScenarioPlayerBundle> children, string[] scenes) =>
+            new PlayScenarioPlayerBundle
+            {
+                SchemaVersion = 3,
+                BuildId = children[0].BuildId,
+                BuildSourceRevision = children[0].BuildSourceRevision,
+                Definition = children[0].Definition,
+                DefinitionHash = children[0].DefinitionHash,
+                ScenePaths = scenes,
+                UnityVersion = children[0].UnityVersion,
+                PackageVersion = children[0].PackageVersion,
+                BuildTarget = children[0].BuildTarget,
+                ScriptingBackend = children[0].ScriptingBackend,
+                ExecutablePath = children[0].ExecutablePath,
+                SuiteName = Text(value, "suite_name", 64),
+                SuiteHash = Text(value, "suite_hash", 64),
+                FailurePolicy = Text(value, "failure_policy", 8),
+                Children = children,
+            };
+
+        internal void SelectChild(string name, string hash)
+        {
+            if (Children == null)
+                return;
+            int index = -1;
+            for (int candidate = 0; candidate < Children.Count; candidate++)
+                if (Children[candidate].Definition.Name == name)
+                {
+                    index = candidate;
+                    break;
+                }
+            if (index < 0 || Children[index].DefinitionHash != hash)
+                throw new ArgumentException("Player request does not identify an exact frozen suite child.");
+            Definition = Children[index].Definition;
+            DefinitionHash = Children[index].DefinitionHash;
+            SuiteChildIndex = index;
         }
 
         public static string DefinitionJson(PlayScenarioDefinition definition) => CanonicalJson(JObject.FromObject(definition));
@@ -127,7 +198,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             if (
                 value["schema_version"]?.Type != JTokenType.Integer
                 || !int.TryParse(value["schema_version"].ToString(), out int schema)
-                || (schema != 1 && schema != 2)
+                || (schema != 1 && schema != 2 && schema != 3)
             )
                 throw new ArgumentException("Unsupported Player schema.");
             return schema;
@@ -223,6 +294,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
         {
             JObject value = PlayScenarioPlayerBundle.Read(json, 4096);
             int schema = PlayScenarioPlayerBundle.Schema(value);
+            if (schema == 3)
+                throw new ArgumentException("Suite children use the version-2 request protocol in fresh processes.");
             string[] fields = { "schema_version", "job_id", "scenario_name", "definition_hash", "repeat_count", "timeout_seconds", "source_revision" };
             PlayScenarioPlayerBundle.Fields(
                 value,
@@ -277,8 +350,9 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public void ValidateBundle(PlayScenarioPlayerBundle bundle)
         {
+            bundle.SelectChild(ScenarioName, DefinitionHash);
             if (
-                SchemaVersion != bundle.SchemaVersion
+                (SchemaVersion != bundle.SchemaVersion && !(SchemaVersion == 2 && bundle.SchemaVersion == 3))
                 || ScenarioName != bundle.Definition.Name
                 || DefinitionHash != bundle.DefinitionHash
                 || (SchemaVersion == 2 && (BuildId != bundle.BuildId || BuildSourceRevision != bundle.BuildSourceRevision))
@@ -301,6 +375,14 @@ namespace MCPForUnity.Runtime.PlayScenarios
             reproduction["payload_hash"] = payloadHash == null ? JValue.CreateNull() : new JValue(payloadHash);
             reproduction["payload_verification"] = SchemaVersion == 2 ? "launcher_admission" : "unverified_legacy";
             report["player_schema_version"] = SchemaVersion;
+            if (bundle?.SuiteName != null)
+                report["player_suite"] = new JObject
+                {
+                    ["name"] = bundle.SuiteName,
+                    ["suite_hash"] = bundle.SuiteHash,
+                    ["child_index"] = bundle.SuiteChildIndex,
+                    ["isolation"] = "fresh-process",
+                };
         }
 
         private static int Integer(JObject value, string name, int min, int max)
@@ -354,8 +436,20 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 }
                 if (step.Property != null)
                     throw Unsupported("Serialized property conditions are unsupported by the Player host; no reflected getters are invoked.");
-                if (step.Action == "click_ui" && !uguiAvailable)
-                    throw Unsupported("click_ui requires the optional runtime uGUI backend.");
+                bool toolkit = false;
+                if (step.Action == "click_ui")
+                {
+                    try
+                    {
+                        toolkit = UIToolkitScenarioInputAdapter.ValidateRequest(step.UiBackend, step.ElementName, step.ElementPath, step.ClickMode);
+                    }
+                    catch (Exception error)
+                    {
+                        throw Unsupported(error.Message);
+                    }
+                }
+                if (step.Action == "click_ui" && !toolkit && !uguiAvailable)
+                    throw Unsupported("uGUI click_ui requires the optional runtime uGUI backend.");
                 if (step.Action == "wait_object" || step.Action == "click_ui")
                 {
                     int count = step.Count ?? 1;

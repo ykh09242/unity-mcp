@@ -39,6 +39,16 @@ from cli.utils.play_scenario_player_payload import (
 )
 from cli.utils.play_scenario_player_progress import ProgressIdentity, ProgressObserver
 from cli.utils.play_scenario_iterations import validate_iteration_results
+from cli.utils.play_scenario_player_platform import (
+    Backend,
+    BuildTarget,
+    EXECUTABLES,
+    PlayerPlatformError,
+    executable_path,
+    host_attribution,
+    require_native_host,
+    validate_runtime_environment,
+)
 from cli.utils.play_scenario_soak import SoakIdentity, SoakJournal, SoakRequest
 
 MANIFEST_LIMIT: Final = PAYLOAD_MANIFEST_LIMIT
@@ -61,7 +71,13 @@ class PlayerBundle(BaseModel):
     schema_version: Annotated[int, Field(strict=True, ge=1, le=2)]
     scenario_name: ScenarioName
     definition_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
-    executable: Literal["MCPScenarioPlayer.exe"]
+    executable: Literal[
+        "MCPScenarioPlayer.exe",
+        "MCPScenarioPlayer.x86_64",
+        "MCPScenarioPlayer.app/Contents/MacOS/MCPScenarioPlayer",
+    ]
+    build_target: BuildTarget = "windows64"
+    scripting_backend: Backend = "mono"
     scene_paths: Annotated[
         list[Annotated[str, Field(strict=True, max_length=4096)]],
         Field(min_length=1, max_length=64),
@@ -128,6 +144,8 @@ class PlayerBundle(BaseModel):
             raise PlayerLaunchError("Player v2 manifest requires all payload identity fields")
         if self.schema_version == 2:
             self.payload
+        if self.executable != EXECUTABLES[self.build_target]:
+            raise PlayerLaunchError("Player executable does not match its declared build target")
         if sha256(self.definition_json.encode("utf-8")).hexdigest() != self.definition_hash:
             raise PlayerLaunchError("Player bundle definition hash mismatch")
         canonical = PlayScenario.model_validate(
@@ -206,6 +224,8 @@ class PlayerRunOptions:
     player_job_id: str | None = None
     soak: SoakRequest | None = None
     graphical: bool = False
+    suite_child_name: str | None = None
+    suite_manifest_hash: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.graphical) is not bool:
@@ -302,7 +322,23 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
     manifest = root / "scenario-bundle.json"
     if manifest.resolve(strict=True).parent != root:
         raise PlayerLaunchError("Player manifest leaves the selected build directory")
-    bundle = PlayerBundle.model_validate(_read_json(manifest, MANIFEST_LIMIT))
+    manifest_value = _read_json(manifest, MANIFEST_LIMIT)
+    suite_identity = None
+    if manifest_value.get("schema_version") == 3:
+        if options.suite_child_name is None or options.soak is not None:
+            raise PlayerLaunchError(
+                "Frozen suite builds require player-suite-run with fresh-process children"
+            )
+        from cli.utils.play_scenario_player_suite import select_child
+
+        manifest_value, suite_identity = select_child(
+            manifest_value, options.suite_child_name, options.suite_manifest_hash
+        )
+    elif options.suite_child_name is not None:
+        raise PlayerLaunchError(
+            "A suite child selector requires a frozen version-three suite build"
+        )
+    bundle = PlayerBundle.model_validate(manifest_value)
     payload = bundle.payload
     if options.soak is not None and payload is None:
         raise PlayerLaunchError("Player soak requires a verified v2 Player payload")
@@ -325,15 +361,12 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                 "Verified Player request/output directories must be outside the build directory"
             )
         verify_player_payload(root, payload, options.deadline_monotonic)
-    executable = root / bundle.executable
-    if (
-        executable.is_symlink()
-        or executable.resolve(strict=True).parent != root
-        or not executable.is_file()
-    ):
-        raise PlayerLaunchError(
-            "Player executable must be a regular file inside the selected build directory"
-        )
+    try:
+        if "build_target" in bundle.model_fields_set:
+            require_native_host(bundle.build_target)
+        executable = executable_path(root, bundle.build_target)
+    except PlayerPlatformError as exc:
+        raise PlayerLaunchError(str(exc)) from exc
     command = PlayScenarioCommand(
         action="run",
         name=bundle.scenario_name,
@@ -469,6 +502,9 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                 observer.observe(directory / "progress.json")
             process_evidence = {
                 "schema_version": 1,
+                "launch_environment": host_attribution(
+                    bundle.build_target, bundle.scripting_backend, options.graphical
+                ),
                 "job_id": command.job_id,
                 "process_id": process.pid,
                 "actual_exit_code": process.returncode,
@@ -518,6 +554,8 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
         else:
             raw = _read_json(directory / "run.json", REPORT_LIMIT)
         report = PlayerFinalReport.model_validate(raw)
+        if suite_identity is not None and raw.get("player_suite") != suite_identity:
+            raise PlayerLaunchError("Player final report frozen suite child identity mismatch")
         soak_summary = None
         soak_journal = None
         if options.soak is not None:
@@ -565,7 +603,11 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
             or report.reproduction.get("payload_verification") != "launcher_admission"
         ):
             raise PlayerLaunchError("Player final report payload identity mismatch")
-    except (PlayerLaunchError, OSError, ValueError, ValidationError) as exc:
+        if "build_target" in bundle.model_fields_set:
+            validate_runtime_environment(
+                report.reproduction, bundle.build_target, bundle.scripting_backend
+            )
+    except (PlayerLaunchError, PlayerPlatformError, OSError, ValueError, ValidationError) as exc:
         diagnostics["failure_code"] = (
             "player_report_missing"
             if not (directory / "run.json").exists()

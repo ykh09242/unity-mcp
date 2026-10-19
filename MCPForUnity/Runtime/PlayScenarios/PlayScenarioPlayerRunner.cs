@@ -83,6 +83,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 {
                     Resources.UnloadAsset(asset);
                 }
+                bundle.SelectChild(request.ScenarioName, request.DefinitionHash);
                 run = PlayScenarioEngine.Create(bundle.Definition, request.JobId, request.RepeatCount, request.TimeoutSeconds, Now);
                 run.ExecutionEnvironment = "player";
                 run.Reproduction.UnityVersion = Application.unityVersion;

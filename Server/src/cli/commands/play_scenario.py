@@ -648,3 +648,100 @@ def player_session_recover(session_directory: Path, output_dir: Path) -> None:
     click.echo(format_output({"success": exit_code == 0, "data": summary}, get_config().format))
     if exit_code:
         raise click.exceptions.Exit(exit_code)
+
+
+@play_scenario.command("player-suite-build")
+@click.argument("name")
+@click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
+@click.option(
+    "--target",
+    type=click.Choice(["windows64", "linux64", "macos"]),
+    default="windows64",
+    show_default=True,
+)
+@click.option("--backend", type=click.Choice(["mono", "il2cpp"]), default="mono", show_default=True)
+@click.option("--failure-policy", type=click.Choice(["stop", "continue"]), default=None)
+@click.option(
+    "--isolation", type=click.Choice(["fresh-process"]), default="fresh-process", show_default=True
+)
+@click.option("--source-revision", default=None)
+@handle_unity_errors
+def player_suite_build(
+    name: str,
+    output_dir: Path,
+    target: str,
+    backend: str,
+    failure_policy: str | None,
+    isolation: str,
+    source_revision: str | None,
+) -> None:
+    """Freeze a saved suite and build its scene union once in the selected Editor.
+
+    Explicit build/import/compile cost applies. Every later child runs in a fresh process.
+    """
+    from cli.utils.play_scenario_player_suite import PlayerSuiteBuildRequest
+
+    try:
+        command = PlayerSuiteBuildRequest(
+            name=name,
+            output_directory=str(output_dir.resolve()),
+            build_target=target,
+            scripting_backend=backend,
+            failure_policy=failure_policy,
+            isolation=isolation,
+            source_revision=source_revision,
+        )
+    except ValidationError as error:
+        raise click.UsageError(str(error)) from error
+    result = run_command(
+        "manage_play_scenario", command.model_dump(mode="json", exclude_none=True), get_config()
+    )
+    click.echo(format_output(result, get_config().format))
+    if result.get("success") is not True:
+        raise click.exceptions.Exit(1)
+
+
+@play_scenario.command("player-suite-run")
+@click.argument("build_directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
+@click.option("--failure-policy", type=click.Choice(["stop", "continue"]), default=None)
+@click.option(
+    "--isolation", type=click.Choice(["fresh-process"]), default="fresh-process", show_default=True
+)
+@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option(
+    "--max-runtime-seconds", type=click.IntRange(1, 86400), default=3600, show_default=True
+)
+@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+@click.option("--source-revision", default=None)
+@click.option("--expected-build-revision", default=None)
+@click.option("--expected-build-id", default=None)
+@click.option("--graphical", is_flag=True)
+def player_suite_run(build_directory: Path, output_dir: Path, **parameters: JsonValue) -> None:
+    """Run all frozen children from one verified build, with child and suite JUnit.
+
+    Fresh processes isolate each child's static state. Ctrl+C cancels the current owned
+    child through its normal bounded cleanup protocol and skips the remaining children.
+    """
+    from cli.utils.play_scenario_player_suite import PlayerSuiteOptions, run_player_suite
+
+    try:
+        outcome = run_player_suite(
+            PlayerSuiteOptions(
+                build_directory=build_directory, output_directory=output_dir, **parameters
+            )
+        )
+    except (PlayerLaunchError, PlayerPayloadError, OSError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(
+        format_output(
+            {
+                "success": outcome.exit_code == 0,
+                "data": outcome.report,
+                "artifact_directory": str(outcome.directory),
+            },
+            get_config().format,
+        )
+    )
+    if outcome.exit_code:
+        raise click.exceptions.Exit(outcome.exit_code)
