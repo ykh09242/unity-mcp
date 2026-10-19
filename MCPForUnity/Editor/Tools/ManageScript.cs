@@ -127,6 +127,9 @@ namespace MCPForUnity.Editor.Tools
             }
             string action = actionResult.Value.ToLowerInvariant();
 
+            if (action == "prepare_change_set" || action == "apply_change_set" || action == "get_change_set" || action == "recover_change_set")
+                return ScriptChangeSet.HandleCommand(@params);
+
             var nameResult = p.GetRequired("name");
             if (!nameResult.IsSuccess)
             {
