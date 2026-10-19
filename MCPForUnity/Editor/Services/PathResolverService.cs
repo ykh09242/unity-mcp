@@ -19,7 +19,7 @@ namespace MCPForUnity.Editor.Services
     {
         private bool _hasUvxPathFallback;
         private readonly object _validationLock = new object();
-        private readonly Dictionary<string, (DateTime Started, Task<string> Result)> _validations = new();
+        private readonly Dictionary<string, (DateTime Started, string Identity, Task<string> Result)> _validations = new();
         private readonly Func<string, string> _probe;
 
         public PathResolverService()
@@ -50,6 +50,7 @@ namespace MCPForUnity.Editor.Services
                 {
                     if (
                         _validations.TryGetValue(overridePath, out var validation)
+                        && validation.Identity == ExecutableIdentity(overridePath)
                         && DateTime.UtcNow - validation.Started < TimeSpan.FromSeconds(30)
                         && validation.Result.Status == TaskStatus.RanToCompletion
                     )
@@ -202,20 +203,26 @@ namespace MCPForUnity.Editor.Services
         {
             if (string.IsNullOrEmpty(uvxPath))
                 return Task.FromResult<string>(null);
+            string identity = ExecutableIdentity(uvxPath);
             lock (_validationLock)
             {
                 if (
                     _validations.TryGetValue(uvxPath, out var cached)
+                    && cached.Identity == identity
                     && (!cached.Result.IsCompleted || DateTime.UtcNow - cached.Started < TimeSpan.FromSeconds(30))
                 )
                     return cached.Result;
                 if (_validations.Count >= 32)
                     foreach (string key in _validations.Where(pair => pair.Value.Result.IsCompleted).Select(pair => pair.Key).ToArray())
                         _validations.Remove(key);
-                var task = Task.Run(() =>
+                var previous = cached.Result;
+                var task = Task.Run(async () =>
                 {
                     try
                     {
+                        // A replaced executable gets a new result, after the previous process exits.
+                        if (previous != null)
+                            await previous.ConfigureAwait(false);
                         return _probe(uvxPath);
                     }
                     catch
@@ -223,8 +230,22 @@ namespace MCPForUnity.Editor.Services
                         return null;
                     }
                 });
-                _validations[uvxPath] = (DateTime.UtcNow, task);
+                _validations[uvxPath] = (DateTime.UtcNow, identity, task);
                 return task;
+            }
+        }
+
+        private static string ExecutableIdentity(string path)
+        {
+            try
+            {
+                string resolved = path.Contains('/') || path.Contains('\\') ? path : FindUvxExecutableInPath(path);
+                var file = new FileInfo(resolved ?? path);
+                return (resolved ?? path) + "|" + (file.Exists ? file.Length + ":" + file.LastWriteTimeUtc.Ticks : "missing");
+            }
+            catch
+            {
+                return path + "|unresolved";
             }
         }
 

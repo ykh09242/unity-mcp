@@ -845,15 +845,16 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         public void RefreshSelectedClient(bool forceImmediate = false)
         {
-            OnCancelConfigurationPreviewClicked();
             if (selectedClientIndex >= 0 && selectedClientIndex < configurators.Count)
             {
                 var client = configurators[selectedClientIndex];
-                // Force immediate for non-Claude CLI, or when explicitly requested
-                bool shouldForceImmediate = forceImmediate || client is not ClaudeCliMcpConfigurator;
-                RefreshClientStatus(client, shouldForceImmediate);
-                UpdateManualConfiguration();
-                UpdateClaudeCliPathVisibility();
+                bool refresh = forceImmediate || ShouldRefreshClient(client);
+                RefreshClientStatus(client, refresh);
+                if (refresh && configurationPreview == null)
+                {
+                    UpdateManualConfiguration();
+                    UpdateClaudeCliPathVisibility();
+                }
             }
         }
 
@@ -867,8 +868,9 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
             if (forceImmediate || ShouldRefreshClient(client))
             {
-                MCPServiceLocator.Client.CheckClientStatus(client);
+                MCPServiceLocator.Client.CheckClientStatus(client, attemptAutoRewrite: false);
                 lastStatusChecks[client] = DateTime.UtcNow;
+                (lastStatusFiles ??= new Dictionary<IMcpClientConfigurator, string>())[client] = ClientFileStamp(client);
             }
 
             ApplyStatusToUi(client);
@@ -974,6 +976,24 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             ApplyStatusToUi(client);
         }
 
+        private Dictionary<IMcpClientConfigurator, string> lastStatusFiles = new();
+
+        private static string ClientFileStamp(IMcpClientConfigurator client)
+        {
+            if (client is ClaudeCliMcpConfigurator)
+                return null;
+            try
+            {
+                string path = client.GetConfigPath();
+                var file = new FileInfo(path);
+                return path + "|" + (file.Exists ? file.Length + ":" + file.LastWriteTimeUtc.Ticks : "missing");
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private bool ShouldRefreshClient(IMcpClientConfigurator client)
         {
             if (!lastStatusChecks.TryGetValue(client, out var last))
@@ -981,7 +1001,11 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 return true;
             }
 
-            return (DateTime.UtcNow - last) > StatusRefreshInterval;
+            return (DateTime.UtcNow - last) > StatusRefreshInterval
+                || (
+                    client is not ClaudeCliMcpConfigurator
+                    && (lastStatusFiles == null || !lastStatusFiles.TryGetValue(client, out string stamp) || stamp != ClientFileStamp(client))
+                );
         }
 
         private void ApplyStatusToUi(IMcpClientConfigurator client, bool showChecking = false, string customMessage = null)

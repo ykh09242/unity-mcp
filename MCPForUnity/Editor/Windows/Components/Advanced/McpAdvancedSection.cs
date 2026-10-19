@@ -45,6 +45,10 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
         private Label healthStatus;
         private Button testConnectionButton;
         private int uvxValidationGeneration;
+        private string uvxValidationIdentity;
+        private IPathResolverService uvxValidationService;
+        private DateTime uvxValidationStarted;
+        private bool uvxValidationSucceeded;
         private IVisualElementScheduledItem uvxValidationPoll;
 
         // Events
@@ -203,7 +207,6 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             {
                 allowInsecureRemoteHttpToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.AllowInsecureRemoteHttp, false));
             }
-            UpdatePathOverrides();
             UpdateDeploymentSection();
         }
 
@@ -348,82 +351,106 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 {
                     // Override path invalid, using system fallback
                     string overridePath = EditorPrefs.GetString(EditorPrefKeys.UvxPathOverride, string.Empty);
-                    uvxPathOverride.value = $"Invalid override path: {overridePath} (fallback to uvx path) {uvxPath}";
+                    uvxPathOverride.SetValueWithoutNotify($"Invalid override path: {overridePath} (fallback to uvx path) {uvxPath}");
                 }
                 else if (!string.IsNullOrEmpty(uvxPath))
                 {
                     // Override path valid
-                    uvxPathOverride.value = uvxPath;
+                    uvxPathOverride.SetValueWithoutNotify(uvxPath);
                 }
                 else
                 {
                     // Override set but invalid, no fallback available
                     string overridePath = EditorPrefs.GetString(EditorPrefKeys.UvxPathOverride, string.Empty);
-                    uvxPathOverride.value = $"Invalid override path: {overridePath}, no uv found";
+                    uvxPathOverride.SetValueWithoutNotify($"Invalid override path: {overridePath}, no uv found");
                 }
             }
             else
             {
-                uvxPathOverride.value = "uvx (uses PATH)";
+                uvxPathOverride.SetValueWithoutNotify("uvx (uses PATH)");
             }
 
-            uvxPathStatus.RemoveFromClassList("valid");
-            uvxPathStatus.RemoveFromClassList("invalid");
-            uvxPathStatus.RemoveFromClassList("warning");
-
-            uvxValidationPoll?.Pause();
-            int generation = ++uvxValidationGeneration;
             string overrideSnapshot = EditorPrefs.GetString(EditorPrefKeys.UvxPathOverride, string.Empty);
-            var validation = pathService.ValidateUvxExecutableAsync(hasOverride ? overrideSnapshot : uvxPath);
-            uvxPathStatus.AddToClassList("warning");
-            uvxPathStatus.tooltip = "Checking uv executable...";
-            // UITK schedules run on the editor thread; background probes never touch
-            // EditorPrefs or visual elements. A newer refresh invalidates this result.
-            uvxValidationPoll = Root
-                .schedule.Execute(() =>
-                {
-                    if (generation != uvxValidationGeneration || !validation.IsCompleted)
-                        return;
-                    uvxValidationPoll?.Pause();
-                    if (
-                        generation != uvxValidationGeneration
-                        || !ReferenceEquals(pathService, MCPServiceLocator.Paths)
-                        || overrideSnapshot != EditorPrefs.GetString(EditorPrefKeys.UvxPathOverride, string.Empty)
-                    )
-                        return;
-                    bool valid = validation.Status == System.Threading.Tasks.TaskStatus.RanToCompletion && validation.Result != null;
-                    if (hasOverride && !valid)
+            string validationPath = hasOverride ? overrideSnapshot : uvxPath;
+            string identity = validationPath + "|" + hasFallback + "|" + Environment.GetEnvironmentVariable("PATH");
+            try
+            {
+                var file = new FileInfo(validationPath);
+                identity += file.Exists ? "|" + file.Length + ":" + file.LastWriteTimeUtc.Ticks : "|missing";
+            }
+            catch
+            {
+                identity += "|unresolved";
+            }
+            if (
+                identity != uvxValidationIdentity
+                || !ReferenceEquals(uvxValidationService, pathService)
+                || (!uvxValidationSucceeded && DateTime.UtcNow - uvxValidationStarted > TimeSpan.FromSeconds(30))
+            )
+            {
+                uvxValidationIdentity = identity;
+                uvxValidationService = pathService;
+                uvxValidationStarted = DateTime.UtcNow;
+                uvxValidationSucceeded = false;
+                uvxPathStatus.RemoveFromClassList("valid");
+                uvxPathStatus.RemoveFromClassList("invalid");
+                uvxPathStatus.RemoveFromClassList("warning");
+                uvxValidationPoll?.Pause();
+                int generation = ++uvxValidationGeneration;
+                var validation = pathService.ValidateUvxExecutableAsync(validationPath);
+                uvxPathStatus.AddToClassList("warning");
+                uvxPathStatus.tooltip = "Checking uv executable...";
+                // UITK schedules run on the editor thread; background probes never touch
+                // EditorPrefs or visual elements. A newer refresh invalidates this result.
+                uvxValidationPoll = Root
+                    .schedule.Execute(() =>
                     {
-                        string fallback = pathService.GetUvxPath();
-                        hasFallback = pathService.HasUvxPathFallback;
-                        uvxPathOverride.value = hasFallback
-                            ? $"Invalid override path: {overrideSnapshot} (fallback to uvx path) {fallback}"
-                            : $"Invalid override path: {overrideSnapshot}, no uv found";
-                    }
-                    uvxPathStatus.RemoveFromClassList("warning");
-                    uvxPathStatus.AddToClassList(
-                        valid ? "valid"
-                        : hasFallback ? "warning"
-                        : "invalid"
-                    );
-                    uvxPathStatus.tooltip = valid ? $"uv {validation.Result}" : "uv executable validation failed";
-                })
-                .Every(50);
+                        if (generation != uvxValidationGeneration || !validation.IsCompleted)
+                            return;
+                        uvxValidationPoll?.Pause();
+                        if (
+                            generation != uvxValidationGeneration
+                            || !ReferenceEquals(pathService, MCPServiceLocator.Paths)
+                            || overrideSnapshot != EditorPrefs.GetString(EditorPrefKeys.UvxPathOverride, string.Empty)
+                        )
+                            return;
+                        bool valid = validation.Status == System.Threading.Tasks.TaskStatus.RanToCompletion && validation.Result != null;
+                        uvxValidationSucceeded = valid;
+                        if (hasOverride && !valid)
+                        {
+                            string fallback = pathService.GetUvxPath();
+                            hasFallback = pathService.HasUvxPathFallback;
+                            uvxPathOverride.SetValueWithoutNotify(
+                                hasFallback
+                                    ? $"Invalid override path: {overrideSnapshot} (fallback to uvx path) {fallback}"
+                                    : $"Invalid override path: {overrideSnapshot}, no uv found"
+                            );
+                        }
+                        uvxPathStatus.RemoveFromClassList("warning");
+                        uvxPathStatus.AddToClassList(
+                            valid ? "valid"
+                            : hasFallback ? "warning"
+                            : "invalid"
+                        );
+                        uvxPathStatus.tooltip = valid ? $"uv {validation.Result}" : "uv executable validation failed";
+                    })
+                    .Every(50);
+            }
 
-            gitUrlOverride.value = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
+            gitUrlOverride.SetValueWithoutNotify(EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, ""));
             if (autoStartOnLoadToggle != null)
-                autoStartOnLoadToggle.value = EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false);
-            debugLogsToggle.value = EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false);
+                autoStartOnLoadToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false));
+            debugLogsToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false));
             if (logRecordToggle != null)
-                logRecordToggle.value = McpLogRecord.IsEnabled;
-            devModeForceRefreshToggle.value = EditorPrefs.GetBool(EditorPrefKeys.DevModeForceServerRefresh, false);
+                logRecordToggle.SetValueWithoutNotify(McpLogRecord.IsEnabled);
+            devModeForceRefreshToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.DevModeForceServerRefresh, false));
             if (allowLanHttpBindToggle != null)
             {
-                allowLanHttpBindToggle.value = EditorPrefs.GetBool(EditorPrefKeys.AllowLanHttpBind, false);
+                allowLanHttpBindToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.AllowLanHttpBind, false));
             }
             if (allowInsecureRemoteHttpToggle != null)
             {
-                allowInsecureRemoteHttpToggle.value = EditorPrefs.GetBool(EditorPrefKeys.AllowInsecureRemoteHttp, false);
+                allowInsecureRemoteHttpToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.AllowInsecureRemoteHttp, false));
             }
             UpdateDeploymentSection();
         }

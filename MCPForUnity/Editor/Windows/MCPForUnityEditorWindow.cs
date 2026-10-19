@@ -638,8 +638,10 @@ namespace MCPForUnity.Editor.Windows
                 _ = connectionSection?.VerifyBridgeConnectionAsync();
             }
 
-            advancedSection?.UpdatePathOverrides();
-            clientConfigSection?.RefreshSelectedClient();
+            if (activePanel == ActivePanel.Advanced)
+                advancedSection?.UpdatePathOverrides();
+            if (activePanel == ActivePanel.Clients)
+                clientConfigSection?.RefreshSelectedClient();
         }
 
         private void SetupTabs()
@@ -695,12 +697,12 @@ namespace MCPForUnity.Editor.Windows
             switch (panel)
             {
                 case ActivePanel.Clients:
-                    // Refresh client status when switching to Connect tab (e.g., after package/version changes).
-                    clientConfigSection?.RefreshSelectedClient(forceImmediate: true);
+                    clientConfigSection?.RefreshSelectedClient();
                     break;
                 case ActivePanel.Deps:
                     break;
                 case ActivePanel.Advanced:
+                    advancedSection?.UpdatePathOverrides();
                     break;
                 case ActivePanel.Tools:
                     EnsureToolsLoaded();

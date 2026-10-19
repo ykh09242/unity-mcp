@@ -12,6 +12,52 @@ namespace MCPForUnityTests.Editor
     public class PathResolverAsyncValidationTests
     {
         [Test]
+        public async Task ReplacedExecutableInvalidatesCachedVersionWithoutOverlappingProbe()
+        {
+            string path = Path.GetTempFileName();
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            int calls = 0;
+            var resolver = new PathResolverService(candidate =>
+            {
+                int call = Interlocked.Increment(ref calls);
+                string version = File.ReadAllText(candidate);
+                if (call == 1)
+                {
+                    entered.Set();
+                    release.Wait(5000);
+                }
+                return version;
+            });
+            Task<string> first = null;
+            Task<string> second = null;
+            try
+            {
+                File.WriteAllText(path, "old");
+                first = resolver.ValidateUvxExecutableAsync(path);
+                Assert.IsTrue(entered.Wait(2000));
+                File.WriteAllText(path, "new-version");
+                second = resolver.ValidateUvxExecutableAsync(path);
+                Assert.AreNotSame(first, second);
+                Assert.AreEqual(1, calls, "A replacement must wait for the old process to finish");
+                release.Set();
+                Assert.AreEqual("old", await first);
+                Assert.AreEqual("new-version", await second);
+                Assert.AreSame(second, resolver.ValidateUvxExecutableAsync(path));
+                Assert.AreEqual(2, calls);
+            }
+            finally
+            {
+                release.Set();
+                if (first != null)
+                    await first;
+                if (second != null)
+                    await second;
+                File.Delete(path);
+            }
+        }
+
+        [Test]
         public async Task ConcurrentRequestsShareProbeAndDoNotBlockCallingThread()
         {
             int calls = 0;
