@@ -1,3 +1,5 @@
+import json
+import re
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -52,6 +54,7 @@ UV_MATERIAL_ACTIONS = [
 
 QUERY_ACTIONS = [
     "get_mesh_info",
+    "get_topology",
     "convert_to_probuilder",
 ]
 
@@ -70,6 +73,73 @@ ALL_ACTIONS = (
     + SMOOTHING_ACTIONS
     + UTILITY_ACTIONS
 )
+
+
+GUARDED_INDEX_ACTIONS = frozenset(
+    {
+        "extrude_faces",
+        "extrude_edges",
+        "bevel_edges",
+        "subdivide",
+        "delete_faces",
+        "bridge_edges",
+        "connect_elements",
+        "detach_faces",
+        "flip_normals",
+        "merge_faces",
+        "duplicate_and_flip",
+        "create_polygon",
+        "merge_vertices",
+        "weld_vertices",
+        "split_vertices",
+        "move_vertices",
+        "insert_vertex",
+        "append_vertices_to_edge",
+        "set_face_material",
+        "set_face_color",
+        "set_face_uvs",
+        "set_smoothing",
+        "auto_smooth",
+    }
+)
+_MESH_REVISION = re.compile(r"pb1:[0-9a-f]{64}\Z")
+
+
+def _topology_admission(action: str, properties: Any) -> str | None:
+    """Validate only the new contracts; legacy payloads retain their existing wire."""
+    parsed = properties
+    if isinstance(properties, str):
+        if action == "get_topology" and len(properties) > 262144:
+            return "Topology properties exceed the request budget."
+        try:
+            parsed = json.loads(properties)
+        except (ValueError, RecursionError):
+            if action == "get_topology":
+                return "Topology properties must be a JSON object."
+            return None
+    if action == "get_topology":
+        if not isinstance(parsed, dict):
+            return "Topology properties must be an object."
+        if set(parsed) - {"kind", "page_size", "cursor", "mesh_revision"}:
+            return "Unknown topology property."
+        if parsed.get("kind", "faces") not in ("faces", "edges", "vertices"):
+            return "kind must be faces, edges or vertices."
+        size = parsed.get("page_size", 100)
+        if type(size) is not int or not 1 <= size <= 100:
+            return "page_size must be an integer from 1 through 100."
+        if "cursor" in parsed:
+            cursor = parsed["cursor"]
+            if not isinstance(cursor, str) or not 1 <= len(cursor) <= 2048:
+                return "cursor must be a nonempty string of at most 2048 characters."
+            if "mesh_revision" not in parsed:
+                return "A continuation requires mesh_revision."
+    if isinstance(parsed, dict) and "mesh_revision" in parsed:
+        revision = parsed["mesh_revision"]
+        if not isinstance(revision, str) or not _MESH_REVISION.fullmatch(revision):
+            return "mesh_revision must have the pb1: revision format."
+        if action != "get_topology" and action not in GUARDED_INDEX_ACTIONS:
+            return "mesh_revision is unsupported for this action."
+    return None
 
 
 @mcp_for_unity_tool(
@@ -117,6 +187,10 @@ ALL_ACTIONS = (
         "'summary' (default: counts, bounds, materials), 'faces' (+ face normals/centers/directions), "
         "'edges' (+ edge vertex pairs), 'all' (everything). Each face includes direction "
         "('top','bottom','front','back','left','right') for semantic selection.\n"
+        "- get_topology: Complete local-space faces/edges/vertices pages. properties: kind, page_size (1-100), "
+        "cursor and mesh_revision (required together for continuation). Native indices are valid for that revision. "
+        "Indexed mutations accept optional mesh_revision and reject stale state before writes. "
+        "Full scans and responses are bounded; oversized meshes return an explicit budget error.\n"
         "- convert_to_probuilder: Convert a standard Unity mesh into ProBuilder for editing.\n\n"
         "SMOOTHING:\n"
         "- set_smoothing: Set smoothing group on faces (faceIndices, smoothingGroup: 0=hard, 1+=smooth).\n"
@@ -175,6 +249,10 @@ async def manage_probuilder(
                 "Run with action='ping' to test connection."
             ),
         }
+
+    admission_error = _topology_admission(action_normalized, properties)
+    if admission_error is not None:
+        return {"success": False, "message": admission_error}
 
     unity_instance = await get_unity_instance_from_context(ctx)
 
