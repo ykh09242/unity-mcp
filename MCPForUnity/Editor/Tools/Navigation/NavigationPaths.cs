@@ -44,9 +44,27 @@ namespace MCPForUnity.Editor.Tools.Navigation
                     foreach (Component link in NavigationObjects.InScene(foreign, linkType))
                         if (link is Behaviour b && b.isActiveAndEnabled && (int)NavigationAccess.Get(link, "agentTypeID") == agentType)
                             return new ErrorResponse("foreign_scene_link: a foreign-scene navigation link prevents scene-attributed global path diagnosis.");
+#if UNITY_6000_0_OR_NEWER
+                // Existing scenes may still contain the obsolete engine component. Inspect its exact public contract without compiling obsolete symbols.
+                Type legacyLinkType = typeof(NavMesh).Assembly.GetType("UnityEngine.AI.OffMeshLink");
+                if (legacyLinkType != null)
+                    foreach (Component link in NavigationObjects.InScene(foreign, legacyLinkType))
+                    {
+                        if (!(link is Behaviour legacy) || !legacy.isActiveAndEnabled)
+                            continue;
+                        object activation = NavigationAccess.Get(link, "activated");
+                        if (!(activation is bool activated))
+                            return new ErrorResponse(
+                                "legacy_link_state_unavailable: an active foreign-scene OffMeshLink has unavailable activation state; scene attribution is refused."
+                            );
+                        if (activated)
+                            return new ErrorResponse("foreign_scene_link: an active legacy OffMeshLink in another scene prevents scene attribution.");
+                    }
+#else
                 foreach (OffMeshLink link in NavigationObjects.InScene(foreign, typeof(OffMeshLink)))
                     if (link.isActiveAndEnabled && link.activated)
                         return new ErrorResponse("foreign_scene_link: an active legacy OffMeshLink in another scene prevents scene attribution.");
+#endif
             }
             if (type != null)
             {

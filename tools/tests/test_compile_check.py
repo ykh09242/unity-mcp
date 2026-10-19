@@ -1186,14 +1186,59 @@ def test_staged_assembly_contract_matches_owned_asmdefs() -> None:
     )
     assert COROUTINES_ASSEMBLY in editor["references"]
     assert tests["defineConstraints"] == ["UNITY_INCLUDE_TESTS"]
-    assert tests["versionDefines"] == []
+    ai_module = {
+        "name": "com.unity.modules.ai",
+        "expression": "0.0.0",
+        "define": "MCP_FOR_UNITY_AI_MODULE",
+    }
+    assert tests["versionDefines"] == [ai_module]
+    assert ai_module in editor["versionDefines"]
     assert tests["includePlatforms"] == ["Editor"]
     assert tests["overrideReferences"]
     assert set(tests["precompiledReferences"]) == {"nunit.framework.dll", "Newtonsoft.Json.dll"}
-    assert (
-        "UNITY_INCLUDE_TESTS"
-        in (ROOT / "tools/compile-defines.txt").read_text(encoding="utf-8").splitlines()
+    assert {"UNITY_INCLUDE_TESTS", ai_module["define"]} <= set(
+        (ROOT / "tools/compile-defines.txt").read_text(encoding="utf-8").splitlines()
     )
+
+
+@pytest.mark.parametrize("version", ["2021.3.45f2", "6000.0.69f1", "7000.0.0a7"])
+def test_owned_ai_module_version_define_reaches_staged_editor_and_test_compilation(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], version: str
+) -> None:
+    # Given the real owned assembly metadata and captured shared compilation defines.
+    project, framework = staged_tests
+    definitions = {
+        "MCPForUnity.Editor": Path("MCPForUnity/Editor/MCPForUnity.Editor.asmdef"),
+        "MCPForUnityTests.EditMode": Path(
+            "TestProjects/UnityMCPTests/Assets/Tests/EditMode/MCPForUnityTests.Editor.asmdef"
+        ),
+    }
+    for name, relative in definitions.items():
+        destination = (
+            harness.repo / relative
+            if name == "MCPForUnity.Editor"
+            else project / "Assets/Tests/EditMode/MCPForUnityTests.Editor.asmdef"
+        )
+        shutil.copy2(ROOT / relative, destination)
+    shutil.copy2(ROOT / "tools/compile-defines.txt", harness.repo / "tools/compile-defines.txt")
+    # When the actual shell harness produces each platform's compiler response files.
+    result = harness.run(version, "win osx linux", test_project=project, framework=framework)
+    # Then both owned consumers receive their declared module symbol, not just test activation.
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name, relative in definitions.items():
+        definition = json.loads((ROOT / relative).read_text(encoding="utf-8"))
+        module_defines = [
+            row["define"]
+            for row in definition["versionDefines"]
+            if row["name"] == "com.unity.modules.ai"
+        ]
+        assert module_defines == ["MCP_FOR_UNITY_AI_MODULE"]
+        for platform in ("win", "osx", "linux"):
+            response = (harness.output / platform / f"{name}.rsp").read_text(encoding="utf-8")
+            lines = response.splitlines()
+            assert lines.count(f"-define:{module_defines[0]}") == 1
+            assert "-define:UNITY_INCLUDE_TESTS" in lines
+            assert "-warnaserror+" in lines
 
 
 @pytest.mark.parametrize(

@@ -152,7 +152,12 @@ namespace MCPForUnity.Editor.Tools.Navigation
 
         internal static void Area(int area)
         {
-            if (area < 0 || area > 31 || !GameObjectUtility.GetNavMeshAreaNames().Any(name => NavMesh.GetAreaFromName(name) == area))
+#if UNITY_6000_0_OR_NEWER
+            string[] areaNames = NavMesh.GetAreaNames();
+#else
+            string[] areaNames = GameObjectUtility.GetNavMeshAreaNames();
+#endif
+            if (area < 0 || area > 31 || !areaNames.Any(name => NavMesh.GetAreaFromName(name) == area))
                 throw new ArgumentException("Area must be a configured NavMesh area index (0..31).");
         }
     }

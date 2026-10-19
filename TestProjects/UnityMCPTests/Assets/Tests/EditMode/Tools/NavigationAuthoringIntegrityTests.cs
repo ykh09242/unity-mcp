@@ -217,6 +217,65 @@ namespace MCPForUnityTests.EditMode.Tools
             }
         }
 
+        [UnityTest]
+        public IEnumerator ForeignLegacyLinkActivationControlsScopeRefusal()
+        {
+            Type legacyType = typeof(NavMesh).Assembly.GetType("UnityEngine.AI.OffMeshLink");
+            Assert.IsNotNull(legacyType, "This compatibility regression requires the actual legacy native component.");
+            string folder = "__McpNavigationScenes_" + Guid.NewGuid().ToString("N");
+            sceneAssetRoot = "Assets/" + folder;
+            Assert.IsFalse(AssetDatabase.IsValidFolder(sceneAssetRoot));
+            sceneAssetRootGuid = AssetDatabase.CreateFolder("Assets", folder);
+            Assert.IsNotEmpty(sceneAssetRootGuid);
+            Assert.IsTrue(UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene, sceneAssetRoot + "/" + scene.name + ".unity"));
+            yield return Bake();
+            var foreignFixture = new PrefabTestSceneFixture();
+            Scene foreign = foreignFixture.Create("__McpNavigationLegacy_", Guid.NewGuid().ToString("N"));
+            UnityEngine.Object[] previousSelection = Selection.objects;
+            GameObject foreignRoot = null;
+            try
+            {
+                foreignRoot = new GameObject("OwnedNativeLegacyLink");
+                SceneManager.MoveGameObjectToScene(foreignRoot, foreign);
+                GameObject start = new GameObject("OwnedLegacyStart");
+                start.transform.SetParent(foreignRoot.transform);
+                start.transform.position = new Vector3(-5, 0, 0);
+                GameObject end = new GameObject("OwnedLegacyEnd");
+                end.transform.SetParent(foreignRoot.transform);
+                end.transform.position = new Vector3(5, 0, 0);
+                Component link = foreignRoot.AddComponent(legacyType);
+                Set(link, "startTransform", start.transform);
+                Set(link, "endTransform", end.transform);
+                Set(link, "activated", true);
+                Assert.AreEqual(foreign, link.gameObject.scene);
+                Assert.IsTrue(((Behaviour)link).isActiveAndEnabled);
+                Selection.objects = new UnityEngine.Object[] { root };
+                Scene selectedScene = SceneManager.GetActiveScene();
+                UnityEngine.Object[] selectedObjects = Selection.objects;
+
+                JObject active = Query();
+                Assert.IsFalse((bool)active["success"], active.ToString());
+                StringAssert.Contains("foreign_scene_link", active.ToString());
+                Assert.AreEqual(selectedScene, SceneManager.GetActiveScene());
+                CollectionAssert.AreEqual(selectedObjects, Selection.objects);
+
+                Set(link, "activated", false);
+                JObject inactive = Query();
+                Assert.IsTrue((bool)inactive["success"], inactive.ToString());
+                StringAssert.DoesNotContain("foreign_scene_link", inactive.ToString());
+                Assert.IsTrue(JToken.DeepEquals(SceneHandle(scene), inactive["data"]["scene_handle"]));
+                Assert.AreEqual(selectedScene, SceneManager.GetActiveScene());
+                CollectionAssert.AreEqual(selectedObjects, Selection.objects);
+            }
+            finally
+            {
+                if (foreignRoot != null)
+                    UnityEngine.Object.DestroyImmediate(foreignRoot);
+                foreignFixture.Close();
+                Selection.objects = previousSelection;
+            }
+        }
+
         [Test]
         public void ConfigureUsesUndoAndRejectsWholeInvalidPatch()
         {

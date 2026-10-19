@@ -341,7 +341,12 @@ namespace MCPForUnity.Editor.Tools.Physics
             if (trigger)
                 return Unavailable("Trigger pairs have no contact points; cached touching is reported separately.", a.IsTouching(b));
             var points = new ContactPoint2D[limit + 1];
-            int count = Physics2D.GetContacts(a, b, new ContactFilter2D().NoFilter(), points);
+#if UNITY_6000_3_OR_NEWER
+            ContactFilter2D filter = ContactFilter2D.noFilter;
+#else
+            ContactFilter2D filter = new ContactFilter2D().NoFilter();
+#endif
+            int count = Physics2D.GetContacts(a, b, filter, points);
             return new JObject
             {
                 ["status"] = "available",
