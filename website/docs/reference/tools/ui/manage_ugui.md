@@ -18,11 +18,11 @@ Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['ping', 'get_hierarchy', 'create', 'set_rect', 'set_layout', 'set_text', 'set_canvas', 'set_image', 'diagnose', 'diagnose_projection', 'diagnose_text', 'diagnose_raycast', 'diagnose_device_profiles']` | yes | Action to perform. |
+| `action` | `Literal['ping', 'get_hierarchy', 'create', 'create_control', 'set_rect', 'set_layout', 'set_text', 'set_canvas', 'set_image', 'diagnose', 'diagnose_projection', 'diagnose_text', 'diagnose_raycast', 'diagnose_device_profiles']` | yes | Action to perform. |
 | `target` | `str \| int \| None` | — | GameObject name, hierarchy path, or instance ID. Required for get_hierarchy, setters and diagnose. |
 | `parent` | `str \| int \| None` | — | Parent GameObject for create, resolved by name, hierarchy path, or instance ID. |
 | `name` | `str \| None` | — | Name of the created GameObject. |
-| `element_type` | `Literal['canvas', 'panel', 'image', 'button', 'text'] \| None` | — | Element to create: canvas, panel, image, button, or text. |
+| `element_type` | `Literal['canvas', 'panel', 'image', 'button', 'text', 'scroll_view', 'toggle', 'slider', 'tmp_input'] \| None` | — | Element to create: canvas, panel, image, button, or text. |
 | `properties` | `dict[str, JsonValue] \| str \| None` | — | Action-specific camelCase properties, as a dict or JSON object string. Rect: anchorMin, anchorMax, pivot, anchoredPosition, sizeDelta, offsetMin, offsetMax, localScale, localEulerAngles. Create: all elements accept Rect properties; panel/image/button also accept color; text also accepts Text properties. set_image edits an existing Image: sprite=null/path/{path,name}, type, fillMethod, fillOrigin, fillAmount, fillClockwise, preserveAspect, fillCenter, color and raycastTarget. Fill fields require final Filled type; origin is validated against final fillMethod. Sliced requires a bordered base sprite. No importer edit, explicit import/refresh or component creation occurs. Layout: type must be vertical, horizontal, grid, layout_element or content_size_fitter, plus that component's properties. Text: text, fontSize, color, alignment, enableAutoSizing, fontSizeMin, fontSizeMax, raycastTarget. Canvas: Canvas and CanvasScaler properties via set_canvas. |
 | `include_inactive` | `bool` | — | Include inactive GameObjects in hierarchy and diagnostics. |
 | `max_nodes` | `int` | — | Maximum hierarchy nodes to inspect, 1 to 1000. |

@@ -137,7 +137,7 @@ _ACTIONS: Final = {
             "ping get_hierarchy diagnose diagnose_projection diagnose_text diagnose_raycast diagnose_device_profiles"
         ),
         Permission.EDIT: _names(
-            "create create_cli set_rect set_layout set_text set_canvas set_image"
+            "create create_cli create_control set_rect set_layout set_text set_canvas set_image"
         ),
     },
     "manage_ui": {
