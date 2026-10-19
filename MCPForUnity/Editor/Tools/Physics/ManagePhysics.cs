@@ -79,6 +79,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                     // --- Validation ---
                     case "validate":
                         return PhysicsValidationOps.Validate(@params);
+                    case "diagnose_pair":
+                        return PhysicsPairDiagnostics.Diagnose(@params);
 
                     // --- Simulation ---
                     case "simulate_step":
@@ -92,7 +94,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                                 + "create_physics_material, configure_physics_material, assign_physics_material, "
                                 + "add_joint, configure_joint, remove_joint, "
                                 + "raycast, raycast_all, linecast, shapecast, overlap, "
-                                + "apply_force, get_rigidbody, configure_rigidbody, validate, simulate_step."
+                                + "apply_force, get_rigidbody, configure_rigidbody, validate, diagnose_pair, simulate_step."
                         );
                 }
             }

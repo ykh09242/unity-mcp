@@ -22,13 +22,14 @@ QUERIES: raycast, raycast_all, linecast, shapecast, overlap
 FORCES: apply_force
 RIGIDBODY: get_rigidbody, configure_rigidbody
 VALIDATION: validate
+PAIR DIAGNOSIS: diagnose_pair (read-only; unique collider selection, optional passive contact observation)
 SIMULATION: simulate_step
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['ping', 'get_settings', 'set_settings', 'get_collision_matrix', 'set_collision_matrix', 'create_physics_material', 'configure_physics_material', 'assign_physics_material', 'add_joint', 'configure_joint', 'remove_joint', 'raycast', 'raycast_all', 'linecast', 'shapecast', 'overlap', 'validate', 'simulate_step', 'apply_force', 'get_rigidbody', 'configure_rigidbody']` | yes | The physics action to perform. |
+| `action` | `Literal['ping', 'get_settings', 'set_settings', 'get_collision_matrix', 'set_collision_matrix', 'create_physics_material', 'configure_physics_material', 'assign_physics_material', 'add_joint', 'configure_joint', 'remove_joint', 'raycast', 'raycast_all', 'linecast', 'shapecast', 'overlap', 'validate', 'simulate_step', 'apply_force', 'get_rigidbody', 'configure_rigidbody', 'diagnose_pair']` | yes | The physics action to perform. |
 | `dimension` | `str \| None` | — | Physics dimension: '3d' (default) or '2d'. |
 | `settings` | `dict[str, Any] \| None` | — | Key-value settings for set_settings. |
 | `layer_a` | `str \| None` | — | Layer name or index for collision matrix. |
@@ -81,6 +82,12 @@ SIMULATION: simulate_step
 | `page_size` | `int \| None` | — | Page size for validate results: 1-1000 (default 50). |
 | `cursor` | `int \| None` | — | Cursor offset for validate pagination. |
 | `component_index` | `int \| None` | — | Zero-based index to select which component when multiple of the same type exist (e.g., multiple HingeJoints or BoxColliders). If omitted, targets the first instance. |
+| `other_target` | `str \| None` | — | diagnose_pair: second GameObject name, path or instance ID. |
+| `other_collider_type` | `str \| None` | — | diagnose_pair: exact second collider type when needed. |
+| `other_component_index` | `int \| None` | — | diagnose_pair: zero-based second collider index after type filtering. |
+| `other_search_method` | `Literal['by_id', 'by_name', 'by_path'] \| None` | — | How to resolve other_target; inferred independently when omitted. |
+| `contact_limit` | `int \| None` | — | diagnose_pair: 2D contact-point sample size, 1–128 (default16); 3D reports event counts. |
+| `observe_contacts` | `bool \| str \| None` | — | diagnose_pair: opt in to a60-second passive3D pair watch; false stops, omitted only reads. Never simulates or enables contact generation. |
 
 ## Returns
 
