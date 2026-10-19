@@ -17,7 +17,7 @@ def test_scene_preparation_does_not_save_user_editors(argv):
     assert lh.prepare_ci_scene(lh.build_arg_parser().parse_args(argv), "inst@hash", send=unexpected)
 
 
-def test_ci_saves_unique_scene_through_the_selected_bridge():
+def test_ci_reuses_one_owned_scene_per_run_through_the_selected_bridge():
     calls = []
 
     def send(command, params, **kwargs):
@@ -27,7 +27,9 @@ def test_ci_saves_unique_scene_through_the_selected_bridge():
     args = lh.build_arg_parser().parse_args(["--ci"])
     assert lh.prepare_ci_scene(args, "inst@hash", send=send)
     assert lh.prepare_ci_scene(args, "inst@hash", send=send)
-    assert calls[0][1]["name"] != calls[1][1]["name"]
+    assert calls[0][1]["name"] == calls[1][1]["name"]
+    assert lh.prepare_ci_scene(lh.build_arg_parser().parse_args(["--ci"]), "inst@hash", send=send)
+    assert calls[0][1]["name"] != calls[2][1]["name"]
     for command, params, kwargs in calls:
         assert command == "manage_scene"
         assert params["action"] == "save"
