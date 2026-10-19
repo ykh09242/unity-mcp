@@ -17,6 +17,7 @@ namespace MCPForUnityTests.Editor.Tools
     public class BatchExecuteKeyPreservationTests
     {
         private GameObject testGo;
+        private MCPForUnityTests.Editor.Services.ScopedConsentTestState scopedConsent;
 
         [OneTimeSetUp]
         public void OneTimeSetUp()
@@ -27,12 +28,14 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
+            scopedConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
             testGo = new GameObject("BatchKeyTestGO");
         }
 
         [TearDown]
         public void TearDown()
         {
+            scopedConsent?.Dispose();
             if (testGo != null)
                 Object.DestroyImmediate(testGo);
         }

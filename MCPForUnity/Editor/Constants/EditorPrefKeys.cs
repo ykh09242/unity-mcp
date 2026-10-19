@@ -44,6 +44,10 @@ namespace MCPForUnity.Editor.Constants
         internal const string LockCursorConfig = "MCPForUnity.LockCursorConfig";
         internal const string AutoRegisterEnabled = "MCPForUnity.AutoRegisterEnabled";
         internal const string ToolEnabledPrefix = "MCPForUnity.ToolEnabled.";
+        internal const string ToolEnabledProjectPrefix = "MCPForUnity.ToolEnabled.v2.Project.";
+        internal const string ToolConsentProjectPrefix = "MCPForUnity.ToolConsent.v2.Project.";
+        internal const string ToolConsentSessionPrefix = "MCPForUnity.ToolConsent.v2.Session.";
+        internal const string ToolConsentDeniedPrefix = "MCPForUnity.ToolConsent.v2.Denied.";
         internal const string ToolFoldoutStatePrefix = "MCPForUnity.ToolFoldout.";
         internal const string ResourceEnabledPrefix = "MCPForUnity.ResourceEnabled.";
         internal const string ResourceFoldoutStatePrefix = "MCPForUnity.ResourceFoldout.";

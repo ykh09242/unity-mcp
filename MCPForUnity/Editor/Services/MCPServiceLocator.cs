@@ -17,6 +17,7 @@ namespace MCPForUnity.Editor.Services
         private static IPackageUpdateService _packageUpdateService;
         private static IPlatformService _platformService;
         private static IToolDiscoveryService _toolDiscoveryService;
+        private static IToolConsentService _toolConsentService;
         private static IResourceDiscoveryService _resourceDiscoveryService;
         private static IServerManagementService _serverManagementService;
         private static TransportManager _transportManager;
@@ -29,6 +30,7 @@ namespace MCPForUnity.Editor.Services
         public static IPackageUpdateService Updates => _packageUpdateService ??= new PackageUpdateService();
         public static IPlatformService Platform => _platformService ??= new PlatformService();
         public static IToolDiscoveryService ToolDiscovery => _toolDiscoveryService ??= new ToolDiscoveryService();
+        public static IToolConsentService ToolConsent => _toolConsentService ??= new ToolConsentService();
         public static IResourceDiscoveryService ResourceDiscovery => _resourceDiscoveryService ??= new ResourceDiscoveryService();
         public static IServerManagementService Server => _serverManagementService ??= new ServerManagementService();
         public static TransportManager TransportManager => _transportManager ??= new TransportManager();
@@ -56,6 +58,8 @@ namespace MCPForUnity.Editor.Services
                 _platformService = ps;
             else if (implementation is IToolDiscoveryService td)
                 _toolDiscoveryService = td;
+            else if (implementation is IToolConsentService tc)
+                _toolConsentService = tc;
             else if (implementation is IResourceDiscoveryService rd)
                 _resourceDiscoveryService = rd;
             else if (implementation is IServerManagementService sm)
@@ -90,6 +94,8 @@ namespace MCPForUnity.Editor.Services
             _packageUpdateService = null;
             _platformService = null;
             _toolDiscoveryService = null;
+            // ToolConsentProcessState.Shared deliberately survives service Reset.
+            _toolConsentService = null;
             _resourceDiscoveryService = null;
             _serverManagementService = null;
             _transportManager = null;

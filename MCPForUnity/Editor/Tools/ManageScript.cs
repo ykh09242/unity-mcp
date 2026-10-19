@@ -61,7 +61,7 @@ namespace MCPForUnity.Editor.Tools
         internal static ErrorResponse RequireExplicitConsent()
         {
             if (
-                !(_explicitConsentForTests?.Invoke() ?? EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("manage_script"), false))
+                !(_explicitConsentForTests?.Invoke() ?? MCPServiceLocator.ToolConsent.GetStatus("manage_script").HasGrant)
                 || !(_parentEnabledForTests?.Invoke() ?? MCPServiceLocator.ToolDiscovery.IsToolEnabled("manage_script"))
             )
                 return new ErrorResponse(

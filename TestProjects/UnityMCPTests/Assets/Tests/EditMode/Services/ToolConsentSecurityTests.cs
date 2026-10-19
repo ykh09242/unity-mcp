@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
@@ -25,10 +28,12 @@ namespace MCPForUnityTests.Editor.Services
             "blender_bridge",
         };
         private readonly Dictionary<string, bool?> saved = new();
+        private ScopedConsentTestState consent;
 
         [SetUp]
         public void SetUp()
         {
+            consent = new ScopedConsentTestState();
             foreach (string name in Names)
             foreach (string key in new[] { EditorPrefKeys.ToolEnabledPrefix + name, ToolDiscoveryService.GetConsentPreferenceKey(name) })
             {
@@ -40,6 +45,7 @@ namespace MCPForUnityTests.Editor.Services
         [TearDown]
         public void TearDown()
         {
+            consent?.Dispose();
             foreach (var entry in saved)
                 if (entry.Value.HasValue)
                     EditorPrefs.SetBool(entry.Key, entry.Value.Value);
@@ -65,6 +71,7 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase("blender_bridge")]
         public async Task BatchRejectsToolsWithoutConsent(string name)
         {
+            Assert.IsTrue(consent.Service.Grant("batch_execute", ToolConsentScope.EditorSession).Succeeded);
             var result = JObject.FromObject(await BatchExecute.HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = name }) }));
             Assert.IsFalse(result.Value<bool>("success"));
             StringAssert.Contains("disabled", result.ToString());
@@ -232,5 +239,174 @@ namespace MCPForUnityTests.Editor.Services
             object[] args = { "Assets/OwnedInertFolder", remaining, depth, System.Diagnostics.Stopwatch.StartNew() };
             Assert.IsTrue((bool)method.Invoke(null, args));
         }
+
+        [TestCase("execute_code")]
+        [TestCase("manage_script")]
+        public async Task CapturedCatalogDoesNotAuthorizeChangedRootOrRevokedEntry(string name)
+        {
+            Assert.IsTrue(consent.Service.Grant(name, ToolConsentScope.Project).Succeeded);
+            var discovery = new ToolDiscoveryService();
+            Assert.IsTrue(discovery.GetEnabledTools().Exists(tool => tool.Name == name), "Capture an actually enabled catalog first.");
+            using var handlers = new ProgressHandlerScope();
+            int calls = 0;
+            handlers.Set(
+                name,
+                new HandlerInfo(
+                    name,
+                    _ =>
+                    {
+                        calls++;
+                        return new { success = true };
+                    },
+                    null
+                )
+            );
+            string rootA = consent.Root;
+            consent.Root = rootA + "-other";
+            string other = await TransportCommandDispatcher.ExecuteCommandJsonAsync(
+                new JObject { ["type"] = name, ["params"] = new JObject() }.ToString(),
+                CancellationToken.None
+            );
+            StringAssert.Contains("disabled", other.ToLowerInvariant());
+            Assert.AreEqual(0, calls);
+            consent.Root = rootA;
+            Assert.IsTrue(consent.Service.Revoke(name).DeniedInCurrentDomain);
+            discovery.InvalidateCache();
+            string revoked = await TransportCommandDispatcher.ExecuteCommandJsonAsync(
+                new JObject { ["type"] = name, ["params"] = new JObject() }.ToString(),
+                CancellationToken.None
+            );
+            StringAssert.Contains("disabled", revoked.ToLowerInvariant());
+            Assert.AreEqual(0, calls, "A stale registered catalog is not an entry grant.");
+        }
+
+        [Test]
+        public async Task OffThreadDiscoveryAndStrictIdentityRefuseBeforeNativeFallback()
+        {
+            Assert.IsTrue(consent.Service.Grant("execute_code", ToolConsentScope.Project).Succeeded);
+            var discovery = new ToolDiscoveryService();
+            int reads = consent.StorageReads;
+            await Task.Run(() =>
+            {
+                Assert.IsFalse(discovery.IsToolEnabled("execute_code"));
+                Assert.IsNull(discovery.GetToolMetadata("execute_code"));
+                Assert.IsEmpty(discovery.DiscoverAllTools());
+                discovery.SetToolEnabled("execute_code", true);
+                Assert.IsFalse(MCPForUnity.Editor.Helpers.ProjectIdentityUtility.TryGetConsentProjectRoot(out var root));
+                Assert.IsNull(root);
+            });
+            Assert.AreEqual(reads, consent.StorageReads);
+            Assert.IsTrue(discovery.IsToolEnabled("execute_code"), "The off-thread refusal must not revoke the main-thread grant.");
+        }
+
+        [Test]
+        public void DirectScriptGuardUsesCurrentProjectAndRevocation()
+        {
+            Assert.IsTrue(consent.Service.Grant("manage_script", ToolConsentScope.Project).Succeeded);
+            Assert.IsNull(ManageScript.RequireExplicitConsent(), "The actual direct/asset-alias guard accepts the scoped grant without executing script work.");
+            string rootA = consent.Root;
+            consent.Root = rootA + "-other";
+            Assert.AreEqual("script_consent_required", JObject.FromObject(ManageScript.RequireExplicitConsent()).Value<string>("code"));
+            consent.Root = rootA;
+            Assert.IsTrue(consent.Service.Revoke("manage_script").DeniedInCurrentDomain);
+            Assert.AreEqual("script_consent_required", JObject.FromObject(ManageScript.RequireExplicitConsent()).Value<string>("code"));
+        }
+    }
+
+    // Uses the real consent transaction with an isolated preference domain. It
+    // never grants into the user's EditorPrefs or consumes Shared latch capacity.
+    internal sealed class ScopedConsentTestState : IToolConsentStorage, IDisposable
+    {
+        private static readonly FieldInfo ServiceField = typeof(MCPServiceLocator).GetField(
+            "_toolConsentService",
+            BindingFlags.Static | BindingFlags.NonPublic
+        );
+        private readonly object previous;
+        private readonly int mainThread = Thread.CurrentThread.ManagedThreadId;
+        private readonly Dictionary<(ToolConsentStorageScope, string), bool> bools = new();
+        private readonly Dictionary<(ToolConsentStorageScope, string), string> strings = new();
+        internal readonly ToolConsentProcessState Domain = new();
+        internal string Root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "core12-entry-" + Guid.NewGuid().ToString("N")));
+        internal ToolConsentService Service { get; }
+        internal int StorageReads,
+            StorageWrites;
+        internal bool FailAfterNextWrite,
+            FailAll;
+
+        internal ScopedConsentTestState(params string[] enabled)
+        {
+            previous = ServiceField.GetValue(null);
+            Service = new ToolConsentService(this, () => Thread.CurrentThread.ManagedThreadId == mainThread, () => Root, Domain);
+            ServiceField.SetValue(null, Service);
+            try
+            {
+                foreach (string name in enabled)
+                    Assert.IsTrue(Service.Grant(name, ToolConsentScope.EditorSession).Succeeded);
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+        }
+
+        private void Read()
+        {
+            StorageReads++;
+            if (FailAll)
+                throw new IOException("Owned consent read failure");
+        }
+
+        private void BeforeWrite()
+        {
+            StorageWrites++;
+            if (FailAll)
+                throw new IOException("Owned consent write failure");
+        }
+
+        private void AfterWrite()
+        {
+            if (!FailAfterNextWrite)
+                return;
+            FailAfterNextWrite = false;
+            throw new IOException("Owned committed write then failure");
+        }
+
+        public bool GetBool(ToolConsentStorageScope scope, string key)
+        {
+            Read();
+            if (key.StartsWith(EditorPrefKeys.ToolEnabledPrefix + "ExplicitConsent.", StringComparison.Ordinal))
+                return EditorPrefs.GetBool(key, false);
+            return bools.TryGetValue((scope, key), out bool value) && value;
+        }
+
+        public void SetBool(ToolConsentStorageScope scope, string key, bool value)
+        {
+            BeforeWrite();
+            bools[(scope, key)] = value;
+            AfterWrite();
+        }
+
+        public void DeleteBool(ToolConsentStorageScope scope, string key)
+        {
+            BeforeWrite();
+            bools.Remove((scope, key));
+            AfterWrite();
+        }
+
+        public string GetString(ToolConsentStorageScope scope, string key)
+        {
+            Read();
+            return strings.TryGetValue((scope, key), out string value) ? value : null;
+        }
+
+        public void SetString(ToolConsentStorageScope scope, string key, string value)
+        {
+            BeforeWrite();
+            strings[(scope, key)] = value;
+            AfterWrite();
+        }
+
+        public void Dispose() => ServiceField.SetValue(null, previous);
     }
 }

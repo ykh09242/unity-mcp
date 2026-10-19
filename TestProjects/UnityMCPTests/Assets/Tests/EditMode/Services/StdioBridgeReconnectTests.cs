@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Services.Transport.Transports;
 using MCPForUnity.Editor.Tools;
@@ -1383,6 +1384,62 @@ namespace MCPForUnityTests.Editor.Services
                 }
                 catch { }
             }
+        }
+
+        [Test, Explicit("Requires a fresh admitted CORE12 disposable project and the existing owned loopback lane.")]
+        public async Task NativeConsent_AuthenticatedStdioUsesLiveGrantForEveryCommand()
+        {
+            using var consent = new NativeConsentProjectScope(includeResources: true);
+            using var handlers = new ProgressHandlerScope();
+            int calls = 0;
+            handlers.Set(
+                "execute_code",
+                new HandlerInfo(
+                    "execute_code",
+                    _ =>
+                    {
+                        Interlocked.Increment(ref calls);
+                        return new { status = "success", ownedConsentProbe = true };
+                    },
+                    null
+                )
+            );
+            Assert.IsTrue(consent.Grant("execute_code", ToolConsentScope.EditorSession).Succeeded);
+            Assert.IsTrue(consent.Discovery.IsToolEnabled("execute_code"));
+            using var host = new TimingHostScope(_ =>
+                throw new AssertionException("The unregistered timing helper must never substitute for the canonical consent tool.")
+            );
+            var connecting = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, null, out _)));
+            await NativeProgressProbe.AwaitOwned(connecting);
+            using var peer = await connecting;
+            for (int phase = 0; phase < 3; phase++)
+            {
+                if (phase == 1)
+                    Assert.IsTrue(consent.Grant("execute_code", ToolConsentScope.EditorSession).Succeeded);
+                else
+                    Assert.IsTrue(consent.Revoke("execute_code").Succeeded);
+                var command = new JObject
+                {
+                    ["type"] = "execute_code",
+                    ["params"] = new JObject { ["ownedConsentProbe"] = Guid.NewGuid().ToString("N") },
+                };
+                var exchange = host.Track(
+                    Task.Run(() =>
+                    {
+                        // Ordinary business frame: no prelude, resend or capability.
+                        SendFrame(peer.GetStream(), Encoding.UTF8.GetBytes(command.ToString(Formatting.None)));
+                        return JObject.Parse(Encoding.UTF8.GetString(ReadFrame(peer.GetStream(), ReadTimeoutMs)));
+                    })
+                );
+                await NativeProgressProbe.AwaitOwned(exchange);
+                var result = await exchange;
+                Assert.AreEqual(phase == 1 ? "success" : "error", result.Value<string>("status"));
+                if (phase != 1)
+                    StringAssert.Contains("disabled", result.Value<string>("error"));
+                Assert.AreEqual(phase == 0 ? 0 : 1, Volatile.Read(ref calls));
+            }
+            Assert.Greater(consent.Store.Reads, 0);
+            CollectionAssert.AreEquivalent(new[] { consent.MainThread }, consent.Store.AccessThreads);
         }
 
         #region Frame protocol helpers

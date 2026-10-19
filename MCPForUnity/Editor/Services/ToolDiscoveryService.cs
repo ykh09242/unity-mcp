@@ -17,6 +17,8 @@ namespace MCPForUnity.Editor.Services
 
         public List<ToolMetadata> DiscoverAllTools()
         {
+            if (!ToolConsentThread.IsMainThread)
+                return new List<ToolMetadata>();
             EnsureToolsDiscovered();
             return _cachedTools.Values.ToList();
         }
@@ -173,6 +175,8 @@ namespace MCPForUnity.Editor.Services
 
         public ToolMetadata GetToolMetadata(string toolName)
         {
+            if (!ToolConsentThread.IsMainThread)
+                return null;
             EnsureToolsDiscovered();
 
             return _cachedTools.TryGetValue(toolName, out var metadata) ? metadata : null;
@@ -180,12 +184,16 @@ namespace MCPForUnity.Editor.Services
 
         public List<ToolMetadata> GetEnabledTools()
         {
+            if (!ToolConsentThread.IsMainThread)
+                return new List<ToolMetadata>();
             EnsureToolsDiscovered();
             return _cachedTools.Values.Where(tool => IsToolEnabled(tool.Name)).ToList();
         }
 
         public bool IsToolEnabled(string toolName)
         {
+            if (!ToolConsentThread.IsMainThread)
+                return false;
             if (string.IsNullOrEmpty(toolName))
             {
                 return false;
@@ -196,8 +204,10 @@ namespace MCPForUnity.Editor.Services
 
         private bool IsCachedToolEnabled(string toolName, ToolMetadata metadata)
         {
-            if (metadata?.RequiresExplicitConsent == true && !EditorPrefs.GetBool(GetConsentPreferenceKey(toolName), false))
+            if (!ToolConsentThread.IsMainThread)
                 return false;
+            if (metadata?.RequiresExplicitConsent == true)
+                return MCPServiceLocator.ToolConsent.GetStatus(metadata.Name).Enabled;
 
             string key = GetToolPreferenceKey(toolName);
             if (EditorPrefs.HasKey(key))
@@ -210,15 +220,20 @@ namespace MCPForUnity.Editor.Services
 
         public void SetToolEnabled(string toolName, bool enabled)
         {
+            if (!ToolConsentThread.IsMainThread)
+                return;
             if (string.IsNullOrEmpty(toolName))
             {
                 return;
             }
 
-            string key = GetToolPreferenceKey(toolName);
-            if (GetToolMetadata(toolName)?.RequiresExplicitConsent == true)
-                EditorPrefs.SetBool(GetConsentPreferenceKey(toolName), enabled);
-            EditorPrefs.SetBool(key, enabled);
+            var metadata = GetToolMetadata(toolName);
+            if (metadata?.RequiresExplicitConsent == true)
+            {
+                MCPServiceLocator.ToolConsent.SetEnabled(metadata.Name, enabled);
+                return;
+            }
+            EditorPrefs.SetBool(GetToolPreferenceKey(toolName), enabled);
         }
 
         private ToolMetadata ExtractToolMetadata(Type type, McpForUnityToolAttribute toolAttr) =>
@@ -395,13 +410,11 @@ namespace MCPForUnity.Editor.Services
                 return;
             }
 
-            string key = GetToolPreferenceKey(metadata.Name);
-            if (metadata.RequiresExplicitConsent && !EditorPrefs.GetBool(GetConsentPreferenceKey(metadata.Name), false))
-            {
-                // Old versions initialized built-in tools to true without recording consent.
-                EditorPrefs.SetBool(key, false);
+            // Missing scoped dangerous state means off. Merely discovering a
+            // tool cannot mutate enablement or migrate an old global grant.
+            if (metadata.RequiresExplicitConsent)
                 return;
-            }
+            string key = GetToolPreferenceKey(metadata.Name);
             if (!EditorPrefs.HasKey(key))
             {
                 bool defaultValue = metadata.AutoRegister || metadata.IsBuiltIn;
@@ -414,6 +427,7 @@ namespace MCPForUnity.Editor.Services
             return EditorPrefKeys.ToolEnabledPrefix + toolName;
         }
 
+        // Retained for legacy-pref inspection/tests. This key never grants v2 consent.
         internal static string GetConsentPreferenceKey(string toolName) => EditorPrefKeys.ToolEnabledPrefix + "ExplicitConsent." + toolName;
     }
 }

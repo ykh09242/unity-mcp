@@ -31,6 +31,9 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private Button retryToolsButton;
         private readonly IToolSettingsStatusSource providedStatusSource;
         private readonly bool? httpMode;
+        private readonly Func<ToolMetadata, ToolConsentScope?> consentScopePrompt;
+        private readonly Dictionary<string, Label> consentScopeLabels = new();
+        private readonly Dictionary<string, string> consentPersistenceWarnings = new();
         private readonly SynchronizationContext uiContext;
         private readonly int uiThread;
         private IToolSettingsStatusSource statusSource;
@@ -67,16 +70,20 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         public VisualElement Root { get; }
 
         public McpToolsSection(VisualElement root)
-            : this(root, null, null) { }
+            : this(root, null, null, null) { }
 
         public McpToolsSection(VisualElement root, IToolSettingsStatusSource source, bool useHttp)
-            : this(root, source, (bool?)useHttp) { }
+            : this(root, source, (bool?)useHttp, null) { }
 
-        private McpToolsSection(VisualElement root, IToolSettingsStatusSource source, bool? useHttp)
+        internal McpToolsSection(VisualElement root, IToolSettingsStatusSource source, bool useHttp, Func<ToolMetadata, ToolConsentScope?> prompt)
+            : this(root, source, (bool?)useHttp, prompt) { }
+
+        private McpToolsSection(VisualElement root, IToolSettingsStatusSource source, bool? useHttp, Func<ToolMetadata, ToolConsentScope?> prompt)
         {
             Root = root;
             providedStatusSource = source;
             httpMode = useHttp;
+            consentScopePrompt = prompt ?? SelectConsentScope;
             uiContext = SynchronizationContext.Current;
             uiThread = Thread.CurrentThread.ManagedThreadId;
             CacheUIElements();
@@ -168,6 +175,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         {
             BindStatusSource();
             toolToggleMap.Clear();
+            consentScopeLabels.Clear();
             groupToggleMap.Clear();
             foldoutEntries.Clear();
             toolRowMap.Clear();
@@ -190,6 +198,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                     noteLabel.text = isHttp
                         ? "Changes apply after reconnecting or re-registering tools."
                         : "Stdio mode: toggles sync at startup. After changing toggles, ask the AI to run manage_tools with action 'sync' to refresh.";
+                    if (consentPersistenceWarnings.Count > 0)
+                        noteLabel.text = string.Join("\n", consentPersistenceWarnings.Values);
                 }
             }
 
@@ -343,6 +353,29 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             header.Add(tagsContainer);
             row.Add(header);
 
+            if (tool.RequiresExplicitConsent)
+            {
+                var scope = new Label { name = "consent-scope-" + tool.Name };
+                consentScopeLabels[tool.Name] = scope;
+                row.Add(scope);
+                row.Add(new Button(() => ChangeConsentScope(tool)) { text = "Choose consent scope", name = "consent-change-" + tool.Name });
+                row.Add(
+                    new Button(() =>
+                    {
+                        var before = MCPServiceLocator.ToolConsent.GetStatus(tool.Name);
+                        var result = MCPServiceLocator.ToolConsent.Revoke(tool.Name);
+                        ShowConsentResult(tool.Name, result);
+                        RefreshConsentRow(tool);
+                        ConsentChanged(tool, before);
+                    })
+                    {
+                        text = "Revoke consent",
+                        name = "consent-revoke-" + tool.Name,
+                    }
+                );
+                RefreshConsentRow(tool);
+            }
+
             // Skip auto-generated placeholder descriptions like "Tool: find_gameobjects"
             if (!string.IsNullOrWhiteSpace(tool.Description) && !tool.Description.StartsWith("Tool: ", StringComparison.OrdinalIgnoreCase))
             {
@@ -373,9 +406,126 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             return row;
         }
 
-        private void HandleToggleChange(ToolMetadata tool, bool enabled, bool updateSummary = true, bool reregisterTools = true)
+        private static ToolConsentScope? SelectConsentScope(ToolMetadata tool)
         {
-            MCPServiceLocator.ToolDiscovery.SetToolEnabled(tool.Name, enabled);
+            int choice = EditorUtility.DisplayDialogComplex(
+                "Enable " + tool.Name,
+                "Choose consent for " + ProjectIdentityUtility.GetProjectName() + ". This permits the tool for already-authorized callers of this Editor.",
+                "This Editor session",
+                "Cancel",
+                "Remember for this project"
+            );
+            return choice == 0 ? ToolConsentScope.EditorSession
+                : choice == 2 ? ToolConsentScope.Project
+                : (ToolConsentScope?)null;
+        }
+
+        private void RefreshConsentRow(ToolMetadata tool)
+        {
+            var state = MCPServiceLocator.ToolConsent.GetStatus(tool.Name);
+            if (toolToggleMap.TryGetValue(tool.Name, out var toggle))
+                toggle.SetValueWithoutNotify(MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name));
+            if (consentScopeLabels.TryGetValue(tool.Name, out var label))
+                label.text =
+                    state.HasGrant
+                        ? "Consent for "
+                            + ProjectIdentityUtility.GetProjectName()
+                            + ": "
+                            + (state.Scope == ToolConsentScope.Project ? "remembered for this project" : "this Editor session")
+                    : state.LegacyGrantIgnored ? "Previous global consent is inactive; choose a scope for this project."
+                    : state.ErrorCode != null ? "Consent blocked: " + state.ErrorCode
+                    : "Consent: not granted";
+        }
+
+        private void ShowConsentResult(string name, ToolConsentChangeResult result)
+        {
+            string message;
+            if (result.Succeeded)
+            {
+                consentPersistenceWarnings.Remove(name);
+                message = "Consent settings saved for this project.";
+            }
+            else if (result.DeniedInCurrentDomain)
+            {
+                message =
+                    result.RestartDenialConfirmed ? "Blocked; grant was not published. Revocation is confirmed across restart."
+                    : result.ReloadDenialConfirmed ? "Blocked in this Editor, including reload. Revocation is not confirmed across restart."
+                    : "Blocked in this Editor; revocation could not be confirmed across reload/restart. Retry explicitly before reloading.";
+                consentPersistenceWarnings[name] = name + ": " + message;
+            }
+            else
+                message = "Consent change was not applied: " + result.ErrorCode;
+            if (noteLabel != null)
+                noteLabel.text = consentPersistenceWarnings.Count > 0 ? string.Join("\n", consentPersistenceWarnings.Values) : message;
+        }
+
+        private void ChangeConsentScope(ToolMetadata tool)
+        {
+            var scope = consentScopePrompt(tool);
+            if (!scope.HasValue)
+            {
+                RefreshConsentRow(tool);
+                return;
+            }
+            var before = MCPServiceLocator.ToolConsent.GetStatus(tool.Name);
+            var result = MCPServiceLocator.ToolConsent.Grant(tool.Name, scope.Value);
+            ShowConsentResult(tool.Name, result);
+            RefreshConsentRow(tool);
+            ConsentChanged(tool, before);
+        }
+
+        private void ConsentChanged(ToolMetadata tool, ToolConsentStatus before)
+        {
+            var after = MCPServiceLocator.ToolConsent.GetStatus(tool.Name);
+            UpdateSummary();
+            UpdateFoldoutHeaders();
+            SyncGroupToggles();
+            if (ConsentStateChanged(before, after))
+                ReregisterToolsAsync();
+        }
+
+        private static bool ConsentStateChanged(ToolConsentStatus before, ToolConsentStatus after) =>
+            before.Enabled != after.Enabled || before.Scope != after.Scope || before.RequiresExplicitGrant != after.RequiresExplicitGrant;
+
+        private bool HandleToggleChange(ToolMetadata tool, bool enabled, bool updateSummary = true, bool reregisterTools = true, bool allowConsentPrompt = true)
+        {
+            bool before = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
+            ToolConsentStatus previousConsent = default;
+            if (tool.RequiresExplicitConsent)
+            {
+                previousConsent = MCPServiceLocator.ToolConsent.GetStatus(tool.Name);
+                ToolConsentChangeResult result;
+                if (enabled && (!previousConsent.HasGrant || previousConsent.RequiresExplicitGrant))
+                {
+                    if (!allowConsentPrompt)
+                    {
+                        RefreshConsentRow(tool);
+                        return false;
+                    }
+                    var scope = consentScopePrompt(tool);
+                    if (!scope.HasValue)
+                    {
+                        RefreshConsentRow(tool);
+                        return false;
+                    }
+                    // Grant publishes scope AND enablement. Never follow it with
+                    // SetToolEnabled: that must not retry a failed transaction.
+                    result = MCPServiceLocator.ToolConsent.Grant(tool.Name, scope.Value);
+                }
+                else
+                    result = MCPServiceLocator.ToolConsent.SetEnabled(tool.Name, enabled);
+                ShowConsentResult(tool.Name, result);
+                RefreshConsentRow(tool);
+            }
+            else
+                MCPServiceLocator.ToolDiscovery.SetToolEnabled(tool.Name, enabled);
+
+            bool changed = before != MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
+            if (tool.RequiresExplicitConsent)
+            {
+                var after = MCPServiceLocator.ToolConsent.GetStatus(tool.Name);
+                changed |= ConsentStateChanged(previousConsent, after);
+            }
 
             if (updateSummary)
             {
@@ -384,11 +534,12 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 SyncGroupToggles();
             }
 
-            if (reregisterTools)
+            if (reregisterTools && changed)
             {
                 // Trigger tool reregistration with connected MCP server
                 ReregisterToolsAsync();
             }
+            return changed;
         }
 
         private void ReregisterToolsAsync()
@@ -429,13 +580,12 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 if (toolToggleMap.TryGetValue(tool.Name, out var toggle))
                     toggle.SetValueWithoutNotify(enabled);
 
-                if (currentEnabled == enabled)
+                if (currentEnabled == enabled && (enabled || !tool.RequiresExplicitConsent))
                 {
                     continue;
                 }
 
-                HandleToggleChange(tool, enabled, updateSummary: false, reregisterTools: false);
-                hasChanges = true;
+                hasChanges |= HandleToggleChange(tool, enabled, updateSummary: false, reregisterTools: false, allowConsentPrompt: false);
             }
 
             UpdateSummary();
@@ -459,10 +609,9 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 if (toolToggleMap.TryGetValue(tool.Name, out var toggle))
                     toggle.SetValueWithoutNotify(enabled);
 
-                if (currentEnabled != enabled)
+                if (currentEnabled != enabled || !enabled && tool.RequiresExplicitConsent)
                 {
-                    HandleToggleChange(tool, enabled, updateSummary: false, reregisterTools: false);
-                    hasChanges = true;
+                    hasChanges |= HandleToggleChange(tool, enabled, updateSummary: false, reregisterTools: false, allowConsentPrompt: false);
                 }
             }
 

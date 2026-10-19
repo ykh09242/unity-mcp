@@ -3,6 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Services;
 using UnityEditor;
 using UnityEngine;
 
@@ -21,9 +22,11 @@ namespace MCPForUnity.Editor.Helpers
         private static string _cachedProjectHash = "default";
         private static string _fallbackSessionId;
         private static bool _cacheScheduled;
+        private static string _consentProjectRoot;
 
         static ProjectIdentityUtility()
         {
+            ToolConsentThread.CaptureEditorMainThread();
             ScheduleCacheRefresh();
             EditorApplication.projectChanged += ScheduleCacheRefresh;
         }
@@ -48,6 +51,8 @@ namespace MCPForUnity.Editor.Helpers
 
         private static void UpdateIdentityCache()
         {
+            if (ToolConsentThread.IsMainThread)
+                _consentProjectRoot = null;
             try
             {
                 string dataPath = Application.dataPath;
@@ -58,11 +63,26 @@ namespace MCPForUnity.Editor.Helpers
 
                 _cachedProjectHash = ComputeProjectHash(dataPath);
                 _cachedProjectName = ComputeProjectName(dataPath);
+                if (ToolConsentThread.IsMainThread)
+                    _consentProjectRoot = ToolConsentService.NormalizeProjectRoot(Path.GetDirectoryName(Path.GetFullPath(dataPath)));
             }
             catch
             {
                 // Ignore and keep defaults
             }
+        }
+
+        // Consent never invokes EnsureIdentityCache: its off-thread/cwd fallback
+        // is for transport compatibility, not authority over a local project.
+        internal static bool TryGetConsentProjectRoot(out string root)
+        {
+            root = null;
+            if (!ToolConsentThread.IsMainThread)
+                return false;
+            if (_consentProjectRoot == null)
+                UpdateIdentityCache();
+            root = _consentProjectRoot;
+            return root != null;
         }
 
         /// <summary>
