@@ -15,7 +15,7 @@ Editor tests by themselves. Keep the repository Actions variable
 | Windows, Linux and macOS bootstrap | Cold/offline server bootstrap checks |
 | Unity version matrix | Runtime, Editor and test assembly compilation for Windows, macOS and Linux defines |
 | Optional packages | Pinned Cinemachine, ProBuilder and graphics dependency preparation and integrity checks |
-| Native EditMode and optional integration tests | **Skipped**; compilation and package preparation do not execute these tests |
+| Native EditMode, PlayMode and optional integration tests | **Skipped**; compilation and package preparation do not execute these tests |
 | Live E2E bridge and manual NL suite | **Skipped**; no Editor activation or live tool calls |
 
 The shared Unity workflow and both live workflows check this policy before reading
@@ -387,6 +387,73 @@ Earlier Unity profiles retain their existing reference and compiler contracts.
 The native-execution policy and license gate stay explicit. A skipped licensed-test job is
 not runtime test evidence, and a successful compile is not proof that an Editor session was
 executed.
+
+### PlayMode bodies and domain reload
+
+The existing licensed Unity matrix has one EditMode execution and two PlayMode executions
+per supported version. PlayMode varies domain reload `on`/`off` while retaining scene reload.
+The job-level license policy is unchanged. Adding these rows does not establish that any
+row executed, and a skipped row provides no PlayMode assurance.
+
+`PlayModeEvidenceSettings` applies an explicit `--mcp-playmode-reload on|off` before the test
+runner starts. `--mcp-playmode-session` supplies a fresh 32-hex nonce. The required body asserts
+that it is actually playing, that the Editor setting matches the request and that a per-domain
+identity actually changed (`on`) or stayed the same (`off`) across the transition. Its NUnit output
+records the nonce, mode and actual Unity version. `check_unity_playmode_evidence.py` requires
+that body plus the four observation bodies to pass. Skipped, missing, duplicate or stale
+evidence fails the gate. A headless screenshot body can pass by verifying explicit capture
+unavailability; that result is not rendered screenshot evidence.
+
+The settings hook restores prior values on orderly Editor shutdown, including failed test
+runs. An external runner reusing a warm isolated project must additionally snapshot
+`ProjectSettings/EditorSettings.asset` and restore it in its own cleanup after its owned Editor
+has exited, including cancellation or forced termination. A killed process cannot execute
+managed cleanup. Never use a developer's open project for this matrix.
+
+For a local licensed execution, pass these arguments to the existing isolated-project runner:
+
+```text
+-runTests -testPlatform PlayMode -testCategory playmode_evidence
+--mcp-playmode-reload on --mcp-playmode-session <fresh-32-hex>
+-testResults <fresh-results.xml>
+```
+
+Repeat with `off`, a new nonce and a new results file. Then check each actual result:
+
+```sh
+python tools/check_unity_playmode_evidence.py <fresh-results.xml> --runner-outcome success --session <fresh-32-hex> --reload on --unity-version <actual-version>
+```
+
+### Windows Player backend evidence
+
+Windows Mono remains the default. Explicit scenario builds accept `--mcp-scenario-backend
+il2cpp`; the backend is selected only for the build and restored afterward. The fixture
+builder accepts the same flag. Builds refuse missing backend modules before output creation.
+The temporary build assets contain a linker preservation rule for the scenario runtime's
+reflection-based JSON models; ordinary builds do not acquire that rule or the scenario define.
+
+The Player assurance workflow accepts `backend: mono|il2cpp` (or `player_backend` through the
+parent workflow). Both choices use the existing licensed-execution policy and Windows serial
+credentials. IL2CPP explicitly adds only the pinned `windows-il2cpp` module from
+`tools/unity-windows-il2cpp.json` to the owned CI Editor. Download size, official integrity and
+Windows publisher signature must pass before installation. The job retains module installation
+logs and a receipt. Selection does not enable licensed execution or establish a successful run.
+
+The same assurance profiles and cancellation/finalization gates apply to both backends:
+
+```sh
+python tools/run_play_scenario_player_e2e.py --editor <Unity.exe> --project <owned-project> --output <fresh-evidence-root> --session-id <fresh-session> --source-revision <revision> --profile standard --backend il2cpp
+```
+
+Initialize the evidence root with the existing `--initialize --profile standard` command first.
+The launcher records its actual host separately from the bundle's backend declaration. Native
+reports must independently identify the same platform and backend. A Mono run cannot satisfy
+an IL2CPP selection. Reuse the same fixture/profile for parity and retain both evidence roots.
+
+Linux and macOS executable layouts and host guards are represented for future native validation;
+their build, signal/cancellation and graphics behavior remains unverified. This delivery's native
+Player verification scope is Windows. Headless screenshot unavailability stays explicit, and
+compilation with another OS's defines does not establish execution on that OS.
 
 ### Optional package integrations
 

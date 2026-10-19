@@ -1,4 +1,4 @@
-"""Build and run the maintained actual Windows Mono Player assurance profile."""
+"""Build and run the maintained actual Windows standalone Player assurance profile."""
 
 import argparse
 import json
@@ -77,7 +77,7 @@ def build_players(args: argparse.Namespace) -> tuple[Path, Path]:
             args.source_revision,
         ]
         if kind == "scenario":
-            command.append("--mcp-fixture-metrics")
+            command.extend(("--mcp-fixture-metrics", "--mcp-scenario-backend", args.backend))
         process = execute(Invocation(command, args.output / "build-evidence" / kind, timeout=1800))
         if process["actual_exit_code"] or process["forced_termination"]:
             raise ValueError("Actual Unity fixture build failed: " + kind)
@@ -334,6 +334,7 @@ def main() -> int:
     parser.add_argument("--build", type=Path)
     parser.add_argument("--ordinary-build", type=Path)
     parser.add_argument("--profile", choices=PROFILE_NAMES, default="standard")
+    parser.add_argument("--backend", choices=("mono", "il2cpp"), default="mono")
     args = parser.parse_args()
     args.output = args.output.resolve()
     try:
@@ -370,6 +371,13 @@ def main() -> int:
         if args.output.is_relative_to(builds[0]) or args.output.is_relative_to(builds[1]):
             raise ValueError("Execution outputs must be external to both immutable builds")
         bundle = verify_bundle(builds[0], args.source_revision)
+        if (
+            bundle.get("scripting_backend", "mono") != args.backend
+            or bundle.get("build_target", "windows64") != "windows64"
+        ):
+            raise ValueError(
+                "Provided Player backend/target differs from requested Windows assurance"
+            )
         write_json(
             args.output / ".session.json",
             {
@@ -377,13 +385,15 @@ def main() -> int:
                 "build_source_revision": args.source_revision,
                 "build_id": bundle["build_id"],
                 "payload_hash": bundle["payload_hash"],
+                "scripting_backend": args.backend,
+                "build_target": "windows64",
                 "build_mode": "native" if not args.build else "provided",
             },
         )
         write_json(args.output / "ordinary-inventory.json", {"files": inventory(builds[1])})
         if not run_profile(args, profile, bundle, builds):
             return 1
-        check(args.output, args.session_id, builds, args.profile)
+        check(args.output, args.session_id, builds, args.profile, args.backend)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
         print(f"Player assurance failed: {exc}")
         return 1

@@ -112,7 +112,7 @@ def test_strict_native_mode_is_opt_in_and_checks_fresh_evidence_after_execution(
     )
     assert cache_index < steps.index(initialize) < steps.index(execute) < steps.index(gate)
     assert "--initialize" in initialize["run"]
-    assert gate["if"] == "always() && inputs.require_native_e2e"
+    assert gate["if"] == "always() && inputs.require_native_e2e && matrix.testMode == 'editmode'"
     assert gate["env"]["NATIVE_SESSION_ID"] == "${{ steps.native-session.outputs.session_id }}"
     assert "--session-id" in gate["run"] and "--runner-outcome" in gate["run"]
     assert not gate.get("continue-on-error", False)
@@ -123,6 +123,28 @@ def test_strict_native_mode_is_opt_in_and_checks_fresh_evidence_after_execution(
     assert "PlayScenarioIntegrationEvidence" in artifact["with"]["path"]
     assert "resolved-packages.json" in artifact["with"]["path"]
     assert artifact["with"]["include-hidden-files"] is True
+
+
+def test_playmode_reload_rows_require_fresh_bodies_under_existing_license_policy():
+    config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    job = config["jobs"]["testAllModes"]
+    assert job["if"] == "needs.license.outputs.unity_ok == 'true'"
+    matrix = job["strategy"]["matrix"]
+    assert matrix["testMode"] == ["editmode", "playmode"]
+    assert matrix["domainReload"] == ["on", "off"]
+    assert matrix["exclude"] == [{"testMode": "editmode", "domainReload": "off"}]
+    runner = next(step for step in job["steps"] if step.get("id") == "tests")
+    assert "-testCategory playmode_evidence" in runner["with"]["customParameters"]
+    assert "--mcp-playmode-reload" in runner["with"]["customParameters"]
+    assert "steps.playmode-session.outputs.session_id" in runner["with"]["customParameters"]
+    gate = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Require actual PlayMode bodies and reload attribution"
+    )
+    assert gate["if"] == "always() && matrix.testMode == 'playmode'"
+    assert "check_unity_playmode_evidence.py" in gate["run"]
+    assert not gate.get("continue-on-error", False)
 
 
 @pytest.mark.parametrize(

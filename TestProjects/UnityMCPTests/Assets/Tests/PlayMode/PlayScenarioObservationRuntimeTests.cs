@@ -10,6 +10,7 @@ using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.PlayMode
 {
+    [Category("playmode_evidence")]
     public class PlayScenarioObservationRuntimeTests
     {
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();

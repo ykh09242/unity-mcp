@@ -1,0 +1,10 @@
+{
+  "unity_version": "6000.0.69f1",
+  "release_revision": "5f8607f5118b",
+  "module_id": "windows-il2cpp",
+  "url": "https://download.unity3d.com/download_unity/5f8607f5118b/TargetSupportInstaller/UnitySetup-Windows-IL2CPP-Support-for-Editor-6000.0.69f1.exe",
+  "integrity": "md5-iuKx2McuFOX5O74RSg2dWA==",
+  "download_size_bytes": 189626832,
+  "installed_size_bytes": 747950496,
+  "module_directory": "Editor/Data/PlaybackEngines/windowsstandalonesupport/Variations/win64_player_nondevelopment_il2cpp"
+}
