@@ -12,7 +12,7 @@ description: "Start, poll or stop a bounded silent MP4 recording of Unity Game V
 
 ## Description
 
-Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. start returns job_id immediately; poll status explicitly or stop to finalize. Game View requires running unpaused Play Mode and a visible focused Game View; Scene View must stay visible. Windows/macOS interactive Editors only, subject to native MediaEncoder codec availability; capabilities reports support. Frames carry actual capture timestamps (variable frame rate); status reports actual frames and skipped sample slots. Output paths are local to the Unity host, inside project Captures/Recordings, with no overwrite or inline base64. Interrupted/failed jobs discard partial video. Resolution is scaled to width/height (aspect ratio differences stretch). Both encoded pixels and source plus encoded pixels have a 2 billion total pixel-frame budget.
+Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. start returns job_id immediately; poll status explicitly or stop to finalize. Game View requires running unpaused Play Mode and a visible focused Game View; Scene View must stay visible. Windows/macOS interactive Editors only, subject to native MediaEncoder codec availability; capabilities reports support. Frames carry actual capture timestamps (variable frame rate); status reports actual frames and skipped sample slots. Output paths are local to the Unity host, inside project Captures/Recordings, with no overwrite or inline base64. Interrupted/failed jobs discard partial video. aspect_mode defaults to stretch; fit preserves the full source with black padding and crop fills the output with a centered crop. Both encoded pixels and source plus encoded pixels have a 2 billion total pixel-frame budget.
 
 ## Parameters
 
@@ -27,6 +27,7 @@ Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene V
 | `height` | `int` | — | Even output height. |
 | `output_folder` | `str \| None` | — | Project-relative directory within Captures/Recordings, or an absolute path inside it. |
 | `file_name` | `str \| None` | — | New plain filename, optionally ending in .mp4; generated if omitted. |
+| `aspect_mode` | `Literal['stretch', 'fit', 'crop']` | — | Resize policy: stretch (default), fit with black padding, or centered crop. |
 
 ## Returns
 

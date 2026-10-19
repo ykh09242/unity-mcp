@@ -2933,6 +2933,40 @@ Execute bounded iterations in one verified native Player process and export evid
 | --graphical | boolean | optional | nargs=1, flag | — | — | Run with graphics for screenshot checkpoints. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp play-scenario player-suite-build`
+
+Freeze a saved suite and build its scene union once in the selected Editor. Explicit build/import/compile cost applies. Every later child runs in a fresh process.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| name | text | required | nargs=1 | — | — |  |
+| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| --target | choice: windows64, linux64, macos | optional | nargs=1 | "windows64" | — |  |
+| --backend | choice: mono, il2cpp | optional | nargs=1 | "mono" | — |  |
+| --failure-policy | choice: stop, continue | optional | nargs=1 | — | — |  |
+| --isolation | choice: fresh-process | optional | nargs=1 | "fresh-process" | — |  |
+| --source-revision | text | optional | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp play-scenario player-suite-run`
+
+Run all frozen children from one verified build, with child and suite JUnit. Fresh processes isolate each child's static state. Ctrl+C cancels the current owned child through its normal bounded cleanup protocol and skips the remaining children.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| build_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
+| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| --failure-policy | choice: stop, continue | optional | nargs=1 | — | — |  |
+| --isolation | choice: fresh-process | optional | nargs=1 | "fresh-process" | — |  |
+| --timeout-seconds | integer range: [1..1800] | optional | nargs=1 | 300 | — |  |
+| --max-runtime-seconds | integer range: [1..86400] | optional | nargs=1 | 3600 | — |  |
+| --cleanup-wait-seconds | integer range: [1..600] | optional | nargs=1 | 360 | — |  |
+| --source-revision | text | optional | nargs=1 | — | — |  |
+| --expected-build-revision | text | optional | nargs=1 | — | — |  |
+| --expected-build-id | text | optional | nargs=1 | — | — |  |
+| --graphical | boolean | optional | nargs=1, flag | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp play-scenario regression-run`
 
 Run one explicit profile: exit 0 passed, 1 failed, 2 unavailable, 130 cancelled. Output must be new. Build/policy/reference paths are relative to the profile file. Every Player requires verified payload provenance. Baselines are never repinned.

@@ -33,7 +33,12 @@ Completed per-frame sums use native units; p95 is nearest-rank, missing is disti
 MEMORY SNAPSHOT (requires com.unity.memoryprofiler):
 - memory_take_snapshot: Capture memory snapshot to file
 - memory_list_snapshots: List available .snap files
-- memory_compare_snapshots: Compare two snapshot files
+- memory_compare_snapshots: Compare legacy file metadata
+
+MEMORY ANALYSIS (native bytes are distinct from managed/retained size):
+- memory_aggregate: Bounded hierarchy/shared runtime-resource sums with object deduplication
+- memory_snapshot_reader_status: Exact supported reader package/format capability
+- memory_analyze_snapshots: Actual typed native-object count/byte/identity deltas; requires Memory Profiler 1.1.12
 
 FRAME DEBUGGER:
 - frame_debugger_enable: Turn on Frame Debugger, report event count
@@ -63,6 +68,12 @@ FRAME DEBUGGER:
 | `timeout_seconds` | `int \| None` | — | Bounded window deadline (default 30 seconds). |
 | `window_id` | `str \| None` | — | Session-scoped ID returned by window_start; required for status/result/cancel. |
 | `include_samples` | `bool \| None` | — | Include bounded completed samples in window result (default false). |
+| `targets` | `list[str] \| None` | — | Loaded GameObject session ID strings for memory_aggregate; duplicate roots deduplicate. |
+| `max_objects` | `int \| None` | — | Read work budget: aggregate at most 4096 (default1024), snapshot at most200000. |
+| `include_references` | `bool \| None` | — | Include declared shared runtime resources in memory_aggregate (default true). |
+| `include_objects` | `bool \| None` | — | Return bounded object rows for memory_aggregate (default false). |
+| `object_limit` | `int \| None` | — | Maximum returned object rows per list (default128); totals remain separately scoped. |
+| `name_prefix` | `str \| None` | — | Exact ordinal native object-name prefix for memory_analyze_snapshots; omit for all within budget. |
 
 ## Returns
 

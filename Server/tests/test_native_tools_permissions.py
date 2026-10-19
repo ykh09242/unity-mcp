@@ -18,6 +18,33 @@ COMPILE = frozenset({Permission.EDIT, Permission.RUN})
 CASES = [
     (tool, action, expected)
     for tool, actions, expected in (
+        ("manage_netcode", "capabilities preflight", READ),
+        ("manage_input_actions", "capabilities read", READ),
+        (
+            "manage_input_actions",
+            "create_asset add_map add_action add_binding set_binding remove_binding",
+            COMPILE,
+        ),
+        ("manage_localization", "capabilities list_locales list_tables inspect", READ),
+        ("manage_localization", "set_string_entry set_fallbacks set_asset_entry", EDIT),
+        ("manage_addressables", "inspect preflight analyze_layout", READ),
+        ("manage_addressables", "set_address move_entry set_profile_value", EDIT),
+        ("manage_timeline", "capabilities read read_director", READ),
+        (
+            "manage_timeline",
+            "create add_track add_clip assign bind preview_start seek preview_stop",
+            EDIT,
+        ),
+        ("manage_simulation_profiles", "capabilities list get diff validate receipt", READ),
+        ("manage_simulation_profiles", "capture delete apply restore", EDIT),
+        (
+            "manage_profiler",
+            "memory_aggregate memory_analyze_snapshots memory_snapshot_reader_status",
+            READ,
+        ),
+        ("manage_input", "player_status", READ),
+        ("manage_input", "gamepad wheel pair_player release_player", RUN),
+        ("manage_play_scenario", "player_suite_build", COMPILE),
         ("manage_audio", "diagnose get_routing read_import_settings", READ),
         ("manage_audio", "set_routing apply_import_settings", EDIT),
         ("manage_physics", "diagnose_pair", READ),
@@ -96,7 +123,19 @@ def test_public_change_set_alias_does_not_bypass_compile_permission(action, expe
 
 
 @pytest.mark.parametrize(
-    "tool", ["manage_navigation", "script_change_set", "manage_sprite_atlas", "manage_terrain"]
+    "tool",
+    [
+        "manage_navigation",
+        "script_change_set",
+        "manage_sprite_atlas",
+        "manage_terrain",
+        "manage_netcode",
+        "manage_input_actions",
+        "manage_localization",
+        "manage_addressables",
+        "manage_timeline",
+        "manage_simulation_profiles",
+    ],
 )
 @pytest.mark.parametrize("action", [None, "", "unknown", False, 1, [], {}])
 def test_new_tool_unknown_or_malformed_action_is_not_admitted(tool, action):
@@ -116,3 +155,23 @@ def test_mixed_batch_preserves_read_and_compilation_requirements():
     for missing in expected:
         with pytest.raises(OperationPermissionError):
             authorize_operation(OperationGrants(expected - {missing}, True), "batch_execute", batch)
+
+
+def test_package_authoring_batch_preserves_read_and_import_compile_requirements():
+    batch = {
+        "commands": [
+            {"tool": "manage_netcode", "params": {"action": "preflight"}},
+            {"tool": "manage_input_actions", "params": {"action": "set_binding"}},
+        ]
+    }
+    expected = READ | COMPILE
+    assert required_permissions("batch_execute", batch) == expected
+    for missing in expected:
+        with pytest.raises(OperationPermissionError):
+            authorize_operation(OperationGrants(expected - {missing}, True), "batch_execute", batch)
+
+
+@pytest.mark.parametrize("action", ["analyze_snapshots", "reader_status", "memory_reader_status"])
+def test_memory_diagnostics_admit_only_actual_public_action_names(action):
+    with pytest.raises(OperationPermissionError):
+        required_permissions("manage_profiler", {"action": action})

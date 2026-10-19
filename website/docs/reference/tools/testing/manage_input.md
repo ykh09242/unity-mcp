@@ -12,13 +12,13 @@ description: "Simulate bounded input in Unity Play Mode. status reports capabili
 
 ## Description
 
-Simulate bounded input in Unity Play Mode. status reports capabilities and held controls. ui_click dispatches uGUI pointer events to a scene instance ID or exact root hierarchy path (independent of raw input backend; does not test raycast occlusion). key/mouse/touch require com.unity.inputsystem 1.7+ and Active Input Handling Input System or Both. press holds for 1..600 game input updates then releases; use release for an earlier release. touch_id 1..10 permits concurrent contacts across calls; move preserves the original release deadline. release_all removes only MCP virtual devices. A hard 30-second lease and play exit/reload cleanup prevent stuck input. Paused Play Mode accepts release_all only. Device-paired PlayerInput actions may require pairing the virtual devices. Legacy UnityEngine.Input and OS input are unsupported.
+Simulate bounded input in Unity Play Mode. status reports capabilities and held controls. ui_click dispatches uGUI pointer events to a scene instance ID or exact root hierarchy path (independent of raw input backend; does not test raycast occlusion). key/mouse/touch/gamepad/wheel require com.unity.inputsystem 1.7+ and Input System or Both handling. gamepad control is a named stick, trigger or button; sticks use value [x,y] in -1..1, triggers use scalar value 0..1 and buttons omit value. Release omits value and returns neutral. wheel delta [x,y] in -10000..10000 is dispatched once, preserving held mouse buttons. player_status(target) reads actual PlayerInput action/device resolution. pair_player(target) adds only a neutral MCP-owned gamepad to one selected player; existing paired devices and control scheme remain. release_player(target) ends that owned device lease. press holds for 1..600 game input updates then releases; use release for an earlier release. touch_id 1..10 permits concurrent contacts across calls; move preserves the original release deadline. release_all removes only MCP virtual devices. A hard 30-second lease and play exit/reload cleanup prevent stuck input. Pause also cleans pairing; release_player/release_all remain callable while paused. PlayerInput eligibility does not guarantee gameplay handling. Legacy UnityEngine.Input and OS input are unsupported.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['status', 'ui_click', 'key', 'mouse', 'touch', 'release_all']` | yes | status, ui_click, key, mouse, touch or release_all |
+| `action` | `Literal['status', 'player_status', 'pair_player', 'release_player', 'ui_click', 'key', 'mouse', 'touch', 'gamepad', 'wheel', 'release_all']` | yes | Read status/player_status; explicitly pair/release a player or simulate bounded input |
 | `target` | `int \| str \| None` | — | ui_click scene instance ID or exact root hierarchy path |
 | `key` | `str \| None` | — | Input System Key enum name, for example A, Space or LeftShift |
 | `state` | `Literal['press', 'release', 'move']` | — | press or release; mouse/touch also support move |
@@ -26,6 +26,10 @@ Simulate bounded input in Unity Play Mode. status reports capabilities and held 
 | `position` | `tuple[float, float] \| None` | — | Screen pixel x,y; required for mouse move and touch press/move |
 | `button` | `Literal['left', 'right', 'middle']` | — | Mouse button |
 | `touch_id` | `int` | — | Independent touch contact ID (1..10) |
+| `control` | `Literal['leftStick', 'rightStick', 'leftTrigger', 'rightTrigger', 'buttonSouth', 'buttonNorth', 'buttonEast', 'buttonWest', 'leftShoulder', 'rightShoulder', 'leftStickPress', 'rightStickPress', 'start', 'select', 'dpadUp', 'dpadDown', 'dpadLeft', 'dpadRight'] \| None` | — | Named gamepad stick, trigger or button |
+| `value` | `float \| tuple[float, float] \| None` | — | Stick [x,y] or trigger scalar; omit for buttons and release |
+| `delta` | `tuple[float, float] \| None` | — | One-shot wheel delta [x,y] |
+| `device` | `Literal['gamepad'] \| None` | — | Explicit pairing device; defaults to owned gamepad |
 
 ## Returns
 

@@ -127,6 +127,10 @@
       "description": "Inspect one exact Component or ScriptableObject instance ID through SerializedObject. The initial Unity ID lookup MAY load a previously unloaded asset and invoke OnEnable or serialization callbacks before type/context admission. (group: scripting_ext)"
     },
     {
+      "name": "manage_addressables",
+      "description": "Inspect Addressables entries, profiles and build layouts and apply bounded explicit corrections"
+    },
+    {
       "name": "manage_animation",
       "description": "Manage Unity animation: Animator control, AnimatorController CRUD, and AnimationClip operations"
     },
@@ -167,12 +171,24 @@
       "description": "Simulate bounded Play Mode UI clicks and optional Input System key, mouse and touch input (group: testing)"
     },
     {
+      "name": "manage_input_actions",
+      "description": "Inspect and author bounded InputAction assets while preserving existing action and binding identities"
+    },
+    {
+      "name": "manage_localization",
+      "description": "Inspect optional Localization tables and explicitly correct entries and locale fallbacks"
+    },
+    {
       "name": "manage_material",
       "description": "Create and modify Unity materials and shaders"
     },
     {
       "name": "manage_navigation",
       "description": "Read navigation capabilities and explicitly author scene navigation agents, obstacles, surfaces and links"
+    },
+    {
+      "name": "manage_netcode",
+      "description": "Inspect explicitly scoped local Netcode for GameObjects configuration without starting sessions"
     },
     {
       "name": "manage_object_handles",
@@ -235,6 +251,10 @@
       "description": "Work with Unity shaders"
     },
     {
+      "name": "manage_simulation_profiles",
+      "description": "Capture, compare, validate, apply and conditionally restore named supported simulation settings"
+    },
+    {
       "name": "manage_sprite",
       "description": "Slice 2D sprite sheets and build AnimationClips and an AnimatorController from the frames"
     },
@@ -249,6 +269,10 @@
     {
       "name": "manage_texture",
       "description": "Create and modify textures with patterns, gradients, and noise"
+    },
+    {
+      "name": "manage_timeline",
+      "description": "Author bounded Timeline assets and manage owned director preview sessions"
     },
     {
       "name": "manage_tools",

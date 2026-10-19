@@ -149,13 +149,40 @@ _ACTIONS: Final = {
     },
     "manage_object_handles": {Permission.READ: _names("capture resolve")},
     "manage_input": {
-        Permission.READ: _names("status"),
-        Permission.RUN: _names("ui_click key mouse touch release_all"),
+        Permission.READ: _names("status player_status"),
+        Permission.RUN: _names(
+            "ui_click key mouse touch gamepad wheel pair_player release_player release_all"
+        ),
     },
     "manage_audio": {
         Permission.READ: _names("diagnose get_routing read_import_settings"),
         Permission.EDIT: _names("set_routing apply_import_settings"),
         Permission.RUN: _names("play stop"),
+    },
+    "manage_netcode": {Permission.READ: _names("capabilities preflight")},
+    "manage_input_actions": {
+        Permission.READ: _names("capabilities read"),
+        Permission.EDIT: _names(
+            "create_asset add_map add_action add_binding set_binding remove_binding"
+        ),
+    },
+    "manage_localization": {
+        Permission.READ: _names("capabilities list_locales list_tables inspect"),
+        Permission.EDIT: _names("set_string_entry set_fallbacks set_asset_entry"),
+    },
+    "manage_addressables": {
+        Permission.READ: _names("inspect preflight analyze_layout"),
+        Permission.EDIT: _names("set_address move_entry set_profile_value"),
+    },
+    "manage_timeline": {
+        Permission.READ: _names("capabilities read read_director"),
+        Permission.EDIT: _names(
+            "create add_track add_clip assign bind preview_start seek preview_stop"
+        ),
+    },
+    "manage_simulation_profiles": {
+        Permission.READ: _names("capabilities list get diff validate receipt"),
+        Permission.EDIT: _names("capture delete apply restore"),
     },
     "manage_navigation": {
         Permission.READ: _names(
@@ -170,7 +197,7 @@ _ACTIONS: Final = {
         Permission.READ: _names(
             "get list status reports suite_get suite_list suite_status suite_reports"
         ),
-        Permission.EDIT: _names("save delete suite_save suite_delete"),
+        Permission.EDIT: _names("save delete suite_save suite_delete player_suite_build"),
         Permission.RUN: _names("run cancel suite_run suite_cancel"),
     },
     "manage_scenario_recording": {
@@ -243,7 +270,7 @@ _ACTIONS: Final = {
     },
     "manage_profiler": {
         Permission.READ: _names(
-            "ping profiler_status get_frame_timing get_counters get_object_memory memory_list_snapshots memory_compare_snapshots frame_debugger_get_events window_status window_result"
+            "ping profiler_status get_frame_timing get_counters get_object_memory memory_list_snapshots memory_compare_snapshots memory_aggregate memory_analyze_snapshots memory_snapshot_reader_status frame_debugger_get_events window_status window_result"
         ),
         Permission.RUN: _names(
             "profiler_start profiler_stop profiler_set_areas memory_take_snapshot frame_debugger_enable frame_debugger_disable window_start window_cancel"
@@ -330,7 +357,7 @@ _CANONICAL_ALIASES: Final = {
     "execute_menu_item_observed": "execute_menu_item",
 }
 _NATIVE_COMMANDS: Final = _names(
-    "batch_execute batch_validate blender_bridge cancel_test_job capture_ui_snapshot execute_code execute_menu_item execute_menu_item_observed export_test_job find_gameobjects generate_audio generate_image generate_model get_active_tool get_cameras get_compile_job get_editor_state get_gameobject get_gameobject_by_handle_v2 get_gameobject_component get_gameobject_component_selected get_gameobject_components get_layers get_menu_items get_prefab_stage get_project_info get_renderer_features get_rendering_stats get_selection get_tags get_test_job get_tests get_tests_for_mode get_tool_states get_volumes get_windows import_model import_model_file inspect_menu_item inspect_serialized_object_v1 manage_animation manage_asset manage_audio manage_build manage_camera manage_components manage_components_selected manage_editor manage_gameobject manage_graphics manage_input manage_material manage_navigation manage_object_handles_v2 manage_packages manage_physics manage_play_scenario manage_prefabs manage_probuilder manage_profiler manage_recording manage_scenario_recording manage_scene manage_scene_edits manage_script manage_scriptable_object manage_shader manage_sprite manage_sprite_atlas manage_terrain manage_texture manage_ugui manage_ui manage_vfx ping read_console refresh_unity run_tests tail_console unity_reflect"
+    "batch_execute batch_validate blender_bridge cancel_test_job capture_ui_snapshot execute_code execute_menu_item execute_menu_item_observed export_test_job find_gameobjects generate_audio generate_image generate_model get_active_tool get_cameras get_compile_job get_editor_state get_gameobject get_gameobject_by_handle_v2 get_gameobject_component get_gameobject_component_selected get_gameobject_components get_layers get_menu_items get_prefab_stage get_project_info get_renderer_features get_rendering_stats get_selection get_tags get_test_job get_tests get_tests_for_mode get_tool_states get_volumes get_windows import_model import_model_file inspect_menu_item inspect_serialized_object_v1 manage_animation manage_addressables manage_asset manage_audio manage_build manage_camera manage_components manage_components_selected manage_editor manage_gameobject manage_graphics manage_input manage_input_actions manage_material manage_localization manage_navigation manage_netcode manage_object_handles_v2 manage_packages manage_physics manage_play_scenario manage_prefabs manage_probuilder manage_profiler manage_recording manage_scenario_recording manage_scene manage_scene_edits manage_script manage_scriptable_object manage_shader manage_sprite manage_simulation_profiles manage_sprite_atlas manage_terrain manage_texture manage_timeline manage_ugui manage_ui manage_vfx ping read_console refresh_unity run_tests tail_console unity_reflect"
 )
 _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"}
 _RESOURCE_PATHS: Final = _names(
@@ -414,6 +441,15 @@ def required_permissions(
     if actions is None or not isinstance(action, str):
         raise OperationPermissionError()
     action = action.strip().lower()
+    if (
+        name == "manage_input_actions"
+        and action in _ACTIONS["manage_input_actions"][Permission.EDIT]
+    ):
+        # InputAction asset import/automatic reimport can compile generated wrappers.
+        return CUSTOM_GRANTS
+    if name == "manage_play_scenario" and action == "player_suite_build":
+        # Explicit Player suite builds persist output and execute Unity build work.
+        return CUSTOM_GRANTS
     if name == "manage_ui" and action == "patch_source":
         # The SDK and native handler both require a JSON boolean. Only an
         # omitted flag defaults to preview; explicit null is malformed.
