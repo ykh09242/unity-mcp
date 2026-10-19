@@ -31,11 +31,13 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Vector3? position;
             Vector3? rotation;
             Vector3? scale;
+            GameObjectTransformOptions transformOptions;
             try
             {
                 position = ManageGameObjectCommon.ReadOptionalVector3(@params, "position");
                 rotation = ManageGameObjectCommon.ReadOptionalVector3(@params, "rotation");
                 scale = ManageGameObjectCommon.ReadOptionalVector3(@params, "scale");
+                transformOptions = GameObjectTransformOptions.Read(@params);
                 ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: false);
             }
             catch (ArgumentException e)
@@ -60,17 +62,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 catch (Exception e)
                 {
                     return new ErrorResponse($"Invalid prefab path: {e.Message}");
-                }
-            }
-
-            JToken parentToken = @params["parent"];
-            GameObject parentGo = null;
-            if (parentToken != null)
-            {
-                parentGo = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
-                if (parentGo == null)
-                {
-                    return new ErrorResponse($"Parent specified ('{parentToken}') but not found.");
                 }
             }
 
@@ -245,19 +236,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     PrefabUtility.RecordPrefabInstancePropertyModifications(newGo);
             }
 
-            // Set Parent
-            if (parentGo != null)
-            {
-                newGo.transform.SetParent(parentGo.transform, true);
-            }
-
-            // Set Transform
-            if (position.HasValue)
-                newGo.transform.localPosition = position.Value;
-            if (rotation.HasValue)
-                newGo.transform.localEulerAngles = rotation.Value;
-            if (scale.HasValue)
-                newGo.transform.localScale = scale.Value;
+            transformOptions.Apply(newGo.transform, position, rotation, scale);
 
             // Set Tag
             if (!string.IsNullOrEmpty(tag))

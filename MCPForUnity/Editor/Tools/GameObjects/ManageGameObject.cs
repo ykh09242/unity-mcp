@@ -26,6 +26,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Duplicate,
             MoveRelative,
             LookAt,
+            Placement,
         }
 
         private static string NormalizeAction(JToken token) => token?.ToString().ToLowerInvariant();
@@ -39,6 +40,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 "duplicate" => ActionKind.Duplicate,
                 "move_relative" => ActionKind.MoveRelative,
                 "look_at" => ActionKind.LookAt,
+                "placement" => ActionKind.Placement,
                 _ => ActionKind.Unknown,
             };
 
@@ -138,6 +140,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         return GameObjectMoveRelative.Handle(@params, targetToken, searchMethod);
                     case ActionKind.LookAt:
                         return GameObjectLookAt.Handle(@params, targetToken, searchMethod);
+                    case ActionKind.Placement:
+                        return GameObjectPlacement.Handle(@params);
 
                     default:
                         return new ErrorResponse($"Unknown action: '{action}'.");
