@@ -15,6 +15,14 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class BatchResponseContractTests
     {
+        private MCPForUnityTests.Editor.Services.ScopedConsentTestState scopedConsent;
+
+        [SetUp]
+        public void GrantBatchScope() => scopedConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
+
+        [TearDown]
+        public void RestoreBatchScope() => scopedConsent?.Dispose();
+
         private static bool Classify(object result) =>
             (bool)typeof(BatchExecute).GetMethod("DetermineCallSucceeded", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new[] { result });
 

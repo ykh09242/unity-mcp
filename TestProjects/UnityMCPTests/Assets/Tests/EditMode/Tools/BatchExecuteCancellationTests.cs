@@ -12,6 +12,14 @@ namespace MCPForUnityTests.Editor.Tools
     [TestFixture]
     public class BatchExecuteCancellationTests
     {
+        private MCPForUnityTests.Editor.Services.ScopedConsentTestState scopedConsent;
+
+        [SetUp]
+        public void GrantBatchScope() => scopedConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
+
+        [TearDown]
+        public void RestoreBatchScope() => scopedConsent?.Dispose();
+
         [TestCase(false)]
         [TestCase(true)]
         public async Task Cancellation_StopsRemainingCommandsAfterActiveChildSettles(bool cooperative)
@@ -265,6 +273,112 @@ namespace MCPForUnityTests.Editor.Tools
                 typeof(BatchExecute).GetMethod("HandleCommand", new[] { typeof(JObject), typeof(CancellationToken) }),
                 "The existing cooperative entry point remains directly callable."
             );
+        }
+
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        public async Task ConsentRevokedWhileChildHeld_AppliesOnlyAtNextBoundary(bool revokeParent, bool failFast)
+        {
+            const string first = "__core12_held";
+            const string second = "execute_code";
+            const string last = "__core12_remaining";
+            using var handlers = new MCPForUnityTests.Editor.Services.ProgressHandlerScope();
+            using var progress = new MCPForUnityTests.Editor.Services.NativeProgressProbe();
+            Assert.IsTrue(scopedConsent.Service.Grant(second, MCPForUnity.Editor.Services.ToolConsentScope.EditorSession).Succeeded);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var gate = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int firstCalls = 0,
+                secondCalls = 0,
+                lastCalls = 0;
+            bool firstSettled = false;
+            handlers.Set(
+                first,
+                new HandlerInfo(
+                    first,
+                    null,
+                    async _ =>
+                    {
+                        firstCalls++;
+                        entered.TrySetResult(true);
+                        var result = await gate.Task.ConfigureAwait(true);
+                        firstSettled = true;
+                        return result;
+                    }
+                )
+            );
+            handlers.Set(
+                second,
+                new HandlerInfo(
+                    second,
+                    _ =>
+                    {
+                        secondCalls++;
+                        return new { success = true };
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                last,
+                new HandlerInfo(
+                    last,
+                    _ =>
+                    {
+                        lastCalls++;
+                        return new { success = true };
+                    },
+                    null
+                )
+            );
+            var request = new JObject
+            {
+                ["failFast"] = failFast,
+                ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = second }, new JObject { ["tool"] = last }),
+            };
+            MCPForUnityTests.Editor.Services.NativeProgressProbe.RequireBatchCapacity(request);
+            var preview = JObject.FromObject(BatchExecute.ValidateCommand(request));
+            Assert.AreEqual(0, preview.SelectToken("data.attemptedCount").Value<int>());
+            Assert.AreEqual(0, firstCalls, "Preview must not enter or reserve a child invocation.");
+            Task<object> batch = null;
+            try
+            {
+                batch = BatchExecute.HandleCommand(request, CancellationToken.None, (MCPForUnity.Editor.Services.Transport.ICommandProgress)progress.Instance);
+                await MCPForUnityTests.Editor.Services.NativeProgressProbe.AwaitOwned(entered.Task);
+                Assert.IsFalse(batch.IsCompleted);
+                Assert.IsTrue(scopedConsent.Service.Revoke(revokeParent ? "batch_execute" : second).DeniedInCurrentDomain);
+                Assert.IsFalse(firstSettled, "Revocation cannot settle or interrupt entered work.");
+                Assert.IsFalse(batch.IsCompleted);
+                gate.TrySetResult(new { success = true });
+                await MCPForUnityTests.Editor.Services.NativeProgressProbe.AwaitOwned(batch);
+                var response = JObject.FromObject(await batch);
+                var outcomes = (JArray)response.SelectToken("data.outcomes");
+                Assert.IsFalse(response.Value<bool>("success"));
+                Assert.IsTrue(firstSettled);
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(0, secondCalls, "Consent revocation must be checked after the held child settles.");
+                Assert.AreEqual(revokeParent || failFast ? 0 : 1, lastCalls);
+                int attempted =
+                    revokeParent ? 1
+                    : failFast ? 2
+                    : 3;
+                Assert.AreEqual(attempted, response.SelectToken("data.attemptedCount").Value<int>());
+                Assert.AreEqual(3 - attempted, response.SelectToken("data.notRunCount").Value<int>());
+                Assert.AreEqual("succeeded", outcomes[0].Value<string>("state"));
+                Assert.AreEqual(revokeParent ? "not_run" : "failed", outcomes[1].Value<string>("state"));
+                Assert.AreEqual(revokeParent ? "batch_disabled" : "tool_disabled", outcomes[1].Value<string>("reason"));
+                Assert.AreEqual(revokeParent || failFast ? "not_run" : "succeeded", outcomes[2].Value<string>("state"));
+                Assert.IsTrue(progress.TryTake(out var update));
+                Assert.AreEqual(attempted, update.Completed, "Unrun suffix items receive no progress credit.");
+                Assert.AreEqual(3, update.Total);
+            }
+            finally
+            {
+                gate.TrySetResult(new { success = true });
+                if (batch != null)
+                    await MCPForUnityTests.Editor.Services.NativeProgressProbe.AwaitOwned(batch);
+            }
         }
     }
 }

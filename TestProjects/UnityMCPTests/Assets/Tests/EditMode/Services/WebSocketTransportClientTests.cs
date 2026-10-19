@@ -1221,6 +1221,112 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [Test, Explicit("Requires a fresh admitted CORE12 disposable project and the existing owned loopback lane.")]
+        public async Task NativeConsent_LiveCatalogCannotAuthorizeRevokedTool()
+        {
+            using var consent = new NativeConsentProjectScope(includeResources: true);
+            using var handlers = new ProgressHandlerScope();
+            int calls = 0;
+            handlers.Set(
+                "execute_code",
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    "execute_code",
+                    _ =>
+                    {
+                        Interlocked.Increment(ref calls);
+                        return new { status = "success", ownedConsentProbe = true };
+                    },
+                    null
+                )
+            );
+            Assert.IsTrue(consent.Grant("execute_code", ToolConsentScope.EditorSession).Succeeded);
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateConsentClient(consent.Discovery);
+            Func<CancellationToken, Task<ToolSettingsSnapshot>> capture = null;
+            bool stopped = false;
+            int beforeRegistrationReads = consent.Store.Reads;
+            try
+            {
+                Assert.IsTrue(await Task.Run(() => client.StartAsync()));
+                // The owned peer acknowledges register automatically; do not send a second registered frame.
+                await peer.Message(message => message.Value<string>("type") == "register");
+                var registrationClock = System.Diagnostics.Stopwatch.StartNew();
+                while (GetField(client, "_registrationTask") == null && registrationClock.ElapsedMilliseconds < 5000)
+                    await Task.Delay(10);
+                var initialRegistration = (Task)GetField(client, "_registrationTask");
+                Assert.IsNotNull(initialRegistration);
+                await NativeProgressProbe.AwaitOwned(initialRegistration);
+                var advertised = await peer.Message(message => message.Value<string>("type") == "register_tools");
+                Assert.IsTrue(
+                    advertised["tools"].OfType<JObject>().Any(tool => tool.Value<string>("name") == "execute_code"),
+                    "The real pre-revocation native catalog must actually advertise this dangerous tool."
+                );
+                Assert.Greater(
+                    consent.Store.Reads,
+                    beforeRegistrationReads,
+                    "The actual asynchronous catalog capture must read native consent on the Editor thread."
+                );
+                object registration = typeof(WebSocketTransportClient)
+                    .GetField("_toolSettingsRegistration", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .GetValue(client);
+                Assert.IsNotNull(registration);
+                capture =
+                    (Func<CancellationToken, Task<ToolSettingsSnapshot>>)
+                        registration.GetType().GetField("_capture", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(registration);
+                await peer.Barrier();
+                Assert.IsTrue(client.IsConnected, "Initial registration must finish on the same live owned connection.");
+                Assert.IsFalse(
+                    peer.Remaining().Any(message => message.Value<string>("type") == "register_tools"),
+                    "Setup must produce exactly one initial catalog."
+                );
+                ToolSettingsStatus initialStatus = client.Status;
+                Assert.AreEqual("owned-editor-session-1", initialStatus.SessionId);
+
+                for (int phase = 0; phase < 3; phase++)
+                {
+                    if (phase == 1)
+                        Assert.IsTrue(consent.Grant("execute_code", ToolConsentScope.EditorSession).Succeeded);
+                    else
+                        Assert.IsTrue(consent.Revoke("execute_code").Succeeded);
+                    string id = Guid.NewGuid().ToString("D");
+                    // No settings notification or re-registration: the old catalog
+                    // deliberately remains enabled while dispatch reads live policy.
+                    peer.Execute(id, "execute_code", new JObject { ["ownedConsentProbe"] = id }, false);
+                    var result = (await peer.Result(id))["result"];
+                    Assert.AreEqual(phase == 1 ? "success" : "error", result.Value<string>("status"));
+                    if (phase != 1)
+                        StringAssert.Contains("disabled", result.Value<string>("error"));
+                    Assert.AreEqual(phase == 0 ? 0 : 1, Volatile.Read(ref calls));
+                }
+                await peer.Barrier();
+                ToolSettingsStatus statusAfterMutations = client.Status;
+                Assert.AreEqual(initialStatus.Epoch, statusAfterMutations.Epoch);
+                Assert.AreEqual(initialStatus.DesiredRevision, statusAfterMutations.DesiredRevision);
+                Assert.AreEqual(initialStatus.SessionId, statusAfterMutations.SessionId);
+                Assert.AreSame(registration, GetField(client, "_toolSettingsRegistration"));
+                Assert.IsFalse(
+                    peer.Remaining().Any(message => message.Value<string>("type") == "register_tools"),
+                    "No new catalog is required for native revocation enforcement."
+                );
+                peer.AssertHealthy();
+                Assert.Greater(consent.Store.Reads, 0);
+                CollectionAssert.AreEquivalent(new[] { consent.MainThread }, consent.Store.AccessThreads);
+
+                await StopOwnedProgressClient(client);
+                stopped = true;
+                int before = consent.Store.Reads + consent.Store.Writes;
+                Task obsolete = Task.Run(() => capture(CancellationToken.None));
+                Assert.AreSame(obsolete, await Task.WhenAny(obsolete, Task.Delay(5000)), "Obsolete capture must settle without storage access.");
+                Assert.IsTrue(obsolete.IsCanceled || obsolete.IsFaulted && obsolete.Exception.GetBaseException() is OperationCanceledException);
+                Assert.AreEqual(before, consent.Store.Reads + consent.Store.Writes);
+            }
+            finally
+            {
+                if (!stopped)
+                    await StopOwnedProgressClient(client);
+            }
+        }
+
         private static void RequireOwnedProgressEditor()
         {
             if (Environment.GetEnvironmentVariable("UNITY_MCP_OWNED_TRANSPORT_TESTS") != "1")
@@ -1264,6 +1370,19 @@ namespace MCPForUnityTests.Editor.Services
                         "Core06Progress",
                         new string('6', 40),
                         "/owned/core06",
+                        "6000.0"
+                    )
+                );
+
+            internal WebSocketTransportClient CreateConsentClient(IToolDiscoveryService discovery) =>
+                new WebSocketTransportClient(
+                    discovery,
+                    new WebSocketTransportClient.OwnedConnectionOptions(
+                        (Uri)_type.GetProperty("Uri").GetValue(_peer),
+                        Token,
+                        "Core12Consent",
+                        new string('c', 40),
+                        NativeConsentProjectScope.StrictRoot(),
                         "6000.0"
                     )
                 );

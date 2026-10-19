@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
@@ -179,6 +180,388 @@ namespace MCPForUnityTests.Editor.Windows
                 finally
                 {
                     UnityEngine.Object.DestroyImmediate(owner);
+                }
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ConsentRow_LoadAndCancelledEnableNeverWriteOrNotify(bool legacyGrant)
+        {
+            using var consent = new ScopedConsentTestState();
+            string key = MCPForUnity.Editor.Constants.EditorPrefKeys.ToolEnabledPrefix + "ExplicitConsent.execute_code";
+            bool? before = UnityEditor.EditorPrefs.HasKey(key) ? UnityEditor.EditorPrefs.GetBool(key) : (bool?)null;
+            try
+            {
+                UnityEditor.EditorPrefs.SetBool(key, legacyGrant);
+                var status = new ConsentNotifications();
+                var root = ConsentRoot();
+                int prompts = 0;
+                var section = ConsentSection(
+                    root,
+                    consent,
+                    status,
+                    _ =>
+                    {
+                        prompts++;
+                        return null;
+                    }
+                );
+                using var panel = new OwnedConsentPanel(root);
+                section.Refresh();
+                Assert.AreEqual(0, consent.StorageWrites);
+                var toggle = root.Q<Toggle>(className: "tool-item-toggle");
+                Assert.IsNotNull(toggle.panel, "The value setter must dispatch through a real attached panel.");
+                toggle.value = true;
+                Assert.IsFalse(toggle.value);
+                Assert.AreEqual(1, prompts);
+                Assert.AreEqual(0, consent.StorageWrites);
+                Assert.AreEqual(0, status.Notifications);
+                if (legacyGrant)
+                    StringAssert.Contains("Previous global consent is inactive", root.Q<Label>("consent-scope-execute_code").text);
+            }
+            finally
+            {
+                if (before.HasValue)
+                    UnityEditor.EditorPrefs.SetBool(key, before.Value);
+                else
+                    UnityEditor.EditorPrefs.DeleteKey(key);
+            }
+        }
+
+        [TestCase(ToolConsentScope.EditorSession)]
+        [TestCase(ToolConsentScope.Project)]
+        public void ConsentRow_ExplicitScopePublishesOnceAndRevokeBlocksBulkRecovery(ToolConsentScope scope)
+        {
+            using var consent = new ScopedConsentTestState();
+            var status = new ConsentNotifications();
+            var root = ConsentRoot();
+            var section = ConsentSection(root, consent, status, _ => scope);
+            using var panel = new OwnedConsentPanel(root);
+            section.Refresh();
+            var toggle = root.Q<Toggle>(className: "tool-item-toggle");
+            Assert.IsNotNull(toggle.panel, "The value setter must dispatch through a real attached panel.");
+            toggle.value = true;
+            Assert.IsTrue(toggle.value);
+            Assert.AreEqual(scope, consent.Service.GetStatus("execute_code").Scope);
+            Assert.AreEqual(1, status.Notifications);
+            Click(root.Q<Button>("consent-revoke-execute_code"));
+            Assert.IsFalse(toggle.value);
+            Assert.IsTrue(consent.Service.GetStatus("execute_code").RequiresExplicitGrant);
+            Assert.AreEqual(2, status.Notifications);
+            int writes = consent.StorageWrites;
+            Click(root.Q<Button>("enable-all-button"));
+            Assert.IsFalse(toggle.value);
+            Assert.AreEqual(writes, consent.StorageWrites, "Bulk enable cannot mint or retry a dangerous grant.");
+            Assert.AreEqual(2, status.Notifications);
+        }
+
+        [Test]
+        public void ConsentRow_ScopeReplacementRemovesRememberedAlternative()
+        {
+            using var consent = new ScopedConsentTestState("execute_code");
+            Assert.IsTrue(consent.Service.Grant("execute_code", ToolConsentScope.Project).Succeeded);
+            var status = new ConsentNotifications();
+            var root = ConsentRoot();
+            var section = ConsentSection(root, consent, status, _ => ToolConsentScope.EditorSession);
+            section.Refresh();
+            Click(root.Q<Button>("consent-change-execute_code"));
+            Assert.AreEqual(ToolConsentScope.EditorSession, consent.Service.GetStatus("execute_code").Scope);
+            var keys = ToolConsentService.KeysFor(ToolConsentService.NormalizeProjectRoot(consent.Root), "execute_code");
+            Assert.IsFalse(consent.GetBool(ToolConsentStorageScope.Project, keys.ProjectGrant));
+            Assert.AreEqual(1, status.Notifications);
+        }
+
+        [Test]
+        public void ConsentRow_CommittedThenThrowCannotBeRetriedBySetterOrPassiveRefresh()
+        {
+            using var consent = new ScopedConsentTestState();
+            var status = new ConsentNotifications();
+            var root = ConsentRoot();
+            var section = ConsentSection(root, consent, status, _ => ToolConsentScope.Project);
+            using var panel = new OwnedConsentPanel(root);
+            section.Refresh();
+            consent.FailAfterNextWrite = true;
+            Assert.IsNotNull(root.Q<Toggle>(className: "tool-item-toggle").panel, "The value setter must dispatch through a real attached panel.");
+            root.Q<Toggle>(className: "tool-item-toggle").value = true;
+            Assert.IsFalse(consent.Service.GetStatus("execute_code").Enabled);
+            Assert.IsFalse(root.Q<Toggle>(className: "tool-item-toggle").value);
+            StringAssert.Contains("Blocked", root.Q<Label>("tools-note").text);
+            int writes = consent.StorageWrites;
+            MCPServiceLocator.ToolDiscovery.SetToolEnabled("execute_code", true);
+            section.Refresh();
+            Assert.AreEqual(writes, consent.StorageWrites);
+            Assert.IsFalse(consent.Service.GetStatus("execute_code").Enabled);
+            Click(root.Q<Button>("consent-change-execute_code"));
+            Assert.IsTrue(consent.Service.GetStatus("execute_code").Enabled, "A new explicit scope action can recover.");
+            Assert.AreEqual(ToolConsentScope.Project, consent.Service.GetStatus("execute_code").Scope);
+        }
+
+        [Test]
+        public void ConsentRow_AllStorageFailureShowsCurrentDomainOnlyWarning()
+        {
+            using var consent = new ScopedConsentTestState("execute_code");
+            var root = ConsentRoot();
+            var section = ConsentSection(root, consent, new ConsentNotifications(), _ => ToolConsentScope.EditorSession);
+            section.Refresh();
+            consent.FailAll = true;
+            Click(root.Q<Button>("consent-revoke-execute_code"));
+            Assert.IsFalse(root.Q<Toggle>(className: "tool-item-toggle").value);
+            StringAssert.Contains("could not be confirmed across reload/restart", root.Q<Label>("tools-note").text);
+            section.Refresh();
+            StringAssert.Contains("could not be confirmed across reload/restart", root.Q<Label>("tools-note").text);
+            Assert.IsFalse(consent.Service.GetStatus("execute_code").Enabled);
+        }
+
+        [Test]
+        public void ConsentRows_BulkRevokeNotifiesOnceForTwoActualPolicyChanges()
+        {
+            using var consent = new ScopedConsentTestState("execute_code", "manage_packages");
+            var status = new ConsentNotifications();
+            var root = ConsentRoot();
+            var section = ConsentSection(root, consent, status, _ => ToolConsentScope.EditorSession);
+            section.Refresh();
+            Assert.AreEqual(0, status.Notifications);
+            Click(root.Q<Button>("disable-all-button"));
+            foreach (string name in new[] { "execute_code", "manage_packages" })
+            {
+                var state = consent.Service.GetStatus(name);
+                Assert.IsFalse(state.Enabled);
+                Assert.IsTrue(state.RequiresExplicitGrant);
+            }
+            Assert.AreEqual(1, status.Notifications, "One bulk action must publish one settings change, rather than one per tool.");
+            Click(root.Q<Button>("disable-all-button"));
+            Assert.AreEqual(1, status.Notifications, "Repeating an unchanged policy action must not publish another change.");
+        }
+
+        [Test, Explicit("Real-store individual actions only in a fresh admitted CORE12 disposable project; platform dialog interaction is separate.")]
+        public void NativeConsent_RealPanelCancelSessionProjectAndRevoke()
+        {
+            using var consent = new NativeConsentProjectScope();
+            var asset = UnityEditor.AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
+                "Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/Tools/McpToolsSection.uxml"
+            );
+            Assert.IsNotNull(asset, "Load the actual installed Tools UXML, not a synthetic row tree.");
+            var root = asset.CloneTree();
+            Type panelType = typeof(VisualElement).Assembly.GetType("UnityEngine.UIElements.Panel");
+            Assert.IsNotNull(panelType);
+            MethodInfo createPanel = panelType.GetMethod(
+                "CreateEditorPanel",
+                BindingFlags.Static | BindingFlags.NonPublic,
+                null,
+                new[] { typeof(UnityEngine.ScriptableObject) },
+                null
+            );
+            Assert.IsNotNull(createPanel);
+            var owner = UnityEngine.ScriptableObject.CreateInstance<OwnedPanelOwner>();
+            owner.hideFlags = UnityEngine.HideFlags.HideAndDontSave;
+            IPanel panel = null;
+            ToolConsentScope? choice = null;
+            int prompts = 0;
+            try
+            {
+                panel = createPanel.Invoke(null, new object[] { owner }) as IPanel;
+                Assert.IsNotNull(panel);
+                var section = new McpToolsSection(
+                    root,
+                    new ConsentNotifications(),
+                    false,
+                    tool =>
+                    {
+                        Assert.AreEqual("execute_code", tool.Name);
+                        prompts++;
+                        return choice;
+                    }
+                );
+                panel.visualTree.Add(root);
+                Assert.AreSame(panel, root.panel);
+                section.Refresh();
+                var toggle = root.Query<Toggle>(className: "tool-item-toggle").ToList().Single(item => item.label == "execute_code");
+                int writes = consent.Store.Writes;
+                consent.DuringOwnedMutation("execute_code", () => toggle.value = true); // Actual callback; deterministic modal cancellation.
+                consent.AssertOwnedState();
+                Assert.IsFalse(toggle.value);
+                Assert.AreEqual(1, prompts);
+                Assert.AreEqual(writes, consent.Store.Writes);
+
+                choice = ToolConsentScope.EditorSession;
+                consent.DuringOwnedMutation("execute_code", () => toggle.value = true);
+                consent.RecordGrant("execute_code", ToolConsentScope.EditorSession);
+                Assert.IsTrue(toggle.value);
+                Assert.AreEqual(ToolConsentScope.EditorSession, consent.Service.GetStatus("execute_code").Scope);
+                var label = root.Q<Label>("consent-scope-execute_code");
+                StringAssert.Contains("this Editor session", label.text);
+                StringAssert.Contains(MCPForUnity.Editor.Helpers.ProjectIdentityUtility.GetProjectName(), label.text);
+
+                choice = ToolConsentScope.Project;
+                consent.DuringOwnedMutation("execute_code", () => Click(root.Q<Button>("consent-change-execute_code")));
+                consent.RecordGrant("execute_code", ToolConsentScope.Project);
+                Assert.AreEqual(ToolConsentScope.Project, consent.Service.GetStatus("execute_code").Scope);
+                StringAssert.Contains("remembered for this project", label.text);
+                var keys = ToolConsentService.KeysFor(consent.Root, "execute_code");
+                Assert.IsTrue(UnityEditor.EditorPrefs.GetBool(keys.ProjectGrant, false));
+                Assert.IsFalse(UnityEditor.SessionState.GetBool(keys.SessionGrant(consent.Run), false));
+
+                consent.DuringOwnedMutation("execute_code", () => Click(root.Q<Button>("consent-revoke-execute_code")));
+                consent.RecordRevoke("execute_code");
+                Assert.IsFalse(toggle.value);
+                Assert.IsFalse(consent.Service.GetStatus("execute_code").Enabled);
+                Assert.IsFalse(UnityEditor.EditorPrefs.GetBool(keys.ProjectGrant, false));
+                Assert.IsFalse(consent.Discovery.IsToolEnabled("execute_code"));
+                Assert.AreEqual(3, prompts, "Only cancel, session and project choices invoke the modal seam.");
+                CollectionAssert.AreEquivalent(new[] { consent.MainThread }, consent.Store.AccessThreads);
+                // No bulk button is clicked: full-default bulk would change global
+                // ordinary enablement preferences. Existing isolated49 covers it.
+                root.RemoveFromHierarchy();
+                Assert.IsNull(root.panel);
+            }
+            finally
+            {
+                try
+                {
+                    panel?.Dispose();
+                }
+                finally
+                {
+                    UnityEngine.Object.DestroyImmediate(owner);
+                }
+            }
+        }
+
+        private static VisualElement ConsentRoot()
+        {
+            var root = Root();
+            root.Add(new Label { name = "tools-note" });
+            root.Add(new Button { name = "enable-all-button" });
+            root.Add(new Button { name = "disable-all-button" });
+            return root;
+        }
+
+        private static McpToolsSection ConsentSection(
+            VisualElement root,
+            ScopedConsentTestState consent,
+            ConsentNotifications source,
+            Func<ToolMetadata, ToolConsentScope?> prompt
+        )
+        {
+            MCPServiceLocator.Register<IToolDiscoveryService>(new ConsentDiscovery(consent.Service));
+            return new McpToolsSection(root, source, true, prompt);
+        }
+
+        private static void Click(Button button)
+        {
+            Assert.IsNotNull(button);
+            typeof(Clickable).GetMethod("Invoke", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(button.clickable, new object[] { null });
+        }
+
+        private sealed class ConsentNotifications : IToolSettingsStatusSource
+        {
+            internal int Notifications;
+            public ToolSettingsStatus Status => new("owned", 1, null, null, "owned", "saved", null, null, false, false);
+            public event Action StatusChanged
+            {
+                add { }
+                remove { }
+            }
+
+            public void NotifyToolSettingsChanged() => Notifications++;
+
+            public Task RetryToolSettingsAsync() => Task.CompletedTask;
+        }
+
+        private sealed class ConsentDiscovery : IToolDiscoveryService
+        {
+            private readonly IToolConsentService consent;
+            private readonly List<ToolMetadata> tools = new()
+            {
+                new()
+                {
+                    Name = "execute_code",
+                    IsBuiltIn = true,
+                    Group = "core",
+                    RequiresExplicitConsent = true,
+                },
+                new()
+                {
+                    Name = "manage_packages",
+                    IsBuiltIn = true,
+                    Group = "core",
+                    RequiresExplicitConsent = true,
+                },
+            };
+
+            internal ConsentDiscovery(IToolConsentService value)
+            {
+                consent = value;
+            }
+
+            public List<ToolMetadata> DiscoverAllTools() => new(tools);
+
+            public ToolMetadata GetToolMetadata(string name) => tools.Find(tool => tool.Name == name);
+
+            public List<ToolMetadata> GetEnabledTools() => tools.FindAll(tool => consent.GetStatus(tool.Name).Enabled);
+
+            public bool IsToolEnabled(string name) => GetToolMetadata(name) != null && consent.GetStatus(name).Enabled;
+
+            public void SetToolEnabled(string name, bool enabled)
+            {
+                consent.SetEnabled(name, enabled);
+            }
+
+            public void InvalidateCache() { }
+        }
+
+        private sealed class OwnedConsentPanel : IDisposable
+        {
+            private readonly VisualElement root;
+            private readonly OwnedPanelOwner owner;
+            private readonly IPanel panel;
+
+            internal OwnedConsentPanel(VisualElement root)
+            {
+                this.root = root;
+                Type panelType = typeof(VisualElement).Assembly.GetType("UnityEngine.UIElements.Panel");
+                Assert.IsNotNull(panelType, "Consent toggle tests require the installed UI Toolkit Panel type.");
+                MethodInfo createPanel = panelType.GetMethod(
+                    "CreateEditorPanel",
+                    BindingFlags.Static | BindingFlags.NonPublic,
+                    null,
+                    new[] { typeof(UnityEngine.ScriptableObject) },
+                    null
+                );
+                Assert.IsNotNull(createPanel, "Consent toggle tests require the real in-memory Editor panel factory.");
+                owner = UnityEngine.ScriptableObject.CreateInstance<OwnedPanelOwner>();
+                owner.hideFlags = UnityEngine.HideFlags.HideAndDontSave;
+                try
+                {
+                    panel = createPanel.Invoke(null, new object[] { owner }) as IPanel;
+                    Assert.IsNotNull(panel);
+                    panel.visualTree.Add(root);
+                    Assert.AreSame(panel, root.panel);
+                }
+                catch
+                {
+                    Dispose();
+                    throw;
+                }
+            }
+
+            public void Dispose()
+            {
+                try
+                {
+                    root.RemoveFromHierarchy();
+                }
+                finally
+                {
+                    try
+                    {
+                        panel?.Dispose();
+                    }
+                    finally
+                    {
+                        UnityEngine.Object.DestroyImmediate(owner);
+                    }
                 }
             }
         }

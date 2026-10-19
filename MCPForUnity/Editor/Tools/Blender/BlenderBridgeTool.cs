@@ -46,8 +46,7 @@ namespace MCPForUnity.Editor.Tools.Blender
         internal static Func<bool> ConsentGrantedOverride = null;
         internal static Func<BlenderEndpoint> EndpointOverride = null;
 
-        private static bool ConsentGranted =>
-            ConsentGrantedOverride?.Invoke() ?? EditorPrefs.GetBool(ToolDiscoveryService.GetConsentPreferenceKey("blender_bridge"), false);
+        private static bool ConsentGranted => ConsentGrantedOverride?.Invoke() ?? MCPServiceLocator.ToolConsent.GetStatus("blender_bridge").HasGrant;
 
         private static BlenderEndpoint Endpoint => EndpointOverride?.Invoke() ?? BlenderBridgePrefs.Endpoint;
 

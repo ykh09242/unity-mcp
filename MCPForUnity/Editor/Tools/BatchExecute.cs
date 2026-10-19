@@ -294,6 +294,15 @@ namespace MCPForUnity.Editor.Tools
             {
                 int index = inputIndex++;
                 cancellationToken.ThrowIfCancellationRequested();
+                // The previous child has settled. Recheck the parent before the
+                // next item; initial dispatcher/preview admission is unchanged.
+                if (index > 0 && !MCPServiceLocator.ToolDiscovery.IsToolEnabled("batch_execute"))
+                {
+                    for (int remaining = index; remaining < commandsToken.Count; remaining++)
+                        SetOutcome(outcomes, remaining, "not_run", "batch_disabled");
+                    anyCommandFailed = true;
+                    break;
+                }
                 int completedBefore = commandResults.Count;
                 try
                 {

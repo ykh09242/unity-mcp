@@ -27,12 +27,14 @@ namespace MCPForUnityTests.Editor.Blender
     {
         private bool? savedEnabled;
         private bool? savedConsent;
+        private MCPForUnityTests.Editor.Services.ScopedConsentTestState scopedConsent;
         private const string EnabledKey = EditorPrefKeys.ToolEnabledPrefix + "blender_bridge";
         private static string ConsentKey => ToolDiscoveryService.GetConsentPreferenceKey("blender_bridge");
 
         [SetUp]
         public void GrantConsent()
         {
+            scopedConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("blender_bridge");
             savedEnabled = EditorPrefs.HasKey(EnabledKey) ? EditorPrefs.GetBool(EnabledKey) : (bool?)null;
             savedConsent = EditorPrefs.HasKey(ConsentKey) ? EditorPrefs.GetBool(ConsentKey) : (bool?)null;
             MCPServiceLocator.ToolDiscovery.SetToolEnabled("blender_bridge", true);
@@ -41,6 +43,7 @@ namespace MCPForUnityTests.Editor.Blender
         [TearDown]
         public void RestoreConsent()
         {
+            scopedConsent?.Dispose();
             if (savedEnabled.HasValue)
                 EditorPrefs.SetBool(EnabledKey, savedEnabled.Value);
             else
