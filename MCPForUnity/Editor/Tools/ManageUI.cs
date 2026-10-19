@@ -83,6 +83,10 @@ namespace MCPForUnity.Editor.Tools
                     case "read":
                         return ReadFile(@params);
 
+                    case "patch_source":
+                        string patchPath = ValidatePath(@params["path"]?.ToString(), out string patchError);
+                        return patchError != null ? new ErrorResponse(patchError) : UISourcePatch.Execute(@params, patchPath);
+
                     case "update":
                         return UpdateFile(@params);
 

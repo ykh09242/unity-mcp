@@ -7,6 +7,7 @@ PanelRenderer components to GameObjects, and inspecting visual trees.
 
 import base64
 import os
+import re
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -50,7 +51,8 @@ def _canonical_ui_path(path: str) -> str:
         "diagnose observes bounded current-panel physical geometry/clipping/overflow/sibling-overlap candidates without text or layout updates. "
         "Unknown/partial results are not a clean-layout assertion; diagnostic paths are not mutation/snapshot selectors.\n"
         "Visual actions: render_ui (captures UI panel to a PNG screenshot for self-evaluation).\n"
-        "Structural actions: link_stylesheet (adds a Style src reference to a UXML file).\n\n"
+        "Structural actions: link_stylesheet (adds a Style src reference to a UXML file).\n"
+        "patch_source previews narrow existing source attribute/declaration edits; preview=false requires expected_source_hash and persists source separately from live UI.\n\n"
         "UI Toolkit workflow:\n"
         "1. Use list to discover existing UI assets\n"
         "2. Create a UXML file (structure, like HTML)\n"
@@ -99,6 +101,7 @@ async def manage_ui(
             "link_stylesheet",
             "list",
             "modify_visual_element",
+            "patch_source",
         ],
         "Action to perform.",
     ],
@@ -111,6 +114,27 @@ async def manage_ui(
     | None = None,
     contents: Annotated[
         str, "File content (UXML or USS markup). Plain text - encoding handled automatically."
+    ]
+    | None = None,
+    source_selector: Annotated[
+        str, "patch_source: unique UXML #name, or exact simple USS type/.class/#name rule."
+    ]
+    | None = None,
+    source_changes: Annotated[
+        dict[str, str],
+        "patch_source: 1..32 existing UXML text/tooltip/class attributes or USS declarations; values <=4096 characters. No insertion/removal or template ownership.",
+    ]
+    | None = None,
+    preview: Annotated[
+        bool,
+        Field(
+            strict=True,
+            description="patch_source: true (default) returns SHA256 and exact value edits without writing. False persists source and reimports; live view refresh is separate.",
+        ),
+    ] = True,
+    expected_source_hash: Annotated[
+        str,
+        "patch_source apply requires source_hash from preview. Detects changed source before write. UTF8 files <=1 MiB; preserves BOM, surrounding bytes and .meta.",
     ]
     | None = None,
     # attach_ui_document / get_visual_tree / render_ui
@@ -342,6 +366,41 @@ async def manage_ui(
     ] = False,
 ) -> dict[str, Any]:
     action_lower = action.lower()
+    if action_lower == "patch_source":
+        if type(preview) is not bool:
+            return {"success": False, "message": "preview must be a Boolean."}
+        if not path or not source_selector or len(source_selector) > 256:
+            return {
+                "success": False,
+                "message": "path and source_selector (up to 256 characters) are required.",
+            }
+        if (
+            not source_changes
+            or len(source_changes) > 32
+            or any(
+                type(value) is not str or len(value) > 4096 or len(key) > 128
+                for key, value in source_changes.items()
+            )
+        ):
+            return {
+                "success": False,
+                "message": "source_changes requires 1..32 string values up to 4096 characters and keys up to 128 characters.",
+            }
+        if not preview and (
+            expected_source_hash is None
+            or re.fullmatch(r"[0-9a-fA-F]{64}", expected_source_hash) is None
+        ):
+            return {
+                "success": False,
+                "message": "Apply requires expected_source_hash from preview.",
+            }
+    elif (
+        source_selector is not None
+        or source_changes is not None
+        or expected_source_hash is not None
+        or preview is not True
+    ):
+        return {"success": False, "message": "Source patch parameters require patch_source."}
     if type(strict_style) is not bool:
         return {"success": False, "message": "strict_style must be a Boolean."}
     if strict_style and action_lower != "modify_visual_element":
@@ -451,7 +510,16 @@ async def manage_ui(
     # --- Path validation for file operations ---
     try:
         if (
-            action_lower in ("create", "read", "update", "delete", "link_stylesheet", "render_ui")
+            action_lower
+            in (
+                "create",
+                "read",
+                "update",
+                "delete",
+                "link_stylesheet",
+                "render_ui",
+                "patch_source",
+            )
             and path
         ):
             path = _canonical_ui_path(path)
@@ -464,6 +532,13 @@ async def manage_ui(
     params_dict: dict[str, Any] = {
         "action": action_lower,
     }
+
+    if action_lower == "patch_source":
+        params_dict["source_selector"] = source_selector
+        params_dict["source_changes"] = source_changes
+        params_dict["preview"] = preview
+        if expected_source_hash is not None:
+            params_dict["expected_source_hash"] = expected_source_hash
 
     # File operations: base64-encode contents for transport
     if action_lower in ("create", "update") and contents is not None:
@@ -580,6 +655,8 @@ async def manage_ui(
         "link_stylesheet",
         "modify_visual_element",
     )
+
+    is_mutation = is_mutation or (action_lower == "patch_source" and not preview)
 
     if is_mutation:
         result = await send_mutation(
