@@ -28,6 +28,7 @@ namespace MCPForUnity.Editor.Tools
         private static RecordingFramePump _pump;
         private static RenderTexture _scaledRenderTexture;
         private static Texture2D _scaledTexture;
+        private static Material _aspectMaterial;
         private static bool _sceneCaptureQueued;
         private static double _lastFrameAt;
 
@@ -94,7 +95,10 @@ namespace MCPForUnity.Editor.Tools
                 ["max_dimension"] = RecordingOptions.MaxDimension,
                 ["max_pixel_frames"] = RecordingOptions.MaxPixelFrames,
                 ["output_root"] = RecordingOptions.DefaultFolder,
-                ["resolution_policy"] = "Frames are scaled to the requested even width/height; differing aspect ratios are stretched.",
+                ["aspect_modes"] = new JArray("stretch", "fit", "crop"),
+                ["default_aspect_mode"] = "stretch",
+                ["resolution_policy"] =
+                    "stretch scales to width/height; fit preserves the full frame with black padding; crop fills the output with a centered crop.",
             };
         }
 
@@ -110,7 +114,8 @@ namespace MCPForUnity.Editor.Tools
                 p.GetInt("width", 1280).Value,
                 p.GetInt("height", 720).Value,
                 p.GetInt("fps", 15).Value,
-                ReadDuration(p)
+                ReadDuration(p),
+                p.Get("aspect_mode", "stretch")
             );
             var capabilities = Capabilities();
             if (!capabilities.Value<bool>("supported"))
@@ -285,7 +290,34 @@ namespace MCPForUnity.Editor.Tools
             var previous = RenderTexture.active;
             try
             {
-                UnityEngine.Graphics.Blit(frame, _scaledRenderTexture);
+                if (options.AspectMode == "stretch")
+                    UnityEngine.Graphics.Blit(frame, _scaledRenderTexture);
+                else
+                {
+                    if (_aspectMaterial == null)
+                    {
+                        var shader = Shader.Find("Hidden/MCPForUnity/RecordingAspect");
+                        if (shader == null || !shader.isSupported)
+                            throw new InvalidOperationException("The recording aspect resize shader is unavailable on this graphics device.");
+                        _aspectMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                    }
+                    float sourceAspect = (float)frame.width / frame.height;
+                    float outputAspect = (float)options.Width / options.Height;
+                    Vector2 scale = Vector2.one;
+                    if (options.AspectMode == "fit")
+                    {
+                        if (sourceAspect < outputAspect)
+                            scale.x = outputAspect / sourceAspect;
+                        else
+                            scale.y = sourceAspect / outputAspect;
+                    }
+                    else if (sourceAspect < outputAspect)
+                        scale.y = sourceAspect / outputAspect;
+                    else
+                        scale.x = outputAspect / sourceAspect;
+                    _aspectMaterial.SetVector("_AspectScale", new Vector4(scale.x, scale.y, 0, 0));
+                    UnityEngine.Graphics.Blit(frame, _scaledRenderTexture, _aspectMaterial);
+                }
                 RenderTexture.active = _scaledRenderTexture;
                 _scaledTexture.ReadPixels(new Rect(0, 0, options.Width, options.Height), 0, 0);
                 _scaledTexture.Apply(false, false);
@@ -318,6 +350,9 @@ namespace MCPForUnity.Editor.Tools
                 if (_scaledTexture != null)
                     UnityEngine.Object.DestroyImmediate(_scaledTexture);
                 _scaledTexture = null;
+                if (_aspectMaterial != null)
+                    UnityEngine.Object.DestroyImmediate(_aspectMaterial);
+                _aspectMaterial = null;
                 if (_scaledRenderTexture != null)
                 {
                     _scaledRenderTexture.Release();

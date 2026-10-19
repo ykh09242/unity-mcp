@@ -42,15 +42,31 @@ namespace MCPForUnity.Editor.Tools.Input
                 InputSimulationRequest request = InputSimulationRequest.Parse(parameters);
                 if (request.Action == "status")
                     return Status();
+                if (request.Action == "player_status")
+                {
+                    if (!(InputBackend is IPlayerInputSimulationBackend observer))
+                        return new ErrorResponse("PlayerInput diagnostics require the optional Input System backend.");
+                    return new SuccessResponse(
+                        "Selected PlayerInput routing diagnostics.",
+                        observer.DiagnosePlayer(InputTargetResolver.Resolve(request.Target))
+                    );
+                }
                 if (!EditorApplication.isPlaying || !EditorApplication.isPlayingOrWillChangePlaymode)
                     return new ErrorResponse("Input simulation requires Play Mode. Start play with manage_editor first.");
-                if (EditorApplication.isPaused && request.Action != "release_all")
-                    return new ErrorResponse("Resume Play Mode before simulating input; release_all remains available while paused.");
+                if (EditorApplication.isPaused && request.Action != "release_all" && request.Action != "release_player")
+                    return new ErrorResponse("Resume Play Mode before simulating input; release_all and release_player remain available while paused.");
                 switch (request.Action)
                 {
                     case "release_all":
                         Cleanup();
                         return new SuccessResponse("Released simulated controls and removed MCP virtual devices.");
+                    case "pair_player":
+                    case "release_player":
+                        if (!(InputBackend is IPlayerInputSimulationBackend routing))
+                            return new ErrorResponse("Explicit PlayerInput pairing requires the optional Input System backend.");
+                        GameObject player = InputTargetResolver.Resolve(request.Target);
+                        object detail = request.Action == "pair_player" ? routing.PairPlayer(player, request.Device) : routing.ReleasePlayer(player);
+                        return new SuccessResponse("Selected PlayerInput pairing lease updated.", detail);
                     case "ui_click":
                         if (UguiBackend == null)
                             return new ErrorResponse("uGUI simulation is unavailable. Install/enable com.unity.ugui and allow scripts to recompile.");
@@ -87,6 +103,10 @@ namespace MCPForUnity.Editor.Tools.Input
                     keyboard = InputBackend?.Available ?? false,
                     mouse = InputBackend?.Available ?? false,
                     touch = InputBackend?.Available ?? false,
+                    gamepad = InputBackend?.Available ?? false,
+                    wheel = InputBackend?.Available ?? false,
+                    player_input_diagnostics = InputBackend is IPlayerInputSimulationBackend,
+                    reversible_gamepad_pairing = InputBackend is IPlayerInputSimulationBackend,
                     multi_touch = InputBackend?.Available ?? false,
                     max_touch_contacts = 10,
                     legacy_raw_input = false,
@@ -97,7 +117,7 @@ namespace MCPForUnity.Editor.Tools.Input
                         : InputBackend?.UnavailableReason
                             ?? "Install com.unity.inputsystem and enable Input System Package or Both under Active Input Handling. Legacy UnityEngine.Input is unsupported.",
                     simulation = InputBackend?.Status,
-                    notes = "Virtual devices affect Input System bindings that accept newly added devices. PlayerInput/device-paired actions may require pairing. frames counts game Input System updates (dynamic or fixed), not Editor updates. No OS input is sent.",
+                    notes = "Virtual devices affect Input System bindings that accept newly added devices. Use player_status for actual action/device resolution and pair_player for explicit reversible routing to one selected PlayerInput. release_player ends the owned device lease and restores prior membership. frames counts game Input System updates (dynamic or fixed), not Editor updates. No OS input is sent.",
                 }
             );
 

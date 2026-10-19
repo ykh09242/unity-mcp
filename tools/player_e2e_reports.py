@@ -70,6 +70,16 @@ def check_report(
     """Require identity, terminal state, cleanup and actual native exit agreement."""
     request = read_json(directory / "request.json", 16384)
     report = read_json(directory / "run.json")
+    if "build_target" in bundle:
+        environment = report.get("reproduction", {}).get("environment", {})
+        require(
+            bundle.get("build_target") == "windows64"
+            and environment.get("platform") == "WindowsPlayer"
+            and environment.get("scripting_backend") == bundle.get("scripting_backend")
+            and environment.get("operating_system")
+            and environment.get("architecture"),
+            "Actual native Windows platform/backend attribution differs from build",
+        )
     require(
         re.fullmatch(r"[0-9a-f]{32}", str(request.get("job_id"))) is not None,
         "Invalid job identity",

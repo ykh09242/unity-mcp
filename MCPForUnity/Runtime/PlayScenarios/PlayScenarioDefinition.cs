@@ -51,6 +51,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("query_budget")]
         public PlayScenarioQueryBudgetOptions QueryBudget = new PlayScenarioQueryBudgetOptions();
 
+        [JsonProperty("parameters", NullValueHandling = NullValueHandling.Ignore)]
+        public JObject Parameters;
+
+        [JsonProperty("parameter_bindings", NullValueHandling = NullValueHandling.Ignore)]
+        public JArray ParameterBindings;
+
+        [JsonProperty("datasets", NullValueHandling = NullValueHandling.Ignore)]
+        public JArray Datasets;
+
         [JsonIgnore]
         public bool UsesExplicitSceneSemantics =>
             SetupSteps
@@ -89,7 +98,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 "diagnostics",
                 "tags",
                 "resources",
-                "query_budget"
+                "query_budget",
+                "parameters",
+                "parameter_bindings",
+                "datasets"
             );
             string name = Text(value, "name", 64);
             ValidateName(name);
@@ -109,12 +121,53 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Tags = ParseTags(value),
                 Resources = ParseResources(value),
                 QueryBudget = ParseQueryBudget(value),
+                Parameters = value.Property("parameters") == null ? null : (JObject)Object(value, "parameters").DeepClone(),
+                ParameterBindings = value.Property("parameter_bindings") == null ? null : value["parameter_bindings"] as JArray,
+                Datasets = value.Property("datasets") == null ? null : value["datasets"] as JArray,
             };
             if ((result.SetupSteps.Count > 0 ? result.SetupSteps[0] : result.Steps[0]).Action != "load_scene")
                 throw new ArgumentException("The first executed setup or main step must load_scene.");
             if ((result.SetupSteps.Count > 0 ? result.SetupSteps[0] : result.Steps[0]).LoadMode == "additive")
                 throw new ArgumentException("The first executed scene anchor must use Single loading.");
+            PlayScenarioParameters.Validate(value);
+            result.ParameterBindings = (JArray)result.ParameterBindings?.DeepClone();
+            result.Datasets = (JArray)result.Datasets?.DeepClone();
             return result;
+        }
+
+        private static void ParseUiSelector(JObject step, PlayScenarioStep parsed)
+        {
+            bool supplied = new[] { "ui_backend", "element_name", "element_path" }.Any(key => step.Property(key) != null);
+            if (!supplied)
+                return;
+            if (parsed.Action != "click_ui" || Text(step, "ui_backend", 16) != "uitoolkit")
+                throw new ArgumentException("UI Toolkit selectors require click_ui and ui_backend=uitoolkit.");
+            if (step.Property("click_mode") != null && Text(step, "click_mode", 16) != "direct")
+                throw new ArgumentException("UI Toolkit scenario clicks support direct mode only.");
+            parsed.UiBackend = "uitoolkit";
+            if (step.Property("element_name") != null)
+                parsed.ElementName = Text(step, "element_name", 256);
+            if (step.Property("element_path") != null)
+            {
+                if (step["element_path"].Type != JTokenType.String)
+                    throw new ArgumentException("element_path must be a string.");
+                parsed.ElementPath = (string)step["element_path"];
+                string[] parts = parsed.ElementPath.Split('/');
+                if (
+                    parsed.ElementPath.Length > 4096
+                    || parts.Length > 128
+                    || (
+                        parsed.ElementPath.Length != 0
+                        && (
+                            !parsed.ElementPath.StartsWith("/", StringComparison.Ordinal)
+                            || parts.Skip(1).Any(part => !Regex.IsMatch(part, @"\A(0|[1-9][0-9]*)\z") || !int.TryParse(part, out _))
+                        )
+                    )
+                )
+                    throw new ArgumentException("element_path must be a bounded canonical root-relative index path.");
+            }
+            if (parsed.ElementName == null && parsed.ElementPath == null)
+                throw new ArgumentException("UI Toolkit clicks require element_name or element_path.");
         }
 
         private static List<PlayScenarioStep> ParseSteps(JToken value, int minimum, int maximum)
@@ -142,6 +195,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "stable_for_ms",
                     "target_id",
                     "click_mode",
+                    "ui_backend",
+                    "element_name",
+                    "element_path",
                     "reset_ids",
                     "state_id",
                     "state_equals",
@@ -165,6 +221,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     Performance = step.Property("performance") == null ? null : PlayScenarioPerformanceOptions.Parse(Object(step, "performance")),
                     Screenshot = step.Property("screenshot") == null ? null : PlayScenarioScreenshotOptions.Parse(Object(step, "screenshot")),
                 };
+                ParseUiSelector(step, parsed);
                 if (step.Property("load_mode") != null)
                 {
                     if (parsed.Action != "load_scene")
@@ -661,6 +718,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         [JsonProperty("click_mode", NullValueHandling = NullValueHandling.Ignore)]
         public string ClickMode;
+
+        [JsonProperty("ui_backend", NullValueHandling = NullValueHandling.Ignore)]
+        public string UiBackend;
+
+        [JsonProperty("element_name", NullValueHandling = NullValueHandling.Ignore)]
+        public string ElementName;
+
+        [JsonProperty("element_path", NullValueHandling = NullValueHandling.Ignore)]
+        public string ElementPath;
 
         [JsonProperty("timeout_seconds")]
         public int TimeoutSeconds = 30;

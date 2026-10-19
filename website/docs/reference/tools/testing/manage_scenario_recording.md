@@ -1,7 +1,7 @@
 ---
 title: manage_scenario_recording
 sidebar_label: manage_scenario_recording
-description: "Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode into a bounded scenario draft. start returns recording_id immediately; status polls explicitly. stop saves a NEW scenario with draft=true and r…"
+description: "Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode."
 ---
 
 # `manage_scenario_recording`
@@ -12,7 +12,7 @@ description: "Record observed uGUI Button pointer clicks and scene changes durin
 
 ## Description
 
-Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode into a bounded scenario draft. start returns recording_id immediately; status polls explicitly. stop saves a NEW scenario with draft=true and requires review before running; cancel discards it. max_events counts clicks, transitions and explicitly requested checkpoints, plus one initial load_scene step (at most 32 total steps). checkpoint requests a named screenshot in the future replay, never an inferred assertion. Opt-in all_loaded captures a bounded initial scene context and exact scene-qualified clicks; transitions are observed waits, never inferred loading/unloading effects. No timing, expected game state, raw input, keyboard, drag, scroll or UI Toolkit steps are invented. Diagnostics identify ambiguous targets and incomplete coverage. The optional com.unity.ugui backend is required. Reload or Play Mode exit stops observation and retains a status snapshot; domain-reloaded sessions cannot be resumed or saved.
+Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode. An optional enabled Input System observer also captures delivered raw key/mouse/touch/wheel events from game Dynamic/Fixed updates; manual Input System update mode is unsupported. Observed holds and spacing are quantized to 1..600 input updates, with diagnostics for simultaneous events and incomplete coverage; subframe timing and gameplay outcomes are not inferred. start returns recording_id immediately; status polls explicitly. stop saves a NEW scenario with draft=true and requires review before running; cancel discards it. max_events counts emitted clicks, raw input steps, transitions and requested checkpoints, plus one initial load_scene step (at most 32 total steps). checkpoint requests a named screenshot in the future replay, never an inferred assertion. Opt-in all_loaded captures a bounded initial scene context and exact scene-qualified clicks; transitions are observed waits, never inferred loading/unloading effects. UI Toolkit element-target recording remains manual; raw packets do not prove which handler consumed them. At least one supported observer is required: optional com.unity.ugui for Button clicks or optional Input System for raw input. Pause, reload or Play Mode exit stops observation and retains a status snapshot; domain-reloaded sessions cannot be resumed or saved.
 
 ## Parameters
 

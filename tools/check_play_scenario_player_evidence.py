@@ -1,4 +1,4 @@
-"""Independently verify fresh Windows Mono Player assurance artifacts."""
+"""Independently verify fresh Windows standalone Player assurance artifacts."""
 
 import argparse
 import json
@@ -182,7 +182,11 @@ def check_case(root: Path, case: str, bundle: dict, receipt: dict) -> None:
 
 
 def check(
-    root: Path, session_id: str, builds: tuple[Path, Path], profile_name: str = "standard"
+    root: Path,
+    session_id: str,
+    builds: tuple[Path, Path],
+    profile_name: str = "standard",
+    expected_backend: str | None = None,
 ) -> None:
     """Require the externally selected profile and matching fresh body/payload evidence."""
     session = read_json(root / ".session.json", 16384)
@@ -193,6 +197,17 @@ def check(
     profile = get_profile(profile_name)
     window = validate_execution_profile(root, session, profile)
     bundle = verify_bundle(builds[0], session["build_source_revision"])
+    if expected_backend is not None:
+        require(
+            bundle.get("scripting_backend", "mono") == expected_backend,
+            "Player evidence does not match the externally requested backend",
+        )
+    if "build_target" in bundle:
+        require(
+            session.get("build_target") == bundle["build_target"]
+            and session.get("scripting_backend") == bundle.get("scripting_backend"),
+            "Evidence backend/target selection differs from build",
+        )
     require(
         session.get("build_id") == bundle.get("build_id")
         and session.get("payload_hash") == bundle.get("payload_hash"),
@@ -260,6 +275,7 @@ def main() -> int:
     parser.add_argument("--build", type=Path)
     parser.add_argument("--ordinary-build", type=Path)
     parser.add_argument("--profile", choices=PROFILE_NAMES, default="standard")
+    parser.add_argument("--backend", choices=("mono", "il2cpp"), default="mono")
     args = parser.parse_args()
     try:
         check(
@@ -270,11 +286,12 @@ def main() -> int:
                 args.ordinary_build or args.root / "builds/ordinary",
             ),
             args.profile,
+            args.backend,
         )
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"Player evidence rejected: {exc}")
         return 1
-    print("All required fresh Windows Mono Player cases passed")
+    print("All required fresh Windows standalone Player cases passed")
     return 0
 
 

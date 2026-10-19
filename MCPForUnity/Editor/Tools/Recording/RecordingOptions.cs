@@ -19,9 +19,12 @@ namespace MCPForUnity.Editor.Tools.Recording
         internal readonly int Fps;
         internal readonly double Duration;
         internal readonly int MaxFrames;
+        internal readonly string AspectMode;
 
-        internal RecordingOptions(string source, int width, int height, int fps, double duration)
+        internal RecordingOptions(string source, int width, int height, int fps, double duration, string aspectMode = "stretch")
         {
+            if (aspectMode != "stretch" && aspectMode != "fit" && aspectMode != "crop")
+                throw new ArgumentException("aspect_mode must be 'stretch', 'fit' or 'crop'.");
             if (source != "game_view" && source != "scene_view")
                 throw new ArgumentException("capture_source must be 'game_view' or 'scene_view'.");
             if (width < 16 || height < 16 || width > MaxDimension || height > MaxDimension || width % 2 != 0 || height % 2 != 0)
@@ -39,6 +42,7 @@ namespace MCPForUnity.Editor.Tools.Recording
             Fps = fps;
             Duration = duration;
             MaxFrames = frames;
+            AspectMode = aspectMode;
         }
 
         internal static string ResolveOutputPath(string projectRoot, string folder, string fileName, string jobId)

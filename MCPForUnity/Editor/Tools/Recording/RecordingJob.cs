@@ -258,6 +258,7 @@ namespace MCPForUnity.Editor.Tools.Recording
                 ["last_frame_seconds"] = _lastFrameElapsed,
                 ["width"] = Options.Width,
                 ["height"] = Options.Height,
+                ["aspect_mode"] = Options.AspectMode,
                 ["pixel_frames_processed"] = _pixelFrames,
                 ["variable_frame_rate"] = true,
                 ["audio_recorded"] = false,

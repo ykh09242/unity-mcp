@@ -56,6 +56,12 @@ namespace MCPForUnity.Editor.Tools.Profiler
                         return MemorySnapshotOps.ListSnapshots(@params);
                     case "memory_compare_snapshots":
                         return MemorySnapshotOps.CompareSnapshots(@params);
+                    case "memory_aggregate":
+                        return MemoryAggregationOps.Read(@params);
+                    case "memory_analyze_snapshots":
+                        return MemorySnapshotAnalysisOps.Compare(@params);
+                    case "memory_snapshot_reader_status":
+                        return MemorySnapshotAnalysisOps.Status(@params);
 
                     // Frame Debugger
                     case "frame_debugger_enable":
@@ -76,6 +82,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                                 + "get_frame_timing, get_counters, get_object_memory, "
                                 + "window_start, window_status, window_result, window_cancel, "
                                 + "memory_take_snapshot, memory_list_snapshots, memory_compare_snapshots, "
+                                + "memory_aggregate, memory_analyze_snapshots, memory_snapshot_reader_status, "
                                 + "frame_debugger_enable, frame_debugger_disable, frame_debugger_get_events, "
                                 + "ping."
                         );

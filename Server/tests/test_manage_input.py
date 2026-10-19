@@ -134,6 +134,11 @@ def test_input_command_schema_exposes_strict_bounds_and_actions():
     assert schema["properties"]["touch_id"]["minimum"] == 1
     assert set(schema["properties"]["action"]["enum"]) == {
         "status",
+        "player_status",
+        "pair_player",
+        "release_player",
+        "gamepad",
+        "wheel",
         "ui_click",
         "key",
         "mouse",

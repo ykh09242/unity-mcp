@@ -19,6 +19,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`find_in_file`](./find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
 - **[`get_compile_job`](./get_compile_job.md)** — Read a compilation request outcome and bounded diagnostics by compile_id.
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
+- **[`manage_addressables`](./manage_addressables.md)** — Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing2.7.6 native build-layout report for dupl…
 - **[`manage_asset`](./manage_asset.md)** — Performs asset operations (import, create, modify, delete, etc.) in Unity.
 - **[`manage_audio`](./manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
@@ -27,8 +28,11 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_editor`](./manage_editor.md)** — Controls Unity editor state and settings. play optionally waits for scene_loaded or first_frame with a bounded persisted job. first_frame confirms simulation frame progress, not rendered pixels or application async initialization. get_pl…
 - **[`manage_gameobject`](./manage_gameobject.md)** — Performs CRUD operations on GameObjects.
 - **[`manage_graphics`](./manage_graphics.md)** — Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features.
+- **[`manage_input_actions`](./manage_input_actions.md)** — Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and exis…
+- **[`manage_localization`](./manage_localization.md)** — Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references.
 - **[`manage_material`](./manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).
 - **[`manage_navigation`](./manage_navigation.md)** — Read and explicitly author navigation surfaces, agents, obstacles and links.
+- **[`manage_netcode`](./manage_netcode.md)** — Inspect local Netcode for GameObjects configuration without starting a network session. capabilities reports optional package detection/version; preflight requires an explicit loaded scene_handle and checks managers, active same-scene tr…
 - **[`manage_object_handles`](./manage_object_handles.md)** — Capture or resolve the original loaded GameObject/Component reference for this Editor session.
 - **[`manage_packages`](./manage_packages.md)** — Manage Unity packages: query, install, remove, embed, and configure registries.
 - **[`manage_physics`](./manage_physics.md)** — Manage physics settings, collision matrix, materials, joints, queries, and validation.

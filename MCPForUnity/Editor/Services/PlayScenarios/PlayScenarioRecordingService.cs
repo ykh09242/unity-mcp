@@ -21,6 +21,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         IPlayScenarioRecordingSession Begin(Action<PlayScenarioRecordedTarget> click, Action<string> diagnose);
     }
 
+    public interface IPlayScenarioInputRecordingSession : IDisposable
+    {
+        long UpdateCount { get; }
+    }
+
+    public interface IPlayScenarioInputRecordingBackend
+    {
+        IPlayScenarioInputRecordingSession Begin(Action<JObject, long> observed, Action<string> diagnose);
+    }
+
     /// <summary>Editor-owned recording lifecycle. Reloads retain a bounded snapshot, never live Unity references.</summary>
     [InitializeOnLoad]
     public static class PlayScenarioRecordingService
@@ -28,6 +38,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private const string SnapshotKey = "MCPForUnity.PlayScenarioRecording.Last";
         private static PlayScenarioRecordingDraft draft;
         private static IPlayScenarioRecordingSession session;
+        private static IPlayScenarioInputRecordingSession inputSession;
+        private static long lastPointerUpdate = -1;
         private static readonly List<(string Path, string State)> PendingScenes = new List<(string, string)>();
         private static readonly Dictionary<Scene, string> ScenePaths = new Dictionary<Scene, string>();
         private static string sceneScope = "active";
@@ -35,6 +47,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static double nextScan;
         private static bool hooked;
         public static IPlayScenarioRecordingBackend Backend { get; set; }
+        public static IPlayScenarioInputRecordingBackend InputBackend { get; set; }
 
         static PlayScenarioRecordingService()
         {
@@ -50,10 +63,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new InvalidOperationException("Scenario recording requires running, unpaused Play Mode.");
             if (durationSeconds < 1 || durationSeconds > 600)
                 throw new ArgumentException("duration_seconds must be an integer between 1 and 600.");
-            if (Backend == null)
-                throw new InvalidOperationException(
-                    "The optional uGUI scenario recorder is unavailable. Install/enable com.unity.ugui to record supported Buttons."
-                );
+            if (Backend == null && InputBackend == null)
+                throw new InvalidOperationException("No supported scenario recorder is available. Enable uGUI Button or optional Input System observation.");
             var store = Store();
             PlayScenarioDefinition.ValidateName(name);
             if (store.List().Contains(name, StringComparer.Ordinal))
@@ -93,9 +104,22 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 );
             try
             {
-                session = Backend.Begin(OnClick, draft.Diagnose);
-                if (session == null)
-                    throw new InvalidOperationException("The uGUI recorder did not provide a recording session.");
+                session = Backend?.Begin(OnClick, draft.Diagnose);
+                try
+                {
+                    inputSession = InputBackend?.Begin(OnInput, draft.Diagnose);
+                }
+                catch (InvalidOperationException error)
+                {
+                    if (session == null)
+                        throw;
+                    draft.Diagnose("Raw observation unavailable; retaining supported uGUI observation: " + error.Message);
+                }
+                if (session == null && inputSession == null)
+                    throw new InvalidOperationException("No available recorder provided an observation session.");
+                if (inputSession == null)
+                    draft.Diagnose("Optional Input System observation is unavailable; raw keyboard/mouse/touch/wheel input requires manual authoring.");
+                lastPointerUpdate = -1;
                 deadline = EditorApplication.timeSinceStartup + durationSeconds;
                 nextScan = EditorApplication.timeSinceStartup + 0.25;
                 SceneManager.activeSceneChanged += SceneChanged;
@@ -103,6 +127,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 SceneManager.sceneUnloaded += SceneUnloaded;
                 EditorApplication.update += Tick;
                 EditorApplication.playModeStateChanged += PlayModeChanged;
+                EditorApplication.pauseStateChanged += PauseChanged;
                 hooked = true;
                 Remember();
                 return draft.Snapshot();
@@ -188,10 +213,31 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             MatchId(id, draft.Id);
         }
 
+        private static void OnInput(JObject input, long frame)
+        {
+            if (draft == null || !draft.Recording)
+                return;
+            draft.InputFrameObserved(frame);
+            FlushScenes();
+            if (draft.InputObserved(input, frame) && ((string)input["action"] == "mouse" || (string)input["action"] == "touch"))
+                lastPointerUpdate = frame;
+            if (!draft.Recording)
+                Cleanup();
+            Remember();
+        }
+
         private static void OnClick(PlayScenarioRecordedTarget target)
         {
             if (draft == null || !draft.Recording)
                 return;
+            if (inputSession != null && lastPointerUpdate == inputSession.UpdateCount)
+            {
+                draft.Diagnose(
+                    "A uGUI click coincident with recorded raw pointer input was not duplicated; review screen-position replay and target identity."
+                );
+                Remember();
+                return;
+            }
             // Button callbacks may load a scene before the observer receives pointerClick.
             // Keep that source click before its queued transition; a click in the new scene flushes first.
             if (sceneScope == "all_loaded" || (target != null && target.Scene != draft.CurrentScene))
@@ -265,6 +311,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private static void FlushScenes()
         {
+            if (draft?.Recording == true && inputSession != null)
+                draft.InputFrameObserved(inputSession.UpdateCount);
             foreach (var scene in PendingScenes)
             {
                 if (draft == null || !draft.Recording)
@@ -279,6 +327,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private static void Tick()
         {
+            if (draft?.Recording == true && inputSession != null)
+                draft.InputFrameObserved(inputSession.UpdateCount);
             FlushScenes();
             if (draft == null || !draft.Recording)
             {
@@ -323,6 +373,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Remember();
         }
 
+        private static void PauseChanged(PauseState state)
+        {
+            if (state == PauseState.Paused && draft?.Recording == true)
+                Interrupt("editor_paused");
+        }
+
         private static void BeforeReload() => Interrupt("assembly_reload");
 
         private static void BeforeQuit() => Interrupt("editor_quit");
@@ -348,13 +404,24 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 SceneManager.sceneUnloaded -= SceneUnloaded;
                 EditorApplication.update -= Tick;
                 EditorApplication.playModeStateChanged -= PlayModeChanged;
+                EditorApplication.pauseStateChanged -= PauseChanged;
                 hooked = false;
             }
             PendingScenes.Clear();
             ScenePaths.Clear();
             IPlayScenarioRecordingSession previous = session;
+            IPlayScenarioInputRecordingSession previousInput = inputSession;
             session = null;
-            previous?.Dispose();
+            inputSession = null;
+            lastPointerUpdate = -1;
+            try
+            {
+                previous?.Dispose();
+            }
+            finally
+            {
+                previousInput?.Dispose();
+            }
         }
 
         public static PlayScenarioRecordedTarget DescribeTarget(GameObject target)

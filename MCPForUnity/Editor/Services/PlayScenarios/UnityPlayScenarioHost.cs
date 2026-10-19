@@ -3,6 +3,7 @@ using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Input;
 using MCPForUnity.Runtime.PlayScenarios;
+using MCPForUnity.Runtime.PlayScenarios.UIToolkit;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -105,10 +106,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 case "wait_object":
                 case "click_ui":
                     PrepareTarget(step, firstPoll);
-                    IUguiInputSimulationBackend backend = step.Action == "click_ui" ? ManageInput.UguiBackend : null;
-                    if (step.Action == "click_ui" && backend == null)
-                        throw CapabilityFailure(step, "Scenario UI clicks require the optional uGUI input backend; UI Toolkit clicks are unsupported.");
-                    if (step.Action == "click_ui")
+                    bool toolkit =
+                        step.Action == "click_ui"
+                        && UIToolkitScenarioInputAdapter.ValidateRequest(step.UiBackend, step.ElementName, step.ElementPath, step.ClickMode);
+                    IUguiInputSimulationBackend backend = step.Action == "click_ui" && !toolkit ? ManageInput.UguiBackend : null;
+                    if (step.Action == "click_ui" && !toolkit && backend == null)
+                        throw CapabilityFailure(
+                            step,
+                            "uGUI scenario UI clicks require the optional uGUI input backend; select ui_backend=uitoolkit explicitly for a UIDocument Button."
+                        );
+                    if (step.Action == "click_ui" && !toolkit)
                     {
                         if (step.ClickMode != null && step.ClickMode != "direct" && step.ClickMode != "raycast")
                             throw new ArgumentException("click_mode must be direct or raycast.");
@@ -126,6 +133,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     PlayScenarioObservation observation = PlayScenarioObjectCondition.Observe(step, matches, componentType);
                     if (!observation.Ready || step.Action == "wait_object")
                         return observation;
+                    if (toolkit)
+                        return UIToolkitScenarioInputAdapter.EvaluateForScenario(
+                            matches.Target,
+                            step.ElementName,
+                            step.ElementPath,
+                            step.ClickMode,
+                            _logPolicy,
+                            ref _queryCounts
+                        );
                     return Click(step, matches.Target, backend);
                 default:
                     throw new ArgumentException("Unsupported play scenario action.");

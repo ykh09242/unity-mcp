@@ -39,6 +39,7 @@ class PlayScenarioResponse(TypedDict, total=False):
     description=(
         "Save/get/list/delete scenarios and suites; reports history and run/status/cancel Unity-owned jobs. "
         "Suite actions use suite_ prefixes, suite_save takes suite and suite_status/cancel take suite_id. "
+        "run accepts an optional dataset; typed explicit scalar bindings are expanded and validated before saving. "
         "save takes a whole definition; get/delete/run take its name; reports accepts optional name. "
         "status/cancel require a 32-character lowercase hexadecimal job_id. "
         "run returns immediately; each repeat executes setup_steps, steps, then bounded cleanup_steps. "
@@ -62,6 +63,9 @@ async def manage_play_scenario(
     suite_id: Annotated[
         JobId | None, "suite_status/suite_cancel ID; optional suite_run key"
     ] = None,
+    dataset: Annotated[
+        ScenarioName | None, "Optional saved dataset case for run; omission uses parameter defaults"
+    ] = None,
     source_revision: Annotated[
         str | None, "Optional caller-provided run revision label, at most 128 UTF-16 units"
     ] = None,
@@ -82,6 +86,7 @@ async def manage_play_scenario(
             suite=suite,
             suite_id=suite_id,
             source_revision=source_revision,
+            dataset=dataset,
             name=name,
             job_id=job_id,
             repeat_count=repeat_count,

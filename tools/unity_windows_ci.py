@@ -15,18 +15,12 @@ from player_e2e_process import Invocation, execute
 MANIFEST = Path(__file__).with_name("unity-player-e2e.json")
 
 
-def provision(root: Path) -> None:
-    """Download only the pinned official installer, enforcing its exact byte/hash bounds."""
-    manifest = read_json(MANIFEST)
-    root.mkdir(parents=True, exist_ok=False)
-    if " " in str(root.resolve()):
-        raise ValueError("Silent Unity installation requires a path without spaces")
-    installer = root / "UnitySetup.exe"
-    expected_size = manifest["installer_size_bytes"]
+def verified_installer(installer: Path, url: str, expected_size: int, integrity: str) -> int:
+    """Require exact official release bytes and a valid Unity publisher signature before execution."""
     checksum = hashlib.md5(usedforsecurity=False)
     size = 0
     deadline = time.monotonic() + 1800
-    with urllib.request.urlopen(manifest["installer_url"], timeout=60) as response:
+    with urllib.request.urlopen(url, timeout=60) as response:
         with installer.open("xb") as stream:
             while chunk := response.read(1024 * 1024):
                 if time.monotonic() >= deadline:
@@ -36,13 +30,22 @@ def provision(root: Path) -> None:
                     raise ValueError("Unity installer exceeds official release size")
                 checksum.update(chunk)
                 stream.write(chunk)
-    expected_digest = base64.b64decode(manifest["installer_integrity"].removeprefix("md5-"))
+    expected_digest = base64.b64decode(integrity.removeprefix("md5-"))
     if size != expected_size or checksum.digest() != expected_digest:
         raise ValueError("Unity installer differs from official release integrity")
+    verify_installer_signature(installer)
+    return size
+
+
+def verify_installer_signature(installer: Path) -> None:
+    """Load Windows PowerShell's own security module, without inheriting a pwsh module override."""
     # Integrity is supplied by Unity's official release API; Windows signature adds publisher proof.
     installer_literal = str(installer).replace("'", "''")
-    script = f"$s=Get-AuthenticodeSignature -LiteralPath '{installer_literal}'; " + (
-        "if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Unity Technologies') { exit 1 }"
+    script = (
+        f"$ErrorActionPreference='Stop'; $s=Get-AuthenticodeSignature -LiteralPath '{installer_literal}'; "
+        + (
+            "if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Unity Technologies') { exit 1 }"
+        )
     )
     signature = subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
@@ -50,9 +53,29 @@ def provision(root: Path) -> None:
         timeout=60,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        # Windows PowerShell reconstructs its native module paths when this override is absent.
+        # Keep every other variable and the parent process environment unchanged.
+        env={key: value for key, value in os.environ.items() if key.casefold() != "psmodulepath"},
     )
     if signature.returncode:
         raise ValueError("Unity installer does not have a valid Unity publisher signature")
+
+
+def provision(root: Path, backend: str = "mono") -> None:
+    """Install the pinned Editor; the optional IL2CPP module requires explicit selection."""
+    if backend not in ("mono", "il2cpp"):
+        raise ValueError("Windows backend must be mono or il2cpp")
+    manifest = read_json(MANIFEST)
+    root.mkdir(parents=True, exist_ok=False)
+    if " " in str(root.resolve()):
+        raise ValueError("Silent Unity installation requires a path without spaces")
+    installer = root / "UnitySetup.exe"
+    size = verified_installer(
+        installer,
+        manifest["installer_url"],
+        manifest["installer_size_bytes"],
+        manifest["installer_integrity"],
+    )
     result = execute(
         Invocation(
             [str(installer), "/S", "/D=" + str(root / "installed")],
@@ -73,6 +96,47 @@ def provision(root: Path) -> None:
             "installer_integrity": manifest["installer_integrity"],
             "authenticode_verified": True,
             "windows_mono_verified": True,
+        },
+    )
+    if backend == "il2cpp":
+        provision_il2cpp(root)
+
+
+def provision_il2cpp(root: Path) -> None:
+    """Add only the pinned module to the owned pinned CI Editor installation."""
+    module = read_json(Path(__file__).with_name("unity-windows-il2cpp.json"))
+    editor = read_json(root / "provision.json")
+    if editor.get("unity_version") != module["unity_version"] or not editor.get(
+        "authenticode_verified"
+    ):
+        raise ValueError("IL2CPP module requires the verified matching owned Editor installation")
+    installer = root / "UnityWindowsIL2CPP.exe"
+    size = verified_installer(
+        installer, module["url"], module["download_size_bytes"], module["integrity"]
+    )
+    result = execute(
+        Invocation(
+            [str(installer), "/S", "/D=" + str(root / "installed")],
+            root / "module-install-evidence",
+            timeout=900,
+        )
+    )
+    if (
+        result["actual_exit_code"]
+        or result["forced_termination"]
+        or not (root / "installed" / module["module_directory"]).is_dir()
+    ):
+        raise ValueError("Pinned Windows IL2CPP module installation did not complete")
+    write_json(
+        root / "module-provision.json",
+        {
+            "unity_version": module["unity_version"],
+            "module_id": module["module_id"],
+            "url": module["url"],
+            "download_size_bytes": size,
+            "integrity": module["integrity"],
+            "authenticode_verified": True,
+            "windows_il2cpp_verified": True,
         },
     )
 
@@ -110,10 +174,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("provision", "activate", "return"))
     parser.add_argument("path", type=Path)
+    parser.add_argument("--backend", choices=("mono", "il2cpp"), default="mono")
     args = parser.parse_args()
     try:
         if args.action == "provision":
-            provision(args.path)
+            provision(args.path, args.backend)
         else:
             license_command(args.path, args.action)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:

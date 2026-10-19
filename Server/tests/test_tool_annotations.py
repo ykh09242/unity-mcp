@@ -43,6 +43,8 @@ READ_ONLY = {
     "get_sha",
     "get_test_job",
     "get_tests",
+    # Scoped NGO configuration diagnostics; no asset refresh, network start or settings writes.
+    "manage_netcode",
     # Session reference cache only; neither action edits scenes/assets or refreshes them.
     "manage_object_handles",
     "manage_script_capabilities",

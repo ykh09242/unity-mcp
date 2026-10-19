@@ -12,11 +12,12 @@ description: Auto-generated catalog of every MCP for Unity tool, grouped by doma
 
 Every tool MCP for Unity exposes, generated directly from the Python `@mcp_for_unity_tool` registry under `Server/src/services/tools/`.
 
-## `animation` &nbsp; (3 tools)
+## `animation` &nbsp; (4 tools)
 Animator control, AnimationClip creation & 2D sprite-sheet animation
 - **[`manage_animation`](./animation/manage_animation.md)** — Manage Unity animation: Animator control and AnimationClip creation.
 - **[`manage_sprite`](./animation/manage_sprite.md)** — Slice 2D sprite sheets and build AnimationClips and an AnimatorController from the frames.
 - **[`manage_sprite_atlas`](./animation/manage_sprite_atlas.md)** — Inspect and explicitly author SpriteAtlas V2 Assets/*.spriteatlasv2 files.
+- **[`manage_timeline`](./animation/manage_timeline.md)** — Inspect/create optional Timeline Assets/*.playable assets and explicitly add built-in animation/audio tracks and clips.
 
 ## `asset_gen` &nbsp; (6 tools)
 AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-your-own-key)
@@ -27,7 +28,7 @@ AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-you
 - **[`import_model`](./asset_gen/import_model.md)** — Import 3D models from the Sketchfab marketplace into the Unity project.
 - **[`import_model_file`](./asset_gen/import_model_file.md)** — Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project.
 
-## `core` &nbsp; (38 tools)
+## `core` &nbsp; (42 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`batch_execute`](./core/batch_execute.md)** — Executes multiple MCP commands in a single batch for dramatically better performance.
@@ -40,6 +41,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`find_in_file`](./core/find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
 - **[`get_compile_job`](./core/get_compile_job.md)** — Read a compilation request outcome and bounded diagnostics by compile_id.
 - **[`get_sha`](./core/get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
+- **[`manage_addressables`](./core/manage_addressables.md)** — Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing2.7.6 native build-layout report for dupl…
 - **[`manage_asset`](./core/manage_asset.md)** — Performs asset operations (import, create, modify, delete, etc.) in Unity.
 - **[`manage_audio`](./core/manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./core/manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
@@ -48,8 +50,11 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_editor`](./core/manage_editor.md)** — Controls Unity editor state and settings. play optionally waits for scene_loaded or first_frame with a bounded persisted job. first_frame confirms simulation frame progress, not rendered pixels or application async initialization. get_pl…
 - **[`manage_gameobject`](./core/manage_gameobject.md)** — Performs CRUD operations on GameObjects.
 - **[`manage_graphics`](./core/manage_graphics.md)** — Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features.
+- **[`manage_input_actions`](./core/manage_input_actions.md)** — Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and exis…
+- **[`manage_localization`](./core/manage_localization.md)** — Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references.
 - **[`manage_material`](./core/manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).
 - **[`manage_navigation`](./core/manage_navigation.md)** — Read and explicitly author navigation surfaces, agents, obstacles and links.
+- **[`manage_netcode`](./core/manage_netcode.md)** — Inspect local Netcode for GameObjects configuration without starting a network session. capabilities reports optional package detection/version; preflight requires an explicit loaded scene_handle and checks managers, active same-scene tr…
 - **[`manage_object_handles`](./core/manage_object_handles.md)** — Capture or resolve the original loaded GameObject/Component reference for this Editor session.
 - **[`manage_packages`](./core/manage_packages.md)** — Manage Unity packages: query, install, remove, embed, and configure registries.
 - **[`manage_physics`](./core/manage_physics.md)** — Manage physics settings, collision matrix, materials, joints, queries, and validation.
@@ -87,7 +92,7 @@ ScriptableObject management
 - **[`inspect_serialized_object`](./scripting_ext/inspect_serialized_object.md)** — Inspect one exact Component or ScriptableObject instance ID through SerializedObject.
 - **[`manage_scriptable_object`](./scripting_ext/manage_scriptable_object.md)** — Creates and modifies ScriptableObject assets using Unity SerializedObject property paths.
 
-## `testing` &nbsp; (9 tools)
+## `testing` &nbsp; (10 tools)
 Test runner, async test jobs & bounded Play Mode input simulation
 - **[`cancel_test_job`](./testing/cancel_test_job.md)** — Request cancellation of an owned native test job.
 - **[`export_test_job`](./testing/export_test_job.md)** — Export completed Unity test evidence as JSON or JUnit.
@@ -95,7 +100,8 @@ Test runner, async test jobs & bounded Play Mode input simulation
 - **[`get_tests`](./testing/get_tests.md)** — Lists Unity tests without running them.
 - **[`manage_input`](./testing/manage_input.md)** — Simulate bounded input in Unity Play Mode. status reports capabilities and held controls. ui_click dispatches uGUI pointer events to a scene instance ID or exact root hierarchy path (independent of raw input backend; does not test raycas…
 - **[`manage_play_scenario`](./testing/manage_play_scenario.md)** — Save/get/list/delete scenarios and suites; reports history and run/status/cancel Unity-owned jobs.
-- **[`manage_scenario_recording`](./testing/manage_scenario_recording.md)** — Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode into a bounded scenario draft. start returns recording_id immediately; status polls explicitly. stop saves a NEW scenario with draft=true and r…
+- **[`manage_scenario_recording`](./testing/manage_scenario_recording.md)** — Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode.
+- **[`manage_simulation_profiles`](./testing/manage_simulation_profiles.md)** — Capture named Time/Physics3D/Physics2D/Audio/Input configuration profiles, inspect per-domain applicability, diff/validate against current settings, explicitly apply, and conditionally restore confirmed changes. capabilities lists exact…
 - **[`run_tests`](./testing/run_tests.md)** — Starts a Unity test run asynchronously and returns a job_id immediately.
 - **[`view_test_results`](./testing/view_test_results.md)** — Read one completed Unity test-result page (up to 100 failed/skipped details).
 

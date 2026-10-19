@@ -14,7 +14,7 @@ namespace MCPForUnityTests.PlayScenarios.Player
     /// <summary>Generates only dedicated synthetic assets in the prepared test project.</summary>
     public static class ScenarioPlayerFixtureBuild
     {
-        private static void EnsureSavedFixtureBaseline(string[] args)
+        internal static void EnsureSavedFixtureBaseline(string[] args)
         {
             bool untitled = false;
             bool pristine = true;
@@ -240,7 +240,11 @@ namespace MCPForUnityTests.PlayScenarios.Player
                 if (revisionIndex >= 0 && revisionIndex + 1 >= args.Length)
                     throw new ArgumentException("--mcp-scenario-source-revision requires a label.");
                 string revision = revisionIndex >= 0 ? args[revisionIndex + 1] : null;
-                PlayScenarioPlayerBuildResult result = PlayScenarioPlayerBuild.Build(definition.Name, args[outputIndex + 1], revision);
+                int backendIndex = Array.IndexOf(args, "--mcp-scenario-backend");
+                if (backendIndex >= 0 && (backendIndex + 1 >= args.Length || Array.LastIndexOf(args, "--mcp-scenario-backend") != backendIndex))
+                    throw new ArgumentException("Provide exactly one --mcp-scenario-backend value.");
+                string backend = backendIndex < 0 ? "mono" : args[backendIndex + 1];
+                PlayScenarioPlayerBuildResult result = PlayScenarioPlayerBuild.Build(definition.Name, args[outputIndex + 1], revision, backend: backend);
                 Debug.Log("PLAYER_FIXTURE_BUILD_COMPLETED:" + result.BundlePath);
             }
             finally

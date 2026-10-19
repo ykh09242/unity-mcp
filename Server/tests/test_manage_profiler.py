@@ -15,6 +15,7 @@ from services.tools.manage_profiler import (
     FRAME_DEBUGGER_ACTIONS,
     UTILITY_ACTIONS,
     WINDOW_ACTIONS,
+    MEMORY_ANALYSIS_ACTIONS,
 )
 
 
@@ -51,7 +52,7 @@ def mock_unity(monkeypatch):
 
 
 def test_profiler_actions_count():
-    assert len(ALL_ACTIONS) == 18
+    assert len(ALL_ACTIONS) == 21
 
 
 def test_no_duplicate_actions():
@@ -90,6 +91,7 @@ def test_all_actions_is_union():
         + MEMORY_SNAPSHOT_ACTIONS
         + FRAME_DEBUGGER_ACTIONS
         + WINDOW_ACTIONS
+        + MEMORY_ANALYSIS_ACTIONS
     )
     assert set(ALL_ACTIONS) == expected
 

@@ -4,6 +4,13 @@ import json
 from typing import Annotated, Literal, assert_never
 from unicodedata import category
 
+from models.play_scenario_parameters import (
+    ScenarioDataset,
+    ScenarioParameter,
+    ScenarioParameterBinding,
+    expand_parameters,
+    validate_parameter_cases,
+)
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -68,6 +75,9 @@ def normalize_native_definition(value: JsonValue) -> JsonValue:
         "target_id",
         "reset_ids",
         "click_mode",
+        "ui_backend",
+        "element_name",
+        "element_path",
         "count",
         "active",
         "component",
@@ -333,7 +343,7 @@ class ScenarioInput(BaseModel):
     """A bounded virtual-device command; press leases survive subsequent drag/release steps."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-    action: Literal["key", "mouse", "touch", "release_all"]
+    action: Literal["key", "mouse", "touch", "gamepad", "wheel", "release_all"]
     state: Literal["press", "move", "release"] = "press"
     key: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
     button: Literal["left", "right", "middle"] = "left"
@@ -341,6 +351,45 @@ class ScenarioInput(BaseModel):
     touch_id: Annotated[int, Field(strict=True, ge=1, le=10)] = 1
     position: (
         list[Annotated[float, Field(strict=True, ge=0, le=1000000, allow_inf_nan=False)]] | None
+    ) = None
+
+    control: (
+        Literal[
+            "leftStick",
+            "rightStick",
+            "leftTrigger",
+            "rightTrigger",
+            "buttonSouth",
+            "buttonNorth",
+            "buttonEast",
+            "buttonWest",
+            "leftShoulder",
+            "rightShoulder",
+            "leftStickPress",
+            "rightStickPress",
+            "start",
+            "select",
+            "dpadUp",
+            "dpadDown",
+            "dpadLeft",
+            "dpadRight",
+        ]
+        | None
+    ) = None
+    value: (
+        Annotated[float, Field(strict=True, ge=-1, le=1, allow_inf_nan=False)]
+        | Annotated[
+            list[Annotated[float, Field(strict=True, ge=-1, le=1, allow_inf_nan=False)]],
+            Field(strict=True, min_length=2, max_length=2),
+        ]
+        | None
+    ) = None
+    delta: (
+        Annotated[
+            list[Annotated[float, Field(strict=True, ge=-10000, le=10000, allow_inf_nan=False)]],
+            Field(strict=True, min_length=2, max_length=2),
+        ]
+        | None
     ) = None
 
     @model_serializer(mode="plain")
@@ -364,6 +413,27 @@ class ScenarioInput(BaseModel):
                 allowed = {"action", "state", "touch_id", "position", "frames"}
                 if self.state != "release" and self.position is None:
                     raise ValueError("touch press/move requires position")
+            case "gamepad":
+                allowed = {"action", "control", "value", "state", "frames"}
+                if self.control is None or self.state == "move":
+                    raise ValueError(
+                        "gamepad requires a supported control and state press or release"
+                    )
+                if self.state == "release":
+                    if "value" in self.model_fields_set:
+                        raise ValueError("gamepad release must omit value")
+                elif self.control in ("leftStick", "rightStick"):
+                    if not isinstance(self.value, list):
+                        raise ValueError("Gamepad stick press requires a bounded two-number value")
+                elif self.control in ("leftTrigger", "rightTrigger"):
+                    if not isinstance(self.value, float) or not 0 <= self.value <= 1:
+                        raise ValueError("Gamepad trigger press requires a scalar from zero to one")
+                elif "value" in self.model_fields_set:
+                    raise ValueError("Gamepad button press must omit value")
+            case "wheel":
+                allowed = {"action", "delta"}
+                if self.delta is None:
+                    raise ValueError("wheel requires a bounded two-number delta")
             case "release_all":
                 allowed = {"action"}
             case unreachable:
@@ -372,8 +442,9 @@ class ScenarioInput(BaseModel):
             raise ValueError("Input command contains fields unrelated to its action")
         if self.state != "press" and "frames" in self.model_fields_set:
             raise ValueError("frames is permitted only on press input")
-        if self.model_fields_set & {"key", "position"} and any(
-            getattr(self, field) is None for field in self.model_fields_set & {"key", "position"}
+        if self.model_fields_set & {"key", "position", "control", "value", "delta"} and any(
+            getattr(self, field) is None
+            for field in self.model_fields_set & {"key", "position", "control", "value", "delta"}
         ):
             raise ValueError("Input fields must be omitted rather than null")
         if self.position is not None and len(self.position) != 2:
@@ -402,6 +473,15 @@ class ScenarioStep(BaseModel):
     state_id: TargetId | None = None
     state_equals: ScenarioScalar | None = None
     state_compare: PlayScenarioNumericCondition | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    ui_backend: Literal["uitoolkit"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    element_name: Annotated[str, Field(strict=True, min_length=1, max_length=256)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    element_path: Annotated[str, Field(strict=True, max_length=4096)] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     click_mode: Literal["direct", "raycast"] | None = None
@@ -468,6 +548,49 @@ class ScenarioStep(BaseModel):
     @model_validator(mode="after")
     def check_arguments(self) -> "ScenarioStep":
         """Reject unused selectors, invalid conditions and unsafe scene/object paths."""
+        ui_fields = self.model_fields_set & {"ui_backend", "element_name", "element_path"}
+        if ui_fields:
+            if (
+                self.action != "click_ui"
+                or self.ui_backend != "uitoolkit"
+                or self.click_mode not in (None, "direct")
+            ):
+                raise ValueError(
+                    "UI Toolkit selectors require click_ui, ui_backend=uitoolkit and direct mode"
+                )
+            if any(getattr(self, field) is None for field in ui_fields):
+                raise ValueError("UI Toolkit selector fields must be omitted rather than null")
+            if self.element_name is None and self.element_path is None:
+                raise ValueError("UI Toolkit clicks require element_name or element_path")
+            if self.element_name is not None and (
+                not self.element_name.strip()
+                or "\\" in self.element_name
+                or any(category(char) == "Cc" for char in self.element_name)
+                or _utf16_units(self.element_name) > 256
+            ):
+                raise ValueError("Invalid element_name")
+            if self.element_path is not None:
+                import re
+
+                parts = self.element_path.split("/")
+                if (
+                    _utf16_units(self.element_path) > 4096
+                    or len(parts) > 128
+                    or (
+                        self.element_path
+                        and (
+                            not self.element_path.startswith("/")
+                            or any(
+                                re.fullmatch(r"0|[1-9][0-9]*", part) is None
+                                or int(part) > 2147483647
+                                for part in parts[1:]
+                            )
+                        )
+                    )
+                ):
+                    raise ValueError(
+                        "element_path must be a bounded canonical root-relative index path"
+                    )
         if "load_mode" in self.model_fields_set and (
             self.action != "load_scene" or self.load_mode is None
         ):
@@ -716,6 +839,26 @@ class PlayScenario(BaseModel):
         default_factory=PlayScenarioDiagnosticsOptions
     )
 
+    parameters: (
+        Annotated[
+            dict[ScenarioName, ScenarioParameter], Field(strict=True, min_length=1, max_length=16)
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
+    parameter_bindings: (
+        Annotated[list[ScenarioParameterBinding], Field(strict=True, min_length=1, max_length=32)]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
+    datasets: (
+        Annotated[list[ScenarioDataset], Field(strict=True, min_length=1, max_length=16)] | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
+
+    def materialize(self, dataset: str | None = None) -> "PlayScenario":
+        """Return one concrete validated definition with its own bounded case identity."""
+        return type(self).model_validate(
+            expand_parameters(self.model_dump(mode="json", exclude_none=True), dataset)
+        )
+
     @field_validator("tags")
     @classmethod
     def check_tags(cls, value: list[str]) -> list[str]:
@@ -725,6 +868,15 @@ class PlayScenario(BaseModel):
     @model_validator(mode="after")
     def check_first_step(self) -> "PlayScenario":
         """Every iteration begins by loading a scene, within the definition byte bound."""
+        if any(
+            getattr(self, field) is None
+            for field in self.model_fields_set & {"parameters", "parameter_bindings", "datasets"}
+        ):
+            raise ValueError("Parameter metadata must be omitted rather than null")
+        for case in validate_parameter_cases(
+            self.model_dump(mode="json", exclude_none=True), self.parameters
+        ):
+            type(self).model_validate(case)
         if "draft" in self.model_fields_set and self.draft is None:
             raise ValueError("draft must be omitted rather than null")
         for steps in (self.setup_steps, self.steps, self.cleanup_steps):
@@ -787,6 +939,7 @@ class PlayScenarioCommand(BaseModel):
     scenario: PlayScenario | None = None
     suite: PlayScenarioSuite | None = None
     suite_id: JobId | None = None
+    dataset: ScenarioName | None = Field(default=None, exclude_if=lambda value: value is None)
     source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
     name: ScenarioName | None = None
     job_id: JobId | None = None
@@ -820,7 +973,14 @@ class PlayScenarioCommand(BaseModel):
             case "run":
                 required, allowed = (
                     {"name"},
-                    {"name", "job_id", "repeat_count", "timeout_seconds", "source_revision"},
+                    {
+                        "name",
+                        "job_id",
+                        "repeat_count",
+                        "timeout_seconds",
+                        "source_revision",
+                        "dataset",
+                    },
                 )
             case "suite_run":
                 required, allowed = (

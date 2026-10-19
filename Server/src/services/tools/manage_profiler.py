@@ -6,6 +6,10 @@ from pydantic import Field
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from services.tools.profiler_memory_analysis import (
+    MEMORY_ANALYSIS_ACTIONS,
+    validate_memory_analysis,
+)
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -44,6 +48,7 @@ ALL_ACTIONS = (
     + MEMORY_SNAPSHOT_ACTIONS
     + FRAME_DEBUGGER_ACTIONS
     + WINDOW_ACTIONS
+    + MEMORY_ANALYSIS_ACTIONS
 )
 
 
@@ -67,7 +72,11 @@ ALL_ACTIONS = (
         "MEMORY SNAPSHOT (requires com.unity.memoryprofiler):\n"
         "- memory_take_snapshot: Capture memory snapshot to file\n"
         "- memory_list_snapshots: List available .snap files\n"
-        "- memory_compare_snapshots: Compare two snapshot files\n\n"
+        "- memory_compare_snapshots: Compare legacy file metadata\n\n"
+        "MEMORY ANALYSIS (native bytes are distinct from managed/retained size):\n"
+        "- memory_aggregate: Bounded hierarchy/shared runtime-resource sums with object deduplication\n"
+        "- memory_snapshot_reader_status: Exact supported reader package/format capability\n"
+        "- memory_analyze_snapshots: Actual typed native-object count/byte/identity deltas; requires Memory Profiler 1.1.12\n\n"
         "FRAME DEBUGGER:\n"
         "- frame_debugger_enable: Turn on Frame Debugger, report event count\n"
         "- frame_debugger_disable: Turn off Frame Debugger\n"
@@ -156,6 +165,36 @@ async def manage_profiler(
         Field(strict=True),
         "Include bounded completed samples in window result (default false).",
     ] = None,
+    targets: Annotated[
+        Optional[list[str]],
+        Field(min_length=1, max_length=32),
+        "Loaded GameObject session ID strings for memory_aggregate; duplicate roots deduplicate.",
+    ] = None,
+    max_objects: Annotated[
+        Optional[int],
+        Field(strict=True, ge=1, le=200000),
+        "Read work budget: aggregate at most 4096 (default1024), snapshot at most200000.",
+    ] = None,
+    include_references: Annotated[
+        Optional[bool],
+        Field(strict=True),
+        "Include declared shared runtime resources in memory_aggregate (default true).",
+    ] = None,
+    include_objects: Annotated[
+        Optional[bool],
+        Field(strict=True),
+        "Return bounded object rows for memory_aggregate (default false).",
+    ] = None,
+    object_limit: Annotated[
+        Optional[int],
+        Field(strict=True, ge=1, le=256),
+        "Maximum returned object rows per list (default128); totals remain separately scoped.",
+    ] = None,
+    name_prefix: Annotated[
+        Optional[str],
+        Field(max_length=128),
+        "Exact ordinal native object-name prefix for memory_analyze_snapshots; omit for all within budget.",
+    ] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
     if action_lower not in ALL_ACTIONS:
@@ -174,6 +213,21 @@ async def manage_profiler(
             timeout_seconds,
             window_id,
             include_samples,
+        )
+        if error:
+            return {"success": False, "message": error}
+
+    if action_lower in MEMORY_ANALYSIS_ACTIONS:
+        error = validate_memory_analysis(
+            action_lower,
+            targets=targets,
+            max_objects=max_objects,
+            include_references=include_references,
+            include_objects=include_objects,
+            object_limit=object_limit,
+            name_prefix=name_prefix,
+            snapshot_a=snapshot_a,
+            snapshot_b=snapshot_b,
         )
         if error:
             return {"success": False, "message": error}
@@ -201,6 +255,12 @@ async def manage_profiler(
         "timeout_seconds": timeout_seconds,
         "window_id": window_id,
         "include_samples": include_samples,
+        "targets": targets,
+        "max_objects": max_objects,
+        "include_references": include_references,
+        "include_objects": include_objects,
+        "object_limit": object_limit,
+        "name_prefix": name_prefix,
     }
     for key, val in param_map.items():
         if val is not None:
