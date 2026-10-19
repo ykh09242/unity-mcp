@@ -139,12 +139,18 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
             return values.Properties().All(value => JToken.DeepEquals(value.Value, Scalar(owner.GetType().GetProperty(value.Name).GetValue(owner))));
         }
 
-        internal bool Matches(SpriteAtlasImporter importer) =>
-            (!Include.HasValue || importer.includeInBuild == Include.Value)
-            && (!Scale.HasValue || importer.variantScale == Scale.Value)
-            && Matches(importer.packingSettings, packing)
-            && Matches(importer.textureSettings, texture)
-            && platforms.All(profile => Matches(importer.GetPlatformSettings(profile.Key), profile.Value));
+        internal bool Matches(SpriteAtlasImporter importer)
+        {
+#if UNITY_2022_1_OR_NEWER
+            return (!Include.HasValue || importer.includeInBuild == Include.Value)
+                && (!Scale.HasValue || importer.variantScale == Scale.Value)
+                && Matches(importer.packingSettings, packing)
+                && Matches(importer.textureSettings, texture)
+                && platforms.All(profile => Matches(importer.GetPlatformSettings(profile.Key), profile.Value));
+#else
+            throw AtlasAccess.ImporterSettingsUnavailable();
+#endif
+        }
 
         internal void ValidateVariant(bool variant)
         {
@@ -158,6 +164,7 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
 
         internal void Apply(SpriteAtlasImporter importer)
         {
+#if UNITY_2022_1_OR_NEWER
             if (Include.HasValue)
                 importer.includeInBuild = Include.Value;
             if (Scale.HasValue)
@@ -174,6 +181,9 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
             }
             EditorUtility.SetDirty(importer);
             importer.SaveAndReimport();
+#else
+            throw AtlasAccess.ImporterSettingsUnavailable();
+#endif
         }
     }
 }

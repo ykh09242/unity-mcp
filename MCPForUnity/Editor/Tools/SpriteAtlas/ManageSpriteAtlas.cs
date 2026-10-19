@@ -327,7 +327,9 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
         private static object Capabilities() =>
             new
             {
-                authoring_available = true,
+                authoring_available = AtlasAccess.ImporterSettingsSupported,
+                minimum_authoring_unity_version = "2022.1",
+                authoring_unavailable_reason = AtlasAccess.ImporterSettingsSupported ? null : AtlasAccess.ImporterSettingsUnavailable().Message,
                 authoring_format = "V2 .spriteatlasv2",
                 packing_enabled = AtlasAccess.PackingEnabled,
                 packer_mode = EditorSettings.spritePackerMode.ToString(),

@@ -19,6 +19,29 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
     {
         internal static readonly string[] Platforms = { "Standalone", "Android", "iPhone", "WebGL" };
 
+        internal static bool ImporterSettingsSupported
+        {
+            get
+            {
+#if UNITY_2022_1_OR_NEWER
+                return true;
+#else
+                return false;
+#endif
+            }
+        }
+
+        internal static ArgumentException ImporterSettingsUnavailable() =>
+            new ArgumentException(
+                "SpriteAtlas V2 importer authoring requires Unity2022.1 or newer; this Editor lacks the public V2 importer settings API. Legacy V1 SpriteAtlas APIs are unchanged."
+            );
+
+        private static void RequireImporterSettings()
+        {
+            if (!ImporterSettingsSupported)
+                throw ImporterSettingsUnavailable();
+        }
+
         internal static void Stable()
         {
             if (
@@ -39,6 +62,7 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
 
         internal static string Path(JObject values)
         {
+            RequireImporterSettings();
             string path = AssetPathUtility.GetContainedAssetPath(Text(values, "path"));
             if (string.IsNullOrEmpty(path) || !path.EndsWith(".spriteatlasv2", StringComparison.Ordinal))
                 throw new ArgumentException("Atlas authoring supports contained Assets/*.spriteatlasv2 paths only; no implicit V1 conversion.");
@@ -89,6 +113,7 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
 
         internal static SpriteAtlas Load(string path)
         {
+            RequireImporterSettings();
             if (!path.EndsWith(".spriteatlasv2", StringComparison.Ordinal) || !(AssetImporter.GetAtPath(path) is SpriteAtlasImporter))
                 throw new ArgumentException("A saved SpriteAtlas V2 asset with SpriteAtlasImporter is required.");
             var atlas = AssetDatabase.LoadAssetAtPath<SpriteAtlas>(path);
@@ -179,6 +204,7 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
 
         internal static JObject Read(JObject request, string path)
         {
+#if UNITY_2022_1_OR_NEWER
             var atlas = Load(path);
             var importer = (SpriteAtlasImporter)AssetImporter.GetAtPath(path);
             Object[] packables = Packables(atlas);
@@ -228,6 +254,9 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
             if (Encoding.UTF8.GetByteCount(data.ToString(Formatting.None)) > 262144)
                 throw new ArgumentException("Atlas read exceeds 256 KiB; request a smaller page_size.");
             return data;
+#else
+            throw ImporterSettingsUnavailable();
+#endif
         }
 
         internal static int Whole(JObject values, string key, int fallback, int min, int max)

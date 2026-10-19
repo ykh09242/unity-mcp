@@ -289,4 +289,51 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(capabilities.Value<bool>("packing_enabled"));
         }
     }
+
+    public class SpriteAtlasImporterCompatibilityTests
+    {
+        [Test]
+        public void CapabilitiesAndPrewriteRefusalMatchPublicImporterSettingsAvailability()
+        {
+            Type tool = typeof(ManageSprite).Assembly.GetType("MCPForUnity.Editor.Tools.SpriteAtlasTools.ManageSpriteAtlas");
+            Assert.IsNotNull(tool);
+            MethodInfo command = tool.GetMethod("HandleCommand", BindingFlags.Static | BindingFlags.Public);
+            var capabilities = JObject.FromObject(command.Invoke(null, new object[] { new JObject { ["action"] = "capabilities" } }));
+            Assert.IsTrue(capabilities.Value<bool>("success"), capabilities.ToString());
+            JObject data = (JObject)capabilities["data"];
+            Assert.AreEqual("2022.1", data.Value<string>("minimum_authoring_unity_version"));
+#if UNITY_2022_1_OR_NEWER
+            Assert.IsTrue(data.Value<bool>("authoring_available"), "Supported Editors must retain the existing V2 importer authoring path.");
+#else
+            Assert.IsFalse(data.Value<bool>("authoring_available"), "Unity2021.3 lacks the public V2 importer settings API.");
+            StringAssert.Contains("Unity2022.1", data.Value<string>("authoring_unavailable_reason"));
+            SpritePackerMode mode = EditorSettings.spritePackerMode;
+            string path = "Assets/__McpAtlasCompat_" + Guid.NewGuid().ToString("N") + ".spriteatlasv2";
+            string full = Path.Combine(Directory.GetParent(Application.dataPath).FullName, path);
+            Assert.IsFalse(File.Exists(full));
+            Assert.IsFalse(File.Exists(full + ".meta"));
+            var response = JObject.FromObject(
+                command.Invoke(
+                    null,
+                    new object[]
+                    {
+                        new JObject
+                        {
+                            ["action"] = "create",
+                            ["path"] = path,
+                            ["properties"] = new JObject { ["include_in_build"] = false },
+                        },
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("Unity2022.1", response.Value<string>("error"));
+            Assert.IsFalse(response["data"].Value<bool>("mutation_may_have_occurred"), response.ToString());
+            Assert.IsFalse(File.Exists(full), "Unavailable V2 authoring must refuse before creating a source file.");
+            Assert.IsFalse(File.Exists(full + ".meta"), "Unavailable V2 authoring must refuse before creating metadata.");
+            Assert.IsTrue(string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets)));
+            Assert.AreEqual(mode, EditorSettings.spritePackerMode, "Capability checks/refusal must preserve the caller's global packing mode.");
+#endif
+        }
+    }
 }
