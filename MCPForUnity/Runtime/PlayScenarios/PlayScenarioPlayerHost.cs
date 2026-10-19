@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Tools.Input;
+using MCPForUnity.Runtime.PlayScenarios.UIToolkit;
 using UnityEngine;
 using UnityEngine.Profiling;
 using UnityEngine.SceneManagement;
@@ -143,6 +144,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 throw new ArgumentException("Unsupported Player host action.");
             if (step.Property != null)
                 throw new InvalidOperationException("Player property capability must be rejected before execution.");
+            bool toolkit =
+                step.Action == "click_ui" && UIToolkitScenarioInputAdapter.ValidateRequest(step.UiBackend, step.ElementName, step.ElementPath, step.ClickMode);
             counts.TargetSearches++;
             PrepareCondition(step);
             Scene active = step.Scene == null ? SceneManager.GetActiveScene() : sceneScope.Resolve(step.Scene, firstPoll);
@@ -210,6 +213,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 return Pending(step, detail + " Waiting for component " + step.Component + ".", "condition_unmet");
             if (step.Action == "wait_object")
                 return new PlayScenarioObservation(true, detail);
+            if (toolkit)
+                return UIToolkitScenarioInputAdapter.EvaluateForScenario(target, step.ElementName, step.ElementPath, step.ClickMode, null, ref counts);
             if (step.ClickMode == "raycast")
             {
                 if (!(PlayScenarioPlayerInput.Backend is IUguiScenarioRaycastClickBackend raycast))

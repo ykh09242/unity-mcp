@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Tools.Input;
+using MCPForUnity.Runtime.PlayScenarios.UIToolkit;
 using Newtonsoft.Json.Linq;
 using UnityEngine.SceneManagement;
 
@@ -142,11 +143,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         PlayScenarioObjectCondition.ValidateSelector(step);
                         string[] segments = step.TargetId == null ? PlayScenarioObjectCondition.ParseTarget(step.Target) : null;
                         Type componentType = PlayScenarioObjectCondition.ValidateCondition(step);
-                        if (step.Action == "click_ui" && ManageInput.UguiBackend == null)
-                            throw new InvalidOperationException(
-                                "Scenario UI clicks require the optional uGUI input backend; UI Toolkit clicks are unsupported."
-                            );
-                        if (step.ClickMode == "raycast" && !(ManageInput.UguiBackend is IUguiScenarioRaycastClickBackend))
+                        bool toolkit =
+                            step.Action == "click_ui"
+                            && UIToolkitScenarioInputAdapter.ValidateRequest(step.UiBackend, step.ElementName, step.ElementPath, step.ClickMode);
+                        if (step.Action == "click_ui" && !toolkit && ManageInput.UguiBackend == null)
+                            throw new InvalidOperationException("uGUI scenario UI clicks require the optional uGUI input backend.");
+                        if (!toolkit && step.ClickMode == "raycast" && !(ManageInput.UguiBackend is IUguiScenarioRaycastClickBackend))
                             throw UnityPlayScenarioHost.CapabilityFailure(step, "The optional uGUI backend does not support raycast-verified clicks.");
                         if (step.Scene != null)
                         {
@@ -177,7 +179,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         }
                         PlayScenarioObservation observation = PlayScenarioObjectCondition.Observe(step, matches, componentType);
                         if (step.Action == "click_ui")
-                            Add(stage, index, step.Name, "deferred", observation.Detail + " Click dispatch is deferred; no input was sent.");
+                            Add(
+                                stage,
+                                index,
+                                step.Name,
+                                "deferred",
+                                observation.Detail
+                                    + (
+                                        toolkit
+                                            ? " UI Toolkit document/panel/element readiness and direct Button submit activation are deferred; no input was sent."
+                                            : " Click dispatch is deferred; no input was sent."
+                                    )
+                            );
                         else if (!observation.Ready || step.StableForMs.GetValueOrDefault() > 0)
                             Add(
                                 stage,

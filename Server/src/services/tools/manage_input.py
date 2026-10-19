@@ -13,7 +13,41 @@ from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
 
-InputAction = Literal["status", "ui_click", "key", "mouse", "touch", "release_all"]
+InputAction = Literal[
+    "status",
+    "player_status",
+    "pair_player",
+    "release_player",
+    "ui_click",
+    "key",
+    "mouse",
+    "touch",
+    "gamepad",
+    "wheel",
+    "release_all",
+]
+GamepadControl = Literal[
+    "leftStick",
+    "rightStick",
+    "leftTrigger",
+    "rightTrigger",
+    "buttonSouth",
+    "buttonNorth",
+    "buttonEast",
+    "buttonWest",
+    "leftShoulder",
+    "rightShoulder",
+    "leftStickPress",
+    "rightStickPress",
+    "start",
+    "select",
+    "dpadUp",
+    "dpadDown",
+    "dpadLeft",
+    "dpadRight",
+]
+AnalogScalar = Annotated[float, Field(strict=True, ge=-1, le=1, allow_inf_nan=False)]
+WheelCoordinate = Annotated[float, Field(strict=True, ge=-10000, le=10000, allow_inf_nan=False)]
 InputState = Literal["press", "release", "move"]
 InputButton = Literal["left", "right", "middle"]
 FrameCount = Annotated[int, Field(strict=True, ge=1, le=600)]
@@ -46,6 +80,10 @@ class InputCommand(BaseModel):
     position: tuple[ScreenCoordinate, ScreenCoordinate] | None = None
     button: InputButton = "left"
     touch_id: TouchId = 1
+    control: GamepadControl | None = None
+    value: AnalogScalar | tuple[AnalogScalar, AnalogScalar] | None = None
+    delta: tuple[WheelCoordinate, WheelCoordinate] | None = None
+    device: Literal["gamepad"] | None = None
 
     @model_validator(mode="after")
     def check_action_arguments(self) -> "InputCommand":
@@ -65,11 +103,46 @@ class InputCommand(BaseModel):
             case "touch":
                 if self.state != "release" and self.position is None:
                     raise ValueError("touch press/move requires position")
+            case "player_status" | "pair_player" | "release_player":
+                if self.target is None:
+                    raise ValueError("PlayerInput operations require an explicit target GameObject")
+            case "gamepad":
+                self.check_gamepad_arguments()
+            case "wheel":
+                if self.delta is None:
+                    raise ValueError("wheel requires a finite delta [x,y]")
             case "status" | "release_all":
                 pass
             case unreachable:
                 assert_never(unreachable)
         return self
+
+    def check_gamepad_arguments(self) -> None:
+        """Require the value shape belonging to the selected bounded gamepad control."""
+        if self.control is None or self.state == "move":
+            raise ValueError("gamepad requires control and state press or release")
+        if self.state == "release":
+            if self.value is not None:
+                raise ValueError("gamepad release must omit value")
+            return
+        if self.control in ("leftStick", "rightStick"):
+            match self.value:
+                case tuple():
+                    return
+                case float() | None:
+                    raise ValueError("stick value requires a finite [x,y] vector in -1..1")
+                case unreachable:
+                    assert_never(unreachable)
+        if self.control in ("leftTrigger", "rightTrigger"):
+            match self.value:
+                case float() if self.value >= 0:
+                    return
+                case float() | tuple() | None:
+                    raise ValueError("trigger value requires a finite scalar in 0..1")
+                case unreachable:
+                    assert_never(unreachable)
+        if self.value is not None:
+            raise ValueError("gamepad buttons use press/release; omit value")
 
 
 @mcp_for_unity_tool(
@@ -78,18 +151,27 @@ class InputCommand(BaseModel):
         "Simulate bounded input in Unity Play Mode. status reports capabilities and held controls. "
         "ui_click dispatches uGUI pointer events to a scene instance ID or exact root hierarchy path "
         "(independent of raw input backend; does not test raycast occlusion). "
-        "key/mouse/touch require com.unity.inputsystem 1.7+ and Active Input Handling Input System or Both. "
+        "key/mouse/touch/gamepad/wheel require com.unity.inputsystem 1.7+ and Input System or Both handling. "
+        "gamepad control is a named stick, trigger or button; sticks use value [x,y] in -1..1, "
+        "triggers use scalar value 0..1 and buttons omit value. Release omits value and returns neutral. "
+        "wheel delta [x,y] in -10000..10000 is dispatched once, preserving held mouse buttons. "
+        "player_status(target) reads actual PlayerInput action/device resolution. pair_player(target) "
+        "adds only a neutral MCP-owned gamepad to one selected player; existing paired devices and "
+        "control scheme remain. release_player(target) ends that owned device lease. "
         "press holds for 1..600 game input updates then releases; use release for an earlier release. "
         "touch_id 1..10 permits concurrent contacts across calls; move preserves the original release deadline. "
         "release_all removes only MCP virtual devices. A hard 30-second lease and play exit/reload cleanup "
-        "prevent stuck input. Paused Play Mode accepts release_all only. Device-paired PlayerInput actions "
-        "may require pairing the virtual devices. Legacy UnityEngine.Input and OS input are unsupported."
+        "prevent stuck input. Pause also cleans pairing; release_player/release_all remain callable while paused. "
+        "PlayerInput eligibility does not guarantee gameplay handling. Legacy UnityEngine.Input and OS input are unsupported."
     ),
     annotations=ToolAnnotations(title="Manage Input", readOnlyHint=False, destructiveHint=True),
 )
 async def manage_input(
     ctx: Context,
-    action: Annotated[InputAction, "status, ui_click, key, mouse, touch or release_all"],
+    action: Annotated[
+        InputAction,
+        "Read status/player_status; explicitly pair/release a player or simulate bounded input",
+    ],
     target: Annotated[
         InstanceId | HierarchyPath | None, "ui_click scene instance ID or exact root hierarchy path"
     ] = None,
@@ -106,6 +188,17 @@ async def manage_input(
     ] = None,
     button: Annotated[InputButton, "Mouse button"] = "left",
     touch_id: Annotated[TouchId, "Independent touch contact ID (1..10)"] = 1,
+    control: Annotated[GamepadControl | None, "Named gamepad stick, trigger or button"] = None,
+    value: Annotated[
+        AnalogScalar | tuple[AnalogScalar, AnalogScalar] | None,
+        "Stick [x,y] or trigger scalar; omit for buttons and release",
+    ] = None,
+    delta: Annotated[
+        tuple[WheelCoordinate, WheelCoordinate] | None, "One-shot wheel delta [x,y]"
+    ] = None,
+    device: Annotated[
+        Literal["gamepad"] | None, "Explicit pairing device; defaults to owned gamepad"
+    ] = None,
 ) -> InputResponse:
     """Validate bounded input parameters and forward using the selected Unity instance."""
     try:
@@ -118,16 +211,26 @@ async def manage_input(
             position=position,
             button=button,
             touch_id=touch_id,
+            control=control,
+            value=value,
+            delta=delta,
+            device=device,
         )
     except ValidationError as exc:
         return {"success": False, "error": f"Invalid input simulation parameters: {exc}"}
     unity_instance = await get_unity_instance_from_context(ctx)
     # Input events are effects; a reload retry must not replay a click or press.
+    payload = command.model_dump(mode="json", exclude_none=True)
+    if action in ("gamepad", "wheel", "player_status", "pair_player", "release_player"):
+        allowed = {"action", "target", "control", "value", "delta", "device"}
+        if action == "gamepad":
+            allowed.update(("state", "frames"))
+        payload = {key: value for key, value in payload.items() if key in allowed}
     response = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
         "manage_input",
-        command.model_dump(mode="json", exclude_none=True),
+        payload,
         retry_on_reload=False,
     )
     # The legacy bridge returns a model for connection/preflight failures.

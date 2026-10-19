@@ -11,7 +11,7 @@ using InputTouchPhase = UnityEngine.InputSystem.TouchPhase;
 namespace MCPForUnity.Editor.Tools.Input
 {
     /// <summary>Queues input only on MCP-owned virtual devices. No physical device state is changed.</summary>
-    public class RuntimeInputSystemSimulationBackend : IScenarioInputSimulationBackend
+    public partial class RuntimeInputSystemSimulationBackend : IScenarioInputSimulationBackend, IPlayerInputSimulationBackend
     {
         private readonly Dictionary<Key, long> _keys = new Dictionary<Key, long>();
         private readonly Dictionary<int, long> _buttons = new Dictionary<int, long>();
@@ -69,6 +69,9 @@ namespace MCPForUnity.Editor.Tools.Input
                 keyboard_device_id = _keyboard?.deviceId,
                 mouse_device_id = _mouse?.deviceId,
                 touchscreen_device_id = _touchscreen?.deviceId,
+                gamepad_device_id = _gamepad?.deviceId,
+                held_gamepad_controls = _gamepadReleases.Keys.OrderBy(control => control).ToArray(),
+                paired_player_index = _pairedPlayer != null ? (int?)_pairedPlayer.playerIndex : null,
                 update_mode = InputApi.settings.updateMode.ToString(),
 #if UNITY_EDITOR
                 editor_input_behavior = InputApi.settings.editorInputBehaviorInPlayMode.ToString(),
@@ -92,12 +95,32 @@ namespace MCPForUnity.Editor.Tools.Input
                 case "mouse":
                     ApplyMouse(request);
                     break;
+                case "gamepad":
+                    ApplyGamepad(request);
+                    break;
+                case "wheel":
+                    EnsureMouse();
+                    QueueMouse(scroll: request.WheelDelta.Value);
+                    break;
                 case "touch":
                     ApplyTouch(request);
                     break;
                 default:
                     throw new ArgumentException("Unsupported raw input action.");
             }
+            EnsureLease();
+            return new
+            {
+                action = request.Action,
+                state = request.State,
+                frames = request.Action == "wheel" || request.State == "release" || request.State == "move" ? 0 : request.Frames,
+                auto_cleanup_seconds = InputSimulationRequest.DeviceTimeoutSeconds,
+                simulation = Status,
+            };
+        }
+
+        private void EnsureLease()
+        {
             if (!_subscribed)
             {
                 // A hard lease cannot be extended by repeated commands while the game loop is stalled.
@@ -106,14 +129,6 @@ namespace MCPForUnity.Editor.Tools.Input
                 SubscribeLifetime();
                 _subscribed = true;
             }
-            return new
-            {
-                action = request.Action,
-                state = request.State,
-                frames = request.State == "release" || request.State == "move" ? 0 : request.Frames,
-                auto_cleanup_seconds = InputSimulationRequest.DeviceTimeoutSeconds,
-                simulation = Status,
-            };
         }
 
         private void ApplyKey(InputSimulationRequest request)
@@ -138,7 +153,7 @@ namespace MCPForUnity.Editor.Tools.Input
             QueueKeyboard();
         }
 
-        private void ApplyMouse(InputSimulationRequest request)
+        private void EnsureMouse()
         {
             if (_mouse == null || !_mouse.added)
             {
@@ -147,6 +162,11 @@ namespace MCPForUnity.Editor.Tools.Input
                 _mousePosition = _previousMouse?.position.ReadValue() ?? Vector2.zero;
                 _mouse = InputApi.AddDevice<Mouse>("MCPVirtualMouse");
             }
+        }
+
+        private void ApplyMouse(InputSimulationRequest request)
+        {
+            EnsureMouse();
             Vector2 previousPosition = _mousePosition;
             if (request.Position.HasValue)
                 _mousePosition = request.Position.Value;
@@ -205,7 +225,7 @@ namespace MCPForUnity.Editor.Tools.Input
 
         private void QueueKeyboard() => InputApi.QueueStateEvent(_keyboard, new KeyboardState(_keys.Keys.ToArray()));
 
-        private void QueueMouse(Vector2 delta = default)
+        private void QueueMouse(Vector2 delta = default, Vector2 scroll = default)
         {
             ushort buttons = 0;
             foreach (int button in _buttons.Keys)
@@ -216,6 +236,7 @@ namespace MCPForUnity.Editor.Tools.Input
                 {
                     position = _mousePosition,
                     delta = delta,
+                    scroll = scroll,
                     buttons = buttons,
                 }
             );
@@ -245,6 +266,7 @@ namespace MCPForUnity.Editor.Tools.Input
                 return;
             }
             _tick++;
+            ReleaseExpiredGamepadControls();
             // Queue release before update N+1, after N complete updates observed the held state.
             // Queueing from onAfterUpdate can lose events when the runtime commits its event buffer.
             Key[] keys = _keys.Where(pair => pair.Value < _tick).Select(pair => pair.Key).ToArray();
@@ -281,6 +303,8 @@ namespace MCPForUnity.Editor.Tools.Input
                 UnsubscribeLifetime();
                 _subscribed = false;
             }
+            RestorePlayerPairing();
+            ReleaseGamepad();
             bool restoreKeyboard = _keyboard != null && Keyboard.current == _keyboard;
             bool restoreMouse = _mouse != null && Mouse.current == _mouse;
             bool restoreTouchscreen = _touchscreen != null && Touchscreen.current == _touchscreen;

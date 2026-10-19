@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using MCPForUnity.Editor.Tools.Input;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -11,6 +13,17 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     {
         private readonly JArray steps = new JArray();
         private readonly JArray diagnostics = new JArray();
+
+        private sealed class HeldInput
+        {
+            internal JObject Step;
+            internal long Started;
+        }
+
+        private readonly Dictionary<string, HeldInput> held = new Dictionary<string, HeldInput>(StringComparer.Ordinal);
+        private long? inputFrame;
+        private JObject previousInput;
+        private long previousInputFrame;
         private string scene;
         private readonly string sceneScope;
         private readonly JArray setup = new JArray();
@@ -97,6 +110,108 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             string bounded = message.Length > 512 ? message.Substring(0, 512) : message;
             if (diagnostics.Count < 32 && !diagnostics.Any(value => (string)value == bounded))
                 diagnostics.Add(bounded);
+        }
+
+        /// <summary>Advances only the actual game-input update counter supplied by the observer.</summary>
+        public bool InputFrameObserved(long frame)
+        {
+            if (!Recording)
+                return false;
+            if (frame < 0 || (inputFrame.HasValue && frame < inputFrame.Value))
+            {
+                Diagnose("The observed input update counter moved backwards; recording stopped without guessing timing.");
+                Finish("interrupted", "input_clock_changed");
+                return false;
+            }
+            if (held.Values.Any(value => frame - value.Started > 600) || (previousInput != null && frame - previousInputFrame > 600))
+            {
+                Diagnose("Observed input hold/spacing exceeded the executable 600 input-update bound; recording stopped without clamping timing.");
+                Finish("interrupted", "input_frame_limit");
+                return false;
+            }
+            foreach (HeldInput value in held.Values)
+                value.Step["input"]["frames"] = Math.Max(1, frame - value.Started);
+            if (previousInput != null)
+                previousInput["wait_frames"] = Math.Max(1, frame - previousInputFrame);
+            inputFrame = frame;
+            return true;
+        }
+
+        /// <summary>Records a validated observed state transition, never a requested/inferred hold duration.</summary>
+        public bool InputObserved(JObject observed, long frame)
+        {
+            if (!Recording)
+                return false;
+            InputSimulationRequest request;
+            try
+            {
+                if (observed == null || observed.Property("frames") != null)
+                    throw new ArgumentException("Observed input cannot supply an unobserved frames duration.");
+                request = InputSimulationRequest.ParseScenario(observed);
+                if (request.Action != "key" && request.Action != "mouse" && request.Action != "touch" && request.Action != "wheel")
+                    throw new ArgumentException("Only observed key, mouse, touch and wheel input is supported by this recorder.");
+            }
+            catch (ArgumentException error)
+            {
+                Diagnose("An unsupported observed input was omitted: " + error.Message);
+                return false;
+            }
+            string identity =
+                request.Action == "key" ? "key:" + request.Key
+                : request.Action == "mouse" ? "mouse:" + request.Button
+                : request.Action == "touch" ? "touch:" + request.TouchId
+                : null;
+            if (!InputFrameObserved(frame))
+                return false;
+            if (identity != null && request.State == "press" && held.ContainsKey(identity))
+            {
+                Diagnose("A repeated observed press was omitted; the existing hold was not restarted.");
+                return false;
+            }
+            if (identity != null && (request.State == "release" || (request.Action == "touch" && request.State == "move")) && !held.ContainsKey(identity))
+            {
+                Diagnose("An observed release/move without a recorded press was omitted; no earlier input was invented.");
+                return false;
+            }
+            if (identity != null && request.State == "press" && held.Count >= 16)
+            {
+                Diagnose("The recorder supports at most sixteen simultaneously observed held controls.");
+                Finish("interrupted", "held_input_limit");
+                return false;
+            }
+            if (previousInput != null && frame == previousInputFrame)
+                Diagnose(
+                    "Events in the same input update retain arrival order, but executable replay requires at least one update per input step; review simultaneous timing."
+                );
+            var input = (JObject)observed.DeepClone();
+            if (request.State == "press" && identity != null)
+                input["frames"] = 1;
+            var step = new JObject
+            {
+                ["name"] = "Recorded input " + steps.Count,
+                ["action"] = "input",
+                ["input"] = input,
+                ["wait_frames"] = 1,
+            };
+            HeldInput released = null;
+            if (identity != null && request.State == "press")
+                held[identity] = new HeldInput { Step = step, Started = frame };
+            else if (identity != null && request.State == "release")
+            {
+                released = held[identity];
+                held.Remove(identity);
+            }
+            if (!Append(step))
+            {
+                if (identity != null && request.State == "press")
+                    held.Remove(identity);
+                else if (released != null)
+                    held[identity] = released;
+                return false;
+            }
+            previousInput = step;
+            previousInputFrame = frame;
+            return true;
         }
 
         public bool Click(PlayScenarioRecordedTarget target)
@@ -192,6 +307,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (!Recording)
                 return false;
+            if ((string)step["action"] != "input")
+                previousInput = null;
             steps.Add(step);
             try
             {
@@ -216,6 +333,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (!Recording)
                 return;
+            if (held.Count > 0)
+                Diagnose(
+                    "Recording ended while input remained held. Only the observed duration is retained; no later release or outcome was invented. Review this partial gesture."
+                );
             Status = status;
             Reason = reason;
         }
@@ -247,10 +368,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 ["event_count"] = steps.Count - 1,
                 ["max_events"] = MaxEvents,
                 ["diagnostics"] = diagnostics.DeepClone(),
+                ["last_observed_input_update"] = inputFrame.HasValue ? new JValue(inputFrame.Value) : JValue.CreateNull(),
                 ["limitations"] = new JArray(
                     sceneScope == "active"
-                        ? "Only supported uGUI Button pointer clicks in the active scene are captured. Keyboard, raw input, drag, scroll, UI Toolkit and programmatic onClick callbacks require manual authoring."
+                        ? "Supported uGUI Button pointer clicks and available Input System key/mouse/touch/wheel events are observed. UI Toolkit, programmatic callbacks, gamepad and legacy-only input require manual authoring."
                         : "Supported uGUI Button pointer clicks carry exact scene selectors. Initial loaded context is explicit setup requiring review; observed transitions are waits, never inferred loading/unloading effects.",
+                    "Raw positions are observed screen pixels, not stable UI identities. Holds and spacing count game Input System updates; same-update ordering is retained but exact simultaneous replay needs review.",
                     "Objects created between observer scans may be missed. Scene changes preserve observed order, not inferred waits or readiness conditions.",
                     "Review selectors, scene readiness, state expectations and reset policy before clearing draft. Checkpoints request future screenshots and do not create image assertions."
                 ),

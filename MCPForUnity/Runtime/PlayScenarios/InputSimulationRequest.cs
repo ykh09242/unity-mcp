@@ -6,7 +6,7 @@ using UnityEngine;
 namespace MCPForUnity.Editor.Tools.Input
 {
     /// <summary>Validated input command shared with optional package adapters.</summary>
-    public sealed class InputSimulationRequest
+    public sealed partial class InputSimulationRequest
     {
         public const int MaxFrames = 600;
         public const double DeviceTimeoutSeconds = 30;
@@ -36,11 +36,17 @@ namespace MCPForUnity.Editor.Tools.Input
                 case "touch":
                     allowed = new[] { "action", "state", "touch_id", "position", "frames" };
                     break;
+                case "gamepad":
+                    allowed = new[] { "action", "control", "value", "state", "frames" };
+                    break;
+                case "wheel":
+                    allowed = new[] { "action", "delta" };
+                    break;
                 case "release_all":
                     allowed = new[] { "action" };
                     break;
                 default:
-                    throw new ArgumentException("Scenario input action must be key, mouse, touch or release_all.");
+                    throw new ArgumentException("Scenario input action must be key, mouse, touch, gamepad, wheel or release_all.");
             }
             foreach (JProperty property in parameters.Properties())
             {
@@ -71,6 +77,11 @@ namespace MCPForUnity.Editor.Tools.Input
             switch (request.Action)
             {
                 case "status":
+                case "player_status":
+                case "pair_player":
+                case "release_player":
+                case "gamepad":
+                case "wheel":
                 case "release_all":
                 case "ui_click":
                 case "key":
@@ -78,7 +89,9 @@ namespace MCPForUnity.Editor.Tools.Input
                 case "touch":
                     break;
                 default:
-                    throw new ArgumentException("action must be status, ui_click, key, mouse, touch or release_all.");
+                    throw new ArgumentException(
+                        "action must be status, player_status, pair_player, release_player, ui_click, key, mouse, touch, gamepad, wheel or release_all."
+                    );
             }
             if (request.State != "press" && request.State != "release" && request.State != "move")
                 throw new ArgumentException("state must be press, release or move.");
@@ -97,6 +110,7 @@ namespace MCPForUnity.Editor.Tools.Input
                 throw new ArgumentException("mouse move requires position.");
             if (request.Action == "touch" && request.State != "release" && !request.Position.HasValue)
                 throw new ArgumentException("touch press/move requires position.");
+            request.ParseExtended(parameters);
             return request;
         }
 
