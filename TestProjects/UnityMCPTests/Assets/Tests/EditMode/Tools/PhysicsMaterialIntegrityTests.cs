@@ -182,6 +182,18 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(JToken.DeepEquals(before, Snapshot(material)));
         }
 
+        [TestCase("3d", "staticFriction")]
+        [TestCase("2d", "friction")]
+        public void BooleanScalarIsRejectedWithoutMutation(string dimension, string property)
+        {
+            var material = CreateMaterial(dimension);
+            var before = Snapshot(material);
+            LogAssert.Expect(LogType.Error, new Regex("\\[ManagePhysics\\] Action 'configure_physics_material' failed:"));
+            var result = Call(Configure(material, dimension, new JObject { [property] = false }));
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.IsTrue(JToken.DeepEquals(before, Snapshot(material)));
+        }
+
         [Test]
         public void ValidAliasesPreserveSuccessfulOrderAndScalarForms()
         {
@@ -194,7 +206,7 @@ namespace MCPForUnityTests.Editor.Tools
                     {
                         ["dynamic_friction"] = "0",
                         ["dynamicFriction"] = 0.3,
-                        ["staticFriction"] = false,
+                        ["staticFriction"] = 0,
                         ["bounciness"] = 0.25,
                         ["friction_combine"] = "minimum",
                         ["frictionCombine"] = "multiply",

@@ -238,7 +238,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 AssetDatabase.CreateAsset(mat, assetPath);
                 if (!EditorUtility.IsPersistent(mat))
                     return new ErrorResponse($"Failed to create physics material at '{assetPath}'.");
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(mat);
                 folders.Complete();
 
                 return new
@@ -292,7 +292,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 AssetDatabase.CreateAsset(mat, assetPath);
                 if (!EditorUtility.IsPersistent(mat))
                     return new ErrorResponse($"Failed to create 2D physics material at '{assetPath}'.");
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(mat);
                 folders.Complete();
 
                 return new
@@ -353,6 +353,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             var setters = new List<Action>();
             foreach (var prop in properties.Properties())
             {
+                if (prop.Value.Type == JTokenType.Null)
+                    throw new ArgumentException("Physics material values must be non-null scalars.");
                 string key = prop.Name.ToLowerInvariant().Replace("_", "");
                 switch (key)
                 {
@@ -409,7 +411,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             foreach (var setter in setters)
                 setter();
             EditorUtility.SetDirty(mat);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(mat);
 
             return new
             {
@@ -442,6 +444,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             var setters = new List<Action>();
             foreach (var prop in properties.Properties())
             {
+                if (prop.Value.Type == JTokenType.Null)
+                    throw new ArgumentException("Physics material values must be non-null scalars.");
                 string key = prop.Name.ToLowerInvariant().Replace("_", "");
                 switch (key)
                 {
@@ -463,7 +467,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             foreach (var setter in setters)
                 setter();
             EditorUtility.SetDirty(mat);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(mat);
 
             return new
             {
