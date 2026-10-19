@@ -180,6 +180,14 @@ namespace MCPForUnity.Editor.Helpers
         /// Builds the remote JSON-RPC endpoint (remote base + /mcp).
         /// Returns empty string if no remote URL is configured.
         /// </summary>
+        internal static string GetStoredRemoteMcpRpcUrl()
+        {
+            // Passive classification must not validate an unused remote connection.
+            string remoteBase = GetRemoteBaseUrl();
+            return string.IsNullOrEmpty(remoteBase) ? string.Empty : AppendPathSegment(remoteBase, "mcp");
+        }
+
+        /// <summary>Returns the remote endpoint after validating connection policy.</summary>
         public static string GetRemoteMcpRpcUrl()
         {
             string remoteBase = ValidateRemoteConfigurationUrl();

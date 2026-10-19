@@ -38,7 +38,7 @@ namespace MCPForUnity.Editor.Clients
                     if (!string.IsNullOrEmpty(url))
                     {
                         // Distinguish HTTP Local from HTTP Remote
-                        string remoteRpcUrl = HttpEndpointUtility.GetRemoteMcpRpcUrl();
+                        string remoteRpcUrl = HttpEndpointUtility.GetStoredRemoteMcpRpcUrl();
                         if (!string.IsNullOrEmpty(remoteRpcUrl) && UrlsEqual(url, remoteRpcUrl))
                         {
                             client.configuredTransport = Models.ConfiguredTransport.HttpRemote;
