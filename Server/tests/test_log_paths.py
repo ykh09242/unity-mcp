@@ -20,9 +20,9 @@ class TestEnvOverride:
     def test_override_wins_on_windows(self):
         path = resolve_log_dir(
             platform="win32",
-            env={"UNITY_MCP_LOG_DIR": "/tmp/custom-logs", "LOCALAPPDATA": r"C:\ignored"},
+            env={"UNITY_MCP_LOG_DIR": "C:/tmp/custom-logs", "LOCALAPPDATA": r"C:\ignored"},
         )
-        assert path == "/tmp/custom-logs"
+        assert path == "C:/tmp/custom-logs"
 
     def test_override_wins_on_linux(self):
         path = resolve_log_dir(
@@ -91,5 +91,21 @@ class TestPlatformDefaults:
 class TestDefaults:
     def test_no_args_reads_live_environment(self, monkeypatch):
         """With no args, should read sys.platform and os.environ directly."""
-        monkeypatch.setenv("UNITY_MCP_LOG_DIR", "/tmp/live-env-test")
-        assert resolve_log_dir() == "/tmp/live-env-test"
+        expected = os.path.abspath("/tmp/live-env-test")
+        monkeypatch.setenv("UNITY_MCP_LOG_DIR", expected)
+        assert resolve_log_dir() == expected
+
+
+@pytest.mark.parametrize("override", ["logs", "../logs", "C:logs"])
+def test_relative_override_rejected_independently_of_working_directory(
+    tmp_path, monkeypatch, override
+):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    for folder in (first, second):
+        monkeypatch.chdir(folder)
+        with pytest.raises(ValueError, match="absolute"):
+            resolve_log_dir(env={"UNITY_MCP_LOG_DIR": override})
+    assert list(first.iterdir()) == list(second.iterdir()) == []

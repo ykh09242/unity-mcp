@@ -6,12 +6,14 @@ Picks a platform-appropriate location for the rotating server log:
 - macOS:   ~/Library/Application Support/UnityMCP/Logs
 - Linux/BSD: $XDG_STATE_HOME/UnityMCP/Logs (default ~/.local/state/UnityMCP/Logs)
 
-UNITY_MCP_LOG_DIR overrides all of the above.
+UNITY_MCP_LOG_DIR overrides all of the above and must be absolute after tilde expansion.
 """
 
 from __future__ import annotations
 
 import os
+import ntpath
+import posixpath
 import sys
 from collections.abc import Mapping
 
@@ -29,7 +31,11 @@ def resolve_log_dir(
 
     override = env.get("UNITY_MCP_LOG_DIR")
     if override:
-        return os.path.expanduser(override)
+        resolved = os.path.expanduser(override)
+        path_api = ntpath if platform == "win32" else posixpath
+        if not path_api.isabs(resolved) and not os.path.isabs(resolved):
+            raise ValueError("UNITY_MCP_LOG_DIR must be an absolute path")
+        return resolved
 
     if platform == "darwin":
         return os.path.expanduser("~/Library/Application Support/UnityMCP/Logs")
