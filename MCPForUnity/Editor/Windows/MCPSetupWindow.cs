@@ -50,17 +50,24 @@ namespace MCPForUnity.Editor.Windows
         private readonly List<(IMcpClientConfigurator client, Toggle toggle)> clientToggles = new();
 
         private DependencyCheckResult _dependencyResult;
+        private Task<DependencyCheckResult> _dependencyTask;
+        private static Func<bool, Task<DependencyCheckResult>> dependencyCheck = DependencyManager.CheckAllDependenciesAsync;
 
         public static void ShowWindow(DependencyCheckResult dependencyResult = null)
         {
             var window = GetWindow<MCPSetupWindow>("MCP Setup");
             window.minSize = new Vector2(480, 320);
-            window.SetDependencyResult(dependencyResult ?? DependencyManager.CheckAllDependencies());
+            if (dependencyResult != null)
+                window.SetDependencyResult(dependencyResult);
+            else
+                window.BeginDependencyCheck(false);
             window.Show();
         }
 
         private void SetDependencyResult(DependencyCheckResult dependencyResult)
         {
+            _dependencyTask = null;
+            EditorApplication.update -= PollDependencies;
             _dependencyResult = dependencyResult;
             if (statusMessage != null && installationSection != null && doneButton != null)
                 UpdateUI();
@@ -139,10 +146,8 @@ namespace MCPForUnity.Editor.Windows
 
         private void OnEnable()
         {
-            if (_dependencyResult == null)
-            {
-                _dependencyResult = DependencyManager.CheckAllDependencies();
-            }
+            // Delay initial capture so ShowWindow can provide an existing result first.
+            EditorApplication.delayCall += BeginInitialDependencyCheck;
             // Resume polling if a uv install was still in flight when the window was last disabled,
             // so its completion is still processed (button reset, dependencies re-checked).
             if (_uvInstallTask != null)
@@ -152,9 +157,33 @@ namespace MCPForUnity.Editor.Windows
             }
         }
 
-        private void OnRefreshClicked()
+        private void BeginInitialDependencyCheck()
         {
-            _dependencyResult = DependencyManager.CheckAllDependencies();
+            if (this != null && _dependencyResult == null && _dependencyTask == null)
+                BeginDependencyCheck(false);
+        }
+
+        private void OnRefreshClicked() => BeginDependencyCheck(true);
+
+        private void BeginDependencyCheck(bool force)
+        {
+            _dependencyTask = dependencyCheck(force);
+            EditorApplication.update -= PollDependencies;
+            EditorApplication.update += PollDependencies;
+            UpdateUI();
+        }
+
+        private void PollDependencies()
+        {
+            if (_dependencyTask == null || !_dependencyTask.IsCompleted)
+                return;
+            var task = _dependencyTask;
+            _dependencyTask = null;
+            EditorApplication.update -= PollDependencies;
+            if (task.Status == TaskStatus.RanToCompletion)
+                _dependencyResult = task.Result;
+            else if (task.IsFaulted)
+                _dependencyResult = new DependencyCheckResult { Summary = "Dependency check failed: " + task.Exception.GetBaseException().Message };
             UpdateUI();
         }
 
@@ -307,17 +336,7 @@ namespace MCPForUnity.Editor.Windows
 
             if (result.Success)
             {
-                _dependencyResult = DependencyManager.CheckAllDependencies();
-                UpdateUI();
-                if (!_dependencyResult.IsSystemReady)
-                {
-                    EditorUtility.DisplayDialog(
-                        "Install UV",
-                        "uv installed, but it isn't visible on PATH yet. Restart Unity (or your terminal) so it picks up the new PATH, then click Refresh.\n\n"
-                            + result.Output,
-                        "OK"
-                    );
-                }
+                BeginDependencyCheck(true);
             }
             else
             {
@@ -334,10 +353,23 @@ namespace MCPForUnity.Editor.Windows
         private void OnDisable()
         {
             EditorApplication.update -= PollUvInstall;
+            EditorApplication.update -= PollDependencies;
+            EditorApplication.delayCall -= BeginInitialDependencyCheck;
+            _dependencyTask = null;
         }
 
         private void UpdateUI()
         {
+            if (statusMessage == null || installationSection == null || doneButton == null)
+                return;
+            bool checking = _dependencyTask != null;
+            refreshButton?.SetEnabled(!checking);
+            doneButton.SetEnabled(!checking);
+            if (checking)
+            {
+                statusMessage.text = "Checking dependencies...";
+                return;
+            }
             if (_dependencyResult == null)
                 return;
 

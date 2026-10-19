@@ -18,6 +18,30 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
         public abstract string GetUvInstallUrl();
         public abstract string GetInstallationRecommendations();
 
+        private string capturedUvxPath;
+        private bool pathsCaptured;
+        private bool capturedOverride;
+        private bool capturedFallback;
+        private Func<string, System.Threading.Tasks.Task<string>> validateUvx;
+
+        // Capture preferences on the Editor thread; the clone is owned by one background check.
+        internal PlatformDetectorBase CaptureForBackground()
+        {
+            var copy = (PlatformDetectorBase)MemberwiseClone();
+            var paths = MCPServiceLocator.Paths;
+            copy.capturedUvxPath = paths.GetUvxPath();
+            copy.capturedOverride = paths.HasUvxPathOverride;
+            copy.capturedFallback = paths.HasUvxPathFallback;
+            copy.validateUvx = paths.ValidateUvxExecutableAsync;
+            copy.pathsCaptured = true;
+            return copy;
+        }
+
+        internal string UvxInputIdentity => capturedUvxPath + "|" + capturedOverride + "|" + capturedFallback;
+        internal string UvxInputPath => capturedUvxPath;
+        protected bool HasExplicitUvxOverride => pathsCaptured ? capturedOverride : MCPServiceLocator.Paths.HasUvxPathOverride;
+        protected bool HasUvxFallback => pathsCaptured ? capturedFallback : MCPServiceLocator.Paths.HasUvxPathFallback;
+
         public virtual DependencyStatus DetectUv()
         {
             var status = new DependencyStatus("uv Package Manager", isRequired: true) { InstallationHint = GetUvInstallUrl() };
@@ -25,26 +49,27 @@ namespace MCPForUnity.Editor.Dependencies.PlatformDetectors
             try
             {
                 // Get uv path from PathResolverService (respects override)
-                string uvxPath = MCPServiceLocator.Paths.GetUvxPath();
+                string uvxPath = pathsCaptured ? capturedUvxPath : MCPServiceLocator.Paths.GetUvxPath();
 
                 // Verify uv executable and get version
-                if (MCPServiceLocator.Paths.TryValidateUvxExecutable(uvxPath, out string version))
+                string version = pathsCaptured
+                    ? validateUvx(uvxPath).GetAwaiter().GetResult()
+                    : (MCPServiceLocator.Paths.TryValidateUvxExecutable(uvxPath, out string detected) ? detected : null);
+                if (version != null)
                 {
                     status.IsAvailable = true;
                     status.Version = version;
                     status.Path = uvxPath;
 
                     // Check if we used fallback from override to system path
-                    if (MCPServiceLocator.Paths.HasUvxPathFallback)
+                    if (HasUvxFallback)
                     {
                         status.Details = $"Found uv {version} (fallback to system path)";
                         status.ErrorMessage = "Override path not found, using system path";
                     }
                     else
                     {
-                        status.Details = MCPServiceLocator.Paths.HasUvxPathOverride
-                            ? $"Found uv {version} (override path)"
-                            : $"Found uv {version} in system path";
+                        status.Details = HasExplicitUvxOverride ? $"Found uv {version} (override path)" : $"Found uv {version} in system path";
                     }
                     return status;
                 }
