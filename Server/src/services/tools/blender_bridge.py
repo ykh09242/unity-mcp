@@ -137,7 +137,10 @@ async def blender_bridge(
     ]
     | None = None,
     code: Annotated[str, "run_python: Python source to execute inside Blender."] | None = None,
-    max_size: Annotated[int, "screenshot: max pixels on the longest side (default 1000)."]
+    max_size: Annotated[
+        int,
+        "screenshot / compare_screenshot: max pixels on the longest side, 0..8192 (default 1000).",
+    ]
     | None = None,
     force: Annotated[bool, "sync_addon: overwrite even when the installed addon already matches."]
     | None = None,
@@ -151,6 +154,16 @@ async def blender_bridge(
     Cancellation is cooperative at local stage boundaries; it does not confirm that
     remote Blender execution stopped or roll back an admitted Unity operation.
     """
+    if (
+        action in {"screenshot", "compare_screenshot"}
+        and max_size is not None
+        and not 0 <= max_size <= 8192
+    ):
+        return {
+            "success": False,
+            "error": "capture_budget_exceeded",
+            "message": "max_size must be between 0 and 8192 pixels.",
+        }
     unity_instance = await get_unity_instance_from_context(ctx)
 
     params_dict = {

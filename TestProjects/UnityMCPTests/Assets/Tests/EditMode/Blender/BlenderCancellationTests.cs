@@ -61,6 +61,24 @@ namespace MCPForUnityTests.Editor.Blender
         [SetUp]
         public void SetUp()
         {
+            string ownedProject = Environment.GetEnvironmentVariable("UNITY_MCP_NATIVE_QA_PROJECT");
+            string nonce = Environment.GetEnvironmentVariable("UNITY_MCP_NATIVE_QA_NONCE");
+            Scene startup = SceneManager.GetActiveScene();
+            if (
+                Application.isBatchMode
+                && Guid.TryParseExact(nonce, "N", out _)
+                && !string.IsNullOrEmpty(ownedProject)
+                && string.Equals(
+                    Path.GetFullPath(ownedProject).TrimEnd(Path.DirectorySeparatorChar),
+                    Path.GetFullPath(Path.GetDirectoryName(Application.dataPath)),
+                    StringComparison.OrdinalIgnoreCase
+                )
+                && SceneManager.sceneCount == 1
+                && string.IsNullOrEmpty(startup.path)
+                && !startup.isDirty
+                && startup.GetRootGameObjects().All(value => value.name == "Main Camera" || value.name == "Directional Light")
+            )
+                EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             previousScene = SceneManager.GetActiveScene();
             previousSelection = Selection.activeObject;
             previousConsent = BlenderBridgeTool.ConsentGrantedOverride;
@@ -494,6 +512,69 @@ namespace MCPForUnityTests.Editor.Blender
             AssertCanceled(command, cancellation.Token);
             yield return DrainWatcher();
             observed.AssertNoMutations();
+        }
+
+        [UnityTest]
+        public IEnumerator Comparison_CleansOwnedIntermediate_AfterEveryLocalOutcome()
+        {
+            var target = new GameObject(unique);
+            SceneManager.MoveGameObjectToScene(target, scene);
+            replacedHandlers["manage_scene"] = handlers["manage_scene"];
+            foreach (string outcome in new[] { "failure", "cancel", "exception", "success" })
+            {
+                string unityPath = null;
+                var cancellation = NewCancellation();
+                handlers["manage_scene"] = HandlerInfo.Cooperative(
+                    "manage_scene",
+                    (parameters, token) =>
+                    {
+                        string directory = (string)parameters["output_folder"];
+                        Assert.IsNotEmpty(directory);
+                        StringAssert.Contains("Library/BlenderBridge/", directory.Replace('\\', '/'));
+                        Assert.AreEqual("unity.png", (string)parameters["fileName"]);
+                        unityPath = Path.Combine(directory, "unity.png");
+                        using (var output = new FileStream(unityPath, FileMode.CreateNew))
+                        {
+                            byte[] bytes = Convert.FromBase64String(
+                                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+                            );
+                            output.Write(bytes, 0, bytes.Length);
+                        }
+                        if (outcome == "cancel")
+                            cancellation.Cancel();
+                        if (outcome == "exception")
+                            throw new IOException("Owned nested capture failure");
+                        return Task.FromResult<object>(new { success = outcome != "failure", data = new { fullPath = unityPath } });
+                    }
+                );
+                var peer = NewPeer(screenshot: true);
+                Task<object> command = Invoke(new JObject { ["action"] = "compare_screenshot", ["game_object"] = unique }, cancellation.Token);
+                yield return Until(() => peer.Request.Task.IsCompleted);
+                peer.Release.Set();
+                yield return Until(() => command.IsCompleted && peer.Completion.IsCompleted);
+                peer.AssertCompleted();
+                Assert.IsNotEmpty(unityPath, outcome);
+                Assert.IsFalse(File.Exists(unityPath), "Never return or leave the Unity intermediate: " + outcome);
+                Assert.IsFalse(File.Exists(unityPath + ".meta"), outcome);
+                if (outcome == "cancel")
+                    AssertCanceled(command, cancellation.Token);
+                else
+                {
+                    JObject result = JObject.FromObject(command.GetAwaiter().GetResult());
+                    Assert.AreEqual(outcome == "success", result.Value<bool>("success"), result.ToString());
+                    if (outcome == "success")
+                    {
+                        foreach (string key in new[] { "path", "blender_path" })
+                        {
+                            string returned = (string)result["data"]?[key];
+                            Assert.IsTrue(File.Exists(returned), key);
+                            File.Delete(returned);
+                        }
+                        Directory.Delete(Path.GetDirectoryName(unityPath));
+                    }
+                }
+                Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(unityPath)), outcome);
+            }
         }
 
         [UnityTest]

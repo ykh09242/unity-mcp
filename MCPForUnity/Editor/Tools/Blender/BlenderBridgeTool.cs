@@ -220,7 +220,9 @@ namespace MCPForUnity.Editor.Tools.Blender
         /// <summary>Asks Blender for an offscreen viewport render and optionally copies it under Assets/.</summary>
         private static async Task<object> ScreenshotAsync(ToolParams p, int timeout, CancellationToken cancellationToken)
         {
-            int maxSize = Math.Max(64, p.GetInt("max_size", 1000) ?? 1000);
+            int requestedSize = p.GetInt("max_size", 1000) ?? 1000;
+            ScreenshotUtility.ValidateMaxResolution(requestedSize);
+            int maxSize = Math.Max(64, requestedSize);
             string outputFolder = p.Get("output_folder");
 
             string assetsRelativeFolder = null;
@@ -231,10 +233,9 @@ namespace MCPForUnity.Editor.Tools.Blender
                     return new ErrorResponse(folderError);
             }
 
-            string dir = Path.Combine(ProjectRoot(), "Library", "BlenderBridge");
             cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(dir);
-            string file = Path.Combine(dir, $"blender_viewport_{UniqueSuffix()}.png").Replace('\\', '/');
+            using var files = new CaptureFiles(ProjectRoot());
+            string file = files.PathFor("blender_viewport.png");
 
             JToken result = await BlenderSocketClient.SendAsync(
                 Endpoint,
@@ -256,17 +257,14 @@ namespace MCPForUnity.Editor.Tools.Blender
             string assetPath = null;
             if (assetsRelativeFolder != null)
             {
-                string absDir = AssetGenPaths.ToAbsolute(assetsRelativeFolder);
                 cancellationToken.ThrowIfCancellationRequested();
-                Directory.CreateDirectory(absDir);
-                assetPath = $"{assetsRelativeFolder}/{Path.GetFileName(file)}";
-                cancellationToken.ThrowIfCancellationRequested();
-                File.Copy(file, Path.Combine(absDir, Path.GetFileName(file)), true);
-                cancellationToken.ThrowIfCancellationRequested();
-                AssetDatabase.ImportAsset(assetPath);
+                assetPath = CopyCaptureAsset(file, assetsRelativeFolder, files, cancellationToken);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            files.Retain(file);
+            if (assetPath != null)
+                files.Retain(AssetGenPaths.ToAbsolute(assetPath));
             return new SuccessResponse(
                 "Captured Blender viewport.",
                 new JObject
@@ -856,7 +854,9 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 return new ErrorResponse("'game_object' is required for compare_screenshot.");
             if (GameObject.Find(target) == null)
                 return new ErrorResponse($"GameObject '{target}' not found in the open scene.");
-            int maxSize = Math.Max(128, p.GetInt("max_size", 800) ?? 800);
+            int requestedSize = p.GetInt("max_size", 800) ?? 800;
+            ScreenshotUtility.ValidateMaxResolution(requestedSize);
+            int maxSize = Math.Max(128, requestedSize);
             string outputFolder = p.Get("output_folder");
             string assetsRelativeFolder = null;
             if (
@@ -864,10 +864,10 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             )
                 return new ErrorResponse(folderError);
 
-            string dir = Path.Combine(ProjectRoot(), "Library", "BlenderBridge");
             cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(dir);
-            string blenderPng = Path.Combine(dir, $"compare_blender_{UniqueSuffix()}.png").Replace('\\', '/');
+            using var files = new CaptureFiles(ProjectRoot());
+            string blenderPng = files.PathFor("blender.png");
+            string unityPng = files.PathFor("unity.png");
             await BlenderSocketClient.SendAsync(
                 Endpoint,
                 "get_viewport_screenshot",
@@ -892,40 +892,35 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                         ["action"] = "screenshot",
                         ["view_target"] = target,
                         ["max_resolution"] = maxSize,
-                        ["screenshot_file_name"] = $"blender_bridge_compare_{UniqueSuffix()}",
+                        ["fileName"] = Path.GetFileName(unityPng),
+                        ["output_folder"] = Path.GetDirectoryName(unityPng),
                     },
                     cancellationToken
                 )
             );
             cancellationToken.ThrowIfCancellationRequested();
-            string unityPng = shot["data"]?["fullPath"]?.ToString();
-            if (!(shot.Value<bool?>("success") ?? false) || string.IsNullOrEmpty(unityPng) || !File.Exists(unityPng))
+            string reportedUnityPath = shot["data"]?["fullPath"]?.ToString();
+            if (!(shot.Value<bool?>("success") ?? false) || string.IsNullOrEmpty(reportedUnityPath) || !File.Exists(unityPng))
                 return new ErrorResponse($"Unity screenshot failed: {shot["error"] ?? shot["message"]}");
+            if (Path.GetFullPath(reportedUnityPath) != Path.GetFullPath(unityPng))
+                return new ErrorResponse("Unity screenshot did not return the owned intermediate path.");
 
-            string outPath = Path.Combine(dir, $"compare_{UniqueSuffix()}.png").Replace('\\', '/');
+            string outPath = files.PathFor("comparison.png");
             cancellationToken.ThrowIfCancellationRequested();
             (int width, int height) = CompositeSideBySide(blenderPng, unityPng, outPath);
-
-            // The Unity capture is written under Assets/ by manage_scene; keep the project clean.
-            cancellationToken.ThrowIfCancellationRequested();
-            string unityAssetPath = shot["data"]?["path"]?.ToString();
-            if (!string.IsNullOrEmpty(unityAssetPath) && unityAssetPath.StartsWith("Assets/", StringComparison.Ordinal))
-                AssetDatabase.DeleteAsset(unityAssetPath);
 
             string assetPath = null;
             if (assetsRelativeFolder != null)
             {
-                string absDir = AssetGenPaths.ToAbsolute(assetsRelativeFolder);
                 cancellationToken.ThrowIfCancellationRequested();
-                Directory.CreateDirectory(absDir);
-                assetPath = $"{assetsRelativeFolder}/{Path.GetFileName(outPath)}";
-                cancellationToken.ThrowIfCancellationRequested();
-                File.Copy(outPath, Path.Combine(absDir, Path.GetFileName(outPath)), true);
-                cancellationToken.ThrowIfCancellationRequested();
-                AssetDatabase.ImportAsset(assetPath);
+                assetPath = CopyCaptureAsset(outPath, assetsRelativeFolder, files, cancellationToken);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            files.Retain(blenderPng);
+            files.Retain(outPath);
+            if (assetPath != null)
+                files.Retain(AssetGenPaths.ToAbsolute(assetPath));
             return new SuccessResponse(
                 "Composited Blender (left) and Unity (right).",
                 new JObject
@@ -938,6 +933,145 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                     ["game_object"] = target,
                 }
             );
+        }
+
+        /// <summary>Private per-call staging; only explicitly returned files survive disposal.</summary>
+        internal sealed class CaptureFiles : IDisposable
+        {
+            private readonly string project;
+            private readonly string directory;
+            private readonly OutputFolderScope folders;
+            private readonly HashSet<string> owned;
+            private readonly HashSet<string> retained;
+
+            public CaptureFiles(string projectRoot)
+            {
+                project = SafePathUtility.ResolveWithinRoot(projectRoot, projectRoot);
+                var comparer = Path.DirectorySeparatorChar == '\\' ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+                owned = new HashSet<string>(comparer);
+                retained = new HashSet<string>(comparer);
+                directory = SafePathUtility.ResolveWithinRoot(project, Path.Combine("Library", "BlenderBridge", Guid.NewGuid().ToString("N")));
+                folders = new OutputFolderScope(project);
+                try
+                {
+                    folders.EnsureParentDirectory(Path.Combine(directory, "capture.png"));
+                }
+                catch
+                {
+                    folders.Dispose();
+                    throw;
+                }
+            }
+
+            public string PathFor(string name)
+            {
+                if (string.IsNullOrEmpty(name) || name != Path.GetFileName(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                    throw new ArgumentException("A simple capture filename is required.");
+                string path = SafePathUtility.ResolveWithinRoot(project, Path.Combine(directory, name));
+                if (File.Exists(path) || Directory.Exists(path))
+                    throw new IOException("Capture output already exists.");
+                owned.Add(path);
+                return path.Replace('\\', '/');
+            }
+
+            public void TrackCreated(string path) => owned.Add(SafePathUtility.ResolveWithinRoot(project, path));
+
+            public void Retain(string path)
+            {
+                path = SafePathUtility.ResolveWithinRoot(project, path);
+                if (!owned.Contains(path))
+                    throw new InvalidOperationException("Cannot retain an unowned capture.");
+                retained.Add(path);
+            }
+
+            public void Dispose()
+            {
+                foreach (string ownedPath in owned)
+                {
+                    if (retained.Contains(ownedPath))
+                        continue;
+                    try
+                    {
+                        string path = SafePathUtility.ResolveWithinRoot(project, ownedPath);
+                        if (!File.Exists(path))
+                            continue;
+                        string relative = path.Substring(project.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length + 1)
+                            .Replace('\\', '/');
+                        if (ScreenshotUtility.IsUnderAssets(relative))
+                        {
+                            AssetDatabase.DeleteAsset(relative);
+                            if (File.Exists(path))
+                                File.Delete(path);
+                        }
+                        else
+                            File.Delete(path);
+                    }
+                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is InvalidOperationException)
+                    {
+                        McpLog.Warn("Could not clean an owned Blender capture: " + error.Message);
+                    }
+                }
+                folders.Dispose();
+            }
+        }
+
+        private static string CopyCaptureAsset(string source, string folder, CaptureFiles files, CancellationToken cancellationToken)
+        {
+            byte[] png = ReadCapturePng(source);
+            string name = Path.GetFileNameWithoutExtension(source) + "_" + UniqueSuffix();
+            var output = ScreenshotUtility.PrepareCaptureResult(name, 1, true, folder, false);
+            string meta = SafePathUtility.ResolveWithinRoot(ProjectRoot(), output.FullPath + ".meta");
+            if (File.Exists(meta))
+                throw new IOException("Capture metadata already exists.");
+            cancellationToken.ThrowIfCancellationRequested();
+            ScreenshotUtility.WriteCaptureBytes(output.FullPath, png);
+            files.TrackCreated(output.FullPath);
+            cancellationToken.ThrowIfCancellationRequested();
+            AssetDatabase.ImportAsset(output.ProjectRelativePath, ImportAssetOptions.ForceSynchronousImport);
+            return output.ProjectRelativePath;
+        }
+
+        private const long MaxCapturePngBytes = ScreenshotUtility.MaxCapturePixels * 4 + 1024 * 1024;
+
+        private static byte[] ReadCapturePng(string path)
+        {
+            path = SafePathUtility.ResolveWithinRoot(ProjectRoot(), path);
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            long length = stream.Length;
+            if (length < 33 || length > MaxCapturePngBytes)
+                throw new IOException("Capture PNG exceeds its encoded byte budget or has no complete header.");
+            byte[] header = new byte[33];
+            ReadExactly(stream, header, 0, header.Length);
+            byte[] prefix = { 137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82 };
+            for (int i = 0; i < prefix.Length; i++)
+                if (header[i] != prefix[i])
+                    throw new IOException("Capture must have a valid PNG IHDR header.");
+            uint width = ReadBigEndian(header, 16),
+                height = ReadBigEndian(header, 20);
+            if (width > int.MaxValue || height > int.MaxValue)
+                throw new ArgumentException("Capture PNG dimensions exceed their budget.");
+            ScreenshotUtility.ValidateFrameDimensions((int)width, (int)height);
+            byte[] bytes = new byte[(int)length];
+            Buffer.BlockCopy(header, 0, bytes, 0, header.Length);
+            ReadExactly(stream, bytes, header.Length, bytes.Length - header.Length);
+            if (stream.ReadByte() != -1)
+                throw new IOException("Capture PNG changed while reading.");
+            return bytes;
+        }
+
+        private static uint ReadBigEndian(byte[] bytes, int offset) =>
+            ((uint)bytes[offset] << 24) | ((uint)bytes[offset + 1] << 16) | ((uint)bytes[offset + 2] << 8) | bytes[offset + 3];
+
+        private static void ReadExactly(Stream stream, byte[] bytes, int offset, int count)
+        {
+            while (count > 0)
+            {
+                int read = stream.Read(bytes, offset, count);
+                if (read == 0)
+                    throw new IOException("Capture PNG ended before its declared size.");
+                offset += read;
+                count -= read;
+            }
         }
 
         /// <summary>Scales both images to the smaller height and writes them side by side. Returns the output size.</summary>
@@ -955,11 +1089,12 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 int h = Math.Min(left.height, right.height);
                 l = ScaleToHeight(left, h);
                 r = ScaleToHeight(right, h);
+                ScreenshotUtility.ValidateFrameDimensions(checked(l.width + r.width), h);
                 outTex = new Texture2D(l.width + r.width, h, TextureFormat.RGBA32, false);
                 outTex.SetPixels(0, 0, l.width, h, l.GetPixels());
                 outTex.SetPixels(l.width, 0, r.width, h, r.GetPixels());
                 outTex.Apply();
-                File.WriteAllBytes(outPath, outTex.EncodeToPNG());
+                ScreenshotUtility.WriteCaptureBytes(outPath, outTex.EncodeToPNG());
                 return (outTex.width, h);
             }
             finally
@@ -973,11 +1108,13 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// <summary>Decodes a PNG from disk into a readable texture.</summary>
         private static Texture2D LoadPng(string path)
         {
+            byte[] png = ReadCapturePng(path);
             var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
             try
             {
-                if (!ImageConversion.LoadImage(tex, File.ReadAllBytes(path)))
+                if (!ImageConversion.LoadImage(tex, png))
                     throw new IOException($"Could not decode PNG: {path}");
+                ScreenshotUtility.ValidateFrameDimensions(tex.width, tex.height);
                 return tex;
             }
             catch

@@ -50,19 +50,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         )
         {
             PlayScenarioPlayerPlatform.Validate(target, backend);
-            BuildTarget buildTarget = Target(target);
-            PreflightBackend(target, backend, buildTarget);
-            bool hasUntitledScene = EnsureEditorReady();
-            string project = Path.GetDirectoryName(Application.dataPath);
+            string project = PlayScenarioPlayerFiles.CheckedAbsolute(Path.GetDirectoryName(Application.dataPath));
             string output = PlayScenarioPlayerFiles.CheckedAbsolute(outputDirectory);
             if (
-                output.Equals(project, StringComparison.OrdinalIgnoreCase)
-                || output.StartsWith(Application.dataPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                || output.Equals(Application.dataPath, StringComparison.OrdinalIgnoreCase)
+                (PlayScenarioPlayerFiles.IsWithin(project, output) && PlayScenarioPlayerFiles.IsWithin(output, project))
+                || PlayScenarioPlayerFiles.IsWithin(Application.dataPath, output)
             )
                 throw new ArgumentException("Player output must be an explicit empty directory outside Assets and the project root.");
             if (Directory.Exists(output) && Directory.EnumerateFileSystemEntries(output).Any())
                 throw new IOException("Player output directory must be empty.");
+            BuildTarget buildTarget = Target(target);
+            PreflightBackend(target, backend, buildTarget);
+            bool hasUntitledScene = EnsureEditorReady();
             foreach (string path in scenes)
                 if (AssetDatabase.LoadAssetAtPath<SceneAsset>(path) == null)
                     throw new ArgumentException("Scenario scene asset is unavailable: " + path);
@@ -75,7 +74,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (!scenes.SequenceEqual(parsed.ScenePaths, StringComparer.Ordinal))
                 throw new ArgumentException("Build scene inventory must match the frozen bundle.");
             string temporaryAssets = "Assets/__MCPScenarioBuild_" + Guid.NewGuid().ToString("N");
-            string temporaryAbsolute = Path.Combine(project, temporaryAssets);
+            string temporaryAbsolute = PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(project, temporaryAssets));
+            bool ownsTemporaryAssets = false;
             Scene bootstrap = default;
             Scene previousActive = SceneManager.GetActiveScene();
 #pragma warning disable CS0618
@@ -89,14 +89,20 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (previousBackend != selectedBackend)
                     PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, selectedBackend);
 #pragma warning restore CS0618
-                Directory.CreateDirectory(Path.Combine(temporaryAbsolute, "Resources"));
-                File.WriteAllText(Path.Combine(temporaryAbsolute, "link.xml"), CreateLinkerDescriptor(), new System.Text.UTF8Encoding(false));
-                File.WriteAllText(
-                    Path.Combine(temporaryAbsolute, "Resources", PlayScenarioPlayerBundle.ResourceName + ".json"),
-                    manifestJson,
-                    new System.Text.UTF8Encoding(false)
-                );
-                AssetDatabase.Refresh();
+                string folderGuid = AssetDatabase.CreateFolder("Assets", Path.GetFileName(temporaryAssets));
+                if (string.IsNullOrEmpty(folderGuid))
+                    throw new IOException("Could not create the temporary Player asset folder.");
+                temporaryAssets = AssetDatabase.GUIDToAssetPath(folderGuid);
+                temporaryAbsolute = PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(project, temporaryAssets));
+                ownsTemporaryAssets = true;
+                if (string.IsNullOrEmpty(AssetDatabase.CreateFolder(temporaryAssets, "Resources")))
+                    throw new IOException("Could not create the temporary Player resource folder.");
+                string linker = temporaryAssets + "/link.xml";
+                string resource = temporaryAssets + "/Resources/" + PlayScenarioPlayerBundle.ResourceName + ".json";
+                PlayScenarioPlayerFiles.WriteNew(Path.Combine(project, linker), CreateLinkerDescriptor(), 65536);
+                PlayScenarioPlayerFiles.WriteNew(Path.Combine(project, resource), manifestJson, PlayScenarioPlayerBundle.Limit);
+                AssetDatabase.ImportAsset(linker, ImportAssetOptions.ForceSynchronousImport);
+                AssetDatabase.ImportAsset(resource, ImportAssetOptions.ForceSynchronousImport);
                 bootstrap = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, hasUntitledScene ? NewSceneMode.Single : NewSceneMode.Additive);
                 string bootstrapPath = temporaryAssets + "/Bootstrap.unity";
                 if (!EditorSceneManager.SaveScene(bootstrap, bootstrapPath))
@@ -150,8 +156,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     }
                     finally
                     {
-                        AssetDatabase.DeleteAsset(temporaryAssets);
-                        AssetDatabase.Refresh();
+                        if (ownsTemporaryAssets && !AssetDatabase.DeleteAsset(temporaryAssets) && Directory.Exists(temporaryAbsolute))
+                            throw new IOException("Could not remove the owned temporary Player assets: " + temporaryAssets);
                     }
                 }
             }

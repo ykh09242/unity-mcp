@@ -34,10 +34,17 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public static bool IsWithin(string root, string path)
         {
-            root = CheckedAbsolute(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            path = CheckedAbsolute(path);
-            return string.Equals(root, path, StringComparison.OrdinalIgnoreCase)
-                || path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            root = DirectoryPath(root);
+            path = DirectoryPath(path);
+            var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            string prefix = root.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) ? root : root + Path.DirectorySeparatorChar;
+            return string.Equals(root, path, comparison) || path.StartsWith(prefix, comparison);
+        }
+
+        private static string DirectoryPath(string path)
+        {
+            string full = CheckedAbsolute(path);
+            return full.Length > Path.GetPathRoot(full).Length ? full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) : full;
         }
 
         /// <summary>Replaces only a previously created diagnostic file, without a delete/rename gap.</summary>
