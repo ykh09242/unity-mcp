@@ -72,7 +72,7 @@ def _decode_unity_response(data: bytes | bytearray) -> Any:
 
 def read_status_file(target_hash: str | None = None) -> dict | None:
     try:
-        base_path = Path.home().joinpath(".unity-mcp")
+        base_path = PortDiscovery.get_registry_dir()
         # Canonical hashes contain no glob/path syntax. Narrow enumeration to
         # their suffix, preserving newer legacy files that share that suffix.
         pattern = "unity-mcp-status-*.json"
