@@ -280,7 +280,8 @@ def test_entire_registered_catalog_has_strict_scalar_leaf_schemas():
         if isinstance(schema, dict):
             if "JsonValue" in str(schema.get("ref", "")):
                 return  # Arbitrary JSON intentionally includes both booleans and numbers.
-            if schema.get("type") in {"bool", "int", "float"}:
+            schema_type = schema.get("type")
+            if isinstance(schema_type, str) and schema_type in {"bool", "int", "float"}:
                 checked.append(label)
                 if schema.get("strict") is not True:
                     failures.append(label)
