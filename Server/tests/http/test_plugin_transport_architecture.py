@@ -196,15 +196,20 @@ def test_capabilities_are_negotiated_as_supported_intersection(client):
         assert set(welcome["capabilities"]) == {
             *FEATURES,
             "command_cancel_v1",
+            "command_progress_v1",
             "large_result_gzip_v1",
             "tool_settings_ack_v1",
         }
         assert set(registered["capabilities"]) == set(FEATURES)
         assert "tool_settings_ack_v1" not in registered["capabilities"]
+        assert "command_progress_v1" not in registered["capabilities"]
+        assert "unsupported" not in registered["capabilities"]
         state = PluginHub._connections[sid].state
         assert state.plugin_session_id == sid
         assert state.plugin_features == frozenset(FEATURES)
         assert "tool_settings_ack_v1" not in state.plugin_features
+        assert "command_progress_v1" not in state.plugin_features
+        assert "unsupported" not in state.plugin_features
         assert state.plugin_generation
 
 
