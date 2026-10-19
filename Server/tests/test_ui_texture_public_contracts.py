@@ -37,6 +37,7 @@ checks = 0
 step = 0
 fail_at = None
 wrapped = False
+transport_lost = False
 texture_reply = {}
 client_type = httpx.AsyncClient
 initial = {'success': True, 'message': 'Created',
@@ -47,15 +48,15 @@ def respond(request):
     value = json.loads(request.content)
     requests.append(value)
     step += 1
+    if transport_lost:
+        raise httpx.ReadError('Controlled transport loss', request=request)
     if texture_reply:
         response = copy.deepcopy(texture_reply)
     elif step == fail_at:
         response = {'success': False, 'error': 'Controlled native step rejected',
                     'data': {'count': 0, 'modified': False, 'reference': None}}
-    elif value['type'] == 'manage_gameobject':
+    elif value['type'] == 'manage_ugui':
         response = copy.deepcopy(initial)
-        if value['params']['name'].endswith('_Label'):
-            response['data']['instanceID'] = 202
     else:
         response = {'success': True, 'data': {'modified': False, 'count': 0}}
     return httpx.Response(200, json={'status': 'success', 'result': response} if wrapped else response)
@@ -73,50 +74,24 @@ def check(condition, label):
 
 ui_cases = [
     (['create-canvas', 'Fixture', '--render-mode', 'ScreenSpaceOverlay'], [
-        ('manage_gameobject', {'action': 'create', 'name': 'Fixture'}),
-        *[('manage_components', {'action': 'add', 'target': 101, 'searchMethod': 'by_id',
-                                'componentType': component})
-          for component in ('Canvas', 'CanvasScaler', 'GraphicRaycaster')],
-        ('manage_components', {'action': 'set_property', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'Canvas', 'property': 'renderMode', 'value': 0}),
+        ('manage_ugui', {'action': 'create_cli', 'element_type': 'canvas', 'name': 'Fixture',
+                         'render_mode': 'ScreenSpaceOverlay'}),
     ]),
     (['create-text', 'Fixture', '--parent', 'Parent', '--text', '', '--position', '0', '-2'], [
-        ('manage_gameobject', {'action': 'create', 'name': 'Fixture', 'parent': 'Parent',
-                              'position': [0.0, -2.0]}),
-        ('manage_components', {'action': 'add', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'TextMeshProUGUI'}),
-        ('manage_components', {'action': 'set_property', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'RectTransform', 'property': 'anchoredPosition',
-                               'value': [0.0, -2.0]}),
-        ('manage_components', {'action': 'set_property', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'TextMeshProUGUI', 'property': 'text', 'value': ''}),
+        ('manage_ugui', {'action': 'create_cli', 'element_type': 'text', 'name': 'Fixture',
+                         'parent': 'Parent', 'text': '', 'position': [0.0, -2.0]}),
     ]),
     (['create-text', 'Fixture', '--parent', 'Parent'], [
-        ('manage_gameobject', {'action': 'create', 'name': 'Fixture', 'parent': 'Parent',
-                              'position': [0, 0]}),
-        ('manage_components', {'action': 'add', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'TextMeshProUGUI'}),
-        ('manage_components', {'action': 'set_property', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'TextMeshProUGUI', 'property': 'text', 'value': 'New Text'}),
+        ('manage_ugui', {'action': 'create_cli', 'element_type': 'text', 'name': 'Fixture',
+                         'parent': 'Parent', 'text': 'New Text', 'position': [0, 0]}),
     ]),
     (['create-button', 'Fixture', '--parent', 'Parent', '--text', '😀'], [
-        ('manage_gameobject', {'action': 'create', 'name': 'Fixture', 'parent': 'Parent'}),
-        ('manage_components', {'action': 'add', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'Image'}),
-        ('manage_components', {'action': 'add', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'Button'}),
-        ('manage_gameobject', {'action': 'create', 'name': 'Fixture_Label', 'parent': 101}),
-        ('manage_components', {'action': 'add', 'target': 202, 'searchMethod': 'by_id',
-                               'componentType': 'TextMeshProUGUI'}),
-        ('manage_components', {'action': 'set_property', 'target': 202, 'searchMethod': 'by_id',
-                               'componentType': 'TextMeshProUGUI', 'property': 'text', 'value': '😀'}),
+        ('manage_ugui', {'action': 'create_cli', 'element_type': 'button', 'name': 'Fixture',
+                         'parent': 'Parent', 'text': '😀'}),
     ]),
     (['create-image', 'Fixture', '--parent', 'Parent', '--sprite', 'Assets/Sprite.png'], [
-        ('manage_gameobject', {'action': 'create', 'name': 'Fixture', 'parent': 'Parent'}),
-        ('manage_components', {'action': 'add', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'Image'}),
-        ('manage_components', {'action': 'set_property', 'target': 101, 'searchMethod': 'by_id',
-                               'componentType': 'Image', 'property': 'sprite', 'value': 'Assets/Sprite.png'}),
+        ('manage_ugui', {'action': 'create_cli', 'element_type': 'image', 'name': 'Fixture',
+                         'parent': 'Parent', 'sprite': 'Assets/Sprite.png'}),
     ]),
 ]
 for args, wires in ui_cases:
@@ -129,9 +104,9 @@ for args, wires in ui_cases:
             sent = requests[before:]
             expected_count = fail_at if fail_at else len(wires)
             label = repr((args[0], wrapped, fail_at))
-            check(len(sent) == expected_count, 'stop on exact failing step ' + label)
+            check(len(sent) == expected_count, 'single native transaction without retry ' + label)
             check([(row['type'], row['params']) for row in sent] == wires[:expected_count],
-                  'created identity and literal payload ' + label)
+                  'closed native creation payload ' + label)
             check(all(row['unity_instance'] == 'Project@fixture' for row in sent),
                   'CLI instance ' + label)
             check(result.exit_code == (1 if fail_at else 0), 'UI exit ' + label)
@@ -145,9 +120,12 @@ for args, wires in ui_cases:
             print('CLI_WIRE', json.dumps({'args': args, 'fail_at': fail_at, 'requests': sent}))
         fail_at = None
         step = 0
+        before = len(requests)
         result = runner.invoke(cli, ['--format', 'text', 'ui', *args])
         check(result.exit_code == 0 and 'Created ' in result.output,
               'UI text notice ' + args[0])
+        check([(row['type'], row['params']) for row in requests[before:]] == wires,
+              'text output uses one native transaction ' + args[0])
 
 wrapped = False
 fail_at = None
@@ -160,6 +138,17 @@ for value in (None, 0, True, '', 'bad'):
           'missing ID stops followups ' + repr(value))
     check('no valid instanceID' in result.output, 'missing ID diagnostic ' + repr(value))
 initial['data']['instanceID'] = 101
+
+transport_lost = True
+for args, wires in ui_cases:
+    before = len(requests)
+    result = runner.invoke(cli, ['--format', 'json', 'ui', *args])
+    check(result.exit_code == 1, 'transport loss fails ' + args[0])
+    check([(row['type'], row['params']) for row in requests[before:]] == wires,
+          'transport loss never retries or compensates ' + args[0])
+    check('Controlled transport loss' in result.output, 'transport diagnostic ' + args[0])
+    check('Created' not in result.output, 'transport loss has no creation success ' + args[0])
+transport_lost = False
 
 texture_cases = [
     (['create', 'Assets/Fixture.png', '--width', '1', '--height', '1', '--color', '#00000000'],
