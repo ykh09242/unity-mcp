@@ -19,12 +19,12 @@ namespace MCPForUnity.Editor.Tools
     // Only create_control uses this transaction. Legacy creation keeps its existing behavior.
     internal static class UguiCompoundCreation
     {
-        private static Action<string, GameObject> FaultForTests;
-        private static Func<string, Type> ResolveForTests;
-        private static Func<Type, string, PropertyInfo> PropertyForTests;
-        private static Action<Component, string> AfterAssignmentForTests;
-        private static Action BeforeRollbackForTests;
-        private static Action BeforeFinalizeForTests;
+        private static Action<string, GameObject> FaultForTests = null;
+        private static Func<string, Type> ResolveForTests = null;
+        private static Func<Type, string, PropertyInfo> PropertyForTests = null;
+        private static Action<Component, string> AfterAssignmentForTests = null;
+        private static Action BeforeRollbackForTests = null;
+        private static Action BeforeFinalizeForTests = null;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
         private const BindingFlags PublicInstance = BindingFlags.Public | BindingFlags.Instance;
 
