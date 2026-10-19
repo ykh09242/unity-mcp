@@ -536,7 +536,7 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse($"Failed to create material asset at {matPath}");
                 }
 
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(existing);
 
                 // Assign to renderer
                 Undo.RecordObject(renderer, "Assign unique material");
@@ -854,7 +854,7 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"Failed to create material asset at {materialPath}");
 
                 EditorUtility.SetDirty(material);
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(material);
 
                 return new SuccessResponse($"Created material at {materialPath} with shader {shaderName}");
             }

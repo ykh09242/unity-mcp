@@ -381,11 +381,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string action = replaceExisting ? "Replaced existing" : "Created new";
             McpLog.Info($"[ManagePrefabs] {action} prefab at '{path}'.");
 
-            if (success)
-            {
-                AssetDatabase.SaveAssets();
-            }
-
             return success;
         }
 
@@ -454,7 +449,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             if (persistedPaths.Count > 0)
             {
-                AssetDatabase.SaveAssets();
+                foreach (string materialPath in persistedPaths)
+                    AssetDatabase.SaveAssetIfDirty(new GUID(AssetDatabase.AssetPathToGUID(materialPath)));
                 McpLog.Info($"[ManagePrefabs] Persisted {persistedPaths.Count} runtime material(s) before prefab save.");
             }
 
@@ -598,9 +594,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                                 throw new InvalidOperationException($"A file occupies the material output folder '{parent}'.");
                             parent = Path.GetDirectoryName(parent);
                         }
-                        string uniquePath = AssetDatabase.GenerateUniqueAssetPath(path);
-                        if (Directory.Exists(AssetPathUtility.GetFullAssetPath(uniquePath)))
-                            throw new InvalidOperationException($"A directory occupies the material destination '{uniquePath}'.");
+                        // Unity cannot generate a unique asset path until its parent is registered.
+                        // Creation validates the selected destination after EnsureFolder below.
                     }
                 }
             }
@@ -1892,7 +1887,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             prefabStage.ClearDirtiness();
-            AssetDatabase.SaveAssets();
             return true;
         }
 

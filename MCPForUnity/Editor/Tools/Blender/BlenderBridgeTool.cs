@@ -621,7 +621,9 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 cancellationToken.ThrowIfCancellationRequested();
                 EditorUtility.SetDirty(animation);
                 cancellationToken.ThrowIfCancellationRequested();
-                AssetDatabase.SaveAssets();
+                foreach (AnimationClip clip in clips)
+                    AssetDatabase.SaveAssetIfDirty(clip);
+                AssetDatabase.SaveAssetIfDirty(animation);
                 cancellationToken.ThrowIfCancellationRequested();
                 return new JObject
                 {
@@ -666,7 +668,10 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             cancellationToken.ThrowIfCancellationRequested();
             EditorUtility.SetDirty(animator);
             cancellationToken.ThrowIfCancellationRequested();
-            AssetDatabase.SaveAssets();
+            foreach (AnimationClip clip in clips)
+                AssetDatabase.SaveAssetIfDirty(clip);
+            AssetDatabase.SaveAssetIfDirty(controller);
+            AssetDatabase.SaveAssetIfDirty(animator);
             cancellationToken.ThrowIfCancellationRequested();
             return new JObject
             {

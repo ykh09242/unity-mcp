@@ -8,6 +8,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -146,7 +147,29 @@ namespace MCPForUnityTests.Editor.Tools
         {
             EnsureMaterialsFolder();
             string collision = assetRoot + "/Materials/Shared_mat.mat";
-            AssetDatabase.CreateFolder(assetRoot + "/Materials", "Shared_mat.mat");
+            // Some Shader Graph versions treat a folder ending in .mat as a material.
+            // Acknowledge only that optional package's exact fixture-creation exception.
+            void ObservePackageFolderImport(string message, string stack, LogType type)
+            {
+                if (
+                    type == LogType.Exception
+                    && message == "NullReferenceException: Object reference not set to an instance of an object"
+                    && (
+                        stack.Contains("UnityEditor.Rendering.BuiltIn.MaterialPostprocessor.OnPostprocessAllAssets")
+                        || stack.Contains("UnityEditor.Rendering.Universal.MaterialPostprocessor.OnPostprocessAllAssets")
+                    )
+                )
+                    LogAssert.Expect(type, message);
+            }
+            Application.logMessageReceived += ObservePackageFolderImport;
+            try
+            {
+                AssetDatabase.CreateFolder(assetRoot + "/Materials", "Shared_mat.mat");
+            }
+            finally
+            {
+                Application.logMessageReceived -= ObservePackageFolderImport;
+            }
             string guid = AssetDatabase.AssetPathToGUID(collision);
             GameObject root = Root();
             Renderer source = Child(root, "Shared", Material(Color.red));

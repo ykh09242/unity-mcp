@@ -222,7 +222,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
             controller.parameters = allParams;
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
             return new
             {
                 success = true,

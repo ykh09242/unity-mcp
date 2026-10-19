@@ -63,7 +63,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             state.motion = blendTree;
 
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
 
             return new
             {
@@ -151,7 +151,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             state.motion = blendTree;
 
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
 
             return new
             {
@@ -236,7 +236,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
                 EditorUtility.SetDirty(blendTree);
                 EditorUtility.SetDirty(controller);
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(controller);
 
                 return new
                 {
@@ -275,7 +275,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
                 EditorUtility.SetDirty(blendTree);
                 EditorUtility.SetDirty(controller);
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(controller);
 
                 return new
                 {

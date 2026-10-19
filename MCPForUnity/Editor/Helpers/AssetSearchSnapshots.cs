@@ -125,8 +125,8 @@ namespace MCPForUnity.Editor.Helpers
                 if (path.Length > MaximumStringCharacters || guid.Length > MaximumStringCharacters)
                     return LimitError();
                 Observe("read_write_time");
-                DateTime written = File.GetLastWriteTimeUtc(Path.Combine(Directory.GetCurrentDirectory(), path));
-                if (cutoff.HasValue && written <= cutoff.Value)
+                DateTime? written = AssetPathUtility.GetLastWriteTimeUtc(path);
+                if (cutoff.HasValue && (!written.HasValue || written.Value <= cutoff.Value))
                     continue;
                 // Refuse before allocating or appending the next metadata row.
                 if (rows.Count >= MaximumRows)
@@ -145,7 +145,7 @@ namespace MCPForUnity.Editor.Helpers
                     ["fileName"] = fileName,
                     ["isFolder"] = AssetDatabase.IsValidFolder(path),
                     ["instanceID"] = 0,
-                    ["lastWriteTimeUtc"] = written.ToString("o", CultureInfo.InvariantCulture),
+                    ["lastWriteTimeUtc"] = written?.ToString("o", CultureInfo.InvariantCulture),
                     ["previewBase64"] = null,
                     ["previewWidth"] = 0,
                     ["previewHeight"] = 0,

@@ -544,7 +544,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 AssetDatabase.CreateAsset(profile, path);
                 if (!AssetDatabase.Contains(profile) || AssetDatabase.GetAssetPath(profile) != path)
                     return new ErrorResponse($"Failed to create VolumeProfile asset at '{path}'.");
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(profile);
                 folders.Complete();
 
                 return new

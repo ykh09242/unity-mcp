@@ -68,7 +68,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                     }
                 }
 
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(clip);
                 folders.Complete();
 
                 return new
@@ -220,7 +220,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             Undo.RecordObject(clip, append ? "Add Animation Curve" : "Set Animation Curve");
             AnimationUtility.SetEditorCurve(clip, binding, curve);
             EditorUtility.SetDirty(clip);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(clip);
 
             string verb = append ? "Added" : "Set";
             return new
@@ -325,7 +325,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             AnimationUtility.SetEditorCurve(clip, bindingY, new AnimationCurve(yKeys.ToArray()));
             AnimationUtility.SetEditorCurve(clip, bindingZ, new AnimationCurve(zKeys.ToArray()));
             EditorUtility.SetDirty(clip);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(clip);
 
             return new
             {
@@ -372,7 +372,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 legacyAnim.AddClip(clip, clip.name);
                 legacyAnim.playAutomatically = true;
                 EditorUtility.SetDirty(legacyAnim);
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(clip);
+                AssetDatabase.SaveAssetIfDirty(legacyAnim);
 
                 // Warn about AnimationEvents if present — they require a MonoBehaviour receiver
                 var events = AnimationUtility.GetAnimationEvents(clip);
@@ -407,7 +408,8 @@ namespace MCPForUnity.Editor.Tools.Animation
                 legacyAnim.AddClip(clip, clip.name);
                 legacyAnim.playAutomatically = true;
                 EditorUtility.SetDirty(go);
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(clip);
+                AssetDatabase.SaveAssetIfDirty(go);
                 var legacyWarning = !wasLegacy ? " Warning: clip was converted to legacy and will not be usable in Mecanim/BlendTrees." : "";
                 return new { success = true, message = $"Added Animation component and assigned clip '{clip.name}' to '{go.name}'.{legacyWarning}" };
             }
@@ -596,7 +598,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             AnimationUtility.SetAnimationEvents(clip, events.ToArray());
 
             EditorUtility.SetDirty(clip);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(clip);
 
             return new
             {
@@ -661,7 +663,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             AssetPathUtility.GetFullAssetPath(clipPath);
             AnimationUtility.SetAnimationEvents(clip, events.ToArray());
             EditorUtility.SetDirty(clip);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(clip);
 
             return new
             {

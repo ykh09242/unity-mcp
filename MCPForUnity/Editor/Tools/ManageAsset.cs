@@ -432,7 +432,7 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"Failed to create asset '{assetType}' at '{fullPath}'. See logs for details.");
                 }
 
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(newAsset);
                 // AssetDatabase.Refresh(); // CreateAsset often handles refresh
                 var response = new SuccessResponse($"Asset '{fullPath}' created successfully.", GetAssetData(fullPath));
                 folders.Complete();
@@ -617,10 +617,8 @@ namespace MCPForUnity.Editor.Tools
                     AssetPathUtility.GetFullAssetPath(fullPath);
                     // Mark the asset as dirty (important for prefabs/SOs) so Unity knows to save it.
                     EditorUtility.SetDirty(asset);
-                    // Save all modified assets to disk.
-                    AssetDatabase.SaveAssets();
-                    // Refresh might be needed in some edge cases, but SaveAssets usually covers it.
-                    // AssetDatabase.Refresh();
+                    // Save only the requested asset file, preserving unrelated dirty assets.
+                    AssetDatabase.SaveAssetIfDirty(asset);
                     return new SuccessResponse($"Asset '{fullPath}' modified successfully.", GetAssetData(fullPath));
                 }
                 else
@@ -817,7 +815,7 @@ namespace MCPForUnity.Editor.Tools
             string[] folderScope = null;
             if (!string.IsNullOrEmpty(pathScope))
             {
-                folderScope = new string[] { AssetPathUtility.SanitizeAssetPath(pathScope) };
+                folderScope = new string[] { AssetPathUtility.GetAssetReferencePath(pathScope, allowPackages: true) };
                 // A continuation reads the captured scope; changed/deleted folders are handled by snapshot invalidation.
                 if ((!metadataOnly || @params["searchSnapshot"] == null) && !AssetDatabase.IsValidFolder(folderScope[0]))
                 {
@@ -882,8 +880,8 @@ namespace MCPForUnity.Editor.Tools
                     // Apply date filter if present
                     if (filterDateAfter.HasValue)
                     {
-                        DateTime lastWriteTime = File.GetLastWriteTimeUtc(Path.Combine(Directory.GetCurrentDirectory(), assetPath));
-                        if (lastWriteTime <= filterDateAfter.Value)
+                        DateTime? lastWriteTime = AssetPathUtility.GetLastWriteTimeUtc(assetPath);
+                        if (!lastWriteTime.HasValue || lastWriteTime.Value <= filterDateAfter.Value)
                         {
                             continue; // Skip assets older than or equal to the filter date
                         }
@@ -918,7 +916,7 @@ namespace MCPForUnity.Editor.Tools
         {
             if (string.IsNullOrEmpty(path))
                 return new ErrorResponse("'path' is required for get_info.");
-            string fullPath = AssetPathUtility.SanitizeAssetPath(path);
+            string fullPath = AssetPathUtility.GetAssetReferencePath(path, allowPackages: true);
             if (!AssetExists(fullPath))
                 return new ErrorResponse($"Asset not found at path: {fullPath}");
 
@@ -1261,7 +1259,7 @@ namespace MCPForUnity.Editor.Tools
                 fileName = Path.GetFileName(path),
                 isFolder = AssetDatabase.IsValidFolder(path),
                 instanceID = asset?.GetInstanceIDCompat() ?? 0,
-                lastWriteTimeUtc = File.GetLastWriteTimeUtc(Path.Combine(Directory.GetCurrentDirectory(), path)).ToString("o"), // ISO 8601
+                lastWriteTimeUtc = AssetPathUtility.GetLastWriteTimeUtc(path)?.ToString("o", CultureInfo.InvariantCulture),
                 // --- Preview Data ---
                 previewBase64 = previewBase64, // PNG data as Base64 string
                 previewWidth = previewWidth,

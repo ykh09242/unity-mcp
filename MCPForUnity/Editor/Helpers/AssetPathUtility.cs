@@ -25,6 +25,42 @@ namespace MCPForUnity.Editor.Helpers
         public static string GetAssetReferencePath(string path, bool allowPackages = false, bool allowBuiltIn = false) =>
             UnityAssetPath.Resolve(path, allowPackages, allowBuiltIn);
 
+        /// <summary>Returns the physical modification time, or null when no checked file/folder is available.</summary>
+        internal static DateTime? GetLastWriteTimeUtc(string path)
+        {
+            try
+            {
+                path = GetAssetReferencePath(path, allowPackages: true);
+                string physical;
+                if (path.StartsWith("Packages/", StringComparison.Ordinal))
+                {
+                    var package = PackageInfo.FindForAssetPath(path);
+                    if (package == null)
+                        return null;
+                    physical = ResolvePackageFilePath(path, package.assetPath, package.resolvedPath);
+                }
+                else
+                    physical = GetFullAssetPath(path);
+                FileSystemInfo entry = Directory.Exists(physical) ? (FileSystemInfo)new DirectoryInfo(physical) : new FileInfo(physical);
+                entry.Refresh();
+                return entry.Exists ? entry.LastWriteTimeUtc : (DateTime?)null;
+            }
+            catch (Exception error)
+                when (error is IOException || error is UnauthorizedAccessException || error is ArgumentException || error is InvalidOperationException)
+            {
+                return null;
+            }
+        }
+
+        internal static string ResolvePackageFilePath(string path, string assetRoot, string physicalRoot)
+        {
+            if (string.IsNullOrEmpty(assetRoot) || string.IsNullOrEmpty(physicalRoot) || !path.StartsWith(assetRoot + "/", StringComparison.Ordinal))
+                throw new ArgumentException("A registered package asset and its physical root are required.");
+            string root = Path.GetFullPath(physicalRoot);
+            SafePathUtility.ResolveWithinRoot(Path.GetPathRoot(root), root);
+            return SafePathUtility.ResolveWithinRoot(root, path.Substring(assetRoot.Length + 1));
+        }
+
         public static string GetAssetPathFromGuid(string guid, bool allowPackages = false, bool allowBuiltIn = false)
         {
             string path = AssetDatabase.GUIDToAssetPath(guid?.Replace("-", "").ToLowerInvariant());

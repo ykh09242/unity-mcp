@@ -321,7 +321,7 @@ namespace MCPForUnity.Editor.Tools
 
             AssetPathUtility.GetFullAssetPath(finalPath);
             EditorUtility.SetDirty(instance);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(instance);
 
             var response = new SuccessResponse(
                 "ScriptableObject created.",
@@ -1527,7 +1527,7 @@ namespace MCPForUnity.Editor.Tools
                 AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
                 EditorUtility.SetDirty(target);
                 if (saveAssets)
-                    AssetDatabase.SaveAssets();
+                    AssetDatabase.SaveAssetIfDirty(target);
             }
 
             return (results, warnings);

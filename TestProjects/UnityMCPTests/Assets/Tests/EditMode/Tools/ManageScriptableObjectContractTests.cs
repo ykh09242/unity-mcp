@@ -31,7 +31,7 @@ namespace MCPForUnityTests.Editor.Tools
             _asset = ScriptableObject.CreateInstance<ScriptableObjectContractDefinition>();
             _asset.intValue = 99;
             AssetDatabase.CreateAsset(_asset, _path);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(_asset);
         }
 
         [TearDown]
@@ -306,7 +306,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string guid = AssetDatabase.AssetPathToGUID(_path);
             _asset.floatValue = 99;
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(_asset);
             string name = overwrite ? "Existing" : "Created";
             JObject response = JObject.FromObject(
                 ManageScriptableObject.HandleCommand(
@@ -408,7 +408,7 @@ namespace MCPForUnityTests.Editor.Tools
             holder.objectReference = _asset;
             string holderPath = _root + "/Holder.asset";
             AssetDatabase.CreateAsset(holder, holderPath);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(holder);
             string guid = AssetDatabase.AssetPathToGUID(_path);
             string fullPath = Path.Combine(Application.dataPath, _path.Substring("Assets/".Length));
             byte[] bytes = File.ReadAllBytes(fullPath);
@@ -468,7 +468,7 @@ namespace MCPForUnityTests.Editor.Tools
             child.name = "Child";
             child.intValue = 17;
             AssetDatabase.AddObjectToAsset(child, _asset);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(_asset);
             string fullPath = Path.Combine(Application.dataPath, _path.Substring("Assets/".Length));
             byte[] bytes = File.ReadAllBytes(fullPath);
             byte[] meta = File.ReadAllBytes(fullPath + ".meta");
@@ -516,7 +516,7 @@ namespace MCPForUnityTests.Editor.Tools
             AssetDatabase.DeleteAsset(_path);
             var original = ScriptableObject.CreateInstance<ManageScriptableObjectTestDefinition>();
             AssetDatabase.CreateAsset(original, _path);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(original);
             string guid = AssetDatabase.AssetPathToGUID(_path);
             var reference = referenceKind == "guid" ? new JObject { ["guid"] = guid } : new JObject { ["instanceID"] = original.GetInstanceIDCompat() };
             var request = ReplaceTypeRequest();
@@ -600,7 +600,7 @@ namespace MCPForUnityTests.Editor.Tools
             var unrelated = ScriptableObject.CreateInstance<ScriptableObjectContractDefinition>();
             string path = _root + "/Unrelated.asset";
             AssetDatabase.CreateAsset(unrelated, path);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(unrelated);
             string fullPath = Path.Combine(Application.dataPath, path.Substring("Assets/".Length));
             byte[] bytes = File.ReadAllBytes(fullPath);
             unrelated.intValue = 1234;

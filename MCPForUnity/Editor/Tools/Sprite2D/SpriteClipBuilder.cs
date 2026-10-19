@@ -291,8 +291,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 }
             }
 
-            if (created.Count > 0)
-                AssetDatabase.SaveAssets();
+            // CreateAsset serialized each owned clip before it entered the result list.
             return created;
         }
 

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -31,7 +32,7 @@ namespace MCPForUnityTests.Editor.Tools
             _matPath = $"{TempRoot}/TestMat_{guid}.mat";
 
             // Create a basic material
-            var material = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+            var material = new Material(RenderPipelineUtility.ResolveShader("Standard"));
             AssetDatabase.CreateAsset(material, _matPath);
             AssetDatabase.SaveAssets();
         }

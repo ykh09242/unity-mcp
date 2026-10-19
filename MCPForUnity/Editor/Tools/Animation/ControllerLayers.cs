@@ -49,7 +49,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             controller.layers = layers;
 
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
 
             return new
             {
@@ -123,7 +123,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             controller.RemoveLayer(layerIndex.Value);
 
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
 
             return new
             {
@@ -194,7 +194,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             controller.layers = layers;
 
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
 
             return new
             {
