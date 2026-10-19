@@ -1,12 +1,18 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Linq;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Transport.Transports;
+using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEngine;
 using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Services
@@ -17,6 +23,7 @@ namespace MCPForUnityTests.Editor.Services
     /// so the work ran twice — visibly, for commands with side effects (issue #1130).
     /// </summary>
     [TestFixture]
+    [Parallelizable(ParallelScope.None)]
     public class StdioBrokerResendTests
     {
         private const int ConnectTimeoutMs = 5000;
@@ -149,6 +156,197 @@ namespace MCPForUnityTests.Editor.Services
                 $"the resend should have attached to the in-flight command, but {queuedAfterResend} "
                     + "matching entries were queued — the command would run that many times"
             );
+        }
+
+        [Test]
+        public void ProgressBusinessIdentity_PreservesLiteralStringsAndExactBytes()
+        {
+            string business = "{\"type\":\"batch_execute\",\"params\":{\"text\":\"2026-10-19T01:02:03Z\",\"commands\":[]}}";
+            object original = new object(),
+                replacement = new object();
+            Assert.IsTrue(StdioBridgeHost.IsBrokerResend(business, original, business, replacement));
+            Assert.IsFalse(StdioBridgeHost.IsBrokerResend(business, original, business, original));
+            Assert.IsFalse(StdioBridgeHost.IsBrokerResend(business, original, business, null));
+        }
+
+        [Test]
+        public void ProgressBusinessIdentity_DoesNotNormalizeWhitespaceOrPropertyOrder()
+        {
+            const string business = "{\"type\":\"batch_execute\",\"params\":{\"commands\":[]}}";
+            object original = new object(),
+                replacement = new object();
+            Assert.IsFalse(StdioBridgeHost.IsBrokerResend(business, original, "{ \"type\":\"batch_execute\",\"params\":{\"commands\":[]}}", replacement));
+            Assert.IsFalse(StdioBridgeHost.IsBrokerResend(business, original, "{\"params\":{\"commands\":[]},\"type\":\"batch_execute\"}", replacement));
+        }
+
+        [Test]
+        public async Task ProgressSuppressedResend_KeepsOriginalOwnerAndDoesNotAttachNewObserver()
+        {
+            const string firstName = "__core06_broker_first",
+                secondName = "__core06_broker_second";
+            int firstCalls = 0,
+                secondCalls = 0;
+            var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var suppressed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var handlers = new ProgressHandlerScope();
+            using var enabled = NativeProgressProbe.EnableTools("batch_execute");
+            handlers.Set(
+                firstName,
+                new HandlerInfo(
+                    firstName,
+                    _ =>
+                    {
+                        firstCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                secondName,
+                new HandlerInfo(
+                    secondName,
+                    null,
+                    async _ =>
+                    {
+                        secondCalls++;
+                        entered.TrySetResult(true);
+                        try
+                        {
+                            return await release.Task.ConfigureAwait(true);
+                        }
+                        finally
+                        {
+                            settled.TrySetResult(true);
+                        }
+                    }
+                )
+            );
+            using var host = new StdioBridgeReconnectTests.TimingHostScope(_ => Task.FromResult<object>(new { unused = true }));
+            var batch = new JObject
+            {
+                ["type"] = "batch_execute",
+                ["params"] = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = firstName }, new JObject { ["tool"] = secondName }) },
+            };
+            NativeProgressProbe.RequireBatchCapacity((JObject)batch["params"]);
+            string original = batch.ToString(Formatting.None);
+            string firstId = Guid.NewGuid().ToString("D"),
+                secondId = Guid.NewGuid().ToString("D");
+            TcpClient first = null,
+                second = null;
+            Application.LogCallback onLog = (message, _stack, _kind) =>
+            {
+                if (message.Contains("Suppressed duplicate command resent on a new connection; awaiting the in-flight result instead of running it twice."))
+                    suppressed.TrySetResult(true);
+            };
+            Application.logMessageReceivedThreaded += onLog;
+            try
+            {
+                var connectFirst = host.Track(
+                    Task.Run(() => StdioBridgeReconnectTests.ConnectProgressPeer(host.Port, host.Token, new JArray("command_progress_v1"), out _))
+                );
+                await NativeProgressProbe.AwaitOwned(connectFirst);
+                first = await connectFirst;
+                var sendFirst = host.Track(
+                    Task.Run(() =>
+                    {
+                        StdioBridgeReconnectTests.SendFrame(first.GetStream(), StdioBridgeReconnectTests.ProgressPrelude(firstId));
+                        StdioBridgeReconnectTests.SendFrame(first.GetStream(), Encoding.UTF8.GetBytes(original));
+                        return true;
+                    })
+                );
+                await NativeProgressProbe.AwaitOwned(sendFirst);
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                var progress = host.Track(Task.Run(() => StdioBridgeReconnectTests.ReadFrame(first.GetStream(), ReadTimeoutMs)));
+                await NativeProgressProbe.AwaitOwned(progress);
+                StdioBridgeReconnectTests.AssertProgressPayload(await progress, firstId, 1);
+                Assert.IsFalse(settled.Task.IsCompleted);
+                var before = FindProgressQueued(original);
+                object originalProgress = before.Progress;
+                object originalOwner = before.Owner;
+                object originalTcs = before.Tcs;
+                Assert.IsNotNull(originalProgress);
+                Assert.AreEqual(firstId, before.ProgressId);
+                var connectSecond = host.Track(
+                    Task.Run(() => StdioBridgeReconnectTests.ConnectProgressPeer(host.Port, host.Token, new JArray("command_progress_v1"), out _))
+                );
+                await NativeProgressProbe.AwaitOwned(connectSecond);
+                second = await connectSecond;
+                var sendSecond = host.Track(
+                    Task.Run(() =>
+                    {
+                        StdioBridgeReconnectTests.SendFrame(second.GetStream(), StdioBridgeReconnectTests.ProgressPrelude(secondId));
+                        StdioBridgeReconnectTests.SendFrame(second.GetStream(), Encoding.UTF8.GetBytes(original));
+                        return true;
+                    })
+                );
+                await NativeProgressProbe.AwaitOwned(sendSecond);
+                // This real host warning is the suppression checkpoint; a count-only sleep is not proof.
+                await NativeProgressProbe.AwaitOwned(suppressed.Task);
+                var after = FindProgressQueued(original);
+                Assert.AreSame(before, after);
+                Assert.AreSame(originalOwner, after.Owner);
+                Assert.AreSame(originalTcs, after.Tcs);
+                Assert.AreSame(originalProgress, after.Progress);
+                Assert.AreEqual(firstId, after.ProgressId);
+                Assert.AreNotEqual(secondId, after.ProgressId);
+                Assert.IsFalse(settled.Task.IsCompleted);
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(1, secondCalls);
+                var readSecond = host.Track(
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            return StdioBridgeReconnectTests.ReadFrame(second.GetStream(), ReadTimeoutMs);
+                        }
+                        catch (IOException error)
+                            when (error.Message == "Connection closed before reading expected bytes"
+                                || error.InnerException is SocketException socket
+                                    && (socket.SocketErrorCode == SocketError.ConnectionReset || socket.SocketErrorCode == SocketError.ConnectionAborted)
+                            )
+                        {
+                            return null;
+                        }
+                    })
+                );
+                // Old ownership may already be canceled/unknown; never invent successful delivery.
+                await NativeProgressProbe.AwaitOwned(readSecond);
+                byte[] body = await readSecond;
+                if (body != null)
+                {
+                    Assert.IsFalse(StdioBridgeReconnectTests.HasProgressPrefix(body), "The replacement cannot subscribe to original work's progress.");
+                    var response = JObject.Parse(Encoding.UTF8.GetString(body));
+                    Assert.That(response.Value<string>("status"), Is.EqualTo("error").Or.EqualTo("success"));
+                }
+            }
+            finally
+            {
+                Application.logMessageReceivedThreaded -= onLog;
+                release.TrySetResult(new { done = true });
+                if (entered.Task.IsCompleted)
+                    await NativeProgressProbe.AwaitOwned(settled.Task);
+                first?.Dispose();
+                second?.Dispose();
+                await StdioBridgeReconnectTests.AwaitProgressQueueEmpty();
+            }
+            Assert.AreEqual(1, firstCalls);
+            Assert.AreEqual(1, secondCalls);
+        }
+
+        internal static QueuedCommand FindProgressQueued(string business)
+        {
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Static;
+            object gate = typeof(StdioBridgeHost).GetField("lockObj", flags).GetValue(null);
+            var queue = (IDictionary)typeof(StdioBridgeHost).GetField("commandQueue", flags).GetValue(null);
+            lock (gate)
+            {
+                var matching = queue.Values.Cast<QueuedCommand>().Where(item => item.CommandJson == business).ToArray();
+                Assert.AreEqual(1, matching.Length, "Capture the unique actual queued invocation while its real child is held.");
+                return matching.Single();
+            }
         }
 
         private static int CountQueuedPayload(string commandJson)

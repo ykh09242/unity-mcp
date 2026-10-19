@@ -1,13 +1,12 @@
 """UI CLI commands - placeholder for future implementation."""
 
-import sys
 import json
 import math
 import click
-from typing import Optional, Any
+from typing import Optional
 
 from cli.utils.config import get_config
-from cli.utils.output import format_output, print_error, print_success
+from cli.utils.output import format_output, print_success
 from cli.utils.connection import run_command, handle_unity_errors, UnityCommandError
 
 
@@ -18,22 +17,18 @@ def ui():
 
 
 def _created_instance_id(result: dict) -> int:
-    """Keep follow-up edits on the object returned by create, even with duplicate names."""
+    """Require the native transaction's created identity before printing success."""
     data = result.get("data")
     value = data.get("instanceID") if isinstance(data, dict) else None
-    if isinstance(value, (int, str)) and not isinstance(value, bool):
+    if type(value) in (int, str):
         try:
             instance_id = int(value)
-            if instance_id != 0:
+            if instance_id != 0 and -(2**31) <= instance_id < 2**31:
                 return instance_id
         except ValueError:
             pass
     raise UnityCommandError(
-        {
-            "success": False,
-            "error": "GameObject creation returned no valid instanceID; follow-up UI edits were not applied.",
-            "data": data,
-        }
+        {"success": False, "error": "Creation returned no valid instanceID.", "data": data}
     )
 
 
@@ -55,60 +50,17 @@ def create_canvas(name: str, render_mode: str):
         unity-mcp ui create-canvas "WorldUI" --render-mode WorldSpace
     """
     config = get_config()
-
-    # Step 1: Create empty GameObject
     result = run_command(
-        "manage_gameobject",
+        "manage_ugui",
         {
-            "action": "create",
+            "action": "create_cli",
+            "element_type": "canvas",
             "name": name,
+            "render_mode": render_mode,
         },
         config,
     )
-
-    if not (result.get("success") or result.get("data") or result.get("result")):
-        click.echo(format_output(result, config.format))
-        return
-
-    target_id = _created_instance_id(result)
-
-    # Step 2: Add Canvas components
-    failed_components = []
-    for component in ["Canvas", "CanvasScaler", "GraphicRaycaster"]:
-        comp_result = run_command(
-            "manage_components",
-            {
-                "action": "add",
-                "target": target_id,
-                "searchMethod": "by_id",
-                "componentType": component,
-            },
-            config,
-        )
-        if not (comp_result.get("success") or comp_result.get("data")):
-            failed_components.append((component, comp_result.get("error", "Unknown error")))
-
-    if failed_components:
-        error_details = "; ".join([f"{c}: {e}" for c, e in failed_components])
-        print_error(f"Failed to add components: {error_details}")
-
-    # Step 3: Set render mode
-    render_mode_value = {"ScreenSpaceOverlay": 0, "ScreenSpaceCamera": 1, "WorldSpace": 2}.get(
-        render_mode, 0
-    )
-    run_command(
-        "manage_components",
-        {
-            "action": "set_property",
-            "target": target_id,
-            "searchMethod": "by_id",
-            "componentType": "Canvas",
-            "property": "renderMode",
-            "value": render_mode_value,
-        },
-        config,
-    )
-
+    _created_instance_id(result)
     click.echo(format_output(result, config.format))
     if config.format != "json":
         print_success(f"Created Canvas: {name}")
@@ -127,66 +79,26 @@ def create_text(name: str, parent: str, text: str, position: tuple[float, float]
     Examples:
         unity-mcp ui create-text "TitleText" --parent "MainUI" --text "Hello World"
     """
+    if position is not None and not all(
+        math.isfinite(value) and abs(value) <= 3.4028234663852886e38 for value in position
+    ):
+        raise click.BadParameter(
+            "Coordinates must be finite Unity floats.", param_hint="--position"
+        )
     config = get_config()
-
-    # Step 1: Create empty GameObject with parent
     result = run_command(
-        "manage_gameobject",
+        "manage_ugui",
         {
-            "action": "create",
+            "action": "create_cli",
+            "element_type": "text",
             "name": name,
             "parent": parent,
+            "text": text,
             "position": list(position if position is not None else (0, 0)),
         },
         config,
     )
-
-    if not (result.get("success") or result.get("data") or result.get("result")):
-        click.echo(format_output(result, config.format))
-        return
-
-    target_id = _created_instance_id(result)
-
-    # Step 2: Add RectTransform and TextMeshProUGUI
-    run_command(
-        "manage_components",
-        {
-            "action": "add",
-            "target": target_id,
-            "searchMethod": "by_id",
-            "componentType": "TextMeshProUGUI",
-        },
-        config,
-    )
-
-    if position is not None:
-        run_command(
-            "manage_components",
-            {
-                "action": "set_property",
-                "target": target_id,
-                "searchMethod": "by_id",
-                "componentType": "RectTransform",
-                "property": "anchoredPosition",
-                "value": list(position),
-            },
-            config,
-        )
-
-    # Step 3: Set text content
-    run_command(
-        "manage_components",
-        {
-            "action": "set_property",
-            "target": target_id,
-            "searchMethod": "by_id",
-            "componentType": "TextMeshProUGUI",
-            "property": "text",
-            "value": text,
-        },
-        config,
-    )
-
+    _created_instance_id(result)
     click.echo(format_output(result, config.format))
     if config.format != "json":
         print_success(f"Created Text: {name}")
@@ -197,7 +109,7 @@ def create_text(name: str, parent: str, text: str, position: tuple[float, float]
 @click.option("--parent", "-p", required=True, help="Parent Canvas or UI element.")
 @click.option("--text", "-t", default="Button", help="Button label text.")
 @handle_unity_errors
-def create_button(name: str, parent: str, text: str):  # text current placeholder
+def create_button(name: str, parent: str, text: str):
     """Create a UI Button.
 
     \b
@@ -205,75 +117,18 @@ def create_button(name: str, parent: str, text: str):  # text current placeholde
         unity-mcp ui create-button "StartButton" --parent "MainUI" --text "Start Game"
     """
     config = get_config()
-
-    # Step 1: Create empty GameObject with parent
     result = run_command(
-        "manage_gameobject",
+        "manage_ugui",
         {
-            "action": "create",
+            "action": "create_cli",
+            "element_type": "button",
             "name": name,
             "parent": parent,
+            "text": text,
         },
         config,
     )
-
-    if not (result.get("success") or result.get("data") or result.get("result")):
-        click.echo(format_output(result, config.format))
-        return
-
-    target_id = _created_instance_id(result)
-
-    # Step 2: Add Button and Image components
-    for component in ["Image", "Button"]:
-        run_command(
-            "manage_components",
-            {
-                "action": "add",
-                "target": target_id,
-                "searchMethod": "by_id",
-                "componentType": component,
-            },
-            config,
-        )
-
-    # Step 3: Create child label GameObject
-    label_name = f"{name}_Label"
-    label_result = run_command(
-        "manage_gameobject",
-        {
-            "action": "create",
-            "name": label_name,
-            "parent": target_id,
-        },
-        config,
-    )
-
-    label_id = _created_instance_id(label_result)
-
-    # Step 4: Add TextMeshProUGUI to label and set text
-    run_command(
-        "manage_components",
-        {
-            "action": "add",
-            "target": label_id,
-            "searchMethod": "by_id",
-            "componentType": "TextMeshProUGUI",
-        },
-        config,
-    )
-    run_command(
-        "manage_components",
-        {
-            "action": "set_property",
-            "target": label_id,
-            "searchMethod": "by_id",
-            "componentType": "TextMeshProUGUI",
-            "property": "text",
-            "value": text,
-        },
-        config,
-    )
-
+    _created_instance_id(result)
     click.echo(format_output(result, config.format))
     if config.format != "json":
         print_success(f"Created Button: {name} (with label '{text}')")
@@ -293,51 +148,11 @@ def create_image(name: str, parent: str, sprite: Optional[str]):
         unity-mcp ui create-image "Icon" --parent "MainUI" --sprite "Assets/Sprites/icon.png"
     """
     config = get_config()
-
-    # Step 1: Create empty GameObject with parent
-    result = run_command(
-        "manage_gameobject",
-        {
-            "action": "create",
-            "name": name,
-            "parent": parent,
-        },
-        config,
-    )
-
-    if not (result.get("success") or result.get("data") or result.get("result")):
-        click.echo(format_output(result, config.format))
-        return
-
-    target_id = _created_instance_id(result)
-
-    # Step 2: Add Image component
-    run_command(
-        "manage_components",
-        {
-            "action": "add",
-            "target": target_id,
-            "searchMethod": "by_id",
-            "componentType": "Image",
-        },
-        config,
-    )
-
-    # Step 3: Set sprite if provided
+    params = {"action": "create_cli", "element_type": "image", "name": name, "parent": parent}
     if sprite:
-        run_command(
-            "manage_components",
-            {
-                "action": "set_property",
-                "target": target_id,
-                "searchMethod": "by_id",
-                "componentType": "Image",
-                "property": "sprite",
-                "value": sprite,
-            },
-            config,
-        )
-
+        params["sprite"] = sprite
+    result = run_command("manage_ugui", params, config)
+    _created_instance_id(result)
     click.echo(format_output(result, config.format))
     if config.format != "json":
         print_success(f"Created Image: {name}")

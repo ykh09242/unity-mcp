@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 
@@ -269,7 +270,9 @@ namespace MCPForUnity.Editor.Tools
             return valid ? new SuccessResponse("Batch action validation completed.", data) : new ErrorResponse("Batch action validation did not pass.", data);
         }
 
-        public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken)
+        public static Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken) => HandleCommand(@params, cancellationToken, null);
+
+        public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken, ICommandProgress progress)
         {
             cancellationToken.ThrowIfCancellationRequested();
             object rejected = ReadEnvelope(@params, false, out var commandsToken, out bool failFast, out bool parallelRequested, out int? maxParallel);
@@ -291,102 +294,117 @@ namespace MCPForUnity.Editor.Tools
             {
                 int index = inputIndex++;
                 cancellationToken.ThrowIfCancellationRequested();
-                var commandObj = (JObject)token;
-                string toolName = commandObj.Value<string>("tool");
-
-                // CommandRegistry dispatches resources as well as tools. Apply both policies.
-                var resourceMeta = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(toolName);
-                if (resourceMeta != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(toolName))
-                {
-                    SetOutcome(outcomes, index, "failed", "resource_disabled");
-                    invocationFailureCount++;
-                    anyCommandFailed = true;
-                    commandResults.Add(
-                        new
-                        {
-                            tool = toolName,
-                            callSucceeded = false,
-                            result = new ErrorResponse($"Resource '{toolName}' is disabled in the Unity Editor."),
-                        }
-                    );
-                    if (failFast)
-                        break;
-                    continue;
-                }
-
-                // Block disabled tools (mirrors TransportCommandDispatcher check)
-                var toolMeta = MCPServiceLocator.ToolDiscovery.GetToolMetadata(toolName);
-                if (toolMeta != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(toolName))
-                {
-                    SetOutcome(outcomes, index, "failed", "tool_disabled");
-                    invocationFailureCount++;
-                    anyCommandFailed = true;
-                    commandResults.Add(
-                        new
-                        {
-                            tool = toolName,
-                            callSucceeded = false,
-                            result = new ErrorResponse($"Tool '{toolName}' is disabled in the Unity Editor."),
-                        }
-                    );
-                    if (failFast)
-                        break;
-                    continue;
-                }
-
+                int completedBefore = commandResults.Count;
                 try
                 {
-                    var rawParams = commandObj["params"] as JObject ?? new JObject();
-                    var commandParams = NormalizeParameterKeys(rawParams);
-                    var result = await CommandRegistry.InvokeCommandAsync(toolName, commandParams, cancellationToken).ConfigureAwait(true);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    bool callSucceeded = DetermineCallSucceeded(result);
-                    SetOutcome(outcomes, index, callSucceeded ? "succeeded" : "failed", callSucceeded ? "ok" : "handler_failed");
-                    if (callSucceeded)
+                    var commandObj = (JObject)token;
+                    string toolName = commandObj.Value<string>("tool");
+
+                    // CommandRegistry dispatches resources as well as tools. Apply both policies.
+                    var resourceMeta = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(toolName);
+                    if (resourceMeta != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(toolName))
                     {
-                        invocationSuccessCount++;
-                    }
-                    else
-                    {
+                        SetOutcome(outcomes, index, "failed", "resource_disabled");
                         invocationFailureCount++;
                         anyCommandFailed = true;
+                        commandResults.Add(
+                            new
+                            {
+                                tool = toolName,
+                                callSucceeded = false,
+                                result = new ErrorResponse($"Resource '{toolName}' is disabled in the Unity Editor."),
+                            }
+                        );
+                        if (failFast)
+                            break;
+                        continue;
                     }
 
-                    commandResults.Add(
-                        new
-                        {
-                            tool = toolName,
-                            callSucceeded,
-                            result,
-                        }
-                    );
-
-                    if (!callSucceeded && failFast)
+                    // Block disabled tools (mirrors TransportCommandDispatcher check)
+                    var toolMeta = MCPServiceLocator.ToolDiscovery.GetToolMetadata(toolName);
+                    if (toolMeta != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(toolName))
                     {
-                        break;
+                        SetOutcome(outcomes, index, "failed", "tool_disabled");
+                        invocationFailureCount++;
+                        anyCommandFailed = true;
+                        commandResults.Add(
+                            new
+                            {
+                                tool = toolName,
+                                callSucceeded = false,
+                                result = new ErrorResponse($"Tool '{toolName}' is disabled in the Unity Editor."),
+                            }
+                        );
+                        if (failFast)
+                            break;
+                        continue;
+                    }
+
+                    try
+                    {
+                        var rawParams = commandObj["params"] as JObject ?? new JObject();
+                        var commandParams = NormalizeParameterKeys(rawParams);
+                        var result = await CommandRegistry.InvokeCommandAsync(toolName, commandParams, cancellationToken).ConfigureAwait(true);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        bool callSucceeded = DetermineCallSucceeded(result);
+                        SetOutcome(outcomes, index, callSucceeded ? "succeeded" : "failed", callSucceeded ? "ok" : "handler_failed");
+                        if (callSucceeded)
+                        {
+                            invocationSuccessCount++;
+                        }
+                        else
+                        {
+                            invocationFailureCount++;
+                            anyCommandFailed = true;
+                        }
+
+                        commandResults.Add(
+                            new
+                            {
+                                tool = toolName,
+                                callSucceeded,
+                                result,
+                            }
+                        );
+
+                        if (!callSucceeded && failFast)
+                        {
+                            break;
+                        }
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        SetOutcome(outcomes, index, "failed", "handler_exception");
+                        invocationFailureCount++;
+                        anyCommandFailed = true;
+                        commandResults.Add(
+                            new
+                            {
+                                tool = toolName,
+                                callSucceeded = false,
+                                error = ex.Message,
+                            }
+                        );
+
+                        if (failFast)
+                        {
+                            break;
+                        }
                     }
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                finally
                 {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    SetOutcome(outcomes, index, "failed", "handler_exception");
-                    invocationFailureCount++;
-                    anyCommandFailed = true;
-                    commandResults.Add(
-                        new
-                        {
-                            tool = toolName,
-                            callSucceeded = false,
-                            error = ex.Message,
-                        }
-                    );
-
-                    if (failFast)
+                    if (commandResults.Count > completedBefore)
                     {
-                        break;
+                        try
+                        {
+                            progress?.Report(commandResults.Count, commandsToken.Count, CommandProgressStage.BatchItems);
+                        }
+                        catch (Exception) { /* An optional observer must not alter the settled batch outcome. */ }
                     }
                 }
             }

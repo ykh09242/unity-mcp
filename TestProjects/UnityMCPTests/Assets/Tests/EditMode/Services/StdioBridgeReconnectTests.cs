@@ -46,7 +46,7 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         // Only admitted by sole QA in a fresh owned scratch Editor. Never stops an existing host.
-        private sealed class TimingHostScope : IDisposable
+        internal sealed class TimingHostScope : IDisposable
         {
             private const BindingFlags Flags = BindingFlags.NonPublic | BindingFlags.Static;
             private readonly FieldInfo _logging = typeof(McpLogRecord).GetField("_isEnabledCached", Flags);
@@ -153,6 +153,11 @@ namespace MCPForUnityTests.Editor.Services
 
         private static TcpClient ConnectTimingPeer(int port, string token)
         {
+            return ConnectProgressPeer(port, token, null, out _);
+        }
+
+        internal static TcpClient ConnectProgressPeer(int port, string token, JToken offered, out JObject reply)
+        {
             var client = new TcpClient();
             try
             {
@@ -169,13 +174,15 @@ namespace MCPForUnityTests.Editor.Services
                     ["client_nonce"] = nonce,
                     ["proof"] = StdioBridgeAuthentication.Proof(token, "client", generation, challenge, nonce),
                 };
+                if (offered != null)
+                    request["capabilities"] = offered;
                 SendFrame(stream, Encoding.UTF8.GetBytes(request.ToString(Formatting.None)));
-                var response = JObject.Parse(Encoding.UTF8.GetString(ReadFrame(stream, ReadTimeoutMs)));
-                Assert.AreEqual("authenticated", response.Value<string>("type"));
-                Assert.AreEqual(2, response.Value<int>("version"));
-                string session = response.Value<string>("session_id");
+                reply = JObject.Parse(Encoding.UTF8.GetString(ReadFrame(stream, ReadTimeoutMs)));
+                Assert.AreEqual("authenticated", reply.Value<string>("type"));
+                Assert.AreEqual(2, reply.Value<int>("version"));
+                string session = reply.Value<string>("session_id");
                 Assert.IsTrue(Guid.TryParseExact(session, "N", out _));
-                Assert.AreEqual(StdioBridgeAuthentication.Proof(token, "server", generation, challenge, nonce, session), response.Value<string>("proof"));
+                Assert.AreEqual(StdioBridgeAuthentication.Proof(token, "server", generation, challenge, nonce, session), reply.Value<string>("proof"));
                 return client;
             }
             catch
@@ -183,6 +190,920 @@ namespace MCPForUnityTests.Editor.Services
                 client.Dispose();
                 throw;
             }
+        }
+
+        [TestCase("accepted")]
+        [TestCase("absent")]
+        [TestCase("scalar")]
+        [TestCase("too-many")]
+        [TestCase("too-long")]
+        public async Task ProgressAuth_OnlyBoundedOfferedCapabilityIsAccepted(string offer)
+        {
+            using var host = new TimingHostScope(_ => Task.FromResult<object>(new { done = true }));
+            JToken offered = null;
+            if (offer == "accepted")
+                offered = new JArray("command_progress_v1");
+            if (offer == "scalar")
+                offered = new JValue("command_progress_v1");
+            if (offer == "too-many")
+                offered = new JArray(Enumerable.Repeat("command_progress_v1", 17));
+            if (offer == "too-long")
+                offered = new JArray(new string('x', 65), "command_progress_v1");
+            JObject ack = null;
+            var connecting = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, offered, out ack)));
+            await NativeProgressProbe.AwaitOwned(connecting);
+            using var connected = await connecting;
+            JToken capabilities = ack["capabilities"];
+            if (offer == "accepted")
+            {
+                Assert.IsNotNull(capabilities, "Negotiation prerequisite: a valid offer must be acknowledged before the progress behavioral run.");
+                Assert.AreEqual(JTokenType.Array, capabilities.Type);
+                CollectionAssert.AreEqual(new[] { "command_progress_v1" }, capabilities.Values<string>().ToArray());
+            }
+            else if (offer == "absent")
+            {
+                CollectionAssert.AreEquivalent(new[] { "type", "version", "session_id", "proof" }, ack.Properties().Select(item => item.Name));
+            }
+            else
+            {
+                Assert.IsTrue(capabilities == null || capabilities.Type == JTokenType.Array && !capabilities.Any());
+            }
+            var ping = host.Track(
+                Task.Run(() =>
+                {
+                    SendFrame(connected.GetStream(), Encoding.UTF8.GetBytes("ping"));
+                    return Encoding.UTF8.GetString(ReadFrame(connected.GetStream(), ReadTimeoutMs));
+                })
+            );
+            await NativeProgressProbe.AwaitOwned(ping);
+            Assert.That(await ping, Does.Contain("pong"), "Optional capability junk must not weaken or break the valid required HMAC session.");
+        }
+
+        [Test]
+        public Task ProgressWire_NegotiatedBatchReportsBeforeHeldSecondAndKeepsFifo() => ProgressBatchWireCase(true, true);
+
+        [Test]
+        public Task ProgressWire_NegotiatedWithoutPreludeKeepsOriginalResult() => ProgressBatchWireCase(true, false);
+
+        [Test]
+        public Task ProgressWire_OldClientKeepsOriginalResult() => ProgressBatchWireCase(false, false);
+
+        private static async Task ProgressBatchWireCase(bool offerCapability, bool optIn)
+        {
+            const string first = "__core06_stdio_first",
+                second = "__core06_stdio_second";
+            var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int firstCalls = 0,
+                secondCalls = 0,
+                nextCalls = 0;
+            using var handlers = new ProgressHandlerScope();
+            using var enabled = NativeProgressProbe.EnableTools("batch_execute");
+            handlers.Set(
+                first,
+                new HandlerInfo(
+                    first,
+                    _ =>
+                    {
+                        firstCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                second,
+                new HandlerInfo(
+                    second,
+                    null,
+                    async _ =>
+                    {
+                        secondCalls++;
+                        entered.TrySetResult(true);
+                        try
+                        {
+                            return await release.Task.ConfigureAwait(true);
+                        }
+                        finally
+                        {
+                            settled.TrySetResult(true);
+                        }
+                    }
+                )
+            );
+            using var host = new TimingHostScope(_ =>
+            {
+                nextCalls++;
+                return Task.FromResult<object>(new { next = true });
+            });
+            TcpClient peer = null;
+            Task<byte[]> reading = null;
+            string id = Guid.NewGuid().ToString("D");
+            var batch = new JObject
+            {
+                ["type"] = "batch_execute",
+                ["params"] = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = second }) },
+            };
+            NativeProgressProbe.RequireBatchCapacity((JObject)batch["params"]);
+            byte[] originalBusiness = Encoding.UTF8.GetBytes(batch.ToString(Formatting.None));
+            try
+            {
+                JObject ack = null;
+                var connecting = host.Track(
+                    Task.Run(() => ConnectProgressPeer(host.Port, host.Token, offerCapability ? new JArray("command_progress_v1") : null, out ack))
+                );
+                await NativeProgressProbe.AwaitOwned(connecting);
+                using var connected = await connecting;
+                peer = connected;
+                if (offerCapability)
+                {
+                    Assert.IsNotNull(ack["capabilities"], "Negotiation prerequisite; this assertion alone is not progress behavioral RED.");
+                    CollectionAssert.Contains(ack["capabilities"].Values<string>().ToArray(), "command_progress_v1");
+                }
+                var sending = host.Track(
+                    Task.Run(() =>
+                    {
+                        if (optIn)
+                            SendFrame(
+                                peer.GetStream(),
+                                Encoding.UTF8.GetBytes(
+                                    new JObject
+                                    {
+                                        ["type"] = "command_progress_begin",
+                                        ["version"] = 1,
+                                        ["id"] = id,
+                                    }.ToString(Formatting.None)
+                                )
+                            );
+                        SendFrame(peer.GetStream(), originalBusiness);
+                        return true;
+                    })
+                );
+                await NativeProgressProbe.AwaitOwned(sending);
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                Assert.IsFalse(settled.Task.IsCompleted);
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(1, secondCalls);
+                reading = host.Track(Task.Run(() => ReadFrame(peer.GetStream(), ReadTimeoutMs)));
+                if (optIn)
+                {
+                    await NativeProgressProbe.AwaitOwned(reading);
+                    AssertProgressPayload(await reading, id, 1);
+                    Assert.IsFalse(settled.Task.IsCompleted, "An actual MCPG1/2 must arrive while the second native handler is held.");
+                    reading = host.Track(Task.Run(() => ReadFrame(peer.GetStream(), ReadTimeoutMs)));
+                }
+                else
+                {
+                    await Task.Delay(200);
+                    Assert.IsFalse(reading.IsCompleted, "No opt-in means no optional frame while the real response is held.");
+                }
+                var nextSend = host.Track(
+                    Task.Run(() =>
+                    {
+                        SendFrame(
+                            peer.GetStream(),
+                            Encoding.UTF8.GetBytes(new JObject { ["type"] = host.Name, ["params"] = new JObject() }.ToString(Formatting.None))
+                        );
+                        return true;
+                    })
+                );
+                await NativeProgressProbe.AwaitOwned(nextSend);
+                Assert.AreEqual(0, nextCalls, "Sending the next FIFO request must not split/release the held batch.");
+                release.TrySetResult(new { done = true });
+                await NativeProgressProbe.AwaitOwned(settled.Task);
+                int lastCompleted = optIn ? 1 : 0;
+                byte[] final;
+                while (true)
+                {
+                    await NativeProgressProbe.AwaitOwned(reading);
+                    final = await reading;
+                    if (!HasProgressPrefix(final))
+                        break;
+                    Assert.IsTrue(optIn);
+                    var update = JObject.Parse(Encoding.UTF8.GetString(final, 4, final.Length - 4));
+                    int completed = update.Value<int>("completed");
+                    Assert.Greater(completed, lastCompleted);
+                    Assert.LessOrEqual(completed, 2);
+                    AssertProgressPayload(final, id, completed);
+                    lastCompleted = completed;
+                    reading = host.Track(Task.Run(() => ReadFrame(peer.GetStream(), ReadTimeoutMs)));
+                }
+                var response = JObject.Parse(Encoding.UTF8.GetString(final));
+                Assert.AreEqual("success", response.Value<string>("status"));
+                Assert.AreEqual(2, response.SelectToken("result.data.attemptedCount").Value<int>());
+                Assert.AreEqual(0, response.SelectToken("result.data.notRunCount").Value<int>());
+                var nextRead = host.Track(Task.Run(() => ReadFrame(peer.GetStream(), ReadTimeoutMs)));
+                await NativeProgressProbe.AwaitOwned(nextRead);
+                Assert.IsFalse(HasProgressPrefix(await nextRead), "No late progress may precede the next ordinary final response.");
+                Assert.AreEqual(1, nextCalls);
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(1, secondCalls);
+                var barrier = host.Track(
+                    Task.Run(() =>
+                    {
+                        SendFrame(peer.GetStream(), Encoding.UTF8.GetBytes("ping"));
+                        return Encoding.UTF8.GetString(ReadFrame(peer.GetStream(), ReadTimeoutMs));
+                    })
+                );
+                await NativeProgressProbe.AwaitOwned(barrier);
+                Assert.That(
+                    await barrier,
+                    Does.Contain("pong"),
+                    "The shared writer remains healthy after final and no late optional frame occupies the barrier."
+                );
+            }
+            finally
+            {
+                release.TrySetResult(new { done = true });
+                peer?.Dispose();
+                if (entered.Task.IsCompleted)
+                    await NativeProgressProbe.AwaitOwned(settled.Task);
+                await AwaitProgressQueueEmpty();
+                if (reading != null)
+                {
+                    try
+                    {
+                        await NativeProgressProbe.AwaitOwned(reading);
+                    }
+                    catch (IOException) { }
+                    catch (ObjectDisposedException) { }
+                }
+            }
+        }
+
+        internal static bool HasProgressPrefix(byte[] body) => body.Length >= 4 && body[0] == 'M' && body[1] == 'C' && body[2] == 'P' && body[3] == 'G';
+
+        internal static void AssertProgressPayload(byte[] body, string id, int completed)
+        {
+            Assert.IsTrue(HasProgressPrefix(body), "Expected a genuine optional MCPG frame, not a terminal/error response.");
+            Assert.LessOrEqual(body.Length - 4, 512);
+            var update = JObject.Parse(Encoding.UTF8.GetString(body, 4, body.Length - 4));
+            CollectionAssert.AreEquivalent(new[] { "type", "id", "completed", "total", "stage" }, update.Properties().Select(item => item.Name));
+            Assert.AreEqual("command_progress", update.Value<string>("type"));
+            Assert.AreEqual(id, update.Value<string>("id"));
+            Assert.AreEqual(JTokenType.Integer, update["completed"].Type);
+            Assert.AreEqual(JTokenType.Integer, update["total"].Type);
+            Assert.AreEqual(completed, update.Value<int>("completed"));
+            Assert.AreEqual(2, update.Value<int>("total"));
+            Assert.AreEqual("batch_items", update.Value<string>("stage"));
+        }
+
+        internal static async Task AwaitProgressQueueEmpty()
+        {
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Static;
+            object gate = typeof(StdioBridgeHost).GetField("lockObj", flags).GetValue(null);
+            var queue = (IDictionary)typeof(StdioBridgeHost).GetField("commandQueue", flags).GetValue(null);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                lock (gate)
+                {
+                    if (queue.Count == 0)
+                        return;
+                }
+                Assert.Less(watch.ElapsedMilliseconds, 5000, "Release and join actual native work before restoring handlers/stopping the owned host.");
+                await Task.Delay(10);
+            }
+        }
+
+        [TestCase("repeat")]
+        [TestCase("bad-id")]
+        [TestCase("eof")]
+        public async Task ProgressPrelude_RepeatedMalformedOrEofNeverDispatches(string fault)
+        {
+            int calls = 0;
+            using var host = new TimingHostScope(_ =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult<object>(new { done = true });
+            });
+            JObject ack = null;
+            var connecting = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, new JArray("command_progress_v1"), out ack)));
+            await NativeProgressProbe.AwaitOwned(connecting);
+            using var peer = await connecting;
+            CollectionAssert.Contains(ack["capabilities"].Values<string>().ToArray(), "command_progress_v1");
+            string firstId = Guid.NewGuid().ToString("D");
+            var closed = host.Track(
+                Task.Run(() =>
+                {
+                    SendFrame(peer.GetStream(), ProgressPrelude(firstId));
+                    if (fault == "repeat")
+                        SendFrame(peer.GetStream(), ProgressPrelude(Guid.NewGuid().ToString("D")));
+                    else if (fault == "bad-id")
+                        SendFrame(peer.GetStream(), ProgressPrelude("not-a-command-uuid"));
+                    else
+                        peer.Client.Shutdown(SocketShutdown.Send);
+                    return ReadProgressPeerClosed(peer);
+                })
+            );
+            await NativeProgressProbe.AwaitOwned(closed);
+            Assert.IsTrue(await closed, "Association refusal must close this peer, not dispatch an unknown command or return a result.");
+            Assert.AreEqual(0, calls);
+            Assert.AreEqual(0, StdioBridgeHost.QueuedCommandCount);
+            var fresh = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, null, out _)));
+            await NativeProgressProbe.AwaitOwned(fresh);
+            using var replacement = await fresh;
+            var response = host.Track(
+                Task.Run(() =>
+                {
+                    SendFrame(
+                        replacement.GetStream(),
+                        Encoding.UTF8.GetBytes(new JObject { ["type"] = host.Name, ["params"] = new JObject() }.ToString(Formatting.None))
+                    );
+                    return ReadFrame(replacement.GetStream(), ReadTimeoutMs);
+                })
+            );
+            await NativeProgressProbe.AwaitOwned(response);
+            Assert.IsFalse(HasProgressPrefix(await response), "A fresh peer cannot inherit an orphaned association.");
+            Assert.AreEqual("success", JObject.Parse(Encoding.UTF8.GetString(await response)).Value<string>("status"));
+            Assert.AreEqual(1, calls);
+            await AwaitProgressQueueEmpty();
+        }
+
+        [Test]
+        public async Task ProgressWire_IdenticalNextBatchUsesFreshAssociation()
+        {
+            const string first = "__core06_fresh_first",
+                second = "__core06_fresh_second";
+            int firstCalls = 0,
+                secondCalls = 0;
+            TaskCompletionSource<object> release = null;
+            TaskCompletionSource<bool> entered = null,
+                settled = null;
+            using var handlers = new ProgressHandlerScope();
+            using var enabled = NativeProgressProbe.EnableTools("batch_execute");
+            handlers.Set(
+                first,
+                new HandlerInfo(
+                    first,
+                    _ =>
+                    {
+                        firstCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                second,
+                new HandlerInfo(
+                    second,
+                    null,
+                    async _ =>
+                    {
+                        secondCalls++;
+                        entered.TrySetResult(true);
+                        try
+                        {
+                            return await release.Task.ConfigureAwait(true);
+                        }
+                        finally
+                        {
+                            settled.TrySetResult(true);
+                        }
+                    }
+                )
+            );
+            using var host = new TimingHostScope(_ => Task.FromResult<object>(new { unused = true }));
+            var batch = new JObject
+            {
+                ["type"] = "batch_execute",
+                ["params"] = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = second }) },
+            };
+            NativeProgressProbe.RequireBatchCapacity((JObject)batch["params"]);
+            string original = batch.ToString(Formatting.None);
+            var connecting = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, new JArray("command_progress_v1"), out _)));
+            await NativeProgressProbe.AwaitOwned(connecting);
+            using var peer = await connecting;
+            string previousId = null;
+            try
+            {
+                for (int round = 0; round < 2; round++)
+                {
+                    release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    string id = Guid.NewGuid().ToString("D");
+                    Assert.AreNotEqual(previousId, id);
+                    var sending = host.Track(
+                        Task.Run(() =>
+                        {
+                            SendFrame(peer.GetStream(), ProgressPrelude(id));
+                            SendFrame(peer.GetStream(), Encoding.UTF8.GetBytes(original));
+                            return true;
+                        })
+                    );
+                    await NativeProgressProbe.AwaitOwned(sending);
+                    await NativeProgressProbe.AwaitOwned(entered.Task);
+                    var progress = host.Track(Task.Run(() => ReadFrame(peer.GetStream(), ReadTimeoutMs)));
+                    await NativeProgressProbe.AwaitOwned(progress);
+                    AssertProgressPayload(await progress, id, 1);
+                    Assert.IsFalse(settled.Task.IsCompleted);
+                    Assert.AreEqual(round + 1, firstCalls);
+                    Assert.AreEqual(round + 1, secondCalls);
+                    var reading = host.Track(Task.Run(() => ReadFrame(peer.GetStream(), ReadTimeoutMs)));
+                    release.TrySetResult(new { done = true });
+                    await NativeProgressProbe.AwaitOwned(settled.Task);
+                    byte[] final = await ReadProgressFinal(host, peer, reading, id);
+                    Assert.AreEqual(2, JObject.Parse(Encoding.UTF8.GetString(final)).SelectToken("result.data.attemptedCount").Value<int>());
+                    await AwaitProgressQueueEmpty();
+                    previousId = id;
+                }
+            }
+            finally
+            {
+                release?.TrySetResult(new { done = true });
+                if (entered?.Task.IsCompleted == true)
+                    await NativeProgressProbe.AwaitOwned(settled.Task);
+                peer.Dispose();
+                await AwaitProgressQueueEmpty();
+            }
+        }
+
+        internal static byte[] ProgressPrelude(string id) =>
+            Encoding.UTF8.GetBytes(
+                new JObject
+                {
+                    ["type"] = "command_progress_begin",
+                    ["version"] = 1,
+                    ["id"] = id,
+                }.ToString(Formatting.None)
+            );
+
+        internal static bool ReadProgressPeerClosed(TcpClient peer)
+        {
+            try
+            {
+                return peer.GetStream().ReadByte() == -1;
+            }
+            catch (IOException error)
+                when (error.InnerException is SocketException socket
+                    && (
+                        socket.SocketErrorCode == SocketError.ConnectionReset
+                        || socket.SocketErrorCode == SocketError.ConnectionAborted
+                        || socket.SocketErrorCode == SocketError.Shutdown
+                    )
+                )
+            {
+                return true;
+            }
+        }
+
+        internal static async Task<byte[]> ReadProgressFinal(TimingHostScope host, TcpClient peer, Task<byte[]> reading, string id)
+        {
+            for (int remaining = 2; remaining >= 0; remaining--)
+            {
+                await NativeProgressProbe.AwaitOwned(reading);
+                byte[] body = await reading;
+                if (!HasProgressPrefix(body))
+                    return body;
+                Assert.Greater(remaining, 0, "Optional frames cannot replace the bounded final response.");
+                AssertProgressPayload(body, id, 2);
+                reading = host.Track(Task.Run(() => ReadFrame(peer.GetStream(), ReadTimeoutMs)));
+            }
+            throw new AssertionException("No terminal frame");
+        }
+
+        [TestCase("legacy")]
+        [TestCase("2026-07-28")]
+        [Explicit("Requires the existing guarded concurrent SDK process owner and fresh control-root binding.")]
+        public async Task ProgressSdk_RealNotificationReleasesOwnedNativeSecondItem(string mode)
+        {
+            string root = Environment.GetEnvironmentVariable("UNITY_MCP_COMMAND_PROGRESS_SDK_ROOT");
+            Assert.IsTrue(
+                !string.IsNullOrEmpty(root) && Path.IsPathRooted(root) && Directory.Exists(root),
+                "SDK owner prerequisite: root must bind a fresh owned control directory and launch the real adapter through existing native_python/cleanup_process."
+            );
+            string folder = Path.Combine(Path.GetFullPath(root), "stdio", mode);
+            Assert.IsFalse(Directory.Exists(folder), "Never overwrite an earlier SDK attempt.");
+            Directory.CreateDirectory(folder);
+            const string first = "__core06_sdk_first",
+                second = "__core06_sdk_second";
+            int firstCalls = 0,
+                secondCalls = 0;
+            var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var handlers = new ProgressHandlerScope();
+            using var enabled = NativeProgressProbe.EnableTools("batch_execute");
+            handlers.Set(
+                first,
+                new HandlerInfo(
+                    first,
+                    _ =>
+                    {
+                        firstCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                second,
+                new HandlerInfo(
+                    second,
+                    null,
+                    async _ =>
+                    {
+                        secondCalls++;
+                        entered.TrySetResult(true);
+                        try
+                        {
+                            return await release.Task.ConfigureAwait(true);
+                        }
+                        finally
+                        {
+                            settled.TrySetResult(true);
+                        }
+                    }
+                )
+            );
+            using var host = new TimingHostScope(_ => Task.FromResult<object>(new { unused = true }));
+            NativeProgressProbe.RequireBatchCapacity(new JObject { ["commands"] = new JArray(new JObject(), new JObject()) });
+            try
+            {
+                using (
+                    var manifest = new StreamWriter(
+                        new FileStream(Path.Combine(folder, "endpoint.json"), FileMode.CreateNew, FileAccess.Write),
+                        new UTF8Encoding(false)
+                    )
+                )
+                    manifest.Write(
+                        new JObject
+                        {
+                            ["protocol"] = "core06-owned-stdio-probe-v1",
+                            ["mode"] = mode,
+                            ["port"] = host.Port,
+                            ["token"] = host.Token,
+                            ["first"] = first,
+                            ["second"] = second,
+                        }.ToString(Formatting.None)
+                    );
+                var observed = await AwaitSdkCheckpoint(Path.Combine(folder, "progress-observed.json"), 15000);
+                Assert.AreEqual("core06-owned-stdio-probe-v1", observed.Value<string>("protocol"));
+                Assert.AreEqual(mode, observed.Value<string>("mode"));
+                Assert.AreEqual(1, observed.Value<int>("completed"));
+                Assert.AreEqual(2, observed.Value<int>("total"));
+                Assert.IsTrue(observed.Value<bool>("call_pending"));
+                Assert.IsTrue(entered.Task.IsCompleted);
+                Assert.IsFalse(settled.Task.IsCompleted, "The actual SDK callback must precede this native gate release.");
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(1, secondCalls);
+                release.TrySetResult(new { done = true });
+                await NativeProgressProbe.AwaitOwned(settled.Task);
+                var final = await AwaitSdkCheckpoint(Path.Combine(folder, "final-result.json"), 5000);
+                Assert.AreEqual(mode, final.Value<string>("mode"));
+                Assert.AreEqual(2, final.Value<int>("attempted"));
+                Assert.AreEqual(0, final.Value<int>("not_run"));
+                Assert.IsFalse(final.Value<bool>("sdk_is_error"));
+                Assert.IsTrue(final.Value<bool>("no_late_progress"));
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(1, secondCalls);
+                await AwaitProgressQueueEmpty();
+            }
+            finally
+            {
+                release.TrySetResult(new { done = true });
+                if (entered.Task.IsCompleted)
+                    await NativeProgressProbe.AwaitOwned(settled.Task);
+                await AwaitProgressQueueEmpty();
+                // The external existing owner must always cleanup/join its adapter process.
+            }
+        }
+
+        internal static async Task<JObject> AwaitSdkCheckpoint(string path, int milliseconds)
+        {
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                Assert.Less(elapsed.ElapsedMilliseconds, milliseconds, "The existing SDK process owner did not publish its real checkpoint.");
+                if (File.Exists(path))
+                {
+                    try
+                    {
+                        // Acquire only after the no-clobber Python publisher closes its file.
+                        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+                        Assert.Greater(input.Length, 0);
+                        Assert.LessOrEqual(input.Length, 4096);
+                        using var reader = new StreamReader(input, Encoding.UTF8);
+                        return JObject.Parse(reader.ReadToEnd());
+                    }
+                    catch (IOException) { }
+                }
+                await Task.Delay(10);
+            }
+        }
+
+        [Test]
+        [Explicit("Requires a fresh owned Editor with UNITY_MCP_STDIO_COMMAND_TIMEOUT_MS in [500,2000].")]
+        public async Task ProgressDeadline_LateFirstSettlementDoesNotRenewOriginalBudget()
+        {
+            int budget = (int)typeof(StdioBridgeHost).GetField("FrameIOTimeoutMs", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            Assert.That(budget, Is.InRange(500, 2000), "A short original deadline must be fixed before this fresh Editor starts.");
+            var clock = (System.Diagnostics.Stopwatch)typeof(StdioBridgeHost).GetField("_uptime", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            const string first = "__core06_deadline_first",
+                second = "__core06_deadline_second";
+            var releaseFirst = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseSecond = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var enteredFirst = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var enteredSecond = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var settledFirst = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var settledSecond = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var handlers = new ProgressHandlerScope();
+            using var enabled = NativeProgressProbe.EnableTools("batch_execute");
+            handlers.Set(
+                first,
+                new HandlerInfo(
+                    first,
+                    null,
+                    async _ =>
+                    {
+                        enteredFirst.TrySetResult(true);
+                        try
+                        {
+                            return await releaseFirst.Task.ConfigureAwait(true);
+                        }
+                        finally
+                        {
+                            settledFirst.TrySetResult(true);
+                        }
+                    }
+                )
+            );
+            handlers.Set(
+                second,
+                new HandlerInfo(
+                    second,
+                    null,
+                    async _ =>
+                    {
+                        enteredSecond.TrySetResult(true);
+                        try
+                        {
+                            return await releaseSecond.Task.ConfigureAwait(true);
+                        }
+                        finally
+                        {
+                            settledSecond.TrySetResult(true);
+                        }
+                    }
+                )
+            );
+            using var host = new TimingHostScope(_ => Task.FromResult<object>(new { unused = true }));
+            string business = new JObject
+            {
+                ["type"] = "batch_execute",
+                ["params"] = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = second }) },
+            }.ToString(Formatting.None);
+            NativeProgressProbe.RequireBatchCapacity((JObject)JObject.Parse(business)["params"]);
+            var connecting = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, new JArray("command_progress_v1"), out _)));
+            await NativeProgressProbe.AwaitOwned(connecting);
+            using var peer = await connecting;
+            string id = Guid.NewGuid().ToString("D");
+            try
+            {
+                var sending = host.Track(
+                    Task.Run(() =>
+                    {
+                        SendFrame(peer.GetStream(), ProgressPrelude(id));
+                        SendFrame(peer.GetStream(), Encoding.UTF8.GetBytes(business));
+                        return true;
+                    })
+                );
+                await NativeProgressProbe.AwaitOwned(sending);
+                await NativeProgressProbe.AwaitOwned(enteredFirst.Task);
+                var queued = StdioBrokerResendTests.FindProgressQueued(business);
+                long admittedAt = queued.DeadlineAtMs - budget;
+                Assert.Greater(queued.DeadlineAtMs, clock.ElapsedMilliseconds);
+                long firstReleaseAt = admittedAt + budget * 7 / 10;
+                Assert.Less(clock.ElapsedMilliseconds, firstReleaseAt, "The fixture must reach the first held item before its late-release checkpoint.");
+                while (clock.ElapsedMilliseconds < firstReleaseAt)
+                    await Task.Delay(5);
+                releaseFirst.TrySetResult(new { done = true });
+                await NativeProgressProbe.AwaitOwned(enteredSecond.Task);
+                var update = host.Track(Task.Run(() => ReadFrame(peer.GetStream(), ReadTimeoutMs)));
+                await NativeProgressProbe.AwaitOwned(update);
+                AssertProgressPayload(await update, id, 1);
+                Assert.IsFalse(settledSecond.Task.IsCompleted);
+                var closed = host.Track(Task.Run(() => ReadProgressPeerClosed(peer)));
+                await NativeProgressProbe.AwaitOwned(closed);
+                Assert.IsTrue(await closed, "Original admitted expiry must close the captured socket rather than renew on the first settlement.");
+                Assert.Less(
+                    clock.ElapsedMilliseconds - admittedAt,
+                    budget * 1.35,
+                    "Renewing the full budget after the 70% settlement would exceed this bound."
+                );
+                Assert.IsFalse(settledSecond.Task.IsCompleted, "Delivery expiry must not masquerade as actual legacy handler settlement.");
+            }
+            finally
+            {
+                releaseFirst.TrySetResult(new { done = true });
+                releaseSecond.TrySetResult(new { done = true });
+                if (enteredFirst.Task.IsCompleted)
+                    await NativeProgressProbe.AwaitOwned(settledFirst.Task);
+                if (enteredSecond.Task.IsCompleted)
+                    await NativeProgressProbe.AwaitOwned(settledSecond.Task);
+                peer.Dispose();
+                await AwaitProgressQueueEmpty();
+            }
+        }
+
+        [Test]
+        public async Task ProgressReconnect_OldSessionCannotWriteToReplacement()
+        {
+            const string first = "__core06_replace_first",
+                second = "__core06_replace_second";
+            int nextCalls = 0;
+            var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var handlers = new ProgressHandlerScope();
+            using var enabled = NativeProgressProbe.EnableTools("batch_execute");
+            handlers.Set(first, new HandlerInfo(first, _ => new { done = true }, null));
+            handlers.Set(
+                second,
+                new HandlerInfo(
+                    second,
+                    null,
+                    async _ =>
+                    {
+                        entered.TrySetResult(true);
+                        try
+                        {
+                            return await release.Task.ConfigureAwait(true);
+                        }
+                        finally
+                        {
+                            settled.TrySetResult(true);
+                        }
+                    }
+                )
+            );
+            using var host = new TimingHostScope(_ =>
+            {
+                nextCalls++;
+                return Task.FromResult<object>(new { next = true });
+            });
+            string business = new JObject
+            {
+                ["type"] = "batch_execute",
+                ["params"] = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = second }) },
+            }.ToString(Formatting.None);
+            NativeProgressProbe.RequireBatchCapacity((JObject)JObject.Parse(business)["params"]);
+            JObject oldAck = null,
+                newAck = null;
+            var connectOld = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, new JArray("command_progress_v1"), out oldAck)));
+            await NativeProgressProbe.AwaitOwned(connectOld);
+            using var oldPeer = await connectOld;
+            TcpClient replacement = null;
+            try
+            {
+                string oldId = Guid.NewGuid().ToString("D");
+                var sendOld = host.Track(
+                    Task.Run(() =>
+                    {
+                        SendFrame(oldPeer.GetStream(), ProgressPrelude(oldId));
+                        SendFrame(oldPeer.GetStream(), Encoding.UTF8.GetBytes(business));
+                        return true;
+                    })
+                );
+                await NativeProgressProbe.AwaitOwned(sendOld);
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                var oldUpdate = host.Track(Task.Run(() => ReadFrame(oldPeer.GetStream(), ReadTimeoutMs)));
+                await NativeProgressProbe.AwaitOwned(oldUpdate);
+                AssertProgressPayload(await oldUpdate, oldId, 1);
+                var original = StdioBrokerResendTests.FindProgressQueued(business);
+                Assert.AreEqual(oldAck.Value<string>("session_id"), original.Session.SessionId);
+                var connectNew = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, new JArray("command_progress_v1"), out newAck)));
+                await NativeProgressProbe.AwaitOwned(connectNew);
+                replacement = await connectNew;
+                Assert.AreNotEqual(oldAck.Value<string>("session_id"), newAck.Value<string>("session_id"));
+                var closing = System.Diagnostics.Stopwatch.StartNew();
+                while ((!original.OwnerCancellation.IsCancellationRequested || !original.Progress.IsClosed) && closing.ElapsedMilliseconds < 3000)
+                    await Task.Delay(10);
+                Assert.IsTrue(original.OwnerCancellation.IsCancellationRequested);
+                Assert.IsTrue(original.Progress.IsClosed);
+                original.Progress.Report(2, 2, CommandProgressStage.BatchItems);
+                Assert.IsFalse(original.Progress.TryTake(out _), "A closed old association cannot retain a late callback.");
+                string next = new JObject { ["type"] = host.Name, ["params"] = new JObject() }.ToString(Formatting.None);
+                var sendNew = host.Track(
+                    Task.Run(() =>
+                    {
+                        SendFrame(replacement.GetStream(), Encoding.UTF8.GetBytes(next));
+                        return true;
+                    })
+                );
+                await NativeProgressProbe.AwaitOwned(sendNew);
+                var waiting = host.Track(Task.Run(() => ReadFrame(replacement.GetStream(), ReadTimeoutMs)));
+                // A real queue admission, not an elapsed delay, proves the replacement request is waiting behind actual old work.
+                var limit = System.Diagnostics.Stopwatch.StartNew();
+                while (StdioBridgeHost.QueuedCommandCount < 2 && limit.ElapsedMilliseconds < 3000)
+                    await Task.Delay(10);
+                Assert.AreEqual(2, StdioBridgeHost.QueuedCommandCount);
+                var replacementCommand = StdioBrokerResendTests.FindProgressQueued(next);
+                Assert.AreEqual(newAck.Value<string>("session_id"), replacementCommand.Session.SessionId);
+                Assert.IsNull(replacementCommand.Progress, "An ordinary new request cannot inherit the old optional association.");
+                Assert.AreEqual(0, nextCalls);
+                Assert.IsFalse(waiting.IsCompleted);
+                Assert.IsFalse(settled.Task.IsCompleted);
+                release.TrySetResult(new { done = true });
+                await NativeProgressProbe.AwaitOwned(settled.Task);
+                await NativeProgressProbe.AwaitOwned(waiting);
+                Assert.IsFalse(HasProgressPrefix(await waiting));
+                Assert.AreEqual("success", JObject.Parse(Encoding.UTF8.GetString(await waiting)).Value<string>("status"));
+                Assert.AreEqual(1, nextCalls);
+                await AwaitProgressQueueEmpty();
+            }
+            finally
+            {
+                release.TrySetResult(new { done = true });
+                if (entered.Task.IsCompleted)
+                    await NativeProgressProbe.AwaitOwned(settled.Task);
+                replacement?.Dispose();
+                oldPeer.Dispose();
+                await AwaitProgressQueueEmpty();
+            }
+        }
+
+        [Test]
+        [Explicit("Requires a fresh owned Editor with UNITY_MCP_STDIO_COMMAND_TIMEOUT_MS in [500,2000].")]
+        public async Task ProgressDeadline_LatePreludeCannotRenewBusinessFrameReadBudget()
+        {
+            int budget = (int)typeof(StdioBridgeHost).GetField("FrameIOTimeoutMs", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            Assert.That(budget, Is.InRange(500, 2000));
+            int calls = 0;
+            using var host = new TimingHostScope(_ =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult<object>(new { done = true });
+            });
+            var connecting = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, new JArray("command_progress_v1"), out _)));
+            await NativeProgressProbe.AwaitOwned(connecting);
+            using var peer = await connecting;
+            // The authenticated ACK brackets this connection's first read. No
+            // test-only timer field or runtime preference mutation is needed.
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            while (elapsed.ElapsedMilliseconds < budget * 7 / 10)
+                await Task.Delay(5);
+            var sendingPrelude = host.Track(
+                Task.Run(() =>
+                {
+                    SendFrame(peer.GetStream(), ProgressPrelude(Guid.NewGuid().ToString("D")));
+                    return true;
+                })
+            );
+            await NativeProgressProbe.AwaitOwned(sendingPrelude);
+            var closed = host.Track(Task.Run(() => ReadProgressPeerClosed(peer)));
+            while (elapsed.ElapsedMilliseconds < budget * 12 / 10)
+                await Task.Delay(5);
+            // A renewed post-prelude budget would still admit this real business
+            // frame. A correctly expired captured peer has already reached EOF.
+            var lateBusiness = host.Track(
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        SendFrame(
+                            peer.GetStream(),
+                            Encoding.UTF8.GetBytes(new JObject { ["type"] = host.Name, ["params"] = new JObject() }.ToString(Formatting.None))
+                        );
+                    }
+                    catch (IOException error)
+                        when (error.InnerException is SocketException socket
+                            && (
+                                socket.SocketErrorCode == SocketError.ConnectionReset
+                                || socket.SocketErrorCode == SocketError.ConnectionAborted
+                                || socket.SocketErrorCode == SocketError.Shutdown
+                            )
+                        ) { }
+                    return true;
+                })
+            );
+            await NativeProgressProbe.AwaitOwned(lateBusiness);
+            await NativeProgressProbe.AwaitOwned(closed);
+            Assert.IsTrue(await closed, "No result may be dispatched under a renewed second-frame budget.");
+            Assert.Less(elapsed.ElapsedMilliseconds, budget * 1.35);
+            Assert.AreEqual(0, calls);
+            Assert.AreEqual(0, StdioBridgeHost.QueuedCommandCount);
+            var fresh = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, null, out _)));
+            await NativeProgressProbe.AwaitOwned(fresh);
+            using var replacement = await fresh;
+            var result = host.Track(
+                Task.Run(() =>
+                {
+                    SendFrame(
+                        replacement.GetStream(),
+                        Encoding.UTF8.GetBytes(new JObject { ["type"] = host.Name, ["params"] = new JObject() }.ToString(Formatting.None))
+                    );
+                    return ReadFrame(replacement.GetStream(), ReadTimeoutMs);
+                })
+            );
+            await NativeProgressProbe.AwaitOwned(result);
+            Assert.IsFalse(HasProgressPrefix(await result));
+            Assert.AreEqual("success", JObject.Parse(Encoding.UTF8.GetString(await result)).Value<string>("status"));
+            Assert.AreEqual(1, calls);
+            await AwaitProgressQueueEmpty();
         }
 
         private static IEnumerator WaitTimingTask(Task task, bool allowFault = false)
@@ -484,7 +1405,7 @@ namespace MCPForUnityTests.Editor.Services
             throw new TimeoutException("Timed out reading line from stream");
         }
 
-        private static void SendFrame(NetworkStream stream, byte[] payload)
+        internal static void SendFrame(NetworkStream stream, byte[] payload)
         {
             byte[] header = new byte[8];
             ulong len = (ulong)payload.LongLength;
@@ -501,7 +1422,7 @@ namespace MCPForUnityTests.Editor.Services
             stream.Flush();
         }
 
-        private static byte[] ReadFrame(NetworkStream stream, int timeoutMs)
+        internal static byte[] ReadFrame(NetworkStream stream, int timeoutMs)
         {
             stream.ReadTimeout = timeoutMs;
 

@@ -24,6 +24,27 @@ class StdioAuthentication:
     deadline: float
 
 
+@dataclass(frozen=True, slots=True)
+class StdioAuthenticatedSession:
+    server_generation: str
+    session_id: str
+    capabilities: frozenset[str]
+
+    @property
+    def session_generation(self) -> str:
+        return self.server_generation + ":" + self.session_id
+
+
+def _optional_capabilities(value: object) -> frozenset[str]:
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) > 16
+        or any(type(item) is not str or not 1 <= len(item) <= 64 for item in value)
+    ):
+        return frozenset()
+    return frozenset(value).intersection({"command_progress_v1"})
+
+
 def authentication_proof(token: str, fields: list[str]) -> str:
     """Use role-separated transcripts so client and server proofs cannot reflect."""
     transcript = "\n".join(["unity-mcp-stdio-v2", *fields])
@@ -48,6 +69,17 @@ def _read_exact(sock: socket.socket, count: int, deadline: float) -> bytes:
 
 def authenticate_stdio(sock: socket.socket, banner: str, options: StdioAuthentication) -> str:
     """Authenticate a fresh socket and return its verified connection generation."""
+    return authenticate_stdio_session(sock, banner, options).session_generation
+
+
+def authenticate_stdio_session(
+    sock: socket.socket,
+    banner: str,
+    options: StdioAuthentication,
+    *,
+    capabilities: tuple[str, ...] = (),
+) -> StdioAuthenticatedSession:
+    """Keep required authentication unchanged; optional capabilities grant no work authority."""
     match = re.fullmatch(
         r"WELCOME UNITY-MCP 2 FRAMING=1 AUTH=HMAC-SHA256 "
         r"SERVER=([0-9a-f]{32}) CHALLENGE=([0-9a-f]{64})",
@@ -60,13 +92,17 @@ def authenticate_stdio(sock: socket.socket, banner: str, options: StdioAuthentic
     if token is None or not 32 <= len(token) <= 256:
         raise StdioAuthenticationError("Stdio launch credential unavailable")
     client_nonce = secrets.token_hex(32)
+    offered = _optional_capabilities(capabilities)
+    request = {
+        "type": "authenticate",
+        "version": 2,
+        "client_nonce": client_nonce,
+        "proof": authentication_proof(token, ["client", generation, challenge, client_nonce]),
+    }
+    if offered:
+        request["capabilities"] = sorted(offered)
     payload = json.dumps(
-        {
-            "type": "authenticate",
-            "version": 2,
-            "client_nonce": client_nonce,
-            "proof": authentication_proof(token, ["client", generation, challenge, client_nonce]),
-        },
+        request,
         separators=(",", ":"),
     ).encode("ascii")
     remaining = options.deadline - time.monotonic()
@@ -101,4 +137,5 @@ def authenticate_stdio(sock: socket.socket, banner: str, options: StdioAuthentic
         raise StdioAuthenticationError("Stdio server authentication failed")
     if time.monotonic() >= options.deadline:
         raise StdioAuthenticationError("Stdio authentication deadline expired")
-    return generation + ":" + session
+    accepted = offered.intersection(_optional_capabilities(reply.get("capabilities")))
+    return StdioAuthenticatedSession(generation, session, accepted)

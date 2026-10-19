@@ -74,6 +74,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private readonly OwnedConnectionOptions _ownedConnection;
         private bool _commandCancellationNegotiated;
         private bool _compressionNegotiated;
+        private bool _commandProgressOffered;
+        private bool _commandProgressNegotiated;
 
         // An explicitly owned connection keeps batch integration tests and embedded
         // callers independent of the user's saved endpoint, identity and session.
@@ -308,6 +310,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 _commandWork = null;
                 _statePublisher = null;
                 _largeResultNegotiated = false;
+                _commandProgressOffered = false;
+                _commandProgressNegotiated = false;
                 Interlocked.Exchange(ref _isReconnectingFlag, 0);
                 _isConnected = false;
                 _state = TransportState.Disconnected(TransportDisplayName);
@@ -462,6 +466,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _largeResultNegotiated = false;
                     _commandCancellationNegotiated = false;
                     _compressionNegotiated = false;
+                    _commandProgressOffered = false;
+                    _commandProgressNegotiated = false;
                 }
             }
             if (!ownsLifecycle)
@@ -868,6 +874,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 if (!IsCurrentConnectionToken(token))
                     return;
+                _commandProgressOffered = HasCommandProgressCapability(payload);
+                if (!_commandProgressOffered)
+                    _commandProgressNegotiated = false;
                 if (keepAliveSeconds.HasValue && keepAliveSeconds.Value > 0)
                 {
                     _keepAliveInterval = TimeSpan.FromSeconds(keepAliveSeconds.Value);
@@ -909,6 +918,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _largeResultNegotiated = HasCapability(payload, LargeResultWriter.Capability);
                     _compressionNegotiated = _largeResultNegotiated && HasCapability(payload, LargeResultWriter.CompressionCapability);
                     _commandCancellationNegotiated = HasCapability(payload, ConnectionCommandWork.CancellationCapability);
+                    _commandProgressNegotiated = _commandProgressOffered && HasCommandProgressCapability(payload);
                     _statePublisher?.Dispose();
                     _statePublisher = null;
                     _state = TransportState.Connected(TransportDisplayName, sessionId: newSessionId, details: _endpointUri.ToString());
@@ -1120,11 +1130,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
 
             ConnectionCommandWork work;
+            string sessionId;
+            bool progressNegotiated;
             lock (_ownershipLock)
             {
                 if (!IsCurrentConnectionToken(token))
                     return;
                 work = _commandWork;
+                sessionId = _sessionId;
+                progressNegotiated = _commandProgressNegotiated;
             }
             if (work == null)
                 return;
@@ -1138,10 +1152,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 TimeoutSeconds = timeoutSeconds,
                 Deadline = deadline,
                 Timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.WebSocket),
+                Owner = work,
+                SessionId = sessionId,
+                Progress = progressNegotiated && RequestsCommandProgress(payload, commandId) ? new CommandProgressBuffer() : null,
             };
             string rejection = work.TryStart(commandId, previous => ExecuteQueuedCommandAsync(previous, request, token), request.Cancel);
             if (rejection != null)
             {
+                request.Progress?.Dispose();
                 deadline.Dispose();
                 request.Timing?.ExecutionDone();
                 try
@@ -1169,12 +1187,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             public int TimeoutSeconds;
             public CancellationTokenSource Deadline;
             public CommandPhaseTiming Timing;
+            public ConnectionCommandWork Owner;
+            public string SessionId;
+            public CommandProgressBuffer Progress;
+            public Task Response;
             private int _cancelRequested;
             public bool CancelRequested => Volatile.Read(ref _cancelRequested) != 0;
 
             public void Cancel()
             {
                 Interlocked.Exchange(ref _cancelRequested, 1);
+                Progress?.Close();
                 Deadline.Cancel();
             }
         }
@@ -1182,6 +1205,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private async Task ExecuteQueuedCommandAsync(Task previous, QueuedCommand request, CancellationToken token)
         {
             TransportCommandOperation operation = null;
+            CancellationTokenSource progressStop = null;
+            Task progressTask = Task.CompletedTask;
             request.Timing?.Start(CommandPhaseTiming.Phase.Queue);
             try
             {
@@ -1190,7 +1215,19 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     await ConnectionCommandWork.WaitAsync(previous, request.Deadline.Token).ConfigureAwait(false);
                     request.Deadline.Token.ThrowIfCancellationRequested();
-                    operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(request.Command, request.Deadline.Token, null, request.Timing);
+                    if (request.Progress != null)
+                    {
+                        progressStop = CancellationTokenSource.CreateLinkedTokenSource(request.Deadline.Token);
+                        progressTask = PumpCommandProgressAsync(request, token, progressStop.Token);
+                    }
+                    operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(
+                        request.Command,
+                        request.Deadline.Token,
+                        null,
+                        request.Timing,
+                        request.Progress
+                    );
+                    request.Response = operation.Response;
                     response = (await operation.Response.ConfigureAwait(false)).Payload;
                 }
                 catch (OperationCanceledException)
@@ -1208,6 +1245,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     response = new { status = "error", error = ex.Message };
                 }
+                finally
+                {
+                    // Close/join before any final-result serialization. A retained actual
+                    // child keeps its existing completion owner and only a closed buffer.
+                    request.Progress?.Close();
+                    progressStop?.Cancel();
+                    await progressTask.ConfigureAwait(false);
+                    progressStop?.Dispose();
+                }
                 await SendTimedCommandResultAsync(request.Id, response, token, request.Timing).ConfigureAwait(false);
                 request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
             }
@@ -1222,6 +1268,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             finally
             {
+                request.Progress?.Dispose();
                 try
                 {
                     // Response delivery may be canceled; mutation settlement must remain truthful.
@@ -1232,6 +1279,139 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (OperationCanceledException) { }
                 request.Timing?.ExecutionDone();
                 request.Deadline.Dispose();
+            }
+        }
+
+        private static bool HasCommandProgressCapability(JObject payload)
+        {
+            if (payload["capabilities"] is not JArray capabilities || capabilities.Count > 16)
+                return false;
+            bool supported = false;
+            foreach (var value in capabilities)
+            {
+                if (value.Type != JTokenType.String)
+                    return false;
+                string name = value.Value<string>();
+                if (name == null || name.Length > 64 || Encoding.UTF8.GetByteCount(name) > 64)
+                    return false;
+                supported |= name == CommandProgressBuffer.Capability;
+            }
+            return supported;
+        }
+
+        private static bool RequestsCommandProgress(JObject payload, string id)
+        {
+            if (
+                !Guid.TryParseExact(id, "D", out var parsed)
+                || parsed.ToString("D") != id
+                || payload["progress"] is not JObject progress
+                || progress.Count != 1
+                || progress["version"] is not JValue version
+                || version.Type != JTokenType.Integer
+            )
+                return false;
+            // Do not coerce booleans, floats, strings or overflowing BigIntegers.
+            return version.Value is long number && number == 1 || version.Value is int small && small == 1;
+        }
+
+        // Caller holds _ownershipLock. The response waiter, not actual mutation
+        // completion, owns optional reporting.
+        private bool IsCurrentProgressOwner(QueuedCommand request, CancellationToken ownerToken) =>
+            IsCurrentConnectionToken(ownerToken)
+            && _commandProgressNegotiated
+            && ReferenceEquals(_commandWork, request.Owner)
+            && string.Equals(_sessionId, request.SessionId, StringComparison.Ordinal)
+            && !request.Deadline.IsCancellationRequested
+            && !request.Progress.IsClosed
+            && (request.Response == null || !request.Response.IsCompleted);
+
+        private async Task PumpCommandProgressAsync(QueuedCommand request, CancellationToken ownerToken, CancellationToken stopToken)
+        {
+            long nextSend = 0;
+            try
+            {
+                while (!stopToken.IsCancellationRequested)
+                {
+                    await request.Progress.WaitAsync(stopToken).ConfigureAwait(false);
+                    long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (now < nextSend)
+                        await Task.Delay(TimeSpan.FromSeconds((nextSend - now) / (double)System.Diagnostics.Stopwatch.Frequency), stopToken)
+                            .ConfigureAwait(false);
+                    stopToken.ThrowIfCancellationRequested();
+                    if (!request.Progress.TryTake(out var update))
+                        break;
+                    await TrySendCommandProgressAsync(request, update, ownerToken, stopToken).ConfigureAwait(false);
+                    nextSend = System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency / 10;
+                }
+            }
+            catch (OperationCanceledException) { /* The foreground/deadline owns this optional sender. */ }
+            catch (Exception) { /* Optional reporting never retries or changes a handler result. */ }
+            finally
+            {
+                request.Progress.Close();
+            }
+        }
+
+        private async Task<bool> TrySendCommandProgressAsync(
+            QueuedCommand request,
+            CommandProgressUpdate update,
+            CancellationToken ownerToken,
+            CancellationToken stopToken
+        )
+        {
+            stopToken.ThrowIfCancellationRequested();
+            ClientWebSocket socket;
+            lock (_ownershipLock)
+            {
+                if (!IsCurrentProgressOwner(request, ownerToken))
+                    return false;
+                socket = _socket;
+            }
+            if (socket == null)
+                return false;
+            var payload = new JObject
+            {
+                ["type"] = "command_progress",
+                ["id"] = request.Id,
+                ["completed"] = update.Completed,
+                ["total"] = update.Total,
+                ["stage"] = "batch_items",
+            };
+            byte[] bytes = Encoding.UTF8.GetBytes(payload.ToString(Formatting.None));
+            if (bytes.Length > CommandProgressBuffer.MaxFrameBytes)
+                return false;
+            // Busy optional capacity is dropped, never queued behind another writer.
+            if (!await _sendLock.WaitAsync(0, stopToken).ConfigureAwait(false))
+                return false;
+            try
+            {
+                lock (_ownershipLock)
+                    if (!IsCurrentProgressOwner(request, ownerToken) || !ReferenceEquals(_socket, socket))
+                        return false;
+                stopToken.ThrowIfCancellationRequested();
+                if (socket.State != WebSocketState.Open)
+                    return false;
+                // Once SendAsync starts, normal foreground closure joins it instead of
+                // interrupting a frame. The original admitted deadline still bounds it.
+                using var write = CancellationTokenSource.CreateLinkedTokenSource(request.Deadline.Token);
+                write.CancelAfter(TimeSpan.FromMilliseconds(200));
+                write.Token.ThrowIfCancellationRequested();
+                try
+                {
+                    await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, write.Token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // A started optional write may have emitted frame bytes. Close only
+                    // that captured socket; never append a final result to partial framing.
+                    socket.Abort();
+                    throw;
+                }
+                return true;
+            }
+            finally
+            {
+                _sendLock.Release();
             }
         }
 
@@ -1340,7 +1520,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     LargeResultWriter.Capability,
                     ConnectionCommandWork.CancellationCapability,
                     ToolSettingsState.Capability,
-                    LargeResultWriter.CompressionCapability
+                    LargeResultWriter.CompressionCapability,
+                    CommandProgressBuffer.Capability
                 ),
             };
 

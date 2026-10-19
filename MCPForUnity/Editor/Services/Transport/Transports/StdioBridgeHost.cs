@@ -30,6 +30,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public int TimeoutMs;
         public CancellationToken OwnerCancellation;
         public CommandPhaseTiming Timing;
+        public CommandProgressBuffer Progress;
+        public string ProgressId;
+        public StdioAuthenticatedSession Session;
+        public long DeadlineAtMs;
 
         /// <summary>
         /// Connection that queued this command, used to tell a broker resend apart from a
@@ -711,7 +715,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             using (NetworkStream stream = client.GetStream())
             {
                 using var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
-                TcpClient[] staleClients = Array.Empty<TcpClient>();
+                StdioFrameWriter writer = null;
                 try
                 {
                     try
@@ -725,10 +729,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         client.NoDelay = true;
                     }
                     catch { }
+                    StdioBridgeAuthentication launch = authentication;
+                    StdioAuthenticatedSession session;
+                    TcpClient[] staleClients;
                     try
                     {
-                        var launch = authentication;
-                        if (launch == null || await launch.AuthenticateAsync(stream, token).ConfigureAwait(false) == null)
+                        session = launch == null ? null : await launch.AuthenticateSessionAsync(stream, token).ConfigureAwait(false);
+                        if (session == null)
                             return;
                         lock (clientsLock)
                         {
@@ -748,10 +755,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             McpLog.Warn($"Stdio authentication refused ({ex.GetType().Name})");
                         return;
                     }
-
-                    // In stdio transport there is only ever one active Python server.
-                    // A new connection means the old one is dead — close stale clients so
-                    // their hung ReadFrameAsUtf8Async calls throw and exit cleanly.
                     if (staleClients.Length > 0)
                     {
                         McpLog.Info($"Closing {staleClients.Length} stale client(s) after new connection", always: false);
@@ -764,189 +767,56 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             catch { }
                         }
                     }
-
-                    while (isRunning && !token.IsCancellationRequested)
-                    {
-                        CommandPhaseTiming timing = null;
-                        try
+                    writer = new StdioFrameWriter(
+                        stream,
+                        () =>
                         {
-                            string commandText = await ReadFrameAsUtf8Async(stream, FrameIOTimeoutMs, token).ConfigureAwait(false);
-
                             try
                             {
-                                if (IsDebugEnabled())
-                                {
-                                    var preview = commandText.Length > 120 ? commandText.Substring(0, 120) + "…" : commandText;
-                                    McpLog.Info($"recv framed: {preview}", always: false);
-                                }
-                            }
-                            catch { }
-                            string commandId = Guid.NewGuid().ToString();
-                            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-                            if (commandText.Trim() == "ping")
-                            {
-                                byte[] pingResponseBytes = System.Text.Encoding.UTF8.GetBytes("{\"status\":\"success\",\"result\":{\"message\":\"pong\"}}");
-                                await WriteFrameAsync(stream, pingResponseBytes);
-                                continue;
-                            }
-
-                            // A command already in flight from a different connection means the
-                            // broker gave up waiting, reconnected and resent it. Running it a
-                            // second time would duplicate side effects (issue #1130), so attach
-                            // to the original instead of queueing a copy.
-                            timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.Stdio);
-                            TaskCompletionSource<string> pending = tcs;
-                            int commandTimeoutMs = ResolveCommandTimeoutMs(commandText, FrameIOTimeoutMs);
-                            using var commandLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
-                            commandLifetime.CancelAfter(commandTimeoutMs);
-                            lock (lockObj)
-                            {
-                                QueuedCommand inFlight = FindBrokerResendTarget(commandText, client);
-                                if (inFlight != null)
-                                {
-                                    pending = inFlight.Tcs;
-                                    timing?.ExecutionDone();
-                                    McpLog.Warn(
-                                        "Suppressed duplicate command resent on a new connection; "
-                                            + "awaiting the in-flight result instead of running it twice."
-                                    );
-                                }
-                                else
-                                {
-                                    if (commandQueue.Count >= 128)
-                                    {
-                                        tcs.TrySetResult("{\"status\":\"error\",\"error\":\"Command queue capacity reached\"}");
-                                        timing?.ExecutionDone();
-                                    }
-                                    else
-                                    {
-                                        timing?.Start(CommandPhaseTiming.Phase.Queue);
-                                        commandQueue[commandId] = new QueuedCommand
-                                        {
-                                            CommandJson = commandText,
-                                            Tcs = tcs,
-                                            IsExecuting = false,
-                                            EnqueuedAtMs = _uptime.ElapsedMilliseconds,
-                                            TimeoutMs = commandTimeoutMs,
-                                            Owner = client,
-                                            OwnerCancellation = commandLifetime.Token,
-                                            Timing = timing,
-                                        };
-                                    }
-                                }
-                            }
-
-                            // Force Unity's main loop to iterate even when backgrounded,
-                            // so ProcessCommands fires and picks up the queued command.
-                            // This mirrors what HTTP does via TransportCommandDispatcher.RequestMainThreadPump().
-                            try
-                            {
-                                EditorApplication.QueuePlayerLoopUpdate();
-                            }
-                            catch { }
-
-                            string response;
-                            using var watchLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
-                            Task disconnectWatch = WatchPendingDisconnectAsync(client, pending.Task, connectionLifetime, watchLifetime.Token);
-                            try
-                            {
-                                using var respCts = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
-                                respCts.CancelAfter(commandTimeoutMs);
-                                var completed = await Task.WhenAny(pending.Task, Task.Delay(commandTimeoutMs, respCts.Token)).ConfigureAwait(false);
-                                if (completed == pending.Task)
-                                {
-                                    respCts.Cancel();
-                                    response = pending.Task.Result;
-                                    Interlocked.Exchange(ref _consecutiveTimeouts, 0);
-                                }
-                                else
-                                {
-                                    int timeouts = Interlocked.Increment(ref _consecutiveTimeouts);
-                                    McpLog.Warn($"Command TCS timed out ({timeouts} consecutive)");
-                                    var timeoutResponse = new { status = "error", error = $"Command processing timed out after {commandTimeoutMs} ms" };
-                                    response = SerializeTimedResponse(timeoutResponse, timing);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                var errorResponse = new { status = "error", error = ex.Message };
-                                response = SerializeTimedResponse(errorResponse, timing);
+                                connectionLifetime.Cancel();
                             }
                             finally
                             {
-                                if (!pending.Task.IsCompleted)
-                                    commandLifetime.Cancel();
-                                watchLifetime.Cancel();
-                                await disconnectWatch.ConfigureAwait(false);
+                                client.Close();
                             }
-
-                            if (IsDebugEnabled())
-                            {
-                                try
-                                {
-                                    McpLog.Info("[MCP] sending framed response", always: false);
-                                }
-                                catch { }
-                            }
-                            byte[] responseBytes;
-                            try
-                            {
-                                timing?.Start(CommandPhaseTiming.Phase.Serialization);
-                                responseBytes = System.Text.Encoding.UTF8.GetBytes(response);
-                                timing?.Stop(CommandPhaseTiming.Phase.Serialization);
-                            }
-                            catch (Exception ex)
-                            {
-                                IoInfo($"[IO] ✗ serialize FAIL tag=response reqId=? {ex.GetType().Name}: {ex.Message}");
-                                throw;
-                            }
-
-                            try
-                            {
-                                timing?.Start(CommandPhaseTiming.Phase.Send);
-                                await WriteFrameAsync(stream, responseBytes);
-                                timing?.Stop(CommandPhaseTiming.Phase.Send);
-                                timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
-                            }
-                            catch (Exception ex)
-                            {
-                                IoInfo($"[IO] ✗ write FAIL  tag=response reqId=? {ex.GetType().Name}: {ex.Message}");
-                                throw;
-                            }
+                        },
+                        connectionLifetime.Token
+                    );
+                    while (isRunning && !connectionLifetime.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            await HandleCommandAsync(client, stream, writer, launch, session, connectionLifetime).ConfigureAwait(false);
                         }
                         catch (Exception ex)
                         {
                             string msg = ex.Message ?? string.Empty;
-                            bool isBenign =
+                            bool benign =
                                 msg.IndexOf("Connection closed before reading expected bytes", StringComparison.OrdinalIgnoreCase) >= 0
                                 || msg.IndexOf("Read timed out", StringComparison.OrdinalIgnoreCase) >= 0
                                 || ex is IOException
-                                || ex is ObjectDisposedException;
-                            if (isBenign)
+                                || ex is ObjectDisposedException
+                                || ex is OperationCanceledException;
+                            if (benign)
                             {
                                 if (IsDebugEnabled())
                                     McpLog.Info($"Client handler: {msg}", always: false);
                             }
                             else
-                            {
                                 McpLog.Error($"Client handler error: {msg}");
-                            }
                             break;
-                        }
-                        finally
-                        {
-                            timing?.DeliveryDone(
-                                connectionLifetime.IsCancellationRequested ? CommandPhaseTiming.Delivery.Canceled : CommandPhaseTiming.Delivery.Failed
-                            );
                         }
                     }
                 }
                 finally
                 {
                     connectionLifetime.Cancel();
+                    if (writer != null)
+                        await writer.CloseAsync().ConfigureAwait(false);
                     lock (lockObj)
                     {
+                        foreach (var item in commandQueue.Values.Where(item => ReferenceEquals(item.Owner, client)))
+                            item.Progress?.Close();
                         var abandoned = commandQueue
                             .Where(item => ReferenceEquals(item.Value.Owner, client) && !item.Value.IsExecuting)
                             .Select(item => item.Key)
@@ -958,19 +828,341 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             commandQueue.Remove(id);
                         }
                     }
+                    int remaining;
                     lock (clientsLock)
                     {
                         activeClients.Remove(client);
                         authenticatingClients.Remove(client);
-                    }
-                    int remaining;
-                    lock (clientsLock)
-                    {
                         remaining = activeClients.Count;
                     }
                     McpLog.Info($"Client handler exited (remaining clients: {remaining})", always: false);
                 }
             }
+        }
+
+        private enum ProgressPrelude
+        {
+            None,
+            Accepted,
+            Refused,
+        }
+
+        private static ProgressPrelude ReadProgressPrelude(string text, out string id)
+        {
+            id = null;
+            JObject value;
+            try
+            {
+                value = JObject.Parse(text, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+            }
+            catch (JsonException)
+            {
+                try
+                {
+                    // A duplicate/malformed optional object must not fall back to
+                    // command dispatch merely because strict loading refused it.
+                    var malformed = JObject.Parse(text);
+                    if (malformed["type"]?.Type == JTokenType.String && (string)malformed["type"] == "command_progress_begin")
+                        return ProgressPrelude.Refused;
+                }
+                catch (JsonException) { }
+                // Invalid ordinary business JSON retains the existing error path.
+                // Once armed, the caller separately requires a valid business object.
+                return ProgressPrelude.None;
+            }
+            if (value["type"]?.Type != JTokenType.String || (string)value["type"] != "command_progress_begin")
+                return ProgressPrelude.None;
+            if (
+                text.Length > CommandProgressBuffer.MaxFrameBytes
+                || System.Text.Encoding.UTF8.GetByteCount(text) > CommandProgressBuffer.MaxFrameBytes
+                || value.Count != 3
+                || value["version"]?.Type != JTokenType.Integer
+                || value["version"].ToString(Formatting.None) != "1"
+                || value["id"]?.Type != JTokenType.String
+            )
+                return ProgressPrelude.Refused;
+            string raw = (string)value["id"];
+            if (!Guid.TryParseExact(raw, "D", out var parsed) || !string.Equals(parsed.ToString("D"), raw, StringComparison.Ordinal))
+                return ProgressPrelude.Refused;
+            id = raw;
+            return ProgressPrelude.Accepted;
+        }
+
+        private static bool IsProgressBusiness(string text)
+        {
+            try
+            {
+                var value = JObject.Parse(text);
+                return value["type"]?.Type == JTokenType.String && (string)value["type"] != "command_progress_begin";
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        private static int RemainingCommandMs(long admittedAt, int timeoutMs)
+        {
+            long remaining = timeoutMs - (_uptime.ElapsedMilliseconds - admittedAt);
+            return (int)Math.Max(0, Math.Min(int.MaxValue, remaining));
+        }
+
+        private static async Task HandleCommandAsync(
+            TcpClient client,
+            NetworkStream stream,
+            StdioFrameWriter writer,
+            StdioBridgeAuthentication launch,
+            StdioAuthenticatedSession session,
+            CancellationTokenSource connectionLifetime
+        )
+        {
+            CommandPhaseTiming timing = null;
+            QueuedCommand owned = null;
+            using var stopProgress = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+            Task progressPump = Task.CompletedTask;
+            CancellationTokenSource commandLifetime = null;
+            try
+            {
+                long frameReadStartedAt = _uptime.ElapsedMilliseconds;
+                string commandText = await ReadFrameAsUtf8Async(stream, FrameIOTimeoutMs, connectionLifetime.Token).ConfigureAwait(false);
+                var prelude = ReadProgressPrelude(commandText, out string progressId);
+                long admittedAt = _uptime.ElapsedMilliseconds;
+                if (prelude != ProgressPrelude.None)
+                {
+                    if (prelude != ProgressPrelude.Accepted || !session.Capabilities.Contains(CommandProgressBuffer.Capability))
+                        throw new IOException("Stdio progress association refused");
+                    // Exactly one local armed slot. EOF, cancellation or any second
+                    // prelude exits this connection without dispatching business work.
+                    int associationMs = Math.Min(RemainingCommandMs(frameReadStartedAt, FrameIOTimeoutMs), RemainingCommandMs(admittedAt, FrameIOTimeoutMs));
+                    if (associationMs == 0)
+                        throw new IOException("Stdio progress association deadline expired");
+                    using var associationDeadline = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+                    associationDeadline.CancelAfter(associationMs);
+                    commandText = await ReadFrameAsUtf8Async(stream, associationMs, associationDeadline.Token).ConfigureAwait(false);
+                    if (RemainingCommandMs(frameReadStartedAt, FrameIOTimeoutMs) == 0)
+                        throw new IOException("Stdio progress association deadline expired");
+                    if (!IsProgressBusiness(commandText))
+                        throw new IOException("Stdio progress association has no business command");
+                }
+                if (commandText.Trim() == "ping")
+                {
+                    using var pingDeadline = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+                    pingDeadline.CancelAfter(FrameIOTimeoutMs);
+                    await writer
+                        .WriteResultAsync(System.Text.Encoding.UTF8.GetBytes("{\"status\":\"success\",\"result\":{\"message\":\"pong\"}}"), pingDeadline.Token)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                try
+                {
+                    if (IsDebugEnabled())
+                    {
+                        var preview = commandText.Length > 120 ? commandText.Substring(0, 120) + "…" : commandText;
+                        McpLog.Info($"recv framed: {preview}", always: false);
+                    }
+                }
+                catch { }
+                string commandId = Guid.NewGuid().ToString();
+                var result = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                TaskCompletionSource<string> pending = result;
+                timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.Stdio);
+                int timeoutMs = ResolveCommandTimeoutMs(commandText, FrameIOTimeoutMs);
+                bool optedIn = prelude == ProgressPrelude.Accepted;
+                int remainingMs = optedIn ? RemainingCommandMs(admittedAt, timeoutMs) : timeoutMs;
+                if (remainingMs == 0)
+                    throw new IOException("Stdio progress command deadline expired");
+                commandLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+                commandLifetime.CancelAfter(remainingMs);
+                lock (lockObj)
+                {
+                    QueuedCommand inFlight = FindBrokerResendTarget(commandText, client);
+                    if (inFlight != null)
+                    {
+                        // Preserve exact business bytes, original TCS/Owner/reporter.
+                        // A replacement's prelude is consumed and never subscribed.
+                        pending = inFlight.Tcs;
+                        timing?.ExecutionDone();
+                        McpLog.Warn("Suppressed duplicate command resent on a new connection; awaiting the in-flight result instead of running it twice.");
+                    }
+                    else if (commandQueue.Count >= 128)
+                    {
+                        result.TrySetResult("{\"status\":\"error\",\"error\":\"Command queue capacity reached\"}");
+                        timing?.ExecutionDone();
+                    }
+                    else
+                    {
+                        timing?.Start(CommandPhaseTiming.Phase.Queue);
+                        owned = new QueuedCommand
+                        {
+                            CommandJson = commandText,
+                            Tcs = result,
+                            IsExecuting = false,
+                            EnqueuedAtMs = _uptime.ElapsedMilliseconds,
+                            TimeoutMs = timeoutMs,
+                            Owner = client,
+                            OwnerCancellation = commandLifetime.Token,
+                            Timing = timing,
+                            Progress = optedIn ? new CommandProgressBuffer() : null,
+                            ProgressId = optedIn ? progressId : null,
+                            Session = session,
+                            DeadlineAtMs = optedIn ? admittedAt + timeoutMs : 0,
+                        };
+                        commandQueue[commandId] = owned;
+                    }
+                }
+                if (owned?.Progress != null)
+                    progressPump = PumpStdioProgressAsync(client, writer, launch, session, commandId, owned, commandLifetime.Token, stopProgress.Token);
+                try
+                {
+                    EditorApplication.QueuePlayerLoopUpdate();
+                }
+                catch { }
+                string response;
+                using var watchLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+                Task disconnectWatch = WatchPendingDisconnectAsync(client, pending.Task, connectionLifetime, watchLifetime.Token);
+                try
+                {
+                    using var responseWait = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+                    int waitMs = optedIn ? RemainingCommandMs(admittedAt, timeoutMs) : timeoutMs;
+                    var completed = await Task.WhenAny(pending.Task, Task.Delay(waitMs, responseWait.Token)).ConfigureAwait(false);
+                    responseWait.Cancel();
+                    if (completed == pending.Task)
+                    {
+                        response = pending.Task.Result;
+                        Interlocked.Exchange(ref _consecutiveTimeouts, 0);
+                    }
+                    else
+                    {
+                        int timeouts = Interlocked.Increment(ref _consecutiveTimeouts);
+                        McpLog.Warn($"Command TCS timed out ({timeouts} consecutive)");
+                        response = SerializeTimedResponse(new { status = "error", error = $"Command processing timed out after {timeoutMs} ms" }, timing);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    response = SerializeTimedResponse(new { status = "error", error = ex.Message }, timing);
+                }
+                finally
+                {
+                    if (!pending.Task.IsCompleted)
+                        commandLifetime.Cancel();
+                    watchLifetime.Cancel();
+                    await disconnectWatch.ConfigureAwait(false);
+                }
+                owned?.Progress?.Close();
+                stopProgress.Cancel();
+                await progressPump.ConfigureAwait(false);
+                timing?.Start(CommandPhaseTiming.Phase.Serialization);
+                byte[] responseBytes;
+                try
+                {
+                    responseBytes = System.Text.Encoding.UTF8.GetBytes(response);
+                }
+                finally
+                {
+                    timing?.Stop(CommandPhaseTiming.Phase.Serialization);
+                }
+                using var legacyWrite = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+                // Preserve ordinary no-prelude timeout/result behavior. Only an
+                // accepted opt-in shares its original deadline with the final frame.
+                if (!optedIn)
+                    legacyWrite.CancelAfter(FrameIOTimeoutMs);
+                CancellationToken writeDeadline = optedIn ? commandLifetime.Token : legacyWrite.Token;
+                timing?.Start(CommandPhaseTiming.Phase.Send);
+                await writer.WriteResultAsync(responseBytes, writeDeadline).ConfigureAwait(false);
+                timing?.Stop(CommandPhaseTiming.Phase.Send);
+                timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
+            }
+            finally
+            {
+                owned?.Progress?.Close();
+                stopProgress.Cancel();
+                await progressPump.ConfigureAwait(false);
+                commandLifetime?.Dispose();
+                timing?.DeliveryDone(connectionLifetime.IsCancellationRequested ? CommandPhaseTiming.Delivery.Canceled : CommandPhaseTiming.Delivery.Failed);
+            }
+        }
+
+        private static bool IsCurrentStdioProgress(
+            TcpClient client,
+            StdioBridgeAuthentication launch,
+            StdioAuthenticatedSession session,
+            string commandId,
+            QueuedCommand command
+        )
+        {
+            lock (clientsLock)
+                if (!isRunning || !ReferenceEquals(authentication, launch) || !activeClients.Contains(client))
+                    return false;
+            lock (lockObj)
+                return commandQueue.TryGetValue(commandId, out var current)
+                    && ReferenceEquals(current, command)
+                    && ReferenceEquals(command.Owner, client)
+                    && ReferenceEquals(command.Session, session)
+                    && !command.OwnerCancellation.IsCancellationRequested
+                    && !command.Tcs.Task.IsCompleted
+                    && !command.Progress.IsClosed;
+        }
+
+        private static async Task PumpStdioProgressAsync(
+            TcpClient client,
+            StdioFrameWriter writer,
+            StdioBridgeAuthentication launch,
+            StdioAuthenticatedSession session,
+            string commandId,
+            QueuedCommand command,
+            CancellationToken deadline,
+            CancellationToken stop
+        )
+        {
+            long lastSent = 0;
+            int sent = 0;
+            try
+            {
+                while (!stop.IsCancellationRequested && !deadline.IsCancellationRequested && !command.Progress.IsClosed && sent < 256)
+                {
+                    await command.Progress.WaitAsync(stop).ConfigureAwait(false);
+                    if (lastSent != 0)
+                    {
+                        int delay = (int)(100 - (_uptime.ElapsedMilliseconds - lastSent));
+                        if (delay > 0)
+                            await Task.Delay(delay, stop).ConfigureAwait(false);
+                    }
+                    if (!IsCurrentStdioProgress(client, launch, session, commandId, command))
+                        return;
+                    if (!command.Progress.TryTake(out var update))
+                        continue;
+                    var payload = new JObject
+                    {
+                        ["type"] = "command_progress",
+                        ["id"] = command.ProgressId,
+                        ["completed"] = update.Completed,
+                        ["total"] = update.Total,
+                        ["stage"] = "batch_items",
+                    };
+                    byte[] json = System.Text.Encoding.UTF8.GetBytes(payload.ToString(Formatting.None));
+                    if (
+                        json.Length > CommandProgressBuffer.MaxFrameBytes
+                        || stop.IsCancellationRequested
+                        || !IsCurrentStdioProgress(client, launch, session, commandId, command)
+                    )
+                        return;
+                    byte[] frame = new byte[json.Length + 4];
+                    frame[0] = (byte)'M';
+                    frame[1] = (byte)'C';
+                    frame[2] = (byte)'P';
+                    frame[3] = (byte)'G';
+                    Buffer.BlockCopy(json, 0, frame, 4, json.Length);
+                    // A started write joins normally; stop only cancels buffer waits.
+                    // Its actual I/O remains bounded by the ORIGINAL command token.
+                    if (!await writer.TryWriteProgressAsync(frame, deadline).ConfigureAwait(false))
+                        return;
+                    sent++;
+                    lastSent = _uptime.ElapsedMilliseconds;
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception) { /* Optional reporting cannot replace a tool result or retry work. */ }
         }
 
         private static async Task WatchPendingDisconnectAsync(
@@ -1275,12 +1467,26 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 TransportCommandOperation operation = null;
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(queuedCommand.OwnerCancellation);
-                cts.CancelAfter(commandTimeoutMs);
+                int remainingMs =
+                    queuedCommand.DeadlineAtMs == 0
+                        ? commandTimeoutMs
+                        : (int)Math.Max(0, Math.Min(int.MaxValue, queuedCommand.DeadlineAtMs - _uptime.ElapsedMilliseconds));
+                if (remainingMs == 0)
+                    cts.Cancel();
+                else
+                    cts.CancelAfter(remainingMs);
                 try
                 {
                     var command = TransportJson.DeserializeCommand(payload);
-                    operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(command, cts.Token, TransportMode.Stdio, queuedCommand.Timing);
+                    operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(
+                        command,
+                        cts.Token,
+                        TransportMode.Stdio,
+                        queuedCommand.Timing,
+                        queuedCommand.Progress
+                    );
                     var response = await operation.Response.ConfigureAwait(true);
+                    queuedCommand.Progress?.Close();
                     queuedCommand.Timing?.Start(CommandPhaseTiming.Phase.Serialization);
                     string json;
                     try
@@ -1295,11 +1501,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch (OperationCanceledException)
                 {
+                    queuedCommand.Progress?.Close();
                     var timeoutResponse = new { status = "error", error = $"Command processing timed out after {commandTimeoutMs} ms" };
                     completionSource.TrySetResult(SerializeTimedResponse(timeoutResponse, queuedCommand.Timing));
                 }
                 catch (Exception ex)
                 {
+                    queuedCommand.Progress?.Close();
                     McpLog.Error($"Error processing command: {ex.Message}\n{ex.StackTrace}");
                     var response = new
                     {
@@ -1311,6 +1519,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 finally
                 {
+                    queuedCommand.Progress?.Close();
                     if (operation != null)
                     {
                         try

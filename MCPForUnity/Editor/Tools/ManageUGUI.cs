@@ -47,6 +47,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 var p = new ToolParams(@params);
                 string action = p.Get("action")?.ToLowerInvariant();
+                if (action == "create_cli")
+                    return Mutate("Create CLI uGUI", UguiCliCreation.Prepare(@params));
                 if (action == "diagnose_device_profiles")
                     return UguiDeviceProfileDiagnostics.Diagnose(@params);
                 if (action == "diagnose_projection")
@@ -71,7 +73,7 @@ namespace MCPForUnity.Editor.Tools
                     return Create(p, includeInactive);
                 if (!new[] { "get_hierarchy", "set_rect", "set_layout", "set_text", "set_canvas", "set_image", "diagnose" }.Contains(action))
                     return new ErrorResponse(
-                        "Valid actions: ping, get_hierarchy, create, set_rect, set_layout, set_text, set_canvas, set_image, diagnose, diagnose_projection, diagnose_text, diagnose_raycast, diagnose_device_profiles."
+                        "Valid actions: ping, get_hierarchy, create, create_cli, set_rect, set_layout, set_text, set_canvas, set_image, diagnose, diagnose_projection, diagnose_text, diagnose_raycast, diagnose_device_profiles."
                     );
                 var go = Resolve(p.GetRaw("target"), includeInactive);
                 if (action == "get_hierarchy")
@@ -280,6 +282,12 @@ namespace MCPForUnity.Editor.Tools
             return found;
         }
 
+        internal static void ValidateCreationName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(new[] { '/', '\\', '\0', '\r', '\n' }) >= 0)
+                throw new ArgumentException("name must be a non-empty single hierarchy name.");
+        }
+
         private static object Create(ToolParams p, bool includeInactive)
         {
             string kind = (p.Get("element_type") ?? "").ToLowerInvariant();
@@ -290,8 +298,7 @@ namespace MCPForUnity.Editor.Tools
             if (nameToken != null && nameToken.Type != JTokenType.Null && nameToken.Type != JTokenType.String && nameToken.Type != JTokenType.Date)
                 throw new ArgumentException("name must be a string.");
             string name = p.Get("name", kind == "canvas" ? "Canvas" : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(kind));
-            if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(new[] { '/', '\\', '\0', '\r', '\n' }) >= 0)
-                throw new ArgumentException("name must be a non-empty single hierarchy name.");
+            ValidateCreationName(name);
             GameObject parent = p.Has("parent") ? Resolve(p.GetRaw("parent"), includeInactive) : null;
             if (kind != "canvas" && (parent == null || !(parent.transform is RectTransform) || parent.GetComponentInParent<Canvas>(true) == null))
                 throw new ArgumentException("A non-canvas element requires a RectTransform parent beneath a Canvas.");
@@ -543,7 +550,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static Sprite ResolveImageSprite(JToken selector)
+        internal static Sprite ResolveImageSprite(JToken selector)
         {
             if (selector.Type == JTokenType.Null)
                 return null;
@@ -1079,7 +1086,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool Enabled(Component c) => c != null && (!(c is Behaviour b) || b.isActiveAndEnabled);
 
-        private static UnityEngine.Object DefaultFont()
+        internal static UnityEngine.Object DefaultFont()
         {
             Type settings = UnityTypeResolver.ResolveAny("TMPro.TMP_Settings");
             UnityEngine.Object font;
@@ -1117,7 +1124,7 @@ namespace MCPForUnity.Editor.Tools
             return type;
         }
 
-        private static Type RequireType(string name) =>
+        internal static Type RequireType(string name) =>
             TypeOf(name)
             ?? throw new ArgumentException("Required optional component is unavailable: " + name + ". Install/enable the corresponding uGUI or TMP package.");
 

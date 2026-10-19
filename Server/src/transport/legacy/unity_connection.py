@@ -7,6 +7,7 @@ from uuid import uuid4
 from core.config import config
 from core.server_build import RUNNING_SERVER
 import contextlib
+from contextvars import Context
 from dataclasses import dataclass, field
 import errno
 import json
@@ -31,12 +32,21 @@ if TYPE_CHECKING:
     import asyncio
 
 from models.models import MCPResponse, UnityInstanceInfo
+from services.command_progress import (
+    CAPABILITY,
+    MAX_PROGRESS_BYTES,
+    MAX_PROGRESS_FRAMES,
+    CommandProgressUpdate,
+    ProgressSink,
+    ProgressSource,
+)
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
 from transport.legacy.stdio_port_registry import stdio_port_registry
 from transport.legacy.stdio_auth import (
     StdioAuthentication,
     StdioAuthenticationError,
-    authenticate_stdio,
+    StdioAuthenticatedSession,
+    authenticate_stdio_session,
 )
 from transport.legacy.stdio_credentials import read_stdio_token
 
@@ -114,6 +124,7 @@ class UnityConnection:
     auth_token_provider: Callable[[str], str | None] | None = field(default=None, repr=False)
     allow_legacy_auth: bool | None = None
     session_generation: str | None = field(default=None, init=False)
+    authenticated_session: StdioAuthenticatedSession | None = field(default=None, init=False)
 
     def __post_init__(self):
         """Set port from discovery if not explicitly provided"""
@@ -129,6 +140,7 @@ class UnityConnection:
         self._async_admissions = weakref.WeakKeyDictionary()
         self._needs_tool_resync = False  # Set True after reconnection
         self._authentication_failure: StdioAuthenticationError | None = None
+        self._progress_owner: tuple[threading.Event, ProgressSink] | None = None
         if self.allow_legacy_auth is None:
             self.allow_legacy_auth = os.environ.get("UNITY_MCP_STDIO_ALLOW_LEGACY") == "1"
 
@@ -157,6 +169,74 @@ class UnityConnection:
         except OSError as exc:
             logger.debug(f"Unable to set TCP_NODELAY: {exc}")
 
+    def _close_stdio_progress(self) -> None:
+        owner, self._progress_owner = getattr(self, "_progress_owner", None), None
+        if owner is not None:
+            active, sink = owner
+            active.clear()
+            with contextlib.suppress(Exception):
+                sink.close()
+
+    def _begin_stdio_progress(
+        self,
+        sink: ProgressSink | None,
+        command_type: str,
+        params: dict[str, Any],
+        deadline: float | None,
+    ) -> tuple[str, bytes] | None:
+        """Bind one opaque foreground sink while this command owns the I/O lock."""
+        self._close_stdio_progress()
+        if sink is None:
+            return None
+        session = self.authenticated_session
+        commands = params.get("commands") if isinstance(params, dict) else None
+        if (
+            command_type != "batch_execute"
+            or params.get("validate_only")
+            or not isinstance(commands, list)
+            or not 1 <= len(commands) <= 100
+            or not self.use_framing
+            or session is None
+            or session.session_generation != self.session_generation
+            or CAPABILITY not in session.capabilities
+        ):
+            with contextlib.suppress(Exception):
+                sink.close()
+            return None
+        command_id = str(uuid4())
+        active = threading.Event()
+
+        async def still_owned() -> bool:
+            # The I/O owner clears this invocation-specific fence before response,
+            # disconnect or reset. Never take its blocking lock on the SDK loop.
+            return active.is_set()
+
+        try:
+            bound = sink.bind(
+                ProgressSource(
+                    transport="stdio",
+                    command_id=command_id,
+                    session_id=session.session_id,
+                    generation=session.server_generation,
+                    user_id=None,
+                    expires_at=deadline,
+                    guard=still_owned,
+                )
+            )
+        except Exception:
+            bound = False
+        if not bound:
+            with contextlib.suppress(Exception):
+                sink.close()
+            return None
+        active.set()
+        self._progress_owner = active, sink
+        prelude = json.dumps(
+            {"type": "command_progress_begin", "version": 1, "id": command_id},
+            separators=(",", ":"),
+        ).encode("ascii")
+        return command_id, prelude
+
     def connect(self, connect_timeout: float | None = None, deadline: float | None = None) -> bool:
         """Establish a connection to the Unity Editor."""
         if config.http_remote_hosted:
@@ -165,6 +245,8 @@ class UnityConnection:
             if self.sock:
                 return True
             self.session_generation = None
+            self.authenticated_session = None
+            self._close_stdio_progress()
             self._authentication_failure = None
             try:
                 # Bounded connect to avoid indefinite blocking
@@ -211,15 +293,17 @@ class UnityConnection:
                     text = bytes(buf).decode("ascii").strip()
 
                     if text.startswith("WELCOME UNITY-MCP 2") or "AUTH=" in text:
-                        session_generation = authenticate_stdio(
+                        session = authenticate_stdio_session(
                             self.sock,
                             text,
                             StdioAuthentication(
                                 self.auth_token_provider or read_stdio_token, handshake_deadline
                             ),
+                            capabilities=(CAPABILITY,),
                         )
                         self._check_deadline(handshake_deadline)
-                        self.session_generation = session_generation
+                        self.authenticated_session = session
+                        self.session_generation = session.session_generation
                         self.use_framing = True
                         logger.debug("Authenticated stdio connection established")
                     else:
@@ -264,11 +348,16 @@ class UnityConnection:
                     pass
                 self.sock = None
                 self.session_generation = None
+                self.authenticated_session = None
+                self._close_stdio_progress()
                 return False
 
     def disconnect(self):
         """Close the connection to the Unity Editor."""
         with self._io_lock:
+            self._close_stdio_progress()
+            self.authenticated_session = None
+            self.session_generation = None
             if self.sock:
                 try:
                     self.sock.close()
@@ -307,6 +396,8 @@ class UnityConnection:
                     pass
                 self.sock = None
                 self.session_generation = None
+                self.authenticated_session = None
+                self._close_stdio_progress()
             finally:
                 if self.sock is original_socket:
                     original_socket.settimeout(original_timeout)
@@ -315,11 +406,16 @@ class UnityConnection:
         return bytes(self._read_exact_buffer(sock, count, deadline))
 
     def _read_exact_buffer(
-        self, sock: socket.socket, count: int, deadline: float | None = None
+        self,
+        sock: socket.socket,
+        count: int,
+        deadline: float | None = None,
+        *,
+        _prefix: bytearray | None = None,
     ) -> bytearray:
         """Grow only one receive slab ahead; keep the final payload buffer owned."""
-        data = bytearray()
-        received = 0
+        data = bytearray() if _prefix is None else _prefix
+        received = len(data)
         receive_into = getattr(sock, "recv_into", None)
         while received < count:
             data.extend(b"\0" * min(65_536, count - received))
@@ -340,8 +436,38 @@ class UnityConnection:
                     received += size
         return data
 
+    @staticmethod
+    def _offer_stdio_progress(sink: ProgressSink, command_id: str, raw: bytearray) -> None:
+        try:
+            message = json.loads(raw)
+        except (ValueError, UnicodeError):
+            return
+        if (
+            not isinstance(message, dict)
+            or set(message) != {"type", "id", "completed", "total", "stage"}
+            or message["type"] != "command_progress"
+            or message["id"] != command_id
+            or type(message["completed"]) is not int
+            or type(message["total"]) is not int
+            or not 1 <= message["completed"] <= message["total"] <= 100
+            or message["stage"] != "batch_items"
+        ):
+            return
+        # The sink enforces the claimed total, monotonicity, foreground lifetime
+        # and SDK-loop ownership. A notification failure never changes Unity work.
+        with contextlib.suppress(Exception):
+            sink.offer_from_thread(
+                CommandProgressUpdate(message["completed"], message["total"], "batch_items")
+            )
+
     def receive_full_response(
-        self, sock, buffer_size=config.buffer_size, deadline: float | None = None
+        self,
+        sock,
+        buffer_size=config.buffer_size,
+        deadline: float | None = None,
+        *,
+        _progress: ProgressSink | None = None,
+        _progress_id: str | None = None,
     ) -> bytes | bytearray:
         """Receive a complete response from Unity, handling chunked data."""
         if self.use_framing:
@@ -353,6 +479,7 @@ class UnityConnection:
             heartbeat_window = getattr(config, "heartbeat_timeout", 2.0)
             heartbeat_started = time.monotonic()
             heartbeat_count = 0
+            progress_frames = 0
             try:
                 while True:
                     header = self._read_exact(sock, 8, deadline)
@@ -370,6 +497,25 @@ class UnityConnection:
                         continue
                     if payload_len > FRAMED_MAX:
                         raise _UnityProtocolError(f"Invalid framed length: {payload_len}")
+                    if _progress is not None and _progress_id is not None:
+                        prefix = self._read_exact_buffer(sock, min(4, payload_len), deadline)
+                        if prefix == b"MCPG":
+                            progress_frames += 1
+                            remaining = payload_len - 4
+                            if (
+                                remaining > MAX_PROGRESS_BYTES
+                                or progress_frames > MAX_PROGRESS_FRAMES
+                            ):
+                                while remaining:
+                                    slab = min(4096, remaining)
+                                    self._read_exact_buffer(sock, slab, deadline)
+                                    remaining -= slab
+                            else:
+                                raw = self._read_exact_buffer(sock, remaining, deadline)
+                                self._offer_stdio_progress(_progress, _progress_id, raw)
+                            continue
+                        # Reuse the peeked slab as the start of the final buffer.
+                        return self._read_exact_buffer(sock, payload_len, deadline, _prefix=prefix)
                     payload = self._read_exact_buffer(sock, payload_len, deadline)
                     logger.debug(f"Received framed response ({len(payload)} bytes)")
                     return payload
@@ -484,6 +630,7 @@ class UnityConnection:
         max_attempts: int | None = None,
         deadline: float | None = None,
         _catalog_guard=None,
+        _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
         """Send a command with retry/backoff and port rediscovery. Pings only when requested.
 
@@ -628,6 +775,19 @@ class UnityConnection:
                         if blender_timeout is not None:
                             self.sock.settimeout(blender_timeout)
                         t_send_start = time.time()
+                        association = self._begin_stdio_progress(
+                            _progress, command_type, params, deadline
+                        )
+                        if association is not None:
+                            _, prelude = association
+                            # Association is not native dispatch. Keep the business
+                            # payload byte-identical and both writes in this lock.
+                            self._set_socket_deadline(self.sock, deadline)
+                            self.sock.sendall(struct.pack(">Q", len(prelude)))
+                            self._check_deadline(deadline)
+                            self._set_socket_deadline(self.sock, deadline)
+                            self.sock.sendall(prelude)
+                            self._check_deadline(deadline)
                         if receipt is not None:
                             receipt.dispatch_started(
                                 kind="stdio",
@@ -661,7 +821,14 @@ class UnityConnection:
                             )
                         self.sock.settimeout(recv_timeout)
                         t_recv_start = time.time()
-                        response_data = self.receive_full_response(self.sock, deadline=deadline)
+                        progress_options = (
+                            {"_progress": _progress, "_progress_id": association[0]}
+                            if association is not None
+                            else {}
+                        )
+                        response_data = self.receive_full_response(
+                            self.sock, deadline=deadline, **progress_options
+                        )
                         self._check_deadline(deadline)
                         logger.info(
                             "[TIMING-STDIO] receive took %.3fs command=%s len=%d",
@@ -672,6 +839,7 @@ class UnityConnection:
                         with contextlib.suppress(Exception):
                             logger.debug(f"recv {len(response_data)} bytes; mode={mode}")
                     finally:
+                        self._close_stdio_progress()
                         self.sock.settimeout(restore_timeout)
 
                     # Parse
@@ -1299,6 +1467,7 @@ def send_command_with_retry(
     max_retries: int | None = None,
     retry_ms: int | None = None,
     retry_on_reload: bool = True,
+    _progress: ProgressSink | None = None,
 ) -> dict[str, Any] | MCPResponse:
     """Send a command to a Unity instance, waiting politely through Unity reloads.
 
@@ -1317,15 +1486,21 @@ def send_command_with_retry(
     Uses config.reload_retry_ms and config.reload_max_retries by default. Preserves the
     structured failure if retries are exhausted.
     """
-    response, _ = _send_command_with_retry(
-        command_type,
-        params,
-        instance_id=instance_id,
-        max_retries=max_retries,
-        retry_ms=retry_ms,
-        retry_on_reload=retry_on_reload,
-    )
-    return response
+    try:
+        response, _ = _send_command_with_retry(
+            command_type,
+            params,
+            instance_id=instance_id,
+            max_retries=max_retries,
+            retry_ms=retry_ms,
+            retry_on_reload=retry_on_reload,
+            **({"_progress": _progress} if _progress is not None else {}),
+        )
+        return response
+    finally:
+        if _progress is not None:
+            with contextlib.suppress(Exception):
+                _progress.close()
 
 
 def _command_deadline(command_type: str, params: dict[str, Any]) -> float | None:
@@ -1347,6 +1522,7 @@ def _send_command_with_retry(
     _connection: UnityConnection | None = None,
     _deadline: float | None = None,
     _catalog_guard=None,
+    _progress: ProgressSink | None = None,
 ) -> tuple[dict[str, Any] | MCPResponse, UnityConnection]:
     """Retain dispatch provenance for async completion without another lookup.
 
@@ -1399,6 +1575,7 @@ def _send_command_with_retry(
         max_attempts=send_max_attempts,
         deadline=deadline,
         **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
+        **({"_progress": _progress} if _progress is not None else {}),
     )
     retries = 0
     wait_started = None
@@ -1450,7 +1627,12 @@ def _send_command_with_retry(
         if (deadline is not None and now >= deadline) or now - wait_started >= max_wait_s:
             break
         retries += 1
-        response = conn.send_command(command_type, params, deadline=deadline)
+        response = conn.send_command(
+            command_type,
+            params,
+            deadline=deadline,
+            **({"_progress": _progress} if _progress is not None else {}),
+        )
         reason = _extract_response_reason(response)
 
     if wait_started is not None:
@@ -1528,6 +1710,7 @@ async def async_send_command_with_retry(
     _deadline: float | None = None,
     _catalog_guard=None,
     _catalog_capture=None,
+    _progress: ProgressSink | None = None,
 ) -> dict[str, Any] | MCPResponse:
     """Preserve existing dispatch behavior and observe canonical uncertainty."""
     result = await _async_send_command_response(
@@ -1541,6 +1724,7 @@ async def async_send_command_with_retry(
         _deadline=_deadline,
         _catalog_guard=_catalog_guard,
         _catalog_capture=_catalog_capture,
+        **({"_progress": _progress} if _progress is not None else {}),
     )
     observe_native_result({"data": result.data} if isinstance(result, MCPResponse) else result)
     return result
@@ -1558,6 +1742,7 @@ async def _async_send_command_response(
     _deadline: float | None = None,
     _catalog_guard=None,
     _catalog_capture=None,
+    _progress: ProgressSink | None = None,
 ) -> dict[str, Any] | MCPResponse:
     """Admit one blocking command worker per actual connection and event loop.
 
@@ -1644,6 +1829,7 @@ async def _async_send_command_response(
                     _connection=conn,
                     _deadline=deadline,
                     **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
+                    **({"_progress": _progress} if _progress is not None else {}),
                 )
 
             if _catalog_capture is None:
@@ -1697,7 +1883,9 @@ async def _async_send_command_response(
                     logger.info("Detected reconnection to Unity; scheduling tool re-sync")
                     receipt_token = execution_owner.set(None)
                     try:
-                        asyncio.ensure_future(_resync_tools_after_reconnect(conn.instance_id))
+                        asyncio.create_task(
+                            _resync_tools_after_reconnect(conn.instance_id), context=Context()
+                        )
                     finally:
                         execution_owner.reset(receipt_token)
         except Exception as exc:
@@ -1709,6 +1897,10 @@ async def _async_send_command_response(
         return result
     except Exception as e:
         return MCPResponse(success=False, error=str(e))
+    finally:
+        if _progress is not None:
+            with contextlib.suppress(Exception):
+                _progress.close()
 
 
 async def _resync_tools_after_reconnect(instance_id: str | None) -> None:
