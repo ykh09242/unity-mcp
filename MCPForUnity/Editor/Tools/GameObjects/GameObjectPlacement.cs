@@ -284,7 +284,11 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
             return new JObject
             {
-                ["scene"] = target.scene.handle,
+#if UNITY_6000_4_OR_NEWER
+                ["scene"] = target.scene.handle.GetRawData(),
+#else
+                ["scene"] = (int)target.scene.handle,
+#endif
                 ["path"] = target.scene.path,
                 ["loaded"] = target.scene.isLoaded,
                 ["playing"] = EditorApplication.isPlaying,

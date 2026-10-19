@@ -89,7 +89,11 @@ namespace MCPForUnity.Editor.Tools
                         {
                             if (!scene.IsValid() || !scene.isLoaded)
                                 continue;
-                            observation.Add(scene.handle.ToString(CultureInfo.InvariantCulture));
+#if UNITY_6000_4_OR_NEWER
+                            observation.Add(scene.handle.GetRawData().ToString(CultureInfo.InvariantCulture));
+#else
+                            observation.Add(((int)scene.handle).ToString(CultureInfo.InvariantCulture));
+#endif
                             observation.Add(scene.path);
                             scan.Hierarchy(scene.GetRootGameObjects(), scene.path);
                             if (!scan.Complete)
@@ -239,7 +243,13 @@ namespace MCPForUnity.Editor.Tools
                             Stop("propertyPath2048");
                             return false;
                         }
+#if UNITY_6000_4_OR_NEWER
+                        ulong targetId = EntityId.ToULong(iterator.objectReferenceEntityIdValue);
+                        const string targetIdKind = "entity_id_raw64";
+#else
                         int targetId = iterator.objectReferenceInstanceIDValue;
+                        const string targetIdKind = "instance_id_raw32";
+#endif
                         bool missing = iterator.objectReferenceValue == null && targetId != 0;
                         Observation.Add(propertyPath);
                         Observation.Add(targetId.ToString(CultureInfo.InvariantCulture));
@@ -267,10 +277,17 @@ namespace MCPForUnity.Editor.Tools
                                 ["componentType"] = owner.GetType().FullName,
                                 ["componentIndex"] = componentIndex,
                                 ["propertyPath"] = propertyPath,
+#if UNITY_6000_4_OR_NEWER
+                                ["targetInstanceId"] = JValue.CreateNull(),
+#else
                                 ["targetInstanceId"] = targetId,
+#endif
+                                ["targetRawId"] = targetId.ToString(CultureInfo.InvariantCulture),
+                                ["targetIdKind"] = targetIdKind,
                                 ["targetGuid"] = JValue.CreateNull(),
                                 ["targetFileId"] = JValue.CreateNull(),
-                                ["evidence"] = "SerializedProperty null value with nonzero instance ID; target GUID/fileID unavailable from this public API.",
+                                ["evidence"] =
+                                    "SerializedProperty null value with nonzero native object ID; target GUID/fileID unavailable from this public API.",
                             }
                         );
                     }

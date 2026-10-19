@@ -3837,14 +3837,14 @@ namespace MCPForUnity.Editor.Tools
         private sealed class ScriptValidationContext
         {
             internal string Path;
-            internal bool Structural,
-                Syntax,
-                UnityRules,
-                Semantics,
-                Defines,
-                References,
-                PartialTypes;
-            internal int SourceFileCount;
+            internal bool Structural = false,
+                Syntax = false,
+                UnityRules = false,
+                Semantics = false,
+                Defines = false,
+                References = false,
+                PartialTypes = false;
+            internal int SourceFileCount = 0;
             internal readonly List<string> Limitations = new();
             internal readonly Dictionary<string, JObject> CompilerDiagnostics = new();
 #if USE_ROSLYN
