@@ -380,6 +380,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 // Runtime parameter control
                 case "get_info":
                     return VfxGraphRead.GetInfo(@params);
+                case "get_exposed_properties":
+                    return VfxGraphExposedRead.Read(@params);
                 case "set_float":
                     return VfxGraphWrite.SetParameter<float>(@params, (vfx, n, v) => vfx.SetFloat(n, v));
                 case "set_int":
