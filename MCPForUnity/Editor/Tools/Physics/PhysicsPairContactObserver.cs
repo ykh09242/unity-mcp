@@ -191,7 +191,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                         return;
                     ref readonly ContactPair pair = ref header.GetContactPair(j);
 #if UNITY_6000_0_OR_NEWER
-#if UNITY_6000_4_OR_NEWER
+#if UNITY_6000_3_OR_NEWER
+                    // Unity 6000.3 EntityId is an Int32 wrapper; the implicit conversion is lossless. 6000.4+ retains the full EntityId alias.
                     ColliderId first = pair.colliderEntityId;
                     ColliderId second = pair.otherColliderEntityId;
 #else
