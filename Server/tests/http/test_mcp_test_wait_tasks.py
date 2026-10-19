@@ -158,7 +158,7 @@ async def test_captured_ordinary_get_test_job_oracle(
 
 
 @asynccontextmanager
-async def isolated_tasks(tmp_path, monkeypatch, execute):
+async def isolated_tasks(tmp_path, monkeypatch, execute, *, outer_timeout=0.2):
     """Actual auth/SDK/extension, injected bounded wait; this is not main.py."""
     validator = ApiKeyService("https://fixture.invalid/validate", cache_ttl=0)
     monkeypatch.setattr(
@@ -186,12 +186,12 @@ async def isolated_tasks(tmp_path, monkeypatch, execute):
             session_id="generation",
             job_id=params.arguments["job_id"],
             wait=DeadlineCheckpoint.capture(0.1, now=wall),
-            outer=DeadlineCheckpoint.capture(0.2, now=wall),
+            outer=DeadlineCheckpoint.capture(outer_timeout, now=wall),
         )
         return CapturedWait(
             op,
             now + 0.1,
-            now + 0.2,
+            now + outer_timeout,
             {
                 "content": [],
                 "isError": True,
@@ -263,7 +263,13 @@ async def test_isolated_authenticated_task_owner_result_and_per_request_opt_in(
         await release.wait()
         return ordinary
 
-    async with isolated_tasks(tmp_path, monkeypatch, execute) as (client, extension, _):
+    # This scenario releases execution after multiple authentication probes. Its
+    # outcome must follow that event, not race the separate short-deadline fixture.
+    async with isolated_tasks(tmp_path, monkeypatch, execute, outer_timeout=30) as (
+        client,
+        extension,
+        _,
+    ):
         _, created = await wire(
             client,
             "tools/call",

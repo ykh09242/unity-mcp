@@ -37,6 +37,7 @@ namespace MCPForUnity.Editor.Tools
             MoveToScene,
             ModifyBuildSettings,
             Validate,
+            ValidateReferences,
         }
 
         private static string NormalizeAction(JToken token) => (token?.ToString() ?? string.Empty).Trim().ToLowerInvariant();
@@ -58,6 +59,7 @@ namespace MCPForUnity.Editor.Tools
                 "move_to_scene" => ActionKind.MoveToScene,
                 "modify_build_settings" => ActionKind.ModifyBuildSettings,
                 "validate" => ActionKind.Validate,
+                "validate_references" => ActionKind.ValidateReferences,
                 _ => ActionKind.Unknown,
             };
 
@@ -229,6 +231,10 @@ namespace MCPForUnity.Editor.Tools
                 McpLog.Info("[ManageScene] HandleCommand: start", always: false);
             }
             catch { }
+            if (NormalizeAction(@params?["action"]) == "validate_references")
+                return SerializedReferenceDiagnostics.Handle(@params);
+            if (new[] { "referenceScope", "maxObjects", "maxWork", "pageNumber", "referenceRevision" }.Any(option => @params?[option] != null))
+                return new ErrorResponse("invalid_reference_diagnostics", new { reason = "Reference options require validate_references." });
             SceneCommand cmd;
             try
             {

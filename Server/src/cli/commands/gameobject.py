@@ -72,6 +72,23 @@ def find(search_term: str, method: str, include_inactive: bool, limit: int, curs
 )
 @click.option("--scale", "-s", nargs=3, type=float, default=None, help="Scale as X Y Z.")
 @click.option("--parent", default=None, help="Parent GameObject name or path.")
+@click.option(
+    "--space",
+    type=click.Choice(["local", "world"]),
+    default=None,
+    help="Position/rotation space (local default); scale is local only.",
+)
+@click.option(
+    "--world-position-stays/--no-world-position-stays",
+    default=None,
+    help="Preserve world transform while parenting (true default).",
+)
+@click.option(
+    "--sibling-index",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Final zero-based sibling index.",
+)
 @click.option("--tag", "-t", default=None, help="Tag to assign.")
 @click.option("--layer", default=None, help="Layer to assign.")
 @click.option("--components", default=None, help="Comma-separated list of components to add.")
@@ -92,6 +109,9 @@ def create(
     components: Optional[str],
     save_prefab: bool,
     prefab_path: Optional[str],
+    space: Optional[str],
+    world_position_stays: Optional[bool],
+    sibling_index: Optional[int],
 ):
     """Create a new GameObject.
 
@@ -131,6 +151,8 @@ def create(
     if components:
         params["componentsToAdd"] = [c.strip() for c in components.split(",")]
 
+    _explicit_transform_options(params, space, world_position_stays, sibling_index, scale)
+
     result = run_command("manage_gameobject", params, config)
     click.echo(format_output(result, config.format))
     if (result.get("success") or result.get("result")) and config.format != "json":
@@ -153,6 +175,24 @@ def create(
 )
 @click.option("--scale", "-s", nargs=3, type=float, default=None, help="New scale as X Y Z.")
 @click.option("--parent", default=None, help="New parent GameObject.")
+@click.option(
+    "--space",
+    type=click.Choice(["local", "world"]),
+    default=None,
+    help="Position/rotation space (local default); scale is local only.",
+)
+@click.option(
+    "--world-position-stays/--no-world-position-stays",
+    default=None,
+    help="Preserve world transform while parenting (true default).",
+)
+@click.option(
+    "--sibling-index",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Final zero-based sibling index.",
+)
+@click.option("--detach", is_flag=True, help="Remove the parent explicitly.")
 @click.option("--tag", "-t", default=None, help="New tag.")
 @click.option("--layer", default=None, help="New layer.")
 @click.option("--active/--inactive", default=None, help="Set active state.")
@@ -184,6 +224,10 @@ def modify(
     add_components: Optional[str],
     remove_components: Optional[str],
     search_method: Optional[str],
+    space: Optional[str],
+    world_position_stays: Optional[bool],
+    sibling_index: Optional[int],
+    detach: bool,
 ):
     """Modify an existing GameObject.
 
@@ -230,6 +274,61 @@ def modify(
     if search_method:
         params["searchMethod"] = search_method
 
+    _explicit_transform_options(params, space, world_position_stays, sibling_index, scale)
+    if detach:
+        if parent:
+            raise click.UsageError("--detach conflicts with --parent.")
+        params["detach"] = True
+
+    result = run_command("manage_gameobject", params, config)
+    click.echo(format_output(result, config.format))
+
+
+def _explicit_transform_options(params, space, world_position_stays, sibling_index, scale):
+    """Add only explicitly supplied transform policy while preserving legacy wire defaults."""
+    if space == "world" and scale is not None:
+        raise click.UsageError("World scale is unsupported; --scale is local only.")
+    for key, value in (
+        ("space", space),
+        ("world_position_stays", world_position_stays),
+        ("sibling_index", sibling_index),
+    ):
+        if value is not None:
+            params[key] = value
+
+
+@gameobject.command("placement")
+@click.argument("targets", nargs=-1, required=True)
+@click.option(
+    "--mode", "placement_mode", type=click.Choice(["align", "distribute"]), default="align"
+)
+@click.option("--axis", type=click.Choice(["x", "y", "z"]), default="x")
+@click.option("--space", type=click.Choice(["local", "world"]), default="local")
+@click.option(
+    "--apply-token", default=None, help="Apply an unchanged preview using its single-use token."
+)
+@handle_unity_errors
+def placement(
+    targets: tuple[str, ...], placement_mode: str, axis: str, space: str, apply_token: str | None
+):
+    """Preview ordered positions; first selector anchors align, first/last bound distribute.
+
+    Supply the same options and ordered targets with --apply-token to apply the preview.
+    Local placement requires a common parent. Use -- before negative instance IDs.
+    """
+    if not 2 <= len(targets) <= 128 or len(set(targets)) != len(targets):
+        raise click.UsageError("Provide 2–128 unique ordered targets.")
+    params = {
+        "action": "placement",
+        "targets": list(targets),
+        "placement_mode": placement_mode,
+        "axis": axis,
+        "space": space,
+        "preview": apply_token is None,
+    }
+    if apply_token is not None:
+        params["preview_token"] = apply_token
+    config = get_config()
     result = run_command("manage_gameobject", params, config)
     click.echo(format_output(result, config.format))
 

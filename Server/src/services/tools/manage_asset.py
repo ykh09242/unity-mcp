@@ -20,6 +20,11 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
 from services.tools.pagination import validate_page, page_integer
+from services.tools.reference_diagnostics import (
+    ASSET_REFERENCE_ACTIONS,
+    reference_page,
+    reference_path,
+)
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -123,6 +128,10 @@ def asset_label_params(
 @mcp_for_unity_tool(
     description=(
         "Performs asset operations (import, create, modify, delete, etc.) in Unity. "
+        "Read-only get_dependencies/get_reverse_references/preview_move/preview_delete use bounded "
+        "AssetDatabase references, explicit scan_root, work/assets budgets and pages up to 100. "
+        "reference_revision rechecks observations and optionally guards move/delete using matching scan options. "
+        "String/custom-loader/Addressables references are not comprehensively discovered. "
         "Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase "
         "assignments, not built bundle files; use bundle_name and pages of at most 100.\n\n"
         'Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep '
@@ -155,6 +164,10 @@ async def manage_asset(
             "list_asset_bundles",
             "get_bundle_assets",
             "get_bundle_dependencies",
+            "get_dependencies",
+            "get_reverse_references",
+            "preview_move",
+            "preview_delete",
             "get_labels",
             "set_labels",
             "add_labels",
@@ -227,8 +240,91 @@ async def manage_asset(
         StrictStr, "Opaque revision from get_labels for a single-target mutation."
     ]
     | None = None,
+    scan_root: Annotated[str, "Reference actions: candidate/dependency folder (Assets by default)."]
+    | None = None,
+    max_assets: Annotated[
+        int | str, "Reference actions: at most 1-4096 candidate/visited assets; default 1024."
+    ]
+    | None = None,
+    max_work: Annotated[
+        int | str, "Reference actions: at most 1-100000 node/edge work units; default 10000."
+    ]
+    | None = None,
+    reference_revision: Annotated[
+        str,
+        "Recheck the same bounded read/preview or guard move/delete immediately before mutation.",
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     action_l = (action or "").lower()
+    guarded_mutation = action_l in {"move", "delete"} and reference_revision is not None
+    if action_l in ASSET_REFERENCE_ACTIONS or guarded_mutation:
+        try:
+            if (
+                any(
+                    value is not None
+                    for value in (
+                        asset_type,
+                        properties,
+                        search_pattern,
+                        filter_type,
+                        filter_date_after,
+                        bundle_name,
+                        search_snapshot,
+                        labels,
+                        label_targets,
+                        label_revision,
+                    )
+                )
+                or generate_preview is not False
+                or metadata_only is not False
+            ):
+                raise ValueError(
+                    "Reference diagnostics do not accept mutation/search/label options."
+                )
+            if type(recursive) is not bool:
+                raise ValueError("recursive must be a boolean.")
+            params = reference_page(page_size, page_number, max_work, reference_revision)
+            params.update(
+                action=action_l,
+                path=reference_path(path, "path"),
+                scanRoot=reference_path(
+                    "Assets" if scan_root is None else scan_root, "scan_root", root=True
+                ),
+                recursive=recursive,
+                maxAssets=page_integer(max_assets, 1024, 1, 4096, "max_assets"),
+            )
+            if action_l in {"preview_move", "move"}:
+                params["destination"] = reference_path(destination, "destination")
+            elif destination is not None:
+                raise ValueError(
+                    "Only move/preview_move accepts destination for reference diagnostics."
+                )
+        except (ValueError, TypeError) as exc:
+            return {
+                "success": False,
+                "code": "invalid_reference_diagnostics",
+                "message": str(exc)[:512],
+            }
+        instance = await get_unity_instance_from_context(ctx)
+        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=False)
+        if gate is not None:
+            return gate.model_dump()
+        result = await send_with_unity_instance(
+            async_send_command_with_retry,
+            instance,
+            "manage_asset",
+            params,
+            loop=asyncio.get_running_loop(),
+            retry_on_reload=not guarded_mutation,
+        )
+        return result if isinstance(result, dict) else {"success": False, "message": str(result)}
+    if any(value is not None for value in (scan_root, max_assets, max_work, reference_revision)):
+        return {
+            "success": False,
+            "code": "invalid_reference_diagnostics",
+            "message": "Reference options require a reference action or move/delete with reference_revision.",
+        }
     label_action = action_l in {"get_labels", "set_labels", "add_labels", "remove_labels"}
     if label_action:
         try:

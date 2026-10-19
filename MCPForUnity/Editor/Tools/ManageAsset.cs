@@ -45,6 +45,10 @@ namespace MCPForUnity.Editor.Tools
             "list_asset_bundles",
             "get_bundle_assets",
             "get_bundle_dependencies",
+            "get_dependencies",
+            "get_reverse_references",
+            "preview_move",
+            "preview_delete",
             "get_labels",
             "set_labels",
             "add_labels",
@@ -69,6 +73,15 @@ namespace MCPForUnity.Editor.Tools
             var searchOptionError = AssetSearchSnapshots.ValidateOptions(@params, action == "search_metadata_v1");
             if (searchOptionError != null)
                 return searchOptionError;
+
+            if (AssetReferenceDiagnostics.IsAction(action))
+                return AssetReferenceDiagnostics.Handle(@params);
+            bool guardedReferenceMutation = (action == "move" || action == "delete") && @params["referenceRevision"] != null;
+            if (AssetReferenceDiagnostics.HasOptions(@params) && !guardedReferenceMutation)
+                return new ErrorResponse(
+                    "invalid_reference_diagnostics",
+                    new { reason = "Reference options require a reference action or guarded move/delete." }
+                );
 
             if (AssetLabels.IsAction(action))
                 return AssetLabels.Handle(@params, RequireScriptConsent);
@@ -132,6 +145,12 @@ namespace MCPForUnity.Editor.Tools
                     && destinationToken.Type != JTokenType.String
                 )
                     return new ErrorResponse("'destination' must be a string or null.");
+                if (guardedReferenceMutation)
+                {
+                    var referenceError = AssetReferenceDiagnostics.GuardMutation(@params);
+                    if (referenceError != null)
+                        return referenceError;
+                }
                 if (
                     action == "import"
                     || action == "create"

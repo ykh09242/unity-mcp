@@ -30,6 +30,10 @@ _VALUE_DEFAULT = Field(default_factory=lambda: _VALUE_OMITTED)
         "Set strict_selection=true to require a unique target and component, or select a component_instance_id. "
         "Name/path uniqueness includes inactive objects in the active scene/current prefab stage; IDs can address other loaded scenes. "
         "These opt-in requests require a compatible Editor package and never fall back to first match. "
+        "Property writes use ordered best_effort results (applied/failed); earlier successes are retained "
+        "and later properties are attempted. Results preserve request index and property name. "
+        "For opt-in preview/expected_old/Undo compensation on supported native properties use "
+        "manage_scene_edits. Arbitrary component callbacks cannot be made atomic. "
         "For creating/deleting GameObjects themselves, use manage_gameobject instead."
     ),
     annotations=ToolAnnotations(

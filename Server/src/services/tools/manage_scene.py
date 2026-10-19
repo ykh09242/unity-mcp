@@ -9,11 +9,16 @@ from services.tools.utils import coerce_int, coerce_bool
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
+from services.tools.pagination import page_integer
+from services.tools.reference_diagnostics import reference_page, reference_path
 
 
 @mcp_for_unity_tool(
     description=(
         "Performs CRUD operations on Unity scenes. "
+        "Read-only validate_references pages broken serialized PPtrs in active_scene/loaded_scenes "
+        "or an explicit prefab/scriptable_object asset; page_size<=100, max_objects<=4096, "
+        "max_work<=1000000. Ordinary nulls are excluded; unavailable GUID/fileID evidence is explicit. "
         "Read-only actions: get_hierarchy, get_active, get_build_settings, get_loaded_scenes, scene_view_frame. "
         "Modifying actions: create (with optional template), load (with optional additive flag), save, "
         "close_scene, set_active_scene, move_to_scene, validate (with optional auto_repair). "
@@ -41,6 +46,7 @@ async def manage_scene(
             "get_loaded_scenes",
             "move_to_scene",
             "validate",
+            "validate_references",
         ],
         "Perform CRUD operations on Unity scenes and control the Scene View camera.",
     ],
@@ -99,7 +105,96 @@ async def manage_scene(
     # --- Scene validation ---
     auto_repair: Annotated[bool | str, "For validate: true to auto-fix missing scripts (undoable)."]
     | None = None,
+    reference_scope: Annotated[
+        Literal["active_scene", "loaded_scenes", "prefab", "scriptable_object"],
+        "validate_references only; loaded scopes never open scenes.",
+    ]
+    | None = None,
+    max_objects: Annotated[
+        int | str, "validate_references: maximum 1-4096 owners/objects, default 1024."
+    ]
+    | None = None,
+    max_work: Annotated[
+        int | str,
+        "validate_references: maximum 1-1000000 traversal/property steps, default 100000.",
+    ]
+    | None = None,
+    page_number: Annotated[int | str, "validate_references: 1-based page, maximum page_size 100."]
+    | None = None,
+    reference_revision: Annotated[
+        str, "validate_references: refuse if the repeated observation has drifted."
+    ]
+    | None = None,
 ) -> dict[str, Any]:
+    if action == "validate_references":
+        try:
+            if any(
+                value is not None
+                for value in (
+                    name,
+                    build_index,
+                    scene_view_target,
+                    parent,
+                    cursor,
+                    max_nodes,
+                    max_depth,
+                    max_children_per_node,
+                    include_transform,
+                    scene_name,
+                    scene_path,
+                    target,
+                    remove_scene,
+                    additive,
+                    template,
+                    auto_repair,
+                )
+            ):
+                raise ValueError(
+                    "validate_references accepts only diagnostic scope/path/page/budget options; no repairs."
+                )
+            scope = reference_scope if reference_scope is not None else "active_scene"
+            if scope not in {"active_scene", "loaded_scenes", "prefab", "scriptable_object"}:
+                raise ValueError("Unknown reference_scope.")
+            params = reference_page(
+                page_size, page_number, max_work, reference_revision, scene=True
+            )
+            params.update(
+                action=action,
+                referenceScope=scope,
+                maxObjects=page_integer(max_objects, 1024, 1, 4096, "max_objects"),
+            )
+            if scope in {"prefab", "scriptable_object"}:
+                params["path"] = reference_path(path, "path")
+            elif path is not None:
+                raise ValueError("Loaded scene diagnostic scopes do not accept an asset path.")
+        except (ValueError, TypeError) as exc:
+            return {
+                "success": False,
+                "code": "invalid_reference_diagnostics",
+                "message": str(exc)[:512],
+            }
+        instance = await get_unity_instance_from_context(ctx)
+        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=False)
+        if gate is not None:
+            return gate.model_dump()
+        response = await send_with_unity_instance(
+            async_send_command_with_retry,
+            instance,
+            "manage_scene",
+            params,
+        )
+        return (
+            response if isinstance(response, dict) else {"success": False, "message": str(response)}
+        )
+    if any(
+        value is not None
+        for value in (reference_scope, max_objects, max_work, page_number, reference_revision)
+    ):
+        return {
+            "success": False,
+            "code": "invalid_reference_diagnostics",
+            "message": "Reference options require validate_references.",
+        }
     try:
         integer_options: dict[str, int | None] = {}
         for field, raw_value in (

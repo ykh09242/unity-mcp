@@ -29,24 +29,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             // Resolve deterministic inputs before any rename, asset rename, or Undo recording.
-            JToken parentToken = @params["parent"];
-            GameObject newParentGo = null;
-            if (parentToken != null)
-            {
-                newParentGo = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
-                if (
-                    newParentGo == null
-                    && !(parentToken.Type == JTokenType.Null || (parentToken.Type == JTokenType.String && string.IsNullOrEmpty(parentToken.ToString())))
-                )
-                {
-                    return new ErrorResponse($"New parent ('{parentToken}') not found.");
-                }
-                if (newParentGo != null && newParentGo.transform.IsChildOf(targetGo.transform))
-                {
-                    return new ErrorResponse($"Cannot parent '{targetGo.name}' to '{newParentGo.name}', as it would create a hierarchy loop.");
-                }
-            }
-
             string layerName = @params["layer"]?.ToString();
             int layerId = string.IsNullOrEmpty(layerName) ? -1 : LayerMask.NameToLayer(layerName);
             if (!string.IsNullOrEmpty(layerName) && layerId == -1)
@@ -59,11 +41,13 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             Vector3? position;
             Vector3? rotation;
             Vector3? scale;
+            GameObjectTransformOptions transformOptions;
             try
             {
                 position = ManageGameObjectCommon.ReadOptionalVector3(@params, "position");
                 rotation = ManageGameObjectCommon.ReadOptionalVector3(@params, "rotation");
                 scale = ManageGameObjectCommon.ReadOptionalVector3(@params, "scale");
+                transformOptions = GameObjectTransformOptions.Read(@params, targetGo);
                 ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: true, componentSource: targetGo);
             }
             catch (ArgumentException e)
@@ -118,14 +102,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 modified = true;
             }
 
-            if (parentToken != null)
-            {
-                if (targetGo.transform.parent != (newParentGo?.transform))
-                {
-                    targetGo.transform.SetParent(newParentGo?.transform, true);
-                    modified = true;
-                }
-            }
+            modified |= transformOptions.Apply(targetGo.transform, position, rotation, scale);
 
             bool? setActive = @params["setActive"]?.ReadScalar<bool?>();
             if (setActive.HasValue && targetGo.activeSelf != setActive.Value)
@@ -182,22 +159,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     GameObjectUtility.SetStaticEditorFlags(targetGo, desiredFlags);
                     modified = true;
                 }
-            }
-
-            if (position.HasValue && targetGo.transform.localPosition != position.Value)
-            {
-                targetGo.transform.localPosition = position.Value;
-                modified = true;
-            }
-            if (rotation.HasValue && targetGo.transform.localEulerAngles != rotation.Value)
-            {
-                targetGo.transform.localEulerAngles = rotation.Value;
-                modified = true;
-            }
-            if (scale.HasValue && targetGo.transform.localScale != scale.Value)
-            {
-                targetGo.transform.localScale = scale.Value;
-                modified = true;
             }
 
             if (@params["componentsToRemove"] is JArray componentsToRemoveArray)

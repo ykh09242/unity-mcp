@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 
 def test_scene_edit_sdk_schema_preserves_expected_old_presence():
@@ -54,6 +55,17 @@ def test_scene_edit_sdk_schema_preserves_expected_old_presence():
                     assert 'expected_old' in sent[-1]['edits'][0]
                     assert sent[-1]['edits'][0]['expected_old'] == expected
                     assert type(sent[-1]['edits'][0]['expected_old']) is type(expected)
+                operations = [{'op': 'create', 'temp_id': '$parent', 'name': 'Parent', 'parent': 42}, {'op': 'reparent', 'target': 43, 'parent': '$parent'}]
+                result = await client.call_tool('manage_scene_edits', {'action': 'preview_structure', 'target': 42, 'operations': operations})
+                assert result.structured_content['success'] is True
+                assert sent[-1]['operations'] == operations
+                result = await client.call_tool('manage_scene_edits', {'action': 'apply_structure', 'preview_id': 'fixture'})
+                assert result.structured_content['success'] is True
+                assert 'operations' not in sent[-1]
+                capsule = {'target': 42, 'component_type': 'CapsuleCollider', 'property': 'm_Radius', 'value': 2, 'expected_old': .5}
+                result = await client.call_tool('manage_scene_edits', {'action': 'apply', 'edits': [capsule]})
+                assert result.structured_content['success'] is True
+                assert sent[-1]['edits'] == [capsule]
                 result = await client.call_tool('manage_scene_edits', {'action': 'apply', 'preview_id': 'fixture'})
                 assert result.structured_content['success'] is True
                 assert 'edits' not in sent[-1]
@@ -66,7 +78,11 @@ def test_scene_edit_sdk_schema_preserves_expected_old_presence():
         capture_output=True,
         text=True,
         timeout=30,
-        env={**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"},
+        env={
+            **os.environ,
+            "UNITY_MCP_DISABLE_TELEMETRY": "true",
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        },
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "scene-edit SDK schema and expected_old presence passed" in result.stdout

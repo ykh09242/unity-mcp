@@ -1644,6 +1644,9 @@ Create a new GameObject. Examples: unity-mcp gameobject create "MyCube" --primit
 | --rotation / -rot | float | optional | nargs=3 | — | — | Rotation as X Y Z (euler angles). |
 | --scale / -s | float | optional | nargs=3 | — | — | Scale as X Y Z. |
 | --parent | text | optional | nargs=1 | — | — | Parent GameObject name or path. |
+| --space | choice: local, world | optional | nargs=1 | — | — | Position/rotation space (local default); scale is local only. |
+| --world-position-stays / --no-world-position-stays | boolean | optional | nargs=1, flag | — | — | Preserve world transform while parenting (true default). |
+| --sibling-index | integer range: [0..None] | optional | nargs=1 | — | — | Final zero-based sibling index. |
 | --tag / -t | text | optional | nargs=1 | — | — | Tag to assign. |
 | --layer | text | optional | nargs=1 | — | — | Layer to assign. |
 | --components | text | optional | nargs=1 | — | — | Comma-separated list of components to add. |
@@ -1699,6 +1702,10 @@ Modify an existing GameObject. TARGET can be a name, path, instance ID, or tag d
 | --rotation / -rot | float | optional | nargs=3 | — | — | New rotation as X Y Z (euler angles). |
 | --scale / -s | float | optional | nargs=3 | — | — | New scale as X Y Z. |
 | --parent | text | optional | nargs=1 | — | — | New parent GameObject. |
+| --space | choice: local, world | optional | nargs=1 | — | — | Position/rotation space (local default); scale is local only. |
+| --world-position-stays / --no-world-position-stays | boolean | optional | nargs=1, flag | — | — | Preserve world transform while parenting (true default). |
+| --sibling-index | integer range: [0..None] | optional | nargs=1 | — | — | Final zero-based sibling index. |
+| --detach | boolean | optional | nargs=1, flag | — | — | Remove the parent explicitly. |
 | --tag / -t | text | optional | nargs=1 | — | — | New tag. |
 | --layer | text | optional | nargs=1 | — | — | New layer. |
 | --active / --inactive | boolean | optional | nargs=1, flag | — | — | Set active state. |
@@ -1720,6 +1727,19 @@ Move a GameObject relative to another object. Examples: unity-mcp gameobject mov
 | --distance | float | optional | nargs=1 | 1.0 | — | Distance to move (default: 1.0). |
 | --local | boolean | optional | nargs=1, flag | — | — | Use reference object's local space instead of world space. |
 | --search-method | choice: by_name, by_path, by_id, by_tag, by_layer | optional | nargs=1 | — | — | How to find the target GameObject. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp gameobject placement`
+
+Preview ordered positions; first selector anchors align, first/last bound distribute. Supply the same options and ordered targets with --apply-token to apply the preview. Local placement requires a common parent. Use -- before negative instance IDs.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| targets | text | required | nargs=-1 | — | — |  |
+| --mode | choice: align, distribute | optional | nargs=1 | "align" | — |  |
+| --axis | choice: x, y, z | optional | nargs=1 | "x" | — |  |
+| --space | choice: local, world | optional | nargs=1 | "local" | — |  |
+| --apply-token | text | optional | nargs=1 | — | — | Apply an unchanged preview using its single-use token. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp graphics`

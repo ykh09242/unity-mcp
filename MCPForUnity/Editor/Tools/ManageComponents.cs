@@ -286,11 +286,12 @@ namespace MCPForUnity.Editor.Tools
 
             // Set properties if provided
             var propertyErrors = new List<string>();
+            var propertyResults = new JArray();
             if (properties != null && properties.HasValues)
             {
                 // Record for undo before modifying properties
                 Undo.RecordObject(newComponent, "Modify Component Properties");
-                propertyErrors = SetPropertiesOnComponent(newComponent, properties);
+                propertyErrors = SetPropertiesOnComponent(newComponent, properties, propertyResults);
             }
 
             EditorUtility.SetDirty(targetGo);
@@ -306,6 +307,8 @@ namespace MCPForUnity.Editor.Tools
                         componentType = type.FullName,
                         componentInstanceID = newComponent.GetInstanceIDCompat(),
                         componentAdded = true,
+                        mode = "best_effort",
+                        results = propertyResults,
                         errors = propertyErrors,
                     }
                 );
@@ -321,6 +324,8 @@ namespace MCPForUnity.Editor.Tools
                     instanceID = targetGo.GetInstanceIDCompat(),
                     componentType = type.FullName,
                     componentInstanceID = newComponent.GetInstanceIDCompat(),
+                    mode = "best_effort",
+                    results = propertyResults,
                 },
             };
             return WithSelection(success, createdSelection);
@@ -475,67 +480,82 @@ namespace MCPForUnity.Editor.Tools
             }
 
             var errors = new List<string>();
+            var requests = new List<JProperty>();
+            if (!string.IsNullOrEmpty(propertyName))
+                requests.Add(new JProperty(propertyName, valueToken));
+            if (properties != null)
+                requests.AddRange(properties.Properties());
+            var results = new JArray(
+                requests.Select(
+                    (request, index) =>
+                        new JObject
+                        {
+                            ["index"] = index,
+                            ["property"] = request.Name,
+                            ["status"] = "skipped",
+                            ["message"] = "Not attempted.",
+                        }
+                )
+            );
             bool anyPropertySet = false;
-
             try
             {
                 Undo.RecordObject(component, $"Set property on {componentType}");
-
-                if (!string.IsNullOrEmpty(propertyName) && valueToken != null)
+                for (int i = 0; i < requests.Count; i++)
                 {
-                    // Single property mode
-                    var error = TrySetProperty(component, propertyName, valueToken);
+                    // A throwing callback can stop this legacy request. Remaining receipts stay skipped.
+                    results[i]["status"] = "failed";
+                    results[i]["message"] = "Property write did not complete.";
+                    string error = TrySetProperty(component, requests[i].Name, requests[i].Value);
+                    results[i]["status"] = error == null ? "applied" : "failed";
+                    results[i]["message"] = error;
                     if (error != null)
-                    {
                         errors.Add(error);
-                    }
                     else
-                    {
                         anyPropertySet = true;
-                    }
                 }
-
-                if (properties != null && properties.HasValues)
-                {
-                    // Multiple properties mode
-                    foreach (var prop in properties.Properties())
-                    {
-                        var error = TrySetProperty(component, prop.Name, prop.Value);
-                        if (error != null)
-                        {
-                            errors.Add(error);
-                        }
-                        else
-                        {
-                            anyPropertySet = true;
-                        }
-                    }
-                }
-
                 if (anyPropertySet)
                 {
                     EditorUtility.SetDirty(component);
                     MarkOwningSceneDirty(targetGo);
                 }
-
                 if (errors.Count > 0)
-                {
                     return new ErrorResponse(
                         $"Some properties failed to set on '{componentType}'.",
-                        new { instanceID = targetGo.GetInstanceIDCompat(), errors = errors }
+                        new
+                        {
+                            instanceID = targetGo.GetInstanceIDCompat(),
+                            errors,
+                            mode = "best_effort",
+                            results,
+                        }
                     );
-                }
-
-                return new
-                {
-                    success = true,
-                    message = $"Properties set on component '{componentType}' on '{targetGo.name}'.",
-                    data = new { instanceID = targetGo.GetInstanceIDCompat() },
-                };
+                return new SuccessResponse(
+                    $"Properties set on component '{componentType}' on '{targetGo.name}'.",
+                    new
+                    {
+                        instanceID = targetGo.GetInstanceIDCompat(),
+                        mode = "best_effort",
+                        results,
+                    }
+                );
             }
             catch (Exception e)
             {
-                return new ErrorResponse($"Error setting properties on component '{componentType}': {e.Message}");
+                if (anyPropertySet)
+                {
+                    EditorUtility.SetDirty(component);
+                    MarkOwningSceneDirty(targetGo);
+                }
+                return new ErrorResponse(
+                    $"Error setting properties on component '{componentType}': {e.Message}",
+                    new
+                    {
+                        instanceID = targetGo.GetInstanceIDCompat(),
+                        mode = "best_effort",
+                        results,
+                    }
+                );
             }
         }
 
@@ -628,7 +648,7 @@ namespace MCPForUnity.Editor.Tools
             return GameObjectLookup.FindByTarget(targetToken, searchMethod ?? "by_name", true);
         }
 
-        private static List<string> SetPropertiesOnComponent(Component component, JObject properties)
+        private static List<string> SetPropertiesOnComponent(Component component, JObject properties, JArray results)
         {
             var errors = new List<string>();
             if (component == null || properties == null)
@@ -637,6 +657,15 @@ namespace MCPForUnity.Editor.Tools
             foreach (var prop in properties.Properties())
             {
                 var error = TrySetProperty(component, prop.Name, prop.Value);
+                results.Add(
+                    new JObject
+                    {
+                        ["index"] = results.Count,
+                        ["property"] = prop.Name,
+                        ["status"] = error == null ? "applied" : "failed",
+                        ["message"] = error,
+                    }
+                );
                 if (error != null)
                     errors.Add(error);
             }

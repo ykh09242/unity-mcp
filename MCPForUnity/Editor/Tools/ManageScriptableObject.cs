@@ -331,6 +331,7 @@ namespace MCPForUnity.Editor.Tools
                     path = finalPath,
                     typeNameResolved = resolvedType.FullName,
                     patchResults,
+                    mode = "best_effort",
                     warnings = warnings.Count > 0 ? warnings : null,
                 }
             );
@@ -418,6 +419,7 @@ namespace MCPForUnity.Editor.Tools
                         path = finalPath,
                         typeNameResolved = replacement.GetType().FullName,
                         patchResults,
+                        mode = "best_effort",
                         warnings = warnings.Count > 0 ? warnings : null,
                     }
                 );
@@ -714,6 +716,7 @@ namespace MCPForUnity.Editor.Tools
                     targetPath,
                     targetTypeName = target.GetType().FullName,
                     results,
+                    mode = "best_effort",
                     warnings = warnings.Count > 0 ? warnings : null,
                 }
             );
@@ -1466,6 +1469,8 @@ namespace MCPForUnity.Editor.Tools
                             propertyPath = "",
                             op = "",
                             ok = false,
+                            index = i,
+                            status = "failed",
                             message = $"Patch at index {i} must be an object.",
                         }
                     );
@@ -1482,6 +1487,8 @@ namespace MCPForUnity.Editor.Tools
                             propertyPath = propertyPath ?? "",
                             op,
                             ok = false,
+                            index = i,
+                            status = "failed",
                             message = "Missing required field: propertyPath",
                         }
                     );
@@ -1495,14 +1502,22 @@ namespace MCPForUnity.Editor.Tools
 
                 var patchResult = ApplyPatch(so, propertyPath, op, patchObj, out bool changed, excludedReferencePath);
                 anyChanged |= changed;
-                results.Add(patchResult);
-
-                // Keep capacity and conversion changes staged until this patch succeeds.
+                // The legacy changed flag also means a successful setter attempt. Unity's
+                // commit result distinguishes retained serialized changes from successful no-ops,
+                // including growth staged before an already-null reference assignment.
+                bool committed = false;
                 if (changed)
                 {
                     AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(target));
-                    so.ApplyModifiedProperties();
+                    committed = so.ApplyModifiedProperties();
                 }
+                JObject receipt = JObject.FromObject(patchResult);
+                receipt["index"] = i;
+                receipt["status"] = receipt.Value<bool>("ok") ? (committed ? "applied" : "skipped") : "failed";
+                if (receipt.Value<string>("status") == "skipped")
+                    receipt["skip_reason"] = "unchanged";
+                results.Add(receipt);
+
                 // Failed patches may have staged growth before resolving their leaf/value.
                 so.Update();
             }

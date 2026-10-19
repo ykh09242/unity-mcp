@@ -11,15 +11,19 @@ namespace MCPForUnityTests.Editor.Helpers
 {
     internal sealed class PrefabTestSceneFixture
     {
+        private static Scene restoredRunnerScene;
+        private static object restoredRunnerJob;
         private Scene previousScene;
         private Scene ownedScene;
         private string scenePrefix;
         private bool restoreEmptyScene;
         private bool restoreRunnerDefaultScene;
+        private object runnerJob;
 
         public void PrepareRunnerBootstrap()
         {
             restoreRunnerDefaultScene = false;
+            runnerJob = null;
             if (PrefabStageUtility.GetCurrentPrefabStage() != null)
                 return;
             Scene initial = SceneManager.GetActiveScene();
@@ -29,11 +33,13 @@ namespace MCPForUnityTests.Editor.Helpers
                 && initial.rootCount != 0
                 && string.IsNullOrEmpty(initial.path)
                 && !initial.isDirty
-                && IsRunnerBootstrapScene(initial)
+                && TryGetRunnerOwner(initial, out runnerJob)
             )
             {
-                // Normalize only the pinned runner's exact scene, once per fixture.
+                // Only the active job's bootstrap or our exact restoration for that same job.
                 EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                restoredRunnerScene = default;
+                restoredRunnerJob = null;
                 restoreRunnerDefaultScene = true;
             }
         }
@@ -47,8 +53,10 @@ namespace MCPForUnityTests.Editor.Helpers
                 SceneManager.sceneCount == 1 && current.IsValid() && string.IsNullOrEmpty(current.path) && !current.isDirty && current.rootCount == 0,
                 "The fixture must finish with only its clean empty replacement scene before restoring the runner default."
             );
-            EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+            restoredRunnerScene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+            restoredRunnerJob = runnerJob;
             restoreRunnerDefaultScene = false;
+            runnerJob = null;
         }
 
         public Scene Create(string prefix, string suffix)
@@ -110,8 +118,9 @@ namespace MCPForUnityTests.Editor.Helpers
             restoreEmptyScene = false;
         }
 
-        private static bool IsRunnerBootstrapScene(Scene candidate)
+        private static bool TryGetRunnerOwner(Scene candidate, out object owner)
         {
+            owner = null;
             Type holderType = typeof(UnityEditor.TestTools.TestRunner.Api.TestRunnerApi).Assembly.GetType(
                 "UnityEditor.TestTools.TestRunner.TestRun.TestJobDataHolder"
             );
@@ -126,8 +135,18 @@ namespace MCPForUnityTests.Editor.Helpers
                 {
                     FieldInfo runningField = run.GetType().GetField("isRunning");
                     FieldInfo sceneField = run.GetType().GetField("InitTestScene");
-                    if (runningField?.GetValue(run) is bool running && running && sceneField?.GetValue(run) is Scene bootstrap && bootstrap == candidate)
+                    if (
+                        runningField?.GetValue(run) is bool running
+                        && running
+                        && (
+                            sceneField?.GetValue(run) is Scene bootstrap && bootstrap == candidate
+                            || ReferenceEquals(restoredRunnerJob, run) && restoredRunnerScene == candidate
+                        )
+                    )
+                    {
+                        owner = run;
                         return true;
+                    }
                 }
             }
             return false;

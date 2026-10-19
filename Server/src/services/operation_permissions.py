@@ -80,7 +80,7 @@ def _names(value: str) -> frozenset[str]:
 _ACTIONS: Final = {
     "manage_asset": {
         Permission.READ: _names(
-            "search search_metadata_v1 get_info get_components list_asset_bundles get_bundle_assets get_bundle_dependencies get_labels"
+            "search search_metadata_v1 get_info get_components list_asset_bundles get_bundle_assets get_bundle_dependencies get_labels get_dependencies get_reverse_references preview_move preview_delete"
         ),
         Permission.EDIT: _names(
             "import create modify delete duplicate move rename create_folder set_labels add_labels remove_labels"
@@ -88,7 +88,7 @@ _ACTIONS: Final = {
     },
     "manage_scene": {
         Permission.READ: _names(
-            "get_hierarchy get_active get_build_settings get_loaded_scenes validate"
+            "get_hierarchy get_active get_build_settings get_loaded_scenes validate validate_references"
         ),
         Permission.EDIT: _names(
             "create load save scene_view_frame close_scene set_active_scene move_to_scene modify_build_settings"
@@ -127,9 +127,9 @@ _ACTIONS: Final = {
         ),
     },
     "manage_prefabs": {
-        Permission.READ: _names("get_info get_hierarchy list_overrides"),
+        Permission.READ: _names("get_info get_hierarchy list_overrides preview_modify_contents"),
         Permission.EDIT: _names(
-            "create_from_gameobject modify_contents open_prefab_stage save_prefab_stage close_prefab_stage revert_overrides apply_overrides"
+            "create_from_gameobject modify_contents open_prefab_stage save_prefab_stage close_prefab_stage revert_overrides apply_overrides apply_preview"
         ),
     },
     "manage_ugui": {
@@ -172,7 +172,10 @@ _ACTIONS: Final = {
         Permission.READ: _names("get_info"),
         Permission.EDIT: _names("slice_sheet setup_clips setup_controller full_setup"),
     },
-    "manage_scene_edits": {Permission.READ: _names("preview"), Permission.EDIT: _names("apply")},
+    "manage_scene_edits": {
+        Permission.READ: _names("preview preview_structure"),
+        Permission.EDIT: _names("apply apply_structure"),
+    },
     "execute_code": {
         Permission.READ: _names("get_history"),
         Permission.RUN: _names("execute replay clear_history"),
@@ -390,6 +393,25 @@ def required_permissions(
     if actions is None or not isinstance(action, str):
         raise OperationPermissionError()
     action = action.strip().lower()
+    if name == "manage_ui" and action == "patch_source":
+        # The SDK and native handler both require a JSON boolean. Only an
+        # omitted flag defaults to preview; explicit null is malformed.
+        preview = params.get("preview", True)
+        if type(preview) is not bool:
+            raise OperationPermissionError()
+        return frozenset({Permission.READ if preview else Permission.EDIT})
+    if name == "manage_gameobject" and action == "placement":
+        # Match public and native placement exactly, including native batch
+        # members: null/missing previews, and canonical false explicitly applies.
+        preview = params.get("preview")
+        if (
+            preview is not None
+            and type(preview) is not bool
+            and (not isinstance(preview, str) or preview.lower() not in {"true", "false"})
+        ):
+            raise OperationPermissionError()
+        applies = preview is False or isinstance(preview, str) and preview.lower() == "false"
+        return frozenset({Permission.EDIT if applies else Permission.READ})
     if name == "manage_ugui" and action == "diagnose_raycast":
         # The default native query refuses applicable custom callbacks. Opting
         # in can run arbitrary user code, including writes and event dispatch.

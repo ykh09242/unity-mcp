@@ -29,4 +29,16 @@ async def test_validate_script_returns_counts(monkeypatch):
     # No need to patch tools.manage_script; it now calls unity_connection.send_command_with_retry
 
     resp = await validate_script(DummyContext(), uri="mcpforunity://path/Assets/Scripts/A.cs")
-    assert resp == {"success": True, "data": {"warnings": 1, "errors": 2}}
+    assert resp == {
+        "success": True,
+        "data": {
+            "warnings": 1,
+            "errors": 2,
+            "validation": {
+                "requestedLevel": "basic",
+                "effectiveLevel": "unknown",
+                "engine": "unknown",
+                "limitations": ["The connected Editor did not report validation capabilities."],
+            },
+        },
+    }

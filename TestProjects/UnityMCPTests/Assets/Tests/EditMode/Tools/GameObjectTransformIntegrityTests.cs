@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -18,17 +19,33 @@ namespace MCPForUnityTests.Editor.Tools
     public class GameObjectTransformIntegrityTests
     {
         private readonly List<GameObject> objects = new List<GameObject>();
-        private Scene originalActive;
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
+        private string assetRoot;
+        private string assetRootGuid;
         private Scene activeScene;
         private Scene targetScene;
         private GameObject target;
         private GameObject reference;
 
+        [OneTimeSetUp]
+        public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void OneTimeTearDown() => sceneFixture.RestoreRunnerBootstrap();
+
         [SetUp]
         public void SetUp()
         {
-            originalActive = SceneManager.GetActiveScene();
-            activeScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            assetRoot = null;
+            assetRootGuid = null;
+            targetScene = default;
+            activeScene = sceneFixture.Create("McpTransformIntegrity_", Guid.NewGuid().ToString("N"));
+            assetRoot = "Assets/__McpTransformIntegrity_" + Guid.NewGuid().ToString("N");
+            Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
+            assetRootGuid = AssetDatabase.CreateFolder("Assets", assetRoot.Substring("Assets/".Length));
+            Assert.IsNotEmpty(assetRootGuid);
+            // Save only our owned empty scene before opening the second scene additively.
+            Assert.IsTrue(EditorSceneManager.SaveScene(activeScene, assetRoot + "/" + activeScene.name + ".unity"));
             targetScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
             SceneManager.SetActiveScene(targetScene);
             target = Owned("Target", targetScene);
@@ -67,12 +84,15 @@ namespace MCPForUnityTests.Editor.Tools
                 UnityEngine.Object.DestroyImmediate(go);
             }
             objects.Clear();
-            if (originalActive.IsValid() && originalActive.isLoaded)
-                SceneManager.SetActiveScene(originalActive);
             if (targetScene.IsValid() && targetScene.isLoaded)
                 EditorSceneManager.CloseScene(targetScene, true);
-            if (activeScene.IsValid() && activeScene.isLoaded)
-                EditorSceneManager.CloseScene(activeScene, true);
+            sceneFixture.Close();
+            if (!string.IsNullOrEmpty(assetRootGuid))
+            {
+                StringAssert.StartsWith("Assets/__McpTransformIntegrity_", assetRoot);
+                Assert.AreEqual(assetRootGuid, AssetDatabase.AssetPathToGUID(assetRoot));
+                Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot));
+            }
         }
 
         private JObject Send(string action, JObject options)

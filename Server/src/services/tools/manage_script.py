@@ -739,7 +739,7 @@ async def delete_script(
 
 @mcp_for_unity_tool(
     unity_target="manage_script",
-    description="Validate a C# script and return diagnostics.",
+    description="Validate a C# script and report diagnostics, the effective validation engine, and context limitations. This does not trigger Unity project compilation.",
     annotations=ToolAnnotations(
         title="Validate Script",
         readOnlyHint=True,
@@ -754,7 +754,10 @@ async def validate_script(
         str,
         "URI of the script to validate under Assets/ directory, mcpforunity://path/Assets/... or file://... or Assets/...",
     ],
-    level: Annotated[Literal["basic", "standard"], "Validation level"] = "basic",
+    level: Annotated[
+        Literal["basic", "standard"],
+        "basic checks structure; standard adds available compiler syntax and heuristic Unity rules. See returned validation capabilities.",
+    ] = "basic",
     include_diagnostics: Annotated[bool, "Include full diagnostics and summary"] = False,
 ) -> dict[str, Any]:
     logger.info("Processing validate_script")
@@ -788,15 +791,29 @@ async def validate_script(
         params,
     )
     if isinstance(resp, dict) and resp.get("success"):
-        diags = resp.get("data", {}).get("diagnostics", []) or []
+        data = resp.get("data", {})
+        diags = data.get("diagnostics", []) or []
+        validation = data.get("validation") or {
+            "requestedLevel": level,
+            "effectiveLevel": "unknown",
+            "engine": "unknown",
+            "limitations": ["The connected Editor did not report validation capabilities."],
+        }
         warnings = sum(1 for d in diags if str(d.get("severity", "")).lower() == "warning")
         errors = sum(1 for d in diags if str(d.get("severity", "")).lower() in ("error", "fatal"))
         if include_diagnostics:
             return {
                 "success": True,
-                "data": {"diagnostics": diags, "summary": {"warnings": warnings, "errors": errors}},
+                "data": {
+                    "diagnostics": diags,
+                    "summary": {"warnings": warnings, "errors": errors},
+                    "validation": validation,
+                },
             }
-        return {"success": True, "data": {"warnings": warnings, "errors": errors}}
+        return {
+            "success": True,
+            "data": {"warnings": warnings, "errors": errors, "validation": validation},
+        }
     return resp if isinstance(resp, dict) else {"success": False, "message": str(resp)}
 
 

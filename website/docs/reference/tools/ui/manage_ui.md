@@ -16,6 +16,7 @@ Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRen
 diagnose observes bounded current-panel physical geometry/clipping/overflow/sibling-overlap candidates without text or layout updates. Unknown/partial results are not a clean-layout assertion; diagnostic paths are not mutation/snapshot selectors.
 Visual actions: render_ui (captures UI panel to a PNG screenshot for self-evaluation).
 Structural actions: link_stylesheet (adds a Style src reference to a UXML file).
+patch_source previews narrow existing source attribute/declaration edits; preview=false requires expected_source_hash and persists source separately from live UI.
 
 UI Toolkit workflow:
 1. Use list to discover existing UI assets
@@ -42,9 +43,13 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['ping', 'create', 'read', 'update', 'delete', 'attach_ui_document', 'detach_ui_document', 'create_panel_settings', 'update_panel_settings', 'get_visual_tree', 'diagnose', 'render_ui', 'link_stylesheet', 'list', 'modify_visual_element']` | yes | Action to perform. |
+| `action` | `Literal['ping', 'create', 'read', 'update', 'delete', 'attach_ui_document', 'detach_ui_document', 'create_panel_settings', 'update_panel_settings', 'get_visual_tree', 'diagnose', 'render_ui', 'link_stylesheet', 'list', 'modify_visual_element', 'patch_source']` | yes | Action to perform. |
 | `path` | `str \| None` | — | Assets-relative path (e.g., 'Assets/UI/MainMenu.uxml' or 'Assets/UI/Styles.uss'). For render_ui: optional UXML path to render directly without a scene GameObject. |
 | `contents` | `str \| None` | — | File content (UXML or USS markup). Plain text - encoding handled automatically. |
+| `source_selector` | `str \| None` | — | patch_source: unique UXML #name, or exact simple USS type/.class/#name rule. |
+| `source_changes` | `dict[str, str] \| None` | — | patch_source: 1..32 existing UXML text/tooltip/class attributes or USS declarations; values <=4096 characters. No insertion/removal or template ownership. |
+| `preview` | `bool` | — | patch_source: true (default) returns SHA256 and exact value edits without writing. False persists source and reimports; live view refresh is separate. |
+| `expected_source_hash` | `str \| None` | — | patch_source apply requires source_hash from preview. Detects changed source before write. UTF8 files <=1 MiB; preserves BOM, surrounding bytes and .meta. |
 | `target` | `str \| None` | — | Target GameObject name or path for attach_ui_document / get_visual_tree / render_ui. |
 | `component_type` | `Literal['auto', 'ui_document', 'panel_renderer'] \| None` | — | UI component for attach/detach, get_visual_tree, modify_visual_element and render_ui. Default auto preserves an existing UIDocument, otherwise resolves PanelRenderer; new attachments prefer PanelRenderer when available and fall back to UIDocument. panel_renderer requires Unity 6.5+ API support. |
 | `source_asset` | `str \| None` | — | Path to UXML VisualTreeAsset (e.g., 'Assets/UI/MainMenu.uxml'). |

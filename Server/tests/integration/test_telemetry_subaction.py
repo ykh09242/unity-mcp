@@ -1,7 +1,43 @@
 import importlib
 import functools
+import inspect
+from types import FunctionType
+
+import pytest
 
 from services.tools.manage_scene import manage_scene
+
+
+@pytest.fixture(params=["declaration", "sdk_registered"])
+def scene_contract(request):
+    # A fresh callable keeps SDK signature caching local to this test. Use the
+    # actual built-in code/globals so its trusted telemetry action schema remains real.
+    contract = FunctionType(
+        manage_scene.__code__,
+        manage_scene.__globals__,
+        manage_scene.__name__,
+        manage_scene.__defaults__,
+        manage_scene.__closure__,
+    )
+    contract.__annotations__ = dict(manage_scene.__annotations__)
+    contract.__kwdefaults__ = manage_scene.__kwdefaults__
+    if request.param == "sdk_registered":
+        from fastmcp import FastMCP
+
+        FastMCP("subaction-signature").tool(contract)
+    return contract
+
+
+def _scene_probe(contract):
+    def decorate(func):
+        signature = inspect.signature(func)
+        wrapped = functools.wraps(contract)(func)
+        # wraps copies the SDK's cached/reordered signature. This probe executes
+        # its own (ctx, action, name) body, so telemetry must bind that signature.
+        wrapped.__signature__ = signature
+        return wrapped
+
+    return decorate
 
 
 def _get_decorator_module():
@@ -30,7 +66,7 @@ def _get_decorator_module():
     return mod
 
 
-def test_subaction_extracted_from_keyword(monkeypatch):
+def test_subaction_extracted_from_keyword(monkeypatch, scene_contract):
     td = _get_decorator_module()
 
     captured = {}
@@ -48,7 +84,7 @@ def test_subaction_extracted_from_keyword(monkeypatch):
     monkeypatch.setattr(td, "record_milestone", lambda *a, **k: None)
     monkeypatch.setattr(td, "_decorator_log_count", 999)
 
-    @functools.wraps(manage_scene)
+    @_scene_probe(scene_contract)
     def dummy_tool(ctx, action: str, name: str = ""):
         return {"success": True, "name": name}
 
@@ -62,7 +98,7 @@ def test_subaction_extracted_from_keyword(monkeypatch):
     assert captured["sub_action"] == "get_hierarchy"
 
 
-def test_subaction_extracted_from_positionals(monkeypatch):
+def test_subaction_extracted_from_positionals(monkeypatch, scene_contract):
     td = _get_decorator_module()
 
     captured = {}
@@ -77,7 +113,7 @@ def test_subaction_extracted_from_positionals(monkeypatch):
     monkeypatch.setattr(td, "record_milestone", lambda *a, **k: None)
     monkeypatch.setattr(td, "_decorator_log_count", 999)
 
-    @functools.wraps(manage_scene)
+    @_scene_probe(scene_contract)
     def dummy_tool(ctx, action: str, name: str = ""):
         return True
 

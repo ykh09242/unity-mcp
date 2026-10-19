@@ -72,6 +72,10 @@ namespace MCPForUnity.Editor.Tools
                 string action = RequiredString(parameters, "action");
                 switch (action)
                 {
+                    case "preview_structure":
+                        return SceneStructurePlans.Preview(parameters);
+                    case "apply_structure":
+                        return SceneStructurePlans.Apply(parameters);
                     case "preview":
                         if (parameters["preview_id"] != null)
                             throw new ArgumentException("preview_id is only valid for apply.");
@@ -143,7 +147,7 @@ namespace MCPForUnity.Editor.Tools
                     typeName = typeName.Substring("UnityEngine.".Length);
                 if (!SceneEditValues.Types.TryGetValue(typeName, out Type type))
                     throw new ArgumentException(
-                        "Supported component types: Transform, BoxCollider, SphereCollider, Rigidbody. Custom components are excluded."
+                        "Supported component types: Transform, BoxCollider, SphereCollider, CapsuleCollider, Rigidbody. Custom components are excluded."
                     );
                 Component[] components = target.GetComponents(type);
                 int index = 0;

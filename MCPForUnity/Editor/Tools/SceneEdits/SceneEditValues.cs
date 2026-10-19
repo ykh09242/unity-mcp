@@ -15,6 +15,7 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
             ["Transform"] = typeof(Transform),
             ["BoxCollider"] = typeof(BoxCollider),
             ["SphereCollider"] = typeof(SphereCollider),
+            ["CapsuleCollider"] = typeof(CapsuleCollider),
             ["Rigidbody"] = typeof(Rigidbody),
         };
 
@@ -31,6 +32,11 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
             if (type == typeof(BoxCollider) && (property == "m_Center" || property == "m_Size" || property == "m_IsTrigger" || property == "m_Enabled"))
                 return property;
             if (type == typeof(SphereCollider) && (property == "m_Center" || property == "m_Radius" || property == "m_IsTrigger" || property == "m_Enabled"))
+                return property;
+            if (
+                type == typeof(CapsuleCollider)
+                && (property == "m_Center" || property == "m_Radius" || property == "m_Height" || property == "m_IsTrigger" || property == "m_Enabled")
+            )
                 return property;
             if (type == typeof(Rigidbody) && (property == "m_Mass" || property == "m_UseGravity" || property == "m_IsKinematic"))
                 return property;
@@ -65,8 +71,8 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
                     float scalar = Number(value);
                     if (property.propertyPath == "m_Mass" && scalar <= 0)
                         throw new ArgumentException("Mass must be greater than zero.");
-                    if (property.propertyPath == "m_Radius" && scalar < 0)
-                        throw new ArgumentException("Radius must be nonnegative.");
+                    if ((property.propertyPath == "m_Radius" || property.propertyPath == "m_Height") && scalar < 0)
+                        throw new ArgumentException("Radius and height must be nonnegative.");
                     return new JValue(scalar);
                 case SerializedPropertyType.Vector3:
                     float[] vector = Numbers(value, 3);

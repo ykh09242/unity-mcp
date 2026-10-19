@@ -152,7 +152,8 @@ def _normalize_component_properties(
 @mcp_for_unity_tool(
     description=(
         "Performs CRUD operations on GameObjects. "
-        "Actions: create, modify, delete, duplicate, move_relative, look_at. "
+        "Actions: create, modify, delete, duplicate, move_relative, look_at, placement. "
+        "Placement previews ordered align/distribute positions; apply requires the unchanged preview token. "
         "NOT for searching — use the find_gameobjects tool to search by name/tag/layer/component/path. "
         "NOT for component management — use the manage_components tool (add/remove/set_property) "
         "or mcpforunity://scene/gameobject/{id}/components resource (read)."
@@ -165,7 +166,7 @@ def _normalize_component_properties(
 async def manage_gameobject(
     ctx: Context,
     action: Annotated[
-        Literal["create", "modify", "delete", "duplicate", "move_relative", "look_at"],
+        Literal["create", "modify", "delete", "duplicate", "move_relative", "look_at", "placement"],
         "Action to perform on GameObject.",
     ]
     | None = None,
@@ -204,6 +205,35 @@ async def manage_gameobject(
     scale: Annotated[
         list[float] | dict[str, float] | str,
         "Scale as [x, y, z] array, {x, y, z} object, or JSON string",
+    ]
+    | None = None,
+    space: Annotated[
+        Literal["local", "world"], "Position/rotation space; local default. Scale is local only."
+    ]
+    | None = None,
+    world_position_stays: Annotated[bool | str, "Preserve world TRS when parenting; true default."]
+    | None = None,
+    detach: Annotated[
+        bool | str, "Modify: explicitly remove parent; conflicts with a nonempty parent."
+    ]
+    | None = None,
+    sibling_index: Annotated[int, "Zero-based final sibling index, validated before mutation."]
+    | None = None,
+    targets: Annotated[
+        list[str], "Placement: 2–128 unique selectors in explicit anchor/endpoint order."
+    ]
+    | None = None,
+    placement_mode: Annotated[
+        Literal["align", "distribute"], "Placement along one axis; align uses first target."
+    ]
+    | None = None,
+    axis: Annotated[Literal["x", "y", "z"], "Placement axis; x default."] | None = None,
+    preview: Annotated[
+        bool | str, "Placement preview defaults true; false applies a validated preview token."
+    ]
+    | None = None,
+    preview_token: Annotated[
+        str, "Placement apply: single-use native preview token, expires after five minutes."
     ]
     | None = None,
     components_to_add: Annotated[
@@ -283,20 +313,70 @@ async def manage_gameobject(
     ]
     | None = None,
 ) -> dict[str, Any]:
-    if action not in {"create", "modify", "delete", "duplicate", "move_relative", "look_at"}:
+    if action not in {
+        "create",
+        "modify",
+        "delete",
+        "duplicate",
+        "move_relative",
+        "look_at",
+        "placement",
+    }:
         return {
             "success": False,
-            "message": "Missing required parameter 'action'. Valid actions: create, modify, delete, duplicate, move_relative, look_at. To SEARCH for GameObjects use the find_gameobjects tool. To manage COMPONENTS use the manage_components tool.",
+            "message": "Missing required parameter 'action'. Valid actions: create, modify, delete, duplicate, move_relative, look_at, placement. To SEARCH for GameObjects use the find_gameobjects tool. To manage COMPONENTS use the manage_components tool.",
         }
 
     if action == "create" and not name:
         return {"success": False, "message": "Action 'create' requires parameter 'name'."}
     # Unity permits 'name' as a target alias only when target is omitted.
-    if action != "create" and not (target if target is not None else name):
+    if action not in {"create", "placement"} and not (target if target is not None else name):
         return {
             "success": False,
             "message": f"Action '{action}' requires parameter 'target' or its 'name' alias.",
         }
+    if space is not None and space not in {"local", "world"}:
+        return {"success": False, "message": "space must be 'local' or 'world'."}
+    if space == "world" and scale is not None:
+        return {"success": False, "message": "World scale is unsupported; scale is local only."}
+    for field, value in (
+        ("world_position_stays", world_position_stays),
+        ("detach", detach),
+        ("preview", preview),
+    ):
+        if (
+            value is not None
+            and not isinstance(value, bool)
+            and (not isinstance(value, str) or value.lower() not in {"true", "false"})
+        ):
+            return {"success": False, "message": f"{field} must be true or false."}
+    world_position_stays = coerce_bool(world_position_stays)
+    detach = coerce_bool(detach)
+    if detach and parent:
+        return {"success": False, "message": "detach conflicts with a nonempty parent."}
+    if sibling_index is not None and (
+        isinstance(sibling_index, bool) or not isinstance(sibling_index, int) or sibling_index < 0
+    ):
+        return {"success": False, "message": "sibling_index must be a nonnegative integer."}
+    if action == "placement":
+        if (
+            not isinstance(targets, list)
+            or not 2 <= len(targets) <= 128
+            or any(not isinstance(item, str) or not item.strip() for item in targets)
+            or len(set(targets)) != len(targets)
+        ):
+            return {
+                "success": False,
+                "message": "targets must contain 2–128 unique nonempty selectors.",
+            }
+        if placement_mode not in {None, "align", "distribute"} or axis not in {None, "x", "y", "z"}:
+            return {
+                "success": False,
+                "message": "placement_mode must be align/distribute; axis must be x/y/z.",
+            }
+        preview = coerce_bool(preview, default=True)
+        if not preview and not preview_token:
+            return {"success": False, "message": "Placement apply requires preview_token."}
     if action == "move_relative":
         if not reference_object:
             return {
@@ -378,6 +458,15 @@ async def manage_gameobject(
             "position": position,
             "rotation": rotation,
             "scale": scale,
+            "space": space,
+            "world_position_stays": world_position_stays,
+            "detach": detach,
+            "sibling_index": sibling_index,
+            "targets": targets,
+            "placement_mode": placement_mode,
+            "axis": axis,
+            "preview": preview,
+            "preview_token": preview_token,
             "componentsToAdd": components_to_add,
             "primitiveType": primitive_type,
             "saveAsPrefab": save_as_prefab,

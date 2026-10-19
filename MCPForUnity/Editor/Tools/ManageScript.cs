@@ -243,30 +243,11 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse($"Failed to read script: {ex.Message}");
                     }
 
-                    bool ok = ValidateScriptSyntax(fileText, chosen, out string[] diagsRaw);
-                    var diags = (diagsRaw ?? Array.Empty<string>())
-                        .Select(s =>
-                        {
-                            var m = Regex.Match(
-                                s,
-                                @"^(ERROR|WARNING|INFO): (.*?)(?: \(Line (\d+)\))?$",
-                                RegexOptions.CultureInvariant | RegexOptions.Multiline,
-                                TimeSpan.FromMilliseconds(250)
-                            );
-                            string severity = m.Success ? m.Groups[1].Value.ToLowerInvariant() : "info";
-                            string message = m.Success ? m.Groups[2].Value : s;
-                            int lineNum = m.Success && int.TryParse(m.Groups[3].Value, out var l) ? l : 0;
-                            return new
-                            {
-                                line = lineNum,
-                                col = 0,
-                                severity,
-                                message,
-                            };
-                        })
-                        .ToArray();
+                    var context = CreateValidationContext(relativePath, chosen);
+                    bool ok = ValidateScriptSyntax(fileText, chosen, out string[] diagsRaw, context);
+                    var diags = (diagsRaw ?? Array.Empty<string>()).Select(s => ValidationDiagnostic(s, context)).ToArray();
 
-                    var result = new { diagnostics = diags };
+                    var result = new { diagnostics = diags, validation = ValidationMetadata(level, chosen, context) };
                     return ok ? new SuccessResponse("Validation completed.", result) : new ErrorResponse("Validation failed.", result);
                 }
                 case "edit":
@@ -1486,6 +1467,14 @@ namespace MCPForUnity.Editor.Tools
             public bool InNonCode { get; private set; }
             public int Position => _pos;
             public int Line => _line;
+
+            // Validation directive messages are arbitrary text, not C# literals.
+            // Only the validation view calls this after observing a code '#' at line start.
+            public void SkipDirectiveLine()
+            {
+                while (_pos < _end && _text[_pos] != '\n')
+                    _pos++;
+            }
 
             /// <summary>
             /// Advance to the next character, updating all state.
@@ -3764,16 +3753,25 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static bool ValidateScriptSyntax(string contents, ValidationLevel level, out string[] errors)
         {
+            return ValidateScriptSyntax(contents, level, out errors, null);
+        }
+
+        private static bool ValidateScriptSyntax(string contents, ValidationLevel level, out string[] errors, ScriptValidationContext context)
+        {
             var errorList = new System.Collections.Generic.List<string>();
             errors = null;
+            if (context != null)
+                context.Structural = true;
 
             if (string.IsNullOrEmpty(contents))
             {
                 return true; // Empty content is valid
             }
 
+            // Directive message text is not C# code; retain offsets while masking it.
+            string structuralContents = context == null ? contents : ValidationDirectiveText(contents);
             // Basic structural validation: check balanced delimiters
-            if (!CheckBalancedDelimiters(contents, out int errLine, out char errExpected))
+            if (!CheckBalancedDelimiters(structuralContents, out int errLine, out char errExpected))
             {
                 errorList.Add($"ERROR: Unbalanced delimiter at line {errLine} (expected '{errExpected}')");
                 errors = errorList.ToArray();
@@ -3781,13 +3779,13 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Basic structural validation: check for duplicate method signatures
-            CheckDuplicateMethodSignatures(contents, errorList);
+            CheckDuplicateMethodSignatures(structuralContents, errorList);
 
 #if USE_ROSLYN
             // Advanced Roslyn-based validation: only run for Standard+; fail on Roslyn errors
             if (level >= ValidationLevel.Standard)
             {
-                if (!ValidateScriptSyntaxRoslyn(contents, level, errorList))
+                if (!ValidateScriptSyntaxRoslyn(contents, level, errorList, context))
                 {
                     errors = errorList.ToArray();
                     return false;
@@ -3798,6 +3796,8 @@ namespace MCPForUnity.Editor.Tools
             // Unity-specific validation
             if (level >= ValidationLevel.Standard)
             {
+                if (context != null)
+                    context.UnityRules = true;
                 ValidateScriptSyntaxUnity(contents, errorList);
             }
 
@@ -3811,7 +3811,7 @@ namespace MCPForUnity.Editor.Tools
             // Full semantic compilation validation for Strict level
             if (level == ValidationLevel.Strict)
             {
-                if (!ValidateScriptSemantics(contents, errorList))
+                if (!ValidateScriptSemantics(contents, errorList, context))
                 {
                     errors = errorList.ToArray();
                     return false; // Strict level fails on any semantic errors
@@ -3834,6 +3834,136 @@ namespace MCPForUnity.Editor.Tools
             Strict, // Treat all issues as errors
         }
 
+        private sealed class ScriptValidationContext
+        {
+            internal string Path;
+            internal bool Structural = false,
+                Syntax = false,
+                UnityRules = false,
+                Semantics = false,
+                Defines = false,
+                References = false,
+                PartialTypes = false;
+            internal int SourceFileCount = 0;
+            internal readonly List<string> Limitations = new();
+            internal readonly Dictionary<string, JObject> CompilerDiagnostics = new();
+#if USE_ROSLYN
+            internal UnityEditor.Compilation.Assembly Assembly;
+            internal CSharpParseOptions ParseOptions;
+#endif
+        }
+
+        private static ScriptValidationContext CreateValidationContext(string path, ValidationLevel level)
+        {
+            var context = new ScriptValidationContext { Path = path };
+            context.Limitations.Add(
+                "This request does not run Unity project compilation. Use refresh_unity and its existing compilation job for native compiler results."
+            );
+            context.Limitations.Add(
+                "Structural and Unity rules are lexical heuristics, not type or control-flow analysis; inactive preprocessor branches and interpolation expressions are not fully analyzed."
+            );
+#if USE_ROSLYN
+            if (level >= ValidationLevel.Standard)
+            {
+                try
+                {
+                    string fullPath = ValidationFullPath(path);
+                    context.Assembly = CompilationPipeline
+                        .GetAssemblies()
+                        .FirstOrDefault(a =>
+                            (a.sourceFiles ?? Array.Empty<string>()).Any(source =>
+                                string.Equals(ValidationFullPath(source), fullPath, StringComparison.Ordinal)
+                            )
+                        );
+                    if (context.Assembly != null)
+                        context.ParseOptions = CSharpParseOptions.Default.WithPreprocessorSymbols(context.Assembly.defines ?? Array.Empty<string>());
+                    else
+                        context.Limitations.Add("No owning imported assembly was found; project defines and partial source context are unavailable.");
+                }
+                catch (Exception ex)
+                {
+                    context.Limitations.Add($"Owning assembly context is unavailable: {ex.Message}");
+                }
+            }
+#else
+            context.Limitations.Add("USE_ROSLYN is not enabled; compiler syntax and semantic diagnostics are unavailable.");
+#endif
+            return context;
+        }
+
+        private static object ValidationMetadata(string requested, ValidationLevel level, ScriptValidationContext context)
+        {
+            string effective =
+                !context.Syntax && !context.UnityRules ? "basic_structural"
+                : context.Semantics ? (context.PartialTypes ? "strict_assembly_semantic" : "strict_single_source_semantic")
+                : context.Syntax ? level.ToString().ToLowerInvariant() + "_roslyn_syntax"
+                : level.ToString().ToLowerInvariant() + "_heuristic";
+            if (!context.Semantics)
+                context.Limitations.Add("References and cross-file partial types were not semantically validated.");
+            return new
+            {
+                requestedLevel = requested,
+                effectiveLevel = effective,
+                engine = context.Syntax || context.Semantics ? "roslyn" : "heuristic",
+                capabilities = new
+                {
+#if USE_ROSLYN
+                    roslynAvailable = true,
+#else
+                    roslynAvailable = false,
+#endif
+                    structural = context.Structural,
+                    syntax = context.Syntax,
+                    unityHeuristics = context.UnityRules,
+                    semanticCompilation = context.Semantics,
+                    projectCompilation = false,
+                },
+                context = new
+                {
+                    scope = context.PartialTypes ? "project_assembly" : "single_source",
+#if USE_ROSLYN
+                    assembly = context.Assembly?.name,
+#else
+                    assembly = (string)null,
+#endif
+                    defines = context.Defines,
+                    references = context.References,
+                    partialTypes = context.PartialTypes,
+                    sourceFileCount = context.SourceFileCount > 0 ? context.SourceFileCount : 1,
+                },
+                limitations = context.Limitations.ToArray(),
+            };
+        }
+
+        private static JObject ValidationDiagnostic(string raw, ScriptValidationContext context)
+        {
+            if (context.CompilerDiagnostics.TryGetValue(raw, out var compilerDiagnostic))
+                return compilerDiagnostic;
+            var match = Regex.Match(
+                raw,
+                @"^(ERROR|WARNING|INFO): (.*?)(?: \[([A-Z]+\d+)\])?(?: \(Line (\d+)(?:, Column (\d+))?\))?$",
+                RegexOptions.CultureInvariant | RegexOptions.Singleline,
+                TimeSpan.FromMilliseconds(250)
+            );
+            int line = match.Success && int.TryParse(match.Groups[4].Value, out int l) ? l : 0;
+            int column = match.Success && int.TryParse(match.Groups[5].Value, out int c) ? c : 0;
+            if (line == 0)
+            {
+                var structuralLocation = Regex.Match(raw, @"\bat line (\d+)\b", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250));
+                if (structuralLocation.Success)
+                    int.TryParse(structuralLocation.Groups[1].Value, out line);
+            }
+            return new JObject
+            {
+                ["line"] = line,
+                ["col"] = column,
+                ["severity"] = match.Success ? match.Groups[1].Value.ToLowerInvariant() : "info",
+                ["message"] = match.Success ? match.Groups[2].Value : raw,
+                ["id"] = match.Success && match.Groups[3].Success ? match.Groups[3].Value : null,
+                ["file"] = context.Path,
+            };
+        }
+
 #if USE_ROSLYN
         /// <summary>
         /// Cached compilation references for performance
@@ -3845,12 +3975,23 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// Validates syntax using Roslyn compiler services
         /// </summary>
-        private static bool ValidateScriptSyntaxRoslyn(string contents, ValidationLevel level, System.Collections.Generic.List<string> errors)
+        private static bool ValidateScriptSyntaxRoslyn(
+            string contents,
+            ValidationLevel level,
+            System.Collections.Generic.List<string> errors,
+            ScriptValidationContext context = null
+        )
         {
             try
             {
-                var syntaxTree = CSharpSyntaxTree.ParseText(contents);
+                var syntaxTree = CSharpSyntaxTree.ParseText(contents, context?.ParseOptions, context?.Path ?? "");
                 var diagnostics = syntaxTree.GetDiagnostics();
+                if (context != null)
+                {
+                    context.Syntax = true;
+                    context.Defines = context.ParseOptions != null;
+                    context.SourceFileCount = 1;
+                }
 
                 bool hasErrors = false;
                 foreach (var diagnostic in diagnostics)
@@ -3871,6 +4012,8 @@ namespace MCPForUnity.Editor.Tools
                         {
                             message += $" (Line {location.StartLinePosition.Line + 1})";
                         }
+                        if (context != null)
+                            message = RecordCompilerDiagnostic(diagnostic, context);
                         errors.Add(message);
                     }
                 }
@@ -3885,33 +4028,101 @@ namespace MCPForUnity.Editor.Tools
         }
 
         /// <summary>
-        /// Validates script semantics using full compilation context to catch namespace, type, and method resolution errors
+        /// Validates semantics in a bounded owning-assembly context when available, otherwise a single-source approximation.
         /// </summary>
-        private static bool ValidateScriptSemantics(string contents, System.Collections.Generic.List<string> errors)
+        private static bool ValidateScriptSemantics(string contents, System.Collections.Generic.List<string> errors, ScriptValidationContext context = null)
         {
             try
             {
-                // Get compilation references with caching
-                var references = GetCompilationReferences();
+                const int maxSources = 256;
+                const int maxReferences = 512;
+                const long maxSourceBytes = 8 * 1024 * 1024;
+                if (context != null && System.Text.Encoding.UTF8.GetByteCount(contents) > maxSourceBytes)
+                {
+                    context?.Limitations.Add("Semantic validation skipped: the requested source exceeds 8 MiB.");
+                    return true;
+                }
+                var trees = new List<SyntaxTree>();
+                var references = new List<MetadataReference>();
+                bool assemblyContext = context?.Assembly != null;
+                if (assemblyContext)
+                {
+                    var assembly = context.Assembly;
+                    string[] sources = assembly.sourceFiles ?? Array.Empty<string>();
+                    string[] paths = assembly.allReferences ?? Array.Empty<string>();
+                    if (sources.Length == 0 || sources.Length > maxSources || paths.Length > maxReferences)
+                    {
+                        context.Limitations.Add($"Assembly semantic validation skipped: input limit is {maxSources} sources and {maxReferences} references.");
+                        return true;
+                    }
+                    long totalBytes = 0;
+                    string requestPath = ValidationFullPath(context.Path);
+                    foreach (string source in sources)
+                    {
+                        string sourcePath = ValidationFullPath(source);
+                        bool requestedSource = string.Equals(sourcePath, requestPath, StringComparison.Ordinal);
+                        long bytes = requestedSource ? System.Text.Encoding.UTF8.GetByteCount(contents) : new FileInfo(sourcePath).Length;
+                        totalBytes += bytes;
+                        if (totalBytes > maxSourceBytes)
+                        {
+                            context.Limitations.Add("Assembly semantic validation skipped: source context exceeds 8 MiB.");
+                            return true;
+                        }
+                        string text = requestedSource ? contents : ReadScriptContents(sourcePath);
+                        trees.Add(CSharpSyntaxTree.ParseText(text, context.ParseOptions, ValidationSourcePath(sourcePath)));
+                    }
+                    // No cache: assembly references may change after a define/asmdef edit.
+                    foreach (string reference in paths.Distinct(StringComparer.Ordinal))
+                    {
+                        if (!File.Exists(reference))
+                        {
+                            context.Limitations.Add($"Assembly semantic validation skipped: a compiler reference is missing ({Path.GetFileName(reference)}).");
+                            return true;
+                        }
+                        references.Add(MetadataReference.CreateFromFile(reference));
+                    }
+                    context.Limitations.Add(
+                        "Owning assembly sources, defines and references are used, but Unity compiler options, response files, analyzers and source generators are not reproduced."
+                    );
+                }
+                else
+                {
+                    // Preserve the existing single-source strict path for unimported scripts and edit validation.
+                    references = GetCompilationReferences();
+                    if (context != null && references.Count > maxReferences)
+                    {
+                        context?.Limitations.Add($"Single-source semantic validation skipped: reference context exceeds {maxReferences} references.");
+                        return true;
+                    }
+                    trees.Add(CSharpSyntaxTree.ParseText(contents, context?.ParseOptions, context?.Path ?? ""));
+                    context?.Limitations.Add(
+                        "Single-source semantic validation uses cached loaded references; asmdef reference isolation, project defines and cross-file partial types are not established."
+                    );
+                }
                 if (references == null || references.Count == 0)
                 {
                     errors.Add("WARNING: Could not load compilation references for semantic validation");
+                    context?.Limitations.Add("Compilation references are unavailable; semantic validation was skipped.");
                     return true; // Don't fail if we can't get references
                 }
 
-                // Create syntax tree
-                var syntaxTree = CSharpSyntaxTree.ParseText(contents);
-
-                // Create compilation with full context
+                // This extends the existing in-memory strict path; native compilation stays with CompilationJobTracker.
                 var compilation = CSharpCompilation.Create(
-                    "TempValidation",
-                    new[] { syntaxTree },
+                    context?.Assembly?.name ?? "TempValidation",
+                    trees,
                     references,
                     new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
                 );
 
-                // Get semantic diagnostics - this catches all the issues you mentioned!
-                var diagnostics = compilation.GetDiagnostics();
+                using var cancellation = context == null ? new CancellationTokenSource() : new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var diagnostics = compilation.GetDiagnostics(cancellation.Token);
+                if (context != null)
+                {
+                    context.Semantics = true;
+                    context.References = true;
+                    context.PartialTypes = assemblyContext;
+                    context.SourceFileCount = trees.Count;
+                }
 
                 bool hasErrors = false;
                 foreach (var diagnostic in diagnostics)
@@ -3926,7 +4137,9 @@ namespace MCPForUnity.Editor.Tools
 
                         // Include diagnostic ID for better error identification
                         string diagnosticId = !string.IsNullOrEmpty(diagnostic.Id) ? $" [{diagnostic.Id}]" : "";
-                        errors.Add($"ERROR: {diagnostic.GetMessage()}{diagnosticId}{locationInfo}");
+                        errors.Add(
+                            context == null ? $"ERROR: {diagnostic.GetMessage()}{diagnosticId}{locationInfo}" : RecordCompilerDiagnostic(diagnostic, context)
+                        );
                     }
                     else if (diagnostic.Severity == DiagnosticSeverity.Warning)
                     {
@@ -3936,7 +4149,9 @@ namespace MCPForUnity.Editor.Tools
                             : "";
 
                         string diagnosticId = !string.IsNullOrEmpty(diagnostic.Id) ? $" [{diagnostic.Id}]" : "";
-                        errors.Add($"WARNING: {diagnostic.GetMessage()}{diagnosticId}{locationInfo}");
+                        errors.Add(
+                            context == null ? $"WARNING: {diagnostic.GetMessage()}{diagnosticId}{locationInfo}" : RecordCompilerDiagnostic(diagnostic, context)
+                        );
                     }
                 }
 
@@ -3944,9 +4159,41 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception ex)
             {
+                context?.Limitations.Add($"Semantic validation could not complete: {ex.Message}");
                 errors.Add($"ERROR: Semantic validation failed: {ex.Message}");
                 return false;
             }
+        }
+
+        private static string ValidationSourcePath(string path)
+        {
+            string root = Path.GetFullPath(Path.Combine(Application.dataPath, "..")).Replace('\\', '/') + "/";
+            string full = Path.GetFullPath(path).Replace('\\', '/');
+            return full.StartsWith(root, StringComparison.Ordinal) ? full.Substring(root.Length) : full;
+        }
+
+        private static string ValidationFullPath(string path) =>
+            Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(Application.dataPath, "..", path));
+
+        private static string RecordCompilerDiagnostic(Diagnostic diagnostic, ScriptValidationContext context)
+        {
+            var span = diagnostic.Location.GetLineSpan();
+            bool located = diagnostic.Location.IsInSource && span.IsValid;
+            string file = located && !string.IsNullOrEmpty(span.Path) ? span.Path.Replace('\\', '/') : context.Path;
+            int line = located ? span.StartLinePosition.Line + 1 : 0;
+            int column = located ? span.StartLinePosition.Character + 1 : 0;
+            string severity = diagnostic.Severity.ToString().ToLowerInvariant();
+            string raw = $"{severity.ToUpperInvariant()}: {diagnostic.GetMessage()} [{diagnostic.Id}] (Line {line}, Column {column}) in {file}";
+            context.CompilerDiagnostics[raw] = new JObject
+            {
+                ["line"] = line,
+                ["col"] = column,
+                ["severity"] = severity,
+                ["message"] = diagnostic.GetMessage(),
+                ["id"] = diagnostic.Id,
+                ["file"] = file,
+            };
+            return raw;
         }
 
         /// <summary>
@@ -4093,20 +4340,24 @@ namespace MCPForUnity.Editor.Tools
 
         /// <summary>
         /// Validates Unity-specific coding rules and best practices
-        /// //TODO: Naive Unity Checks and not really yield any results, need to be improved
         /// </summary>
         private static void ValidateScriptSyntaxUnity(string contents, System.Collections.Generic.List<string> errors)
         {
-            // Check for common Unity anti-patterns
-            if (contents.Contains("FindObjectOfType") && contents.Contains("Update()"))
-            {
-                errors.Add("WARNING: FindObjectOfType in Update() can cause performance issues");
-            }
+            string code = ValidationCodeOnly(contents);
+            string update = ValidationUpdateCode(code);
+            foreach (Match call in Regex.Matches(update, @"\bGameObject\s*\.\s*Find\s*\(", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250)))
+                AddValidationWarning(contents, call.Index, "MCPUNITY001", "GameObject.Find in Update() can cause performance issues", errors);
+            foreach (
+                Match call in Regex.Matches(
+                    update,
+                    @"\bFindObjectOfType\s*(?:<[^;{}()]+>)?\s*\(",
+                    RegexOptions.CultureInvariant,
+                    TimeSpan.FromMilliseconds(250)
+                )
+            )
+                AddValidationWarning(contents, call.Index, "MCPUNITY002", "FindObjectOfType in Update() can cause performance issues", errors);
 
-            if (contents.Contains("GameObject.Find") && contents.Contains("Update()"))
-            {
-                errors.Add("WARNING: GameObject.Find in Update() can cause performance issues");
-            }
+            contents = code;
 
             // Check for proper MonoBehaviour usage
             if (contents.Contains(": MonoBehaviour") && !contents.Contains("using UnityEngine"))
@@ -4127,7 +4378,11 @@ namespace MCPForUnity.Editor.Tools
             }
 
             // Check for Update without FixedUpdate for physics
-            if (contents.Contains("Rigidbody") && contents.Contains("Update()") && !contents.Contains("FixedUpdate()"))
+            if (
+                contents.Contains("Rigidbody")
+                && Regex.IsMatch(update, @"\b(?:AddForce|MovePosition|MoveRotation)\s*\(", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250))
+                && !Regex.IsMatch(contents, @"\bvoid\s+FixedUpdate\s*\(\s*\)", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250))
+            )
             {
                 errors.Add("WARNING: Consider using FixedUpdate() for Rigidbody operations");
             }
@@ -4149,11 +4404,91 @@ namespace MCPForUnity.Editor.Tools
                 errors.Add("WARNING: Update() should not have parameters");
             }
 
-            // Check for inefficient string operations
-            if (contents.Contains("Update()") && contents.Contains("\"") && contents.Contains("+"))
+            // A '+' and a literal anywhere in a script do not establish string concatenation in Update.
+        }
+
+        private static string ValidationCodeOnly(string contents)
+        {
+            contents = ValidationDirectiveText(contents);
+            var chars = contents.ToCharArray();
+            var lexer = new CSharpLexer(contents);
+            while (true)
             {
-                errors.Add("WARNING: String concatenation in Update() can cause garbage collection issues");
+                int start = lexer.Position;
+                if (!lexer.Advance(out _))
+                    break;
+                if (lexer.InNonCode)
+                    for (int i = start; i < lexer.Position && i < chars.Length; i++)
+                        if (chars[i] != '\n' && chars[i] != '\r')
+                            chars[i] = ' ';
             }
+            return new string(chars);
+        }
+
+        private static string ValidationDirectiveText(string contents)
+        {
+            var chars = contents.ToCharArray();
+            var lexer = new CSharpLexer(contents);
+            while (lexer.Advance(out char c))
+            {
+                if (lexer.InNonCode || c != '#')
+                    continue;
+                int start = lexer.Position - 1;
+                int before = start - 1;
+                while (before >= 0 && contents[before] != '\n' && (contents[before] == ' ' || contents[before] == '\t' || contents[before] == '\r'))
+                    before--;
+                if (before >= 0 && contents[before] != '\n')
+                    continue;
+                lexer.SkipDirectiveLine();
+                for (int i = start; i < lexer.Position; i++)
+                    if (chars[i] != '\r')
+                        chars[i] = ' ';
+            }
+            return new string(chars);
+        }
+
+        private static string ValidationUpdateCode(string code)
+        {
+            var chars = new string(' ', code.Length).ToCharArray();
+            foreach (Match method in Regex.Matches(code, @"\bvoid\s+Update\s*\(\s*\)\s*(\{|=>)", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250)))
+            {
+                int start = method.Index + method.Length;
+                int end = start;
+                if (method.Groups[1].Value == "=>")
+                {
+                    int semicolon = code.IndexOf(';', start);
+                    end = semicolon < 0 ? code.Length : semicolon;
+                }
+                else
+                {
+                    int depth = 1;
+                    while (end < code.Length && depth > 0)
+                    {
+                        if (code[end] == '{')
+                            depth++;
+                        else if (code[end] == '}')
+                            depth--;
+                        if (depth > 0)
+                            end++;
+                    }
+                }
+                for (int i = start; i < end; i++)
+                    chars[i] = code[i];
+            }
+            return new string(chars);
+        }
+
+        private static void AddValidationWarning(string source, int index, string id, string message, List<string> errors)
+        {
+            int line = 1,
+                lineStart = 0;
+            for (int i = 0; i < index; i++)
+                if (source[i] == '\n')
+                {
+                    line++;
+                    lineStart = i + 1;
+                }
+            errors.Add($"WARNING: {message} [{id}] (Line {line}, Column {index - lineStart + 1})");
         }
 
         /// <summary>
@@ -4366,7 +4701,9 @@ namespace MCPForUnity.Editor.Tools
         private static void ValidateSemanticRules(string contents, System.Collections.Generic.List<string> errors)
         {
             // Check for potential memory leaks
-            if (contents.Contains("new ") && contents.Contains("Update()"))
+            contents = ValidationCodeOnly(contents);
+            string update = ValidationUpdateCode(contents);
+            if (Regex.IsMatch(update, @"\bnew\s+", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250)))
             {
                 errors.Add("WARNING: Creating objects in Update() may cause memory issues");
             }
@@ -4429,12 +4766,6 @@ namespace MCPForUnity.Editor.Tools
             if (contents.Contains("async ") && !contents.Contains("await"))
             {
                 errors.Add("WARNING: Async method should contain await or return Task");
-            }
-
-            // Check for hardcoded tags and layers
-            if (contents.Contains("\"Player\"") || contents.Contains("\"Enemy\""))
-            {
-                errors.Add("WARNING: Consider using constants for tags instead of hardcoded strings");
             }
         }
 

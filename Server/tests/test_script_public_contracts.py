@@ -288,7 +288,17 @@ async def main():
                     'include_diagnostics': include,
                 })
                 summary = response['data']['summary'] if include else response['data']
-                check(summary == {'warnings': 1, 'errors': 2}, 'diagnostic summary ' + mode)
+                expected_validation = {
+                    'requestedLevel': 'standard', 'effectiveLevel': 'unknown',
+                    'engine': 'unknown',
+                    'limitations': ['The connected Editor did not report validation capabilities.'],
+                }
+                expected_summary = {'warnings': 1, 'errors': 2}
+                if not include:
+                    expected_summary['validation'] = expected_validation
+                check(summary == expected_summary, 'diagnostic summary ' + mode)
+                check(response['data']['validation'] == expected_validation,
+                      'legacy validation context is explicitly unknown ' + mode)
                 check(wires[0][2]['level'] == 'standard', 'validation level ' + mode)
             before = len(requests)
             response, wires = await invoke(client, 'manage_script_capabilities', {})

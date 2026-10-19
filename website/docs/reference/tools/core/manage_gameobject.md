@@ -12,13 +12,13 @@ description: "Performs CRUD operations on GameObjects."
 
 ## Description
 
-Performs CRUD operations on GameObjects. Actions: create, modify, delete, duplicate, move_relative, look_at. NOT for searching — use the find_gameobjects tool to search by name/tag/layer/component/path. NOT for component management — use the manage_components tool (add/remove/set_property) or mcpforunity://scene/gameobject/{id}/components resource (read).
+Performs CRUD operations on GameObjects. Actions: create, modify, delete, duplicate, move_relative, look_at, placement. Placement previews ordered align/distribute positions; apply requires the unchanged preview token. NOT for searching — use the find_gameobjects tool to search by name/tag/layer/component/path. NOT for component management — use the manage_components tool (add/remove/set_property) or mcpforunity://scene/gameobject/{id}/components resource (read).
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| `action` | `Literal['create', 'modify', 'delete', 'duplicate', 'move_relative', 'look_at'] \| None` | — | Action to perform on GameObject. |
+| `action` | `Literal['create', 'modify', 'delete', 'duplicate', 'move_relative', 'look_at', 'placement'] \| None` | — | Action to perform on GameObject. |
 | `target` | `str \| None` | — | GameObject identifier by name, path, or instance ID for modify/delete/duplicate actions |
 | `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer', 'by_component'] \| None` | — | How to resolve 'target'. If omitted, Unity infers: instance ID -> by_id, path (contains '/') -> by_path, otherwise by_name. |
 | `name` | `str \| None` | — | GameObject name for 'create' (initial name) and 'modify' (rename) actions. |
@@ -27,6 +27,15 @@ Performs CRUD operations on GameObjects. Actions: create, modify, delete, duplic
 | `position` | `list[float] \| dict[str, float] \| str \| None` | — | Position as [x, y, z] array, {x, y, z} object, or JSON string |
 | `rotation` | `list[float] \| dict[str, float] \| str \| None` | — | Rotation as [x, y, z] euler angles array, {x, y, z} object, or JSON string |
 | `scale` | `list[float] \| dict[str, float] \| str \| None` | — | Scale as [x, y, z] array, {x, y, z} object, or JSON string |
+| `space` | `Literal['local', 'world'] \| None` | — | Position/rotation space; local default. Scale is local only. |
+| `world_position_stays` | `bool \| str \| None` | — | Preserve world TRS when parenting; true default. |
+| `detach` | `bool \| str \| None` | — | Modify: explicitly remove parent; conflicts with a nonempty parent. |
+| `sibling_index` | `int \| None` | — | Zero-based final sibling index, validated before mutation. |
+| `targets` | `list[str] \| None` | — | Placement: 2–128 unique selectors in explicit anchor/endpoint order. |
+| `placement_mode` | `Literal['align', 'distribute'] \| None` | — | Placement along one axis; align uses first target. |
+| `axis` | `Literal['x', 'y', 'z'] \| None` | — | Placement axis; x default. |
+| `preview` | `bool \| str \| None` | — | Placement preview defaults true; false applies a validated preview token. |
+| `preview_token` | `str \| None` | — | Placement apply: single-use native preview token, expires after five minutes. |
 | `components_to_add` | `list[str \| dict[str, Any]] \| dict[str, Any] \| str \| None` | — | List of components to add during 'create' or 'modify'. Each entry is either                                  a plain type name string (e.g. "BoxCollider") or an object                                  {"typeName": "BoxCollider", "properties": {"size": [2, 2, 2]}} that adds the                                  component with initial properties applied in the same call. Mixing both forms                                  in one list is fine. |
 | `primitive_type` | `str \| None` | — | Primitive type for 'create' action |
 | `save_as_prefab` | `bool \| str \| None` | — | If True, saves the created GameObject as a prefab (accepts true/false or 'true'/'false') |

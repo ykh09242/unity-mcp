@@ -43,7 +43,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             + ACTION_SAVE_PREFAB_STAGE
             + ", "
             + ACTION_CLOSE_PREFAB_STAGE
-            + ", list_overrides, revert_overrides, apply_overrides";
+            + ", list_overrides, revert_overrides, apply_overrides, preview_modify_contents, apply_preview";
 
         public static object HandleCommand(JObject @params)
         {
@@ -74,6 +74,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 switch (action)
                 {
+                    case "preview_modify_contents":
+                        return PrefabSourcePlans.Preview(@params);
+                    case "apply_preview":
+                        return PrefabSourcePlans.Apply(@params);
                     case "list_overrides":
                     case "revert_overrides":
                     case "apply_overrides":
@@ -116,7 +120,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 throw;
             }
-            catch (ArgumentException e) when (action == ACTION_GET_HIERARCHY)
+            catch (ArgumentException e) when (action == ACTION_GET_HIERARCHY || action == "preview_modify_contents" || action == "apply_preview")
+            {
+                return new ErrorResponse(e.Message);
+            }
+            catch (InvalidOperationException e) when (action == "preview_modify_contents" || action == "apply_preview")
             {
                 return new ErrorResponse(e.Message);
             }
