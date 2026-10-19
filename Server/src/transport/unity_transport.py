@@ -154,9 +154,8 @@ async def send_with_unity_instance(
                 command_outcome_unknown(command_type, err, unity_instance=unity_instance)
             )
 
-    # Task1 negotiates only HTTP/WS; stdio retains its existing wire contract.
     if _progress is not None:
-        _progress.close()
+        kwargs["_progress"] = _progress
     if unity_instance:
         kwargs.setdefault("instance_id", unity_instance)
     result = await send_fn(*args, **kwargs)

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -11,6 +12,21 @@ using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Services.Transport.Transports
 {
+    internal sealed class StdioAuthenticatedSession
+    {
+        internal string ServerGeneration { get; }
+        internal string SessionId { get; }
+        internal IReadOnlyCollection<string> Capabilities { get; }
+        internal string SessionGeneration => ServerGeneration + ":" + SessionId;
+
+        internal StdioAuthenticatedSession(string generation, string session, bool progress)
+        {
+            ServerGeneration = generation;
+            SessionId = session;
+            Capabilities = Array.AsReadOnly(progress ? new[] { CommandProgressBuffer.Capability } : Array.Empty<string>());
+        }
+    }
+
     /// <summary>Mutual, bounded launch authentication before command/client admission.</summary>
     internal sealed class StdioBridgeAuthentication : IDisposable
     {
@@ -69,6 +85,30 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         internal async Task<string> AuthenticateAsync(NetworkStream stream, CancellationToken cancel)
         {
+            var session = await AuthenticateSessionAsync(stream, cancel).ConfigureAwait(false);
+            // Keep the native legacy wrapper's exact session-only return contract.
+            return session?.SessionId;
+        }
+
+        private static bool OffersCommandProgress(JToken offered)
+        {
+            if (!(offered is JArray values) || values.Count > 16)
+                return false;
+            bool supported = false;
+            foreach (JToken value in values)
+            {
+                if (value.Type != JTokenType.String)
+                    return false;
+                string capability = (string)value;
+                if (capability.Length > 64 || Encoding.UTF8.GetByteCount(capability) > 64)
+                    return false;
+                supported |= string.Equals(capability, CommandProgressBuffer.Capability, StringComparison.Ordinal);
+            }
+            return supported;
+        }
+
+        internal async Task<StdioAuthenticatedSession> AuthenticateSessionAsync(NetworkStream stream, CancellationToken cancel)
+        {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             deadline.CancelAfter(3000);
             // Older Mono NetworkStream reads may not abort on token cancellation.
@@ -115,17 +155,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             )
                 return null;
             string session = Guid.NewGuid().ToString("N");
-            byte[] reply = Encoding.ASCII.GetBytes(
-                JsonConvert.SerializeObject(
-                    new
-                    {
-                        type = "authenticated",
-                        version = 2,
-                        session_id = session,
-                        proof = Proof(token, "server", Generation, challenge, nonce, session),
-                    }
-                )
-            );
+            bool progress = OffersCommandProgress(request["capabilities"]);
+            var acknowledgement = new JObject
+            {
+                ["type"] = "authenticated",
+                ["version"] = 2,
+                ["session_id"] = session,
+                ["proof"] = Proof(token, "server", Generation, challenge, nonce, session),
+            };
+            if (progress)
+                acknowledgement["capabilities"] = new JArray(CommandProgressBuffer.Capability);
+            byte[] reply = Encoding.ASCII.GetBytes(acknowledgement.ToString(Formatting.None));
             ulong remaining = (ulong)reply.Length;
             for (int i = 7; i >= 0; i--)
             {
@@ -134,7 +174,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             await stream.WriteAsync(header, 0, header.Length, deadline.Token).ConfigureAwait(false);
             await stream.WriteAsync(reply, 0, reply.Length, deadline.Token).ConfigureAwait(false);
-            return session;
+            return new StdioAuthenticatedSession(Generation, session, progress);
         }
 
         public void Dispose() => credential?.Dispose();

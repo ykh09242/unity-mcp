@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Services.Transport.Transports;
 using Newtonsoft.Json.Linq;
@@ -154,6 +155,161 @@ namespace MCPForUnityTests.Editor.Services
             finally
             {
                 client.ForceStop();
+            }
+        }
+
+        [TestCase("legacy")]
+        [TestCase("2026-07-28")]
+        [Explicit("Requires the fixed owned production HTTP server and concurrent real SDK owner.")]
+        public async Task CommandProgress_RealSdkNotificationReleasesOwnedNativeSecondItem(string mode)
+        {
+            Assert.AreEqual("1", Environment.GetEnvironmentVariable("UNITY_MCP_OWNED_TRANSPORT_TESTS"));
+            Assert.IsTrue(UnityEngine.Application.isBatchMode);
+            Assert.IsFalse(StdioBridgeHost.IsRunning, "Never share another active host.");
+            string root = Environment.GetEnvironmentVariable("UNITY_MCP_COMMAND_PROGRESS_SDK_ROOT");
+            string endpointPath = Environment.GetEnvironmentVariable("UNITY_MCP_COMMAND_PROGRESS_WS_ENDPOINT");
+            Assert.IsTrue(!string.IsNullOrEmpty(root) && System.IO.Path.IsPathRooted(root) && System.IO.Directory.Exists(root));
+            Assert.AreEqual(System.IO.Path.Combine(System.IO.Path.GetFullPath(root), "ws-server.json"), System.IO.Path.GetFullPath(endpointPath));
+            JObject server = await StdioBridgeReconnectTests.AwaitSdkCheckpoint(endpointPath, 1000);
+            Assert.AreEqual("core06-owned-ws-server-v1", server.Value<string>("protocol"));
+            var http = new Uri(server.Value<string>("http_url"));
+            Assert.AreEqual("http", http.Scheme);
+            Assert.AreEqual("127.0.0.1", http.Host);
+            Assert.AreEqual("/", http.AbsolutePath);
+            Assert.IsEmpty(http.UserInfo);
+            Assert.IsEmpty(http.Query);
+            Assert.IsEmpty(http.Fragment);
+            string token = server.Value<string>("token");
+            Assert.That(token.Length, Is.InRange(32, 256));
+            string folder = System.IO.Path.Combine(System.IO.Path.GetFullPath(root), "ws", mode);
+            Assert.IsFalse(System.IO.Directory.Exists(folder), "Never overwrite an earlier native/SDK attempt.");
+            System.IO.Directory.CreateDirectory(folder);
+            const string first = "__core06_ws_sdk_first",
+                second = "__core06_ws_sdk_second",
+                hash = "d0c0f006";
+            int firstCalls = 0,
+                secondCalls = 0;
+            var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var handlers = new ProgressHandlerScope();
+            using var enabled = NativeProgressProbe.EnableTools("batch_execute");
+            handlers.Set(
+                first,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    first,
+                    _ =>
+                    {
+                        firstCalls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                second,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    second,
+                    null,
+                    async _ =>
+                    {
+                        secondCalls++;
+                        entered.TrySetResult(true);
+                        try
+                        {
+                            return await release.Task.ConfigureAwait(true);
+                        }
+                        finally
+                        {
+                            settled.TrySetResult(true);
+                        }
+                    }
+                )
+            );
+            NativeProgressProbe.RequireBatchCapacity(new JObject { ["commands"] = new JArray(new JObject(), new JObject()) });
+            using var client = new WebSocketTransportClient(
+                MCPServiceLocator.ToolDiscovery,
+                new WebSocketTransportClient.OwnedConnectionOptions(
+                    new Uri("ws://127.0.0.1:" + http.Port + "/hub/plugin"),
+                    token,
+                    "Core06Progress",
+                    hash,
+                    "core06-owned-memory-project",
+                    UnityEngine.Application.unityVersion
+                )
+            );
+            try
+            {
+                Task<bool> start = client.StartAsync();
+                await NativeProgressProbe.AwaitOwned(start);
+                Assert.IsTrue(await start);
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var session = typeof(WebSocketTransportClient).GetField("_sessionId", BindingFlags.NonPublic | BindingFlags.Instance);
+                var negotiated = typeof(WebSocketTransportClient).GetField("_commandProgressNegotiated", BindingFlags.NonPublic | BindingFlags.Instance);
+                while (string.IsNullOrEmpty((string)session.GetValue(client)) && clock.ElapsedMilliseconds < 5000)
+                    await Task.Delay(10);
+                Assert.IsNotEmpty((string)session.GetValue(client), "The real PluginHub must register this native client before SDK dispatch.");
+                Assert.IsTrue((bool)negotiated.GetValue(client));
+                var registrationField = typeof(WebSocketTransportClient).GetField("_registrationTask", BindingFlags.NonPublic | BindingFlags.Instance);
+                while (registrationField.GetValue(client) == null && clock.ElapsedMilliseconds < 5000)
+                    await Task.Delay(10);
+                var registration = (Task)registrationField.GetValue(client);
+                Assert.IsNotNull(registration);
+                await NativeProgressProbe.AwaitOwned(registration);
+                Assert.IsTrue(client.IsConnected, "Actual tool registration must complete on the same live native connection.");
+                using (
+                    var manifest = new System.IO.StreamWriter(
+                        new System.IO.FileStream(System.IO.Path.Combine(folder, "endpoint.json"), System.IO.FileMode.CreateNew, System.IO.FileAccess.Write),
+                        new UTF8Encoding(false)
+                    )
+                )
+                    manifest.Write(
+                        new JObject
+                        {
+                            ["protocol"] = "core06-owned-ws-probe-v1",
+                            ["mode"] = mode,
+                            ["http_url"] = http.GetLeftPart(UriPartial.Authority),
+                            ["token"] = token,
+                            ["unity_instance"] = hash,
+                            ["session_id"] = (string)session.GetValue(client),
+                            ["first"] = first,
+                            ["second"] = second,
+                        }.ToString(Newtonsoft.Json.Formatting.None)
+                    );
+                var observed = await StdioBridgeReconnectTests.AwaitSdkCheckpoint(System.IO.Path.Combine(folder, "progress-observed.json"), 15000);
+                Assert.AreEqual("core06-owned-ws-probe-v1", observed.Value<string>("protocol"));
+                Assert.AreEqual(mode, observed.Value<string>("mode"));
+                Assert.AreEqual(1, observed.Value<int>("completed"));
+                Assert.AreEqual(2, observed.Value<int>("total"));
+                Assert.IsTrue(observed.Value<bool>("call_pending"));
+                Assert.IsTrue(entered.Task.IsCompleted);
+                Assert.IsFalse(settled.Task.IsCompleted, "Only the actual SDK progress callback releases this native handler.");
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(1, secondCalls);
+                release.TrySetResult(new { done = true });
+                await NativeProgressProbe.AwaitOwned(settled.Task);
+                var final = await StdioBridgeReconnectTests.AwaitSdkCheckpoint(System.IO.Path.Combine(folder, "final-result.json"), 5000);
+                Assert.AreEqual(mode, final.Value<string>("mode"));
+                Assert.AreEqual(2, final.Value<int>("attempted"));
+                Assert.AreEqual(0, final.Value<int>("not_run"));
+                Assert.IsFalse(final.Value<bool>("sdk_is_error"));
+                Assert.IsTrue(final.Value<bool>("same_session_healthy"));
+                Assert.IsTrue(final.Value<bool>("no_late_progress"));
+                Assert.AreEqual(1, firstCalls);
+                Assert.AreEqual(1, secondCalls);
+            }
+            finally
+            {
+                release.TrySetResult(new { done = true });
+                try
+                {
+                    if (entered.Task.IsCompleted)
+                        await NativeProgressProbe.AwaitOwned(settled.Task);
+                }
+                finally
+                {
+                    await StopOwnedProgressClient(client);
+                }
             }
         }
 

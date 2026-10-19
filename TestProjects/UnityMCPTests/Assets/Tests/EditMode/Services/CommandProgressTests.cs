@@ -1,8 +1,10 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Models;
@@ -141,6 +143,307 @@ namespace MCPForUnityTests.Editor.Services
                     new[] { typeof(string), typeof(JObject), typeof(TaskCompletionSource<string>), typeof(CancellationToken), progressType }
                 )
             );
+        }
+
+        [Test]
+        public async Task StdioWriter_HeaderGatedProgressAndFinalCannotInterleave()
+        {
+            using var stream = new ProgressHeaderGateStream(false);
+            using var original = new CancellationTokenSource();
+            var writer = new StdioFrameWriter(stream, stream.AbortExactConnection, CancellationToken.None);
+            byte[] progress = WriterProgressPayload(1);
+            byte[] result = Encoding.UTF8.GetBytes("{\"status\":\"success\",\"result\":{\"settled\":2}}");
+            Task<bool> optional = null;
+            Task final = null;
+            try
+            {
+                optional = writer.TryWriteProgressAsync(progress, original.Token);
+                await NativeProgressProbe.AwaitOwned(stream.HeaderWritten.Task);
+                Assert.IsFalse(optional.IsCompleted);
+                final = writer.WriteResultAsync(result, original.Token);
+                Assert.IsFalse(final.IsCompleted);
+                Assert.AreEqual(8, stream.Snapshot().Length, "Final bytes must not enter a started optional frame.");
+                Task<bool> lateOptional = writer.TryWriteProgressAsync(WriterProgressPayload(2), original.Token);
+                Assert.IsTrue(lateOptional.IsCompleted, "A busy optional writer drops instead of queuing another producer task.");
+                Assert.IsFalse(await lateOptional, "A pending final has priority over any optional write that has not begun.");
+                stream.Release.TrySetResult(true);
+                await NativeProgressProbe.AwaitOwned(optional);
+                await NativeProgressProbe.AwaitOwned(final);
+                Assert.IsTrue(await optional);
+                CollectionAssert.AreEqual(FrameBytes(progress).Concat(FrameBytes(result)).ToArray(), stream.Snapshot());
+                Assert.AreEqual(1, stream.MaxConcurrentWrites);
+                Assert.AreEqual(0, stream.AbortCalls);
+                await NativeProgressProbe.AwaitOwned(writer.CloseAsync());
+                Assert.IsTrue(writer.Completion.IsCompleted, "Scope exit must join its actual writer owner.");
+            }
+            finally
+            {
+                original.Cancel();
+                stream.Release.TrySetResult(true);
+                await ObserveWriterTerminal(optional);
+                await ObserveWriterTerminal(final);
+                await NativeProgressProbe.AwaitOwned(writer.CloseAsync());
+                await ObserveWriterTerminal(writer.Completion);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task StdioWriter_PartialOptionalCancellationClosesOnlyItsConnection(bool streamIgnoresToken)
+        {
+            using var stream = new ProgressHeaderGateStream(streamIgnoresToken);
+            using var replacement = new ProgressHeaderGateStream(false);
+            using var original = new CancellationTokenSource();
+            var writer = new StdioFrameWriter(stream, stream.AbortExactConnection, CancellationToken.None);
+            Task<bool> optional = null;
+            Task final = null;
+            try
+            {
+                optional = writer.TryWriteProgressAsync(WriterProgressPayload(1), original.Token);
+                await NativeProgressProbe.AwaitOwned(stream.HeaderWritten.Task);
+                final = writer.WriteResultAsync(Encoding.UTF8.GetBytes("{\"status\":\"success\"}"), original.Token);
+                original.Cancel();
+                await ObserveWriterTerminal(optional);
+                await ObserveWriterTerminal(final);
+                await NativeProgressProbe.AwaitOwned(writer.CloseAsync());
+                Assert.AreEqual(1, stream.AbortCalls);
+                Assert.IsTrue(stream.IsDisposed);
+                Assert.AreEqual(8, stream.Snapshot().Length, "Never append result/header/payload to an interrupted optional header.");
+                Assert.IsFalse(optional.Status == TaskStatus.RanToCompletion && optional.Result);
+                Assert.IsTrue(final.IsCanceled || final.IsFaulted, "A partial write cannot manufacture a successful final delivery.");
+                Assert.AreEqual(0, replacement.AbortCalls);
+                Assert.IsFalse(replacement.IsDisposed, "The closure capability names the captured connection, not a replacement.");
+                Assert.IsTrue(writer.Completion.IsCompleted);
+            }
+            finally
+            {
+                original.Cancel();
+                stream.Release.TrySetResult(true);
+                await ObserveWriterTerminal(optional);
+                await ObserveWriterTerminal(final);
+                await NativeProgressProbe.AwaitOwned(writer.CloseAsync());
+                await ObserveWriterTerminal(writer.Completion);
+            }
+        }
+
+        [Test]
+        public async Task StdioWriter_OriginalDeadlineStopsSlowWriteWithoutFreshBudget()
+        {
+            using var stream = new ProgressHeaderGateStream(true);
+            using var original = new CancellationTokenSource(1000);
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            var writer = new StdioFrameWriter(stream, stream.AbortExactConnection, CancellationToken.None);
+            Task<bool> optional = null;
+            try
+            {
+                optional = writer.TryWriteProgressAsync(WriterProgressPayload(1), original.Token);
+                await NativeProgressProbe.AwaitOwned(stream.HeaderWritten.Task);
+                await ObserveWriterTerminal(optional);
+                Assert.IsTrue(original.IsCancellationRequested);
+                Assert.Less(elapsed.ElapsedMilliseconds, 3000, "No fresh 300-second frame timer may outlive the original deadline.");
+                Assert.AreEqual(1, stream.AbortCalls);
+                Assert.AreEqual(8, stream.Snapshot().Length);
+                await NativeProgressProbe.AwaitOwned(writer.CloseAsync());
+                Assert.IsTrue(writer.Completion.IsCompleted);
+            }
+            finally
+            {
+                original.Cancel();
+                stream.Release.TrySetResult(true);
+                await ObserveWriterTerminal(optional);
+                await NativeProgressProbe.AwaitOwned(writer.CloseAsync());
+                await ObserveWriterTerminal(writer.Completion);
+            }
+        }
+
+        [Test]
+        public async Task StdioWriter_PreCancelledOptionalWritesNothingAndLeavesConnectionHealthy()
+        {
+            using var stream = new ProgressHeaderGateStream(false);
+            using var original = new CancellationTokenSource();
+            original.Cancel();
+            var writer = new StdioFrameWriter(stream, stream.AbortExactConnection, CancellationToken.None);
+            try
+            {
+                Task<bool> optional = writer.TryWriteProgressAsync(WriterProgressPayload(1), original.Token);
+                await ObserveWriterTerminal(optional);
+                Assert.IsFalse(optional.Status == TaskStatus.RanToCompletion && optional.Result);
+                Assert.AreEqual(0, stream.Snapshot().Length);
+                Assert.AreEqual(0, stream.AbortCalls);
+                Assert.IsFalse(stream.IsDisposed);
+                stream.Release.TrySetResult(true);
+                byte[] result = Encoding.UTF8.GetBytes("{\"status\":\"success\"}");
+                await NativeProgressProbe.AwaitOwned(writer.WriteResultAsync(result, CancellationToken.None));
+                CollectionAssert.AreEqual(FrameBytes(result), stream.Snapshot());
+                await NativeProgressProbe.AwaitOwned(writer.CloseAsync());
+                Assert.IsTrue(writer.Completion.IsCompleted);
+            }
+            finally
+            {
+                stream.Release.TrySetResult(true);
+                await NativeProgressProbe.AwaitOwned(writer.CloseAsync());
+                await ObserveWriterTerminal(writer.Completion);
+            }
+        }
+
+        private static byte[] WriterProgressPayload(int completed) =>
+            Encoding.UTF8.GetBytes(
+                "MCPG{\"type\":\"command_progress\",\"id\":\"11111111-1111-4111-8111-111111111111\",\"completed\":"
+                    + completed
+                    + ",\"total\":2,\"stage\":\"batch_items\"}"
+            );
+
+        private static byte[] FrameBytes(byte[] payload)
+        {
+            var framed = new byte[8 + payload.Length];
+            ulong size = (ulong)payload.Length;
+            for (int index = 7; index >= 0; index--)
+            {
+                framed[index] = (byte)size;
+                size >>= 8;
+            }
+            Buffer.BlockCopy(payload, 0, framed, 8, payload.Length);
+            return framed;
+        }
+
+        // Cleanup observes only expected I/O/cancellation failures, never an assertion
+        // or arbitrary exception. Behavioral assertions inspect the terminal tasks above.
+        private static async Task ObserveWriterTerminal(Task task)
+        {
+            if (task == null)
+                return;
+            Assert.AreSame(task, await Task.WhenAny(task, Task.Delay(5000)), "Owned frame write did not stop/join.");
+            try
+            {
+                await task;
+            }
+            catch (OperationCanceledException) { }
+            catch (IOException) { }
+            catch (ObjectDisposedException) { }
+        }
+
+        private sealed class ProgressHeaderGateStream : Stream
+        {
+            private readonly object _lock = new object();
+            private readonly MemoryStream _bytes = new MemoryStream();
+            private readonly bool _ignoreToken;
+            private int _writes,
+                _active;
+            internal int MaxConcurrentWrites,
+                AbortCalls;
+            internal bool IsDisposed;
+            internal readonly TaskCompletionSource<bool> HeaderWritten = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal readonly TaskCompletionSource<bool> Release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            internal ProgressHeaderGateStream(bool ignoreToken)
+            {
+                _ignoreToken = ignoreToken;
+            }
+
+            internal byte[] Snapshot()
+            {
+                lock (_lock)
+                    return _bytes.ToArray();
+            }
+
+            internal void AbortExactConnection()
+            {
+                lock (_lock)
+                    AbortCalls++;
+                Dispose();
+            }
+
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => !IsDisposed;
+            public override long Length => Snapshot().Length;
+            public override long Position
+            {
+                get => Length;
+                set => throw new NotSupportedException();
+            }
+
+            public override void Flush() { }
+
+            public override Task FlushAsync(CancellationToken token)
+            {
+                token.ThrowIfCancellationRequested();
+                return Task.CompletedTask;
+            }
+
+            public override int Read(byte[] bytes, int offset, int count) => throw new NotSupportedException();
+
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+            public override void SetLength(long value) => throw new NotSupportedException();
+
+            public override void Write(byte[] bytes, int offset, int count) =>
+                throw new InvalidOperationException("Production must use its asynchronous owned writer.");
+
+            public override async Task WriteAsync(byte[] bytes, int offset, int count, CancellationToken token)
+            {
+                bool first;
+                lock (_lock)
+                {
+                    if (IsDisposed)
+                        throw new ObjectDisposedException(nameof(ProgressHeaderGateStream));
+                    first = _writes++ == 0;
+                    _active++;
+                    MaxConcurrentWrites = Math.Max(MaxConcurrentWrites, _active);
+                }
+                try
+                {
+                    if (first)
+                    {
+                        Assert.GreaterOrEqual(count, 8, "The real writer must emit a complete eight-byte header.");
+                        lock (_lock)
+                            _bytes.Write(bytes, offset, 8);
+                        HeaderWritten.TrySetResult(true);
+                        if (_ignoreToken)
+                            await Release.Task;
+                        else
+                            using (token.Register(() => Release.TrySetCanceled()))
+                                await Release.Task;
+                        lock (_lock)
+                        {
+                            if (IsDisposed)
+                                throw new ObjectDisposedException(nameof(ProgressHeaderGateStream));
+                            token.ThrowIfCancellationRequested();
+                            if (count > 8)
+                                _bytes.Write(bytes, offset + 8, count - 8);
+                        }
+                    }
+                    else
+                        lock (_lock)
+                        {
+                            if (IsDisposed)
+                                throw new ObjectDisposedException(nameof(ProgressHeaderGateStream));
+                            token.ThrowIfCancellationRequested();
+                            _bytes.Write(bytes, offset, count);
+                        }
+                }
+                finally
+                {
+                    lock (_lock)
+                        _active--;
+                }
+            }
+
+#if NETSTANDARD2_1 || NETCOREAPP
+            public override ValueTask WriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken token = default)
+            {
+                byte[] copy = bytes.ToArray();
+                return new ValueTask(WriteAsync(copy, 0, copy.Length, token));
+            }
+#endif
+
+            protected override void Dispose(bool disposing)
+            {
+                lock (_lock)
+                    IsDisposed = true;
+                Release.TrySetResult(true);
+                base.Dispose(disposing);
+            }
         }
     }
 
