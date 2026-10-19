@@ -103,7 +103,7 @@ _ACTIONS: Final = {
     },
     "manage_script": {
         Permission.READ: _names(
-            "read get_sha validate validate_edit preview_edit preview_text_edits preview_script_buffer get_capabilities"
+            "read get_sha validate validate_edit preview_edit preview_text_edits preview_script_buffer get_capabilities prepare_change_set get_change_set"
         ),
     },
     "manage_shader": {
@@ -152,7 +152,20 @@ _ACTIONS: Final = {
         Permission.READ: _names("status"),
         Permission.RUN: _names("ui_click key mouse touch release_all"),
     },
-    "manage_audio": {Permission.RUN: _names("play stop")},
+    "manage_audio": {
+        Permission.READ: _names("diagnose get_routing read_import_settings"),
+        Permission.EDIT: _names("set_routing apply_import_settings"),
+        Permission.RUN: _names("play stop"),
+    },
+    "manage_navigation": {
+        Permission.READ: _names(
+            "capabilities list read bake_status sample_position calculate_path"
+        ),
+        Permission.EDIT: _names("add configure bake cancel_bake"),
+    },
+    "script_change_set": {
+        Permission.READ: _names("prepare status"),
+    },
     "manage_play_scenario": {
         Permission.READ: _names(
             "get list status reports suite_get suite_list suite_status suite_reports"
@@ -208,7 +221,7 @@ _ACTIONS: Final = {
     },
     "manage_physics": {
         Permission.READ: _names(
-            "ping get_settings get_collision_matrix raycast raycast_all linecast shapecast overlap get_rigidbody validate"
+            "ping get_settings get_collision_matrix raycast raycast_all linecast shapecast overlap get_rigidbody validate diagnose_pair"
         ),
         Permission.EDIT: _names(
             "set_settings set_collision_matrix create_physics_material configure_physics_material assign_physics_material add_joint configure_joint remove_joint configure_rigidbody"
@@ -216,7 +229,7 @@ _ACTIONS: Final = {
         Permission.RUN: _names("apply_force simulate_step"),
     },
     "manage_build": {
-        Permission.READ: _names("plan status"),
+        Permission.READ: _names("plan status report_history report compare_reports"),
         Permission.RUN: _names("build_from_plan build batch cancel clean_output"),
         Permission.EDIT: _names("platform settings scenes profiles"),
     },
@@ -252,13 +265,13 @@ _ACTIONS: Final = {
     },
     "manage_animation": {
         Permission.READ: _names(
-            "animator_get_info animator_get_parameter controller_get_info clip_get_info"
+            "animator_get_info animator_get_parameter controller_get_info clip_get_info clip_get_curves clip_get_curve controller_get_graph"
         ),
         Permission.RUN: _names(
             "animator_play animator_crossfade animator_set_parameter animator_set_speed animator_set_enabled"
         ),
         Permission.EDIT: _names(
-            "controller_create controller_add_state controller_add_transition controller_add_parameter controller_assign controller_add_layer controller_remove_layer controller_set_layer_weight controller_create_blend_tree_1d controller_create_blend_tree_2d controller_add_blend_tree_child clip_create clip_add_curve clip_set_curve clip_set_vector_curve clip_create_preset clip_assign clip_add_event clip_remove_event"
+            "controller_create controller_add_state controller_add_transition controller_add_parameter controller_assign controller_add_layer controller_remove_layer controller_set_layer_weight controller_create_blend_tree_1d controller_create_blend_tree_2d controller_add_blend_tree_child clip_create clip_add_curve clip_set_curve clip_set_vector_curve clip_create_preset clip_assign clip_add_event clip_remove_event clip_replace_curve clip_delete_curve controller_modify_state controller_delete_state controller_modify_transition controller_delete_transition"
         ),
     },
     "manage_graphics": {
@@ -300,7 +313,7 @@ _PUBLIC_SCRIPT_WRAPPERS: Final = _names(
     "create_script delete_script apply_text_edits script_apply_edits"
 )
 _COMPILING_SCRIPT_ACTIONS: Final = _names(
-    "create delete edit apply_text_edits apply_prepared_script"
+    "create delete edit apply_text_edits apply_prepared_script apply_change_set recover_change_set"
 )
 # BatchExecute dispatches canonical native tools, not Python convenience wrappers.
 _CANONICAL_ALIASES: Final = {
@@ -309,7 +322,7 @@ _CANONICAL_ALIASES: Final = {
     "execute_menu_item_observed": "execute_menu_item",
 }
 _NATIVE_COMMANDS: Final = _names(
-    "batch_execute batch_validate blender_bridge cancel_test_job capture_ui_snapshot execute_code execute_menu_item execute_menu_item_observed export_test_job find_gameobjects generate_audio generate_image generate_model get_active_tool get_cameras get_compile_job get_editor_state get_gameobject get_gameobject_by_handle_v2 get_gameobject_component get_gameobject_component_selected get_gameobject_components get_layers get_menu_items get_prefab_stage get_project_info get_renderer_features get_rendering_stats get_selection get_tags get_test_job get_tests get_tests_for_mode get_tool_states get_volumes get_windows import_model import_model_file inspect_menu_item inspect_serialized_object_v1 manage_animation manage_asset manage_audio manage_build manage_camera manage_components manage_components_selected manage_editor manage_gameobject manage_graphics manage_input manage_material manage_object_handles_v2 manage_packages manage_physics manage_play_scenario manage_prefabs manage_probuilder manage_profiler manage_recording manage_scenario_recording manage_scene manage_scene_edits manage_script manage_scriptable_object manage_shader manage_sprite manage_texture manage_ugui manage_ui manage_vfx ping read_console refresh_unity run_tests tail_console unity_reflect"
+    "batch_execute batch_validate blender_bridge cancel_test_job capture_ui_snapshot execute_code execute_menu_item execute_menu_item_observed export_test_job find_gameobjects generate_audio generate_image generate_model get_active_tool get_cameras get_compile_job get_editor_state get_gameobject get_gameobject_by_handle_v2 get_gameobject_component get_gameobject_component_selected get_gameobject_components get_layers get_menu_items get_prefab_stage get_project_info get_renderer_features get_rendering_stats get_selection get_tags get_test_job get_tests get_tests_for_mode get_tool_states get_volumes get_windows import_model import_model_file inspect_menu_item inspect_serialized_object_v1 manage_animation manage_asset manage_audio manage_build manage_camera manage_components manage_components_selected manage_editor manage_gameobject manage_graphics manage_input manage_material manage_navigation manage_object_handles_v2 manage_packages manage_physics manage_play_scenario manage_prefabs manage_probuilder manage_profiler manage_recording manage_scenario_recording manage_scene manage_scene_edits manage_script manage_scriptable_object manage_shader manage_sprite manage_texture manage_ugui manage_ui manage_vfx ping read_console refresh_unity run_tests tail_console unity_reflect"
 )
 _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"}
 _RESOURCE_PATHS: Final = _names(
@@ -421,6 +434,10 @@ def required_permissions(
         if allow_custom_filters:
             return CUSTOM_GRANTS | {Permission.READ}
         return frozenset({Permission.READ})
+    if name == "script_change_set" and action in {"apply", "recover"}:
+        # Final-source changes can compile on automatic/deferred import even
+        # when this wrapper does not explicitly request a refresh.
+        return CUSTOM_GRANTS
     if name == "manage_script" and action in _COMPILING_SCRIPT_ACTIONS:
         # Native mutation paths compile/import-compile, including deferred
         # refresh. Public create/delete also unconditionally await readiness.

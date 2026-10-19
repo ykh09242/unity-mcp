@@ -20,7 +20,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`get_compile_job`](./get_compile_job.md)** — Read a compilation request outcome and bounded diagnostics by compile_id.
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_asset`](./manage_asset.md)** — Performs asset operations (import, create, modify, delete, etc.) in Unity.
-- **[`manage_audio`](./manage_audio.md)** — Play or stop an existing scene AudioSource in Play mode.
+- **[`manage_audio`](./manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_camera`](./manage_camera.md)** — Manage cameras (Unity Camera + Cinemachine).
 - **[`manage_components`](./manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.
@@ -28,6 +28,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_gameobject`](./manage_gameobject.md)** — Performs CRUD operations on GameObjects.
 - **[`manage_graphics`](./manage_graphics.md)** — Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features.
 - **[`manage_material`](./manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).
+- **[`manage_navigation`](./manage_navigation.md)** — Read and explicitly author navigation surfaces, agents, obstacles and links.
 - **[`manage_object_handles`](./manage_object_handles.md)** — Capture or resolve the original loaded GameObject/Component reference for this Editor session.
 - **[`manage_packages`](./manage_packages.md)** — Manage Unity packages: query, install, remove, embed, and configure registries.
 - **[`manage_physics`](./manage_physics.md)** — Manage physics settings, collision matrix, materials, joints, queries, and validation.
@@ -41,5 +42,6 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`read_console`](./read_console.md)** — Gets messages from or clears the Unity Editor console.
 - **[`refresh_unity`](./refresh_unity.md)** — Request a Unity asset database refresh and optionally a script compilation.
 - **[`script_apply_edits`](./script_apply_edits.md)** — Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text.
+- **[`script_change_set`](./script_change_set.md)** — Prepare, apply, inspect or recover 1–16 existing C# source replacements as one bounded change set.
 - **[`set_active_instance`](./set_active_instance.md)** — Set the active Unity instance for this client/session.
 - **[`validate_script`](./validate_script.md)** — Validate a C# script and report diagnostics, the effective validation engine, and context limitations.
