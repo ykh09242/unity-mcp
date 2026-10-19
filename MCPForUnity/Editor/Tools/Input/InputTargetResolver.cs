@@ -31,8 +31,9 @@ namespace MCPForUnity.Editor.Tools.Input
             if (Array.Exists(segments, string.IsNullOrEmpty))
                 throw new ArgumentException("target path contains an empty segment.");
             GameObject match = null;
-            // Resources includes DontDestroyOnLoad objects; reject assets and preview scenes before matching.
-            foreach (GameObject root in UnityEngine.Resources.FindObjectsOfTypeAll<GameObject>())
+            var roots = new List<GameObject>();
+            SceneObjectRoots.CopyTo(roots, new List<GameObject>());
+            foreach (GameObject root in roots)
             {
                 if (root.transform.parent != null || !IsSceneObject(root) || root.name != segments[0])
                     continue;

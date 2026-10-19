@@ -44,10 +44,11 @@ namespace MCPForUnityTests.Editor.Helpers
         public void RecorderExcludesPayloadActionAndErrorText()
         {
             string sentinel = "secret-probe-" + Guid.NewGuid().ToString("N");
-            bool wasEnabled = McpLogRecord.IsEnabled;
+            var enabled = typeof(McpLogRecord).GetField("_isEnabledCached", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            bool wasEnabled = (bool)enabled.GetValue(null);
             try
             {
-                McpLogRecord.IsEnabled = true;
+                enabled.SetValue(null, true);
                 McpLogRecord.Log(
                     "manage_script",
                     new JObject
@@ -62,10 +63,13 @@ namespace MCPForUnityTests.Editor.Helpers
                     10,
                     sentinel
                 );
+                Assert.IsTrue(McpLogRecord.Flush(5000));
                 string logDir = Path.Combine(Application.dataPath, "..", "Library", "MCPForUnity", "Logs");
                 foreach (string name in new[] { "mcp.log", "mcpError.log" })
                 {
-                    string text = File.ReadAllText(Path.Combine(logDir, name));
+                    using var stream = new FileStream(Path.Combine(logDir, name), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var reader = new StreamReader(stream);
+                    string text = reader.ReadToEnd();
                     StringAssert.DoesNotContain(sentinel, text);
                     StringAssert.Contains("manage_script", text);
                     StringAssert.Contains("ERROR", text);
@@ -75,7 +79,7 @@ namespace MCPForUnityTests.Editor.Helpers
             }
             finally
             {
-                McpLogRecord.IsEnabled = wasEnabled;
+                enabled.SetValue(null, wasEnabled);
             }
         }
     }

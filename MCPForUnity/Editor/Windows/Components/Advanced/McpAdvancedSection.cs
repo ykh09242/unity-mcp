@@ -196,7 +196,10 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             McpLog.SetDebugLoggingEnabled(debugEnabled);
 
             if (logRecordToggle != null)
+            {
                 logRecordToggle.value = McpLogRecord.IsEnabled;
+                logRecordToggle.tooltip = "Metadata-only logging; a full 1024-entry queue drops new records. " + McpLogRecord.BufferStatus;
+            }
 
             devModeForceRefreshToggle.value = EditorPrefs.GetBool(EditorPrefKeys.DevModeForceServerRefresh, false);
             if (allowLanHttpBindToggle != null)
@@ -442,7 +445,10 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 autoStartOnLoadToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false));
             debugLogsToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false));
             if (logRecordToggle != null)
+            {
                 logRecordToggle.SetValueWithoutNotify(McpLogRecord.IsEnabled);
+                logRecordToggle.tooltip = "Metadata-only logging; a full 1024-entry queue drops new records. " + McpLogRecord.BufferStatus;
+            }
             devModeForceRefreshToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.DevModeForceServerRefresh, false));
             if (allowLanHttpBindToggle != null)
             {

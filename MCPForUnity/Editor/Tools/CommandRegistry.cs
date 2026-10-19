@@ -346,6 +346,15 @@ namespace MCPForUnity.Editor.Tools
             TaskCompletionSource<string> tcs,
             CancellationToken cancellationToken,
             ICommandProgress progress
+        ) => ExecuteCommand(commandName, @params, tcs, cancellationToken, progress, null);
+
+        internal static object ExecuteCommand(
+            string commandName,
+            JObject @params,
+            TaskCompletionSource<string> tcs,
+            CancellationToken cancellationToken,
+            ICommandProgress progress,
+            Action<CommandOutcome> outcome
         )
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -353,7 +362,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (handlerInfo.IsAsync)
             {
-                ExecuteAsyncHandler(handlerInfo, @params, tcs, cancellationToken, progress);
+                ExecuteAsyncHandler(handlerInfo, @params, tcs, cancellationToken, progress, outcome);
                 return null;
             }
 
@@ -368,7 +377,7 @@ namespace MCPForUnity.Editor.Tools
             // another Task type should be declared async, which registration handles.
             if (result is Task<object> returnedTask)
             {
-                ExecuteAsyncHandler(new HandlerInfo(commandName, null, _ => returnedTask), @params, tcs, cancellationToken, progress);
+                ExecuteAsyncHandler(new HandlerInfo(commandName, null, _ => returnedTask), @params, tcs, cancellationToken, progress, outcome);
                 return null;
             }
 
@@ -491,7 +500,8 @@ namespace MCPForUnity.Editor.Tools
             JObject parameters,
             TaskCompletionSource<string> tcs,
             CancellationToken cancellationToken,
-            ICommandProgress progress
+            ICommandProgress progress,
+            Action<CommandOutcome> outcome
         )
         {
             string commandName = handlerInfo.CommandName;
@@ -519,14 +529,14 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception ex)
             {
                 CloseTransportProgress();
-                ReportAsyncFailure(commandName, tcs, ex);
+                ReportAsyncFailure(commandName, tcs, ex, outcome);
                 return;
             }
 
             if (handlerTask == null)
             {
                 CloseTransportProgress();
-                CompleteAsyncCommand(commandName, tcs, null);
+                CompleteAsyncCommand(commandName, tcs, null, outcome);
                 return;
             }
 
@@ -536,7 +546,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     var finalResult = await handlerTask.ConfigureAwait(true);
                     CloseTransportProgress();
-                    CompleteAsyncCommand(commandName, tcs, finalResult);
+                    CompleteAsyncCommand(commandName, tcs, finalResult, outcome);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -546,7 +556,7 @@ namespace MCPForUnity.Editor.Tools
                 catch (Exception ex)
                 {
                     CloseTransportProgress();
-                    ReportAsyncFailure(commandName, tcs, ex);
+                    ReportAsyncFailure(commandName, tcs, ex, outcome);
                 }
             }
 
@@ -559,12 +569,13 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="commandName"></param>
         /// <param name="tcs"></param>
         /// <param name="result"></param>
-        private static void CompleteAsyncCommand(string commandName, TaskCompletionSource<string> tcs, object result)
+        private static void CompleteAsyncCommand(string commandName, TaskCompletionSource<string> tcs, object result, Action<CommandOutcome> outcome)
         {
             try
             {
                 var response = new { status = "success", result };
                 string json = JsonConvert.SerializeObject(response);
+                outcome?.Invoke(CommandOutcomeMetadata.FromResult(result));
 
                 if (!tcs.TrySetResult(json))
                 {
@@ -574,7 +585,7 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception ex)
             {
                 McpLog.Error($"Error completing async command '{commandName}': {ex.Message}\n{ex.StackTrace}");
-                ReportAsyncFailure(commandName, tcs, ex);
+                ReportAsyncFailure(commandName, tcs, ex, outcome);
             }
         }
 
@@ -585,7 +596,7 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="commandName"></param>
         /// <param name="tcs"></param>
         /// <param name="ex"></param>
-        private static void ReportAsyncFailure(string commandName, TaskCompletionSource<string> tcs, Exception ex)
+        private static void ReportAsyncFailure(string commandName, TaskCompletionSource<string> tcs, Exception ex, Action<CommandOutcome> outcome)
         {
             McpLog.Error($"Error in async command '{commandName}': {ex.Message}\n{ex.StackTrace}");
 
@@ -608,6 +619,7 @@ namespace MCPForUnity.Editor.Tools
                 json = "{\"status\":\"error\",\"error\":\"Failed to complete command\"}";
             }
 
+            outcome?.Invoke(CommandOutcome.Error);
             if (!tcs.TrySetResult(json))
             {
                 McpLog.Warn($"TCS for async command '{commandName}' was already completed when trying to report error");

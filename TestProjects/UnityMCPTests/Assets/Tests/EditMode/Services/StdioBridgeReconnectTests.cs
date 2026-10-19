@@ -99,6 +99,7 @@ namespace MCPForUnityTests.Editor.Services
 
             internal JObject[] TimingRows()
             {
+                Assert.IsTrue(McpLogRecord.Flush(5000));
                 lock (typeof(McpLogRecord).GetField("_logLock", Flags).GetValue(null))
                 {
                     if (!File.Exists(_logPath))

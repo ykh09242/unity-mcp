@@ -11,17 +11,20 @@ namespace MCPForUnity.Editor.Helpers
     internal static class McpLogRecord
     {
         private static readonly string LogDir = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Library", "MCPForUnity", "Logs"));
-        private static readonly string LogPath = Path.Combine(LogDir, "mcp.log");
-        private static readonly string ErrorLogPath = Path.Combine(LogDir, "mcpError.log");
-        private const long MaxLogSizeBytes = 1024 * 1024; // 1 MB
-        private static bool _sessionStarted;
+        private static readonly string UnityVersion = Application.unityVersion;
         private static readonly object _logLock = new();
         private static volatile bool _isEnabledCached;
+        private static bool stopped;
+        private static BufferedLogWriter writer;
 
         [InitializeOnLoadMethod]
         private static void RefreshFromPrefs()
         {
             _isEnabledCached = EditorPrefs.GetBool(EditorPrefKeys.LogRecordEnabled, false);
+            AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+            AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+            EditorApplication.quitting -= Shutdown;
+            EditorApplication.quitting += Shutdown;
         }
 
         internal static bool IsEnabled
@@ -34,93 +37,99 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
+        private static BufferedLogWriter Writer()
+        {
+            lock (_logLock)
+            {
+                if (stopped)
+                    return null;
+                if (writer == null)
+                {
+                    writer = new BufferedLogWriter(LogDir, 1024, 1024 * 1024);
+                    writer.Enqueue(
+                        JsonConvert.SerializeObject(
+                            new
+                            {
+                                ts = DateTime.UtcNow,
+                                @event = "session_start",
+                                unity = UnityVersion,
+                            }
+                        ),
+                        false
+                    );
+                }
+                return writer;
+            }
+        }
+
+        internal static string BufferStatus
+        {
+            get
+            {
+                lock (_logLock)
+                    return writer == null
+                        ? "Log buffer idle"
+                        : $"Log buffer: {writer.PendingCount} pending, {writer.DroppedCount} dropped, {writer.FailureCount} failed";
+            }
+        }
+
         internal static void Log(string commandType, JObject parameters, string type, string status, long durationMs, string error = null)
         {
             if (!IsEnabled)
                 return;
-
             try
             {
-                var entry = new JObject
-                {
-                    ["ts"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
-                    ["tool"] = commandType,
-                    ["type"] = type,
-                    ["status"] = status,
-                    ["ms"] = durationMs,
-                };
-
-                // Parameters (including action) and error text can contain credentials, scripts,
-                // signed URLs or other project data. Record execution metadata only.
-
-                var line = entry.ToString(Formatting.None);
-
-                lock (_logLock)
-                {
-                    if (!_sessionStarted)
+                var buffer = Writer();
+                if (buffer == null)
+                    return;
+                // Never retain parameters, payloads, action strings or error text.
+                string line = JsonConvert.SerializeObject(
+                    new
                     {
-                        _sessionStarted = true;
-                        var sessionEntry = new JObject
-                        {
-                            ["ts"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
-                            ["event"] = "session_start",
-                            ["unity"] = Application.unityVersion,
-                        };
-                        RotateAndAppend(LogPath, sessionEntry.ToString(Formatting.None));
+                        ts = DateTime.UtcNow,
+                        tool = Bound(commandType, 256),
+                        type = Bound(type, 32),
+                        status = Bound(status, 32),
+                        ms = durationMs,
+                        dropped = buffer.DroppedCount,
+                        failed = buffer.FailureCount,
                     }
-
-                    RotateAndAppend(LogPath, line);
-
-                    if (status == "ERROR")
-                    {
-                        RotateAndAppend(ErrorLogPath, line);
-                    }
-                }
+                );
+                buffer.Enqueue(line, status == "ERROR");
             }
-            catch (Exception ex)
-            {
-                McpLog.Warn($"[McpLogRecord] Failed to write log: {ex.Message}");
-            }
+            catch { /* Diagnostics must not fail a tool or recursively log a disk error. */ }
         }
 
-        // Timing rows contain only fixed metadata and bounded phase measurements.
         internal static void LogTiming(JObject entry)
         {
             if (!IsEnabled)
                 return;
             try
             {
-                lock (_logLock)
-                    RotateAndAppend(LogPath, entry.ToString(Formatting.None));
+                Writer()?.Enqueue(entry.ToString(Formatting.None), false);
             }
             catch { }
         }
 
-        private static void RotateAndAppend(string path, string line)
+        private static string Bound(string value, int limit) => value == null || value.Length <= limit ? value : value.Substring(0, limit);
+
+        internal static bool Flush(int timeoutMs = 2000)
         {
-            Directory.CreateDirectory(LogDir);
-            RotateIfNeeded(path);
-            File.AppendAllText(path, line + Environment.NewLine);
+            BufferedLogWriter current;
+            lock (_logLock)
+                current = writer;
+            return current == null || current.Flush(timeoutMs);
         }
 
-        private static void RotateIfNeeded(string path)
+        private static void Shutdown()
         {
-            try
+            BufferedLogWriter current;
+            lock (_logLock)
             {
-                if (!File.Exists(path))
-                    return;
-                var info = new FileInfo(path);
-                if (info.Length <= MaxLogSizeBytes)
-                    return;
-
-                var lines = File.ReadAllLines(path);
-                var half = lines.Length / 2;
-                File.WriteAllLines(path, lines[half..]);
+                stopped = true;
+                current = writer;
             }
-            catch
-            {
-                // Best-effort rotation
-            }
+            current?.Dispose();
         }
     }
 }
