@@ -41,6 +41,14 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     case "get_object_memory":
                         return ObjectMemoryOps.GetObjectMemory(@params);
 
+                    // Independent bounded windows
+                    case "window_start":
+                        return WindowOps.Start(@params);
+                    case "window_status":
+                    case "window_result":
+                    case "window_cancel":
+                        return WindowOps.Query(@params, action);
+
                     // Memory Snapshot
                     case "memory_take_snapshot":
                         return await MemorySnapshotOps.TakeSnapshotAsync(@params);
@@ -66,6 +74,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                             $"Unknown action: '{action}'. Valid actions: "
                                 + "profiler_start, profiler_stop, profiler_status, profiler_set_areas, "
                                 + "get_frame_timing, get_counters, get_object_memory, "
+                                + "window_start, window_status, window_result, window_cancel, "
                                 + "memory_take_snapshot, memory_list_snapshots, memory_compare_snapshots, "
                                 + "frame_debugger_enable, frame_debugger_disable, frame_debugger_get_events, "
                                 + "ping."

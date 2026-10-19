@@ -25,6 +25,11 @@ COUNTERS:
 - get_counters: Generic counter read by category + optional counter names (async, 1-frame wait)
 - get_object_memory: Memory size of a specific object by path
 
+INDEPENDENT WINDOWS:
+- window_start: Bounded category/markers sampling with warmup and deadline; returns window_id
+- window_status/window_result/window_cancel: Inspect, read terminal statistics, or dispose a window
+Completed per-frame sums use native units; p95 is nearest-rank, missing is distinct from zero.
+
 MEMORY SNAPSHOT (requires com.unity.memoryprofiler):
 - memory_take_snapshot: Capture memory snapshot to file
 - memory_list_snapshots: List available .snap files
@@ -52,6 +57,12 @@ FRAME DEBUGGER:
 | `snapshot_b` | `str \| None` | — | Second snapshot path for memory_compare_snapshots. Project-relative or absolute inside the project or Unity temporary cache directory. |
 | `page_size` | `int \| None` | — | Page size for frame_debugger_get_events (default 50, clamped to 1..500). |
 | `cursor` | `int \| None` | — | Cursor offset for frame_debugger_get_events (default 0, negative values treated as 0). |
+| `markers` | `list[str] \| None` | — | 1–8 distinct exact marker/counter names for window_start. |
+| `frame_count` | `int \| None` | — | Window measurement frame limit (default 60). |
+| `warmup_frames` | `int \| None` | — | Excluded warmup frames (default 0). |
+| `timeout_seconds` | `int \| None` | — | Bounded window deadline (default 30 seconds). |
+| `window_id` | `str \| None` | — | Session-scoped ID returned by window_start; required for status/result/cancel. |
+| `include_samples` | `bool \| None` | — | Include bounded completed samples in window result (default false). |
 
 ## Returns
 
