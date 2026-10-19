@@ -183,6 +183,8 @@ def test_particle_graph_registered_sdk_payloads_and_diagnostics(tmp_path):
                         expected = raw["result"] if failed else raw
                         for action in PARTICLE_ACTIONS + VFX_ACTIONS:
                             properties = {"parameter":"Enabled","value":False,"rate_over_time":0,"bursts":[],"reference":None,"gradient":{"alpha_keys":[{"alpha":0,"time":0}]}}
+                            if action == "vfx_get_exposed_properties":
+                                properties = {"parameter":"Enabled","page_size":1,"page_number":1,"max_curve_keys":0,"max_gradient_keys":0,"max_characters":1024}
                             payload = {"action":action.upper(),"target":"0","search_method":"by_name","component_index":0,"properties":properties}
                             result = await client.call_tool("manage_vfx",payload)
                             check(result.structured_content == expected,"response " + action + mode + str(failed))
