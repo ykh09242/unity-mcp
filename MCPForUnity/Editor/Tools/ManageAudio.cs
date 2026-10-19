@@ -11,7 +11,7 @@ namespace MCPForUnity.Editor.Tools
         "manage_audio",
         AutoRegister = false,
         Group = "core",
-        Description = "Issue play or stop requests to an existing scene AudioSource in Play mode. Play optionally assigns an AudioClip asset path after validation; success does not guarantee audible output."
+        Description = "Observe audio diagnostics, read/set existing mixer routing with Undo, and read/apply AudioImporter platform settings with reimport. No output-device audibility proof. Issue play or stop requests to an existing scene AudioSource in Play mode. Play optionally assigns an AudioClip asset path after validation; success does not guarantee audible output."
     )]
     public static class ManageAudio
     {
@@ -24,6 +24,14 @@ namespace MCPForUnity.Editor.Tools
             if (actionToken?.Type != JTokenType.String)
                 return new ErrorResponse("'action' must be play or stop.");
             string action = actionToken.ToString().Trim().ToLowerInvariant();
+            if (
+                action == "diagnose"
+                || action == "get_routing"
+                || action == "set_routing"
+                || action == "read_import_settings"
+                || action == "apply_import_settings"
+            )
+                return AudioInspection.Handle(parameters, action);
             if (action != "play" && action != "stop")
                 return new ErrorResponse("'action' must be play or stop.");
 
