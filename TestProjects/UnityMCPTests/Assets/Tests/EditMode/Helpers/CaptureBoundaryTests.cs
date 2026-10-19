@@ -189,12 +189,12 @@ namespace MCPForUnityTests.Editor.Helpers
             }
             string path = Path.Combine(root, "oversized.png");
             File.WriteAllBytes(path, bytes);
-            var before = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray();
+            var before = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray();
             var method = typeof(BlenderBridgeTool).GetMethod("ReadCapturePng", StaticPrivate);
             Assert.IsNotNull(method, "External PNG headers must be bounded before decoding");
             var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[] { path }));
             Assert.IsInstanceOf<ArgumentException>(error.InnerException);
-            CollectionAssert.AreEquivalent(before, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray());
+            CollectionAssert.AreEquivalent(before, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray());
         }
 
         private static Type CaptureScopeType()
