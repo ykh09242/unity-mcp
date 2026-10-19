@@ -103,6 +103,12 @@ namespace MCPForUnity.Editor.Services
             );
     }
 
+    internal sealed class ConfigurationLockedException : InvalidOperationException
+    {
+        internal ConfigurationLockedException()
+            : base("Configuration is locked. No settings were changed.") { }
+    }
+
     internal sealed class ConfigurationLimitException : Exception { }
 
     internal sealed class ConfigurationPathException : Exception { }
@@ -326,6 +332,21 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
+        // Unregister shares the same bounded reader and final guarded replacement as preview/apply.
+        // The transformation runs on the snapshot; no writer may silently replace a later edit.
+        internal void MutateFile(string path, Func<string, string> transform)
+        {
+            if (readLock())
+                throw new ConfigurationLockedException();
+            byte[] original = Read(path);
+            if (original == null)
+                return;
+            string document = Decode(original, out bool bom);
+            string updated = transform(document);
+            if (updated != document)
+                Commit(path, updated, bom, original);
+        }
+
         private void Commit(string path, string text, bool bom, byte[] expected)
         {
             if (Encoding.UTF8.GetByteCount(text) + (bom ? 3 : 0) > FileLimit)
@@ -339,6 +360,8 @@ namespace MCPForUnity.Editor.Services
                 () =>
                 {
                     beforeCommitComparison?.Invoke();
+                    if (readLock())
+                        throw new ConfigurationLockedException();
                     ValidatePath(path);
                 }
             );
@@ -361,7 +384,8 @@ namespace MCPForUnity.Editor.Services
         }
 
         private static string Classify(Exception error) =>
-            error is ConfigurationLimitException ? "input_limit"
+            error is ConfigurationLockedException ? "locked"
+            : error is ConfigurationLimitException ? "input_limit"
             : error is ConfigurationPathException ? "unsupported_path"
             : error is McpConfigurationHelper.ConfigurationConflictException ? "stale_file"
             : error is ConfigurationLayoutException ? "unsupported_layout"
