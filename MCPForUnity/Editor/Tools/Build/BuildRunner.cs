@@ -166,12 +166,15 @@ namespace MCPForUnity.Editor.Tools.Build
 
             job.State = BuildJobState.Building;
             job.StartedAt = DateTime.UtcNow;
+            BuildReportStore.Observe(job);
+            BuildReport capturedReport = null;
 
             try
             {
                 beforeBuild?.Invoke();
                 SaveBeforeBuild();
                 BuildReport report = buildFunc();
+                capturedReport = report;
                 job.CompletedAt = DateTime.UtcNow;
 
                 // Extract summary data immediately, then let the BuildReport be GC'd
@@ -201,6 +204,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 job.ErrorMessage = ex.Message;
             }
 
+            BuildReportStore.Complete(job, capturedReport);
             BuildJobStore.SetLastCompleted(job);
 
             // Emit console signal so the build result is visible in Unity's Console
@@ -220,11 +224,16 @@ namespace MCPForUnity.Editor.Tools.Build
         public static void ScheduleNextBatchBuild(BatchJob batch, Func<int, BuildJob> createChildBuild)
         {
             batch.CurrentIndex++;
+            BuildReportStore.Observe(batch);
 
             if (batch.State == BuildJobState.Cancelled)
             {
                 for (int i = batch.CurrentIndex; i < batch.Children.Count; i++)
+                {
                     batch.Children[i].State = BuildJobState.Skipped;
+                    BuildReportStore.Complete(batch.Children[i]);
+                }
+                BuildReportStore.Complete(batch);
                 return;
             }
 
@@ -232,6 +241,7 @@ namespace MCPForUnity.Editor.Tools.Build
             {
                 bool anyFailed = batch.Children.Any(c => c.State == BuildJobState.Failed);
                 batch.State = anyFailed ? BuildJobState.Failed : BuildJobState.Succeeded;
+                BuildReportStore.Complete(batch);
                 return;
             }
 
@@ -265,6 +275,7 @@ namespace MCPForUnity.Editor.Tools.Build
                     {
                         child.State = BuildJobState.Failed;
                         child.ErrorMessage = "Build timed out after 2 hours.";
+                        BuildReportStore.Complete(child);
                     }
                     ScheduleNextBatchBuild(batch, createChildBuild);
                     return;

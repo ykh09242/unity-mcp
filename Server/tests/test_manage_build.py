@@ -35,7 +35,7 @@ def mock_unity(monkeypatch):
 
 
 def test_all_actions_count():
-    assert len(ALL_ACTIONS) == 11
+    assert len(ALL_ACTIONS) == 14
 
 
 def test_unknown_action_returns_error(mock_unity):

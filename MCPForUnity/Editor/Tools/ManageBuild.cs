@@ -34,6 +34,9 @@ namespace MCPForUnity.Editor.Tools
             "batch",
             "cancel",
             "clean_output",
+            "report_history",
+            "report",
+            "compare_reports",
         };
 
         public static object HandleCommand(JObject @params)
@@ -50,6 +53,11 @@ namespace MCPForUnity.Editor.Tools
 
             if (!ValidActions.Contains(action))
                 return new ErrorResponse($"Unknown action '{action}'. Valid actions: {string.Join(", ", ValidActions)}");
+
+            if (BuildReportStore.IsAction(action))
+                return BuildReportStore.Handle(@params);
+            if (BuildReportStore.HasOptions(@params))
+                return new ErrorResponse("invalid_build_report_request");
 
             try
             {
@@ -376,6 +384,9 @@ namespace MCPForUnity.Editor.Tools
                 if (last != null)
                     return new SuccessResponse("Last completed build.", last.ToStatusResponse());
 
+                var persisted = BuildReportStore.FindStatus();
+                if (persisted != null)
+                    return new SuccessResponse("Last retained completed build observation.", persisted);
 #if UNITY_6000_0_OR_NEWER
                 var latestReport = BuildReport.GetLatestReport();
                 if (latestReport != null)
@@ -414,7 +425,12 @@ namespace MCPForUnity.Editor.Tools
 
             var buildJob = BuildJobStore.GetBuildJob(jobId);
             if (buildJob == null)
-                return new ErrorResponse($"No job found with ID: {jobId}");
+            {
+                var persisted = BuildReportStore.FindStatus(jobId);
+                return persisted != null
+                    ? new SuccessResponse("Retained completed build observation.", persisted)
+                    : new ErrorResponse($"No job found with ID: {jobId}");
+            }
 
             if (buildJob.State == BuildJobState.Building || buildJob.State == BuildJobState.Pending)
             {
@@ -798,6 +814,7 @@ namespace MCPForUnity.Editor.Tools
                 if (batchJob.State == BuildJobState.Building)
                 {
                     batchJob.State = BuildJobState.Cancelled;
+                    BuildReportStore.Complete(batchJob);
                     return new SuccessResponse(
                         "Batch cancelled. The current build will finish but no more builds will start.",
                         new { job_id = jobId, state = "cancelled" }
