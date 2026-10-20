@@ -64,6 +64,36 @@ class _UnityProtocolError(ValueError):
     """A Unity response cannot be safely decoded or reused."""
 
 
+class _AsyncAdmissionGate:
+    """Track holders and waiters, including the release-to-resume handoff."""
+
+    def __init__(self):
+        import asyncio
+
+        self._lock = asyncio.Lock()
+        self._participants = 0
+
+    async def acquire(self) -> bool:
+        self._participants += 1
+        acquired = False
+        try:
+            acquired = await self._lock.acquire()
+            return acquired
+        finally:
+            if not acquired:
+                self._participants -= 1
+
+    def release(self) -> None:
+        self._lock.release()
+        self._participants -= 1
+
+    def in_use(self) -> bool:
+        return self._participants > 0
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+
 def _decode_unity_response(data: bytes | bytearray) -> Any:
     """Decode JSON before callers enforce the existing object response shape."""
     # Retain this helper and its imported native decoder for existing adapters.
@@ -131,6 +161,8 @@ class UnityConnection:
         if self.port is None:
             self.port = stdio_port_registry.get_port(self.instance_id)
         self._io_lock = threading.RLock()
+        self._active_commands = 0
+        self._retired = False
         # Connection publication, liveness checks, close, and commands share one
         # lock. Lifecycle helpers are also called from a command transaction.
         self._conn_lock = self._io_lock
@@ -144,15 +176,13 @@ class UnityConnection:
         if self.allow_legacy_auth is None:
             self.allow_legacy_auth = os.environ.get("UNITY_MCP_STDIO_ALLOW_LEGACY") == "1"
 
-    def _async_admission(self, loop: "asyncio.AbstractEventLoop") -> "asyncio.Lock":
+    def _async_admission(self, loop: "asyncio.AbstractEventLoop") -> _AsyncAdmissionGate:
         """Share one worker admission per connection and event loop."""
-        import asyncio
-
         with self._resync_lock:
             reference = self._async_admissions.get(loop)
             gate = reference() if reference is not None else None
             if gate is None:
-                gate = asyncio.Lock()
+                gate = _AsyncAdmissionGate()
                 self._async_admissions[loop] = weakref.ref(gate)
             return gate
 
@@ -242,6 +272,8 @@ class UnityConnection:
         if config.http_remote_hosted:
             raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
         with self._conn_lock:
+            if self._retired:
+                return False
             if self.sock:
                 return True
             self.session_generation = None
@@ -366,6 +398,26 @@ class UnityConnection:
                 finally:
                     self.sock = None
                     self.session_generation = None
+
+    def _try_retire(self) -> bool:
+        """Seal an idle pooled generation without interrupting running/queued I/O."""
+        if not self._io_lock.acquire(blocking=False):
+            return False
+        try:
+            # RLock is reentrant: discovery called from this command must not
+            # mistake its own held lock for an idle connection.
+            if self._active_commands:
+                return False
+            with self._resync_lock:
+                for reference in self._async_admissions.values():
+                    gate = reference()
+                    if gate is not None and gate.in_use():
+                        return False
+                self._retired = True
+            self.disconnect()
+            return True
+        finally:
+            self._io_lock.release()
 
     def _ensure_live_connection(self) -> None:
         """Detect and discard cleanly-closed sockets before sending.
@@ -617,10 +669,17 @@ class UnityConnection:
         )
         if not acquired:
             raise TimeoutError("Unity command exceeded total deadline waiting for connection")
+        entered = False
         try:
             self._check_deadline(deadline)
+            if self._retired:
+                raise ConnectionError("Unity connection was retired; select the instance again")
+            self._active_commands += 1
+            entered = True
             yield
         finally:
+            if entered:
+                self._active_commands -= 1
             self._io_lock.release()
 
     def send_command(
@@ -988,6 +1047,9 @@ class UnityConnection:
 class UnityConnectionPool:
     """Manages connections to multiple Unity Editor instances"""
 
+    MAX_CONNECTIONS = 64
+    MISSING_GRACE_SECONDS = 60.0
+
     def __init__(self):
         self._connections: dict[str, UnityConnection] = {}
         self._known_instances: dict[str, UnityInstanceInfo] = {}
@@ -997,12 +1059,35 @@ class UnityConnectionPool:
         self._pool_lock = threading.Lock()
         self._scan_lock = threading.Lock()
         self._default_instance_id: str | None = None
+        self._last_used: dict[str, float] = {}
+        self._missing_since: dict[str, float] = {}
 
         # Check for default instance from environment
         env_default = os.environ.get("UNITY_MCP_DEFAULT_INSTANCE", "").strip()
         if env_default:
             self._default_instance_id = env_default
             logger.info(f"Default Unity instance set from environment: {env_default}")
+
+    def _retire_missing_locked(self, now: float) -> None:
+        """Reclaim proven-missing, unused generations while holding the pool lock."""
+        for instance_id, missing_at in list(self._missing_since.items()):
+            if (
+                now - missing_at < self.MISSING_GRACE_SECONDS
+                or now - self._last_used.get(instance_id, missing_at) < self.MISSING_GRACE_SECONDS
+            ):
+                continue
+            connection = self._connections.get(instance_id)
+            if connection is None or not connection._try_retire():
+                continue
+            del self._connections[instance_id]
+            self._missing_since.pop(instance_id, None)
+            self._last_used.pop(instance_id, None)
+            self._target_refreshes.pop(instance_id, None)
+            if instance_id in self._known_instances:
+                self._known_instances = {
+                    key: value for key, value in self._known_instances.items() if key != instance_id
+                }
+            logger.debug("Retired an idle Unity connection absent from discovery")
 
     def discover_all_instances(self, force_refresh: bool = False) -> list[UnityInstanceInfo]:
         """
@@ -1037,6 +1122,13 @@ class UnityConnectionPool:
                 self._known_instances = {inst.id: inst for inst in instances}
                 self._last_full_scan = time.time()
                 self._target_refreshes.clear()
+                now_monotonic = time.monotonic()
+                for instance_id in self._connections:
+                    if instance_id in self._known_instances:
+                        self._missing_since.pop(instance_id, None)
+                    else:
+                        self._missing_since.setdefault(instance_id, now_monotonic)
+                self._retire_missing_locked(now_monotonic)
 
             logger.info(
                 f"Found {len(instances)} Unity instances: {[inst.id for inst in instances]}"
@@ -1094,11 +1186,14 @@ class UnityConnectionPool:
                         }
                         for key in displaced:
                             self._target_refreshes.pop(key, None)
+                            if key != target.id and key in self._connections:
+                                self._missing_since.setdefault(key, time.monotonic())
                         known_instances[target.id] = target
                         # Publish atomically for resource readers that iterate
                         # metadata without holding the pool's internal locks.
                         self._known_instances = known_instances
                         self._target_refreshes[target.id] = time.time()
+                        self._missing_since.pop(target.id, None)
                         # A partial refresh cannot certify a global inventory.
                         self._last_full_scan = None
                     return target
@@ -1241,9 +1336,27 @@ class UnityConnectionPool:
         """
         target = self.resolve_instance(instance_identifier)
 
+        # An exact-ID lookup may have refreshed only one target for a long time.
+        # At capacity, obtain a complete inventory before deciding admission.
+        with self._pool_lock:
+            needs_scan = (
+                target.id not in self._connections
+                and len(self._connections) >= self.MAX_CONNECTIONS
+            )
+        if needs_scan:
+            self.discover_all_instances(force_refresh=True)
+
         # Return existing connection or create new one
         with self._pool_lock:
+            now = time.monotonic()
+            self._missing_since.pop(target.id, None)
+            self._retire_missing_locked(now)
             if target.id not in self._connections:
+                if len(self._connections) >= self.MAX_CONNECTIONS:
+                    raise ConnectionError(
+                        "Unity connection pool capacity reached; close unused editors and "
+                        "retry after discovery's idle grace period"
+                    )
                 logger.info(
                     f"Creating new connection to Unity instance: {target.id} (port {target.port})"
                 )
@@ -1267,6 +1380,7 @@ class UnityConnectionPool:
                         conn.port = target.port
                 logger.debug(f"Reusing existing connection to: {target.id}")
 
+            self._last_used[target.id] = now
             return self._connections[target.id]
 
     def disconnect_all(self):
@@ -1281,6 +1395,8 @@ class UnityConnectionPool:
                 except Exception:
                     logger.exception(f"Error disconnecting from {instance_id}")
             self._connections.clear()
+            self._last_used.clear()
+            self._missing_since.clear()
             # Replace metadata rather than mutating an existing resource reader's snapshot.
             self._known_instances = {}
             self._target_refreshes.clear()
