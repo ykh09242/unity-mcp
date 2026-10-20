@@ -1015,3 +1015,43 @@ async def test_preview_alias_final_native_fence_retains_both_authorities(
         assert PluginHub._pending == {}
         if not allowed:
             assert result["error"] == "permission_denied"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "request_permissions,plugin_permissions,allowed",
+    [
+        (["read"], ["read"], True),
+        ([], ["read"], False),
+        (["read"], [], False),
+    ],
+)
+async def test_focused_native_dispatch_intersects_both_scoped_authorities(
+    command_hub, monkeypatch, request_permissions, plugin_permissions, allowed
+):
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    await command_hub.registry.unregister("session")
+    await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
+    claims = {
+        "request": {"unity_mcp_permissions": request_permissions},
+        "plugin": {"unity_mcp_permissions": plugin_permissions},
+    }
+    async with permission_service(monkeypatch, claims) as fixture:
+        requester = (await fixture.service.validate("request")).lease
+        plugin = (await fixture.service.validate("plugin")).lease
+        command_hub.websocket.state.user_id = "alice"
+        setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, plugin)
+        with bind_credential_lease(requester):
+            if allowed:
+                result = await PluginHub.send_command(
+                    "session", "scene_inspect", {"action": "get_active"}
+                )
+                assert result["success"] is True
+                assert len(command_hub.sent) == 1 and command_hub.sent[0]["name"] == "scene_inspect"
+            else:
+                result = await PluginHub.send_command(
+                    "session", "scene_inspect", {"action": "get_active"}
+                )
+                assert result["success"] is False and result["error"] == "permission_denied"
+                assert command_hub.sent == []
+        assert PluginHub._pending == {}

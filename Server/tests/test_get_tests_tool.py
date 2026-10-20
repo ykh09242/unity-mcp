@@ -35,6 +35,7 @@ def test_get_tests_pages_filters_errors_and_validation(tmp_path):
             tools.get_registered_tools = lambda: metadata
             mcp = FastMCP("paginated-test-discovery")
             tools.register_all_tools(mcp)
+            mcp.enable(names={"get_tests"}, components={"tool"})
             config.transport_mode = "http"
             discovery.get_unity_instance_from_context = AsyncMock(return_value="Selected@hash")
             boundary = AsyncMock()

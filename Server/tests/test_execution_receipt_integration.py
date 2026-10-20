@@ -111,6 +111,8 @@ async def sdk_wire(
         counts["body"] += 1
         return ToolResult(structured_content={"action": action, "path": path})
 
+    server.tool(name="scene_lifecycle")(scene_load)
+
     async def select(context, **kwargs):
         # Controlled project selection only; ordinary receipt+SDK execution is real.
         context.message.arguments.pop("unity_instance", None)
@@ -336,14 +338,17 @@ async def test_actual_tasks_adapter_keeps_receipted_wait_on_ordinary_path(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_actual_scene_adapter_refuses_receipted_ask_before_body(tmp_path, monkeypatch):
+@pytest.mark.parametrize("tool_name", ["manage_scene", "scene_lifecycle"])
+async def test_actual_scene_adapter_refuses_receipted_ask_before_body(
+    tmp_path, monkeypatch, tool_name
+):
     # Given the actual SceneLoadInputs adapter and an initial missing-path scene load.
     async with sdk_wire(tmp_path, monkeypatch, scene=True) as (runtime, counts, call):
         # When receipt protection would otherwise cross an interactive MRTR ask.
         reply = await call(
             "tools/call",
             {
-                "name": "manage_scene",
+                "name": tool_name,
                 "arguments": {"action": "load"},
                 "_meta": {META_KEY: options(runtime)},
             },
@@ -972,3 +977,22 @@ async def test_duplicate_metadata_decode_refuses_before_lookup_when_memory_full(
         delivery.release()
         response_owner.reset(token)
         runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["2025-11-25", "2026-07-28"])
+async def test_focused_scene_operation_is_receipted_and_replayed_once(
+    tmp_path, monkeypatch, protocol
+):
+    async with sdk_wire(tmp_path, monkeypatch, protocol) as (runtime, counts, call):
+        params = {
+            "name": "scene_lifecycle",
+            "arguments": {"action": "load", "path": "Assets/Scenes/A.unity"},
+            "_meta": {META_KEY: options(runtime)},
+        }
+        first = (await call("tools/call", params, "focused-first"))["result"]
+        replay = (await call("tools/call", params, "focused-replay"))["result"]
+        assert first["structuredContent"] == {"action": "load", "path": "Assets/Scenes/A.unity"}
+        assert replay["structuredContent"] == first["structuredContent"]
+        assert first["_meta"][META_KEY]["status"] == "completed"
+        assert counts["body"] == 1

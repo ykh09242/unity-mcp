@@ -37,6 +37,7 @@ def test_audio_generation_sdk_and_cli_response_contracts():
         tools.get_registered_tools = lambda: metadata
         mcp = FastMCP("audio-contracts")
         tools.register_all_tools(mcp)
+        mcp.enable(names={'generate_audio', 'import_audio'}, components={"tool"})
         async def scenario():
             global response
             for mode in ("2026-07-28", "legacy"):

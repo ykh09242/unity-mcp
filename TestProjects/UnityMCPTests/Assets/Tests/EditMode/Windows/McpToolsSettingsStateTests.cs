@@ -376,7 +376,7 @@ namespace MCPForUnityTests.Editor.Windows
                 panel.visualTree.Add(root);
                 Assert.AreSame(panel, root.panel);
                 section.Refresh();
-                var toggle = root.Query<Toggle>(className: "tool-item-toggle").ToList().Single(item => item.label == "execute_code");
+                var toggle = root.Query<Toggle>(className: "tool-item-toggle").ToList().Single(item => item.name == "tool-toggle-execute_code");
                 int writes = consent.Store.Writes;
                 consent.DuringOwnedMutation("execute_code", () => toggle.value = true); // Actual callback; deterministic modal cancellation.
                 consent.AssertOwnedState();

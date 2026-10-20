@@ -3,6 +3,7 @@ from typing import Annotated, Literal, Any
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_int, coerce_bool
@@ -14,6 +15,7 @@ from services.tools.reference_diagnostics import reference_page, reference_path
 
 
 @mcp_for_unity_tool(
+    group="legacy",
     description=(
         "Performs CRUD operations on Unity scenes. "
         "Read-only validate_references pages broken serialized PPtrs in active_scene/loaded_scenes "
@@ -180,7 +182,7 @@ async def manage_scene(
         response = await send_with_unity_instance(
             async_send_command_with_retry,
             instance,
-            "manage_scene",
+            capability_command("manage_scene"),
             params,
         )
         return (
@@ -309,7 +311,10 @@ async def manage_scene(
         if gate is not None:
             return gate.model_dump()
         response = await send_with_unity_instance(
-            async_send_command_with_retry, unity_instance, "manage_scene", params
+            async_send_command_with_retry,
+            unity_instance,
+            capability_command("manage_scene"),
+            params,
         )
 
         # Preserve structured failure data; unwrap success into a friendlier shape

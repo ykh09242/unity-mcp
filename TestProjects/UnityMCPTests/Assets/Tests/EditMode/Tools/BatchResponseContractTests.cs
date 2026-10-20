@@ -637,27 +637,28 @@ namespace MCPForUnityTests.Editor.Tools
             return type.CreateType();
         }
 
-        [Test]
-        public void ReplacingBatchOwnerInvalidatesItsAliasAndDoesNotInheritValidator()
+        [TestCase("manage_components", "add")]
+        [TestCase("scene_inspect", "get_active")]
+        public void ReplacingBatchOwnerInvalidatesItsAliasAndDoesNotInheritValidator(string tool, string action)
         {
             CommandRegistry.Initialize();
             var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
             var register = typeof(CommandRegistry).GetMethod("RegisterCommandType", BindingFlags.NonPublic | BindingFlags.Static);
             object owner = handlers["batch_execute"],
                 alias = handlers["batch_validate"],
-                component = handlers["manage_components"];
-            using var state = EnableTools("batch_execute", "manage_components");
+                component = handlers[tool];
+            using var state = EnableTools("batch_execute", tool);
             try
             {
-                Assert.IsTrue((bool)register.Invoke(null, new object[] { DynamicTool("manage_components"), false }));
+                Assert.IsTrue((bool)register.Invoke(null, new object[] { DynamicTool(tool), false }));
                 var response = Preview(
                     new JObject
                     {
                         ["commands"] = new JArray(
                             new JObject
                             {
-                                ["tool"] = "manage_components",
-                                ["params"] = new JObject { ["action"] = "add" },
+                                ["tool"] = tool,
+                                ["params"] = new JObject { ["action"] = action },
                             }
                         ),
                     }
@@ -671,7 +672,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 handlers["batch_execute"] = owner;
                 handlers["batch_validate"] = alias;
-                handlers["manage_components"] = component;
+                handlers[tool] = component;
             }
         }
 

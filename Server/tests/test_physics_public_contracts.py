@@ -159,6 +159,7 @@ def test_physics_registered_sdk_payloads_schema_and_diagnostics(tmp_path):
         server = FastMCP("physics-public-contracts")
         server.add_middleware(FixtureState())
         register_all_tools(server)
+        server.enable(names={'manage_physics'}, components={"tool"})
         fields = {"dimension":"2d","settings":{"queriesHitTriggers":False,"defaultContactOffset":0},"layer_a":"0","layer_b":"1","collide":False,"name":"Fixture","path":"Assets/Fixture","dynamic_friction":0,"static_friction":0,"bounciness":0,"friction":0,"friction_combine":"Average","bounce_combine":"Maximum","material_path":"Assets/Fixture.physicMaterial","target":"0","collider_type":"BoxCollider","search_method":"by_name","joint_type":"hinge","connected_body":"Root/Body","motor":{"force":0,"freeSpin":False},"limits":{},"spring":{"spring":0},"drive":{"enabled":False},"properties":{"enabled":False,"reference":None,"mass":0},"origin":[0,-1,0],"direction":[0,0,0],"max_distance":0,"layer_mask":"0","query_trigger_interaction":"Ignore","shape":"box","position":[0,0],"size":[0,1],"start":[0,0],"end":[0,0],"point1":[0,0,0],"point2":[0,0,0],"height":0,"capsule_direction":0,"angle":0,"force":[0,0],"force_mode":"Impulse","force_type":"normal","torque":[0],"explosion_position":[0,0,0],"explosion_radius":0,"explosion_force":0,"upwards_modifier":0,"steps":0,"step_size":0,"page_size":0,"cursor":0,"component_index":0}
         async def main():
             global raw

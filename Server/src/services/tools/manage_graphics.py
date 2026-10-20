@@ -4,6 +4,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -78,7 +79,7 @@ ALL_ACTIONS = (
 
 
 @mcp_for_unity_tool(
-    group="core",
+    group="legacy",
     description=(
         "Manage rendering graphics: volumes, post-processing, light baking, "
         "rendering stats, pipeline settings, and URP renderer features. "
@@ -230,6 +231,9 @@ async def manage_graphics(
             params_dict[key] = val
 
     result = await send_with_unity_instance(
-        async_send_command_with_retry, unity_instance, "manage_graphics", params_dict
+        async_send_command_with_retry,
+        unity_instance,
+        capability_command("manage_graphics"),
+        params_dict,
     )
     return result if isinstance(result, dict) else {"success": False, "message": str(result)}

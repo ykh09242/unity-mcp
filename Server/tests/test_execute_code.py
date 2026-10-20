@@ -233,6 +233,7 @@ def test_sdk_rejects_scalar_coercion_before_unity_dispatch():
         module.send_with_unity_instance = send
         server = FastMCP("execute-code-contract")
         register_all_tools(server)
+        server.enable(names={'execute_code'}, components={"tool"})
 
         async def main():
             for mode in ("2026-07-28", "legacy"):

@@ -179,6 +179,7 @@ class FixtureState(Middleware):
 server = FastMCP('camera-public-contracts')
 server.add_middleware(FixtureState())
 register_all_tools(server)
+server.enable(names={'manage_camera', 'capture_camera'}, components={"tool"})
 cases = [
     ({'action': action}, {'action': action})
     for action in ('ping', 'get_brain_status', 'list_cameras', 'release_override')
@@ -315,6 +316,7 @@ async def controlled_send(instance, command, params, **kwargs):
 PluginHub.send_command_for_instance = staticmethod(controlled_send)
 server = FastMCP('camera-image-metadata')
 register_all_tools(server)
+server.enable(names={'manage_camera', 'capture_camera'}, components={"tool"})
 image = ('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8'
          '/x8AAwMCAO+a5XkAAAAASUVORK5CYII=')
 cases = [
@@ -334,14 +336,18 @@ async def main():
     global reply
     for mode in ('2026-07-28', 'legacy'):
         async with Client(server, mode=mode) as client:
-            for payload, data in cases:
+            for tool_name, payload, data in (
+                (name, payload, data)
+                for name in ('manage_camera', 'capture_camera')
+                for payload, data in cases
+            ):
                 reply = {'success': True, 'message': 'Captured', 'data': data}
                 expected = copy.deepcopy(reply)
                 expected['data'].pop('imageBase64', None)
                 for shot in expected['data'].get('screenshots', []):
                     shot.pop('imageBase64', None)
                 # When: the public SDK requests an inline screenshot.
-                result = await client.call_tool('manage_camera', payload)
+                result = await client.call_tool(tool_name, payload)
                 # Then: metadata is structured and image bytes occur only in image blocks.
                 assert result.structured_content == expected, (mode, result.structured_content)
                 assert json.loads(result.content[0].text) == expected

@@ -253,7 +253,11 @@ class SceneLoadInputs(Middleware):
 
         ctx = context.fastmcp_context
         message = context.message
-        if message.name != "manage_scene" or ctx is None or ctx.request_context is None:
+        if (
+            message.name not in {"manage_scene", "scene_lifecycle"}
+            or ctx is None
+            or ctx.request_context is None
+        ):
             return await call_next(context)
         from transport.execution_receipts import execution_options, reject_continuation
         from services.execution_receipt_identity import ReceiptUnavailable
@@ -281,9 +285,14 @@ class SceneLoadInputs(Middleware):
         elicitation = capabilities.elicitation if capabilities else None
         if elicitation is None or (elicitation.form is None and elicitation.url is not None):
             return await call_next(context)
+        expected = manage_scene
+        if message.name == "scene_lifecycle":
+            from services.tools.capabilities import CAPABILITY_TOOLS
+
+            expected = CAPABILITY_TOOLS["scene_lifecycle"]
         tool = await ctx.fastmcp.get_tool(message.name)
         if type(tool) is not FunctionTool or inspect.unwrap(tool.fn) is not inspect.unwrap(
-            manage_scene
+            expected
         ):
             return await call_next(context)
         owner = self.principal(ctx.request_context)

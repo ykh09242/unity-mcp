@@ -9,6 +9,8 @@ from enum import StrEnum
 from typing import Final, TypeAlias
 from urllib.parse import urlsplit
 
+from services.registry.capability_catalog import CAPABILITIES
+
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 
 
@@ -350,6 +352,8 @@ _PUBLIC_SCRIPT_WRAPPERS: Final = _names(
 _COMPILING_SCRIPT_ACTIONS: Final = _names(
     "create delete edit apply_text_edits apply_prepared_script apply_change_set recover_change_set"
 )
+_CAPABILITIES: Final = {feature.name: feature for feature in CAPABILITIES}
+
 # BatchExecute dispatches canonical native tools, not Python convenience wrappers.
 _CANONICAL_ALIASES: Final = {
     "manage_components_selected": "manage_components",
@@ -358,7 +362,7 @@ _CANONICAL_ALIASES: Final = {
 }
 _NATIVE_COMMANDS: Final = _names(
     "batch_execute batch_validate blender_bridge cancel_test_job capture_ui_snapshot execute_code execute_menu_item execute_menu_item_observed export_test_job find_gameobjects generate_audio generate_image generate_model get_active_tool get_cameras get_compile_job get_editor_state get_gameobject get_gameobject_by_handle_v2 get_gameobject_component get_gameobject_component_selected get_gameobject_components get_layers get_menu_items get_prefab_stage get_project_info get_renderer_features get_rendering_stats get_selection get_tags get_test_job get_tests get_tests_for_mode get_tool_states get_volumes get_windows import_model import_model_file inspect_menu_item inspect_serialized_object_v1 manage_animation manage_addressables manage_asset manage_audio manage_build manage_camera manage_components manage_components_selected manage_editor manage_gameobject manage_graphics manage_input manage_input_actions manage_material manage_localization manage_navigation manage_netcode manage_object_handles_v2 manage_packages manage_physics manage_play_scenario manage_prefabs manage_probuilder manage_profiler manage_recording manage_scenario_recording manage_scene manage_scene_edits manage_script manage_scriptable_object manage_shader manage_sprite manage_simulation_profiles manage_sprite_atlas manage_terrain manage_texture manage_timeline manage_ugui manage_ui manage_vfx ping read_console refresh_unity run_tests tail_console unity_reflect"
-)
+) | frozenset(_CAPABILITIES)
 _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"}
 _RESOURCE_PATHS: Final = _names(
     "capabilities doctor tool-diagnostics custom-tools editor/active-tool editor/state scene/cameras scene/gameobject-api project/layers menu-items editor/prefab-stage prefab-api project/info pipeline/renderer-features rendering/stats editor/selection project/tags tests tool-groups instances scene/volumes editor/windows"
@@ -405,6 +409,15 @@ def required_permissions(
         if not native and params.get("wait_for_ready", True) is not False:
             return CUSTOM_GRANTS | {Permission.READ}
         return CUSTOM_GRANTS
+    feature = _CAPABILITIES.get(name)
+    if feature is not None:
+        action = params.get("action")
+        admitted = feature.native_actions if native else feature.actions
+        if not isinstance(action, str) or action.strip().lower() not in admitted:
+            raise OperationPermissionError()
+        # Preserve source special cases (preview, repair and capture grants).
+        # Admission remains restricted to this feature before canonicalization.
+        name = feature.source
     name = _CANONICAL_ALIASES.get(name, name)
     if name in _PUBLIC_SCRIPT_WRAPPERS:
         # These wrappers inspect/verify/await readiness, and their write paths

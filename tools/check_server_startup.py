@@ -30,8 +30,19 @@ async def check_registration():
     tools = await server.list_tools(run_middleware=False)
     resources = await server.list_resources(run_middleware=False)
     templates = await server.list_resource_templates(run_middleware=False)
-    if not {"manage_scene", "read_console"} <= {tool.name for tool in tools}:
-        raise RuntimeError("Required MCP tools were not registered")
+    required_tools = {
+        "asset_inspect",
+        "gameobject_create",
+        "gameobject_edit",
+        "manage_tools",
+        "prefab_inspect",
+        "read_console",
+        "scene_inspect",
+        "scene_lifecycle",
+    }
+    missing_tools = required_tools - {tool.name for tool in tools}
+    if missing_tools:
+        raise RuntimeError(f"Required MCP tools were not registered: {sorted(missing_tools)}")
     if not resources or not templates:
         raise RuntimeError("MCP resources or templates were not registered")
     return {"tools": len(tools), "resources": len(resources), "templates": len(templates)}

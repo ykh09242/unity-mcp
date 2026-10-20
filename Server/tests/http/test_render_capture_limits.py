@@ -228,6 +228,7 @@ async def _exercise_registered_sdk(owned: Path) -> None:
     refresh.wait_for_editor_ready = readiness
     server = FastMCP("render-capture-resource-limits")
     register_all_tools(server)
+    server.enable(names={"manage_ui", "manage_camera"}, components={"tool"})
     failures: list[str] = []
     rows = []
     for mode in ("auto", "legacy"):

@@ -239,6 +239,7 @@ class DirectContext:
 server = FastMCP('scene-prefab-contracts')
 server.add_middleware(FixtureState())
 register_all_tools(server)
+server.enable(names={'manage_scene', 'manage_prefabs'}, components={"tool"})
 scene_cases = [
     ({'action': 'load', 'name': 'Same'}, {'action': 'load', 'name': 'Same'}),
     ({'action': 'load', 'name': 'Same', 'additive': False},

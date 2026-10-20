@@ -246,6 +246,7 @@ class FixtureState(Middleware):
 server = FastMCP('ui-texture-public-contracts')
 server.add_middleware(FixtureState())
 register_all_tools(server)
+server.enable(names={'manage_ui', 'manage_texture'}, components={"tool"})
 server.enable(tags={'group:ui', 'group:vfx'})
 ui_cases = [
     ({'action': 'ping'}, {'action': 'ping'}),

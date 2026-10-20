@@ -223,6 +223,7 @@ class DirectContext:
 server = FastMCP('component-asset-contracts')
 server.add_middleware(FixtureState())
 register_all_tools(server)
+server.enable(names={'manage_asset'}, components={"tool"})
 component_cases = [
     ({'action': 'add', 'target': 'Fixture', 'component_type': 'BoxCollider'},
      {'action': 'add', 'target': 'Fixture', 'componentType': 'BoxCollider'}),
@@ -457,6 +458,7 @@ class State(Middleware):
 server = FastMCP("component-selection-contract")
 server.add_middleware(State())
 register_all_tools(server)
+server.enable(names={'manage_asset'}, components={"tool"})
 base = {"action": "set_property", "target": -321, "component_type": "UnityEngine.AudioSource", "property": "volume", "value": 0}
 wire = {"action": "set_property", "target": -321, "componentType": "UnityEngine.AudioSource", "property": "volume", "value": 0}
 async def main():

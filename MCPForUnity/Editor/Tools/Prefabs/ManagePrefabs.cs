@@ -14,7 +14,7 @@ using UnityEngine.SceneManagement;
 
 namespace MCPForUnity.Editor.Tools.Prefabs
 {
-    [McpForUnityTool("manage_prefabs", AutoRegister = false)]
+    [McpForUnityTool("manage_prefabs", AutoRegister = false, Group = "legacy")]
     /// <summary>
     /// Tool to manage Unity Prefabs: create, inspect, modify, and open/save/close prefab stage.
     /// Supports both headless editing (modify_contents) and interactive prefab stage workflows.

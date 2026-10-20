@@ -65,7 +65,7 @@ class ScenePeer(PluginStream):
         async with self.command_receive:
             async for command in self.command_receive:
                 self.reply_done = anyio.Event()
-                if command["name"] == "manage_scene":
+                if command["name"] in {"manage_scene", "scene_lifecycle", "scene_inspect"}:
                     self.loads.append(command)
                     self.dispatched.set()
                     if self.hold_load:
@@ -109,7 +109,8 @@ def flow_server(monkeypatch, prepared_tool_factory, request):
     import services.tools.preflight as preflight_module
 
     settings = getattr(request, "param", True)
-    hosted, enabled = settings if isinstance(settings, tuple) else (settings, True)
+    hosted, enabled = settings[:2] if isinstance(settings, tuple) else (settings, True)
+    grants = settings[2] if isinstance(settings, tuple) and len(settings) == 3 else None
     monkeypatch.setattr(config, "http_remote_hosted", hosted)
     monkeypatch.setattr(config, "http_behind_tls_proxy", True)
     monkeypatch.setattr(config, "transport_mode", "http")
@@ -128,7 +129,11 @@ def flow_server(monkeypatch, prepared_tool_factory, request):
 
         async def validate(key):
             users = {"alice-key": "alice", "bob-key": "bob"}
-            return ValidationResult(valid=key in users, user_id=users.get(key))
+            return ValidationResult(
+                valid=key in users,
+                user_id=users.get(key),
+                metadata={"unity_mcp_permissions": grants} if grants is not None else None,
+            )
 
         monkeypatch.setattr(service, "_validate_external", validate)
         with monkeypatch.context() as patch:
@@ -141,7 +146,7 @@ def flow_server(monkeypatch, prepared_tool_factory, request):
 
 
 @asynccontextmanager
-async def connected(flow_server):
+async def connected(flow_server, *, tools=None):
     server, hosted = flow_server
     app = server.http_app(path="/mcp", stateless_http=True, json_response=True)
     async with app.router.lifespan_context(app):
@@ -152,7 +157,11 @@ async def connected(flow_server):
             try:
                 await peer.connect(group)
                 group.start_soon(peer.respond)
-                await peer.catalog([{"name": "manage_scene"}, {"name": "get_editor_state"}])
+                await peer.catalog(
+                    tools
+                    if tools is not None
+                    else [{"name": "manage_scene"}, {"name": "get_editor_state"}]
+                )
                 headers = {"Accept": "application/json, text/event-stream"}
                 headers.update(
                     {"x-api-key": "alice-key"}
@@ -1044,7 +1053,10 @@ async def test_unreviewed_original_argument_combinations_delegate_ordinary_valid
 
 
 @pytest.mark.asyncio
-async def test_replaced_builtin_is_not_interpreted_as_the_repository_scene_load(flow_server):
+@pytest.mark.parametrize("tool_name", ["manage_scene", "scene_lifecycle"])
+async def test_replaced_builtin_is_not_interpreted_as_the_repository_scene_load(
+    flow_server, tool_name
+):
     # Given: a real public FunctionTool replacement under the same tool name.
     from fastmcp.tools.base import Tool
 
@@ -1055,10 +1067,12 @@ async def test_replaced_builtin_is_not_interpreted_as_the_repository_scene_load(
         calls.append((action, additive))
         return {"success": False, "error": "fixture_replacement"}
 
-    server.add_tool(Tool.from_function(replacement, name="manage_scene"))
-    async with connected(flow_server) as (_, client, peer, _):
+    server.add_tool(Tool.from_function(replacement, name=tool_name))
+    async with connected(
+        flow_server, tools=[{"name": tool_name}, {"name": "get_editor_state"}]
+    ) as (_, client, peer, _):
         # When: the form-capable request targets the replacement instead of the reviewed function.
-        response = await request(client)
+        response = await request(client, name=tool_name)
         # Then: its own semantics are retained with no prompt or native invocation.
         assert response.json()["result"]["structuredContent"]["error"] == "fixture_replacement"
         assert calls == [("load", True)]
@@ -1079,3 +1093,68 @@ async def test_current_catalog_withdrawal_is_checked_before_pending_input(flow_s
         # Then: existing current-tenant visibility refuses before native continuation.
         assert response.json()["error"] == ordinary.json()["error"]
         assert not peer.commands
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "flow_server", [(True, True, ["read", "edit", "run"]), False], indirect=True
+)
+async def test_focused_scene_input_resumes_once_without_enabling_legacy_tool(flow_server):
+    catalog = [{"name": "scene_lifecycle"}, {"name": "get_editor_state"}]
+    async with connected(flow_server, tools=catalog) as (_, client, peer, _):
+        first = (await request(client, name="scene_lifecycle")).json()["result"]
+        assert first["resultType"] == "input_required"
+        assert not peer.commands
+        args = dict(name="scene_lifecycle", state=first["requestState"], answer=accepted())
+        completed = (await request(client, **args, request_id="focused-resume")).json()["result"]
+        assert completed["structuredContent"]["success"] is True
+        assert len(peer.loads) == 1 and peer.loads[0]["name"] == "scene_lifecycle"
+        assert peer.loads[0]["params"] == {
+            "action": "load",
+            "path": "Assets/Scenes/A.unity",
+            "additive": True,
+        }
+        await request(client, **args, request_id="focused-replay")
+        assert len(peer.loads) == 1
+
+
+@pytest.mark.asyncio
+async def test_focused_scene_state_cannot_switch_names_or_survive_withdrawal(flow_server):
+    catalog = [{"name": name} for name in ("scene_lifecycle", "manage_scene", "get_editor_state")]
+    async with connected(flow_server, tools=catalog) as (_, client, peer, _):
+        first = (await request(client, name="scene_lifecycle")).json()["result"]
+        assert first["resultType"] == "input_required"
+        switched = await request(
+            client, name="manage_scene", state=first["requestState"], answer=accepted()
+        )
+        assert "error" in switched.json()
+        assert not peer.commands
+        await peer.catalog([{"name": "get_editor_state"}])
+        withdrawn = await request(
+            client, name="scene_lifecycle", state=first["requestState"], answer=accepted()
+        )
+        assert "error" in withdrawn.json()
+        assert not peer.commands
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flow_server", [(True, True, ["read"])], indirect=True)
+async def test_focused_scene_sdk_and_native_dispatch_honor_read_only_authority(flow_server):
+    catalog = [{"name": name} for name in ("scene_inspect", "scene_lifecycle", "get_editor_state")]
+    async with connected(flow_server, tools=catalog) as (_, client, peer, _):
+        inspected = await request(
+            client,
+            name="scene_inspect",
+            arguments={"action": "get_active", "unity_instance": "A@a"},
+        )
+        assert inspected.json()["result"]["structuredContent"]["success"] is True
+        assert peer.loads[-1]["name"] == "scene_inspect"
+        before = len(peer.commands)
+        denied = await request(
+            client,
+            name="scene_lifecycle",
+            arguments={"action": "load", "path": "Assets/Scenes/A.unity", "unity_instance": "A@a"},
+        )
+        payload = denied.json()
+        assert "error" in payload or payload.get("result", {}).get("isError")
+        assert len(peer.commands) == before

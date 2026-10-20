@@ -8,7 +8,7 @@ description: "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity
 
 > **Auto-generated** from the Python tool registry. Do not hand-edit outside `<!-- examples:start --><!-- examples:end -->` blocks — the generator (`tools/generate_docs_reference.py`) will overwrite them.
 
-**Group:** `ui` &nbsp;·&nbsp; **Module:** `services.tools.manage_ui`
+**Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_ui`
 
 ## Description
 

@@ -39,6 +39,7 @@ def test_reflection_execution_sdk_and_cli_contracts():
         tools.get_registered_tools = lambda: metadata
         mcp = FastMCP("reflection-execution-contract")
         tools.register_all_tools(mcp)
+        mcp.enable(names={'unity_reflect', 'execute_code'}, components={"tool"})
 
         async def scenario():
             global response

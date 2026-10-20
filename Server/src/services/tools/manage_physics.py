@@ -4,6 +4,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.pagination import validate_page
@@ -39,7 +40,7 @@ ALL_ACTIONS: list[str] = list(get_args(PhysicsAction))
 
 
 @mcp_for_unity_tool(
-    group="core",
+    group="legacy",
     description=(
         "Manage physics settings, collision matrix, materials, joints, queries, and validation.\n\n"
         "SETTINGS: ping, get_settings, set_settings\n"
@@ -305,6 +306,9 @@ async def manage_physics(
             params_dict[key] = val
 
     result = await send_with_unity_instance(
-        async_send_command_with_retry, unity_instance, "manage_physics", params_dict
+        async_send_command_with_retry,
+        unity_instance,
+        capability_command("manage_physics"),
+        params_dict,
     )
     return result if isinstance(result, dict) else {"success": False, "message": str(result)}

@@ -5,6 +5,7 @@ using System.Reflection;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.Capabilities;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 
@@ -31,6 +32,12 @@ namespace MCPForUnity.Editor.Services
             }
 
             _cachedTools = new Dictionary<string, ToolMetadata>();
+            // A new capability cannot silently override a user's previous combined-tool choice.
+            // Capture before discovery initializes missing legacy preferences on fresh installs.
+            var existingLegacyPreferences = new HashSet<string>(
+                ToolCapabilityCatalog.LegacyNames.Where(name => EditorPrefs.HasKey(GetToolPreferenceKey(name))),
+                StringComparer.Ordinal
+            );
 
             // TypeCache is Unity's precomputed attribute index, rebuilt once per domain reload.
             // This used to query it and then ALSO materialise every type in every loaded assembly
@@ -71,7 +78,7 @@ namespace MCPForUnity.Editor.Services
                     name => McpLog.Warn($"Duplicate tool name '{name}' from {type.FullName}; overwriting previous registration.")
                 );
                 if (metadata != null)
-                    EnsurePreferenceInitialized(metadata);
+                    EnsurePreferenceInitialized(metadata, existingLegacyPreferences);
             }
             _diagnostics.Complete();
 
@@ -215,7 +222,7 @@ namespace MCPForUnity.Editor.Services
                 return EditorPrefs.GetBool(key, true);
             }
 
-            return metadata?.AutoRegister ?? false;
+            return metadata?.EnabledByDefault ?? false;
         }
 
         public void SetToolEnabled(string toolName, bool enabled)
@@ -260,6 +267,7 @@ namespace MCPForUnity.Editor.Services
                 var metadata = new ToolMetadata
                 {
                     Name = toolName,
+                    DisplayName = toolAttr.DisplayName,
                     Description = description,
                     StructuredOutput = toolAttr.StructuredOutput,
                     Parameters = parameters,
@@ -403,7 +411,7 @@ namespace MCPForUnity.Editor.Services
             _diagnostics = new ToolDiscoveryDiagnostics();
         }
 
-        private void EnsurePreferenceInitialized(ToolMetadata metadata)
+        private void EnsurePreferenceInitialized(ToolMetadata metadata, HashSet<string> existingLegacyPreferences)
         {
             if (metadata == null || string.IsNullOrEmpty(metadata.Name))
             {
@@ -417,7 +425,9 @@ namespace MCPForUnity.Editor.Services
             string key = GetToolPreferenceKey(metadata.Name);
             if (!EditorPrefs.HasKey(key))
             {
-                bool defaultValue = metadata.AutoRegister || metadata.IsBuiltIn;
+                string source = ToolCapabilityCatalog.GetSource(metadata.Name);
+                bool retainedLegacyChoice = source != null && existingLegacyPreferences.Contains(source);
+                bool defaultValue = !retainedLegacyChoice && metadata.EnabledByDefault;
                 EditorPrefs.SetBool(key, defaultValue);
             }
         }

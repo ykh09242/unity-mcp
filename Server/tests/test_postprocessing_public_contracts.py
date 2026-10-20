@@ -153,6 +153,7 @@ class FixtureState(Middleware):
 server = FastMCP('postprocessing-public-contracts')
 server.add_middleware(FixtureState())
 register_all_tools(server)
+server.enable(names={'manage_graphics'}, components={"tool"})
 cases = [
     ({'action': 'VOLUME_CREATE', 'name': 'Fixture', 'profile_path': 'Assets/Settings/Fixture.asset',
       'is_global': False, 'weight': 0, 'priority': 0,

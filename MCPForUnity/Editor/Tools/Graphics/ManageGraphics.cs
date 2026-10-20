@@ -6,7 +6,7 @@ using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.Graphics
 {
-    [McpForUnityTool("manage_graphics", AutoRegister = false, Group = "core")]
+    [McpForUnityTool("manage_graphics", AutoRegister = false, Group = "legacy")]
     public static class ManageGraphics
     {
         // The registry selects this cooperative overload. Direct callers of synchronous

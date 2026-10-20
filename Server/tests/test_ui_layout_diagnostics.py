@@ -143,14 +143,14 @@ def test_actual_sdk_layout_diagnostics(tmp_path):
         module.send_with_unity_instance=send
         module.send_mutation=mutation
         entry=next(e for e in get_registered_tools() if e["name"]=="manage_ui")
-        assert entry["group"]=="ui" and entry["kwargs"]["annotations"].destructive_hint is True
+        assert entry["group"]=="legacy" and entry["kwargs"]["annotations"].destructive_hint is True
         server=FastMCP("ui06")
         server.tool(name="manage_ui",description=entry["description"],**entry["kwargs"])(module.manage_ui)
         async def main():
             for mode in ("2026-07-28","legacy"):
                 async with Client(server,mode=mode) as client:
                     for disabled in ("group", "tool"):
-                        if disabled == "group": server.disable(tags={"group:ui"},components={"tool"})
+                        if disabled == "group": server.disable(tags={"group:legacy"},components={"tool"})
                         else: server.disable(names={"manage_ui"},components={"tool"})
                         assert "manage_ui" not in {t.name for t in await client.list_tools()}
                         before=len(calls)
@@ -159,7 +159,7 @@ def test_actual_sdk_layout_diagnostics(tmp_path):
                         except Exception: pass
                         else: assert refused.is_error
                         assert len(calls)==before
-                        if disabled == "group": server.enable(tags={"group:ui"},components={"tool"})
+                        if disabled == "group": server.enable(tags={"group:legacy"},components={"tool"})
                         else: server.enable(names={"manage_ui"},components={"tool"})
                     t=next(t for t in await client.list_tools() if t.name=="manage_ui")
                     schema=t.input_schema if hasattr(t,"input_schema") else t.inputSchema

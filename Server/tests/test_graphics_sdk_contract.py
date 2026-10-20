@@ -32,6 +32,7 @@ def test_graphics_sdk_preserves_rejected_bakes_and_optional_values():
             tools.get_registered_tools = lambda: metadata
             mcp = FastMCP("graphics-response-contract")
             tools.register_all_tools(mcp)
+            mcp.enable(names={'manage_graphics'}, components={"tool"})
             for mode in ("2026-07-28", "legacy"):
                 async with Client(mcp, mode=mode) as client:
                     for async_flag in (False, True):

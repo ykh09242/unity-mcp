@@ -76,6 +76,7 @@ async def main():
     server = FastMCP("asset-search-contract")
     server.add_middleware(State())
     register_all_tools(server)
+    server.enable(names={'manage_asset'}, components={"tool"})
     async with Client(server, mode=sys.argv[1]) as client:
         # Given: the actual registered SDK advertises the opt-in without changing the public alias.
         schema = {tool.name: tool.input_schema for tool in await client.list_tools()}["manage_asset"]

@@ -34,6 +34,7 @@ def run_paging_adapter_contract(pages):
         server = FastMCP("reflect-paging")
         server.add_middleware(FixtureState())
         register_all_tools(server)
+        server.enable(names={'unity_reflect'}, components={"tool"})
         async def scenario():
             global current
             for mode in ("2026-07-28", "legacy"):

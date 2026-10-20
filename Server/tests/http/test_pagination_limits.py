@@ -80,6 +80,7 @@ async def exercise(owned: Path):
     modules["manage_asset"].preflight = preflight
     server = FastMCP("pagination-security-fixture")
     register_all_tools(server)
+    server.enable(names={"manage_asset", "manage_ui", "manage_physics"}, components={"tool"})
     results = []
     for mode in ("auto", "legacy"):
         async with Client(server, mode=mode) as client:

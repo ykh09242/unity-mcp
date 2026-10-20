@@ -8,7 +8,7 @@ description: "Manages Unity Prefab assets. get_hierarchy returns bounded sibling
 
 > **Auto-generated** from the Python tool registry. Do not hand-edit outside `<!-- examples:start --><!-- examples:end -->` blocks — the generator (`tools/generate_docs_reference.py`) will overwrite them.
 
-**Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_prefabs`
+**Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_prefabs`
 
 ## Description
 

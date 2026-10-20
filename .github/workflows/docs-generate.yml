@@ -19,6 +19,8 @@ on:
       - Server/src/services/registry/**
       - website/docs/reference/**
       - tools/generate_docs_reference.py
+      - tools/generate_tool_capabilities.py
+      - MCPForUnity/Editor/Tools/ToolCapabilities.generated.cs
       - .github/workflows/docs-generate.yml
   push:
     branches: [beta]
@@ -28,6 +30,8 @@ on:
       - Server/src/services/registry/**
       - website/docs/reference/**
       - tools/generate_docs_reference.py
+      - tools/generate_tool_capabilities.py
+      - MCPForUnity/Editor/Tools/ToolCapabilities.generated.cs
       - .github/workflows/docs-generate.yml
   workflow_dispatch: {}
 
@@ -62,16 +66,6 @@ jobs:
         working-directory: Server
         run: uv run --python 3.14 python ../tools/generate_docs_reference.py --check
 
-      - name: Tool-count sanity
-        run: |
-          set -euo pipefail
-          # Match the decorator at start-of-line (skips imports and docstring mentions).
-          decorator_count=$(grep -rhE "^@mcp_for_unity_tool\(" Server/src/services/tools/ | wc -l | tr -d ' ')
-          # md_count excludes group landing pages (index.md) and the catalog root.
-          md_count=$(find website/docs/reference/tools -name '*.md' -not -name 'index.md' | wc -l | tr -d ' ')
-          echo "decorator_count=$decorator_count, md_count=$md_count"
-          if [[ "$decorator_count" != "$md_count" ]]; then
-            echo "Mismatch: $decorator_count @mcp_for_unity_tool decorators vs $md_count reference pages." >&2
-            echo "Run: cd Server && uv run python ../tools/generate_docs_reference.py" >&2
-            exit 1
-          fi
+      - name: Check native feature catalog
+        working-directory: Server
+        run: uv run --python 3.14 python ../tools/generate_tool_capabilities.py --check

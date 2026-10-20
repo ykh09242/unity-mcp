@@ -15,6 +15,9 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         public string Name { get; set; }
 
+        /// <summary>Optional human-readable title in the Editor tool catalog.</summary>
+        public string DisplayName { get; set; }
+
         /// <summary>
         /// Tool description for LLM
         /// </summary>
@@ -44,9 +47,10 @@ namespace MCPForUnity.Editor.Tools
 
         /// <summary>
         /// Tool group for dynamic visibility on the Python server.
-        /// Core tools are enabled by default; other groups start hidden and
-        /// can be activated per-session via the manage_tools meta-tool.
-        /// Valid groups: core, vfx, animation, ui, scripting_ext, testing, menu.
+        /// New built-in preferences enable core tools only. Existing choices are retained.
+        /// Optional groups can be selected in the Editor. Legacy stateful clients also
+        /// support session visibility via manage_tools; sessionless clients use Editor settings.
+        /// Group names must match the Python tool registry.
         /// Set to null for server meta-tools that should always be visible.
         /// </summary>
         public string Group { get; set; } = "core";

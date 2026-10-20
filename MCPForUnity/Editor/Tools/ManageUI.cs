@@ -14,7 +14,7 @@ using UnityEngine.UIElements;
 
 namespace MCPForUnity.Editor.Tools
 {
-    [McpForUnityTool("manage_ui", AutoRegister = false, Group = "ui")]
+    [McpForUnityTool("manage_ui", AutoRegister = false, Group = "legacy")]
     public static class ManageUI
     {
         private static readonly HashSet<string> ValidExtensions = new(StringComparer.OrdinalIgnoreCase) { ".uxml", ".uss" };

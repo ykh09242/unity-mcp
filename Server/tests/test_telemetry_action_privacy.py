@@ -84,6 +84,7 @@ async def main():
     app = FastMCP("telemetry-action-privacy")
     with patch.object(tools, "discover_modules", lambda *args: iter(())):
         tools.register_all_tools(app)
+        app.enable(names={'manage_camera', 'manage_physics'}, components={"tool"})
     service = custom.CustomToolService(app)
     definition = ToolDefinitionModel(name="caller_custom", parameters=[ToolParameterModel(name="action", type="string", required=False, default_value=SECRETS[4])])
     service._register_project_tools("fixturehash", [definition], project_hash="fixturehash")

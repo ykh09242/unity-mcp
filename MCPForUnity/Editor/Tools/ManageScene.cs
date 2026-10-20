@@ -16,7 +16,7 @@ namespace MCPForUnity.Editor.Tools
     /// <summary>
     /// Handles scene management operations like loading, saving, creating, and querying hierarchy.
     /// </summary>
-    [McpForUnityTool("manage_scene", AutoRegister = false)]
+    [McpForUnityTool("manage_scene", AutoRegister = false, Group = "legacy")]
     public static class ManageScene
     {
         // One native action catalogue is shared by preview and actual dispatch.

@@ -13,7 +13,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
     /// <summary>
     /// Handles GameObject manipulation within the current scene (CRUD, find, components).
     /// </summary>
-    [McpForUnityTool("manage_gameobject", AutoRegister = false)]
+    [McpForUnityTool("manage_gameobject", AutoRegister = false, Group = "legacy")]
     public static class ManageGameObject
     {
         // One native action catalogue is shared by preview and actual dispatch.

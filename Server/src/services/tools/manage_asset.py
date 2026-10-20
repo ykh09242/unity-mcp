@@ -13,6 +13,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
+from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import parse_json_payload, coerce_int, normalize_properties
@@ -126,6 +127,7 @@ def asset_label_params(
 
 
 @mcp_for_unity_tool(
+    group="legacy",
     description=(
         "Performs asset operations (import, create, modify, delete, etc.) in Unity. "
         "Read-only get_dependencies/get_reverse_references/preview_move/preview_delete use bounded "
@@ -313,7 +315,7 @@ async def manage_asset(
         result = await send_with_unity_instance(
             async_send_command_with_retry,
             instance,
-            "manage_asset",
+            capability_command("manage_asset"),
             params,
             loop=asyncio.get_running_loop(),
             retry_on_reload=not guarded_mutation,
@@ -359,7 +361,7 @@ async def manage_asset(
         result = await send_with_unity_instance(
             async_send_command_with_retry,
             instance,
-            "manage_asset",
+            capability_command("manage_asset"),
             params,
             loop=asyncio.get_running_loop(),
             retry_on_reload=action_l == "get_labels",
@@ -537,7 +539,11 @@ async def manage_asset(
 
     # Use centralized async retry helper with instance routing
     result = await send_with_unity_instance(
-        async_send_command_with_retry, unity_instance, "manage_asset", params_dict, loop=loop
+        async_send_command_with_retry,
+        unity_instance,
+        capability_command("manage_asset"),
+        params_dict,
+        loop=loop,
     )
     # Return the result obtained from Unity
     return result if isinstance(result, dict) else {"success": False, "message": str(result)}

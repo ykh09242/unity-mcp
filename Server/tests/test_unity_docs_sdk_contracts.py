@@ -40,6 +40,7 @@ def test_docs_versions_and_policy_at_actual_sdk_boundary():
         server = FastMCP("docs-contracts")
         server.add_middleware(middleware)
         register_all_tools(server)
+        server.enable(names={'unity_docs'}, components={"tool"})
         async def main():
             async with Client(server) as client:
                 schema = next(t for t in await client.list_tools() if t.name == "unity_docs").input_schema

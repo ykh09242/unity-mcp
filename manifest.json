@@ -23,7 +23,7 @@
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/2627fc893d46c37c05956b2616e2cc8ebb9d4ce2.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/942ddd10d1748d1367b697f47efb3582a4f4566d.zip#subdirectory=Server",
         "mcp-for-unity"
       ],
       "env": {}
@@ -31,8 +31,32 @@
   },
   "tools": [
     {
+      "name": "apply_physics_force",
+      "description": "Apply forces, torque or explosions to rigidbodies."
+    },
+    {
       "name": "apply_text_edits",
       "description": "Apply text edits to script content"
+    },
+    {
+      "name": "asset_bundles",
+      "description": "Inspect asset bundles, their contents and dependencies."
+    },
+    {
+      "name": "asset_edit",
+      "description": "Create, import, modify, duplicate, move or delete assets and folders."
+    },
+    {
+      "name": "asset_inspect",
+      "description": "Search assets or inspect their metadata and components."
+    },
+    {
+      "name": "asset_labels",
+      "description": "Read or change asset labels with revision checks."
+    },
+    {
+      "name": "asset_reference_diagnostics",
+      "description": "Inspect dependencies and reverse references, or preview asset moves and deletion."
     },
     {
       "name": "batch_execute",
@@ -45,6 +69,10 @@
     {
       "name": "cancel_test_job",
       "description": "Request cancellation of an owned native Unity test job"
+    },
+    {
+      "name": "capture_camera",
+      "description": "Capture Game or Scene views, including surround and orbit batches."
     },
     {
       "name": "capture_ui_snapshot",
@@ -61,6 +89,10 @@
     {
       "name": "delete_script",
       "description": "Delete C# scripts"
+    },
+    {
+      "name": "diagnose_physics",
+      "description": "Validate physics setup or inspect a pair of colliders and passive contacts."
     },
     {
       "name": "execute_code",
@@ -85,6 +117,26 @@
     {
       "name": "find_in_file",
       "description": "Search for content within Unity project files"
+    },
+    {
+      "name": "gameobject_create",
+      "description": "Create a GameObject with transform, components and optional prefab output."
+    },
+    {
+      "name": "gameobject_duplicate",
+      "description": "Duplicate a GameObject with optional name, parent and position changes."
+    },
+    {
+      "name": "gameobject_edit",
+      "description": "Modify or delete an existing GameObject and its components."
+    },
+    {
+      "name": "gameobject_placement",
+      "description": "Preview or apply alignment and distribution of selected GameObjects."
+    },
+    {
+      "name": "gameobject_positioning",
+      "description": "Move a GameObject relative to a reference or orient it toward a target."
     },
     {
       "name": "generate_audio",
@@ -151,6 +203,14 @@
       "description": "Manage cameras (Unity Camera + Cinemachine) with presets, pipelines, and blending"
     },
     {
+      "name": "manage_cameras",
+      "description": "Create or list cameras, select targets and configure lenses or priority."
+    },
+    {
+      "name": "manage_cinemachine",
+      "description": "Configure Cinemachine brains, tracking, extensions and camera blends."
+    },
+    {
       "name": "manage_components",
       "description": "Add, remove, and configure GameObject components"
     },
@@ -173,6 +233,10 @@
     {
       "name": "manage_input_actions",
       "description": "Inspect and author bounded InputAction assets while preserving existing action and binding identities"
+    },
+    {
+      "name": "manage_light_baking",
+      "description": "Control light baking and configure light or reflection probes."
     },
     {
       "name": "manage_localization",
@@ -203,6 +267,18 @@
       "description": "Manage 3D and 2D physics: settings, collision matrix, materials, joints, queries (raycast, shapecast, linecast, overlap), forces, rigidbody configuration, validation, and simulation"
     },
     {
+      "name": "manage_physics_joints",
+      "description": "Add, configure or remove 2D/3D joints."
+    },
+    {
+      "name": "manage_physics_materials",
+      "description": "Create, configure and assign physics materials."
+    },
+    {
+      "name": "manage_physics_settings",
+      "description": "Inspect or change 2D/3D physics settings and layer collision rules."
+    },
+    {
       "name": "manage_play_scenario",
       "description": "Save, validate and run repeatable Play Mode scenarios with condition waits, step results and failure logs (group: testing)"
     },
@@ -221,6 +297,38 @@
     {
       "name": "manage_recording",
       "description": "Start, poll and stop bounded silent Game View or Scene View MP4 recording on supported interactive Editors (group: core)"
+    },
+    {
+      "name": "manage_render_environment",
+      "description": "Inspect the environment or configure skybox, ambient light and sun."
+    },
+    {
+      "name": "manage_render_fog",
+      "description": "Enable or configure scene fog."
+    },
+    {
+      "name": "manage_render_pipeline",
+      "description": "Inspect the render pipeline or change quality and pipeline settings."
+    },
+    {
+      "name": "manage_render_reflections",
+      "description": "Configure environment reflection mode, intensity, bounces and resolution."
+    },
+    {
+      "name": "manage_render_volumes",
+      "description": "Create volumes and profiles, then inspect or configure post-processing effects."
+    },
+    {
+      "name": "manage_renderer_features",
+      "description": "Add, configure, reorder or remove URP renderer features."
+    },
+    {
+      "name": "manage_rendering_stats",
+      "description": "Inspect rendering counters and memory, or select a scene debug view."
+    },
+    {
+      "name": "manage_rigidbody",
+      "description": "Inspect or configure a Rigidbody or Rigidbody2D."
     },
     {
       "name": "manage_scenario_recording",
@@ -291,6 +399,30 @@
       "description": "Manage Visual Effects, particle systems, and trails"
     },
     {
+      "name": "prefab_contents",
+      "description": "Edit prefab contents or preview and apply a guarded transform change."
+    },
+    {
+      "name": "prefab_create",
+      "description": "Create a prefab asset from an existing GameObject."
+    },
+    {
+      "name": "prefab_inspect",
+      "description": "Inspect prefab metadata or a bounded hierarchy page."
+    },
+    {
+      "name": "prefab_overrides",
+      "description": "List, apply or revert explicitly selected prefab overrides."
+    },
+    {
+      "name": "prefab_stage",
+      "description": "Open, save or close the Prefab Stage."
+    },
+    {
+      "name": "query_physics",
+      "description": "Run ray, shape and overlap queries in 2D or 3D."
+    },
+    {
       "name": "read_console",
       "description": "Read Unity Editor console output; MCP logs are excluded unless include_mcp_logs is enabled"
     },
@@ -303,6 +435,22 @@
       "description": "Run Unity Test Framework tests"
     },
     {
+      "name": "scene_inspect",
+      "description": "Inspect loaded scenes, hierarchy and build settings, or frame the Scene view."
+    },
+    {
+      "name": "scene_lifecycle",
+      "description": "Create, load, save or close scenes and organize loaded scene objects."
+    },
+    {
+      "name": "scene_reference_diagnostics",
+      "description": "Inspect scene references within explicit work and result budgets."
+    },
+    {
+      "name": "scene_validate",
+      "description": "Validate the scene, with optional explicit repair."
+    },
+    {
       "name": "script_apply_edits",
       "description": "Apply code edits to C# scripts with validation"
     },
@@ -313,6 +461,30 @@
     {
       "name": "set_active_instance",
       "description": "Set the active Unity Editor instance for multi-instance workflows"
+    },
+    {
+      "name": "simulate_physics",
+      "description": "Advance physics by a bounded number of explicit simulation steps."
+    },
+    {
+      "name": "ui_capture",
+      "description": "Start, poll or cancel a bounded UI Toolkit render capture."
+    },
+    {
+      "name": "ui_document",
+      "description": "Attach UI documents and configure Panel Settings."
+    },
+    {
+      "name": "ui_element",
+      "description": "Change a visual element's text, classes, style or state."
+    },
+    {
+      "name": "ui_inspect",
+      "description": "Inspect the visual tree or diagnose UI Toolkit layout and text."
+    },
+    {
+      "name": "ui_source",
+      "description": "Create, read or edit UXML/USS assets, link stylesheets or preview source patches."
     },
     {
       "name": "unity_docs",

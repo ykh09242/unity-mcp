@@ -152,6 +152,7 @@ def test_physics_assets_settings_registered_sdk_payloads_and_results(tmp_path):
         server = FastMCP("physics-assets-settings")
         server.add_middleware(FixtureState())
         register_all_tools(server)
+        server.enable(names={'manage_physics'}, components={"tool"})
         cases = [
             {"action":"create_physics_material","name":"Fixture"},
             {"action":"create_physics_material","name":"Fixture","dimension":"2d","path":r"Assets\Physics\Nested","friction":0,"bounciness":0},
