@@ -28,6 +28,11 @@ namespace MCPForUnityTests.Editor.Tools
             RenderTexture.active = originalActive;
             foreach (int id in panelIds)
             {
+                if (Cache.TryGetValue(id, out var owned))
+                {
+                    Bindings.TryGetValue(id, out var binding);
+                    ManageUI.FinishPanelRender(id, binding.panel, owned, false, true);
+                }
                 Cache.Remove(id);
                 Bindings.Remove(id);
             }
@@ -55,6 +60,100 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         private static void PruneCache() => typeof(ManageUI).GetMethod("PruneUICache", PrivateStatic).Invoke(null, null);
+
+        [UnityEngine.TestTools.UnityTest]
+        public System.Collections.IEnumerator IdlePanelTargetsExpireAndRestoreBorrowedBinding()
+        {
+            var clock = typeof(ManageUI).GetField("s_renderCacheClock", PrivateStatic);
+            Assert.IsNotNull(clock, "A panel cache needs idle lifetime ownership.");
+            object previous = clock.GetValue(null);
+            double now = 1000;
+            try
+            {
+                clock.SetValue(null, (System.Func<double>)(() => now));
+                var item = Seed();
+                typeof(ManageUI).GetMethod("TouchPanelCache", PrivateStatic).Invoke(null, new object[] { item.id });
+                now += 61;
+                yield return null;
+                yield return null;
+                Assert.IsFalse(Cache.ContainsKey(item.id));
+                Assert.IsFalse(Bindings.ContainsKey(item.id));
+                Assert.IsTrue(item.owned == null);
+                Assert.AreSame(item.prior, item.panel.targetTexture);
+                Assert.IsFalse((bool)typeof(ManageUI).GetField("s_renderCleanupScheduled", PrivateStatic).GetValue(null));
+            }
+            finally
+            {
+                clock.SetValue(null, previous);
+            }
+        }
+
+        [UnityEngine.TestTools.UnityTest]
+        public System.Collections.IEnumerator IdleCleanupProtectsAnActiveDeferredCapture()
+        {
+            var clock = typeof(ManageUI).GetField("s_renderCacheClock", PrivateStatic);
+            var pending = typeof(ManageUI).GetField("s_pendingPanelCapture", PrivateStatic);
+            object previousClock = clock.GetValue(null);
+            object previousCapture = pending.GetValue(null);
+            Assert.IsNull(previousCapture);
+            double now = 1000;
+            try
+            {
+                clock.SetValue(null, (System.Func<double>)(() => now));
+                var item = Seed();
+                var capture = System.Activator.CreateInstance(pending.FieldType, true);
+                var fields = BindingFlags.Instance | BindingFlags.NonPublic;
+                pending.FieldType.GetField("PanelId", fields).SetValue(capture, item.id);
+                pending.FieldType.GetField("Panel", fields).SetValue(capture, item.panel);
+                pending.FieldType.GetField("Target", fields).SetValue(capture, item.owned);
+                pending.SetValue(null, capture);
+                typeof(ManageUI).GetMethod("TouchPanelCache", PrivateStatic).Invoke(null, new object[] { item.id });
+                now += 61;
+                yield return null;
+                yield return null;
+                Assert.AreSame(item.owned, Cache[item.id]);
+                Assert.IsTrue(item.owned != null);
+                pending.SetValue(null, null);
+                now += 2;
+                yield return null;
+                yield return null;
+                Assert.IsFalse(Cache.ContainsKey(item.id));
+            }
+            finally
+            {
+                pending.SetValue(null, previousCapture);
+                clock.SetValue(null, previousClock);
+            }
+        }
+
+        [Test]
+        public void DetachingLastDocumentReleasesCache_ButSharedSettingsStayWarm()
+        {
+            var item = Seed();
+            var first = new GameObject("FirstCachedDocument");
+            var second = new GameObject("SecondCachedDocument");
+            objects.Add(first);
+            objects.Add(second);
+            first.AddComponent<UIDocument>().panelSettings = item.panel;
+            second.AddComponent<UIDocument>().panelSettings = item.panel;
+            foreach (var document in new[] { first, second })
+            {
+                var response = Newtonsoft.Json.Linq.JObject.FromObject(
+                    ManageUI.HandleCommand(
+                        new Newtonsoft.Json.Linq.JObject
+                        {
+                            ["action"] = "detach_ui_document",
+                            ["target"] = document.GetInstanceIDCompat().ToString(),
+                            ["component_type"] = "ui_document",
+                        }
+                    )
+                );
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(document == first, Cache.ContainsKey(item.id));
+            }
+            Assert.IsTrue(item.owned == null);
+            Assert.AreSame(item.prior, item.panel.targetTexture);
+        }
 
         [Test]
         public void DestroyedBorrowedPanelPrunesOnlyItsOwnedTarget()
