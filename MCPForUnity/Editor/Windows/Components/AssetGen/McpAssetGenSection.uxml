@@ -9,7 +9,7 @@
             </ui:VisualElement>
             <ui:VisualElement class="setting-row">
                 <ui:Button name="assetgen-refresh" text="Refresh All" class="icon-button" />
-                <ui:Label name="assetgen-refresh-status" class="help-text" style="flex-shrink: 1; white-space: normal;" />
+                <ui:Label name="assetgen-refresh-status" class="help-text" />
             </ui:VisualElement>
             <ui:VisualElement name="assetgen-providers-container" class="spaced-row" />
             <ui:VisualElement name="blender-bridge-panel" class="subsection">
