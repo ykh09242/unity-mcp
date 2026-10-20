@@ -158,8 +158,8 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          # Start the measured long HTTP child early; keep complete files on two workers.
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
+          # Start the measured long HTTP child early; keep complete files on four workers.
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
 
       - name: Run server tests
         if: matrix.suite == 'server' && matrix.python-version != '3.14'
@@ -168,7 +168,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Run local harness unit tests (hermetic, no Unity)
         if: matrix.suite == 'tools'
@@ -176,7 +176,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=tools/tests/test_bench_transport.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -198,7 +198,7 @@ jobs:
           TIMING_SUITE: ${{ matrix.suite }}
         run: |
           cd Server
-          options=(--workers 2)
+          options=(--workers 4)
           if [ "$TIMING_SUITE" = server ] && [ "$TIMING_PYTHON" = 3.14 ]; then options+=(--coverage); fi
           uv run --python "$TIMING_PYTHON" --locked --extra dev python ../tools/ci_test_performance.py snapshot \
             --junit test-results.xml --nested-junit test-results-http.xml \
