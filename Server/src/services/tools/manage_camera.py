@@ -51,7 +51,7 @@ ALL_ACTIONS = (
 
 
 @mcp_for_unity_tool(
-    group="core",
+    group="camera",
     description=(
         "Manage cameras (Unity Camera + Cinemachine). Works without Cinemachine using basic Camera; "
         "unlocks presets, pipelines, and blending when Cinemachine is installed. "

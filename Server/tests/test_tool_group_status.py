@@ -144,3 +144,59 @@ def test_group_status_honors_remote_tenants_project_selection_and_empty_catalogs
                                     assert {group["name"] for group in reset["groups"] if group["enabled"]} == expected
         asyncio.run(scenario())
     """)
+
+
+def test_specialized_groups_start_hidden_and_reveal_complete_unchanged_schemas():
+    run_sdk_regression("""
+        import asyncio, json, sys
+        sys.path.insert(0, "src")
+        from fastmcp import Client, FastMCP
+        from core.config import config
+        from services.tools import register_all_tools
+        from transport.plugin_hub import PluginHub
+
+        optional = {"manage_camera": "camera", "manage_graphics": "graphics", "manage_physics": "physics"}
+
+        async def scenario():
+            config.transport_mode = "stdio"
+            config.http_remote_hosted = False
+            complete = FastMCP("complete")
+            register_all_tools(complete, project_scoped_tools=False)
+            schemas = {t.name: t.parameters for t in await complete.list_tools(run_middleware=False)}
+            assert optional.keys() <= schemas.keys(), "Legacy stdio compatibility"
+
+            config.transport_mode = "http"
+            server = FastMCP("lean")
+            register_all_tools(server, project_scoped_tools=False)
+            for mode in ("legacy", "2026-07-28"):
+                async with Client(server, mode=mode) as client:
+                    initial = await client.list_tools()
+                    names = {t.name for t in initial}
+                    assert not optional.keys() & names, names
+                    assert {"manage_gameobject", "manage_prefabs", "manage_tools"} <= names
+                    groups = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content["groups"]
+                    for name, group in optional.items():
+                        item = next(g for g in groups if g["name"] == group)
+                        assert name in item["tools"] and not item["default_enabled"] and not item["enabled"]
+                        result = (await client.call_tool("manage_tools", {"action": "activate", "group": group})).structured_content
+                        if mode == "legacy":
+                            assert result["activated"] == group
+                            visible = next(t for t in await client.list_tools() if t.name == name)
+                            assert visible.inputSchema == schemas[name]
+                        else:
+                            assert "sessionless" in result["error"]
+                    if mode == "legacy":
+                        await client.call_tool("manage_tools", {"action": "reset"})
+                    assert {t.name for t in await client.list_tools()} == names
+
+            # An explicit Editor choice can publish an optional group to either
+            # protocol, without changing the complete input contract.
+            PluginHub._mcp = server
+            PluginHub._sync_server_tool_visibility([{"name": "manage_camera"}, {"name": "manage_gameobject"}])
+            async with Client(server, mode="2026-07-28") as client:
+                visible = {t.name: t for t in await client.list_tools()}
+                assert "manage_camera" in visible
+                assert "manage_physics" not in visible
+                assert visible["manage_camera"].inputSchema == schemas["manage_camera"]
+        asyncio.run(scenario())
+    """)

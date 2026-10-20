@@ -78,7 +78,7 @@ ALL_ACTIONS = (
 
 
 @mcp_for_unity_tool(
-    group="core",
+    group="graphics",
     description=(
         "Manage rendering graphics: volumes, post-processing, light baking, "
         "rendering stats, pipeline settings, and URP renderer features. "

@@ -22,6 +22,10 @@ namespace MCPForUnity.Editor.Services
         public int MaxPollSeconds { get; set; } = 0;
         public bool IsBuiltIn { get; set; }
         public string Group { get; set; } = "core";
+
+        /// <summary>Initial selection only. Saved preferences and scoped consent take precedence.</summary>
+        public bool EnabledByDefault =>
+            !RequiresExplicitConsent && (IsBuiltIn ? string.Equals(Group ?? "core", "core", System.StringComparison.OrdinalIgnoreCase) : AutoRegister);
         public int SchemaVersion { get; set; }
         public JObject InputSchema { get; set; }
         public JObject OutputDataSchema { get; set; }

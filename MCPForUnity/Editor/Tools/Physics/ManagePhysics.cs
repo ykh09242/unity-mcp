@@ -4,7 +4,7 @@ using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.Physics
 {
-    [McpForUnityTool("manage_physics", AutoRegister = false, Group = "core")]
+    [McpForUnityTool("manage_physics", AutoRegister = false, Group = "physics")]
     public static class ManagePhysics
     {
         public static object HandleCommand(JObject @params)

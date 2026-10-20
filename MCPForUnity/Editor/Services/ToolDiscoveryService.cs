@@ -215,7 +215,7 @@ namespace MCPForUnity.Editor.Services
                 return EditorPrefs.GetBool(key, true);
             }
 
-            return metadata?.AutoRegister ?? false;
+            return metadata?.EnabledByDefault ?? false;
         }
 
         public void SetToolEnabled(string toolName, bool enabled)
@@ -417,7 +417,7 @@ namespace MCPForUnity.Editor.Services
             string key = GetToolPreferenceKey(metadata.Name);
             if (!EditorPrefs.HasKey(key))
             {
-                bool defaultValue = metadata.AutoRegister || metadata.IsBuiltIn;
+                bool defaultValue = metadata.EnabledByDefault;
                 EditorPrefs.SetBool(key, defaultValue);
             }
         }

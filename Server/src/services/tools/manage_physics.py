@@ -39,7 +39,7 @@ ALL_ACTIONS: list[str] = list(get_args(PhysicsAction))
 
 
 @mcp_for_unity_tool(
-    group="core",
+    group="physics",
     description=(
         "Manage physics settings, collision matrix, materials, joints, queries, and validation.\n\n"
         "SETTINGS: ping, get_settings, set_settings\n"
