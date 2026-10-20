@@ -9,6 +9,27 @@ namespace MCPForUnityTests.Editor.Services
 {
     public class CompilationJobTrackerTests
     {
+        [Test]
+        public void OverflowDiagnosticBurstPreservesBoundedPersistedOutcome()
+        {
+            var ledger = Ledger();
+            ledger.Begin(Id);
+            ledger.ExplicitRequest(Id);
+            ledger.Dispatched(Id);
+            var context = new object();
+            ledger.Started(context);
+            var messages = Enumerable.Repeat(Message(false, new string('x', 1000)), 1000).ToArray();
+            ledger.Assembly("Library/ScriptAssemblies/A.dll", messages);
+            ledger.Assembly("B.dll", new[] { Message(true, "Final failure") });
+            ledger.Finished(context);
+            var result = Ledger(_saved).Query(Id);
+            Assert.AreEqual("failed", (string)result["outcome"]);
+            Assert.AreEqual(1000, (int)result["warning_count"]);
+            Assert.AreEqual(1, (int)result["error_count"]);
+            Assert.IsTrue((bool)result["diagnostics_truncated"]);
+            Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(result.ToString()), 65536);
+        }
+
         private const string Session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         private const string Id = "11111111111111111111111111111111";
         private const string Other = "22222222222222222222222222222222";

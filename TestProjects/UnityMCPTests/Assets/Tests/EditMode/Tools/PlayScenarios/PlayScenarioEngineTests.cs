@@ -10,6 +10,40 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
 {
     public class PlayScenarioEngineTests
     {
+        [Test]
+        public void LargeStrictLogsRetainBoundedSummariesAndClosedBuffersIgnoreLateCallbacks()
+        {
+            var buffer = new PlayScenarioLogBuffer(new PlayScenarioLogPolicy { Mode = "strict" });
+            string message = new string('x', 1024 * 1024);
+            buffer.Add(1, "Error", message, "");
+            buffer.Add(2, "Error", message, "");
+            var run = new PlayScenarioRun();
+            buffer.DrainTo(run);
+            Assert.AreEqual(2, run.UnexpectedLogCount);
+            Assert.AreEqual("Error: " + new string('x', 4089), run.LastUnexpectedLogError);
+            buffer.Close();
+            for (int i = 0; i < 100; i++)
+                buffer.Add(i, "Error", message, message);
+            buffer.DrainTo(run);
+            Assert.AreEqual(2, run.UnexpectedLogCount);
+            Assert.AreEqual(2, run.Logs.Count);
+        }
+
+        [Test]
+        public void StrictLogSummaryNeverCutsSurrogatesOrWeakensFullMessageAllowlist()
+        {
+            string allowed = new string('x', 4088) + "\U0001f600" + "allowed";
+            var policy = new PlayScenarioLogPolicy { Mode = "strict" };
+            policy.AllowedMessages.Add(allowed);
+            var buffer = new PlayScenarioLogBuffer(policy);
+            buffer.Add(1, "Error", allowed, "");
+            buffer.Add(2, "Error", new string('x', 4088) + "\U0001f600" + "different", "");
+            var run = new PlayScenarioRun();
+            buffer.DrainTo(run);
+            Assert.AreEqual(1, run.UnexpectedLogCount);
+            Assert.AreEqual("Error: " + new string('x', 4088), run.LastUnexpectedLogError);
+        }
+
         private sealed class Host : IPlayScenarioHost, IPlayScenarioMetricsHost, IPlayScenarioResourceHost
         {
             public int Calls;

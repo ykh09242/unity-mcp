@@ -26,23 +26,23 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public void Add(long timestamp, string type, string message, string stackTrace)
         {
-            var entry = new PlayScenarioLog
-            {
-                TimestampUnixMs = timestamp,
-                Type = type,
-                Message = PlayScenarioEngine.Bounded(message, 1024),
-                StackTrace = PlayScenarioEngine.Bounded(stackTrace, 2048),
-            };
             lock (_gate)
             {
                 if (_closed)
                     return;
+                var entry = new PlayScenarioLog
+                {
+                    TimestampUnixMs = timestamp,
+                    Type = type,
+                    Message = PlayScenarioEngine.Bounded(message, 1024),
+                    StackTrace = PlayScenarioEngine.Bounded(stackTrace, 2048),
+                };
                 // Match the complete callback message before truncation, even when its tail entry is dropped.
                 if (_strict && (type == "Error" || type == "Assert" || type == "Exception") && !_allowed.Contains(message))
                 {
                     if (_unexpected < int.MaxValue)
                         _unexpected++;
-                    _lastUnexpected = PlayScenarioEngine.Bounded(type + ": " + message, 4096);
+                    _lastUnexpected = type + ": " + PlayScenarioEngine.Bounded(message, 4096 - type.Length - 2);
                     if (_firstUnexpected == null)
                         _firstUnexpected = _lastUnexpected;
                 }
