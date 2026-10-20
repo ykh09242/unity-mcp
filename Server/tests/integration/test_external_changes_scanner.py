@@ -144,6 +144,8 @@ def test_cached_package_can_disappear_and_reappear(tmp_path, monkeypatch):
     assert package.resolve().is_relative_to(tmp_path.resolve())
     assert detached.resolve().is_relative_to(tmp_path.resolve())
     package.rename(detached)
+    assert scanner.update_and_get("Move@one")["external_changes_dirty"] is True
+    scanner.clear_dirty("Move@one")
     assert not scanner.update_and_get("Move@one")["external_changes_dirty"]
     detached.rename(package)
     os.utime(target, ns=(3_000_000_000, 3_000_000_000))
