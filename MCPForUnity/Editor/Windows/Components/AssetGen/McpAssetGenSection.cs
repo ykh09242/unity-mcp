@@ -52,6 +52,9 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private Button refreshButton;
         private Label refreshStatusLabel;
         private McpBlenderBridgePanel blenderPanel;
+        private string activeKind,
+            activeProvider;
+        private int refreshRevision;
 
         // Per-provider enable toggles for the GLB-capable (model) providers, used to
         // recompute the glTFast notice when a toggle changes.
@@ -72,12 +75,14 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             RegisterCallbacks();
             Root.RegisterCallback<AttachToPanelEvent>(_ =>
             {
+                refreshButton?.SetEnabled(true);
                 SubscribeCatalogs();
                 // Catch up on catalog changes that fired while the tab was detached.
                 RebuildModelControls(null, null);
             });
             Root.RegisterCallback<DetachFromPanelEvent>(_ =>
             {
+                refreshRevision++;
                 FalModelCatalog.Changed -= OnFalChanged;
                 OpenRouterModelCatalog.Changed -= OnRouterChanged;
             });
@@ -85,11 +90,33 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 SubscribeCatalogs();
             Root.schedule.Execute(() =>
                 {
-                    if (!modelControls.Any(c => FalModelCatalog.IsRefreshing(c.Kind)) && !OpenRouterModelCatalog.IsRefreshing)
+                    if (IsVisible() && activeKind != null)
                         _ = RefreshCatalog(false);
                 })
                 .Every(60000);
-            _ = RefreshCatalog(false);
+            if (refreshStatusLabel != null)
+                SetStatus(refreshStatusLabel, "Cached models · select a model control to check for updates.", true);
+        }
+
+        private bool IsVisible()
+        {
+            if (Root.panel == null)
+                return false;
+            for (var element = Root; element != null; element = element.parent)
+                if (element.resolvedStyle.display == DisplayStyle.None)
+                    return false;
+            return true;
+        }
+
+        private Task SelectCatalogAsync(string kind, string provider)
+        {
+            activeKind = kind;
+            activeProvider = provider;
+            refreshRevision++;
+            refreshButton?.SetEnabled(true);
+            if (provider != "fal" && provider != "openrouter" && refreshStatusLabel != null)
+                SetStatus(refreshStatusLabel, "Bundled models · no catalog download needed.", true);
+            return RefreshCatalog(false);
         }
 
         private void SubscribeCatalogs()
@@ -171,19 +198,16 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
 
             if (refreshButton != null)
             {
-                refreshButton.tooltip = "Refresh fal image, sound and 3D models, and OpenRouter images.";
+                refreshButton.tooltip = "Refresh all model catalogs. Selecting a model control checks only its provider and media kind.";
+                refreshButton.text = "Refresh All";
                 refreshButton.clicked += OnRefreshClicked;
             }
         }
 
         /// <summary>
-        /// Re-reads key presence and forces a nonblocking fal catalog refresh.
+        /// Explicitly refreshes every provider without rebuilding key input fields.
         /// </summary>
-        private void OnRefreshClicked()
-        {
-            SyncFromPrefs();
-            _ = RefreshCatalog(true);
-        }
+        private void OnRefreshClicked() => _ = RefreshCatalog(true);
 
         /// <summary>
         /// Re-reads secure-store presence and prefs and rebuilds the rows. Called when the
@@ -193,38 +217,68 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         {
             SyncFromPrefs();
             blenderPanel?.Refresh();
-            _ = RefreshCatalog(false);
         }
 
         private async Task RefreshCatalog(bool force)
         {
+            string kind = activeKind,
+                provider = activeProvider;
+            if (!force && (kind == null || (provider != "fal" && provider != "openrouter")))
+                return;
+            int revision = ++refreshRevision;
             refreshButton?.SetEnabled(false);
             if (refreshStatusLabel != null)
-                SetStatus(refreshStatusLabel, "Checking model catalogs…", true);
+                SetStatus(refreshStatusLabel, force ? "Checking all catalogs…" : $"Checking {provider} {kind} models…", true);
             try
             {
-                // A committed refresh raises Changed, which rebuilds only the affected model controls;
-                // unchanged catalogs leave the rows (and any unsaved API-key input) alone.
-                await Task.WhenAll(
-                    FalModelCatalog.RefreshAsync("image", force),
-                    FalModelCatalog.RefreshAsync("audio", force),
-                    FalModelCatalog.RefreshAsync("model", force),
-                    OpenRouterModelCatalog.RefreshAsync(force)
-                );
-                string error =
-                    FalModelCatalog.LastError("image")
-                    ?? FalModelCatalog.LastError("audio")
-                    ?? FalModelCatalog.LastError("model")
-                    ?? OpenRouterModelCatalog.LastError;
-                string verified = FalModelCatalog.VerifiedAt("audio") ?? FalModelCatalog.VerifiedAt("image");
+                string error,
+                    verified;
+                if (force)
+                {
+                    await Task.WhenAll(
+                        FalModelCatalog.RefreshAsync("image", true),
+                        FalModelCatalog.RefreshAsync("audio", true),
+                        FalModelCatalog.RefreshAsync("model", true),
+                        OpenRouterModelCatalog.RefreshAsync(true)
+                    );
+                    error =
+                        FalModelCatalog.LastError("image")
+                        ?? FalModelCatalog.LastError("audio")
+                        ?? FalModelCatalog.LastError("model")
+                        ?? OpenRouterModelCatalog.LastError;
+                    verified = OpenRouterModelCatalog.CheckedAt ?? FalModelCatalog.VerifiedAt("image");
+                }
+                else if (provider == "fal")
+                {
+                    await FalModelCatalog.RefreshAsync(kind);
+                    error = FalModelCatalog.LastError(kind);
+                    verified = FalModelCatalog.VerifiedAt(kind);
+                }
+                else
+                {
+                    await OpenRouterModelCatalog.RefreshAsync();
+                    error = OpenRouterModelCatalog.LastError;
+                    verified = OpenRouterModelCatalog.CheckedAt;
+                }
+                if (revision != refreshRevision)
+                    return;
                 string when = DateTime.TryParse(verified, out var time) ? time.ToLocalTime().ToString("g") : "unknown";
-                string label = error != null ? error : "Catalogs checked " + when + " · refreshed automatically every 24 hours";
                 if (refreshStatusLabel != null)
-                    SetStatus(refreshStatusLabel, label, error == null);
+                    SetStatus(
+                        refreshStatusLabel,
+                        error ?? $"{(force ? "All catalogs" : provider + " " + kind)} checked {when} · cached for 24 hours",
+                        error == null
+                    );
+            }
+            catch (Exception error)
+            {
+                if (revision == refreshRevision && refreshStatusLabel != null)
+                    SetStatus(refreshStatusLabel, SecretRedactor.Scrub(error.Message), false);
             }
             finally
             {
-                refreshButton?.SetEnabled(true);
+                if (revision == refreshRevision)
+                    refreshButton?.SetEnabled(true);
             }
         }
 
@@ -467,6 +521,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
 
                 var search = new TextField { name = "model-search-" + kind + "-" + providerId };
                 search.AddToClassList("setting-dropdown-inline");
+                search.RegisterCallback<FocusInEvent>(evt => _ = SelectCatalogAsync(kind, providerId));
                 search.tooltip = "Filter this provider's models by name, id or use case.";
                 string key = kind + "/" + providerId;
                 search.SetValueWithoutNotify(searches.TryGetValue(key, out var term) ? term : "");
@@ -526,6 +581,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             var dropdown = new DropdownField(choices, 0, null, MenuItemText);
             dropdown.AddToClassList("setting-dropdown-inline");
             dropdown.tooltip = "The model generate_* uses for this provider when no explicit model is passed.";
+            dropdown.RegisterCallback<FocusInEvent>(evt => _ = SelectCatalogAsync(kind, providerId));
             dropdown.SetValueWithoutNotify(choices[selectedIndex]);
             dropdownRow.Add(dropdown);
 
@@ -580,6 +636,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private async Task VerifySelection(ModelEntry picked, Label meta)
         {
             string key = picked.Kind + "/" + picked.Provider;
+            int revision = refreshRevision;
             meta.text = "Checking compatibility…";
             try
             {
@@ -595,12 +652,12 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                     picked.Provider == "fal"
                         ? await FalModelCatalog.VerifyForGeneration(picked.Id, picked.Kind, mode, CancellationToken.None, apiKey)
                         : await OpenRouterModelCatalog.VerifyForGeneration(picked.Id, mode, CancellationToken.None);
-                if (AssetGenPrefs.GetSelectedModel(picked.Kind, picked.Provider) == picked.Id)
+                if (revision == refreshRevision && AssetGenPrefs.GetSelectedModel(picked.Kind, picked.Provider) == picked.Id)
                     UpdateModelMeta(meta, verified);
             }
             catch (Exception error)
             {
-                if (AssetGenPrefs.GetSelectedModel(picked.Kind, picked.Provider) != picked.Id)
+                if (revision != refreshRevision || AssetGenPrefs.GetSelectedModel(picked.Kind, picked.Provider) != picked.Id)
                     return;
                 string message = "Compatibility check failed: " + SecretRedactor.Scrub(error.Message);
                 verifyErrors[key] = (picked.Id, message);
