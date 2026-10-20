@@ -163,17 +163,29 @@ namespace MCPForUnityTests.Editor.Helpers
             try
             {
                 File.WriteAllText(Path.Combine(server, "pyproject.toml"), "[project]\nname = 'test'\n");
-                Assert.AreEqual("--python \">=3.11\" --from \"" + server + "\"", AssetPathUtility.GetBetaServerFromArgs(root, null, true));
-                CollectionAssert.AreEqual(new[] { "--python", ">=3.11", "--from", server }, AssetPathUtility.GetBetaServerFromArgsList(root, null));
+                Assert.AreEqual(
+                    "--python \">=3.11\" --from \"" + server + "\" --with-editable \"" + server + "\"",
+                    AssetPathUtility.GetBetaServerFromArgs(root, null, true)
+                );
                 CollectionAssert.AreEqual(
-                    new[] { "--python", ">=3.11", "--from", "file://" + server },
+                    new[] { "--python", ">=3.11", "--from", server, "--with-editable", server },
+                    AssetPathUtility.GetBetaServerFromArgsList(root, null)
+                );
+                CollectionAssert.AreEqual(
+                    new[] { "--python", ">=3.11", "--from", server, "--with-editable", server },
                     AssetPathUtility.GetBetaServerFromArgsList("file://" + root, null)
                 );
                 EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, root);
                 Assert.AreEqual(server, AssetPathUtility.GetMcpServerPackageSource());
                 Assert.AreEqual(server, EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride));
-                CollectionAssert.AreEqual(new[] { "--python", ">=3.11", "--from", server }, AssetPathUtility.GetBetaServerFromArgsList());
-                Assert.AreEqual("--python \">=3.11\" --from \"" + server + "\"", AssetPathUtility.GetBetaServerFromArgs(true));
+                CollectionAssert.AreEqual(
+                    new[] { "--python", ">=3.11", "--from", server, "--with-editable", server },
+                    AssetPathUtility.GetBetaServerFromArgsList()
+                );
+                Assert.AreEqual(
+                    "--python \">=3.11\" --from \"" + server + "\" --with-editable \"" + server + "\"",
+                    AssetPathUtility.GetBetaServerFromArgs(true)
+                );
             }
             finally
             {
@@ -186,25 +198,53 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [Test]
-        public void OfflineCache_InvalidatesWhenPinnedSourceChanges()
+        public void FileUriDecodesSpacesAndNativePercentNamesRemainLiteral()
         {
-            var flags = BindingFlags.NonPublic | BindingFlags.Static;
-            var sourceField = typeof(AssetPathUtility).GetField("_offlineCacheSource", flags);
-            var timeField = typeof(AssetPathUtility).GetField("_offlineCacheTimestamp", flags);
-            object originalSource = sourceField.GetValue(null);
-            object originalTime = timeField.GetValue(null);
+            string root = Path.Combine(Path.GetTempPath(), "mcp uri %20 space " + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path.Combine(root, "Server"));
             try
             {
-                sourceField.SetValue(null, PinnedSource);
-                timeField.SetValue(null, 100.0);
-                Assert.IsTrue(AssetPathUtility.IsOfflineProbeCacheValid(PinnedSource, 101.0));
-                Assert.IsFalse(AssetPathUtility.IsOfflineProbeCacheValid(PinnedSource.Replace("01234567#", "01234568#"), 101.0));
-                Assert.IsFalse(AssetPathUtility.IsOfflineProbeCacheValid(PinnedSource, 131.0));
+                string server = Path.Combine(root, "Server");
+                File.WriteAllText(Path.Combine(server, "pyproject.toml"), "[project]\nname='fixture'\n");
+                Assert.That(AssetPathUtility.ResolveLocalServerPath(new Uri(root + Path.DirectorySeparatorChar).AbsoluteUri), Is.EqualTo(server));
+                Assert.That(AssetPathUtility.ResolveLocalServerPath(root), Is.EqualTo(server));
             }
             finally
             {
-                sourceField.SetValue(null, originalSource);
-                timeField.SetValue(null, originalTime);
+                Directory.Delete(root, true);
+            }
+        }
+
+        [TestCase("C:relative")]
+        [TestCase("file://remote-host/share/project")]
+        [TestCase("file:///C:/project?extra=value")]
+        public void AmbiguousOrRemoteLocalPathsAreRejected(string path)
+        {
+            Assert.Throws<ArgumentException>(() => AssetPathUtility.ResolveLocalServerPath(path));
+        }
+
+        [Test]
+        public void LocalSourceUsesEditableModeWithoutDisablingDependencyCache()
+        {
+            string old = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
+            bool existed = EditorPrefs.HasKey(EditorPrefKeys.GitUrlOverride);
+            try
+            {
+                string path = Path.Combine(Path.GetTempPath(), "owned-local-source");
+                EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, path);
+                EditorPrefs.SetBool(EditorPrefKeys.DevModeForceServerRefresh, false);
+                Assert.IsFalse(AssetPathUtility.ShouldForceUvxRefresh());
+                CollectionAssert.AreEqual(
+                    new[] { "--python", ">=3.11", "--from", path, "--with-editable", path },
+                    AssetPathUtility.GetBetaServerFromArgsList(path, null)
+                );
+            }
+            finally
+            {
+                if (existed)
+                    EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, old);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
             }
         }
 

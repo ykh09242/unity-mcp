@@ -329,36 +329,32 @@ namespace MCPForUnity.Editor.Helpers
                 return path;
             }
 
-            // If it looks like a PyPI package reference (no path separators), skip
-            if (!path.Contains('/') && !path.Contains('\\') && !path.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
-            {
+            if (!path.Contains('/') && !path.Contains('\\') && !path.Contains(':'))
                 return path;
-            }
-
-            // Strip file:// prefix for filesystem checks, preserve for return value
-            string checkPath = path;
-            string prefix = string.Empty;
-            if (checkPath.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            string local = path;
+            if (path.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
             {
-                prefix = checkPath.Substring(0, 7); // preserve original casing
-                checkPath = checkPath.Substring(7);
+                if (
+                    !Uri.TryCreate(path, UriKind.Absolute, out var uri)
+                    || !uri.IsFile
+                    || !uri.IsLoopback
+                    || uri.IsUnc
+                    || !string.IsNullOrEmpty(uri.Query)
+                    || !string.IsNullOrEmpty(uri.Fragment)
+                )
+                    throw new ArgumentException("Use an absolute local file URI without a remote host, query or fragment.", nameof(path));
+                local = uri.LocalPath;
             }
-
-            // Already correct — pyproject.toml exists at this path
-            if (System.IO.File.Exists(System.IO.Path.Combine(checkPath, "pyproject.toml")))
-            {
-                return path;
-            }
-
-            // Check if "Server" subdirectory contains pyproject.toml
-            string serverSubDir = System.IO.Path.Combine(checkPath, "Server");
-            if (System.IO.File.Exists(System.IO.Path.Combine(serverSubDir, "pyproject.toml")))
-            {
-                return prefix + serverSubDir;
-            }
-
-            // Return as-is; uvx will report the error if the path is truly invalid
-            return path;
+            if (
+                !Path.IsPathFullyQualified(local)
+                || local.StartsWith(@"\\", StringComparison.Ordinal)
+                || (local.Length >= 2 && local[1] == ':' && (local.Length < 3 || (local[2] != '/' && local[2] != '\\')))
+            )
+                throw new ArgumentException("Use a fully qualified local server directory.", nameof(path));
+            local = Path.GetFullPath(local).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (!File.Exists(Path.Combine(local, "pyproject.toml")) && File.Exists(Path.Combine(local, "Server", "pyproject.toml")))
+                local = Path.Combine(local, "Server");
+            return local;
         }
 
         /// <summary>
@@ -409,7 +405,7 @@ namespace MCPForUnity.Editor.Helpers
         private static string FormatServerFromArgs(string source, bool quoteFromPath)
         {
             string fromValue = quoteFromPath ? $"\"{source}\"" : source;
-            return $"--python \">=3.11\" --from {fromValue}";
+            return $"--python \">=3.11\" --from {fromValue}" + (IsLocalServerSource(source) ? $" --with-editable {fromValue}" : "");
         }
 
         /// <summary>
@@ -437,7 +433,10 @@ namespace MCPForUnity.Editor.Helpers
 
         private static System.Collections.Generic.IList<string> FormatServerFromArgsList(string source)
         {
-            return new System.Collections.Generic.List<string> { "--python", ">=3.11", "--from", source };
+            var args = new List<string> { "--python", ">=3.11", "--from", source };
+            if (IsLocalServerSource(source))
+                args.AddRange(new[] { "--with-editable", source });
+            return args;
         }
 
         private static string GetEffectiveServerSource(string sourceOverride, string packageSource)
@@ -447,8 +446,7 @@ namespace MCPForUnity.Editor.Helpers
 
         /// <summary>
         /// Determines whether uvx should use --no-cache --refresh flags.
-        /// Returns true if DevModeForceServerRefresh is enabled OR if the server URL is a local path.
-        /// Local paths (file:// or absolute) always need fresh builds to avoid stale uvx cache.
+        /// Only the explicit refresh preference disables persistent caching. Local sources use editable installations.
         /// Note: --reinstall is not supported by uvx and will cause a warning.
         /// </summary>
         public static bool ShouldForceUvxRefresh()
@@ -460,68 +458,38 @@ namespace MCPForUnity.Editor.Helpers
             }
             catch { }
 
-            if (devForceRefresh)
-                return true;
-
-            // Auto-enable force refresh when using a local path override.
-            return IsLocalServerPath();
+            return devForceRefresh;
         }
 
-        private static bool _offlineCacheResult;
-        private static double _offlineCacheTimestamp = -999;
-        private static string _offlineCacheSource;
-        private const double OfflineCacheTtlSeconds = 30.0;
+        private static readonly UvxOfflineProbe OfflineProbe = new(
+            (executable, arguments) => ExecPath.TryRun(executable, arguments, null, out _, out _, timeoutMs: 3000)
+        );
 
-        /// <summary>
-        /// Determines whether uvx should use --offline mode for faster startup.
-        /// Runs a lightweight probe (uvx --offline ... mcp-for-unity --help) with a 3-second timeout
-        /// to check if the package is already cached. If cached, --offline skips the network
-        /// dependency check that can hang for 30+ seconds on poor connections.
-        /// Returns false if force refresh is enabled (new download needed).
-        /// The result is cached for 30 seconds to avoid redundant subprocess spawns.
-        /// Must be called on the main thread (reads EditorPrefs).
-        /// </summary>
-        public static bool ShouldUseUvxOffline()
-        {
-            if (ShouldForceUvxRefresh())
-                return false;
-            return GetCachedOfflineProbeResult();
-        }
+        /// <summary>Returns a cached probe result immediately; cold probes run off the editor thread.</summary>
+        public static bool ShouldUseUvxOffline() => !ShouldForceUvxRefresh() && GetCachedOfflineProbeResult();
 
         private static bool GetCachedOfflineProbeResult()
         {
             string source = GetMcpServerPackageSource();
-            double now = EditorApplication.timeSinceStartup;
-            if (IsOfflineProbeCacheValid(source, now))
-                return _offlineCacheResult;
-
-            bool result = RunOfflineProbe();
-            _offlineCacheResult = result;
-            _offlineCacheTimestamp = now;
-            _offlineCacheSource = source;
-            return result;
+            // Editable source freshness and dependency metadata must be resolved by uv at each launch.
+            if (IsLocalServerSource(source))
+                return false;
+            return OfflineProbe.GetCachedOrSchedule(MCPServiceLocator.Paths.GetUvxPath(), FormatServerFromArgs(source, true));
         }
 
-        internal static bool IsOfflineProbeCacheValid(string source, double now) =>
-            string.Equals(source, _offlineCacheSource, StringComparison.Ordinal) && now - _offlineCacheTimestamp < OfflineCacheTtlSeconds;
-
-        private static bool RunOfflineProbe()
+        internal static async System.Threading.Tasks.Task<string> GetUvxDevFlagsAsync(
+            string executable,
+            string source,
+            bool forceRefresh,
+            System.Threading.CancellationToken cancellationToken
+        )
         {
-            try
-            {
-                string uvxPath = MCPServiceLocator.Paths.GetUvxPath();
-                if (string.IsNullOrEmpty(uvxPath))
-                    return false;
-
-                string fromArgs = GetBetaServerFromArgs(quoteFromPath: true);
-                string probeArgs = $"--offline {fromArgs} mcp-for-unity --help";
-
-                return ExecPath.TryRun(uvxPath, probeArgs, null, out _, out _, timeoutMs: 3000);
-            }
-            catch
-            {
-                return false;
-            }
+            bool offline =
+                !forceRefresh
+                && !IsLocalServerSource(source)
+                && await OfflineProbe.ProbeAsync(executable, FormatServerFromArgs(source, true), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            return GetUvxDevFlags(forceRefresh, offline);
         }
 
         /// <summary>
@@ -574,17 +542,12 @@ namespace MCPForUnity.Editor.Helpers
             if (string.IsNullOrEmpty(fromUrl))
                 return false;
 
-            // Check for file:// protocol or absolute local path
-            if (fromUrl.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
-                return true;
-
             try
             {
-                return System.IO.Path.IsPathRooted(fromUrl);
+                return Path.IsPathFullyQualified(ResolveLocalServerPath(fromUrl));
             }
-            catch (System.ArgumentException)
+            catch (ArgumentException)
             {
-                // fromUrl contains characters illegal in paths (e.g. a remote URL)
                 return false;
             }
         }
@@ -599,13 +562,7 @@ namespace MCPForUnity.Editor.Helpers
             if (!IsLocalServerSource(fromUrl))
                 return null;
 
-            if (fromUrl.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
-            {
-                // Strip file:// prefix
-                fromUrl = fromUrl.Substring(7);
-            }
-
-            return fromUrl;
+            return ResolveLocalServerPath(fromUrl);
         }
 
         /// <summary>
