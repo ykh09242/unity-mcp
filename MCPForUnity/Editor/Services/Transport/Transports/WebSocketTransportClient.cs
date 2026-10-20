@@ -733,15 +733,28 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private async Task ReceiveLoopAsync(CancellationToken token)
         {
+            ClientWebSocket socket;
+            lock (_ownershipLock)
+            {
+                if (!IsCurrentConnectionToken(token))
+                    return;
+                socket = _socket;
+            }
+            if (socket == null)
+                return;
+            using var reader = new WebSocketMessageReader();
             while (!token.IsCancellationRequested)
             {
                 try
                 {
-                    string message = await ReceiveMessageAsync(token).ConfigureAwait(false);
+                    string message = await reader.ReadAsync(socket, token).ConfigureAwait(false);
                     if (message == null)
                     {
-                        continue;
+                        await HandleSocketClosureAsync(reader.CloseReason, token).ConfigureAwait(false);
+                        break;
                     }
+                    if (message.Length == 0)
+                        continue;
                     await HandleMessageAsync(message, token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
@@ -760,53 +773,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false);
                     break;
                 }
-            }
-        }
-
-        private async Task<string> ReceiveMessageAsync(CancellationToken token)
-        {
-            if (_socket == null)
-            {
-                return null;
-            }
-
-            byte[] rentedBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(8192);
-            var buffer = new ArraySegment<byte>(rentedBuffer);
-            using var ms = new MemoryStream(8192);
-
-            try
-            {
-                while (!token.IsCancellationRequested)
-                {
-                    WebSocketReceiveResult result = await _socket.ReceiveAsync(buffer, token).ConfigureAwait(false);
-
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        await HandleSocketClosureAsync(result.CloseStatusDescription ?? "Server closed connection", token).ConfigureAwait(false);
-                        return null;
-                    }
-
-                    if (result.Count > 0)
-                    {
-                        ms.Write(buffer.Array!, buffer.Offset, result.Count);
-                    }
-
-                    if (result.EndOfMessage)
-                    {
-                        break;
-                    }
-                }
-
-                if (ms.Length == 0)
-                {
-                    return null;
-                }
-
-                return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
-            }
-            finally
-            {
-                System.Buffers.ArrayPool<byte>.Shared.Return(rentedBuffer);
             }
         }
 
@@ -1430,16 +1396,33 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             token.ThrowIfCancellationRequested();
             timing?.Start(CommandPhaseTiming.Phase.Serialization);
-            var responseJson = new LargeResultWriter.PreparedJson(
-                JsonConvert.SerializeObject(
-                    new
-                    {
-                        type = "command_result",
-                        id,
-                        result,
-                    }
-                )
-            );
+            LargeResultWriter.PreparedJson responseJson;
+            try
+            {
+                responseJson = new LargeResultWriter.PreparedJson(
+                    BoundedResponseJson.Serialize(
+                        new
+                        {
+                            type = "command_result",
+                            id,
+                            result,
+                        }
+                    )
+                );
+            }
+            catch (ResponseLimitException)
+            {
+                responseJson = new LargeResultWriter.PreparedJson(
+                    BoundedResponseJson.Serialize(
+                        new
+                        {
+                            type = "command_result",
+                            id,
+                            result = new { status = "error", error = "Command result exceeds the transport size limit" },
+                        }
+                    )
+                );
+            }
             bool negotiated;
             bool compressionNegotiated;
             lock (_ownershipLock)
@@ -1450,17 +1433,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 negotiated = _largeResultNegotiated;
                 compressionNegotiated = _compressionNegotiated;
             }
-            if (responseJson.ByteCount > LargeResultWriter.MaxResultBytes)
-                responseJson = new LargeResultWriter.PreparedJson(
-                    JsonConvert.SerializeObject(
-                        new
-                        {
-                            type = "command_result",
-                            id,
-                            result = new { status = "error", error = "Command result exceeds the transport size limit" },
-                        }
-                    )
-                );
             // Legacy integrations can use opaque IDs; they retain text responses.
             if (!Guid.TryParseExact(id, "D", out var parsedId) || parsedId.ToString("D") != id)
                 negotiated = false;

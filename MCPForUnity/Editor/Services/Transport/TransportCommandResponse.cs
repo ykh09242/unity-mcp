@@ -12,18 +12,43 @@ namespace MCPForUnity.Editor.Services.Transport
 
         public object Payload { get; }
 
-        public string ToJson() => JsonConvert.SerializeObject(Payload);
+        public string ToJson()
+        {
+            try
+            {
+                return BoundedResponseJson.Serialize(Payload);
+            }
+            catch (ResponseLimitException)
+            {
+                return BoundedResponseJson.Serialize(LimitPayload());
+            }
+        }
+
+        private static object LimitPayload() => new { status = "error", error = "Command result exceeds the transport size or complexity limit" };
 
         // Freeze Unity-facing values on the dispatcher thread without an intermediate JSON string.
-        public static TransportCommandResponse FromObject(object payload) =>
-            new TransportCommandResponse(payload is JToken ? payload : JToken.FromObject(payload));
+        public static TransportCommandResponse FromObject(object payload)
+        {
+            try
+            {
+                return new TransportCommandResponse(BoundedResponseJson.Freeze(payload));
+            }
+            catch (ResponseLimitException)
+            {
+                return new TransportCommandResponse(JObject.FromObject(LimitPayload()));
+            }
+        }
 
         // Existing asynchronous handlers complete a string TCS. Parse only that compatibility path.
         public static TransportCommandResponse FromJson(string json)
         {
             try
             {
-                return FromObject(TransportJson.ParseToken(json));
+                return new TransportCommandResponse(BoundedResponseJson.Parse(json));
+            }
+            catch (ResponseLimitException)
+            {
+                return FromObject(LimitPayload());
             }
             catch (JsonException)
             {

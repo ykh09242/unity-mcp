@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
 using UnityEditor.Compilation;
 
@@ -60,6 +62,33 @@ internal static class Harness
                 ledger.Assembly("A.dll", warnings);
             },
             32L * 1024 * 1024
+        );
+        string oversized = new string('x', 33 * 1024 * 1024);
+        Check(
+            "oversized_wire_serialization",
+            () =>
+            {
+                try
+                {
+                    BoundedResponseJson.Serialize(new { result = oversized });
+                    throw new Exception("Oversized response was admitted.");
+                }
+                catch (ResponseLimitException) { }
+            },
+            65536
+        );
+        using var reader = new WebSocketMessageReader();
+        using var socket = new SocketProbe();
+        Check(
+            "small_websocket_message",
+            () =>
+            {
+                socket.Remaining = 32;
+                string result = reader.ReadAsync(socket, CancellationToken.None).GetAwaiter().GetResult();
+                if (result.Length != 32)
+                    throw new Exception("Message assembly changed.");
+            },
+            2048
         );
         Console.WriteLine(JsonConvert.SerializeObject(new { runtime = Environment.Version.ToString(), results = Results }));
         return failed ? 1 : 0;

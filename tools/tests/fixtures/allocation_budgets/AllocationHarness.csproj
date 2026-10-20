@@ -8,6 +8,10 @@
   <ItemGroup>
     <Reference Include="Newtonsoft.Json"><HintPath>$(JsonAssembly)</HintPath></Reference>
     <Compile Include="Harness.cs" />
+    <Compile Include="SocketProbe.cs" />
+    <Compile Include="../../../../MCPForUnity/Editor/Services/Transport/WebSocketMessageReader.cs" />
+    <Compile Include="../../../../MCPForUnity/Editor/Services/Transport/BoundedResponseJson.cs" />
+    <Compile Include="../../../../MCPForUnity/Editor/Services/Transport/LargeResultWriter.cs" />
     <Compile Include="BoundaryStubs.cs" />
     <Compile Include="../../../../MCPForUnity/Runtime/PlayScenarios/PlayScenarioLogBuffer.cs" />
     <Compile Include="../../../../MCPForUnity/Editor/Services/CompilationJobTracker.cs" />
