@@ -157,7 +157,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 var root = document.rootVisualElement;
                 root.style.width = 840;
                 root.style.height = 720;
-                root.style.unityFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                root.style.unityFont = UnityEngine.Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
                 root.style.fontSize = 14;
                 root.style.color = Color.white;
                 var scroll = new ScrollView();
