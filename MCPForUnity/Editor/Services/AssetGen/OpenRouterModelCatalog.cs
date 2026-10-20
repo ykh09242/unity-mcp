@@ -225,6 +225,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             loaded = true;
             try
             {
+                GuardedFileSystem.CheckPath(CachePath);
                 if (!File.Exists(CachePath))
                     return;
                 if (new FileInfo(CachePath).Length > FalModelCatalog.MaxCacheBytes)
@@ -253,14 +254,13 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(CachePath));
-                File.WriteAllText(CachePath + ".tmp", JsonConvert.SerializeObject(snapshot));
-                if (File.Exists(CachePath))
-                    File.Replace(CachePath + ".tmp", CachePath, null);
-                else
-                    File.Move(CachePath + ".tmp", CachePath);
+                GuardedFileSystem.WriteAllTextAtomic(CachePath, JsonConvert.SerializeObject(snapshot));
             }
-            catch { /* The in-memory snapshot still works. */ }
+            catch (Exception ex)
+            {
+                // Persistence failure must not discard a successful in-memory refresh.
+                McpLog.Warn("Could not persist the model catalog: " + ex.Message);
+            }
         }
 
         internal static void ReloadCacheForTests()

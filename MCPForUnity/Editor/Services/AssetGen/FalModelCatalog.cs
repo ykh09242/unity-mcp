@@ -414,6 +414,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             loaded = true;
             try
             {
+                GuardedFileSystem.CheckPath(CachePath);
                 if (!File.Exists(CachePath))
                     return;
                 if (new FileInfo(CachePath).Length > MaxCacheBytes)
@@ -445,15 +446,13 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             try
             {
-                string path = CachePath;
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-                File.WriteAllText(path + ".tmp", JsonConvert.SerializeObject(new Cache { Snapshots = Snapshots.Values.ToList() }));
-                if (File.Exists(path))
-                    File.Replace(path + ".tmp", path, null);
-                else
-                    File.Move(path + ".tmp", path);
+                GuardedFileSystem.WriteAllTextAtomic(CachePath, JsonConvert.SerializeObject(new Cache { Snapshots = Snapshots.Values.ToList() }));
             }
-            catch { /* A read-only/full disk does not invalidate the in-memory refresh. */ }
+            catch (Exception ex)
+            {
+                // Persistence failure must not discard a successful in-memory refresh.
+                McpLog.Warn("Could not persist the model catalog: " + ex.Message);
+            }
         }
 
         internal static void ReloadCacheForTests()
