@@ -132,6 +132,8 @@ def test_changed_root_resets_dirty_timestamps_and_throttle(tmp_path, scanner_mod
         "external_changes_last_seen_unix_ms": None,
         "dirty_since_unix_ms": None,
         "last_cleared_unix_ms": None,
+        "external_changes_scan_complete": True,
+        "external_changes_scan_limited": False,
     }
     assert scanner._get_state("one").last_seen_mtime_ns == 1_000_000_000
 

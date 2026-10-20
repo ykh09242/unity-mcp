@@ -92,6 +92,8 @@ class EditorStateRefresh(BaseModel):
 class EditorStateAssets(BaseModel):
     is_updating: bool | None = None
     external_changes_dirty: bool | None = None
+    external_changes_scan_complete: bool | None = None
+    external_changes_scan_limited: bool | None = None
     external_changes_last_seen_unix_ms: int | None = None
     external_changes_dirty_since_unix_ms: int | None = None
     external_changes_last_cleared_unix_ms: int | None = None
@@ -260,6 +262,10 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         blocking.append("asset_refresh")
     if assets.get("is_updating") is True:
         blocking.append("asset_import")
+    if assets.get("external_changes_scan_limited") is True:
+        blocking.append("external_changes_scan_limited")
+    elif assets.get("external_changes_scan_complete") is False:
+        blocking.append("external_changes_scan_pending")
     activity = state_v2.get("activity") or {}
     phase = activity.get("phase")
     if phase == "playmode_transition":
@@ -317,6 +323,8 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         "recommended_retry_after_ms": 0 if ready_for_tools else 5000 if inspect_editor else 500,
         "recommended_next_action": "inspect_editor"
         if inspect_editor
+        else "inspect_scan_scope"
+        if assets.get("external_changes_scan_limited") is True
         else "none"
         if ready_for_tools
         else "retry_later",
@@ -328,7 +336,12 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
 @mcp_for_unity_resource(
     uri="mcpforunity://editor/state",
     name="editor_state",
-    description="Canonical editor readiness snapshot. Includes advice and server-computed staleness.\n\nURI: mcpforunity://editor/state",
+    description=(
+        "Canonical editor readiness snapshot. Includes advice, server-computed staleness, "
+        "and assets.external_changes_scan_complete/limited coverage. A pending or limited "
+        "local scan is not ready_for_tools; unknown remote coverage remains null."
+        "\n\nURI: mcpforunity://editor/state"
+    ),
 )
 async def get_editor_state(ctx: Context) -> MCPResponse:
     return await _read_editor_state(ctx, require_fresh=False)
@@ -452,6 +465,8 @@ async def _read_editor_state(
                 assets = {}
                 state_v2["assets"] = assets
             assets["external_changes_dirty"] = bool(ext.get("external_changes_dirty", False))
+            assets["external_changes_scan_complete"] = ext.get("external_changes_scan_complete")
+            assets["external_changes_scan_limited"] = ext.get("external_changes_scan_limited")
             assets["external_changes_last_seen_unix_ms"] = ext.get(
                 "external_changes_last_seen_unix_ms"
             )

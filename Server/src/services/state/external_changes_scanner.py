@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from hashlib import blake2b
 import json
 import time
 import asyncio
@@ -8,17 +9,19 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from stat import S_ISLNK
 from typing import Iterable
 from urllib.request import url2pathname
 
 from core.config import config
+from services.state.external_changes_walk import ScanCursor
 
 _EMPTY_RESULT = {
     "external_changes_dirty": False,
     "external_changes_last_seen_unix_ms": None,
     "dirty_since_unix_ms": None,
     "last_cleared_unix_ms": None,
+    "external_changes_scan_complete": None,
+    "external_changes_scan_limited": None,
 }
 
 
@@ -43,21 +46,27 @@ class ExternalChangesState:
     # Resolved file: dependency paths; directory existence is checked on each scan.
     extra_roots: list[str] | None = None
     manifest_last_mtime_ns: int | None = None
+    manifest_content_hash: bytes | None = None
+    cursor: ScanCursor | None = None
+    fingerprint: tuple[int, int] | None = None
+    revision: int = 0
+    # Coverage is unknown until a verified local project root is available.
+    scan_complete: bool | None = None
+    scan_limited: bool | None = None
 
 
 @dataclass(frozen=True)
 class ExternalChangesSnapshot:
     state: ExternalChangesState
     last_seen_mtime_ns: int | None
+    revision: int = 0
 
 
 class ExternalChangesScanner:
-    """
-    Lightweight external-changes detector using recursive max-mtime scan.
+    """Detect external changes with resumable traversal and complete-pass fingerprints.
 
-    This is intentionally conservative:
-    - It only marks dirty when it sees a strictly newer mtime than the baseline.
-    - It scans at most once per scan_interval_ms per instance to keep overhead bounded.
+    Entry, time and byte budgets bound each call. Partial coverage is explicit;
+    file deletion, rename and timestamp-preserving edits change the fingerprint.
     """
 
     def __init__(
@@ -70,6 +79,7 @@ class ExternalChangesScanner:
         max_scan_seconds: float = 0.25,
         max_manifest_bytes: int = 1024 * 1024,
         max_extra_roots: int = 256,
+        max_scan_bytes: int = 2 * 1024 * 1024,
     ):
         self._states: OrderedDict[str, ExternalChangesState] = OrderedDict()
         self._last_access: dict[str, int] = {}
@@ -80,6 +90,8 @@ class ExternalChangesScanner:
         self._max_scan_seconds = max(0.001, float(max_scan_seconds))
         self._max_manifest_bytes = max(1, int(max_manifest_bytes))
         self._max_extra_roots = max(1, int(max_extra_roots))
+        self._max_scan_bytes = max(1, int(max_scan_bytes))
+        self._scan_state: ExternalChangesState | None = None
         self._scan_lock = threading.Lock()
         self._state_lock = threading.RLock()
         self._active_stop: threading.Event | None = None
@@ -94,12 +106,13 @@ class ExternalChangesScanner:
                 if now - self._last_access.get(key, now) >= self._state_ttl_ms
             ]
             for key in expired:
-                del self._states[key]
+                self._release_state(self._states.pop(key))
                 self._last_access.pop(key, None)
             st = self._states.pop(instance_id, None)
             if st is None:
                 if len(self._states) >= self._max_states:
-                    key, _ = self._states.popitem(last=False)
+                    key, retired = self._states.popitem(last=False)
+                    self._release_state(retired)
                     self._last_access.pop(key, None)
                 st = ExternalChangesState()
             self._last_access[instance_id] = now
@@ -119,7 +132,10 @@ class ExternalChangesScanner:
                 st.project_root is None or Path(st.project_root) != Path(project_root)
             ):
                 # Cached package paths, timestamps and dirty state belong to this project.
-                self._states[instance_id] = ExternalChangesState(project_root=project_root)
+                self._release_state(st)
+                self._states[instance_id] = ExternalChangesState(
+                    project_root=project_root, scan_complete=False, scan_limited=False
+                )
 
     def capture_dirty_state(self, instance_id: str) -> ExternalChangesSnapshot | None:
         """Capture the observed edits before dispatch, without scanning or advancing them."""
@@ -127,7 +143,7 @@ class ExternalChangesScanner:
             return None
         with self._state_lock:
             st = self._get_state(instance_id)
-            return ExternalChangesSnapshot(st, st.last_seen_mtime_ns)
+            return ExternalChangesSnapshot(st, st.last_seen_mtime_ns, st.revision)
 
     def clear_dirty(
         self, instance_id: str, *, expected: ExternalChangesSnapshot | None = None
@@ -138,7 +154,9 @@ class ExternalChangesScanner:
         with self._state_lock:
             st = self._get_state(instance_id)
             if expected is not None and (
-                st is not expected.state or st.last_seen_mtime_ns != expected.last_seen_mtime_ns
+                st is not expected.state
+                or st.last_seen_mtime_ns != expected.last_seen_mtime_ns
+                or st.revision != expected.revision
             ):
                 return False
             st.dirty = False
@@ -147,54 +165,41 @@ class ExternalChangesScanner:
             # Preserve the watermark so an edit not yet sampled remains detectable.
             return True
 
+    def _release_state(self, state: ExternalChangesState) -> None:
+        if state is self._scan_state and self._active_stop is not None:
+            self._active_stop.set()
+        elif state.cursor is not None:
+            state.cursor.close()
+            state.cursor = None
+
+    def close(self) -> None:
+        """Retire cached cursors; an active worker cooperatively closes its own handles."""
+        with self._state_lock:
+            for state in self._states.values():
+                self._release_state(state)
+            self._states.clear()
+            self._last_access.clear()
+
     def _scan_paths_max_mtime_ns(self, roots: Iterable[Path]) -> int | None:
-        newest: int | None = None
-        entries = 0
-
-        pending = list(roots)
-        # Local package roots can also be descendants of the standard scan roots.
-        # Keep successful directory visits local to this bounded scan.
-        visited: set[Path] = set()
-        skipped = {"library", "temp", "logs", "obj", ".git", "node_modules"}
-        while pending:
-            if self._scan_stopped() or entries >= self._max_entries:
-                return newest
-            root = pending.pop()
-            if root in visited:
-                continue
-            entries += 1
-            try:
-                root_stat = root.stat(follow_symlinks=False)
-                if S_ISLNK(root_stat.st_mode) or getattr(root_stat, "st_file_attributes", 0) & 1024:
-                    continue
-                with os.scandir(root) as children:
-                    visited.add(root)
-                    for entry in children:
-                        if self._scan_stopped() or entries >= self._max_entries:
-                            return newest
-                        entries += 1
-                        if entry.name.startswith(".") or entry.name.lower() in skipped:
-                            continue
-                        try:
-                            stat = entry.stat(follow_symlinks=False)
-                            if entry.is_symlink() or getattr(stat, "st_file_attributes", 0) & 1024:
-                                continue
-                            if entry.is_dir(follow_symlinks=False):
-                                # Keep the pending traversal bounded as well as stat work.
-                                if len(pending) < self._max_entries - entries:
-                                    pending.append(Path(entry.path))
-                            else:
-                                newest = (
-                                    stat.st_mtime_ns
-                                    if newest is None
-                                    else max(newest, stat.st_mtime_ns)
-                                )
-                        except OSError:
-                            continue
-            except OSError:
-                continue
-
-        return newest
+        # Keep the existing scan boundary for callers and controlled cancellation tests.
+        state = self._scan_state
+        cursor = state.cursor if state is not None else None
+        if cursor is None:
+            watched = (
+                Path(state.project_root) / "Packages/manifest.json"
+                if state is not None and state.project_root
+                else None
+            )
+            cursor = ScanCursor(roots, watched)
+            if state is not None:
+                state.cursor = cursor
+        cursor.advance(self._max_entries, self._max_scan_bytes, self._scan_stopped)
+        if state is None:
+            cursor.close()
+        else:
+            state.scan_complete = cursor.complete and not cursor.limited
+            state.scan_limited = cursor.limited
+        return cursor.newest
 
     def _scan_stopped(self) -> bool:
         return (
@@ -244,6 +249,7 @@ class ExternalChangesScanner:
                 raw = source.read(self._max_manifest_bytes + 1)
             if len(raw) > self._max_manifest_bytes:
                 raise ValueError("Local package manifest exceeds scanner budget")
+            st.manifest_content_hash = blake2b(raw, digest_size=32).digest()
             doc = json.loads(raw)
         except (OSError, ValueError, UnicodeError):
             st.extra_roots = []
@@ -342,6 +348,8 @@ class ExternalChangesScanner:
                 "external_changes_last_seen_unix_ms": st.external_changes_last_seen_unix_ms,
                 "dirty_since_unix_ms": st.dirty_since_unix_ms,
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
+                "external_changes_scan_complete": st.scan_complete,
+                "external_changes_scan_limited": st.scan_limited,
             }
 
     def _run_update_locked(
@@ -354,6 +362,20 @@ class ExternalChangesScanner:
                 return _EMPTY_RESULT.copy()
             return self._update_and_get(instance_id)
         finally:
+            state = self._scan_state
+            if (
+                state is not None
+                and state.cursor is not None
+                and (
+                    stop.is_set()
+                    or config.http_remote_hosted
+                    or self._states.get(instance_id) is not state
+                )
+            ):
+                state.cursor.close()
+                state.cursor = None
+                state.scan_complete = False
+            self._scan_state = None
             self._active_stop = None
             self._scan_deadline = 0.0
             self._scan_lock.release()
@@ -374,6 +396,8 @@ class ExternalChangesScanner:
                 "external_changes_last_seen_unix_ms": st.external_changes_last_seen_unix_ms,
                 "dirty_since_unix_ms": st.dirty_since_unix_ms,
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
+                "external_changes_scan_complete": st.scan_complete,
+                "external_changes_scan_limited": st.scan_limited,
             }
 
         now = _now_unix_ms()
@@ -386,6 +410,8 @@ class ExternalChangesScanner:
                 "external_changes_last_seen_unix_ms": st.external_changes_last_seen_unix_ms,
                 "dirty_since_unix_ms": st.dirty_since_unix_ms,
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
+                "external_changes_scan_complete": st.scan_complete,
+                "external_changes_scan_limited": st.scan_limited,
             }
 
         st.last_scan_unix_ms = now
@@ -397,6 +423,8 @@ class ExternalChangesScanner:
                 "external_changes_last_seen_unix_ms": st.external_changes_last_seen_unix_ms,
                 "dirty_since_unix_ms": st.dirty_since_unix_ms,
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
+                "external_changes_scan_complete": st.scan_complete,
+                "external_changes_scan_limited": st.scan_limited,
             }
 
         root = Path(project_root)
@@ -406,30 +434,46 @@ class ExternalChangesScanner:
             paths.extend(self._resolve_manifest_extra_roots(root, st))
         except Exception:
             pass
+        self._scan_state = st
         newest = self._scan_paths_max_mtime_ns(paths)
-        if newest is None:
-            return {
-                "external_changes_dirty": st.dirty,
-                "external_changes_last_seen_unix_ms": st.external_changes_last_seen_unix_ms,
-                "dirty_since_unix_ms": st.dirty_since_unix_ms,
-                "last_cleared_unix_ms": st.last_cleared_unix_ms,
-            }
-
         with self._state_lock:
-            if st.last_seen_mtime_ns is None:
-                st.last_seen_mtime_ns = newest
-            elif newest > st.last_seen_mtime_ns:
-                st.last_seen_mtime_ns = newest
-                st.external_changes_last_seen_unix_ms = now
-                if not st.dirty:
-                    st.dirty = True
-                    st.dirty_since_unix_ms = now
+            if self._states.get(instance_id) is not st or self._scan_stopped():
+                return self._cached_result(instance_id)
+            cursor = st.cursor
+            if cursor is not None and cursor.complete:
+                current = (cursor.count, cursor.digest)
+                if (
+                    cursor.watched_digest is not None
+                    and cursor.watched_digest != st.manifest_content_hash
+                ):
+                    st.manifest_last_mtime_ns = None
+                changed = cursor.limited or (
+                    st.fingerprint is not None and current != st.fingerprint
+                )
+                if not cursor.limited:
+                    st.fingerprint = current
+                if newest is not None:
+                    st.last_seen_mtime_ns = (
+                        newest
+                        if st.last_seen_mtime_ns is None
+                        else max(st.last_seen_mtime_ns, newest)
+                    )
+                if changed:
+                    st.revision += 1
+                    st.external_changes_last_seen_unix_ms = now
+                    if not st.dirty:
+                        st.dirty = True
+                        st.dirty_since_unix_ms = now
+                cursor.close()
+                st.cursor = None
 
         return {
             "external_changes_dirty": st.dirty,
             "external_changes_last_seen_unix_ms": st.external_changes_last_seen_unix_ms,
             "dirty_since_unix_ms": st.dirty_since_unix_ms,
             "last_cleared_unix_ms": st.last_cleared_unix_ms,
+            "external_changes_scan_complete": st.scan_complete,
+            "external_changes_scan_limited": st.scan_limited,
         }
 
 
