@@ -2,6 +2,7 @@ using System.Reflection;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -44,6 +45,29 @@ namespace MCPForUnityTests.Editor.Services
             Observe(snapshot, 20);
             Assert.AreEqual(10, returned.Value<long>("observed_at_unix_ms"));
             Assert.AreEqual(3, snapshot.Value<long>("sequence"));
+        }
+
+        [TestCase(PlayModeStateChange.ExitingEditMode, true)]
+        [TestCase(PlayModeStateChange.EnteredPlayMode, false)]
+        [TestCase(PlayModeStateChange.ExitingPlayMode, true)]
+        [TestCase(PlayModeStateChange.EnteredEditMode, false)]
+        public void PlayTransitionEdgesSurviveUntilTheMatchingEnteredEvent(PlayModeStateChange state, bool changing)
+        {
+            const string key = "MCPForUnity.EditorState.PlayTransition";
+            bool prior = SessionState.GetBool(key, false);
+            var handler = typeof(EditorStateCache).GetMethod("OnPlayModeStateChanged", BindingFlags.NonPublic | BindingFlags.Static);
+            try
+            {
+                handler.Invoke(null, new object[] { state });
+                Assert.That(EditorStateCache.GetSnapshot()["editor"]["play_mode"]["is_changing"].Value<bool>(), Is.EqualTo(changing));
+            }
+            finally
+            {
+                SessionState.SetBool(key, prior);
+                typeof(EditorStateCache)
+                    .GetMethod("ForceUpdate", BindingFlags.NonPublic | BindingFlags.Static)
+                    .Invoke(null, new object[] { "restore-transition-test", null });
+            }
         }
 
         private static void Observe(JObject snapshot, long time)

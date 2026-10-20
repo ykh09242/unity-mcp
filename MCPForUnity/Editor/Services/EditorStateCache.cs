@@ -28,6 +28,16 @@ namespace MCPForUnity.Editor.Services
         private static long _observedUnixMs;
 
         private static bool _lastIsCompiling;
+        private const string PlayTransitionKey = "MCPForUnity.EditorState.PlayTransition";
+        private static bool IsPlayModeTransition =>
+            SessionState.GetBool(PlayTransitionKey, false) || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode;
+
+        private static void OnPlayModeStateChanged(PlayModeStateChange state)
+        {
+            // Persist the edge across the domain reload between Exiting and Entered events.
+            SessionState.SetBool(PlayTransitionKey, state == PlayModeStateChange.ExitingEditMode || state == PlayModeStateChange.ExitingPlayMode);
+            ForceUpdate("playmode");
+        }
 
         // Compile edges live in SessionState, recorded from the CompilationPipeline
         // events, rather than in statics sampled off the update tick. Two reasons,
@@ -289,7 +299,7 @@ namespace MCPForUnity.Editor.Services
                 _cached = BuildSnapshot("init");
 
                 EditorApplication.update += OnUpdate;
-                EditorApplication.playModeStateChanged += _ => ForceUpdate("playmode");
+                EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
 
                 // Tracks whether an assembly compilation is actually running, for
                 // GetActualIsCompiling. Statics reset on domain reload and this
@@ -366,7 +376,7 @@ namespace MCPForUnity.Editor.Services
             bool isFocused = InternalEditorUtility.isApplicationActive;
             bool isPlaying = EditorApplication.isPlaying;
             bool isPaused = EditorApplication.isPaused;
-            bool isChanging = EditorApplication.isPlayingOrWillChangePlaymode;
+            bool isChanging = IsPlayModeTransition;
             bool isUpdating = EditorApplication.isUpdating;
             bool testsRunning = TestRunStatus.IsRunning;
             string testsMode = TestRunStatus.Mode?.ToString();
@@ -390,7 +400,7 @@ namespace MCPForUnity.Editor.Services
             {
                 activityPhase = "asset_import";
             }
-            else if (EditorApplication.isPlayingOrWillChangePlaymode)
+            else if (IsPlayModeTransition)
             {
                 activityPhase = "playmode_transition";
             }
@@ -555,7 +565,7 @@ namespace MCPForUnity.Editor.Services
             {
                 activityPhase = "asset_import";
             }
-            else if (EditorApplication.isPlayingOrWillChangePlaymode)
+            else if (IsPlayModeTransition)
             {
                 activityPhase = "playmode_transition";
             }
@@ -583,7 +593,7 @@ namespace MCPForUnity.Editor.Services
                     {
                         IsPlaying = EditorApplication.isPlaying,
                         IsPaused = EditorApplication.isPaused,
-                        IsChanging = EditorApplication.isPlayingOrWillChangePlaymode,
+                        IsChanging = IsPlayModeTransition,
                     },
                     ActiveScene = new EditorStateActiveScene
                     {
