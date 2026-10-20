@@ -518,49 +518,14 @@ namespace MCPForUnity.Runtime.Helpers
         /// </summary>
         public static (string base64, int width, int height) RenderCameraToBase64(Camera camera, int maxResolution = 640)
         {
-            if (camera == null)
-                throw new ArgumentNullException(nameof(camera));
-
-            int width = Mathf.Max(1, camera.pixelWidth > 0 ? camera.pixelWidth : Screen.width);
-            int height = Mathf.Max(1, camera.pixelHeight > 0 ? camera.pixelHeight : Screen.height);
-            ValidateFrameDimensions(width, height);
-            ValidateMaxResolution(maxResolution);
-
-            RenderTexture prevRT = camera.targetTexture;
-            RenderTexture prevActive = RenderTexture.active;
-            var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
-            Texture2D tex = null;
-            Texture2D downscaled = null;
+            Texture2D texture = RenderCameraToTexture(camera, maxResolution);
             try
             {
-                camera.targetTexture = rt;
-                camera.Render();
-
-                RenderTexture.active = rt;
-                tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
-                tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                tex.Apply();
-
-                int targetMax = maxResolution > 0 ? maxResolution : 640;
-                if (width > targetMax || height > targetMax)
-                {
-                    downscaled = DownscaleTexture(tex, targetMax);
-                    string b64 = System.Convert.ToBase64String(downscaled.EncodeToPNG());
-                    return (b64, downscaled.width, downscaled.height);
-                }
-                else
-                {
-                    string b64 = System.Convert.ToBase64String(tex.EncodeToPNG());
-                    return (b64, width, height);
-                }
+                return (Convert.ToBase64String(texture.EncodeToPNG()), texture.width, texture.height);
             }
             finally
             {
-                camera.targetTexture = prevRT;
-                RenderTexture.active = prevActive;
-                RenderTexture.ReleaseTemporary(rt);
-                DestroyTexture(tex);
-                DestroyTexture(downscaled);
+                DestroyTexture(texture);
             }
         }
 
@@ -582,25 +547,27 @@ namespace MCPForUnity.Runtime.Helpers
             RenderTexture prevRT = camera.targetTexture;
             RenderTexture prevActive = RenderTexture.active;
             var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
+            RenderTexture reduced = null;
             Texture2D tex = null;
             try
             {
                 camera.targetTexture = rt;
                 camera.Render();
 
-                RenderTexture.active = rt;
-                tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
-                tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                tex.Apply();
-
-                int targetMax = maxResolution > 0 ? maxResolution : 640;
-                if (width > targetMax || height > targetMax)
+                RenderTexture readback = rt;
+                if (tileWidth != width || tileHeight != height)
                 {
-                    var downscaled = DownscaleTexture(tex, targetMax);
-                    DestroyTexture(tex);
-                    tex = null;
-                    return downscaled;
+                    // Preserve the previous sRGB CPU-texture downscale semantics, but
+                    // keep the full-resolution image on the GPU until it is reduced.
+                    reduced = RenderTexture.GetTemporary(tileWidth, tileHeight, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+                    rt.filterMode = FilterMode.Bilinear;
+                    Graphics.Blit(rt, reduced);
+                    readback = reduced;
                 }
+                RenderTexture.active = readback;
+                tex = new Texture2D(tileWidth, tileHeight, TextureFormat.RGBA32, false);
+                tex.ReadPixels(new Rect(0, 0, tileWidth, tileHeight), 0, 0);
+                tex.Apply();
                 var result = tex;
                 tex = null; // transfer ownership to caller
                 return result;
@@ -609,6 +576,8 @@ namespace MCPForUnity.Runtime.Helpers
             {
                 camera.targetTexture = prevRT;
                 RenderTexture.active = prevActive;
+                if (reduced != null)
+                    RenderTexture.ReleaseTemporary(reduced);
                 RenderTexture.ReleaseTemporary(rt);
                 DestroyTexture(tex);
             }
@@ -641,13 +610,13 @@ namespace MCPForUnity.Runtime.Helpers
                 int cellH = tileH + labelHeight + padding;
                 sheet = new Texture2D(sheetW, sheetH, TextureFormat.RGBA32, false);
 
-                // Build the full sheet in a Color32[] buffer, then upload once
+                // Borrow the owned RGBA32 CPU storage; never dispose or retain this view.
                 var bgColor = new Color32(30, 30, 30, 255);
-                Color32[] sheetPixels = new Color32[sheetW * sheetH];
+                var sheetPixels = sheet.GetPixelData<Color32>(0);
                 for (int i = 0; i < sheetPixels.Length; i++)
                     sheetPixels[i] = bgColor;
 
-                // Track label draw requests so we can apply them after the bulk upload
+                // Track label draw requests for drawing after the tile pixels.
                 var labelDraws = new List<(string text, int x, int y, int h)>();
 
                 for (int idx = 0; idx < count; idx++)
@@ -658,13 +627,19 @@ namespace MCPForUnity.Runtime.Helpers
                     int x = padding + col * cellW;
                     int y = sheetH - padding - (row + 1) * cellH + padding;
 
-                    // Copy tile pixels row-by-row using bulk operations
-                    Color32[] tilePixels = tiles[idx].GetPixels32();
-                    for (int ty = 0; ty < tileH; ty++)
+                    // Color32 matches RGBA32 exactly. Other formats retain the conversion
+                    // fallback so callers still receive identical contact-sheet pixels.
+                    if (tiles[idx].format == TextureFormat.RGBA32)
                     {
-                        int srcOffset = ty * tileW;
-                        int dstOffset = (y + labelHeight + ty) * sheetW + x;
-                        System.Array.Copy(tilePixels, srcOffset, sheetPixels, dstOffset, tileW);
+                        var tilePixels = tiles[idx].GetPixelData<Color32>(0);
+                        for (int ty = 0; ty < tileH; ty++)
+                            Unity.Collections.NativeArray<Color32>.Copy(tilePixels, ty * tileW, sheetPixels, (y + labelHeight + ty) * sheetW + x, tileW);
+                    }
+                    else
+                    {
+                        Color32[] tilePixels = tiles[idx].GetPixels32();
+                        for (int ty = 0; ty < tileH; ty++)
+                            Unity.Collections.NativeArray<Color32>.Copy(tilePixels, ty * tileW, sheetPixels, (y + labelHeight + ty) * sheetW + x, tileW);
                     }
                     DestroyTexture(tiles[idx]);
                     tiles[idx] = null; // release each retained native texture as soon as it is copied
@@ -680,15 +655,12 @@ namespace MCPForUnity.Runtime.Helpers
                         }
                     }
 
-                    // Queue label text drawing (applied after bulk pixel upload)
+                    // Queue label text drawing after all tile copies.
                     if (labels != null && idx < labels.Count && !string.IsNullOrEmpty(labels[idx]))
                     {
                         labelDraws.Add((labels[idx], x + 3, y + 2, labelHeight - 4));
                     }
                 }
-
-                // Upload all tile + banner pixels in one SetPixels32 call
-                sheet.SetPixels32(sheetPixels);
 
                 // Draw label text on top (small glyph-based writes, negligible cost)
                 foreach (var (text, lx, ly, lh) in labelDraws)

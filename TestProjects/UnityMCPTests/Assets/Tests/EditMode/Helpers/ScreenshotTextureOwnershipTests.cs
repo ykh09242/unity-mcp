@@ -9,6 +9,34 @@ namespace MCPForUnityTests.EditMode.Helpers
 {
     public class ScreenshotTextureOwnershipTests
     {
+        [Test]
+        public void WarmRgbaFlipDoesNotAllocateManagedPixelBuffers()
+        {
+            if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
+                Assert.Ignore("Texture upload requires a graphics device.");
+            var texture = new Texture2D(64, 33, TextureFormat.RGBA32, false);
+            try
+            {
+                var method = typeof(EditorWindowScreenshotUtility).GetMethod("FlipTextureVertically", BindingFlags.Static | BindingFlags.NonPublic);
+                var flip = (System.Action<Texture2D>)System.Delegate.CreateDelegate(typeof(System.Action<Texture2D>), method);
+                flip(texture);
+                using var recorder = Unity.Profiling.ProfilerRecorder.StartNew(
+                    Unity.Profiling.ProfilerCategory.Memory,
+                    "GC.Alloc",
+                    8192,
+                    Unity.Profiling.ProfilerRecorderOptions.StartImmediately | Unity.Profiling.ProfilerRecorderOptions.CollectOnlyOnCurrentThread
+                );
+                flip(texture);
+                recorder.Stop();
+                Assert.IsTrue(recorder.Valid);
+                Assert.AreEqual(0, recorder.Count, "The owned RGBA32 image must be flipped through its CPU pixel view.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(texture);
+            }
+        }
+
         [TestCase(2, 2)]
         [TestCase(2, 3)]
         [TestCase(1, 1)]
