@@ -41,7 +41,8 @@ on:
       - tools/unity-ci/**
       - tools/unity_ci_packages.py
       - tools/unity-ci-packages.json
-      - tools/tests/test_compile_check.py
+      - tools/tests/test_compile_check*.py
+      - tools/tests/compile_check_helpers.py
       - tools/tests/test_compile_matrix.py
       - tools/tests/test_unity_compile_cache.py
       - tools/tests/test_unity_compile_cache_diagnostics.py
