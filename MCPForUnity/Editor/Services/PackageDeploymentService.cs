@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using UnityEditor;
@@ -14,25 +16,71 @@ namespace MCPForUnity.Editor.Services
     public class PackageDeploymentService : IPackageDeploymentService
     {
         private const string BackupRootFolderName = "MCPForUnityDeployBackups";
+        private readonly string projectRoot;
+        private readonly Func<string> targetOverride;
+        private readonly Func<string, string> readPreference;
+        private readonly Action<string, string> writePreference;
+        private readonly Action<string> deletePreference;
+
+        public PackageDeploymentService()
+            : this(GetProjectRoot(), null, key => EditorPrefs.GetString(key, string.Empty), EditorPrefs.SetString, EditorPrefs.DeleteKey) { }
+
+        internal PackageDeploymentService(
+            string projectRoot,
+            Func<string> targetPath,
+            Func<string, string> readPreference,
+            Action<string, string> writePreference,
+            Action<string> deletePreference
+        )
+        {
+            this.projectRoot = CanonicalPath(projectRoot);
+            targetOverride = targetPath;
+            this.readPreference = readPreference;
+            this.writePreference = writePreference;
+            this.deletePreference = deletePreference;
+        }
+
+        private string PreferenceKey(string key)
+        {
+            string identity = Path.DirectorySeparatorChar == '\\' ? projectRoot.ToUpperInvariant() : projectRoot;
+            using (var hash = SHA256.Create())
+                return key + ".Project." + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(identity))).Replace("-", "");
+        }
+
+        private string Read(string key) => readPreference(PreferenceKey(key)) ?? string.Empty;
+
+        private void Write(string key, string value) => writePreference(PreferenceKey(key), value);
+
+        private static string CanonicalPath(string path) => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        private static bool SamePath(string a, string b) =>
+            string.Equals(
+                CanonicalPath(a),
+                CanonicalPath(b),
+                Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal
+            );
 
         public string GetStoredSourcePath()
         {
-            return EditorPrefs.GetString(EditorPrefKeys.PackageDeploySourcePath, string.Empty);
+            return Read(EditorPrefKeys.PackageDeploySourcePath);
         }
 
         public void SetStoredSourcePath(string path)
         {
             ValidateSource(path);
-            EditorPrefs.SetString(EditorPrefKeys.PackageDeploySourcePath, Path.GetFullPath(path));
+            Write(EditorPrefKeys.PackageDeploySourcePath, Path.GetFullPath(path));
         }
 
         public void ClearStoredSourcePath()
         {
-            EditorPrefs.DeleteKey(EditorPrefKeys.PackageDeploySourcePath);
+            deletePreference(PreferenceKey(EditorPrefKeys.PackageDeploySourcePath));
         }
 
         public string GetTargetPath()
         {
+            if (targetOverride != null)
+                return targetOverride();
+
             // Prefer Package Manager resolved path for the installed package
             var packageInfo = PackageInfo.FindForAssembly(typeof(PackageDeploymentService).Assembly);
             if (packageInfo != null)
@@ -77,7 +125,7 @@ namespace MCPForUnity.Editor.Services
 
         public string GetLastBackupPath()
         {
-            return EditorPrefs.GetString(EditorPrefKeys.PackageDeployLastBackupPath, string.Empty);
+            return TryGetRestorePaths(out string backup, out _) ? backup : string.Empty;
         }
 
         public bool HasBackup()
@@ -114,13 +162,13 @@ namespace MCPForUnity.Editor.Services
             try
             {
                 EditorUtility.DisplayProgressBar("Deploy MCP for Unity", "Creating backup...", 0.25f);
-                string backupRoot = Path.Combine(GetProjectRoot(), "Library", BackupRootFolderName);
+                string backupRoot = Path.Combine(projectRoot, "Library", BackupRootFolderName);
                 string backupPath = CreateBackup(targetPath, backupRoot);
 
                 // Publish the completed backup before any destructive replacement, so a failed copy can be recovered.
-                EditorPrefs.SetString(EditorPrefKeys.PackageDeployLastBackupPath, backupPath);
-                EditorPrefs.SetString(EditorPrefKeys.PackageDeployLastTargetPath, targetPath);
-                EditorPrefs.SetString(EditorPrefKeys.PackageDeployLastSourcePath, sourcePath);
+                Write(EditorPrefKeys.PackageDeployLastBackupPath, backupPath);
+                Write(EditorPrefKeys.PackageDeployLastTargetPath, targetPath);
+                Write(EditorPrefKeys.PackageDeployLastSourcePath, sourcePath);
 
                 EditorUtility.DisplayProgressBar("Deploy MCP for Unity", "Replacing package contents...", 0.7f);
                 CopyCoreFolders(sourcePath, targetPath);
@@ -141,23 +189,8 @@ namespace MCPForUnity.Editor.Services
 
         public PackageDeploymentResult RestoreLastBackup()
         {
-            string backupPath = GetLastBackupPath();
-            string targetPath = EditorPrefs.GetString(EditorPrefKeys.PackageDeployLastTargetPath, string.Empty);
-
-            if (string.IsNullOrEmpty(backupPath) || !Directory.Exists(backupPath))
-            {
-                return Fail("No backup available to restore.");
-            }
-
-            if (string.IsNullOrEmpty(targetPath))
-            {
-                targetPath = GetTargetPath();
-            }
-
-            if (string.IsNullOrEmpty(targetPath))
-            {
-                return Fail("Could not locate target package path.");
-            }
+            if (!TryGetRestorePaths(out string backupPath, out string targetPath))
+                return Fail("No backup matches this project and its currently installed package.");
 
             if (PathsOverlap(backupPath, targetPath))
             {
@@ -180,6 +213,28 @@ namespace MCPForUnity.Editor.Services
             finally
             {
                 EditorUtility.ClearProgressBar();
+            }
+        }
+
+        private bool TryGetRestorePaths(out string backup, out string target)
+        {
+            backup = Read(EditorPrefKeys.PackageDeployLastBackupPath);
+            target = GetTargetPath();
+            string recordedTarget = Read(EditorPrefKeys.PackageDeployLastTargetPath);
+            if (string.IsNullOrEmpty(backup) || string.IsNullOrEmpty(target) || string.IsNullOrEmpty(recordedTarget))
+                return false;
+            try
+            {
+                string backupRoot = CanonicalPath(Path.Combine(projectRoot, "Library", BackupRootFolderName));
+                string canonicalBackup = CanonicalPath(backup);
+                var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                return SamePath(target, recordedTarget)
+                    && canonicalBackup.StartsWith(backupRoot + Path.DirectorySeparatorChar, comparison)
+                    && Directory.Exists(canonicalBackup);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is IOException || ex is NotSupportedException)
+            {
+                return false;
             }
         }
 
