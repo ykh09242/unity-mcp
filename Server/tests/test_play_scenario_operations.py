@@ -358,7 +358,7 @@ def test_cli_cancels_at_deadline_when_native_suite_has_not_finalized(
 
 
 def test_cli_exit_is_failure_when_artifact_path_is_not_a_directory(suite_wire, tmp_path):
-    # Given: native execution succeeds but the chosen output path is an existing file.
+    # Given: an invalid output entry is known before native execution.
     calls, replies = suite_wire
     replies.append(receipt("succeeded"))
     output = tmp_path / "artifacts"
@@ -385,8 +385,8 @@ def test_cli_exit_is_failure_when_artifact_path_is_not_a_directory(suite_wire, t
     )
     # Then: the error receipt is visible, exit is nonzero, and existing content is preserved.
     assert result.exit_code == 1, result.output
-    assert len(calls) == 1
-    assert json.loads(result.stdout)["error"] == "report_persist_failed"
+    assert len(calls) == 0
+    assert json.loads(result.stdout)["error"] == "report_output_invalid"
     assert marker.read_text(encoding="utf-8") == "keep"
 
 

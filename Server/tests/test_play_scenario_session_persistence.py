@@ -75,7 +75,7 @@ def storage_fault(monkeypatch):
             if (
                 stage == "junit-write"
                 and path.name in ("junit.xml", "junit.xml.tmp")
-                and path.parent.parent.name != "runs"
+                and not any(parent.name == "runs" for parent in path.parents)
                 and mode == "wb"
             ):
                 return FaultStream(stream, "partial", triggered)

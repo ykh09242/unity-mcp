@@ -23,6 +23,7 @@ from cli.utils.play_scenario_iterations import (
     zero_iteration_counts,
 )
 from cli.utils.play_scenario_reports import _xml_text, write_player_artifacts
+from cli.utils.play_scenario_artifact_io import COMPLETION_MANIFEST
 from cli.utils.play_scenario_checkpoint_artifacts import (
     admit_checkpoint_artifacts,
 )
@@ -37,6 +38,7 @@ OWNED_FILES: Final = frozenset(
         "definition.json",
         "run.json",
         "junit.xml",
+        COMPLETION_MANIFEST,
         "player.log",
         "progress.json",
         "process.json",
