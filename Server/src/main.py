@@ -58,6 +58,7 @@ from transport.catalog_subscriptions import (
 )
 from transport.mcp_version_middleware import McpVersionMiddleware
 from transport.inventory_ordering import InventoryOrderingMiddleware
+from transport.session_state_store import SessionStateStore
 from transport.skills_extension import install_skills
 from transport.scene_load_inputs import prepare_scene_load_inputs
 from transport.test_job_tasks import WaitTaskDeliveryMiddleware
@@ -368,12 +369,17 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 
         # Yield shared state for lifespan consumers (e.g., middleware)
         subscriptions = getattr(server, "_catalog_subscriptions", None)
-        async with subscriptions.lifespan() if subscriptions is not None else nullcontext():
-            yield {
-                "pool": _unity_connection_pool,
-                "plugin_registry": _plugin_registry,
-            }
+        state_store = getattr(server, "_unity_session_state_store", None)
+        async with state_store.lifespan() if state_store is not None else nullcontext():
+            async with subscriptions.lifespan() if subscriptions is not None else nullcontext():
+                yield {
+                    "pool": _unity_connection_pool,
+                    "plugin_registry": _plugin_registry,
+                }
     finally:
+        state_store = getattr(server, "_unity_session_state_store", None)
+        if state_store is not None:
+            state_store.clear()
         receipts = getattr(server, "_execution_receipts", None)
         if receipts is not None:
             receipts.close()
@@ -609,15 +615,18 @@ def create_mcp_server(
     execution_receipts_private_root: bool = False,
 ) -> FastMCP:
     scene_inputs = prepare_scene_load_inputs()
+    state_store = SessionStateStore()
     mcp = UnityMCP(
         name="mcp-for-unity-server",
         version=RUNNING_SERVER.version,
         lifespan=server_lifespan,
+        session_state_store=state_store,
         instructions=append_custom_instructions(
             _build_instructions(project_scoped_tools), custom_instructions
         ),
         **({"request_state_security": scene_inputs.policy} if scene_inputs is not None else {}),
     )
+    mcp._unity_session_state_store = state_store
     mcp._scene_load_inputs = scene_inputs
     mcp.add_middleware(InventoryOrderingMiddleware())
     mcp.add_middleware(ResponseLimitMiddleware())
