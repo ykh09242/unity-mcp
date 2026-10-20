@@ -53,6 +53,15 @@ class ResourceContract:
 
         @mcp.tool(name="bench_resource_arm")
         async def arm() -> dict[str, bool]:
+            # Parity cohorts start from the same completed local scan. A first
+            # scan may legitimately return pending to a concurrent resource reader.
+            editor.external_changes_scanner.set_project_root(INSTANCE, str(project))
+            baseline = await editor.external_changes_scanner.update_and_get_async(INSTANCE)
+            if (
+                baseline["external_changes_scan_complete"] is not True
+                or baseline["external_changes_dirty"]
+            ):
+                raise RuntimeError("Owned resource fixture has no complete clean scan baseline")
             self.entered = self.held = 0
             self.held_event, self.release = anyio.Event(), anyio.Event()
             self.peer.resource_entered = anyio.Event()

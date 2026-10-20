@@ -20,8 +20,8 @@ _EMPTY_RESULT = {
     "external_changes_last_seen_unix_ms": None,
     "dirty_since_unix_ms": None,
     "last_cleared_unix_ms": None,
-    "external_changes_scan_complete": False,
-    "external_changes_scan_limited": False,
+    "external_changes_scan_complete": None,
+    "external_changes_scan_limited": None,
 }
 
 
@@ -50,8 +50,9 @@ class ExternalChangesState:
     cursor: ScanCursor | None = None
     fingerprint: tuple[int, int] | None = None
     revision: int = 0
-    scan_complete: bool = False
-    scan_limited: bool = False
+    # Coverage is unknown until a verified local project root is available.
+    scan_complete: bool | None = None
+    scan_limited: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,9 @@ class ExternalChangesScanner:
             ):
                 # Cached package paths, timestamps and dirty state belong to this project.
                 self._release_state(st)
-                self._states[instance_id] = ExternalChangesState(project_root=project_root)
+                self._states[instance_id] = ExternalChangesState(
+                    project_root=project_root, scan_complete=False, scan_limited=False
+                )
 
     def capture_dirty_state(self, instance_id: str) -> ExternalChangesSnapshot | None:
         """Capture the observed edits before dispatch, without scanning or advancing them."""
