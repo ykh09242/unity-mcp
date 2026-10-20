@@ -19,9 +19,21 @@ namespace MCPForUnity.Editor.Clients
         public ClaudeCliMcpConfigurator(McpClient client)
             : base(client) { }
 
+        protected virtual bool RunCli(
+            string executable,
+            string arguments,
+            string directory,
+            out string stdout,
+            out string stderr,
+            int timeout,
+            string pathPrepend
+        ) => ExecPath.TryRun(executable, arguments, directory, out stdout, out stderr, timeout, pathPrepend);
+
         public override bool SupportsAutoConfigure => true;
+        private bool hasSelectedLocalRegistration;
         internal bool ShouldUnregister =>
-            client.status == McpStatus.Configured
+            hasSelectedLocalRegistration
+            && client.status == McpStatus.Configured
             && (HasClientProjectDirOverride || client.configuredTransport == HttpEndpointUtility.GetCurrentServerTransport());
 
         public override string GetConfigureActionLabel() => ShouldUnregister ? "Unregister" : "Configure";
@@ -124,6 +136,8 @@ namespace MCPForUnity.Editor.Clients
                 {
                     throw new ArgumentNullException(nameof(projectDir), "Project directory must be provided for thread-safe execution");
                 }
+
+                hasSelectedLocalRegistration = ReadSelectedLocalRegistrations(projectDir).Count > 0;
 
                 // Read Claude Code config directly from ~/.claude.json instead of using slow CLI
                 // This is instant vs 15+ seconds for `claude mcp list` which does health checks
@@ -359,17 +373,16 @@ namespace MCPForUnity.Editor.Clients
                 args = $"mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {uvxDevFlags}{fromArgs} {packageName}";
             }
 
-            // Remove any existing registrations from ALL scopes to prevent stale config conflicts (#664)
-            McpLog.Info("Removing any existing UnityMCP registrations from all scopes before adding...");
-            RemoveFromAllScopes(claudePath, projectDir, pathPrepend);
+            RemoveSelectedLocalRegistrations(claudePath, projectDir, pathPrepend);
 
             // Now add the registration
-            if (!ExecPath.TryRun(claudePath, args, projectDir, out var stdout, out var stderr, 15000, pathPrepend))
+            if (!RunCli(claudePath, args, projectDir, out var stdout, out var stderr, 15000, pathPrepend))
             {
                 throw new InvalidOperationException("Failed to register with Claude Code. Check its CLI path, configuration permissions and scope.");
             }
 
             McpLog.Info($"Successfully registered with Claude Code using {(useHttpTransport ? "HTTP" : "stdio")} transport.");
+            hasSelectedLocalRegistration = true;
             client.SetStatus(McpStatus.Configured);
             client.configuredTransport = serverTransport;
         }
@@ -384,13 +397,17 @@ namespace MCPForUnity.Editor.Clients
                 throw new InvalidOperationException("Claude CLI not found. Please install Claude Code first.");
             }
 
-            // Remove from ALL scopes to ensure complete cleanup (#664)
-            McpLog.Info("Removing all UnityMCP registrations from all scopes...");
-            RemoveFromAllScopes(claudePath, projectDir, pathPrepend);
-
-            McpLog.Info("MCP server successfully unregistered from Claude Code.");
-            client.SetStatus(McpStatus.NotConfigured);
+            RemoveSelectedLocalRegistrations(claudePath, projectDir, pathPrepend);
+            var remaining = ReadClaudeCodeConfig(projectDir);
+            if (remaining.error != null)
+            {
+                client.SetStatus(McpStatus.Error, remaining.error);
+                throw new InvalidOperationException(remaining.error);
+            }
+            client.SetStatus(remaining.serverConfig == null ? McpStatus.NotConfigured : McpStatus.Configured);
             client.configuredTransport = Models.ConfiguredTransport.Unknown;
+            if (remaining.serverConfig != null)
+                client.configStatus = "Local registration removed; shared or inherited registration remains unchanged.";
         }
 
         private void Register()
@@ -444,12 +461,10 @@ namespace MCPForUnity.Editor.Clients
             }
             catch { }
 
-            // Remove any existing registrations from ALL scopes to prevent stale config conflicts (#664)
-            McpLog.Info("Removing any existing UnityMCP registrations from all scopes before adding...");
-            RemoveFromAllScopes(claudePath, projectDir, pathPrepend);
+            RemoveSelectedLocalRegistrations(claudePath, projectDir, pathPrepend);
 
             // Now add the registration with the current transport mode
-            if (!ExecPath.TryRun(claudePath, args, projectDir, out var stdout, out var stderr, 15000, pathPrepend))
+            if (!RunCli(claudePath, args, projectDir, out var stdout, out var stderr, 15000, pathPrepend))
             {
                 throw new InvalidOperationException("Failed to register with Claude Code. Check its CLI path, configuration permissions and scope.");
             }
@@ -458,6 +473,7 @@ namespace MCPForUnity.Editor.Clients
 
             // Set status to Configured immediately after successful registration
             // The UI will trigger an async verification check separately to avoid blocking
+            hasSelectedLocalRegistration = true;
             client.SetStatus(McpStatus.Configured);
             client.configuredTransport = HttpEndpointUtility.GetCurrentServerTransport();
         }
@@ -483,13 +499,17 @@ namespace MCPForUnity.Editor.Clients
                 pathPrepend = "/usr/local/bin:/usr/bin:/bin";
             }
 
-            // Remove from ALL scopes to ensure complete cleanup (#664)
-            McpLog.Info("Removing all UnityMCP registrations from all scopes...");
-            RemoveFromAllScopes(claudePath, projectDir, pathPrepend);
-
-            McpLog.Info("MCP server successfully unregistered from Claude Code.");
-            client.SetStatus(McpStatus.NotConfigured);
+            RemoveSelectedLocalRegistrations(claudePath, projectDir, pathPrepend);
+            var remaining = ReadClaudeCodeConfig(projectDir);
+            if (remaining.error != null)
+            {
+                client.SetStatus(McpStatus.Error, remaining.error);
+                throw new InvalidOperationException(remaining.error);
+            }
+            client.SetStatus(remaining.serverConfig == null ? McpStatus.NotConfigured : McpStatus.Configured);
             client.configuredTransport = Models.ConfiguredTransport.Unknown;
+            if (remaining.serverConfig != null)
+                client.configStatus = "Local registration removed; shared or inherited registration remains unchanged.";
         }
 
         public override string GetManualSnippet()
@@ -512,10 +532,8 @@ namespace MCPForUnity.Editor.Clients
                 string headerArg = BuildHttpAuthArgument(httpUrl, remote, apiKey);
                 return "# Register the MCP server with Claude Code:\n"
                     + $"claude mcp add --scope local --transport http UnityMCP {httpUrl}{headerArg}\n\n"
-                    + "# Unregister the MCP server (from all scopes to clean up any stale configs):\n"
-                    + "claude mcp remove --scope local UnityMCP\n"
-                    + "claude mcp remove --scope user UnityMCP\n"
-                    + "claude mcp remove --scope project UnityMCP\n\n"
+                    + "# Remove the local registration for the selected project:\n"
+                    + "claude mcp remove --scope local UnityMCP\n\n"
                     + "# List registered servers:\n"
                     + "claude mcp list";
             }
@@ -530,10 +548,8 @@ namespace MCPForUnity.Editor.Clients
 
             return "# Register the MCP server with Claude Code:\n"
                 + $"claude mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {devFlags}{fromArgs} mcp-for-unity\n\n"
-                + "# Unregister the MCP server (from all scopes to clean up any stale configs):\n"
-                + "claude mcp remove --scope local UnityMCP\n"
-                + "claude mcp remove --scope user UnityMCP\n"
-                + "claude mcp remove --scope project UnityMCP\n\n"
+                + "# Remove the local registration for the selected project:\n"
+                + "claude mcp remove --scope local UnityMCP\n\n"
                 + "# List registered servers:\n"
                 + "claude mcp list";
         }
@@ -548,101 +564,62 @@ namespace MCPForUnity.Editor.Clients
                 "Restart Claude Code",
             };
 
-        /// <summary>
-        /// Removes UnityMCP registration from all Claude Code configuration scopes (local, user, project).
-        /// Also removes legacy entries from ~/.claude.json that the CLI scoped removal can't touch.
-        /// This ensures no stale or conflicting configurations remain across different scopes.
-        /// Also handles legacy "unityMCP" naming convention.
-        /// </summary>
-        private static void RemoveFromAllScopes(string claudePath, string projectDir, string pathPrepend)
-        {
-            // Remove from all three scopes to prevent stale configs causing connection issues.
-            // See GitHub issue #664 - conflicting configs at different scopes can cause
-            // Claude Code to connect with outdated/incorrect configuration.
-            string[] scopes = { "local", "user", "project" };
-            string[] names = { "UnityMCP", "unityMCP" }; // Include legacy naming
-
-            foreach (var scope in scopes)
-            {
-                foreach (var name in names)
-                {
-                    ExecPath.TryRun(claudePath, $"mcp remove --scope {scope} {name}", projectDir, out _, out _, 5000, pathPrepend);
-                }
-            }
-
-            // Also remove legacy entries directly from ~/.claude.json.
-            // Older versions and manual CLI commands without --scope wrote mcpServers entries
-            // into the projects section of ~/.claude.json. The scoped `claude mcp remove` commands
-            // above won't touch these, leaving stale/conflicting configs behind.
-            RemoveLegacyUserConfigEntries(projectDir);
-        }
-
-        /// <summary>
-        /// Removes UnityMCP entries from the projects section of ~/.claude.json.
-        /// These are legacy entries that were created by older versions or manual commands
-        /// that didn't use --scope. The scoped `claude mcp remove` commands don't clean these up.
-        /// </summary>
-        private static void RemoveLegacyUserConfigEntries(string projectDir)
+        // The CLI owns configuration writes. Never rewrite the shared user document to clean up other scopes.
+        private void RemoveSelectedLocalRegistrations(string claudePath, string projectDir, string pathPrepend)
         {
             try
             {
-                string configPath = GetUserConfigPath();
-                if (!File.Exists(configPath))
-                    return;
-
-                string json = File.ReadAllText(configPath);
-                var config = JObject.Parse(json);
-                var projects = config["projects"] as JObject;
-                if (projects == null)
-                    return;
-
-                string normalizedProjectDir = NormalizePath(projectDir);
-                bool modified = false;
-
-                // Walk all project entries looking for ones that match our project path
-                foreach (var project in projects.Properties())
+                var registrations = ReadSelectedLocalRegistrations(projectDir);
+                foreach (var name in registrations.Keys)
                 {
-                    string normalizedKey = NormalizePath(project.Name);
-
-                    // Match exact path or parent paths (same logic as ReadUserScopeConfig)
-                    if (!string.Equals(normalizedKey, normalizedProjectDir, StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Also check if projectDir is a child of this config entry
-                        if (!normalizedProjectDir.StartsWith(normalizedKey + "/", StringComparison.OrdinalIgnoreCase))
-                            continue;
-                    }
-
-                    var mcpServers = project.Value?["mcpServers"] as JObject;
-                    if (mcpServers == null)
-                        continue;
-
-                    // Remove UnityMCP/unityMCP entries (case-insensitive)
-                    var toRemove = new List<string>();
-                    foreach (var server in mcpServers.Properties())
-                    {
-                        if (string.Equals(server.Name, "UnityMCP", StringComparison.OrdinalIgnoreCase))
-                        {
-                            toRemove.Add(server.Name);
-                        }
-                    }
-
-                    foreach (var name in toRemove)
-                    {
-                        mcpServers.Remove(name);
-                        modified = true;
-                        McpLog.Info($"Removed legacy '{name}' entry from ~/.claude.json for project '{project.Name}'");
-                    }
+                    if (!RunCli(claudePath, $"mcp remove --scope local {name}", projectDir, out _, out _, 5000, pathPrepend))
+                        throw new InvalidOperationException(
+                            "Claude CLI could not remove the selected local registration. Other scopes were preserved; check configuration permissions and retry."
+                        );
                 }
-
-                if (modified)
-                {
-                    File.WriteAllText(configPath, config.ToString(Formatting.Indented));
-                }
+                hasSelectedLocalRegistration = ReadSelectedLocalRegistrations(projectDir).Count > 0;
+                if (hasSelectedLocalRegistration)
+                    throw new InvalidOperationException("Claude CLI returned success but the selected local registration remains. Review it before retrying.");
             }
-            catch (Exception ex)
+            catch (Exception error)
             {
-                McpLog.Warn($"Failed to clean up legacy ~/.claude.json entries: {ex.Message}");
+                client.SetStatus(McpStatus.Error, error.Message);
+                throw;
             }
+        }
+
+        private static Dictionary<string, JObject> ReadSelectedLocalRegistrations(string projectDir)
+        {
+            var result = new Dictionary<string, JObject>(StringComparer.Ordinal);
+            string path = GetUserConfigPath();
+            GuardedFileSystem.CheckPath(path);
+            if (!File.Exists(path))
+                return result;
+            var projects = JObject.Parse(File.ReadAllText(path))["projects"] as JObject;
+            if (projects == null)
+                return result;
+            string selected = NormalizePath(Path.GetFullPath(projectDir));
+            var comparison = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            foreach (var project in projects.Properties())
+            {
+                if (!string.Equals(NormalizePath(Path.GetFullPath(project.Name)), selected, comparison))
+                    continue;
+                if (project.Value?["mcpServers"] == null)
+                    continue;
+                if (!(project.Value["mcpServers"] is JObject servers))
+                    throw new FormatException("Claude Code mcpServers must be an object.");
+                foreach (var server in servers.Properties())
+                {
+                    if (!string.Equals(server.Name, "UnityMCP", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (!(server.Value is JObject entry))
+                        throw new FormatException("Claude Code registration must be an object.");
+                    if (result.TryGetValue(server.Name, out var previous) && !JToken.DeepEquals(previous, entry))
+                        throw new InvalidOperationException("Conflicting local path variants require manual review before changing this registration.");
+                    result[server.Name] = entry;
+                }
+            }
+            return result;
         }
 
         private static string BuildHttpRegistrationArguments(string projectDir, string claudePath, string httpUrl, bool remote, string apiKey)
@@ -663,25 +640,11 @@ namespace MCPForUnity.Editor.Clients
         private static JObject GetExistingConfigForRegistration(string projectDir)
         {
             JObject existing = null;
-            // Registration removes stale entries in each scope, so validate shadowed providers too.
-            var scopes = new[]
+            foreach (var entry in ReadSelectedLocalRegistrations(projectDir).Values)
             {
-                ReadUserScopeConfig(projectDir),
-                ReadProjectScopeConfig(projectDir),
-                ReadUserScopeConfig(projectDir, userOnly: true),
-                ReadLocalScopeConfig(projectDir),
-            };
-            foreach (var scope in scopes)
-            {
-                if (scope.error != null)
-                {
-                    throw new InvalidOperationException(scope.error);
-                }
-                ClaudeHttpAuth.EnsureManagedAuthentication(scope.serverConfig);
+                ClaudeHttpAuth.EnsureManagedAuthentication(entry);
                 if (existing == null)
-                {
-                    existing = scope.serverConfig;
-                }
+                    existing = entry;
             }
             return existing;
         }

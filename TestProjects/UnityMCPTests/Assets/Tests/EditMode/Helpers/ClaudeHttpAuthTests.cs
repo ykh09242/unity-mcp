@@ -127,8 +127,8 @@ namespace MCPForUnityTests.Editor.Helpers
                     string before = config.ToString();
                     File.WriteAllText(path, before);
                     var method = typeof(ClaudeCliMcpConfigurator).GetMethod("GetExistingConfigForRegistration", BindingFlags.Static | BindingFlags.NonPublic);
-                    var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[] { project }));
-                    Assert.IsInstanceOf<InvalidOperationException>(error.InnerException);
+                    var local = (JObject)method.Invoke(null, new object[] { project });
+                    Assert.AreEqual("local", (string)local["command"]);
                     Assert.AreEqual(before, File.ReadAllText(path));
                 }
             );
