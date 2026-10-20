@@ -14,7 +14,25 @@ Tools are grouped so an assistant can discover the relevant operations without l
 
 Ask for `manage_tools(action="list_groups")`. It reports actual visible inventory rather than assuming every registered tool is enabled. Consult the [tool catalog](../reference/tools/index.md) for group membership and schemas; it is generated from the source instead of copied into this guide.
 
-Groups include `core`, `animation`, `ui`, `vfx`, `scripting_ext`, `testing`, `probuilder`, `profiling`, `docs`, and `asset_gen`. Local defaults begin with `core`; optional tools may also depend on Unity packages, provider setup, or explicit consent.
+Groups include `core`, `camera`, `graphics`, `physics`, `animation`, `ui`, `vfx`, `scripting_ext`, `testing`, `probuilder`, `profiling`, `docs`, and `asset_gen`. Local HTTP startup defaults begin with `core`; optional tools may also depend on Unity packages, provider setup, or explicit consent.
+
+The specialized `camera`, `graphics`, and `physics` groups are optional. Their complete input schemas and tool IDs are unchanged; enable the relevant group when working on cameras, rendering, or physics.
+
+## Editor selection and recommended defaults
+
+On the Unity MCP window's **Tools** page, the **User Interface** group distinguishes **uGUI / Canvas** (`manage_ugui`) from **UI Toolkit / UXML & USS** (`manage_ui`). Each row keeps its technical tool ID under the display name. Expand **Details** for parameter and output information or tool-specific settings.
+
+Fresh built-in selections enable essentials only. Existing saved tool choices remain unchanged, and custom tools retain their declared registration default. **Use Recommended** selects essential built-in tools and disables optional built-in groups; it preserves custom tools and all explicit-consent tool settings. This preset also applies to rows hidden by search or the **Show** filter.
+
+Search names, IDs, descriptions, and groups, or filter enabled/disabled tools without changing their selection. Group counts explicitly report enabled tools; a mixed checkbox indicates a partially enabled group. The server confirmation below the controls distinguishes saved settings from settings actually received by the server.
+
+## Tool inventory and model context
+
+This server reduces the tools returned in the initial local HTTP catalog. It keeps standard `tools/list` responses, full schemas and stable tool names. A smaller visible catalog can reduce the definitions a host sends to its model, but the host decides how much of that catalog enters model context.
+
+The [MCP client best practices](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/docs/2026-07-28/develop/clients/client-best-practices.mdx) recommend progressive tool discovery in the client: inspect the catalog, select relevant tools, and refresh it when tool-list notifications arrive. Server visibility settings complement this behavior; they do not implement host-side tool search or guarantee the same token savings in every client.
+
+Stdio initially registers all groups for compatibility, then synchronizes with Unity. A smaller initial inventory is therefore specific to local HTTP. Existing saved Editor choices may enable more tools when the Editor connects.
 
 The `ui` group contains [`manage_ui`](../reference/tools/ui/manage_ui.md) for UI Toolkit and [`manage_ugui`](../reference/tools/ui/manage_ugui.md) for Canvas-based UI. The [uGUI guide](./ugui.md) covers creation, layout editing and screen-size diagnostics.
 

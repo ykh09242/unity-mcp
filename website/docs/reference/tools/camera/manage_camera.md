@@ -8,7 +8,7 @@ description: "Manage cameras (Unity Camera + Cinemachine)."
 
 > **Auto-generated** from the Python tool registry. Do not hand-edit outside `<!-- examples:start --><!-- examples:end -->` blocks — the generator (`tools/generate_docs_reference.py`) will overwrite them.
 
-**Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_camera`
+**Group:** `camera` &nbsp;·&nbsp; **Module:** `services.tools.manage_camera`
 
 ## Description
 

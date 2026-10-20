@@ -8,7 +8,7 @@ description: "Manage physics settings, collision matrix, materials, joints, quer
 
 > **Auto-generated** from the Python tool registry. Do not hand-edit outside `<!-- examples:start --><!-- examples:end -->` blocks — the generator (`tools/generate_docs_reference.py`) will overwrite them.
 
-**Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_physics`
+**Group:** `physics` &nbsp;·&nbsp; **Module:** `services.tools.manage_physics`
 
 ## Description
 

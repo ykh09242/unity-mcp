@@ -179,8 +179,9 @@ const config = {
       '@docusaurus/plugin-client-redirects',
       {
         redirects: [
-          // Example pattern (populated as content migrates in M2):
-          // { from: '/docs/guides/CLI_USAGE', to: '/guides/cli' },
+          { from: '/reference/tools/core/manage_camera', to: '/reference/tools/camera/manage_camera' },
+          { from: '/reference/tools/core/manage_graphics', to: '/reference/tools/graphics/manage_graphics' },
+          { from: '/reference/tools/core/manage_physics', to: '/reference/tools/physics/manage_physics' },
         ],
       },
     ],
