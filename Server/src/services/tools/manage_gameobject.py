@@ -3,6 +3,7 @@ from typing import Annotated, Any, Literal
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -150,6 +151,7 @@ def _normalize_component_properties(
 
 
 @mcp_for_unity_tool(
+    group="legacy",
     description=(
         "Performs CRUD operations on GameObjects. "
         "Actions: create, modify, delete, duplicate, move_relative, look_at, placement. "
@@ -527,7 +529,7 @@ async def manage_gameobject(
         response = await send_with_unity_instance(
             async_send_command_with_retry,
             unity_instance,
-            "manage_gameobject",
+            capability_command("manage_gameobject"),
             params,
         )
 

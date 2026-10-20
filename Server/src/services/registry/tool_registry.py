@@ -20,6 +20,10 @@ _tool_registry: list[dict[str, Any]] = []
 # Valid group names. ``None`` is also accepted (always-visible meta-tools).
 TOOL_GROUPS: dict[str, str] = {
     "core": "Essential scene, script, asset, editor & view recording tools (always on by default)",
+    "scene": "GameObject positioning, placement and scene diagnostics",
+    "assets": "Asset changes, labels, bundles and reference diagnostics",
+    "prefabs": "Prefab creation, contents, stages and overrides",
+    "legacy": "Compatibility: full combined schemas for existing clients; prefer focused tools",
     "camera": "Camera setup, Cinemachine and view capture",
     "graphics": "Rendering, lighting, volumes and graphics diagnostics",
     "physics": "2D and 3D physics settings, queries and simulation",

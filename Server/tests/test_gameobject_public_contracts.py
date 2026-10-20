@@ -235,6 +235,7 @@ def test_gameobject_registered_sdk_vectors_flags_and_preflight(tmp_path):
         server = FastMCP('gameobject-contracts')
         server.add_middleware(FixtureState())
         register_all_tools(server)
+        server.enable(names={'manage_gameobject'}, components={"tool"})
         cases = [
             ({'action': 'create', 'name': 'Fixture'}, {'action': 'create', 'name': 'Fixture'}),
             (

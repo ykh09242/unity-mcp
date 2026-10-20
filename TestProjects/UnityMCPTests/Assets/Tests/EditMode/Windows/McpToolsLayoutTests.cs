@@ -78,7 +78,7 @@ namespace MCPForUnityTests.EditMode.Windows
                             "disable-all-button",
                             "tools-search",
                             "tools-state-filter",
-                            "tool-toggle-manage_ui",
+                            "tool-toggle-ui_source",
                             "tool-toggle-manage_ugui",
                         }
                     )
@@ -118,10 +118,26 @@ namespace MCPForUnityTests.EditMode.Windows
                     window.Repaint();
                     yield return null;
                 }
-                Assert.That(content.Q<Label>("tools-visible-count").text, Is.EqualTo("1 / 7 shown"));
+                Assert.That(content.Q<Label>("tools-visible-count").text, Is.EqualTo("1 / 8 shown"));
                 string filtered = Path.Combine(directory, "tools-filtered-details.png");
                 Capture(window, filtered);
                 TestContext.WriteLine("TOOLS_LAYOUT_CAPTURE " + filtered);
+                window.position = new Rect(40, 40, 420, 860);
+                content.Q<DropdownField>("tools-state-filter").value = "All";
+                foreach (string query in new[] { "Physics Queries", "Compatibility" })
+                {
+                    content.Q<TextField>("tools-search").value = query;
+                    for (int i = 0; i < 12; i++)
+                    {
+                        EditorApplication.QueuePlayerLoopUpdate();
+                        window.Repaint();
+                        yield return null;
+                    }
+                    Assert.That(content.Q<Label>("tools-visible-count").text, Is.EqualTo("1 / 8 shown"));
+                    string featurePath = Path.Combine(directory, query == "Compatibility" ? "tools-compatibility.png" : "tools-physics-query.png");
+                    Capture(window, featurePath);
+                    TestContext.WriteLine("TOOLS_LAYOUT_CAPTURE " + featurePath);
+                }
             }
             finally
             {
@@ -176,41 +192,25 @@ namespace MCPForUnityTests.EditMode.Windows
 
         private sealed class LayoutDiscovery : IToolDiscoveryService
         {
-            private readonly List<ToolMetadata> tools = new()
+            private readonly List<ToolMetadata> tools = CreateRepresentativeCatalog();
+
+            private static List<ToolMetadata> CreateRepresentativeCatalog()
             {
-                new() { Name = "manage_scene", IsBuiltIn = true },
-                new() { Name = "manage_gameobject", IsBuiltIn = true },
-                new()
+                var discovery = new ToolDiscoveryService();
+                return new[]
                 {
-                    Name = "manage_ui",
-                    Group = "ui",
-                    IsBuiltIn = true,
-                },
-                new()
-                {
-                    Name = "manage_ugui",
-                    Group = "ui",
-                    IsBuiltIn = true,
-                },
-                new()
-                {
-                    Name = "manage_camera",
-                    Group = "camera",
-                    IsBuiltIn = true,
-                },
-                new()
-                {
-                    Name = "manage_graphics",
-                    Group = "graphics",
-                    IsBuiltIn = true,
-                },
-                new()
-                {
-                    Name = "manage_physics",
-                    Group = "physics",
-                    IsBuiltIn = true,
-                },
-            };
+                    "scene_inspect",
+                    "gameobject_create",
+                    "ui_source",
+                    "manage_ugui",
+                    "capture_camera",
+                    "manage_render_volumes",
+                    "query_physics",
+                    "manage_ui",
+                }
+                    .Select(discovery.GetToolMetadata)
+                    .ToList();
+            }
 
             public List<ToolMetadata> DiscoverAllTools() => tools.ToList();
 
@@ -218,7 +218,7 @@ namespace MCPForUnityTests.EditMode.Windows
 
             public List<ToolMetadata> GetEnabledTools() => tools.FindAll(tool => IsToolEnabled(tool.Name));
 
-            public bool IsToolEnabled(string name) => name == "manage_ugui" || name == "manage_scene";
+            public bool IsToolEnabled(string name) => name == "manage_ugui" || name == "scene_inspect";
 
             public void SetToolEnabled(string name, bool enabled) => Assert.Fail("Render inspection cannot change user selection.");
 

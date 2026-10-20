@@ -15,6 +15,9 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         public string Name { get; set; }
 
+        /// <summary>Optional human-readable title in the Editor tool catalog.</summary>
+        public string DisplayName { get; set; }
+
         /// <summary>
         /// Tool description for LLM
         /// </summary>

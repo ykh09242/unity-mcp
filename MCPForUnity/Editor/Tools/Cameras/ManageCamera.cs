@@ -4,7 +4,7 @@ using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.Cameras
 {
-    [McpForUnityTool("manage_camera", AutoRegister = false, Group = "camera")]
+    [McpForUnityTool("manage_camera", AutoRegister = false, Group = "legacy")]
     public static class ManageCamera
     {
         public static object HandleCommand(JObject @params)

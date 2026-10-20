@@ -369,7 +369,7 @@ namespace MCPForUnityTests.EditMode.Windows
             string key = EditorPrefKeys.ToolEnabledPrefix + metadata.Name;
             try
             {
-                Invoke(new ToolDiscoveryService(), "EnsurePreferenceInitialized", metadata);
+                Invoke(new ToolDiscoveryService(), "EnsurePreferenceInitialized", metadata, new HashSet<string>());
                 Assert.That(EditorPrefs.GetBool(key), Is.EqualTo(expected));
             }
             finally
@@ -392,7 +392,7 @@ namespace MCPForUnityTests.EditMode.Windows
             try
             {
                 EditorPrefs.SetBool(key, enabled);
-                Invoke(new ToolDiscoveryService(), "EnsurePreferenceInitialized", metadata);
+                Invoke(new ToolDiscoveryService(), "EnsurePreferenceInitialized", metadata, new HashSet<string>());
                 Assert.That(EditorPrefs.GetBool(key), Is.EqualTo(enabled));
             }
             finally

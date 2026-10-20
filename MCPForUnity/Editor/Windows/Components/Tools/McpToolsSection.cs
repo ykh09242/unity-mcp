@@ -60,6 +60,10 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private static readonly Dictionary<string, string> GroupDisplayNames = new(StringComparer.OrdinalIgnoreCase)
         {
             { "core", "Essentials" },
+            { "scene", "Scene Layout & Diagnostics" },
+            { "assets", "Asset Management" },
+            { "prefabs", "Prefab Editing" },
+            { "legacy", "Compatibility" },
             { "camera", "Cameras & Capture" },
             { "graphics", "Rendering & Lighting" },
             { "physics", "Physics" },
@@ -942,8 +946,11 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
         private bool IsFiltering() => !string.IsNullOrWhiteSpace(searchField?.value) || stateFilter?.value == "Enabled" || stateFilter?.value == "Disabled";
 
-        private static string GetToolDisplayName(ToolMetadata tool) =>
-            tool?.Name switch
+        private static string GetToolDisplayName(ToolMetadata tool)
+        {
+            if (!string.IsNullOrWhiteSpace(tool?.DisplayName))
+                return tool.DisplayName;
+            string title = tool?.Name switch
             {
                 "manage_ugui" => "uGUI / Canvas",
                 "manage_ui" => "UI Toolkit / UXML & USS",
@@ -952,6 +959,10 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 "manage_physics" => "Physics / 2D & 3D",
                 _ => CultureInfo.InvariantCulture.TextInfo.ToTitleCase((tool?.Name ?? string.Empty).Replace('_', ' ')),
             };
+            return tool != null && IsBuiltIn(tool) && string.Equals(tool.Group, "legacy", StringComparison.OrdinalIgnoreCase)
+                ? title + " (all actions)"
+                : title;
+        }
 
         private static string GetToolSummary(ToolMetadata tool)
         {
@@ -1163,7 +1174,9 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
         private static bool IsManageSceneTool(ToolMetadata tool) => string.Equals(tool?.Name, "manage_scene", StringComparison.OrdinalIgnoreCase);
 
-        private static bool IsManageCameraTool(ToolMetadata tool) => string.Equals(tool?.Name, "manage_camera", StringComparison.OrdinalIgnoreCase);
+        private static bool IsManageCameraTool(ToolMetadata tool) =>
+            string.Equals(tool?.Name, "manage_camera", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool?.Name, "capture_camera", StringComparison.OrdinalIgnoreCase);
 
         private static bool IsBatchExecuteTool(ToolMetadata tool) => string.Equals(tool?.Name, "batch_execute", StringComparison.OrdinalIgnoreCase);
 

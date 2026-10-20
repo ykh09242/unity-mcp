@@ -356,6 +356,8 @@ def test_all_registered_tools_have_safe_bounded_argument_guards(tmp_path):
         config.http_remote_hosted = False
         server = FastMCP("catalog-guard")
         register_all_tools(server)
+        # Validate guards across the complete catalog, including optional tools.
+        server.enable(components={"tool"})
         async def scenario():
             tools = await server.list_tools(run_middleware=False)
             assert len(tools) >= 51

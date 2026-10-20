@@ -57,6 +57,7 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
         server = FastMCP("prefab-texture-contracts")
         server.add_middleware(FixtureUnityState())
         register_all_tools(server)
+        server.enable(names={'manage_prefabs', 'manage_texture'}, components={"tool"})
 
         invalid_texture = [
             {"width": 0}, {"fill_color": [1, 2]}, {"palette": "not-json"},

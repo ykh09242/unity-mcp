@@ -20,6 +20,7 @@ def texture_server():
     server = FastMCP("texture-budgets")
     server.add_middleware(UnityState())
     register_all_tools(server)
+    server.enable(names={"manage_texture"}, components={"tool"})
     return server
 
 

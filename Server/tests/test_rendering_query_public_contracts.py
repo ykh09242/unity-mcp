@@ -59,8 +59,8 @@ def test_counter_category_schema_and_transport(tmp_path):
             tools.get_registered_tools = lambda: metadata
             mcp = FastMCP("rendering-query-contract")
             tools.register_all_tools(mcp)
+            mcp.enable(names={'manage_graphics'}, components={"tool"})
             # Select rendering for schema checks; startup defaults are covered by the group suite.
-            mcp.enable(tags={"group:graphics"}, components={"tool"})
             for mode in ("2026-07-28", "legacy"):
                 async with Client(mcp, mode=mode) as client:
                     tool = next(t for t in await client.list_tools() if t.name == "manage_graphics")

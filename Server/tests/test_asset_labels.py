@@ -176,6 +176,7 @@ async def main():
     config.transport_mode="http"; config.http_remote_hosted=False
     PluginHub.send_command_for_instance=staticmethod(send)
     server=FastMCP("labels-contract"); server.add_middleware(State()); register_all_tools(server)
+    server.enable(names={'manage_asset'}, components={"tool"})
     async with Client(server,mode=sys.argv[1]) as client:
         tool=next(t for t in await client.list_tools() if t.name=="manage_asset")
         annotations=tool.annotations.model_dump(by_alias=True)

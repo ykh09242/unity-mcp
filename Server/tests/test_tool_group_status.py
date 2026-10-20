@@ -70,6 +70,7 @@ def test_group_status_honors_remote_tenants_project_selection_and_empty_catalogs
         from unittest.mock import AsyncMock
         sys.path.insert(0, "src")
         from fastmcp import Client, Context, FastMCP
+        from mcp.shared.exceptions import MCPError
         from core.config import config
         from models.models import ToolDefinitionModel
         from tests.remote_credentials import remote_credentials
@@ -89,10 +90,10 @@ def test_group_status_honors_remote_tenants_project_selection_and_empty_catalogs
         config.transport_mode = "http"
         config.http_remote_hosted = True
 
-        async def check_groups(ctx: Context, action: str, group: str | None = None) -> dict:
+        async def check_groups(ctx: Context, action: str, group: str | None = None, tool: str | None = None) -> dict:
             keys = ("unity_instance", "unity_session_id", "user_id")
             before = [await ctx.get_state(key) for key in keys]
-            response = await manage_tools(ctx, action, group)
+            response = await manage_tools(ctx, action, group, tool)
             assert [await ctx.get_state(key) for key in keys] == before, "Group listing mutated request routing"
             return response
 
@@ -131,6 +132,21 @@ def test_group_status_honors_remote_tenants_project_selection_and_empty_catalogs
                             enabled = {group["name"] for group in response["groups"] if group["enabled"]}
                             assert enabled == expected, (mode, user, enabled)
                             assert sum(group["tool_count"] for group in response["groups"]) == 3
+                            # Selecting a specific tool must still honor authenticated catalogs.
+                            activation = (await client.call_tool("manage_tools", {"action": "activate", "tool": "docs_probe"})).structured_content
+                            if mode == "legacy":
+                                assert activation["activated_tool"] == "docs_probe"
+                            else:
+                                assert "sessionless" in activation["error"]
+                            after = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content
+                            assert {group["name"] for group in after["groups"] if group["enabled"]} == expected
+                            if user != "bob":
+                                try:
+                                    denied = await client.call_tool("docs_probe", {}, raise_on_error=False)
+                                except MCPError:
+                                    pass  # The catalog middleware rejects before tool execution.
+                                else:
+                                    assert denied.is_error
                             if user == "alice":
                                 for target, groups in (("First@first", {"vfx"}), ("Second@second", {"core"})):
                                     selected = (await client.call_tool("manage_tools", {"action": "list_groups", "unity_instance": target})).structured_content
@@ -155,15 +171,16 @@ def test_specialized_groups_start_hidden_and_reveal_complete_unchanged_schemas()
         from services.tools import register_all_tools
         from transport.plugin_hub import PluginHub
 
-        optional = {"manage_camera": "camera", "manage_graphics": "graphics", "manage_physics": "physics"}
+        optional = {"capture_camera": "camera", "manage_render_volumes": "graphics", "query_physics": "physics"}
 
         async def scenario():
             config.transport_mode = "stdio"
             config.http_remote_hosted = False
             complete = FastMCP("complete")
             register_all_tools(complete, project_scoped_tools=False)
+            complete.enable(components={"tool"})
             schemas = {t.name: t.parameters for t in await complete.list_tools(run_middleware=False)}
-            assert optional.keys() <= schemas.keys(), "Legacy stdio compatibility"
+            assert optional.keys() <= schemas.keys(), "Explicit complete catalog"
 
             config.transport_mode = "http"
             server = FastMCP("lean")
@@ -173,7 +190,7 @@ def test_specialized_groups_start_hidden_and_reveal_complete_unchanged_schemas()
                     initial = await client.list_tools()
                     names = {t.name for t in initial}
                     assert not optional.keys() & names, names
-                    assert {"manage_gameobject", "manage_prefabs", "manage_tools"} <= names
+                    assert {"gameobject_create", "prefab_inspect", "manage_tools"} <= names
                     groups = (await client.call_tool("manage_tools", {"action": "list_groups"})).structured_content["groups"]
                     for name, group in optional.items():
                         item = next(g for g in groups if g["name"] == group)
@@ -192,11 +209,11 @@ def test_specialized_groups_start_hidden_and_reveal_complete_unchanged_schemas()
             # An explicit Editor choice can publish an optional group to either
             # protocol, without changing the complete input contract.
             PluginHub._mcp = server
-            PluginHub._sync_server_tool_visibility([{"name": "manage_camera"}, {"name": "manage_gameobject"}])
+            PluginHub._sync_server_tool_visibility([{"name": "capture_camera"}, {"name": "gameobject_create"}])
             async with Client(server, mode="2026-07-28") as client:
                 visible = {t.name: t for t in await client.list_tools()}
-                assert "manage_camera" in visible
-                assert "manage_physics" not in visible
-                assert visible["manage_camera"].inputSchema == schemas["manage_camera"]
+                assert "capture_camera" in visible
+                assert "query_physics" not in visible
+                assert visible["capture_camera"].inputSchema == schemas["capture_camera"]
         asyncio.run(scenario())
     """)

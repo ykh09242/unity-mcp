@@ -4,6 +4,7 @@ from fastmcp import Context
 from fastmcp.server.server import ToolResult
 from mcp.types import ToolAnnotations
 
+from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.rendering_limits import orbit_limits_error, screenshot_limits_error
@@ -51,7 +52,7 @@ ALL_ACTIONS = (
 
 
 @mcp_for_unity_tool(
-    group="camera",
+    group="legacy",
     description=(
         "Manage cameras (Unity Camera + Cinemachine). Works without Cinemachine using basic Camera; "
         "unlocks presets, pipelines, and blending when Cinemachine is installed. "
@@ -250,7 +251,7 @@ async def manage_camera(
     result = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
-        "manage_camera",
+        capability_command("manage_camera"),
         params_dict,
     )
 

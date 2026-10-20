@@ -37,6 +37,7 @@ def test_bundle_and_graph_inspection_sdk_contracts(tmp_path):
         server = FastMCP("inspection-contracts")
         server.add_middleware(FixtureState())
         register_all_tools(server)
+        server.enable(names={'manage_asset', 'inspect_shader_graph'}, components={"tool"})
         server.enable(tags={"group:vfx"})
 
         async def main():

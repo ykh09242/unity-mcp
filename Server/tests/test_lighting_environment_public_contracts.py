@@ -200,8 +200,7 @@ class FixtureState(Middleware):
 server = FastMCP('lighting-environment-contracts')
 server.add_middleware(FixtureState())
 register_all_tools(server)
-# Select this optional domain for payload/schema checks, independently of startup visibility.
-server.enable(tags={"group:graphics"}, components={"tool"})
+server.enable(names={'manage_graphics'}, components={"tool"})
 cases = [
     ({'action': action}, {'action': action})
     for action in ('bake_cancel', 'bake_status', 'bake_clear', 'bake_get_settings', 'skybox_get')

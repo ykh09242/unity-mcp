@@ -16,6 +16,7 @@ from pydantic import Field
 
 from models.ui_layout_diagnostics import validate_ui_layout_diagnostics
 
+from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation
@@ -43,7 +44,7 @@ def _canonical_ui_path(path: str) -> str:
 
 
 @mcp_for_unity_tool(
-    group="ui",
+    group="legacy",
     description=(
         "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components). "
         "Read-only actions: ping, read, get_visual_tree, diagnose, list.  "
@@ -662,14 +663,14 @@ async def manage_ui(
         result = await send_mutation(
             ctx,
             unity_instance,
-            "manage_ui",
+            capability_command("manage_ui"),
             params_dict,
         )
     else:
         result = await send_with_unity_instance(
             async_send_command_with_retry,
             unity_instance,
-            "manage_ui",
+            capability_command("manage_ui"),
             params_dict,
         )
 

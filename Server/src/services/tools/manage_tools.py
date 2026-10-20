@@ -23,6 +23,7 @@ from services.registry import (
     TOOL_GROUPS,
     DEFAULT_ENABLED_GROUPS,
     get_group_tool_names,
+    get_registered_tools,
 )
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -32,9 +33,9 @@ logger = logging.getLogger("mcp-for-unity-server")
     unity_target=None,
     group=None,
     description=(
-        "Manage which tool groups are visible in this session. "
+        "Manage visible groups or individual feature tools in this session. "
         "Actions: list_groups (show all groups and their status), "
-        "activate (enable a group), deactivate (disable a group), "
+        "activate/deactivate (select exactly one group or tool), "
         "sync (refresh visibility from Unity Editor's toggle states), "
         "reset (restore defaults). "
         "Activating a group makes its tools appear; deactivating hides them. "
@@ -55,8 +56,11 @@ async def manage_tools(
     ],
     group: Annotated[
         str | None,
-        "Group name (required for activate / deactivate). "
+        "Group name for activate/deactivate; select a group or a single tool. "
         "Valid groups: " + ", ".join(sorted(TOOL_GROUPS.keys())),
+    ] = None,
+    tool: Annotated[
+        str | None, "Single tool name for activate/deactivate. Discover names with list_groups."
     ] = None,
 ) -> dict[str, Any]:
     if action in ("activate", "deactivate", "reset") and is_sessionless(ctx):
@@ -67,9 +71,25 @@ async def manage_tools(
     if action == "list_groups":
         return await _list_groups(ctx)
 
+    if action in ("activate", "deactivate") and tool is not None:
+        if group is not None:
+            return {"error": "Select exactly one group or tool."}
+        tool = tool.strip()
+        entry = next((item for item in get_registered_tools() if item["name"] == tool), None)
+        if entry is None or entry.get("group") is None:
+            return {
+                "error": "Unknown or always-visible tool. Use list_groups to discover selectable tools."
+            }
+        operation = ctx.enable_components if action == "activate" else ctx.disable_components
+        await operation(names={tool}, components={"tool"})
+        return {
+            "activated_tool" if action == "activate" else "deactivated_tool": tool,
+            "message": "Session selection updated. Unity's enabled tools and project permissions still apply.",
+        }
+
     if action in ("activate", "deactivate"):
         if not group:
-            return {"error": f"group is required for {action}"}
+            return {"error": f"group or tool is required for {action}"}
         group = group.strip().lower()
         if group not in TOOL_GROUPS:
             return {"error": f"Unknown group '{group}'. Valid: {', '.join(sorted(TOOL_GROUPS))}"}
@@ -167,6 +187,7 @@ async def _list_groups(ctx: Context) -> dict[str, Any]:
                 "enabled": currently_enabled,
                 "default_enabled": name in DEFAULT_ENABLED_GROUPS,
                 "tools": group_tools.get(name, []),
+                "enabled_tools": sorted(visible_names.intersection(group_tools.get(name, []))),
                 "tool_count": len(group_tools.get(name, [])),
             }
         )

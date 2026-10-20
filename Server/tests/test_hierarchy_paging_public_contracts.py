@@ -46,6 +46,7 @@ def test_registered_hierarchy_and_children_paging_contract(mode, tmp_path):
             resources.get_registered_resources = lambda: resource_metadata
             server = FastMCP("bounded-hierarchy-contract")
             tools.register_all_tools(server)
+            server.enable(names={'manage_prefabs', 'manage_scene'}, components={"tool"})
             resources.register_all_resources(server)
             requests = []
             reply = {"success": True, "data": {"extra_native_field": {"keep": True}, "next_cursor": "a" * 32, "total": None, "total_known": False}}

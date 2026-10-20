@@ -7,6 +7,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Tools.Capabilities;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
@@ -261,6 +262,8 @@ namespace MCPForUnity.Editor.Tools
                     handlerInfo.BatchValidator = ManageComponents.ValidateBatchAction;
                 else if (type == typeof(ManageScene))
                     handlerInfo.BatchValidator = ManageScene.ValidateBatchAction;
+                else
+                    handlerInfo.BatchValidator = ToolCapabilityCatalog.GetBatchValidator(type);
 
                 // Replacing the owner never inherits its privileged alias or validator.
                 if (commandName == "batch_execute")

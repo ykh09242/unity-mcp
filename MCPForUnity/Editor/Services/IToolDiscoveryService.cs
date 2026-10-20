@@ -9,6 +9,7 @@ namespace MCPForUnity.Editor.Services
     public class ToolMetadata
     {
         public string Name { get; set; }
+        public string DisplayName { get; set; }
         public string Description { get; set; }
         public bool StructuredOutput { get; set; }
         public List<ParameterMetadata> Parameters { get; set; }

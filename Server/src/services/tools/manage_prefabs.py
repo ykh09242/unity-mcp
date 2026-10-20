@@ -3,6 +3,7 @@ from typing import Annotated, Any, Literal
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_bool, normalize_vector3
@@ -28,6 +29,7 @@ REQUIRED_PARAMS = {
 
 
 @mcp_for_unity_tool(
+    group="legacy",
     description=(
         "Manages Unity Prefab assets. "
         "get_hierarchy returns bounded sibling-index depth-first pages: page_size defaults to 50 (1-500), "
@@ -491,7 +493,10 @@ async def manage_prefabs(
         except Exception as exc:
             return {"success": False, "message": f"Unity preflight check failed: {exc}"}
         response = await send_with_unity_instance(
-            async_send_command_with_retry, unity_instance, "manage_prefabs", params
+            async_send_command_with_retry,
+            unity_instance,
+            capability_command("manage_prefabs"),
+            params,
         )
 
         # Return Unity response directly; ensure success field exists
