@@ -45,7 +45,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-26.04, macos-latest]
+        # Use the standard Intel pool after repeated hosted arm64 capacity failures.
+        os: [windows-latest, ubuntu-26.04, macos-26-intel]
     steps:
       - name: Checkout source metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

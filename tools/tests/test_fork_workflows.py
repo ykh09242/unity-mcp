@@ -250,7 +250,7 @@ def test_server_bootstrap_covers_default_windows_paths_and_offline_cache() -> No
     assert set(job["strategy"]["matrix"]["os"]) == {
         "windows-latest",
         "ubuntu-26.04",
-        "macos-latest",
+        "macos-26-intel",
     }
     assert job["timeout-minutes"] <= 10
     steps = {step["name"]: step for step in job["steps"]}

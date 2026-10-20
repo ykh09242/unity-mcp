@@ -26,5 +26,5 @@ def test_workflows_use_the_reviewed_ubuntu_image(path):
 def test_bootstrap_keeps_all_three_operating_systems():
     config = yaml.safe_load((WORKFLOWS / "python-tests.yml").read_text(encoding="utf-8"))
     job = config["jobs"]["server_bootstrap"]
-    assert job["strategy"]["matrix"]["os"] == ["windows-latest", "ubuntu-26.04", "macos-latest"]
+    assert job["strategy"]["matrix"]["os"] == ["windows-latest", "ubuntu-26.04", "macos-26-intel"]
     assert job["runs-on"] == "${{ matrix.os }}"

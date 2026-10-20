@@ -158,8 +158,10 @@ async def test_captured_ordinary_get_test_job_oracle(
 
 
 @asynccontextmanager
-async def isolated_tasks(tmp_path, monkeypatch, execute, *, outer_timeout=0.2):
+async def isolated_tasks(tmp_path, monkeypatch, execute, *, outer_timeout=30):
     """Actual auth/SDK/extension, injected bounded wait; this is not main.py."""
+    # Leave scheduling headroom for event-driven correctness checks. The deadline
+    # regression explicitly expires and verifies the real absolute-time guard.
     validator = ApiKeyService("https://fixture.invalid/validate", cache_ttl=0)
     monkeypatch.setattr(
         validator,
@@ -264,7 +266,7 @@ async def test_isolated_authenticated_task_owner_result_and_per_request_opt_in(
         return ordinary
 
     # This scenario releases execution after multiple authentication probes. Its
-    # outcome must follow that event, not race the separate short-deadline fixture.
+    # outcome must follow that event; deadline expiry has its own dedicated check.
     async with isolated_tasks(tmp_path, monkeypatch, execute, outer_timeout=30) as (
         client,
         extension,
