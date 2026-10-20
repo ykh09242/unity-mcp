@@ -62,6 +62,7 @@ try {
         (Join-Path $root 'MCPForUnity/Editor/Helpers/Response.cs'),
         (Join-Path $root 'MCPForUnity/Editor/Helpers/UnityJsonSerializer.cs'),
         (Join-Path $root 'MCPForUnity/Runtime/Helpers/UnityAssembliesCompat.cs'),
+        (Join-Path $root 'MCPForUnity/Runtime/Helpers/DynamicCompilationCache.cs'),
         (Join-Path $root 'MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs'),
         (Join-Path $root 'MCPForUnity/Runtime/Serialization/JsonScalarConversion.cs'),
         (Join-Path $root 'MCPForUnity/Runtime/Serialization/UnityTypeConverters.cs'))

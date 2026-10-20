@@ -38,28 +38,6 @@ namespace MCPForUnity.Editor.Tools
         private static int _cachedAssemblyGeneration = -1;
         private static readonly JsonSerializer _resultSerializer = CreateResultSerializer();
 
-        // Every compile emits a fresh in-memory "MCPDynamic" assembly, and Mono cannot unload
-        // one, so recompiling an identical snippet leaks an assembly per call until the next
-        // domain reload (see issue #1351). Cache the compiled output keyed on the wrapped
-        // source so repeated calls reuse one assembly.
-        private const int MaxCompiledCacheEntries = 64;
-        private static readonly Dictionary<string, CompiledSnippet> _compiledCache = new Dictionary<string, CompiledSnippet>(StringComparer.Ordinal);
-        private static readonly LinkedList<string> _compiledCacheOrder = new LinkedList<string>();
-
-        private readonly struct CompiledSnippet
-        {
-            public CompiledSnippet(Assembly assembly, string compiler, LinkedListNode<string> cacheNode)
-            {
-                Assembly = assembly;
-                Compiler = compiler;
-                CacheNode = cacheNode;
-            }
-
-            public Assembly Assembly { get; }
-            public string Compiler { get; }
-            public LinkedListNode<string> CacheNode { get; }
-        }
-
         static ExecuteCode()
         {
             AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoaded;
@@ -87,8 +65,6 @@ namespace MCPForUnity.Editor.Tools
             _cachedAssemblyPaths = null;
             _cachedCodeDomAssemblyPaths = null;
             _cachedAssemblyGeneration = -1;
-            _compiledCache.Clear();
-            _compiledCacheOrder.Clear();
             RoslynCompiler.ResetCache();
         }
 
@@ -294,24 +270,28 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Roslyn (Microsoft.CodeAnalysis) is not available. Install it via NuGet or use compiler='codedom'.");
 
             string[] assemblyPaths = GetAssemblyPaths();
-            string cacheKey = usedCompiler + "\n" + wrappedSource;
-            if (_compiledCache.TryGetValue(cacheKey, out CompiledSnippet cached))
-            {
-                _compiledCacheOrder.Remove(cached.CacheNode);
-                _compiledCacheOrder.AddLast(cached.CacheNode);
-                return InvokeCompiled(cached.Assembly, cached.Compiler);
-            }
-
-            Assembly compiled;
-            List<string> errors;
-            if (usedCompiler == "roslyn")
-            {
-                compiled = RoslynCompiler.Compile(wrappedSource, assemblyPaths, out errors);
-            }
-            else
-            {
-                compiled = CodeDomCompile(wrappedSource, assemblyPaths, out errors);
-            }
+            string cacheKey = usedCompiler + "\n" + _cachedAssemblyGeneration + "\n" + wrappedSource;
+            List<string> errors = null;
+            var cache = DynamicCompilationCache.Shared;
+            if (
+                !cache.TryGetOrCompile(
+                    cacheKey,
+                    () =>
+                        usedCompiler == "roslyn"
+                            ? RoslynCompiler.Compile(wrappedSource, assemblyPaths, out errors)
+                            : CodeDomCompile(wrappedSource, assemblyPaths, out errors),
+                    out Assembly compiled
+                )
+            )
+                return new ErrorResponse(
+                    "compilation_budget_exhausted",
+                    new
+                    {
+                        loaded = cache.Count,
+                        limit = cache.Limit,
+                        hint = "Existing compiled snippets remain reusable. Save your work, then explicitly reload the scripting domain before compiling new code. Clearing history does not unload assemblies.",
+                    }
+                );
 
             if (compiled == null)
                 return new ErrorResponse(
@@ -325,17 +305,6 @@ namespace MCPForUnity.Editor.Tools
                             : "execute_code accepts a method body, not a complete script. Roslyn language support depends on the installed Microsoft.CodeAnalysis version.",
                     }
                 );
-
-            // Keep recently used snippets when the cache fills. Loaded assemblies cannot
-            // be unloaded individually on Mono; this bounds cache bookkeeping only.
-            if (_compiledCache.Count >= MaxCompiledCacheEntries)
-            {
-                var oldest = _compiledCacheOrder.First;
-                _compiledCache.Remove(oldest.Value);
-                _compiledCacheOrder.RemoveFirst();
-            }
-            var cacheNode = _compiledCacheOrder.AddLast(cacheKey);
-            _compiledCache[cacheKey] = new CompiledSnippet(compiled, usedCompiler, cacheNode);
 
             return InvokeCompiled(compiled, usedCompiler);
         }
@@ -624,8 +593,6 @@ namespace MCPForUnity.Editor.Tools
             if (_cachedAssemblyPaths == null || _cachedAssemblyGeneration != generation)
             {
                 _cachedCodeDomAssemblyPaths = null;
-                _compiledCache.Clear();
-                _compiledCacheOrder.Clear();
                 RoslynCompiler.ResetCache();
                 _cachedAssemblyPaths = ResolveAssemblyPaths();
                 // A load during enumeration must remain visible to the next refresh.
