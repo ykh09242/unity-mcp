@@ -177,7 +177,7 @@ jobs:
 
       - name: Upload package resolution
         if: always() && steps.packages.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Unity package profile ${{ matrix.unity.version }}
           path: ${{ steps.packages.outputs.resolution_report }}
@@ -232,7 +232,7 @@ jobs:
         run: |
           python3 tools/ci_test_performance.py stages --repository "$GITHUB_REPOSITORY" \
             --run-id "$GITHUB_RUN_ID" --workload compile --output .tmp/compile-stage-timings
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: compile-stage-timings
           path: .tmp/compile-stage-timings/
