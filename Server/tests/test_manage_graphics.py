@@ -925,9 +925,9 @@ def test_skybox_bounces_maps_correctly(mock_unity):
 # ---------------------------------------------------------------------------
 
 
-def test_tool_registered_with_core_group():
+def test_tool_registered_with_optional_graphics_group():
     from services.registry.tool_registry import _tool_registry
 
     graphics_tools = [t for t in _tool_registry if t.get("name") == "manage_graphics"]
     assert len(graphics_tools) == 1
-    assert graphics_tools[0]["group"] == "core"
+    assert graphics_tools[0]["group"] == "graphics"

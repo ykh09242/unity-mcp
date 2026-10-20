@@ -179,6 +179,8 @@ class FixtureState(Middleware):
 server = FastMCP('camera-public-contracts')
 server.add_middleware(FixtureState())
 register_all_tools(server)
+# Select this optional domain for payload/schema checks, independently of startup visibility.
+server.enable(tags={"group:camera"}, components={"tool"})
 cases = [
     ({'action': action}, {'action': action})
     for action in ('ping', 'get_brain_status', 'list_cameras', 'release_override')
@@ -315,6 +317,8 @@ async def controlled_send(instance, command, params, **kwargs):
 PluginHub.send_command_for_instance = staticmethod(controlled_send)
 server = FastMCP('camera-image-metadata')
 register_all_tools(server)
+# Select this optional domain for payload/schema checks, independently of startup visibility.
+server.enable(tags={"group:camera"}, components={"tool"})
 image = ('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8'
          '/x8AAwMCAO+a5XkAAAAASUVORK5CYII=')
 cases = [
