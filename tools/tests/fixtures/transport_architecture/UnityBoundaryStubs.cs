@@ -192,6 +192,11 @@ namespace MCPForUnity.Editor.Services
         public static readonly FixtureDiscovery ResourceDiscovery = new FixtureDiscovery();
     }
 
+    internal sealed class EditorStateFrame
+    {
+        internal string ToJson() => throw new NotSupportedException("State frame serialization is tested against production code in its own fixture.");
+    }
+
     internal sealed class EditorStatePublisher : IDisposable
     {
         internal const string Capability = "editor_state_v1";
@@ -199,7 +204,7 @@ namespace MCPForUnity.Editor.Services
         internal static int Disposals;
         private bool _disposed;
 
-        internal static EditorStatePublisher Start(Func<JObject, CancellationToken, Task> send, CancellationToken token)
+        internal static EditorStatePublisher Start(Func<EditorStateFrame, CancellationToken, Task> send, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
             Starts++;

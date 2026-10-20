@@ -354,19 +354,38 @@ namespace MCPForUnity.Editor.Helpers
 
             int width = texture.width;
             int height = texture.height;
-            Color32[] pixels = texture.GetPixels32();
-            var temp = new Color32[width];
-
-            for (int y = 0; y < height / 2; y++)
+            if (texture.format == TextureFormat.RGBA32)
             {
-                int topRow = y * width;
-                int bottomRow = (height - 1 - y) * width;
-                Array.Copy(pixels, topRow, temp, 0, width);
-                Array.Copy(pixels, bottomRow, pixels, topRow, width);
-                Array.Copy(temp, 0, pixels, bottomRow, width);
+                // This view belongs to the texture and is valid only until Apply.
+                var pixels = texture.GetPixelData<Color32>(0);
+                for (int y = 0; y < height / 2; y++)
+                {
+                    int topRow = y * width;
+                    int bottomRow = (height - 1 - y) * width;
+                    for (int x = 0; x < width; x++)
+                    {
+                        Color32 value = pixels[topRow + x];
+                        pixels[topRow + x] = pixels[bottomRow + x];
+                        pixels[bottomRow + x] = value;
+                    }
+                }
             }
-
-            texture.SetPixels32(pixels);
+            else
+            {
+                Color32[] pixels = texture.GetPixels32();
+                for (int y = 0; y < height / 2; y++)
+                {
+                    int topRow = y * width;
+                    int bottomRow = (height - 1 - y) * width;
+                    for (int x = 0; x < width; x++)
+                    {
+                        Color32 value = pixels[topRow + x];
+                        pixels[topRow + x] = pixels[bottomRow + x];
+                        pixels[bottomRow + x] = value;
+                    }
+                }
+                texture.SetPixels32(pixels);
+            }
             texture.Apply();
         }
 

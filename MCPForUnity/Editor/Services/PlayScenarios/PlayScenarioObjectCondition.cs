@@ -96,7 +96,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return Resolve(scene, segments, ref counts);
         }
 
-        internal static Matches Resolve(Scene scene, string[] segments, ref PlayScenarioQueryCounts counts)
+        internal static Matches Resolve(Scene scene, string[] segments, ref PlayScenarioQueryCounts counts) =>
+            Resolve(scene, segments, ref counts, new PlayScenarioHierarchyQuery());
+
+        internal static Matches Resolve(Scene scene, string[] segments, ref PlayScenarioQueryCounts counts, PlayScenarioHierarchyQuery query)
         {
             counts.TargetSearches++;
             var matches = new Matches();
@@ -104,14 +107,22 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return matches;
             if (scene.rootCount > MaximumInspectedObjects)
                 throw new InvalidOperationException("Target inspection exceeds the bounded hierarchy budget.");
-            int inspected = 0;
-            foreach (GameObject root in scene.GetRootGameObjects())
+            try
             {
-                Inspect(ref inspected, ref counts);
-                if (root.name == segments[0])
-                    Match(root.transform, segments, 1, ref matches, ref inspected, ref counts);
+                int inspected = 0;
+                query.Begin(scene);
+                foreach (GameObject root in query.Roots)
+                {
+                    Inspect(ref inspected, ref counts);
+                    if (root.name == segments[0])
+                        Match(root.transform, segments, 1, ref matches, ref inspected, ref counts);
+                }
+                return matches;
             }
-            return matches;
+            finally
+            {
+                query.Clear();
+            }
         }
 
         internal static void ValidateSelector(PlayScenarioStep step)
@@ -128,7 +139,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return ResolveId(scene, identifier, ref counts);
         }
 
-        internal static Matches ResolveId(Scene scene, string identifier, ref PlayScenarioQueryCounts counts)
+        internal static Matches ResolveId(Scene scene, string identifier, ref PlayScenarioQueryCounts counts) =>
+            ResolveId(scene, identifier, ref counts, new PlayScenarioHierarchyQuery());
+
+        internal static Matches ResolveId(Scene scene, string identifier, ref PlayScenarioQueryCounts counts, PlayScenarioHierarchyQuery query)
         {
             counts.TargetSearches++;
             var matches = new Matches();
@@ -136,45 +150,50 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return matches;
             if (!PlayScenarioTarget.IsValidTargetId(identifier))
                 throw new ArgumentException("target_id must match [A-Za-z0-9][A-Za-z0-9_.:-]{0,127}.");
-            int inspected = 0;
-            var pending = new Stack<Transform>();
-            if (scene.rootCount > MaximumInspectedObjects)
-                throw new InvalidOperationException("Target inspection exceeds the bounded hierarchy budget.");
-            foreach (GameObject root in scene.GetRootGameObjects())
+            try
             {
-                Inspect(ref inspected, ref counts);
-                pending.Push(root.transform);
-            }
-            while (pending.Count > 0)
-            {
-                Transform current = pending.Pop();
-                PlayScenarioTarget marker = current.GetComponent<PlayScenarioTarget>();
-                if (marker != null && string.Equals(marker.TargetId, identifier, StringComparison.Ordinal))
-                {
-                    matches.Count++;
-                    if (current.gameObject.activeInHierarchy)
-                        matches.ActiveCount++;
-                    if (matches.Target == null)
-                        matches.Target = current.gameObject;
-                    if (matches.Count > 1)
-                        throw new PlayScenarioException(
-                            new PlayScenarioFailure
-                            {
-                                Code = "target_ambiguous",
-                                Target = identifier,
-                                Expected = "one unique ID in the active scene",
-                                Actual = "at least two matching markers, including inactive objects",
-                                Message = "Target ID is ambiguous in the active scene, including inactive objects.",
-                            }
-                        );
-                }
-                for (int index = 0; index < current.childCount; index++)
+                int inspected = 0;
+                query.Begin(scene);
+                foreach (GameObject root in query.Roots)
                 {
                     Inspect(ref inspected, ref counts);
-                    pending.Push(current.GetChild(index));
+                    query.Push(root.transform, 0);
                 }
+                while (query.Count > 0)
+                {
+                    Transform current = query.Pop().Node;
+                    PlayScenarioTarget marker = current.GetComponent<PlayScenarioTarget>();
+                    if (marker != null && string.Equals(marker.TargetId, identifier, StringComparison.Ordinal))
+                    {
+                        matches.Count++;
+                        if (current.gameObject.activeInHierarchy)
+                            matches.ActiveCount++;
+                        if (matches.Target == null)
+                            matches.Target = current.gameObject;
+                        if (matches.Count > 1)
+                            throw new PlayScenarioException(
+                                new PlayScenarioFailure
+                                {
+                                    Code = "target_ambiguous",
+                                    Target = identifier,
+                                    Expected = "one unique ID in the active scene",
+                                    Actual = "at least two matching markers, including inactive objects",
+                                    Message = "Target ID is ambiguous in the active scene, including inactive objects.",
+                                }
+                            );
+                    }
+                    for (int index = 0; index < current.childCount; index++)
+                    {
+                        Inspect(ref inspected, ref counts);
+                        query.Push(current.GetChild(index), 0);
+                    }
+                }
+                return matches;
             }
-            return matches;
+            finally
+            {
+                query.Clear();
+            }
         }
 
         private static void Match(Transform parent, string[] segments, int index, ref Matches matches, ref int inspected, ref PlayScenarioQueryCounts counts)

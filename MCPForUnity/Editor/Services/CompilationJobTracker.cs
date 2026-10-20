@@ -51,6 +51,10 @@ namespace MCPForUnity.Editor.Services
             public bool Complete = true;
             public int Omitted;
             public List<JObject> Diagnostics = new();
+
+            // Reserve metadata/counter growth independently of the diagnostic array.
+            [JsonIgnore]
+            public int DiagnosticBytes = 512;
         }
 
         internal CompilationLedger(string session, string projectRoot, Action<string> save, string restored = null, Func<long> now = null)
@@ -188,6 +192,7 @@ namespace MCPForUnity.Editor.Services
                 Save();
                 return;
             }
+            string assemblyName = Basename(assembly, 256);
             foreach (var message in messages)
             {
                 bool error = message.type == CompilerMessageType.Error;
@@ -210,24 +215,30 @@ namespace MCPForUnity.Editor.Services
                     else
                         run.Warnings++;
                 }
+                if (run.Diagnostics.Count == 100)
+                {
+                    run.Omitted = Math.Min(2000000, run.Omitted + 1);
+                    continue;
+                }
+                string messageText = SanitizeMessage(message.message);
                 var diagnostic = new JObject
                 {
                     ["severity"] = error ? "error" : "warning",
-                    ["assembly"] = Basename(assembly, 256),
+                    ["assembly"] = assemblyName,
                     ["file"] = RelativeFile(message.file),
                     ["line"] = Math.Max(0, message.line),
                     ["column"] = Math.Max(0, message.column),
-                    ["message"] = SanitizeMessage(message.message),
-                    ["diagnostic_text_omitted"] = SanitizeMessage(message.message) == "<diagnostic text omitted: absolute path>",
+                    ["message"] = messageText,
+                    ["diagnostic_text_omitted"] = messageText == "<diagnostic text omitted: absolute path>",
                 };
-                if (
-                    run.Diagnostics.Count == 100
-                    || Encoding.UTF8.GetByteCount(JsonConvert.SerializeObject(run)) + Encoding.UTF8.GetByteCount(diagnostic.ToString(Formatting.None))
-                        > MaxRecordBytes - 16384
-                )
+                int diagnosticBytes = Encoding.UTF8.GetByteCount(diagnostic.ToString(Formatting.None)) + 1;
+                if (run.DiagnosticBytes + diagnosticBytes > MaxRecordBytes - 16384)
                     run.Omitted = Math.Min(2000000, run.Omitted + 1);
                 else
+                {
                     run.Diagnostics.Add(diagnostic);
+                    run.DiagnosticBytes += diagnosticBytes;
+                }
             }
             Save();
         }
@@ -555,6 +566,7 @@ namespace MCPForUnity.Editor.Services
                         if (assembly != Basename(assembly, 256) || file != RelativeFile(file) || message != SanitizeMessage(message))
                             throw new FormatException();
                         run.Diagnostics.Add((JObject)diagnostic.DeepClone());
+                        run.DiagnosticBytes += Encoding.UTF8.GetByteCount(diagnostic.ToString(Formatting.None)) + 1;
                     }
                     if (
                         Encoding.UTF8.GetByteCount(row.ToString(Formatting.None)) > MaxRecordBytes

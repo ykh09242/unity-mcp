@@ -14,6 +14,94 @@ namespace MCPForUnityTests.Editor.Tools
     [TestFixture]
     public class ScreenshotUtilityDownscaleTests
     {
+        [Test]
+        public void CameraPreviewMatchesTheExistingFullReadbackColorsAndRestoresTargets()
+        {
+            var owner = new GameObject("PreviewColorFixture");
+            var camera = owner.AddComponent<Camera>();
+            camera.enabled = false;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.cullingMask = 0;
+            camera.backgroundColor = new Color(0.12f, 0.3f, 0.75f, 0.5f);
+            var originalTarget = RenderTexture.GetTemporary(192, 96, 24);
+            var priorActive = RenderTexture.active;
+            Texture2D full = null,
+                expected = null,
+                actual = null;
+            try
+            {
+                camera.targetTexture = originalTarget;
+                camera.Render();
+                RenderTexture.active = originalTarget;
+                full = new Texture2D(192, 96, TextureFormat.RGBA32, false);
+                full.ReadPixels(new Rect(0, 0, 192, 96), 0, 0);
+                full.Apply();
+                expected = ScreenshotUtility.DownscaleTexture(full, 64);
+                RenderTexture.active = priorActive;
+                actual = ScreenshotUtility.RenderCameraToTexture(camera, 64);
+                Assert.AreSame(originalTarget, camera.targetTexture);
+                Assert.AreSame(priorActive, RenderTexture.active);
+                Assert.AreEqual(64, actual.width);
+                Assert.AreEqual(32, actual.height);
+                var wanted = expected.GetPixels32();
+                var got = actual.GetPixels32();
+                for (int i = 0; i < wanted.Length; i++)
+                {
+                    Assert.AreEqual(wanted[i].r, got[i].r, 2);
+                    Assert.AreEqual(wanted[i].g, got[i].g, 2);
+                    Assert.AreEqual(wanted[i].b, got[i].b, 2);
+                    Assert.AreEqual(wanted[i].a, got[i].a, 2);
+                }
+            }
+            finally
+            {
+                camera.targetTexture = null;
+                RenderTexture.active = priorActive;
+                RenderTexture.ReleaseTemporary(originalTarget);
+                if (full != null)
+                    Object.DestroyImmediate(full);
+                if (expected != null)
+                    Object.DestroyImmediate(expected);
+                if (actual != null)
+                    Object.DestroyImmediate(actual);
+                Object.DestroyImmediate(owner);
+            }
+        }
+
+        [TestCase(TextureFormat.RGBA32)]
+        [TestCase(TextureFormat.RGB24)]
+        public void ContactSheetPreservesTilePixelsAndBannerAcrossSupportedFormats(TextureFormat format)
+        {
+            var tiles = new System.Collections.Generic.List<Texture2D>();
+            var colors = new[] { new Color32(11, 33, 77, 255), new Color32(200, 80, 40, 255) };
+            var decoded = new Texture2D(1, 1);
+            try
+            {
+                foreach (var color in colors)
+                {
+                    var tile = new Texture2D(2, 2, format, false);
+                    tile.SetPixels32(new[] { color, color, color, color });
+                    tile.Apply();
+                    tiles.Add(tile);
+                }
+                var sheet = ScreenshotUtility.ComposeContactSheet(tiles, null, 1);
+                Assert.AreEqual(7, sheet.width);
+                Assert.AreEqual(18, sheet.height);
+                Assert.IsTrue(decoded.LoadImage(System.Convert.FromBase64String(sheet.base64)));
+                var pixels = decoded.GetPixels32();
+                Assert.AreEqual(colors[0], pixels[15 * 7 + 1]);
+                Assert.AreEqual(colors[1], pixels[15 * 7 + 4]);
+                Assert.AreEqual(new Color32(20, 20, 20, 220), pixels[1 * 7 + 1]);
+                Assert.AreEqual(new Color32(30, 30, 30, 255), pixels[0]);
+                Assert.IsTrue(tiles.TrueForAll(tile => tile == null));
+            }
+            finally
+            {
+                ScreenshotUtility.ReleaseCaptureTiles(tiles);
+                Object.DestroyImmediate(decoded);
+            }
+        }
+
         [SetUp]
         public void SkipWithoutGraphics()
         {

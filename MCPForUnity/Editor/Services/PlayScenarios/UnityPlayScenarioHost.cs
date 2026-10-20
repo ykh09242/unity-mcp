@@ -25,6 +25,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private readonly bool sceneSemantics;
         private readonly PlayScenarioSceneOperation sceneOperation;
         private readonly PlayScenarioSceneScope sceneScope = new PlayScenarioSceneScope();
+        private readonly PlayScenarioHierarchyQuery targetQuery = new();
         private const string SceneUnknownKey = "MCPForUnity.PlayScenario.SceneOperationUnknown";
 
         static UnityPlayScenarioHost()
@@ -128,8 +129,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         return new PlayScenarioObservation(false, "Waiting for a loaded active scene.");
                     var matches =
                         _targetId != null
-                            ? PlayScenarioObjectCondition.ResolveId(scene, _targetId, ref _queryCounts)
-                            : PlayScenarioObjectCondition.Resolve(scene, _targetSegments, ref _queryCounts);
+                            ? PlayScenarioObjectCondition.ResolveId(scene, _targetId, ref _queryCounts, targetQuery)
+                            : PlayScenarioObjectCondition.Resolve(scene, _targetSegments, ref _queryCounts, targetQuery);
                     PlayScenarioObservation observation = PlayScenarioObjectCondition.Observe(step, matches, componentType);
                     if (!observation.Ready || step.Action == "wait_object")
                         return observation;
@@ -287,6 +288,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public void Release()
         {
+            targetQuery.Clear();
             ReleaseInput();
             sceneOperation.Release();
             sceneScope.Release();
