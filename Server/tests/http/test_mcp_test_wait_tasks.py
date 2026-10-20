@@ -357,34 +357,58 @@ async def test_isolated_wait_cancel_is_intent_until_actual_cleanup(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_detached_wait_keeps_original_outer_deadline(tmp_path, monkeypatch):
-    calls = []
+    calls, captured_deadlines, armed_deadlines = [], [], []
+    guards = {}
+    cancelled = anyio.Event()
+    timeout_at = asyncio.timeout_at
+
+    def observe_timeout_at(deadline):
+        guard = timeout_at(deadline)
+        guards[asyncio.current_task()] = guard
+        return guard
+
+    monkeypatch.setattr(asyncio, "timeout_at", observe_timeout_at)
 
     async def execute(captured):
         calls.append(captured)
-        await anyio.sleep_forever()
+        guard = guards[asyncio.current_task()]
+        armed_deadlines.append(guard.when())
+        # Observe the actual absolute deadline before expiring the real asyncio
+        # guard. Journal I/O and runner scheduling are not execution budgets.
+        guard.reschedule(asyncio.get_running_loop().time())
+        try:
+            await anyio.sleep_forever()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
 
-    async with isolated_tasks(tmp_path, monkeypatch, execute) as (client, extension, _):
+    async with isolated_tasks(tmp_path, monkeypatch, execute, outer_timeout=30) as (
+        client,
+        extension,
+        _,
+    ):
         original = extension.capture
 
-        async def slow_capture(params, ctx):
+        async def suspended_capture(params, ctx):
             captured = await original(params, ctx)
-            await anyio.sleep(0.12)
+            captured_deadlines.append(captured.outer_deadline)
+            await anyio.sleep(0)
             return captured
 
-        extension.capture = slow_capture
-        started = asyncio.get_running_loop().time()
+        extension.capture = suspended_capture
         _, created = await wire(
             client,
             "tools/call",
             {"name": "get_test_job", "arguments": {"job_id": "existing", "wait_timeout": 60}},
         )
         task_id = created["result"]["taskId"]
-        with anyio.fail_after(1):
+        with anyio.fail_after(10):
             while extension._workers:
                 await anyio.sleep(0)
-        elapsed = asyncio.get_running_loop().time() - started
-        assert elapsed < 0.3
         assert len(calls) == 1
+        assert armed_deadlines == captured_deadlines == [calls[0].outer_deadline]
+        assert cancelled.is_set()
+        assert any(guard.expired() for guard in guards.values())
         record = extension.journal.get(task_id, "alice")
         assert record.status == "completed"
         assert record.result == calls[0].outer_timeout_result
