@@ -1,4 +1,4 @@
-required-version = "==0.17.0"
+required-version = "==0.17.1"
 target-version = "py311"
 line-length = 100
 indent-width = 4

@@ -148,7 +148,11 @@ def test_rest_route_and_captured_expected_root_belong_to_identity():
         identity(opts, surface="/api/context-command")
 
 
-@pytest.mark.parametrize("value", [float("nan"), {1: "not-json"}, "x" * (MAX_ARGUMENT_BYTES + 1)])
+@pytest.mark.parametrize(
+    "value",
+    [float("nan"), {1: "not-json"}, "x" * (MAX_ARGUMENT_BYTES + 1)],
+    ids=["non-finite", "non-string-key", "oversized-string"],
+)
 def test_identity_bounds_refuse_unrepresentable_values(value):
     with pytest.raises(ReceiptInvalid):
         owned_json(value)

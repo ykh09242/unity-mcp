@@ -12,6 +12,17 @@ validation and warnings-as-errors enabled. Use the same setting when testing wit
 warnings-as-errors on 3.15 until an upstream fix is released. The lint runner uses
 one worker on 3.15 because dill 0.4.1 still references the removed `co_lnotab` attribute.
 
+The October 2026 dependency refresh requires FastMCP **4.1.1+**, FastAPI **0.150.0+**
+and Pillow **13.x**. [FastMCP 4.1.1](https://github.com/PrefectHQ/fastmcp/releases/tag/v4.1.1)
+includes bounded regex search and proxy/JWKS fixes. [Pillow 13](https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html)
+adds Python 3.15 support, image-decoder security fixes and faster import/difference
+operations used by offline visual comparison. Comparison remains strict, bounded
+PNG/RGBA processing with no resizing or changed tolerance defaults. New FastAPI form
+semantics do not change the server's existing Starlette/MCP routes.
+The scene-input, skills, task-wait and execution-receipt compatibility gates are
+reviewed for FastMCP 4.1.1 with MCP SDK 2.3.0. They still refuse unreviewed SDK
+versions; upgrading the dependency floor alone is insufficient for these features.
+
 Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` server baseline. The pinned source commit selects the implementation, not the version label alone. No fork PyPI distribution or prebuilt Docker image is advertised.
 
 ## Choose your task

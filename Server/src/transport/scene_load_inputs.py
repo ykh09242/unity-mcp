@@ -345,7 +345,7 @@ def prepare_scene_load_inputs() -> SceneLoadInputs | None:
     if config.transport_mode != "http" or os.environ.get("UNITY_MCP_SCENE_LOAD_INPUTS") != "1":
         return None
     try:
-        if version("mcp") != "2.3.0" or version("fastmcp") != "4.1.0":
+        if version("mcp") != "2.3.0" or version("fastmcp") != "4.1.1":
             raise RuntimeError("Unreviewed MRTR SDK version")
         return SceneLoadInputs(remote_hosted=config.http_remote_hosted)
     except (ImportError, AttributeError, TypeError, ValueError, RuntimeError):

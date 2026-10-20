@@ -41,7 +41,7 @@ class _SdkResultKernel:
     """One explicitly gated pinned bridge; the SDK keeps its formatter/policy."""
 
     def __init__(self, server: FastMCP):
-        if version("mcp") != "2.3.0" or version("fastmcp") != "4.1.0":
+        if version("mcp") != "2.3.0" or version("fastmcp") != "4.1.1":
             raise RuntimeError("Unreviewed Tasks SDK version")
         # Private pinned hooks are optional: import only after the version gate,
         # so a different supported base SDK cannot break default-disabled startup.

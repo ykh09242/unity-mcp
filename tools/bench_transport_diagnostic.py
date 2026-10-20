@@ -28,7 +28,7 @@ class DiagnosticError(RuntimeError):
 
 def require_sdk() -> None:
     """Only the source-reviewed installed SDK versions are supported."""
-    for package, supported in (("mcp", ("2.3.0",)), ("fastmcp", ("4.0.11", "4.1.0"))):
+    for package, supported in (("mcp", ("2.3.0",)), ("fastmcp", ("4.0.11", "4.1.0", "4.1.1"))):
         if importlib.metadata.version(package) not in supported:
             raise DiagnosticError(
                 f"Unsupported diagnostic SDK: {package}; expected {' or '.join(supported)}"

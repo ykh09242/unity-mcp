@@ -133,7 +133,7 @@ def install_skills(
     No request-driven paths, package downloads or live guidance sources are consulted.
     """
     try:
-        if metadata.version("mcp") != "2.3.0" or metadata.version("fastmcp") != "4.1.0":
+        if metadata.version("mcp") != "2.3.0" or metadata.version("fastmcp") != "4.1.1":
             return None
         # Optional API imports stay inside the refusal boundary.
         from fastmcp.resources import Resource
