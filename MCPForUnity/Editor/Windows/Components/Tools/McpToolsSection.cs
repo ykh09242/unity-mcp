@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -40,6 +41,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private bool statusAttached = true;
         private int statusRenderQueued;
         private TextField searchField;
+        private DropdownField stateFilter;
+        private Button recommendedButton;
         private Label visibleCountLabel;
         private Label emptyStateLabel;
         private Button enableAllButton;
@@ -56,15 +59,19 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         /// <summary>Human-friendly names for tool groups shown in the UI.</summary>
         private static readonly Dictionary<string, string> GroupDisplayNames = new(StringComparer.OrdinalIgnoreCase)
         {
-            { "core", "Core Tools" },
+            { "core", "Essentials" },
+            { "camera", "Cameras & Capture" },
+            { "graphics", "Rendering & Lighting" },
+            { "physics", "Physics" },
+            { "docs", "API Reference" },
             { "vfx", "VFX & Shaders" },
             { "animation", "Animation" },
-            { "ui", "UI Toolkit" },
+            { "ui", "User Interface" },
             { "scripting_ext", "Scripting Extensions" },
             { "testing", "Testing" },
             { "probuilder", "ProBuilder — Experimental" },
             { "profiling", "Profiling & Frame Debugger" },
-            { "asset_gen", "Asset Gen" },
+            { "asset_gen", "Asset Generation" },
         };
 
         public VisualElement Root { get; }
@@ -109,6 +116,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             applyStatusLabel = Root.Q<Label>("tools-apply-status");
             retryToolsButton = Root.Q<Button>("retry-tools-button");
             searchField = Root.Q<TextField>("tools-search");
+            stateFilter = Root.Q<DropdownField>("tools-state-filter");
+            recommendedButton = Root.Q<Button>("recommended-tools-button");
             visibleCountLabel = Root.Q<Label>("tools-visible-count");
             emptyStateLabel = Root.Q<Label>("tools-empty-state");
             enableAllButton = Root.Q<Button>("enable-all-button");
@@ -121,6 +130,14 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private void RegisterCallbacks()
         {
             searchField?.RegisterValueChangedCallback(evt => ApplySearch());
+            if (stateFilter != null)
+            {
+                stateFilter.choices = new List<string> { "All", "Enabled", "Disabled" };
+                stateFilter.SetValueWithoutNotify("All");
+                stateFilter.RegisterValueChangedCallback(_ => ApplySearch());
+            }
+            if (recommendedButton != null)
+                recommendedButton.clicked += SetRecommendedToolsState;
             if (retryToolsButton != null)
                 retryToolsButton.clicked += () => _ = RetryToolSettingsAsync();
 
@@ -186,6 +203,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             allTools = service.DiscoverAllTools().OrderBy(tool => tool.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
             bool hasTools = allTools.Count > 0;
+            recommendedButton?.SetEnabled(hasTools);
             enableAllButton?.SetEnabled(hasTools);
             disableAllButton?.SetEnabled(hasTools);
 
@@ -194,9 +212,9 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 noteLabel.EnableInClassList("catalog-hidden", !hasTools);
                 if (hasTools)
                 {
-                    bool isHttp = EditorConfigurationCache.Instance.UseHttpTransport;
+                    bool isHttp = IsHttpMode();
                     noteLabel.text = isHttp
-                        ? "Changes apply after reconnecting or re-registering tools."
+                        ? "Selections are sent to the connected server. Check confirmation above; refresh your client tool list if needed."
                         : "Stdio mode: toggles sync at startup. After changing toggles, ask the AI to run manage_tools with action 'sync' to refresh.";
                     if (consentPersistenceWarnings.Count > 0)
                         noteLabel.text = string.Join("\n", consentPersistenceWarnings.Values);
@@ -265,21 +283,26 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             bool defaultOpen = prefsSuffix == "group-core";
             var foldout = new Foldout
             {
-                text = $"{title} ({enabledCount}/{toolList.Count})",
+                text = $"{title} — {enabledCount} / {toolList.Count} enabled",
                 value = EditorPrefs.GetBool(EditorPrefKeys.ToolFoldoutStatePrefix + prefsSuffix, defaultOpen),
             };
             foldout.AddToClassList("catalog-category");
 
             foldout.RegisterValueChangedCallback(evt =>
             {
-                if (evt.target != foldout || !string.IsNullOrWhiteSpace(searchField?.value))
+                if (evt.target != foldout || IsFiltering())
                     return;
                 EditorPrefs.SetBool(EditorPrefKeys.ToolFoldoutStatePrefix + prefsSuffix, evt.newValue);
             });
 
             // Add a checkbox into the foldout header to toggle all tools in this group
             bool allEnabled = enabledCount == toolList.Count;
-            var groupCheckbox = new Toggle { value = allEnabled };
+            var groupCheckbox = new Toggle
+            {
+                value = allEnabled,
+                text = "All",
+                showMixedValue = enabledCount > 0 && !allEnabled,
+            };
             groupCheckbox.AddToClassList("group-header-checkbox");
             groupCheckbox.tooltip = $"Toggle all tools in \"{title}\" on or off.";
 
@@ -325,7 +348,12 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             var header = new VisualElement();
             header.AddToClassList("tool-item-header");
 
-            var toggle = new Toggle(tool.Name) { value = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name) };
+            var toggle = new Toggle
+            {
+                name = "tool-toggle-" + tool.Name,
+                text = GetToolDisplayName(tool),
+                value = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name),
+            };
             toggle.AddToClassList("tool-item-toggle");
             toggle.tooltip = string.IsNullOrWhiteSpace(tool.Description) ? tool.Name : tool.Description;
 
@@ -337,10 +365,26 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             toolToggleMap[tool.Name] = toggle;
             header.Add(toggle);
 
+            row.Add(header);
+            var identity = new Label(tool.Name);
+            identity.AddToClassList("tool-wire-name");
+            row.Add(identity);
+
+            string summary = GetToolSummary(tool);
+            if (!string.IsNullOrWhiteSpace(summary))
+            {
+                var description = new Label(summary);
+                description.AddToClassList("tool-item-description");
+                row.Add(description);
+            }
+
+            var details = new Foldout { text = "Details", value = false };
+            details.AddToClassList("tool-details");
+            row.Add(details);
             var tagsContainer = new VisualElement();
             tagsContainer.AddToClassList("tool-tags");
 
-            bool defaultEnabled = !tool.RequiresExplicitConsent && (tool.AutoRegister || tool.IsBuiltIn);
+            bool defaultEnabled = tool.EnabledByDefault;
             tagsContainer.Add(CreateTag(defaultEnabled ? "On by default" : "Off by default"));
 
             tagsContainer.Add(CreateTag(tool.StructuredOutput ? "Structured output" : "Free-form"));
@@ -350,8 +394,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 tagsContainer.Add(CreateTag($"Polling: {tool.PollAction}"));
             }
 
-            header.Add(tagsContainer);
-            row.Add(header);
+            details.Add(tagsContainer);
 
             if (tool.RequiresExplicitConsent)
             {
@@ -376,31 +419,23 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 RefreshConsentRow(tool);
             }
 
-            // Skip auto-generated placeholder descriptions like "Tool: find_gameobjects"
-            if (!string.IsNullOrWhiteSpace(tool.Description) && !tool.Description.StartsWith("Tool: ", StringComparison.OrdinalIgnoreCase))
-            {
-                var description = new Label(tool.Description);
-                description.AddToClassList("tool-item-description");
-                row.Add(description);
-            }
-
             if (tool.Parameters != null && tool.Parameters.Count > 0)
             {
                 var paramSummary = string.Join(", ", tool.Parameters.Select(p => $"{p.Name}{(p.Required ? string.Empty : " (optional)")}: {p.Type}"));
 
                 var parametersLabel = new Label(paramSummary);
                 parametersLabel.AddToClassList("tool-parameters");
-                row.Add(parametersLabel);
+                details.Add(parametersLabel);
             }
 
             if (IsManageCameraTool(tool))
             {
-                row.Add(CreateManageSceneActions());
+                details.Add(CreateManageSceneActions());
             }
 
             if (IsBatchExecuteTool(tool))
             {
-                row.Add(CreateBatchExecuteSettings());
+                details.Add(CreateBatchExecuteSettings());
             }
 
             return row;
@@ -570,6 +605,27 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             });
         }
 
+        private void SetRecommendedToolsState()
+        {
+            bool changed = false;
+            foreach (var tool in allTools)
+            {
+                // A preset is not a consent action and does not manage project-defined tools.
+                if (!IsBuiltIn(tool) || tool.RequiresExplicitConsent)
+                    continue;
+                bool enabled = tool.EnabledByDefault;
+                if (toolToggleMap.TryGetValue(tool.Name, out var toggle))
+                    toggle.SetValueWithoutNotify(enabled);
+                if (MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name) != enabled)
+                    changed |= HandleToggleChange(tool, enabled, updateSummary: false, reregisterTools: false, allowConsentPrompt: false);
+            }
+            UpdateSummary();
+            UpdateFoldoutHeaders();
+            SyncGroupToggles();
+            if (changed)
+                ReregisterToolsAsync();
+        }
+
         private void SetAllToolsState(bool enabled)
         {
             bool hasChanges = false;
@@ -617,7 +673,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             // Update the foldout header count
             int enabledCount = groupTools.Count(t => MCPServiceLocator.ToolDiscovery.IsToolEnabled(t.Name));
-            foldout.text = $"{title} ({enabledCount}/{groupTools.Count})";
+            foldout.text = $"{title} — {enabledCount} / {groupTools.Count} enabled";
 
             // Sync global group toggles after group change
             SyncGroupToggles();
@@ -656,8 +712,9 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                         continue;
                 }
 
-                bool allEnabled = groupTools.All(t => MCPServiceLocator.ToolDiscovery.IsToolEnabled(t.Name));
-                kvp.Value.SetValueWithoutNotify(allEnabled);
+                int enabled = groupTools.Count(t => MCPServiceLocator.ToolDiscovery.IsToolEnabled(t.Name));
+                kvp.Value.SetValueWithoutNotify(enabled == groupTools.Count);
+                kvp.Value.showMixedValue = enabled > 0 && enabled < groupTools.Count;
             }
         }
 
@@ -726,6 +783,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         {
             if (summaryLabel == null)
             {
+                ApplySearch();
                 return;
             }
 
@@ -737,6 +795,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             int enabledCount = allTools.Count(tool => MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name));
             summaryLabel.text = $"{enabledCount} of {allTools.Count} tools enabled in saved local settings.";
+            ApplySearch();
         }
 
         private bool IsHttpMode() => httpMode ?? EditorConfigurationCache.Instance.UseHttpTransport;
@@ -833,14 +892,14 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             foreach (var (foldout, title, tools) in foldoutEntries)
             {
                 int enabledCount = tools.Count(t => MCPServiceLocator.ToolDiscovery.IsToolEnabled(t.Name));
-                foldout.text = $"{title} ({enabledCount}/{tools.Count})";
+                foldout.text = $"{title} — {enabledCount} / {tools.Count} enabled";
             }
         }
 
         private void ApplySearch()
         {
             string query = (searchField?.value ?? string.Empty).Trim();
-            bool searching = query.Length > 0;
+            bool searching = IsFiltering();
             int visibleCount = 0;
 
             foreach (var (foldout, _, tools) in foldoutEntries)
@@ -848,7 +907,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 int groupVisibleCount = 0;
                 foreach (var tool in tools)
                 {
-                    bool matches = MatchesSearch(tool, query);
+                    bool enabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
+                    bool matches = MatchesSearch(tool, query) && (stateFilter?.value != "Enabled" || enabled) && (stateFilter?.value != "Disabled" || !enabled);
                     if (toolRowMap.TryGetValue(tool.Name, out var row))
                         row.EnableInClassList("catalog-hidden", !matches);
                     if (matches)
@@ -875,9 +935,37 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 visibleCountLabel.text = $"{visibleCount} / {allTools.Count} shown";
             if (emptyStateLabel != null)
             {
-                emptyStateLabel.text = allTools.Count == 0 ? "No tools discovered." : "No tools match your search.";
+                emptyStateLabel.text = allTools.Count == 0 ? "No tools discovered." : "No tools match your search and filter.";
                 emptyStateLabel.EnableInClassList("catalog-hidden", visibleCount > 0);
             }
+        }
+
+        private bool IsFiltering() => !string.IsNullOrWhiteSpace(searchField?.value) || stateFilter?.value == "Enabled" || stateFilter?.value == "Disabled";
+
+        private static string GetToolDisplayName(ToolMetadata tool) =>
+            tool?.Name switch
+            {
+                "manage_ugui" => "uGUI / Canvas",
+                "manage_ui" => "UI Toolkit / UXML & USS",
+                "manage_camera" => "Cameras & Capture",
+                "manage_graphics" => "Rendering & Lighting",
+                "manage_physics" => "Physics / 2D & 3D",
+                _ => CultureInfo.InvariantCulture.TextInfo.ToTitleCase((tool?.Name ?? string.Empty).Replace('_', ' ')),
+            };
+
+        private static string GetToolSummary(ToolMetadata tool)
+        {
+            if (!string.IsNullOrWhiteSpace(tool?.Description) && !tool.Description.StartsWith("Tool: ", StringComparison.OrdinalIgnoreCase))
+                return tool.Description;
+            return tool?.Name switch
+            {
+                "manage_ugui" => "Create and inspect Canvas UI, RectTransforms, layout groups and controls.",
+                "manage_ui" => "Build and inspect UI Documents with UXML, USS and visual elements.",
+                "manage_camera" => "Configure cameras and Cinemachine; capture Game and Scene views.",
+                "manage_graphics" => "Configure rendering, lights, volumes and graphics diagnostics.",
+                "manage_physics" => "Inspect and configure 2D / 3D physics, queries and simulation.",
+                _ => string.Empty,
+            };
         }
 
         private static bool MatchesSearch(ToolMetadata tool, string query)
@@ -890,7 +978,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             string group = tool.Group ?? "core";
             string category = IsBuiltIn(tool) ? GetGroupDisplayName(group) : "Custom Tools";
             return (tool.Name ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
-                || (tool.Description ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || GetToolDisplayName(tool).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || GetToolSummary(tool).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
                 || group.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
                 || category.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
         }

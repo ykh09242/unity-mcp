@@ -18,6 +18,7 @@ namespace MCPForUnityTests.EditMode.Windows
     public class McpCatalogSearchTests
     {
         private readonly Dictionary<string, object> previousServices = new();
+        private readonly List<IDisposable> panels = new();
         private FakeToolDiscovery tools;
         private FakeResourceDiscovery resources;
 
@@ -36,6 +37,9 @@ namespace MCPForUnityTests.EditMode.Windows
         [TearDown]
         public void TearDown()
         {
+            foreach (var panel in panels)
+                panel.Dispose();
+            panels.Clear();
             foreach (var previous in previousServices)
                 ServiceField(previous.Key).SetValue(null, previous.Value);
             previousServices.Clear();
@@ -125,7 +129,7 @@ namespace MCPForUnityTests.EditMode.Windows
             var originalRows = root.Query<VisualElement>(className: "tool-item").ToList();
             var toggles = originalRows.Select(row => row.Q<Toggle>()).ToList();
             bool[] originalStates = toggles.Select(toggle => toggle.value).ToArray();
-            var foldouts = root.Query<Foldout>().ToList();
+            var foldouts = root.Query<Foldout>(className: "catalog-category").ToList();
             foldouts[0].SetValueWithoutNotify(false);
             foldouts[1].SetValueWithoutNotify(true);
 
@@ -180,7 +184,7 @@ namespace MCPForUnityTests.EditMode.Windows
         {
             var (section, root) = CreateCatalog(toolCatalog);
             var rows = root.Query<VisualElement>(className: "tool-item").ToList();
-            var alphaToggle = rows.Single(row => row.Q<Toggle>().label == "alpha").Q<Toggle>();
+            var alphaToggle = rows.Single(row => row.Q<Toggle>().name == "tool-toggle-alpha" || row.Q<Toggle>().label == "alpha").Q<Toggle>();
             alphaToggle.SetValueWithoutNotify(needsChange ? requested : !requested);
             if (toolCatalog)
             {
@@ -209,12 +213,15 @@ namespace MCPForUnityTests.EditMode.Windows
         public void GroupAction_UsesAuthoritativeStateAndSynchronizesCachedUi(bool requested, bool needsChange)
         {
             var (section, root) = CreateCatalog(true);
-            var alphaToggle = root.Query<VisualElement>(className: "tool-item").ToList().Single(row => row.Q<Toggle>().label == "alpha").Q<Toggle>();
+            var alphaToggle = root.Query<VisualElement>(className: "tool-item")
+                .ToList()
+                .Single(row => row.Q<Toggle>().name == "tool-toggle-alpha" || row.Q<Toggle>().label == "alpha")
+                .Q<Toggle>();
             alphaToggle.SetValueWithoutNotify(needsChange ? requested : !requested);
             tools.SetToolEnabled("alpha", needsChange ? !requested : requested);
             int previousWrites = tools.WriteCalls;
             Search(root, "tools", "beta");
-            var foldout = root.Query<Foldout>().ToList()[0];
+            var foldout = root.Query<Foldout>(className: "catalog-category").ToList()[0];
 
             Invoke(section, "SetGroupToolsState", tools.Items.Where(tool => tool.IsBuiltIn).ToList(), requested, foldout, "Core Tools");
 
@@ -237,11 +244,11 @@ namespace MCPForUnityTests.EditMode.Windows
             var (section, root) = CreateCatalog(true);
             Search(root, "tools", "First item");
             var groupTools = tools.Items.Where(tool => tool.IsBuiltIn).ToList();
-            var foldout = root.Query<Foldout>().ToList()[0];
+            var foldout = root.Query<Foldout>(className: "catalog-category").ToList()[0];
             Invoke(section, "SetGroupToolsState", groupTools, true, foldout, "Core Tools");
             Assert.That(tools.IsToolEnabled("alpha_hidden"), Is.True);
             Assert.That(
-                root.Query<VisualElement>(className: "tool-item").ToList().Single(row => row.Q<Toggle>().label == "alpha_hidden").Q<Toggle>().value,
+                root.Query<VisualElement>(className: "tool-item").ToList().Single(row => row.Q<Toggle>().name == "tool-toggle-alpha_hidden").Q<Toggle>().value,
                 Is.True
             );
         }
@@ -272,7 +279,7 @@ namespace MCPForUnityTests.EditMode.Windows
                 EditorPrefs.SetBool(key, initialExpanded);
                 var (section, root) = CreateCatalog(toolCatalog);
                 string prefix = toolCatalog ? "tools" : "resources";
-                var foldout = root.Query<Foldout>().ToList()[0];
+                var foldout = root.Query<Foldout>(className: "catalog-category").ToList()[0];
                 Search(root, prefix, "alpha");
 
                 ChangeFoldout(foldout, !initialExpanded);
@@ -283,7 +290,7 @@ namespace MCPForUnityTests.EditMode.Windows
                 Search(root, prefix, string.Empty);
                 Assert.That(foldout.value, Is.EqualTo(initialExpanded));
                 Invoke(section, "Refresh");
-                foldout = root.Query<Foldout>().ToList()[0];
+                foldout = root.Query<Foldout>(className: "catalog-category").ToList()[0];
                 Assert.That(foldout.value, Is.EqualTo(initialExpanded));
                 Assert.That(EditorPrefs.GetBool(key), Is.EqualTo(initialExpanded));
 
@@ -342,6 +349,202 @@ namespace MCPForUnityTests.EditMode.Windows
             }
         }
 
+        [TestCase("core", true, false, true)]
+        [TestCase("camera", true, false, false)]
+        [TestCase("graphics", true, false, false)]
+        [TestCase("physics", true, false, false)]
+        [TestCase("ui", true, true, false)]
+        [TestCase("docs", true, false, false)]
+        [TestCase("ui", false, true, true)]
+        [TestCase("core", false, false, false)]
+        public void FreshDefaults_KeepOnlyCoreBuiltInsAndRespectCustomRegistration(string group, bool builtIn, bool auto, bool expected)
+        {
+            var metadata = new ToolMetadata
+            {
+                Name = "catalog_default_" + Guid.NewGuid().ToString("N"),
+                Group = group,
+                IsBuiltIn = builtIn,
+                AutoRegister = auto,
+            };
+            string key = EditorPrefKeys.ToolEnabledPrefix + metadata.Name;
+            try
+            {
+                Invoke(new ToolDiscoveryService(), "EnsurePreferenceInitialized", metadata);
+                Assert.That(EditorPrefs.GetBool(key), Is.EqualTo(expected));
+            }
+            finally
+            {
+                EditorPrefs.DeleteKey(key);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ExistingPreference_WinsOverNewGroupDefaults(bool enabled)
+        {
+            var metadata = new ToolMetadata
+            {
+                Name = "catalog_saved_" + Guid.NewGuid().ToString("N"),
+                Group = "physics",
+                IsBuiltIn = true,
+            };
+            string key = EditorPrefKeys.ToolEnabledPrefix + metadata.Name;
+            try
+            {
+                EditorPrefs.SetBool(key, enabled);
+                Invoke(new ToolDiscoveryService(), "EnsurePreferenceInitialized", metadata);
+                Assert.That(EditorPrefs.GetBool(key), Is.EqualTo(enabled));
+            }
+            finally
+            {
+                EditorPrefs.DeleteKey(key);
+            }
+        }
+
+        [Test]
+        public void FrameworkRows_HaveReadableTitlesStableIdsAndAccurateGroup()
+        {
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "manage_ugui",
+                    IsBuiltIn = true,
+                    Group = "ui",
+                }
+            );
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "manage_ui",
+                    IsBuiltIn = true,
+                    Group = "ui",
+                }
+            );
+            var root = ActualToolsRoot();
+            new McpToolsSection(root).Refresh();
+            var ugui = root.Q<Toggle>("tool-toggle-manage_ugui");
+            var uitk = root.Q<Toggle>("tool-toggle-manage_ui");
+            Assert.IsNotNull(ugui);
+            Assert.IsNotNull(uitk);
+            Assert.That(ugui.text, Is.EqualTo("uGUI / Canvas"));
+            Assert.That(uitk.text, Is.EqualTo("UI Toolkit / UXML & USS"));
+            Assert.That(
+                root.Query<Label>(className: "tool-wire-name").ToList().Select(label => label.text),
+                Is.EquivalentTo(new[] { "manage_ui", "manage_ugui" })
+            );
+            StringAssert.StartsWith("User Interface", root.Q<Foldout>(className: "catalog-category").text);
+            Assert.That(tools.WriteCalls, Is.Zero);
+        }
+
+        [Test]
+        public void RecommendedPreset_PreservesCustomToolsAndSkipsExplicitConsent()
+        {
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "scene",
+                    IsBuiltIn = true,
+                    Group = "core",
+                }
+            );
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "physics",
+                    IsBuiltIn = true,
+                    Group = "physics",
+                }
+            );
+            tools.Items.Add(new ToolMetadata { Name = "private_tool", IsBuiltIn = false });
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "execute_code",
+                    IsBuiltIn = true,
+                    RequiresExplicitConsent = true,
+                }
+            );
+            tools.SetToolEnabled("physics", true);
+            tools.SetToolEnabled("private_tool", true);
+            int before = tools.WriteCalls;
+            var root = ActualToolsRoot();
+            new McpToolsSection(root).Refresh();
+            Search(root, "tools", "scene");
+            var button = root.Q<Button>("recommended-tools-button");
+            Assert.IsNotNull(button);
+            Click(button);
+            Assert.IsTrue(tools.IsToolEnabled("scene"));
+            Assert.IsFalse(tools.IsToolEnabled("physics"));
+            Assert.IsTrue(tools.IsToolEnabled("private_tool"));
+            Assert.IsFalse(tools.IsToolEnabled("execute_code"));
+            Assert.That(tools.WriteCalls - before, Is.EqualTo(2));
+            Click(button);
+            Assert.That(tools.WriteCalls - before, Is.EqualTo(2), "Repeated preset is a no-op.");
+            Assert.That(tools.DiscoverCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void EnabledFilter_ComposesWithSearchAndDoesNotRediscoverOrWrite()
+        {
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "manage_ugui",
+                    IsBuiltIn = true,
+                    Group = "ui",
+                }
+            );
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "manage_ui",
+                    IsBuiltIn = true,
+                    Group = "ui",
+                }
+            );
+            tools.SetToolEnabled("manage_ugui", true);
+            int before = tools.WriteCalls;
+            var root = ActualToolsRoot();
+            new McpToolsSection(root).Refresh();
+            var filter = root.Q<DropdownField>("tools-state-filter");
+            Assert.IsNotNull(filter);
+            filter.SetValueWithoutNotify("Enabled");
+            Search(root, "tools", "Canvas");
+            Assert.That(root.Q<Label>("tools-visible-count").text, Is.EqualTo("1 / 2 shown"));
+            filter.SetValueWithoutNotify("Disabled");
+            Search(root, "tools", "Canvas");
+            Assert.That(root.Q<Label>("tools-visible-count").text, Is.EqualTo("0 / 2 shown"));
+            Assert.That(tools.WriteCalls, Is.EqualTo(before));
+            Assert.That(tools.DiscoverCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void PartiallyEnabledGroup_ShowsMixedState()
+        {
+            tools.Items.Add(new ToolMetadata { Name = "first", IsBuiltIn = true });
+            tools.Items.Add(new ToolMetadata { Name = "second", IsBuiltIn = true });
+            tools.SetToolEnabled("first", true);
+            var root = ActualToolsRoot();
+            new McpToolsSection(root).Refresh();
+            Assert.IsTrue(root.Q<Toggle>(className: "group-header-checkbox").showMixedValue);
+            StringAssert.Contains("1 / 2 enabled", root.Q<Foldout>(className: "catalog-category").text);
+            root.Q<Toggle>(className: "group-header-checkbox").value = true;
+            Assert.IsFalse(root.Q<Toggle>(className: "group-header-checkbox").showMixedValue);
+            StringAssert.Contains("2 / 2 enabled", root.Q<Foldout>(className: "catalog-category").text);
+        }
+
+        private VisualElement ActualToolsRoot()
+        {
+            var tree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>("Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/Tools/McpToolsSection.uxml");
+            Assert.IsNotNull(tree);
+            var root = tree.CloneTree();
+            panels.Add(new OwnedPanel(root));
+            return root;
+        }
+
+        private static void Click(Button button) =>
+            typeof(Clickable).GetMethod("Invoke", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(button.clickable, new object[] { null });
+
         private (object section, VisualElement root) CreateCatalog(bool toolCatalog)
         {
             tools.Items.Add(
@@ -383,7 +586,7 @@ namespace MCPForUnityTests.EditMode.Windows
             return (section, root);
         }
 
-        private static VisualElement CreateRoot(bool toolCatalog)
+        private VisualElement CreateRoot(bool toolCatalog)
         {
             string prefix = toolCatalog ? "tools" : "resources";
             var root = new VisualElement();
@@ -391,6 +594,7 @@ namespace MCPForUnityTests.EditMode.Windows
             root.Add(new Label { name = prefix + "-visible-count" });
             root.Add(new Label { name = prefix + "-empty-state" });
             root.Add(new VisualElement { name = toolCatalog ? "tool-category-container" : "resource-category-container" });
+            panels.Add(new OwnedPanel(root));
             return root;
         }
 
@@ -426,6 +630,30 @@ namespace MCPForUnityTests.EditMode.Windows
 
         private static void Invoke(object target, string method, params object[] args) =>
             target.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).Invoke(target, args);
+
+        private sealed class OwnedPanel : IDisposable
+        {
+            private readonly UnityEngine.ScriptableObject owner;
+            private readonly IPanel panel;
+
+            internal OwnedPanel(VisualElement root)
+            {
+                owner = UnityEngine.ScriptableObject.CreateInstance<PanelOwner>();
+                var factory = typeof(VisualElement)
+                    .Assembly.GetType("UnityEngine.UIElements.Panel")
+                    .GetMethod("CreateEditorPanel", BindingFlags.Static | BindingFlags.NonPublic, null, new[] { typeof(UnityEngine.ScriptableObject) }, null);
+                panel = (IPanel)factory.Invoke(null, new object[] { owner });
+                panel.visualTree.Add(root);
+            }
+
+            public void Dispose()
+            {
+                panel.Dispose();
+                UnityEngine.Object.DestroyImmediate(owner);
+            }
+        }
+
+        private sealed class PanelOwner : UnityEngine.ScriptableObject { }
 
         private sealed class FakeToolDiscovery : IToolDiscoveryService
         {

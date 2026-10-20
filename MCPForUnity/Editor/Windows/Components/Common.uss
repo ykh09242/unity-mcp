@@ -592,3 +592,108 @@
 .catalog-hidden {
     display: none;
 }
+
+#tools-section .catalog-summary {
+    -unity-font-style: bold;
+    white-space: normal;
+    margin-bottom: 8px;
+}
+
+#tools-section .catalog-search > .unity-base-field__label,
+.catalog-state-filter > .unity-base-field__label {
+    min-width: 0;
+    width: auto;
+    margin-right: 6px;
+}
+
+.catalog-state-filter {
+    flex-basis: 150px;
+    flex-shrink: 1;
+    margin: 0 8px 4px 0;
+    min-width: 130px;
+}
+
+#tools-section .catalog-retry {
+    align-self: flex-start;
+    margin-bottom: 8px;
+}
+
+#tools-section .tool-item {
+    padding: 10px 12px;
+    border-left-width: 2px;
+    border-left-color: var(--mcp-border);
+}
+
+#tools-section .tool-item-toggle {
+    flex-grow: 1;
+    margin-left: 0;
+    -unity-font-style: bold;
+}
+
+#tools-section .tool-item-toggle > .unity-toggle__input {
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+.tool-wire-name {
+    color: var(--mcp-muted);
+    font-size: 10px;
+    white-space: normal;
+    margin: 3px 0 3px 0;
+}
+
+.tool-details {
+    margin-top: 3px;
+    margin-left: 0;
+    min-width: 0;
+}
+
+#tools-section .tool-tags {
+    margin-left: 0;
+    padding-left: 0;
+}
+
+#tools-section .tool-tag {
+    margin-left: 0;
+    margin-right: 4px;
+    white-space: normal;
+}
+
+#tools-section .group-header-checkbox {
+    margin-left: auto;
+    padding-left: 8px;
+}
+
+#tools-section .catalog-category > .unity-foldout__toggle > .unity-toggle__text {
+    white-space: normal;
+    flex-shrink: 1;
+}
+
+.catalog-advanced {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top-width: 1px;
+    border-top-color: var(--mcp-border);
+}
+
+
+#tools-section .tool-item-toggle .unity-toggle__text,
+#tools-section .group-header-checkbox .unity-toggle__text {
+    margin-left: 6px;
+    white-space: normal;
+}
+
+#tools-section .tool-wire-name,
+#tools-section .tool-item-description {
+    margin-left: 20px;
+}
+
+#tools-section .tool-item-description {
+    margin-top: 4px;
+    margin-bottom: 6px;
+}
+
+#tools-section .tool-details {
+    margin-left: 8px;
+    margin-top: 4px;
+}
