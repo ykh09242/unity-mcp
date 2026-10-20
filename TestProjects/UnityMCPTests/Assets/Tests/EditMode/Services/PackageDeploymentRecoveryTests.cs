@@ -135,6 +135,39 @@ namespace MCPForUnityTests.Editor.Services
             Assert.That(File.ReadAllText(OwnedRelative(target, "Editor/marker.txt")), Is.EqualTo("replacement"));
         }
 
+        [Test]
+        public void FailedPayloadPreparationPreservesBothInstalledSubtrees()
+        {
+            string source = Owned("Incomplete");
+            WriteMarker(source, "new");
+            string target = MakePackage("Target", "old");
+            var method = typeof(PackageDeploymentService).GetMethod("CopyCoreFolders", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.Throws<TargetInvocationException>(() =>
+                method.Invoke(Service("Project", () => target, new Dictionary<string, string>()), new object[] { source, target })
+            );
+            Assert.That(File.ReadAllText(OwnedRelative(target, "Editor/marker.txt")), Is.EqualTo("old"));
+            Assert.That(File.ReadAllText(OwnedRelative(target, "Runtime/marker.txt")), Is.EqualTo("old"));
+        }
+
+        [Test]
+        public void DeploymentAndRestoreKeepMetadataAndBothCodeTreesTogether()
+        {
+            string source = MakePackage("Source", "new");
+            string target = MakePackage("Target", "old");
+            string oldMetadata = File.ReadAllText(OwnedRelative(target, "package.json"));
+            string newMetadata =
+                "{\"name\":\"com.ykh09242.unity-mcp\",\"version\":\"2.0.0\",\"mcpServerSource\":\"https://github.com/ykh09242/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server\",\"dependencies\":{\"example\":\"2.0.0\"}}";
+            File.WriteAllText(OwnedRelative(source, "package.json"), newMetadata);
+            var service = Service("Project", () => target, new Dictionary<string, string>());
+            service.SetStoredSourcePath(source);
+            Assert.That(service.DeployFromStoredSource().Success, Is.True);
+            Assert.That(File.ReadAllText(OwnedRelative(target, "package.json")), Is.EqualTo(newMetadata));
+            Assert.That(File.ReadAllText(OwnedRelative(target, "Runtime/marker.txt")), Is.EqualTo("new"));
+            Assert.That(service.RestoreLastBackup().Success, Is.True);
+            Assert.That(File.ReadAllText(OwnedRelative(target, "package.json")), Is.EqualTo(oldMetadata));
+            Assert.That(File.ReadAllText(OwnedRelative(target, "Editor/marker.txt")), Is.EqualTo("old"));
+        }
+
         private PackageDeploymentService Service(string project, Func<string> target, Dictionary<string, string> prefs) =>
             new PackageDeploymentService(
                 Owned(project),
@@ -150,7 +183,10 @@ namespace MCPForUnityTests.Editor.Services
             WriteMarker(target, label);
             Directory.CreateDirectory(OwnedRelative(target, "Runtime"));
             File.WriteAllText(OwnedRelative(target, "Runtime/marker.txt"), label);
-            File.WriteAllText(OwnedRelative(target, "package.json"), "{\"name\":\"com.ykh09242.unity-mcp\",\"version\":\"1.0.0\"}");
+            File.WriteAllText(
+                OwnedRelative(target, "package.json"),
+                "{\"name\":\"com.ykh09242.unity-mcp\",\"version\":\"1.0.0\",\"mcpServerSource\":\"https://github.com/ykh09242/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server\"}"
+            );
             return target;
         }
 
