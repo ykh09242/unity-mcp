@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Newtonsoft.Json"><HintPath>$(JsonAssembly)</HintPath></Reference>
+    <Compile Include="../../../../MCPForUnity/Editor/Tools/Profiler/Operations/MemorySnapshotComparison.cs" />
     <Compile Include="Harness.cs" />
     <Compile Include="SocketProbe.cs" />
     <Compile Include="../../../../MCPForUnity/Editor/Services/Transport/WebSocketMessageReader.cs" />

@@ -5,6 +5,7 @@ using System.Threading;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Tools.Profiler;
 using Newtonsoft.Json;
 using UnityEditor.Compilation;
 
@@ -89,6 +90,64 @@ internal static class Harness
                     throw new Exception("Message assembly changed.");
             },
             2048
+        );
+        var snapshotA = new MemorySnapshotComparison.Snapshot
+        {
+            Session = 1,
+            Format = 18,
+            Path = "synthetic",
+        };
+        var snapshotB = new MemorySnapshotComparison.Snapshot
+        {
+            Session = 1,
+            Format = 18,
+            Path = "synthetic",
+        };
+        for (int i = 0; i < 200000; i++)
+        {
+            string key = i.ToString("D6");
+            snapshotA.Objects.Add(
+                key,
+                new MemorySnapshotComparison.NativeObject
+                {
+                    Key = key,
+                    Id = key,
+                    Name = key,
+                    Type = "T" + (i % 8),
+                    Bytes = 1,
+                }
+            );
+            string addedKey = "b" + key;
+            snapshotB.Objects.Add(
+                addedKey,
+                new MemorySnapshotComparison.NativeObject
+                {
+                    Key = addedKey,
+                    Id = addedKey,
+                    Name = addedKey,
+                    Type = "T" + (i % 8),
+                    Bytes = 2,
+                }
+            );
+        }
+        Check(
+            "large_snapshot_comparison",
+            () =>
+            {
+                var comparison = MemorySnapshotComparison.Compare(snapshotA, snapshotB, 8);
+                if (
+                    comparison.BytesA != 200000
+                    || comparison.BytesB != 400000
+                    || (int)comparison.Delta["added_count"] != 200000
+                    || comparison.Delta["added"].Count() != 8
+                    || (int)comparison.Delta["removed_count"] != 200000
+                    || comparison.Types.Count != 8
+                    || (string)comparison.Delta["added"][0]["snapshot_identity"] != "b000000"
+                    || (string)comparison.Delta["removed"][7]["snapshot_identity"] != "000007"
+                )
+                    throw new Exception("Snapshot comparison semantics changed.");
+            },
+            1024 * 1024
         );
         Console.WriteLine(JsonConvert.SerializeObject(new { runtime = Environment.Version.ToString(), results = Results }));
         return failed ? 1 : 0;

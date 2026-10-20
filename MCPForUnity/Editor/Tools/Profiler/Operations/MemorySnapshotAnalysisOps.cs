@@ -9,6 +9,8 @@ using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using Unity.IO.LowLevel.Unsafe;
 using UnityEditor.PackageManager;
+using NativeObject = MCPForUnity.Editor.Tools.Profiler.MemorySnapshotComparison.NativeObject;
+using Snapshot = MCPForUnity.Editor.Tools.Profiler.MemorySnapshotComparison.Snapshot;
 
 namespace MCPForUnity.Editor.Tools.Profiler
 {
@@ -30,23 +32,6 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 Code = code;
                 Columns = columns;
             }
-        }
-
-        private sealed class NativeObject
-        {
-            internal string Key;
-            internal string Id;
-            internal string Name;
-            internal string Type;
-            internal long Bytes;
-        }
-
-        private sealed class Snapshot
-        {
-            internal uint Format;
-            internal uint Session;
-            internal string Path;
-            internal readonly Dictionary<string, NativeObject> Objects = new Dictionary<string, NativeObject>(StringComparer.Ordinal);
         }
 
         private sealed class Backend
@@ -166,70 +151,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             {
                 Snapshot a = Load(backend, pathA, maximum, prefix);
                 Snapshot b = Load(backend, pathB, maximum, prefix);
-                var leftTypes = a.Objects.Values.ToLookup(row => row.Type, StringComparer.Ordinal);
-                var rightTypes = b.Objects.Values.ToLookup(row => row.Type, StringComparer.Ordinal);
-                var typeNames = leftTypes
-                    .Select(group => group.Key)
-                    .Concat(rightTypes.Select(group => group.Key))
-                    .Distinct(StringComparer.Ordinal)
-                    .OrderBy(name => name, StringComparer.Ordinal)
-                    .ToArray();
-                if (typeNames.Length > 512)
-                    throw new SnapshotProblem("memory_work_limit", "Selected native type count exceeds 512.");
-                var types = new JArray(
-                    typeNames.Select(name =>
-                    {
-                        NativeObject[] left = leftTypes[name].ToArray();
-                        NativeObject[] right = rightTypes[name].ToArray();
-                        long bytesA = Sum(left);
-                        long bytesB = Sum(right);
-                        return new JObject
-                        {
-                            ["type"] = name,
-                            ["count_a"] = left.Length,
-                            ["count_b"] = right.Length,
-                            ["count_delta"] = right.Length - left.Length,
-                            ["bytes_a"] = bytesA,
-                            ["bytes_b"] = bytesB,
-                            ["bytes_delta"] = checked(bytesB - bytesA),
-                        };
-                    })
-                );
-                bool sameSession = a.Session != 0 && a.Session == b.Session && (a.Format >= 18) == (b.Format >= 18);
-                JObject delta;
-                if (sameSession)
-                {
-                    NativeObject[] added = b.Objects.Values.Where(row => !a.Objects.ContainsKey(row.Key)).ToArray();
-                    NativeObject[] removed = a.Objects.Values.Where(row => !b.Objects.ContainsKey(row.Key)).ToArray();
-                    NativeObject[] changed = b
-                        .Objects.Values.Where(row =>
-                            a.Objects.TryGetValue(row.Key, out NativeObject before) && (row.Bytes != before.Bytes || row.Name != before.Name)
-                        )
-                        .ToArray();
-                    delta = new JObject
-                    {
-                        ["status"] = "same_capture_session",
-                        ["identity_basis"] = "native_id_and_address_and_native_type; no_managed_or_cross_session_identity_claim",
-                        ["added_count"] = added.Length,
-                        ["removed_count"] = removed.Length,
-                        ["changed_count"] = changed.Length,
-                        ["added"] = Describe(added, objectLimit),
-                        ["removed"] = Describe(removed, objectLimit),
-                        ["changed"] = Describe(changed, objectLimit),
-                        ["objects_truncated"] = added.Length > objectLimit || removed.Length > objectLimit || changed.Length > objectLimit,
-                    };
-                }
-                else
-                    delta = new JObject
-                    {
-                        ["status"] = "unavailable_different_or_unknown_session_or_id_width",
-                        ["added_count"] = JValue.CreateNull(),
-                        ["removed_count"] = JValue.CreateNull(),
-                        ["changed_count"] = JValue.CreateNull(),
-                        ["added"] = JValue.CreateNull(),
-                        ["removed"] = JValue.CreateNull(),
-                        ["changed"] = JValue.CreateNull(),
-                    };
+                var comparison = MemorySnapshotComparison.Compare(a, b, objectLimit);
                 return new SuccessResponse(
                     "Compared actual native-object snapshot records, not snapshot file lengths.",
                     new JObject
@@ -251,11 +173,11 @@ namespace MCPForUnity.Editor.Tools.Profiler
                             ["selected_object_count"] = b.Objects.Count,
                         },
                         ["name_prefix"] = prefix,
-                        ["types"] = types,
-                        ["object_delta"] = delta,
-                        ["native_object_bytes_a"] = Sum(a.Objects.Values),
-                        ["native_object_bytes_b"] = Sum(b.Objects.Values),
-                        ["native_object_bytes_delta"] = checked(Sum(b.Objects.Values) - Sum(a.Objects.Values)),
+                        ["types"] = comparison.Types,
+                        ["object_delta"] = comparison.Delta,
+                        ["native_object_bytes_a"] = comparison.BytesA,
+                        ["native_object_bytes_b"] = comparison.BytesB,
+                        ["native_object_bytes_delta"] = checked(comparison.BytesB - comparison.BytesA),
                         ["managed_heap_bytes_delta"] = JValue.CreateNull(),
                         ["retained_bytes_delta"] = JValue.CreateNull(),
                         ["limitations"] = new JArray(
@@ -267,6 +189,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
                         ),
                     }
                 );
+            }
+            catch (MemorySnapshotComparison.LimitException)
+            {
+                return new ErrorResponse("memory_work_limit", new { message = "Selected native type count exceeds 512.", columns = (JArray)null });
             }
             catch (SnapshotProblem error)
             {
@@ -288,28 +214,6 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 );
             }
         }
-
-        private static long Sum(IEnumerable<NativeObject> rows)
-        {
-            long sum = 0;
-            foreach (NativeObject row in rows)
-                sum = checked(sum + row.Bytes);
-            return sum;
-        }
-
-        private static JArray Describe(IEnumerable<NativeObject> rows, int limit) =>
-            new JArray(
-                rows.OrderBy(row => row.Key, StringComparer.Ordinal)
-                    .Take(limit)
-                    .Select(row => new JObject
-                    {
-                        ["snapshot_identity"] = row.Key,
-                        ["native_id"] = row.Id,
-                        ["name"] = MemoryAnalysisParams.BoundedName(row.Name),
-                        ["type"] = row.Type,
-                        ["native_size_bytes"] = row.Bytes,
-                    })
-            );
 
         private static Snapshot Load(Backend backend, string path, int maximum, string prefix)
         {
