@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using Microsoft.Win32.SafeHandles;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
@@ -166,6 +170,63 @@ namespace MCPForUnityTests.Editor.Services
             Assert.That(service.RestoreLastBackup().Success, Is.True);
             Assert.That(File.ReadAllText(OwnedRelative(target, "package.json")), Is.EqualTo(oldMetadata));
             Assert.That(File.ReadAllText(OwnedRelative(target, "Editor/marker.txt")), Is.EqualTo("old"));
+        }
+
+        [Test]
+        public void CopyFailureAfterOneStagedSubtreePreservesCompleteTarget()
+        {
+            string target = MakePackage("Target", "old");
+            var original = Directory.GetFiles(target, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
+            Assert.Throws<IOException>(() =>
+                GuardedFileSystem.ReplaceDirectory(
+                    target,
+                    stage =>
+                    {
+                        Directory.CreateDirectory(Path.Combine(stage, "Editor"));
+                        File.WriteAllText(Path.Combine(stage, "Editor/marker.txt"), "new");
+                        throw new IOException("Runtime copy failed after Editor was staged");
+                    }
+                )
+            );
+            foreach (var pair in original)
+                CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key));
+            Assert.IsEmpty(Directory.GetDirectories(_root, ".mcp-stage-*"));
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+
+        [Test]
+        public void BlockedFinalDirectoryRenameRollsBackCompleteTarget()
+        {
+            if (Environment.OSVersion.Platform != PlatformID.Win32NT)
+                Assert.Ignore("Windows directory sharing semantics are required.");
+            string target = MakePackage("Target", "old");
+            string source = MakePackage("Source", "new");
+            var original = Directory.GetFiles(target, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
+            SafeFileHandle held = null;
+            try
+            {
+                Assert.Throws<IOException>(() =>
+                    GuardedFileSystem.ReplaceDirectory(
+                        target,
+                        stage =>
+                        {
+                            GuardedFileSystem.CopyDirectory(source, stage);
+                            // Keep the fully staged directory readable, but deny its final rename.
+                            held = CreateFileW(stage, 0x80000000, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+                            Assert.IsFalse(held.IsInvalid);
+                        }
+                    )
+                );
+                foreach (var pair in original)
+                    CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key));
+                Assert.IsEmpty(Directory.GetDirectories(_root, ".mcp-previous-*"), "The previous target must have been restored.");
+            }
+            finally
+            {
+                held?.Dispose();
+            }
         }
 
         private PackageDeploymentService Service(string project, Func<string> target, Dictionary<string, string> prefs) =>
