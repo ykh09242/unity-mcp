@@ -14,7 +14,6 @@ async def test_server_state_physically_reclaims_expired_session_keys(monkeypatch
     server = create_mcp_server(
         False,
         execution_receipts_root=tmp_path / "receipts",
-        test_wait_tasks_root=tmp_path / "tasks",
     )
     adapter = server._state_store
     expired_created_at = datetime.now(timezone.utc) - timedelta(seconds=10)
@@ -135,7 +134,6 @@ async def test_fastmcp_contexts_keep_session_state_isolated(monkeypatch, tmp_pat
     server = create_mcp_server(
         False,
         execution_receipts_root=tmp_path / "receipts",
-        test_wait_tasks_root=tmp_path / "tasks",
     )
     current_session = ["one"]
     monkeypatch.setattr(Context, "session_id", property(lambda _: current_session[0]))
