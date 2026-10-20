@@ -20,6 +20,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private PlayScenarioEngine engine;
         private PlayScenarioLogBuffer logs;
         private string directory;
+        private PlayScenarioPlayerCancellation cancellation;
         private bool subscribed;
         private bool finished;
         private int processedUnexpectedLogs;
@@ -62,6 +63,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 }
                 requestPath = PlayScenarioPlayerFiles.CheckedAbsolute(requestPath);
                 directory = Path.GetDirectoryName(requestPath);
+                cancellation = new PlayScenarioPlayerCancellation(directory);
                 if (
                     File.Exists(Path.Combine(directory, "run.json"))
                     || File.Exists(Path.Combine(directory, "run.json.tmp"))
@@ -179,7 +181,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             try
             {
                 Drain();
-                if (File.Exists(PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(directory, "cancel"))))
+                if (cancellation.Poll(elapsed.ElapsedMilliseconds))
                 {
                     soakStopStatus = "cancelled";
                     soakStopError = "Cancelled by caller.";

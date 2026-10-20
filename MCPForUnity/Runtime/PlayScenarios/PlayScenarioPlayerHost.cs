@@ -29,6 +29,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private readonly PlayScenarioSceneScope sceneScope = new PlayScenarioSceneScope();
         private AsyncOperation load;
         private PlayScenarioQueryCounts counts;
+        private readonly PlayScenarioHierarchyQuery targetQuery = new();
         private string preparedTarget;
         private string preparedTargetId;
         private string preparedComponent;
@@ -155,50 +156,55 @@ namespace MCPForUnity.Runtime.PlayScenarios
             int matched = 0,
                 activeCount = 0;
             GameObject target = null;
-            var pending = new Stack<(Transform Node, int Segment)>();
             string[] parts = targetSegments;
-            if (active.IsValid() && active.isLoaded)
+            try
             {
-                if (active.rootCount > 100000)
-                    throw new InvalidOperationException("Target inspection exceeds the bounded hierarchy budget.");
-                foreach (GameObject root in active.GetRootGameObjects())
+                if (active.IsValid() && active.isLoaded)
                 {
-                    Inspect(ref inspected);
-                    if (parts == null || root.name == parts[0])
-                        pending.Push((root.transform, 1));
+                    targetQuery.Begin(active);
+                    foreach (GameObject root in targetQuery.Roots)
+                    {
+                        Inspect(ref inspected);
+                        if (parts == null || root.name == parts[0])
+                            targetQuery.Push(root.transform, 1);
+                    }
+                }
+                while (targetQuery.Count > 0)
+                {
+                    var entry = targetQuery.Pop();
+                    Transform current = entry.Node;
+                    bool match = parts == null ? current.GetComponent<PlayScenarioTarget>()?.TargetId == step.TargetId : entry.Segment == parts.Length;
+                    if (match)
+                    {
+                        matched++;
+                        if (current.gameObject.activeInHierarchy)
+                            activeCount++;
+                        if (target == null)
+                            target = current.gameObject;
+                        if ((step.TargetId != null || !step.Count.HasValue) && matched > 1)
+                            throw new PlayScenarioException(
+                                new PlayScenarioFailure
+                                {
+                                    Code = "target_ambiguous",
+                                    Target = step.TargetId ?? step.Target,
+                                    Message = "Target is ambiguous in the active Player scene, including inactive objects.",
+                                }
+                            );
+                    }
+                    if (parts != null && entry.Segment == parts.Length)
+                        continue;
+                    for (int index = 0; index < current.childCount; index++)
+                    {
+                        Inspect(ref inspected);
+                        Transform child = current.GetChild(index);
+                        if (parts == null || child.name == parts[entry.Segment])
+                            targetQuery.Push(child, entry.Segment + 1);
+                    }
                 }
             }
-            while (pending.Count > 0)
+            finally
             {
-                var entry = pending.Pop();
-                Transform current = entry.Node;
-                bool match = parts == null ? current.GetComponent<PlayScenarioTarget>()?.TargetId == step.TargetId : entry.Segment == parts.Length;
-                if (match)
-                {
-                    matched++;
-                    if (current.gameObject.activeInHierarchy)
-                        activeCount++;
-                    if (target == null)
-                        target = current.gameObject;
-                    if ((step.TargetId != null || !step.Count.HasValue) && matched > 1)
-                        throw new PlayScenarioException(
-                            new PlayScenarioFailure
-                            {
-                                Code = "target_ambiguous",
-                                Target = step.TargetId ?? step.Target,
-                                Message = "Target is ambiguous in the active Player scene, including inactive objects.",
-                            }
-                        );
-                }
-                if (parts != null && entry.Segment == parts.Length)
-                    continue;
-                for (int index = 0; index < current.childCount; index++)
-                {
-                    Inspect(ref inspected);
-                    Transform child = current.GetChild(index);
-                    if (parts == null || child.name == parts[entry.Segment])
-                        pending.Push((child, entry.Segment + 1));
-                }
+                targetQuery.Clear();
             }
             int expected = step.Count ?? 1;
             string detail = "Exact Player matches: " + matched + "; expected: " + expected + "; active matches: " + activeCount + ".";
@@ -260,6 +266,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public void Release()
         {
+            targetQuery.Clear();
             ReleaseInput();
             sceneOperation.Release();
             sceneScope.Release();
