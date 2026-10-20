@@ -15,6 +15,7 @@ from cli.utils.connection import handle_unity_errors, run_command
 from cli.utils.output import format_output
 from models.play_scenarios import PlayScenario, PlayScenarioCommand, PlayScenarioSuite
 from cli.utils.play_scenario_reports import write_suite_artifacts, write_player_artifacts
+from cli.utils.play_scenario_artifact_io import preflight_report_output
 from cli.utils.play_scenario_player import PlayerLaunchError, PlayerRunOptions, run_player
 from cli.utils.play_scenario_player_payload import PlayerPayloadError
 from cli.utils.play_scenario_player_session import PlayerSessionOptions, run_player_session
@@ -438,6 +439,17 @@ def suite_run(
 
     def request(parameters: dict[str, JsonValue], request_timeout: int) -> dict[str, JsonValue]:
         return run_command("manage_play_scenario", parameters, config, timeout=request_timeout)
+
+    try:
+        output_dir = preflight_report_output(output_dir, ("suite.json", "junit.xml"))
+    except (OSError, ValueError) as exc:
+        click.echo(
+            format_output(
+                {"success": False, "error": "report_output_invalid", "message": str(exc)},
+                config.format,
+            )
+        )
+        raise click.exceptions.Exit(1) from exc
 
     report = wait_for_suite(
         request,

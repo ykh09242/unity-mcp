@@ -8,6 +8,7 @@ from xml.etree import ElementTree
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from cli.utils.play_scenario_iterations import iteration_counts
+from cli.utils.play_scenario_artifact_io import publish_reports, preflight_report_output
 
 LOG_LIMIT: Final = 16384
 
@@ -326,12 +327,14 @@ def junit_xml(raw: dict[str, JsonValue]) -> bytes:
 def write_suite_artifacts(raw: dict[str, JsonValue], directory: Path) -> tuple[Path, Path]:
     """Persist both reports in an explicit caller-selected directory; propagate write errors."""
     xml = junit_xml(raw)
-    directory.mkdir(parents=True, exist_ok=True)
-    json_path = directory / "suite.json"
-    xml_path = directory / "junit.xml"
-    json_path.write_text(json.dumps(raw, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
-    xml_path.write_bytes(xml)
-    return json_path, xml_path
+    publish_reports(
+        directory,
+        {
+            "suite.json": (json.dumps(raw, ensure_ascii=True, indent=2) + "\n").encode("utf-8"),
+            "junit.xml": xml,
+        },
+    )
+    return directory / "suite.json", directory / "junit.xml"
 
 
 def write_player_artifacts(
@@ -366,10 +369,12 @@ def write_player_artifacts(
     if client_error is not None:
         adapter["client_error"] = client_error
     xml = junit_xml(adapter)
+    directory = preflight_report_output(directory, ("run.json", "junit.xml"))
     json_path = directory / "run.json"
     xml_path = directory / "junit.xml"
-    # run.json is the native artifact; preserve its exact bytes when it already exists.
+    reports = {"junit.xml": xml}
+    # run.json is native evidence: preserve its exact bytes when it already exists.
     if not json_path.exists():
-        json_path.write_text(json.dumps(raw, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
-    xml_path.write_bytes(xml)
+        reports["run.json"] = (json.dumps(raw, ensure_ascii=True, indent=2) + "\n").encode("utf-8")
+    publish_reports(directory, reports)
     return json_path, xml_path
