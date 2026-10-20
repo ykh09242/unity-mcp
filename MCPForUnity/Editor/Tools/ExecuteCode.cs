@@ -367,6 +367,8 @@ namespace MCPForUnity.Editor.Tools
             // Route references through a response file (@responsefile is supported by both mcs and
             // Roslyn csc) so we pass exactly one short argument regardless of reference count.
             string responseFilePath = Path.Combine(Path.GetTempPath(), $"mcp-codedom-{Guid.NewGuid():N}.rsp");
+            string referenceDirectory = null;
+            var stagedReferences = new List<string>();
 
             try
             {
@@ -374,8 +376,22 @@ namespace MCPForUnity.Editor.Tools
                 {
                     foreach (var path in filtered)
                     {
+                        string compilerPath = path;
+                        // Mono's Windows compiler reports valid DLLs beyond MAX_PATH as
+                        // invalid metadata. Stage only those references, never their originals.
+                        if (Path.DirectorySeparatorChar == '\\' && path.Length >= 260)
+                        {
+                            if (referenceDirectory == null)
+                            {
+                                referenceDirectory = Path.Combine(Path.GetTempPath(), $"mcp-codedom-refs-{Guid.NewGuid():N}");
+                                Directory.CreateDirectory(referenceDirectory);
+                            }
+                            compilerPath = Path.Combine(referenceDirectory, stagedReferences.Count + ".dll");
+                            stagedReferences.Add(compilerPath);
+                            File.Copy(path, compilerPath);
+                        }
                         writer.Write("/r:\"");
-                        writer.Write(path);
+                        writer.Write(compilerPath);
                         writer.WriteLine("\"");
                     }
                 }
@@ -440,6 +456,22 @@ namespace MCPForUnity.Editor.Tools
             }
             finally
             {
+                foreach (string staged in stagedReferences)
+                {
+                    try
+                    {
+                        File.Delete(staged);
+                    }
+                    catch { /* best effort cleanup of this invocation's copies only */ }
+                }
+                if (referenceDirectory != null)
+                {
+                    try
+                    {
+                        Directory.Delete(referenceDirectory, false);
+                    }
+                    catch { /* never recursively delete unexpected contents */ }
+                }
                 try
                 {
                     if (File.Exists(responseFilePath))

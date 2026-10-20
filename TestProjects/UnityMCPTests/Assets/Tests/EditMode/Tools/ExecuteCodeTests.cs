@@ -21,6 +21,47 @@ namespace MCPForUnityTests.Editor.Tools
 
         // ──────────────────── Execute: success cases ────────────────────
 
+        [Test]
+        public void CodeDom_LongWindowsReferencesPreserveOriginalsAndCleanCopiesOnSuccessAndFailure()
+        {
+            if (Path.DirectorySeparatorChar != '\\')
+                Assert.Ignore("Windows Mono compiler path-length regression.");
+            var paths = (string[])typeof(ExecuteCode).GetMethod("GetAssemblyPaths", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            string reference = paths.FirstOrDefault(path => path.Length >= 260 && File.Exists(path));
+            if (reference == null)
+                Assert.Ignore("This project has no loaded reference beyond Windows MAX_PATH.");
+            // Embedded Mono's FileStream also rejects this path; File.Copy can read it.
+            string originalCopy = Path.GetTempFileName();
+            try
+            {
+                File.Copy(reference, originalCopy, true);
+                byte[] original = File.ReadAllBytes(originalCopy);
+                string[] before = Directory.GetDirectories(Path.GetTempPath(), "mcp-codedom-refs-*");
+                foreach (bool valid in new[] { true, false })
+                {
+                    string code = (valid ? "return 14;" : "return MissingLongReferenceSymbol;") + " // " + Guid.NewGuid().ToString("N");
+                    var response = ToJObject(
+                        ExecuteCode.HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = "execute",
+                                ["compiler"] = "codedom",
+                                ["code"] = code,
+                            }
+                        )
+                    );
+                    Assert.AreEqual(valid, response.Value<bool>("success"), response.ToString());
+                    File.Copy(reference, originalCopy, true);
+                    CollectionAssert.AreEqual(original, File.ReadAllBytes(originalCopy));
+                    CollectionAssert.AreEquivalent(before, Directory.GetDirectories(Path.GetTempPath(), "mcp-codedom-refs-*"));
+                }
+            }
+            finally
+            {
+                File.Delete(originalCopy);
+            }
+        }
+
         [TestCase("auto")]
         [TestCase("codedom")]
         public void Execute_ObjectAliasResolvesUnityEngineObject(string compiler)
