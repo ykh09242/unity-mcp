@@ -114,88 +114,101 @@ public class RoslynRuntimeCompiler : MonoBehaviour
 
         try
         {
-            var syntaxTree = CSharpSyntaxTree.ParseText(code ?? string.Empty);
-
-            // collect references from loaded assemblies (Editor-safe)
-            var refs = new List<MetadataReference>();
-
-            // Always include mscorlib / system.runtime
-            refs.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
-
-            // Add all currently loaded assemblies' locations that are not dynamic and have a location
-            var assemblies = AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location)).Distinct();
-
-            foreach (var a in assemblies)
-            {
-                try
+            var assemblies = AppDomain
+                .CurrentDomain.GetAssemblies()
+                .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
+                .OrderBy(a => a.FullName, StringComparer.Ordinal)
+                .ToArray();
+            string source = code ?? string.Empty;
+            string identity = "roslyn-demo\n" + string.Join("\n", assemblies.Select(a => a.ManifestModule.ModuleVersionId)) + "\n" + source;
+            string compilationErrors = null;
+            var cache = DynamicCompilationCache.Shared;
+            bool admitted = cache.TryGetOrCompile(
+                identity,
+                () =>
                 {
-                    refs.Add(MetadataReference.CreateFromFile(a.Location));
-                }
-                catch { }
+                    var syntaxTree = CSharpSyntaxTree.ParseText(source);
+                    var refs = new List<MetadataReference>();
+                    foreach (var reference in assemblies)
+                    {
+                        try
+                        {
+                            refs.Add(MetadataReference.CreateFromFile(reference.Location));
+                        }
+                        catch { }
+                    }
+                    var compilation = CSharpCompilation.Create(
+                        assemblyName: "RoslynRuntimeAssembly_" + Guid.NewGuid().ToString("N"),
+                        syntaxTrees: new[] { syntaxTree },
+                        references: refs,
+                        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+                    );
+                    using (var ms = new MemoryStream())
+                    {
+                        var result = compilation.Emit(ms);
+                        if (!result.Success)
+                        {
+                            compilationErrors = string.Join("\n", result.Diagnostics.Select(d => d.ToString()));
+                            return null;
+                        }
+                        return UnityAssembliesCompat.LoadFromBytes(ms.ToArray());
+                    }
+                },
+                out Assembly assembly
+            );
+            if (!admitted)
+            {
+                diagnostics =
+                    $"Compilation budget exhausted ({cache.Count}/{cache.Limit} loaded assemblies). Reuse an existing source, or save your work and explicitly reload the scripting domain. Clearing history does not unload assemblies.";
+                lastCompileDiagnostics = diagnostics;
+                return false;
+            }
+            if (assembly == null)
+            {
+                diagnostics = compilationErrors;
+                lastCompileDiagnostics = diagnostics;
+                Debug.LogError("Roslyn compile failed:\n" + diagnostics);
+                return false;
             }
 
-            var compilation = CSharpCompilation.Create(
-                assemblyName: "RoslynRuntimeAssembly_" + Guid.NewGuid().ToString("N"),
-                syntaxTrees: new[] { syntaxTree },
-                references: refs,
-                options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
-            );
-
-            using (var ms = new MemoryStream())
+            // Cache the successful load even if entry-point selection fails.
+            var type = assembly.GetType(entryTypeName);
+            if (type == null)
             {
-                var result = compilation.Emit(ms);
-                if (!result.Success)
-                {
-                    var diagText = string.Join("\n", result.Diagnostics.Select(d => d.ToString()));
-                    lastCompileDiagnostics = diagText;
-                    diagnostics = diagText;
-                    Debug.LogError("Roslyn compile failed:\n" + diagText);
-                    return false;
-                }
+                lastCompileDiagnostics = $"Type '{entryTypeName}' not found in compiled assembly.";
+                diagnostics = lastCompileDiagnostics;
+                return false;
+            }
 
-                ms.Seek(0, SeekOrigin.Begin);
-                var assemblyData = ms.ToArray();
-                var assembly = Assembly.Load(assemblyData);
-
-                // find entry type
-                var type = assembly.GetType(entryTypeName);
-                if (type == null)
-                {
-                    lastCompileDiagnostics = $"Type '{entryTypeName}' not found in compiled assembly.";
-                    diagnostics = lastCompileDiagnostics;
-                    return false;
-                }
-
-                // Check if it's a MonoBehaviour
-                if (typeof(MonoBehaviour).IsAssignableFrom(type))
-                {
-                    compiledAssembly = assembly;
-                    entryType = type;
-                    lastCompileDiagnostics = $"Compilation OK. Type '{entryTypeName}' is a MonoBehaviour and can be attached as a component.";
-                    diagnostics = lastCompileDiagnostics;
-                    Debug.Log(diagnostics);
-                    return true;
-                }
-
-                // try various method signatures for non-MonoBehaviour types
-                var method = type.GetMethod(entryMethodName, BindingFlags.Public | BindingFlags.Static);
-                if (method == null)
-                {
-                    lastCompileDiagnostics =
-                        $"Static method '{entryMethodName}' not found on type '{entryTypeName}'.\n"
-                        + $"For MonoBehaviour types, set 'attachAsComponent' to true instead.";
-                    diagnostics = lastCompileDiagnostics;
-                    return false;
-                }
-
+            // Check if it's a MonoBehaviour
+            if (typeof(MonoBehaviour).IsAssignableFrom(type))
+            {
                 compiledAssembly = assembly;
                 entryType = type;
-                entryMethod = method;
-                lastCompileDiagnostics = "Compilation OK.";
+                lastCompileDiagnostics = $"Compilation OK. Type '{entryTypeName}' is a MonoBehaviour and can be attached as a component.";
                 diagnostics = lastCompileDiagnostics;
-                Debug.Log("Roslyn compilation successful.");
+                Debug.Log(diagnostics);
                 return true;
             }
+
+            // try various method signatures for non-MonoBehaviour types
+            var method = type.GetMethod(entryMethodName, BindingFlags.Public | BindingFlags.Static);
+            if (method == null)
+            {
+                lastCompileDiagnostics =
+                    $"Static method '{entryMethodName}' not found on type '{entryTypeName}'.\n"
+                    + $"For MonoBehaviour types, set 'attachAsComponent' to true instead.";
+                diagnostics = lastCompileDiagnostics;
+                return false;
+            }
+
+            compiledAssembly = assembly;
+            entryType = type;
+            entryMethod = method;
+            lastCompileDiagnostics = "Compilation OK.";
+            diagnostics = lastCompileDiagnostics;
+            Debug.Log("Roslyn compilation successful.");
+            return true;
         }
         catch (Exception ex)
         {

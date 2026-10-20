@@ -43,14 +43,7 @@ namespace MCPForUnity.Editor.Tools
                 Material material = source;
                 if (mode == "instance")
                 {
-                    material = new Material(source) { name = source.name + " (Render State Instance)" };
-                    Undo.RegisterCreatedObjectUndo(material, UndoLabel);
-                    Undo.RegisterCompleteObjectUndo(renderer, UndoLabel);
-                    var materials = renderer.sharedMaterials;
-                    materials[slot] = material;
-                    renderer.sharedMaterials = materials;
-                    PrefabUtility.RecordPrefabInstancePropertyModifications(renderer);
-                    EditorUtility.SetDirty(renderer);
+                    material = MaterialLifetimeStore.instance.PrepareInstance(renderer, slot, source, UndoLabel);
                 }
                 else
                 {

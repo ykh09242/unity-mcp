@@ -255,15 +255,28 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Slot {slot} out of bounds (count: {sharedMats.Length})");
             }
 
-            Material assignedMaterial = mat;
             if (mode == "instance")
             {
-                assignedMaterial = new Material(mat);
-                Undo.RegisterCreatedObjectUndo(assignedMaterial, "Create Material Instance");
+                Undo.IncrementCurrentGroup();
+                int group = Undo.GetCurrentGroup();
+                try
+                {
+                    Material assigned = MaterialLifetimeStore.instance.PrepareInstance(renderer, slot, mat, "Assign Material Instance");
+                    EditorUtility.SetDirty(assigned);
+                    Undo.CollapseUndoOperations(group);
+                }
+                catch
+                {
+                    Undo.RevertAllDownToGroup(group);
+                    throw;
+                }
             }
-            Undo.RecordObject(renderer, "Assign Material");
-            sharedMats[slot] = assignedMaterial;
-            renderer.sharedMaterials = sharedMats;
+            else
+            {
+                Undo.RecordObject(renderer, "Assign Material");
+                sharedMats[slot] = mat;
+                renderer.sharedMaterials = sharedMats;
+            }
 
             EditorUtility.SetDirty(renderer);
             return new SuccessResponse($"Assigned material {mat.name} to {go.name} slot {slot}");
@@ -391,18 +404,21 @@ namespace MCPForUnity.Editor.Tools
                 {
                     if (sharedMaterials[slot] == null)
                         return new ErrorResponse($"No material in slot {slot}");
-                    Material mat = renderer.materials[slot];
-                    if (mat == null)
+                    Undo.IncrementCurrentGroup();
+                    int group = Undo.GetCurrentGroup();
+                    try
                     {
-                        return new ErrorResponse($"No material in slot {slot}");
+                        Material mat = MaterialLifetimeStore.instance.PrepareInstance(renderer, slot, sharedMaterials[slot], "Set Instance Material Color");
+                        SetColorProperties(mat, color);
+                        EditorUtility.SetDirty(mat);
+                        Undo.CollapseUndoOperations(group);
+                        return new SuccessResponse("Set instance material color");
                     }
-                    // Note: Undo cannot fully revert material instantiation
-                    Undo.RecordObject(mat, "Set Instance Material Color");
-                    SetColorProperties(mat, color);
-                    return new SuccessResponse(
-                        "Set instance material color",
-                        new { warning = "Material instance created; Undo cannot fully revert instantiation." }
-                    );
+                    catch
+                    {
+                        Undo.RevertAllDownToGroup(group);
+                        throw;
+                    }
                 }
                 return new ErrorResponse("Invalid slot");
             }

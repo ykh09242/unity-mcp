@@ -47,6 +47,8 @@ namespace MCPForUnity.Editor.Tools
             }
             s_panelRTs.Clear();
             s_panelBindings.Clear();
+            s_panelLastUsed.Clear();
+            StopRenderCleanupIfEmpty();
         }
 
         private static void OnPlayModeStateChanged(PlayModeStateChange state)
@@ -1071,8 +1073,57 @@ namespace MCPForUnity.Editor.Tools
         // renders into them automatically every frame.
         private static readonly Dictionary<int, RenderTexture> s_panelRTs = new();
         private static readonly Dictionary<int, (PanelSettings panel, RenderTexture previousTarget)> s_panelBindings = new();
+        private static readonly Dictionary<int, double> s_panelLastUsed = new();
+        private static Func<double> s_renderCacheClock = () => EditorApplication.timeSinceStartup;
+        private static double s_nextRenderCleanup;
+        private static bool s_renderCleanupScheduled;
+        private const double RenderCacheIdleSeconds = 60;
         private const int MaxCachedPanels = 8;
         private const long MaxCachedPanelPixels = 64L * 1024 * 1024;
+
+        private static void TouchPanelCache(int panelId)
+        {
+            if (!s_panelRTs.ContainsKey(panelId))
+                return;
+            s_panelLastUsed[panelId] = s_renderCacheClock();
+            if (s_renderCleanupScheduled)
+                return;
+            s_nextRenderCleanup = s_renderCacheClock() + 1;
+            s_renderCleanupScheduled = true;
+            EditorApplication.update += CleanupIdlePanelTargets;
+        }
+
+        private static void StopRenderCleanupIfEmpty()
+        {
+            if (s_panelLastUsed.Count != 0)
+                return;
+            EditorApplication.update -= CleanupIdlePanelTargets;
+            s_renderCleanupScheduled = false;
+        }
+
+        private static void CleanupIdlePanelTargets()
+        {
+            double now = s_renderCacheClock();
+            if (now < s_nextRenderCleanup)
+                return;
+            s_nextRenderCleanup = now + 1;
+            PruneUICache();
+            foreach (int panelId in new List<int>(s_panelLastUsed.Keys))
+            {
+                if (!s_panelRTs.TryGetValue(panelId, out var target))
+                {
+                    s_panelLastUsed.Remove(panelId);
+                    continue;
+                }
+                if (s_pendingPanelCapture != null && s_pendingPanelCapture.PanelId == panelId)
+                    continue;
+                if (now - s_panelLastUsed[panelId] < RenderCacheIdleSeconds)
+                    continue;
+                s_panelBindings.TryGetValue(panelId, out var binding);
+                FinishPanelRender(panelId, binding.panel, target, false, true);
+            }
+            StopRenderCleanupIfEmpty();
+        }
 
         private static void PruneUICache()
         {
@@ -1096,6 +1147,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     s_panelRTs.Remove(panelId);
                     s_panelBindings.Remove(panelId);
+                    s_panelLastUsed.Remove(panelId);
+                    StopRenderCleanupIfEmpty();
                 }
                 else
                     FinishPanelRender(panelId, binding.panel, ownedTarget, false, true);
@@ -1147,6 +1200,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     s_panelRTs.Remove(panelId);
                     s_panelBindings.Remove(panelId);
+                    s_panelLastUsed.Remove(panelId);
+                    StopRenderCleanupIfEmpty();
                     if (ownedTarget != null)
                     {
                         string assetPath = AssetDatabase.GetAssetPath(ownedTarget);
@@ -1157,6 +1212,8 @@ namespace MCPForUnity.Editor.Tools
                             UnityEngine.Object.DestroyImmediate(ownedTarget);
                     }
                 }
+                else
+                    TouchPanelCache(panelId);
             }
         }
 
@@ -1743,6 +1800,7 @@ namespace MCPForUnity.Editor.Tools
                 int psId = panelSettings.GetInstanceIDCompat();
                 renderPanelId = psId;
                 PruneUICache();
+                CleanupIdlePanelTargets();
                 ValidateUICacheBudget(psId, width, height);
                 bool rememberBinding = !s_panelRTs.TryGetValue(psId, out var ownedTarget) || panelSettings.targetTexture != ownedTarget;
                 var previousTarget = rememberBinding ? panelSettings.targetTexture : s_panelBindings[psId].previousTarget;
@@ -1807,6 +1865,7 @@ namespace MCPForUnity.Editor.Tools
                         AssetDatabase.SaveAssetIfDirty(rt);
 
                         s_panelRTs[psId] = rt;
+                        TouchPanelCache(psId);
                         renderTarget = rt;
                         s_panelBindings[psId] = (panelSettings, previousTarget);
                         adopted = true;
@@ -2238,8 +2297,10 @@ namespace MCPForUnity.Editor.Tools
 
             string componentKind = ui.Kind;
             string componentName = ui.DisplayName;
+            PanelSettings panel = ui.PanelSettings;
             Undo.DestroyObjectImmediate(ui.Component);
             EditorUtility.SetDirty(go);
+            ReleaseUnusedPanelCache(panel);
 
             return new SuccessResponse(
                 $"Removed {componentName} from {go.name}",
@@ -2250,6 +2311,24 @@ namespace MCPForUnity.Editor.Tools
                     removedSourceAsset = sourceAsset,
                 }
             );
+        }
+
+        private static void ReleaseUnusedPanelCache(PanelSettings panel)
+        {
+            if (panel == null)
+                return;
+            int panelId = panel.GetInstanceIDCompat();
+            if (!s_panelRTs.TryGetValue(panelId, out var target) || (s_pendingPanelCapture != null && s_pendingPanelCapture.PanelId == panelId))
+                return;
+            foreach (var document in UnityEngine.Resources.FindObjectsOfTypeAll<UIDocument>())
+                if (document.panelSettings == panel)
+                    return;
+            Type rendererType = UIComponentAdapter.PanelRendererType;
+            if (rendererType != null)
+                foreach (var value in UnityEngine.Resources.FindObjectsOfTypeAll(rendererType))
+                    if (value is Component component && new UIComponentAdapter(component).PanelSettings == panel)
+                        return;
+            FinishPanelRender(panelId, panel, target, false, true);
         }
 
         // ---- Modify Visual Element ----

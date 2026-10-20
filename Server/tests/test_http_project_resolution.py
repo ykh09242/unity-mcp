@@ -29,7 +29,9 @@ def resolution(monkeypatch):
         return state.instances
 
     monkeypatch.setattr(module, "get_unity_connection_pool", lambda: pool)
-    monkeypatch.setattr(uc, "time", SimpleNamespace(time=lambda: state.now))
+    monkeypatch.setattr(
+        uc, "time", SimpleNamespace(time=lambda: state.now, monotonic=lambda: state.now)
+    )
     monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", scan)
     return state
 

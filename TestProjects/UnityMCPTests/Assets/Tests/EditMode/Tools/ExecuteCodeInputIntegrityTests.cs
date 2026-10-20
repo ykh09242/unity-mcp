@@ -29,8 +29,6 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("null", null)]
         [TestCase("false", false)]
         [TestCase("true", true)]
-        [TestCase("0", false)]
-        [TestCase("1", true)]
         [TestCase("\"false\"", false)]
         [TestCase("\"true\"", true)]
         public void BooleanOptionalValuePreservesAcceptedConversions(string json, object expected)
@@ -46,8 +44,6 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("0", 0)]
         [TestCase("-1", -1)]
         [TestCase("\"1\"", 1)]
-        [TestCase("false", 0)]
-        [TestCase("true", 1)]
         [TestCase("2147483647", int.MaxValue)]
         public void IntegerOptionalValuePreservesAcceptedConversions(string json, object expected)
         {
@@ -60,6 +56,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("\"invalid\"")]
         [TestCase("{}")]
         [TestCase("[]")]
+        [TestCase("0")]
+        [TestCase("1")]
         public void InvalidBooleanReturnsNamedError(string json)
         {
             var arguments = Convert<bool>(json, "safety_checks", out bool accepted);
@@ -74,6 +72,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("[]")]
         [TestCase("9223372036854775807")]
         [TestCase("1e100")]
+        [TestCase("false")]
+        [TestCase("true")]
         public void InvalidIntegerReturnsNamedError(string json)
         {
             var arguments = Convert<int>(json, "index", out bool accepted);
