@@ -2493,15 +2493,23 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
             {
                 var go = pbMesh.gameObject;
                 var renderer = go.GetComponent<Renderer>();
-                if (renderer != null && renderer.sharedMaterial != null && renderer.sharedMaterial.shader.name.Contains("Standard"))
+                if (
+                    renderer != null
+                    && renderer.sharedMaterial != null
+                    && renderer.sharedMaterial.shader != null
+                    && renderer.sharedMaterial.shader.name.Contains("Standard")
+                )
                 {
                     var vcShader =
                         Shader.Find("ProBuilder/Standard Vertex Color") ?? Shader.Find("ProBuilder/Diffuse Vertex Color") ?? Shader.Find("Sprites/Default");
                     // Standard Vertex Color also matches "Standard"; reuse it on later color edits.
                     if (vcShader != null && renderer.sharedMaterial.shader != vcShader)
                     {
-                        var vcMat = new Material(vcShader);
+                        var vcMat = RenderPipelineUtility.GetOrCreateVertexColorMaterial(vcShader);
+                        Undo.RegisterCompleteObjectUndo(renderer, "Set Face Color Material");
                         renderer.sharedMaterial = vcMat;
+                        PrefabUtility.RecordPrefabInstancePropertyModifications(renderer);
+                        EditorUtility.SetDirty(renderer);
                     }
                 }
             }

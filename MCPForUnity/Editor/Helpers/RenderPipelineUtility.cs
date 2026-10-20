@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -22,9 +21,6 @@ namespace MCPForUnity.Editor.Helpers
             LineRenderer,
             TrailRenderer,
         }
-
-        private static Dictionary<string, Material> s_DefaultVFXMaterials = new Dictionary<string, Material>();
-        private static Dictionary<string, Material> s_DefaultSceneMaterials = new Dictionary<string, Material>();
 
         private static readonly string[] BuiltInLitShaders = { "Standard", "Legacy Shaders/Diffuse" };
         private static readonly string[] BuiltInUnlitShaders = { "Unlit/Color", "Unlit/Texture" };
@@ -294,12 +290,13 @@ namespace MCPForUnity.Editor.Helpers
             var pipeline = GetActivePipeline();
             string cacheKey = $"{pipeline}_{componentType}";
 
-            if (s_DefaultVFXMaterials.TryGetValue(cacheKey, out Material cachedMaterial) && cachedMaterial != null)
+            if (DefaultMaterialStore.instance.TryGet(cacheKey, out Material cachedMaterial))
             {
                 return cachedMaterial;
             }
 
             Material material = null;
+            bool owned = false;
 
             if (pipeline == PipelineKind.BuiltIn)
             {
@@ -319,6 +316,7 @@ namespace MCPForUnity.Editor.Helpers
                 if (shader != null)
                 {
                     material = new Material(shader);
+                    owned = true;
                     material.name = $"Auto_Default_{componentType}_{pipeline}";
 
                     // Set default color (white is standard for VFX)
@@ -358,7 +356,7 @@ namespace MCPForUnity.Editor.Helpers
 
             if (material != null)
             {
-                s_DefaultVFXMaterials[cacheKey] = material;
+                DefaultMaterialStore.instance.Store(cacheKey, material, owned);
             }
 
             return material;
@@ -413,7 +411,7 @@ namespace MCPForUnity.Editor.Helpers
         {
             var pipeline = GetActivePipeline();
             string cacheKey = $"{pipeline}_scene";
-            if (s_DefaultSceneMaterials.TryGetValue(cacheKey, out Material cached) && cached != null)
+            if (DefaultMaterialStore.instance.TryGet(cacheKey, out Material cached))
             {
                 return cached;
             }
@@ -442,9 +440,21 @@ namespace MCPForUnity.Editor.Helpers
 
             if (material != null)
             {
-                s_DefaultSceneMaterials[cacheKey] = material;
+                DefaultMaterialStore.instance.Store(cacheKey, material, true);
             }
 
+            return material;
+        }
+
+        internal static Material GetOrCreateVertexColorMaterial(Shader shader)
+        {
+            if (shader == null)
+                throw new ArgumentNullException(nameof(shader));
+            string key = "vertex-color_" + shader.name;
+            if (DefaultMaterialStore.instance.TryGet(key, out Material cached))
+                return cached;
+            var material = new Material(shader) { name = "Auto_Default_VertexColor" };
+            DefaultMaterialStore.instance.Store(key, material, true);
             return material;
         }
     }
