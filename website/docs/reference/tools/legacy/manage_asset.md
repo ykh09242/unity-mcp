@@ -8,7 +8,7 @@ description: "Performs asset operations (import, create, modify, delete, etc.) i
 
 > **Auto-generated** from the Python tool registry. Do not hand-edit outside `<!-- examples:start --><!-- examples:end -->` blocks — the generator (`tools/generate_docs_reference.py`) will overwrite them.
 
-**Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_asset`
+**Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_asset`
 
 ## Description
 

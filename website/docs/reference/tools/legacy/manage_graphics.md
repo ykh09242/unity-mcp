@@ -8,7 +8,7 @@ description: "Manage rendering graphics: volumes, post-processing, light baking,
 
 > **Auto-generated** from the Python tool registry. Do not hand-edit outside `<!-- examples:start --><!-- examples:end -->` blocks — the generator (`tools/generate_docs_reference.py`) will overwrite them.
 
-**Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.tools.manage_graphics`
+**Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_graphics`
 
 ## Description
 

@@ -8,7 +8,7 @@ description: "Performs CRUD operations on Unity scenes."
 
 > **Auto-generated** from the Python tool registry. Do not hand-edit outside `<!-- examples:start --><!-- examples:end -->` blocks — the generator (`tools/generate_docs_reference.py`) will overwrite them.
 
-**Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_scene`
+**Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_scene`
 
 ## Description
 

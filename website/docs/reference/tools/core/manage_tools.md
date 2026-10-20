@@ -1,7 +1,7 @@
 ---
 title: manage_tools
 sidebar_label: manage_tools
-description: "Manage which tool groups are visible in this session."
+description: "Manage visible groups or individual feature tools in this session."
 ---
 
 # `manage_tools`
@@ -12,14 +12,15 @@ description: "Manage which tool groups are visible in this session."
 
 ## Description
 
-Manage which tool groups are visible in this session. Actions: list_groups (show all groups and their status), activate (enable a group), deactivate (disable a group), sync (refresh visibility from Unity Editor's toggle states), reset (restore defaults). Activating a group makes its tools appear; deactivating hides them. Use sync after toggling tools in the Unity Editor GUI.
+Manage visible groups or individual feature tools in this session. Actions: list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh visibility from Unity Editor's toggle states), reset (restore defaults). Activating a group makes its tools appear; deactivating hides them. Use sync after toggling tools in the Unity Editor GUI.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['list_groups', 'activate', 'deactivate', 'sync', 'reset']` | yes | Action to perform. |
-| `group` | `str \| None` | — | Group name (required for activate / deactivate). Valid groups: animation, asset_gen, camera, core, docs, graphics, physics, probuilder, profiling, scripting_ext, testing, ui, vfx |
+| `group` | `str \| None` | — | Group name for activate/deactivate; select a group or a single tool. Valid groups: animation, asset_gen, assets, camera, core, docs, graphics, legacy, physics, prefabs, probuilder, profiling, scene, scripting_ext, testing, ui, vfx |
+| `tool` | `str \| None` | — | Single tool name for activate/deactivate. Discover names with list_groups. |
 
 ## Returns
 

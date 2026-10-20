@@ -179,9 +179,14 @@ const config = {
       '@docusaurus/plugin-client-redirects',
       {
         redirects: [
-          { from: '/reference/tools/core/manage_camera', to: '/reference/tools/camera/manage_camera' },
-          { from: '/reference/tools/core/manage_graphics', to: '/reference/tools/graphics/manage_graphics' },
-          { from: '/reference/tools/core/manage_physics', to: '/reference/tools/physics/manage_physics' },
+          { from: '/reference/tools/core/manage_gameobject', to: '/reference/tools/legacy/manage_gameobject' },
+          { from: '/reference/tools/core/manage_prefabs', to: '/reference/tools/legacy/manage_prefabs' },
+          { from: '/reference/tools/core/manage_scene', to: '/reference/tools/legacy/manage_scene' },
+          { from: '/reference/tools/core/manage_asset', to: '/reference/tools/legacy/manage_asset' },
+          { from: '/reference/tools/ui/manage_ui', to: '/reference/tools/legacy/manage_ui' },
+          { from: ['/reference/tools/core/manage_camera', '/reference/tools/camera/manage_camera'], to: '/reference/tools/legacy/manage_camera' },
+          { from: ['/reference/tools/core/manage_graphics', '/reference/tools/graphics/manage_graphics'], to: '/reference/tools/legacy/manage_graphics' },
+          { from: ['/reference/tools/core/manage_physics', '/reference/tools/physics/manage_physics'], to: '/reference/tools/legacy/manage_physics' },
         ],
       },
     ],

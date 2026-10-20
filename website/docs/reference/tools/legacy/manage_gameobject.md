@@ -8,7 +8,7 @@ description: "Performs CRUD operations on GameObjects."
 
 > **Auto-generated** from the Python tool registry. Do not hand-edit outside `<!-- examples:start --><!-- examples:end -->` blocks — the generator (`tools/generate_docs_reference.py`) will overwrite them.
 
-**Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_gameobject`
+**Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_gameobject`
 
 ## Description
 
@@ -75,7 +75,7 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 }
 ```
 
-Pair with [`manage_material`](./manage_material.md) to make it actually red.
+Pair with [`manage_material`](../core/manage_material.md) to make it actually red.
 
 ### Find a GameObject by name and move it
 

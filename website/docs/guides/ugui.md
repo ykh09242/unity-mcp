@@ -8,7 +8,7 @@ description: Create and edit Canvas UI, inspect layout and text, and assess layo
 
 # Canvas-based uGUI
 
-[`manage_ugui`](../reference/tools/ui/manage_ugui.md) belongs to the optional `ui` group. Enable it through the Editor tool controls and inspect visibility with `manage_tools(action="list_groups")`; [Tool groups](./tool-groups.md) explains session and hosted-client behavior. Use [`manage_ui`](../reference/tools/ui/manage_ui.md) for UI Toolkit documents and stylesheets.
+[`manage_ugui`](../reference/tools/ui/manage_ugui.md) belongs to the optional `ui` group. Enable it through the Editor tool controls and inspect visibility with `manage_tools(action="list_groups")`; [Tool groups](./tool-groups.md) explains session and hosted-client behavior. Use [`ui_source`](../reference/tools/ui/ui_source.md) for UI Toolkit documents and stylesheets.
 
 ## Inspect before editing
 
