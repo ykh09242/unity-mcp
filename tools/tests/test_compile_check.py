@@ -140,7 +140,7 @@ rsp=${2#@}
 echo "$rsp" >> "$FAKE_COMPILER_CALLS"
 while IFS= read -r line; do
   case "$line" in
-    -out:*) output=${line#-out:}; output=${output#\\"}; output=${output%\\"}; touch "$output" ;;
+    -out:*) output=${line#-out:}; output=${output#\\"}; output=${output%\\"}; : > "$output" ;;
   esac
 done < "$rsp"
 """,
@@ -568,8 +568,8 @@ def test_disappearing_compile_inputs_fail_closed_after_first_platform(
     compiler = harness.data / "NetCoreRuntime/dotnet"
     compiler.write_text(
         compiler.read_text(encoding="utf-8").replace(
-            'touch "$output"',
-            f'touch "$output"; if [[ "$output" == */win/MCPForUnity.Runtime.dll ]]; then rm "{target}"; fi',
+            ': > "$output"',
+            f': > "$output"; if [[ "$output" == */win/MCPForUnity.Runtime.dll ]]; then rm "{target}"; fi',
         ),
         encoding="utf-8",
     )
@@ -1045,8 +1045,8 @@ def test_missing_editor_coroutines_output_blocks_editor_and_tests(
     compiler = harness.data / "Tools/Scripting/DotNetSdk/dotnet"
     compiler.write_text(
         compiler.read_text(encoding="utf-8").replace(
-            'touch "$output"',
-            f'case "$output" in *{COROUTINES_ASSEMBLY}.dll) ;; *) touch "$output" ;; esac',
+            ': > "$output"',
+            f'case "$output" in *{COROUTINES_ASSEMBLY}.dll) ;; *) : > "$output" ;; esac',
         ),
         encoding="utf-8",
     )
@@ -1092,7 +1092,7 @@ def test_missing_owned_assembly_does_not_report_editmode_success(
     compiler = harness.data / "Tools/Scripting/DotNetSdk/dotnet"
     compiler.write_text(
         compiler.read_text(encoding="utf-8").replace(
-            'touch "$output"', 'case "$output" in *TestAsmdef.dll) ;; *) touch "$output" ;; esac'
+            ': > "$output"', 'case "$output" in *TestAsmdef.dll) ;; *) : > "$output" ;; esac'
         ),
         encoding="utf-8",
     )
@@ -1364,9 +1364,9 @@ def test_optional_compiler_failure_is_not_reported_as_success(
     failure: str,
 ) -> None:
     compiler = harness.data / "NetCoreRuntime/dotnet"
-    replacement = f'case "$output" in *{name}.dll) {"exit 7" if failure == "exit_code" else ":"} ;; *) touch "$output" ;; esac'
+    replacement = f'case "$output" in *{name}.dll) {"exit 7" if failure == "exit_code" else ":"} ;; *) : > "$output" ;; esac'
     compiler.write_text(
-        compiler.read_text(encoding="utf-8").replace('touch "$output"', replacement),
+        compiler.read_text(encoding="utf-8").replace(': > "$output"', replacement),
         encoding="utf-8",
     )
     result = harness.run("6000.0.84f1")
@@ -1582,8 +1582,8 @@ def test_missing_ugui_runtime_output_blocks_all_downstream_consumers(
     compiler = harness.data / "NetCoreRuntime/dotnet"
     compiler.write_text(
         compiler.read_text(encoding="utf-8").replace(
-            'touch "$output"',
-            f'case "$output" in *{UGUI_ASSEMBLIES[0]}.dll) ;; *) touch "$output" ;; esac',
+            ': > "$output"',
+            f'case "$output" in *{UGUI_ASSEMBLIES[0]}.dll) ;; *) : > "$output" ;; esac',
         ),
         encoding="utf-8",
     )
@@ -1743,8 +1743,8 @@ def test_input_system_runtime_compile_failure_blocks_adapter_consumers(
     compiler = harness.data / "NetCoreRuntime/dotnet"
     compiler.write_text(
         compiler.read_text(encoding="utf-8").replace(
-            'touch "$output"',
-            f'case "$output" in *{INPUT_SYSTEM_ASSEMBLIES[0]}.dll) ;; *) touch "$output" ;; esac',
+            ': > "$output"',
+            f'case "$output" in *{INPUT_SYSTEM_ASSEMBLIES[0]}.dll) ;; *) : > "$output" ;; esac',
         ),
         encoding="utf-8",
     )
@@ -1756,3 +1756,23 @@ def test_input_system_runtime_compile_failure_blocks_adapter_consumers(
     assert INPUT_SYSTEM_ASSEMBLIES[0] in calls
     assert INPUT_SYSTEM_ASSEMBLIES[1] not in calls
     assert INPUT_SYSTEM_ASSEMBLIES[2] not in calls
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_compiler_stream_preserves_diagnostics_and_exit_status(harness, exit_code):
+    compiler = harness.data / "NetCoreRuntime/dotnet"
+    original = compiler.read_text(encoding="utf-8")
+    diagnostics = (
+        "printf '%s\\n' 'Microsoft (R) fixture compiler' 'Copyright fixture' '' "
+        "'Fixture.cs(1,1): warning CS1234: retained warning'\n"
+        "printf '%s' 'Fixture.cs(2,1): error CS9999: retained final diagnostic' >&2\n"
+        f"if [ {exit_code} -ne 0 ]; then exit {exit_code}; fi\n"
+    )
+    compiler.write_text(original.replace("set -eu\n", "set -eu\n" + diagnostics), encoding="utf-8")
+    result = harness.run("6000.0.84f1")
+    assert result.returncode == (0 if exit_code == 0 else 1)
+    assert "warning CS1234: retained warning" in result.stdout
+    assert "error CS9999: retained final diagnostic" in result.stdout
+    assert "Microsoft (R) fixture compiler" not in result.stdout
+    assert "Copyright fixture" not in result.stdout
+    assert ("compile check passed" in result.stdout) == (exit_code == 0)
