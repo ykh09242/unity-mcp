@@ -73,6 +73,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private const double PortBusyStaleResetSeconds = 60.0;
         private static int heartbeatSeq = 0;
         private static Dictionary<string, QueuedCommand> commandQueue = new();
+        private static readonly List<string> canceledCommandIds = new();
         private static int mainThreadId;
         private static int currentUnityPort = 6400;
         private static bool isAutoConnectMode = false;
@@ -1356,23 +1357,28 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     nextHeartbeatAt = now + 0.5f;
                 }
 
-                List<(string id, QueuedCommand command)> work;
+                KeyValuePair<string, QueuedCommand> work = default;
                 lock (lockObj)
                 {
                     // Avoid cancellation-scan allocations on idle editor updates.
                     if (commandQueue.Count == 0)
                         return;
 
-                    var canceled = commandQueue
-                        .Where(item => !item.Value.IsExecuting && item.Value.OwnerCancellation.IsCancellationRequested)
-                        .Select(item => item.Key)
-                        .ToArray();
-                    foreach (var id in canceled)
+                    canceledCommandIds.Clear();
+                    foreach (var item in commandQueue)
+                    {
+                        if (!item.Value.IsExecuting && item.Value.OwnerCancellation.IsCancellationRequested)
+                            canceledCommandIds.Add(item.Key);
+                    }
+                    foreach (var id in canceledCommandIds)
                     {
                         commandQueue[id].Tcs.TrySetCanceled(commandQueue[id].OwnerCancellation);
                         commandQueue[id].Timing?.ExecutionDone();
                         commandQueue.Remove(id);
                     }
+                    canceledCommandIds.Clear();
+                    if (canceledCommandIds.Capacity > 256)
+                        canceledCommandIds.Capacity = 256;
                     // Early exit inside lock to prevent per-frame List allocations (GitHub issue #577)
                     if (commandQueue.Count == 0)
                     {
@@ -1388,22 +1394,21 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             return;
                     }
 
-                    work = new List<(string, QueuedCommand)>(commandQueue.Count);
                     foreach (var kvp in commandQueue)
                     {
                         var queued = kvp.Value;
                         if (queued.IsExecuting)
                             continue;
                         queued.IsExecuting = true;
-                        work.Add((kvp.Key, queued));
+                        work = kvp;
                         break;
                     }
                 }
 
-                foreach (var item in work)
+                if (work.Value != null)
                 {
-                    string id = item.id;
-                    QueuedCommand queuedCommand = item.command;
+                    string id = work.Key;
+                    QueuedCommand queuedCommand = work.Value;
                     string commandText = queuedCommand.CommandJson;
                     TaskCompletionSource<string> tcs = queuedCommand.Tcs;
 
@@ -1416,7 +1421,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             commandQueue.Remove(id);
                         }
                         queuedCommand.Timing?.ExecutionDone();
-                        continue;
+                        return;
                     }
 
                     commandText = commandText.Trim();
@@ -1429,7 +1434,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             commandQueue.Remove(id);
                         }
                         queuedCommand.Timing?.ExecutionDone();
-                        continue;
+                        return;
                     }
 
                     if (!IsValidJson(commandText))
@@ -1446,7 +1451,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             commandQueue.Remove(id);
                         }
                         queuedCommand.Timing?.ExecutionDone();
-                        continue;
+                        return;
                     }
 
                     ExecuteQueuedCommand(id, queuedCommand);
