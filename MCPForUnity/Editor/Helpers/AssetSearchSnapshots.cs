@@ -27,6 +27,8 @@ namespace MCPForUnity.Editor.Helpers
         private static long Epoch;
         private static long AccessOrder;
         private static int RetainedBytes;
+        private static bool CleanupScheduled;
+        private static double NextCleanup;
 
         // Inert test seams; fixtures restore previous values in finally. Neither is a public command/API.
         private static Action<string> OperationObserved = null;
@@ -44,6 +46,7 @@ namespace MCPForUnity.Editor.Helpers
             Epoch++;
             Entries.Clear();
             RetainedBytes = 0;
+            StopCleanupIfEmpty();
         }
 
         internal static bool IsToken(string token) =>
@@ -166,6 +169,12 @@ namespace MCPForUnity.Editor.Helpers
             var snapshot = new Snapshot(newToken, key, rows, bytes, started + LifetimeSeconds, expiresAtUtc);
             Entries.Add(newToken, snapshot);
             RetainedBytes += bytes;
+            if (!CleanupScheduled)
+            {
+                CleanupScheduled = true;
+                NextCleanup = Clock() + 1;
+                EditorApplication.update += CleanupIdle;
+            }
             return Page(snapshot, pageSize, pageNumber, epoch);
         }
 
@@ -222,6 +231,23 @@ namespace MCPForUnity.Editor.Helpers
                 Remove(token);
         }
 
+        private static void CleanupIdle()
+        {
+            double now = Clock();
+            if (now < NextCleanup)
+                return;
+            NextCleanup = now + 1;
+            RemoveExpired(now);
+        }
+
+        private static void StopCleanupIfEmpty()
+        {
+            if (Entries.Count != 0 || !CleanupScheduled)
+                return;
+            EditorApplication.update -= CleanupIdle;
+            CleanupScheduled = false;
+        }
+
         // Include the in-progress row payload when bounding aggregate accounted bytes.
         private static void MakeRoom(int pendingBytes)
         {
@@ -235,6 +261,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 RetainedBytes -= snapshot.Bytes;
                 Entries.Remove(token);
+                StopCleanupIfEmpty();
             }
         }
 

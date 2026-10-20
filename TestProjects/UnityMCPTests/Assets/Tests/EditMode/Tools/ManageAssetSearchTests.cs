@@ -586,6 +586,34 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static Type SnapshotType => typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Helpers.AssetSearchSnapshots", true);
 
+        [UnityEngine.TestTools.UnityTest]
+        public System.Collections.IEnumerator IdleSnapshotsExpireWithoutAnotherSearch()
+        {
+            var clock = SnapshotType.GetField("Clock", BindingFlags.NonPublic | BindingFlags.Static);
+            object previous = clock.GetValue(null);
+            double now = 1000;
+            try
+            {
+                InvalidateSnapshots();
+                clock.SetValue(null, (Func<double>)(() => now));
+                var result = Metadata(1, 1);
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                var entries = (System.Collections.IDictionary)SnapshotType.GetField("Entries", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+                Assert.AreEqual(1, entries.Count);
+                now += 61;
+                yield return null;
+                yield return null;
+                Assert.AreEqual(0, entries.Count, "Expired rows must be released even when no new search arrives.");
+                Assert.AreEqual(0, SnapshotType.GetField("RetainedBytes", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null));
+                Assert.IsFalse((bool)SnapshotType.GetField("CleanupScheduled", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null));
+            }
+            finally
+            {
+                InvalidateSnapshots();
+                clock.SetValue(null, previous);
+            }
+        }
+
         private static void InvalidateSnapshots() => SnapshotType.GetMethod("Invalidate", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
 
         private JObject Metadata(int size, int page, string token = null, string date = null)
