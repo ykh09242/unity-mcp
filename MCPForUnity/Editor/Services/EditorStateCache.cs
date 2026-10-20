@@ -23,7 +23,10 @@ namespace MCPForUnity.Editor.Services
         private static readonly object LockObj = new();
         private static readonly int MainThreadId = Thread.CurrentThread.ManagedThreadId;
         internal static readonly string Epoch = Guid.NewGuid().ToString("N");
-        private static readonly List<Action<JObject>> Observers = new();
+        private static readonly List<Action<EditorStateFrame>> Observers = new();
+        private static Action<EditorStateFrame>[] _observerSnapshot = Array.Empty<Action<EditorStateFrame>>();
+        private static JObject _publishedSource;
+        private static EditorStateFrame.Content _publishedContent;
         private static long _sequence;
         private static long _observedUnixMs;
 
@@ -460,17 +463,18 @@ namespace MCPForUnity.Editor.Services
         /// Subscribe on the editor main thread; the initial snapshot and subsequent
         /// successful observations are delivered there. Disposal uses no Unity API.
         /// </summary>
-        internal static IDisposable Subscribe(Action<JObject> observer)
+        internal static IDisposable Subscribe(Action<EditorStateFrame> observer)
         {
             if (observer == null)
                 throw new ArgumentNullException(nameof(observer));
             if (Thread.CurrentThread.ManagedThreadId != MainThreadId)
                 throw new InvalidOperationException("Editor-state subscription requires the Unity main thread.");
-            JObject initial;
+            EditorStateFrame initial;
             lock (LockObj)
             {
                 Observers.Add(observer);
-                initial = (JObject)_cached.DeepClone();
+                _observerSnapshot = Observers.ToArray();
+                initial = ObserveLocked();
             }
             try
             {
@@ -479,22 +483,49 @@ namespace MCPForUnity.Editor.Services
             catch
             {
                 lock (LockObj)
-                    Observers.Remove(observer);
+                    RemoveObserverLocked(observer);
                 throw;
             }
             return new ObservationSubscription(observer);
         }
 
+        private static EditorStateFrame ObserveLocked()
+        {
+            // Only observation time mutates on an unchanged snapshot; content rebuilds
+            // replace _cached. Serialize that content once and share immutable frames.
+            if (!ReferenceEquals(_publishedSource, _cached))
+            {
+                _publishedContent = new EditorStateFrame.Content(Epoch, _cached);
+                _publishedSource = _cached;
+            }
+            return _publishedContent.Observe(_cached.Value<long>("observed_at_unix_ms"));
+        }
+
+        private static void RemoveObserverLocked(Action<EditorStateFrame> observer)
+        {
+            if (!Observers.Remove(observer))
+                return;
+            _observerSnapshot = Observers.ToArray();
+            if (Observers.Count == 0)
+            {
+                _publishedSource = null;
+                _publishedContent = null;
+            }
+        }
+
         private static void NotifyObservers()
         {
-            Action<JObject>[] observers;
+            Action<EditorStateFrame>[] observers;
+            EditorStateFrame snapshot;
             lock (LockObj)
-                observers = Observers.ToArray();
+            {
+                observers = _observerSnapshot;
+                if (observers.Length == 0)
+                    return;
+                snapshot = ObserveLocked();
+            }
             foreach (var observer in observers)
             {
-                JObject snapshot;
-                lock (LockObj)
-                    snapshot = (JObject)_cached.DeepClone();
                 try
                 {
                     observer(snapshot);
@@ -508,16 +539,16 @@ namespace MCPForUnity.Editor.Services
 
         private sealed class ObservationSubscription : IDisposable
         {
-            private Action<JObject> _observer;
+            private Action<EditorStateFrame> _observer;
 
-            internal ObservationSubscription(Action<JObject> observer) => _observer = observer;
+            internal ObservationSubscription(Action<EditorStateFrame> observer) => _observer = observer;
 
             public void Dispose()
             {
                 var observer = Interlocked.Exchange(ref _observer, null);
                 if (observer != null)
                     lock (LockObj)
-                        Observers.Remove(observer);
+                        RemoveObserverLocked(observer);
             }
         }
 

@@ -1,6 +1,12 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
+#if LEGACY_EDITOR_STATE
+using Observation = Newtonsoft.Json.Linq.JObject;
+#else
+using Observation = MCPForUnity.Editor.Services.EditorStateFrame;
+#endif
 
 namespace UnityEditor
 {
@@ -21,7 +27,7 @@ namespace MCPForUnity.Editor.Helpers
     internal static class EditorStateCache
     {
         private static readonly object Gate = new();
-        private static readonly List<Action<JObject>> Observers = new();
+        private static readonly List<Action<Observation>> Observers = new();
         internal static Action<object> BeforeInitial;
         internal static Action<object> BeforeReturn;
         internal static bool FailSubscribe;
@@ -36,7 +42,7 @@ namespace MCPForUnity.Editor.Helpers
         }
         internal static int Removed;
 
-        internal static IDisposable Subscribe(Action<JObject> observer)
+        internal static IDisposable Subscribe(Action<Observation> observer)
         {
             if (FailSubscribe)
                 throw new InvalidOperationException("subscribe failed");
@@ -45,7 +51,7 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 BeforeInitial?.Invoke(observer.Target);
-                observer(new JObject { ["sequence"] = 1, ["observed_at_unix_ms"] = 1 });
+                observer(CreateObservation(1));
                 BeforeReturn?.Invoke(observer.Target);
             }
             catch
@@ -59,11 +65,20 @@ namespace MCPForUnity.Editor.Helpers
 
         internal static void Emit(int sequence)
         {
-            Action<JObject>[] observers;
+            Action<Observation>[] observers;
             lock (Gate)
                 observers = Observers.ToArray();
             foreach (var observer in observers)
-                observer(new JObject { ["sequence"] = sequence, ["observed_at_unix_ms"] = sequence });
+                observer(CreateObservation(sequence));
+        }
+
+        private static Observation CreateObservation(int sequence)
+        {
+#if LEGACY_EDITOR_STATE
+            return new JObject { ["sequence"] = sequence, ["observed_at_unix_ms"] = sequence };
+#else
+            return new EditorStateFrame.Content(Epoch, new JObject { ["sequence"] = sequence }).Observe(sequence);
+#endif
         }
 
         internal static void Reset()
@@ -78,9 +93,9 @@ namespace MCPForUnity.Editor.Helpers
 
         private sealed class Subscription : IDisposable
         {
-            private Action<JObject> _observer;
+            private Action<Observation> _observer;
 
-            internal Subscription(Action<JObject> observer)
+            internal Subscription(Action<Observation> observer)
             {
                 _observer = observer;
             }

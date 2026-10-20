@@ -2,7 +2,6 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
-using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Services
 {
@@ -14,22 +13,22 @@ namespace MCPForUnity.Editor.Services
     {
         internal const string Capability = "editor_state_v1";
         private readonly object _gate = new object();
-        private readonly Func<JObject, CancellationToken, Task> _send;
+        private readonly Func<EditorStateFrame, CancellationToken, Task> _send;
         private readonly CancellationTokenSource _lifetime;
         private IDisposable _subscription;
         private CancellationTokenRegistration _connectionCancellation;
-        private JObject _pending;
+        private EditorStateFrame _pending;
         private bool _sending;
         private bool _disposed;
 
-        private EditorStatePublisher(Func<JObject, CancellationToken, Task> send, CancellationToken token)
+        private EditorStatePublisher(Func<EditorStateFrame, CancellationToken, Task> send, CancellationToken token)
         {
             _send = send ?? throw new ArgumentNullException(nameof(send));
             _lifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
         }
 
         /// <summary>Call on Unity's main thread after capability negotiation and registration.</summary>
-        internal static EditorStatePublisher Start(Func<JObject, CancellationToken, Task> send, CancellationToken connectionToken)
+        internal static EditorStatePublisher Start(Func<EditorStateFrame, CancellationToken, Task> send, CancellationToken connectionToken)
         {
             connectionToken.ThrowIfCancellationRequested();
             var publisher = new EditorStatePublisher(send, connectionToken);
@@ -67,20 +66,13 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private void Observe(JObject snapshot)
+        private void Observe(EditorStateFrame snapshot)
         {
             lock (_gate)
             {
                 if (_disposed || _lifetime.IsCancellationRequested)
                     return;
-                _pending = new JObject
-                {
-                    ["type"] = "editor_state",
-                    ["epoch"] = EditorStateCache.Epoch,
-                    ["sequence"] = snapshot["sequence"].DeepClone(),
-                    ["observed_at_unix_ms"] = snapshot["observed_at_unix_ms"].DeepClone(),
-                    ["state"] = snapshot,
-                };
+                _pending = snapshot;
                 if (_sending)
                     return;
                 _sending = true;
@@ -94,7 +86,7 @@ namespace MCPForUnity.Editor.Services
             {
                 while (true)
                 {
-                    JObject message;
+                    EditorStateFrame message;
                     lock (_gate)
                     {
                         if (_disposed || _lifetime.IsCancellationRequested || _pending == null)

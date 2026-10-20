@@ -8,6 +8,11 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json.Linq;
+#if LEGACY_EDITOR_STATE
+using Observation = Newtonsoft.Json.Linq.JObject;
+#else
+using Observation = MCPForUnity.Editor.Services.EditorStateFrame;
+#endif
 
 internal static class Program
 {
@@ -37,7 +42,16 @@ internal static class Program
         );
     }
 
-    private static Task Send(JObject state, CancellationToken token) => Task.CompletedTask;
+    private static int ReadSequence(Observation message)
+    {
+#if LEGACY_EDITOR_STATE
+        return (int)message["sequence"];
+#else
+        return (int)message.Sequence;
+#endif
+    }
+
+    private static Task Send(Observation state, CancellationToken token) => Task.CompletedTask;
 
     private static void Case(string name, Action test)
     {
@@ -216,8 +230,8 @@ internal static class Program
                     (message, token) =>
                     {
                         lock (sequences)
-                            sequences.Add((int)message["sequence"]);
-                        if ((int)message["sequence"] != 1)
+                            sequences.Add(ReadSequence(message));
+                        if (ReadSequence(message) != 1)
                             return Task.CompletedTask;
                         entered.Set();
                         return release.Task;

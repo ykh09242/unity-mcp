@@ -1,9 +1,10 @@
 # Editor-state publisher cancellation lifetime
 
 This .NET 9 console fixture compiles the complete current `EditorStatePublisher.cs`
-and the exact current `TransportCommandDispatcher.RunOnMainThreadAsync<T>` method.
+with the actual immutable `EditorStateFrame` and the exact current `TransportCommandDispatcher.RunOnMainThreadAsync<T>` method.
 It uses the repository's existing `.compile-refs/Newtonsoft.Json.dll` and installed
-.NET SDK; it needs no optional Unity package or NuGet test package.
+.NET SDK; it needs no optional Unity package or NuGet test package. Pass
+`--json-assembly <absolute-path>` to use another existing Newtonsoft.Json DLL.
 
 `Boundary.cs` replaces only `EditorStateCache`, `EditorApplication`, and logging.
 The cache boundary preserves synchronous initial observation, static observer retention,
@@ -22,7 +23,8 @@ Server/.venv/Scripts/python.exe tools/tests/fixtures/editor_state_publisher_life
 output directory and performs no cleanup. `--baseline <git-ref>` reads the same two
 production sources from Git without changing the checkout. Reproduce the original
 failure with `--baseline e8249f2e`; the original source intentionally exits 1.
-Each run prints normalized source SHA256 values.
+Each run prints normalized publisher and dispatcher source SHA256 values.
+The boundary adapts to the older JObject observation contract for baseline runs.
 
 The fourteen scenarios cover cancellation before/during/after synchronous creation,
 caller ownership, duplicate disposal, pre-cancellation, subscription and send failures,

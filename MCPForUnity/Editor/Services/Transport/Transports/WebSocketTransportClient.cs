@@ -1527,6 +1527,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return false;
         }
 
+        private Task SendStateAsync(EditorStateFrame payload, CancellationToken ownerToken, CancellationToken sendToken) =>
+            SendOwnedFrameAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(payload.ToJson())), WebSocketMessageType.Text, ownerToken, sendToken);
+
         private Task SendStateAsync(JObject payload, CancellationToken ownerToken, CancellationToken sendToken) =>
             SendOwnedFrameAsync(
                 new ArraySegment<byte>(Encoding.UTF8.GetBytes(payload.ToString(Formatting.None))),
