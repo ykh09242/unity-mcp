@@ -25,6 +25,15 @@ namespace MCPForUnity.Editor.Services.AssetGen
             public List<ModelEntry> Entries;
         }
 
+        private sealed class EndpointCheck
+        {
+            internal Task<JObject> Task;
+            internal DateTime Expires;
+        }
+
+        private static readonly object EndpointLock = new();
+        private static readonly Dictionary<string, EndpointCheck> EndpointChecks = new();
+        private static readonly TimeSpan EndpointLifetime = TimeSpan.FromMinutes(5);
         private static Snapshot snapshot;
         private static bool loaded,
             fromDisk,
@@ -96,6 +105,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 var entries = await Discover(ct.Token);
                 snapshot = new Snapshot { CheckedAt = UtcNow(), Entries = entries };
+                lock (EndpointLock)
+                    EndpointChecks.Clear();
                 fromDisk = false;
                 LastError = null;
                 Save();
@@ -153,15 +164,21 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (!FalModelSchema.SafeId(id))
                 throw new InvalidOperationException("Invalid OpenRouter model ID.");
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            var entry = (await Discover(timeout.Token)).FirstOrDefault(e => e.Id == id);
-            if (entry == null)
+            ct.ThrowIfCancellationRequested();
+            if (!await WaitForCaller(RefreshAsync(), ct))
+                throw new InvalidOperationException(LastError ?? "OpenRouter catalog is unavailable. Retry after refreshing models.");
+            var observed = snapshot;
+            var model = observed?.Entries.FirstOrDefault(e => e.Id == id);
+            if (model == null)
                 throw new InvalidOperationException($"OpenRouter model '{id}' is unavailable or incompatible. Refresh models and choose another model.");
             mode = string.IsNullOrEmpty(mode) ? "text" : mode;
-            var json = await Get(Api + "/" + id + "/endpoints", timeout.Token);
-            if ((string)json["id"] != id || !(json["endpoints"] is JArray endpoints))
-                throw new InvalidOperationException("Invalid OpenRouter endpoint catalog.");
+            var verification = GetSharedEndpoints(id);
+            var json = await WaitForCaller(verification.Task, ct);
+            if (!ReferenceEquals(observed, snapshot))
+                throw new InvalidOperationException("OpenRouter catalog changed during verification. Retry with the current model selection.");
+            var endpoints = (JArray)json["endpoints"];
+            // Each job owns its capabilities; neither mode selection nor caller mutation may alter cached data.
+            var entry = JsonConvert.DeserializeObject<ModelEntry>(JsonConvert.SerializeObject(model));
             foreach (JObject endpoint in endpoints)
             {
                 var parameters = endpoint["supported_parameters"] as JObject;
@@ -170,21 +187,81 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 if (parameters == null || string.IsNullOrEmpty(tag) || !Modes(parameters).Contains(mode) || !RasterFormat(parameters, out string format))
                     continue;
                 entry.RouterProviderTag = tag;
-                entry.RouterParameters = parameters;
+                entry.RouterParameters = (JObject)parameters.DeepClone();
                 entry.OutputFormat = format;
                 entry.Modes = Modes(parameters);
-                entry.VerifiedAt = UtcNow().ToString("O");
+                entry.VerifiedAt = (verification.Expires - EndpointLifetime).ToString("O");
                 Load();
                 int index = snapshot?.Entries.FindIndex(e => e.Id == id) ?? -1;
-                if (index >= 0)
+                if (index >= 0 && JsonConvert.SerializeObject(snapshot.Entries[index]) != JsonConvert.SerializeObject(entry))
                 {
-                    snapshot.Entries[index] = entry;
+                    snapshot.Entries[index] = JsonConvert.DeserializeObject<ModelEntry>(JsonConvert.SerializeObject(entry));
                     Save();
                     Changed?.Invoke();
                 }
                 return entry;
             }
             throw new InvalidOperationException($"OpenRouter model '{id}' has no compatible '{mode}' endpoint.");
+        }
+
+        private static EndpointCheck GetSharedEndpoints(string id)
+        {
+            lock (EndpointLock)
+            {
+                if (
+                    EndpointChecks.TryGetValue(id, out var check)
+                    && !check.Task.IsFaulted
+                    && !check.Task.IsCanceled
+                    && (!check.Task.IsCompleted || UtcNow() < check.Expires)
+                )
+                    return check;
+                foreach (
+                    string expired in EndpointChecks
+                        .Where(pair =>
+                            pair.Value.Task.IsCompleted && (pair.Value.Task.IsFaulted || pair.Value.Task.IsCanceled || UtcNow() >= pair.Value.Expires)
+                        )
+                        .Select(pair => pair.Key)
+                        .ToArray()
+                )
+                    EndpointChecks.Remove(expired);
+                if (EndpointChecks.Count >= 128)
+                {
+                    string victim = EndpointChecks
+                        .Where(pair => pair.Value.Task.IsCompleted)
+                        .OrderBy(pair => pair.Value.Expires)
+                        .Select(pair => pair.Key)
+                        .FirstOrDefault();
+                    if (victim == null)
+                        throw new InvalidOperationException("Too many model verifications are in progress. Retry shortly.");
+                    EndpointChecks.Remove(victim);
+                }
+                check = new EndpointCheck { Task = FetchEndpoints(id), Expires = UtcNow() + EndpointLifetime };
+                EndpointChecks[id] = check;
+                return check;
+            }
+        }
+
+        private static async Task<JObject> FetchEndpoints(string id)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var json = await Get(Api + "/" + id + "/endpoints", timeout.Token);
+            if ((string)json["id"] != id || !(json["endpoints"] is JArray))
+                throw new InvalidOperationException("Invalid OpenRouter endpoint catalog.");
+            return json;
+        }
+
+        private static async Task<T> WaitForCaller<T>(Task<T> work, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!ct.CanBeCanceled)
+                return await work;
+            var canceled = new TaskCompletionSource<bool>();
+            using (ct.Register(() => canceled.TrySetResult(true)))
+            {
+                await Task.WhenAny(work, canceled.Task);
+                ct.ThrowIfCancellationRequested();
+                return await work;
+            }
         }
 
         private static string[] Modes(JObject parameters)
@@ -276,6 +353,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
             fromDisk = false;
             isolated = isolate;
             refresh = null;
+            lock (EndpointLock)
+                EndpointChecks.Clear();
             LastError = null;
             attempted = DateTime.MinValue;
             TransportOverrideForTests = null;

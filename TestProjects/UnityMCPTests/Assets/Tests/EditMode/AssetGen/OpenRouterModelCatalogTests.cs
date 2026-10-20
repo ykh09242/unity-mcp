@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
@@ -250,6 +251,80 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 Environment.SetEnvironmentVariable("MCPFORUNITY_OPENROUTER_API_KEY", key);
             }
+        }
+
+        [Test]
+        public void RepeatedGenerationReusesCatalogAndShortLivedEndpointVerification()
+        {
+            var first = OpenRouterModelCatalog.VerifyForGeneration(Id, "text", CancellationToken.None).GetAwaiter().GetResult();
+            string cacheBefore = File.ReadAllText(OpenRouterModelCatalog.CachePathOverrideForTests);
+            for (int i = 0; i < 5; i++)
+                OpenRouterModelCatalog.VerifyForGeneration(Id, "text", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, http.RecordedRequests.Count, "One discovery and one endpoint request serve repeated jobs.");
+            Assert.AreEqual(cacheBefore, File.ReadAllText(OpenRouterModelCatalog.CachePathOverrideForTests));
+            first.RouterProviderTag = "caller-mutated";
+            Assert.AreEqual("vendor", OpenRouterModelCatalog.VerifyForGeneration(Id, "text", CancellationToken.None).Result.RouterProviderTag);
+            now = now.AddMinutes(6);
+            http.Handler = request =>
+                Json(
+                    request.Url.EndsWith("/endpoints")
+                        ? new JObject { ["id"] = Id, ["endpoints"] = new JArray(Endpoint(Parameters(1, 1))) }
+                        : new JObject { ["data"] = new JArray(Model()) }
+                );
+            Assert.Throws<InvalidOperationException>(() =>
+                OpenRouterModelCatalog.VerifyForGeneration(Id, "text", CancellationToken.None).GetAwaiter().GetResult()
+            );
+            Assert.AreEqual(1, http.RecordedRequests.Count(request => !request.Url.EndsWith("/endpoints")));
+        }
+
+        [Test]
+        public void RefreshedRemovalInvalidatesPriorVerification()
+        {
+            OpenRouterModelCatalog.VerifyForGeneration(Id, "text", CancellationToken.None).GetAwaiter().GetResult();
+            http.Handler = _ => Json(new JObject { ["data"] = new JArray() });
+            Assert.IsTrue(OpenRouterModelCatalog.RefreshAsync(true).Result);
+            Assert.Throws<InvalidOperationException>(() =>
+                OpenRouterModelCatalog.VerifyForGeneration(Id, "text", CancellationToken.None).GetAwaiter().GetResult()
+            );
+        }
+
+        private sealed class DelayedEndpoints : IHttpTransport
+        {
+            internal int DiscoveryCalls,
+                EndpointCalls;
+            internal CancellationToken SharedToken;
+            internal readonly TaskCompletionSource<HttpResult> Endpoint = new();
+
+            public Task<HttpResult> SendAsync(HttpRequestSpec request, CancellationToken ct)
+            {
+                if (request.Url.EndsWith("/endpoints"))
+                {
+                    EndpointCalls++;
+                    SharedToken = ct;
+                    return Endpoint.Task;
+                }
+                DiscoveryCalls++;
+                return Task.FromResult(Json(new JObject { ["data"] = new JArray(Model()) }));
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ConcurrentGenerationSharesVerificationAndIsolatesCancellation()
+        {
+            var delayed = new DelayedEndpoints();
+            OpenRouterModelCatalog.TransportOverrideForTests = delayed;
+            using var cancel = new CancellationTokenSource();
+            var first = OpenRouterModelCatalog.VerifyForGeneration(Id, "text", cancel.Token);
+            var second = OpenRouterModelCatalog.VerifyForGeneration(Id, "image", CancellationToken.None);
+            cancel.Cancel();
+            delayed.Endpoint.SetResult(Json(new JObject { ["id"] = Id, ["endpoints"] = new JArray(Endpoint(Parameters())) }));
+            for (int i = 0; i < 100 && (!first.IsCompleted || !second.IsCompleted); i++)
+                yield return null;
+            Assert.IsTrue(first.IsCanceled);
+            Assert.IsFalse(delayed.SharedToken.IsCancellationRequested);
+            Assert.AreEqual("vendor", second.GetAwaiter().GetResult().RouterProviderTag);
+            Assert.AreEqual(1, delayed.DiscoveryCalls);
+            Assert.AreEqual(1, delayed.EndpointCalls);
         }
 
         [UnityTest, Explicit("Reads public OpenRouter image discovery; no paid generation.")]
