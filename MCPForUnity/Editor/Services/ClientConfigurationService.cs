@@ -25,7 +25,7 @@ namespace MCPForUnity.Editor.Services
                 McpClientRegistry.All,
                 () => EditorConfigurationCache.Instance.UseHttpTransport,
                 value => EditorConfigurationCache.Instance.SetUseHttpTransport(value),
-                PrepareLocalServer,
+                () => { },
                 message => McpLog.Info(message)
             ) { }
 
@@ -218,13 +218,6 @@ namespace MCPForUnity.Editor.Services
         {
             currentAttempt = new ClientConfigurationAttempt(retryOwner, catalog, failures, rows, remaining, unavailable);
             return currentAttempt;
-        }
-
-        private static void PrepareLocalServer()
-        {
-            // Clean stale build artifacts so deleted modules cannot be auto-discovered.
-            if (AssetPathUtility.IsLocalServerPath())
-                AssetPathUtility.CleanLocalServerBuildArtifacts();
         }
 
         private void ConfigureWithTransportCoercion(IMcpClientConfigurator configurator)

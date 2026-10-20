@@ -609,34 +609,11 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
-        /// Cleans stale Python build artifacts from the local server path.
-        /// This is necessary because Python's build system doesn't remove deleted files from build/,
-        /// and the auto-discovery mechanism will pick up old .py files causing ghost resources/tools.
+        /// Retained for compatibility. Configuring or starting a server must not delete a caller-owned source tree.
+        /// Package freshness is handled by uv's build cache, not recursive source-directory cleanup.
         /// </summary>
-        /// <returns>True if cleaning was performed, false if not applicable or failed.</returns>
         public static bool CleanLocalServerBuildArtifacts()
         {
-            string localPath = GetLocalServerPath();
-            if (string.IsNullOrEmpty(localPath))
-                return false;
-
-            // Clean the build/ directory which can contain stale .py files
-            string buildPath = System.IO.Path.Combine(localPath, "build");
-            if (System.IO.Directory.Exists(buildPath))
-            {
-                try
-                {
-                    System.IO.Directory.Delete(buildPath, recursive: true);
-                    McpLog.Info($"Cleaned stale build artifacts from: {buildPath}");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    McpLog.Warn($"Failed to clean build artifacts: {ex.Message}");
-                    return false;
-                }
-            }
-
             return false;
         }
 
