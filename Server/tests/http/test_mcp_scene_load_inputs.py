@@ -15,7 +15,6 @@ import pytest
 from core.config import config
 from core.local_auth import LOCAL_AUTH_HEADER
 from services.api_key_service import ApiKeyService, ValidationResult
-from tests.http.prepared_tool_registration import prepared_tool_factory  # pylint: disable=unused-import
 from tests.http.test_mcp_catalog_subscription_limits import PluginStream
 from tests.http.test_mcp_protocol_wire import _body, _headers
 from transport.plugin_hub import PluginHub

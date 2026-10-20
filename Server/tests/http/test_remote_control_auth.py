@@ -9,7 +9,6 @@ from starlette.websockets import WebSocketDisconnect
 
 from core.config import config
 from services.api_key_service import ApiKeyService, ValidationResult
-from tests.http.prepared_tool_registration import prepared_tool_factory
 
 
 @pytest.fixture

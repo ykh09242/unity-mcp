@@ -7,7 +7,6 @@ import weakref
 import pytest
 from starlette.responses import Response
 
-from tests.http.prepared_tool_registration import prepared_tool_factory  # pylint: disable=unused-import
 from tests.http.test_mcp_protocol_wire import LEGACY_VERSION, MODERN_VERSION, _body
 from tests.http.test_rejected_request_body_lifetime import TrackedMessage
 from tests.http.test_request_body_limit import (

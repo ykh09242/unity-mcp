@@ -15,7 +15,6 @@ from services.api_key_service import ApiKeyService, ValidationResult
 from transport.models import SessionDetails, SessionList
 from transport.plugin_hub import PluginHub
 from transport.request_body_limit_middleware import RequestBodyLimitMiddleware
-from tests.http.prepared_tool_registration import prepared_tool_factory
 
 
 LIMIT = 256

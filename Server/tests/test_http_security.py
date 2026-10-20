@@ -25,6 +25,10 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
             "-m",
             "pytest",
             "tests/http",
+            "-n",
+            "4",
+            "--dist=loadfile",
+            "--max-worker-restart=0",
             "-q",
             "--tb=short",
             "-W",
@@ -40,7 +44,8 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
         env=env,
         capture_output=True,
         text=True,
-        # Bound the expanded isolated suite, including child startup; request deadlines stay unchanged.
+        # Four workers overlap isolated SDK subprocesses without multiplying by host CPUs.
+        # Keep each file's fixtures together and retain the existing total/request deadlines.
         timeout=180,
     )
     assert result.returncode == 0, result.stdout + result.stderr
