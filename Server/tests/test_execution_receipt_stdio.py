@@ -1,6 +1,7 @@
 """Durable receipt replay across two actual owned retained-stdio SDK processes."""
 
 from contextlib import asynccontextmanager
+import itertools
 import json
 from pathlib import Path
 import subprocess
@@ -36,8 +37,9 @@ async def owned_stdio(tmp_path: Path, store: Path, protocol: str):
             )
             assert process.stdout is not None and process.stdin is not None
             output = BufferedByteReceiveStream(process.stdout)
+            request_ids = itertools.count(1)
 
-            async def exchange(method, params, identifier="call"):
+            async def exchange(method, params, *, notification=False):
                 if protocol == "2026-07-28" and method == "tools/call":
                     params = {
                         **params,
@@ -52,12 +54,18 @@ async def owned_stdio(tmp_path: Path, store: Path, protocol: str):
                         },
                     }
                 message = {"jsonrpc": "2.0", "method": method, "params": params}
+                # Each request needs a fresh ID even after its response is received:
+                # the peer may still be settling the previous stdout flush.
+                identifier = None if notification else next(request_ids)
                 if identifier is not None:
                     message["id"] = identifier
                 await process.stdin.send(json.dumps(message).encode() + b"\n")
                 if identifier is None:
                     return None
-                return json.loads(await output.receive_until(b"\n", 128 * 1024))
+                reply = json.loads(await output.receive_until(b"\n", 128 * 1024))
+                assert reply.get("id") == identifier, reply
+                assert "error" not in reply, reply
+                return reply
 
             if protocol == "2025-11-25":
                 reply = await exchange(
@@ -69,7 +77,7 @@ async def owned_stdio(tmp_path: Path, store: Path, protocol: str):
                     },
                 )
                 assert reply["result"]["protocolVersion"] == protocol
-                await exchange("notifications/initialized", {}, None)
+                await exchange("notifications/initialized", {}, notification=True)
             yield exchange
             await process.stdin.aclose()
         finally:
@@ -116,3 +124,36 @@ async def test_actual_stdio_restart_rehydrates_receipt_without_second_handler(
         assert initial["result"]["_meta"]["application"] == replay["result"]["_meta"]["application"]
         assert replay["result"]["_meta"][META]["replayed"] is True
         assert count["result"]["structuredContent"]["body"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["2025-11-25", "2026-07-28"])
+async def test_owned_stdio_client_never_reuses_request_ids(tmp_path, monkeypatch, protocol):
+    frames = []
+    open_process = anyio.open_process
+
+    async def capture_process(*args, **kwargs):
+        process = await open_process(*args, **kwargs)
+        send = process.stdin.send
+
+        async def capture_request(data):
+            frames.append(json.loads(data))
+            await send(data)
+
+        monkeypatch.setattr(process.stdin, "send", capture_request)
+        return process
+
+    monkeypatch.setattr(anyio, "open_process", capture_process)
+    with anyio.fail_after(25):
+        async with owned_stdio(tmp_path, tmp_path / "receipts", protocol) as call:
+            first = await call("tools/call", {"name": "body_count", "arguments": {}})
+            second = await call("tools/call", {"name": "body_count", "arguments": {}})
+    identifiers = [frame["id"] for frame in frames if "id" in frame]
+    assert len(identifiers) >= 2
+    assert len(identifiers) == len(set(identifiers)), frames
+    assert all(
+        "id" not in frame for frame in frames if frame["method"].startswith("notifications/")
+    )
+    assert (
+        first["result"]["structuredContent"] == second["result"]["structuredContent"] == {"body": 0}
+    )
