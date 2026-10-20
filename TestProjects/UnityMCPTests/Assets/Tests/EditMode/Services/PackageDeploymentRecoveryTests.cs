@@ -1,13 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
 {
-    // Public deployment/restore use persistent user prefs; these native tests deliberately exercise
-    // only the actual private path/backup helpers with an owned synthetic filesystem root.
+    // All files and preferences are owned fixture data; the active project package is never replaced.
     public class PackageDeploymentRecoveryTests
     {
         private string _root;
@@ -79,6 +80,78 @@ namespace MCPForUnityTests.Editor.Services
             Assert.That(File.ReadAllText(OwnedRelative(backup, "Runtime/marker.txt")), Is.EqualTo("runtime"));
             Assert.That(File.ReadAllText(OwnedRelative(backup, "package.json")), Is.EqualTo("manifest"));
             Assert.That(File.ReadAllText(OwnedRelative(target, "Editor/marker.txt")), Is.EqualTo("editor"));
+        }
+
+        [Test]
+        public void RestoreRejectsLegacyForeignTargetWithoutChangingEitherProject()
+        {
+            var prefs = new Dictionary<string, string>();
+            string foreign = MakePackage("Foreign/Package", "foreign");
+            string current = MakePackage("Current/Package", "current");
+            string backup = MakePackage("Foreign/Library/MCPForUnityDeployBackups/old", "backup");
+            prefs[EditorPrefKeys.PackageDeployLastBackupPath] = backup;
+            prefs[EditorPrefKeys.PackageDeployLastTargetPath] = foreign;
+            var service = Service("Current", () => current, prefs);
+            Assert.That(service.RestoreLastBackup().Success, Is.False);
+            Assert.That(File.ReadAllText(OwnedRelative(foreign, "Editor/marker.txt")), Is.EqualTo("foreign"));
+            Assert.That(File.ReadAllText(OwnedRelative(current, "Editor/marker.txt")), Is.EqualTo("current"));
+        }
+
+        [Test]
+        public void ProjectsKeepIndependentSourcesAndBackupsAndRestoreOnlyTheirOwnTarget()
+        {
+            var prefs = new Dictionary<string, string>();
+            string a = MakePackage("A/Package", "a-old");
+            string b = MakePackage("B/Package", "b-old");
+            string sourceA = MakePackage("SourceA", "a-new");
+            string sourceB = MakePackage("SourceB", "b-new");
+            var serviceA = Service("A", () => a, prefs);
+            var serviceB = Service("B", () => b, prefs);
+            serviceA.SetStoredSourcePath(sourceA);
+            serviceB.SetStoredSourcePath(sourceB);
+            Assert.That(serviceA.DeployFromStoredSource().Success, Is.True);
+            Assert.That(serviceB.DeployFromStoredSource().Success, Is.True);
+            Assert.That(serviceA.GetStoredSourcePath(), Is.EqualTo(Path.GetFullPath(sourceA)));
+            Assert.That(serviceB.RestoreLastBackup().Success, Is.True);
+            Assert.That(File.ReadAllText(OwnedRelative(a, "Editor/marker.txt")), Is.EqualTo("a-new"));
+            Assert.That(File.ReadAllText(OwnedRelative(b, "Editor/marker.txt")), Is.EqualTo("b-old"));
+            Assert.That(serviceA.RestoreLastBackup().Success, Is.True);
+            Assert.That(File.ReadAllText(OwnedRelative(a, "Editor/marker.txt")), Is.EqualTo("a-old"));
+        }
+
+        [Test]
+        public void RestoreRejectsBackupAfterInstalledPackageLocationChanges()
+        {
+            var prefs = new Dictionary<string, string>();
+            string original = MakePackage("A/Package", "old");
+            string target = original;
+            var service = Service("A", () => target, prefs);
+            service.SetStoredSourcePath(MakePackage("Source", "new"));
+            Assert.That(service.DeployFromStoredSource().Success, Is.True);
+            target = MakePackage("A/Replacement", "replacement");
+            Assert.That(service.HasBackup(), Is.False);
+            Assert.That(service.RestoreLastBackup().Success, Is.False);
+            Assert.That(File.ReadAllText(OwnedRelative(original, "Editor/marker.txt")), Is.EqualTo("new"));
+            Assert.That(File.ReadAllText(OwnedRelative(target, "Editor/marker.txt")), Is.EqualTo("replacement"));
+        }
+
+        private PackageDeploymentService Service(string project, Func<string> target, Dictionary<string, string> prefs) =>
+            new PackageDeploymentService(
+                Owned(project),
+                target,
+                key => prefs.TryGetValue(key, out string value) ? value : "",
+                (key, value) => prefs[key] = value,
+                key => prefs.Remove(key)
+            );
+
+        private string MakePackage(string relative, string label)
+        {
+            string target = Owned(relative);
+            WriteMarker(target, label);
+            Directory.CreateDirectory(OwnedRelative(target, "Runtime"));
+            File.WriteAllText(OwnedRelative(target, "Runtime/marker.txt"), label);
+            File.WriteAllText(OwnedRelative(target, "package.json"), "{\"name\":\"com.ykh09242.unity-mcp\",\"version\":\"1.0.0\"}");
+            return target;
         }
 
         private string Backup(string target, string backups)
