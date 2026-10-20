@@ -233,7 +233,7 @@ namespace MCPForUnity.Editor.Services
         /// <summary>
         /// Start the local HTTP server headless (no terminal window), redirecting its
         /// stdout/stderr to Library/MCPForUnity/Logs/server-launch-{port}.log.
-        /// Refuses occupied ports and clears stale build artifacts first.
+        /// Refuses occupied ports and validates the launch command before starting.
         /// </summary>
         public bool StartLocalHttpServer(bool quiet = false)
         {
@@ -244,9 +244,6 @@ namespace MCPForUnity.Editor.Services
                     EditorUtility.DisplayDialog("Managed Server Launch Still Pending", ownershipError, "OK");
                 return false;
             }
-
-            /// Clean stale Python build artifacts when using a local dev server path
-            AssetPathUtility.CleanLocalServerBuildArtifacts();
 
             if (!TryGetLocalHttpServerCommandParts(out _, out _, out var displayCommand, out var error))
             {

@@ -28,6 +28,37 @@ namespace MCPForUnityTests.Editor.Helpers
             EditorPrefs.SetBool(EditorPrefKeys.DevModeForceServerRefresh, _originalForceRefresh);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AutomaticCleanupPreservesCallerOwnedBuildFiles(bool isPackage)
+        {
+            string root = Path.Combine(Path.GetTempPath(), "McpOwnedBuild_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path.Combine(root, "build"));
+            string marker = Path.Combine(root, "build", "user-owned.txt");
+            File.WriteAllText(marker, "retain");
+            if (isPackage)
+                File.WriteAllText(Path.Combine(root, "pyproject.toml"), "[project]\nname = 'ykh09242-unity-mcp-server'\n");
+            bool hadOverride = EditorPrefs.HasKey(EditorPrefKeys.GitUrlOverride);
+            string oldOverride = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
+            try
+            {
+                EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, root);
+                Assert.That(AssetPathUtility.CleanLocalServerBuildArtifacts(), Is.False);
+                Assert.That(File.ReadAllText(marker), Is.EqualTo("retain"));
+            }
+            finally
+            {
+                if (hadOverride)
+                    EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, oldOverride);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
+                string fullRoot = Path.GetFullPath(root);
+                Assert.That(fullRoot.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase), Is.True);
+                Assert.That(Path.GetFileName(fullRoot).StartsWith("McpOwnedBuild_", StringComparison.Ordinal), Is.True);
+                Directory.Delete(fullRoot, true);
+            }
+        }
+
         [Test]
         public void ShouldUseUvxOffline_WhenForceRefreshEnabled_ReturnsFalse()
         {
