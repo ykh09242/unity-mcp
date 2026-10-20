@@ -377,7 +377,7 @@ def test_server_workers_preserve_file_fixtures_and_fail_on_crashes() -> None:
     assert all("runner." not in str(value) for value in job["env"].values())
     for name in ("Run tests with coverage", "Run server tests"):
         command = steps[name]["run"]
-        assert "-n 2 --dist=loadfile --max-worker-restart=0" in command
+        assert "-n 4 --dist=loadfile --max-worker-restart=0" in command
         assert "-p pytest_ci_schedule --no-loadscope-reorder" in command
         assert "--ci-first-file=test_http_security.py" in command
         assert steps[name]["env"]["UNITY_MCP_LOG_DIR"].startswith("${{ runner.temp }}/")
@@ -388,12 +388,13 @@ def test_server_workers_preserve_file_fixtures_and_fail_on_crashes() -> None:
 def test_tools_workers_and_timing_context_agree() -> None:
     steps = {step["name"]: step for step in workflow("python-tests.yml")["jobs"]["test"]["steps"]}
     assert (
-        "-n 2 --dist=loadfile --max-worker-restart=0"
+        "-n 4 --dist=loadfile --max-worker-restart=0"
         in steps["Run local harness unit tests (hermetic, no Unity)"]["run"]
     )
-    assert "options=(--workers 2)" in steps["Capture compact timing snapshot"]["run"]
+    assert "options=(--workers 4)" in steps["Capture compact timing snapshot"]["run"]
     assert (
-        "--ci-first-file" not in steps["Run local harness unit tests (hermetic, no Unity)"]["run"]
+        "--ci-first-file=tools/tests/test_bench_transport.py"
+        in steps["Run local harness unit tests (hermetic, no Unity)"]["run"]
     )
 
 

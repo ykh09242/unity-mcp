@@ -86,7 +86,7 @@ def require_supported_sdk() -> None:
     if any(
         version(name) != expected
         for name, expected in (
-            ("fastmcp", "4.1.0"),
+            ("fastmcp", "4.1.1"),
             ("mcp", "2.3.0"),
             ("mcp_types", "2.3.0"),
         )

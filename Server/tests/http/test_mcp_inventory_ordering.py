@@ -10,7 +10,6 @@ import pytest
 
 from core.config import config
 from core.local_auth import LOCAL_AUTH_HEADER
-from tests.http.prepared_tool_registration import prepared_tool_factory  # pylint: disable=unused-import
 from tests.http.test_mcp_catalog_subscription_limits import (
     ListenStream,
     PluginStream,

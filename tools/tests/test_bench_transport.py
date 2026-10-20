@@ -410,28 +410,13 @@ async def test_readiness_failure_stays_visible_and_owned_child_is_closed(
         observed,
         _,
     ):
-        # A failed background publication can leave the server alive; the unchanged
-        # reader then reports its bounded deadline rather than an exited child.
-        error = (
-            json.JSONDecodeError
-            if fault == "malformed"
-            else (RuntimeError, TimeoutError)
-            if fault in {"write", "replace"}
-            else RuntimeError
-        )
-        match = (
-            "Expecting"
-            if fault == "malformed"
-            else "forked"
-            if fault == "pid"
-            else None
-            if fault in {"write", "replace"}
-            else "exited"
-        )
+        # Publication failures must terminate the owned fixture, not consume its deadline.
+        error = json.JSONDecodeError if fault == "malformed" else RuntimeError
+        match = "Expecting" if fault == "malformed" else "forked" if fault == "pid" else "exited"
         with pytest.raises(error, match=match) as failure:
             await bench.measure_mode("http", options, directory)
-        if fault in {"write", "replace"} and isinstance(failure.value, RuntimeError):
-            assert "exited" in str(failure.value)
+        if fault in {"write", "replace"}:
+            assert observed["process"].returncode not in (None, 0)
         if fault in {"exit", "write", "replace"}:
             assert not (directory / "ready.json").exists()
         if fault == "exit":

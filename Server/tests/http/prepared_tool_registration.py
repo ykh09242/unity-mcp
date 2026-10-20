@@ -10,15 +10,26 @@ import pytest
 from fastmcp import FastMCP
 from fastmcp.tools.base import Tool
 from fastmcp.tools.function_tool import FunctionTool
+from pydantic import Field
 from pydantic.fields import FieldInfo
 
 from services.tools import register_all_tools
 
 
+# Field's general metadata uses identity equality, unlike its frozen constraints.
+# Obtain the type through the public constructor without importing SDK internals.
+_GENERAL_METADATA_TYPE = type(Field(pattern="").metadata[0])
+
+
 def _annotation_state(value) -> tuple:
     """Snapshot mutable Field metadata without comparing copied typing aliases by identity."""
     if isinstance(value, FieldInfo):
-        return (value.asdict(),)
+        data = value.asdict()
+        data["metadata"] = [
+            (type(item), vars(item).copy()) if type(item) is _GENERAL_METADATA_TYPE else item
+            for item in data["metadata"]
+        ]
+        return (data,)
     origin = get_origin(value)
     if origin is not None:
         return origin, tuple(_annotation_state(argument) for argument in get_args(value))
@@ -59,7 +70,7 @@ def _wrapper_state(fn: FunctionType, depth: int = 0) -> tuple | None:
     )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def prepared_tool_factory() -> Callable[..., FunctionTool]:
     """Keep private templates out of apps and fall back for changed declarations/options."""
     original = Tool.from_function

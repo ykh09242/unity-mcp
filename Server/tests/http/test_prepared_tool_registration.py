@@ -2,9 +2,11 @@
 
 from functools import wraps
 import json
+from typing import Annotated
 
 import anyio
 import pytest
+from pydantic import Field
 from fastmcp import Client, FastMCP
 from fastmcp.tools.base import Tool
 from starlette.testclient import TestClient
@@ -13,7 +15,6 @@ import main
 from core.config import config
 from services import tools
 from services.tools import run_tests
-from tests.http.prepared_tool_registration import prepared_tool_factory
 
 
 def test_prepared_registration_keeps_public_apps_and_descriptors_isolated(
@@ -143,3 +144,45 @@ def test_prepared_registration_reparses_behavior_changing_wrappers(
     result = anyio.run(invoke)
     # Then the new wrapper executes instead of a cached wrapper for the old declaration.
     assert json.loads(result.content[0].text) == {"changed_wrapper": True}
+
+
+def test_prepared_registration_reuses_patterns_and_reparses_changed_constraints(monkeypatch):
+    from tests.http import prepared_tool_registration as prepared
+
+    constraint = Field(pattern="^before$")
+
+    def constrained(value: Annotated[str, constraint]) -> str:
+        return value
+
+    def register(server, **_kwargs):
+        # Match production registration: a fresh wrapper around the same declaration.
+        @wraps(constrained)
+        def wrapped(value):
+            return constrained(value)
+
+        server.tool(wrapped)
+
+    original = Tool.from_function
+    parsed = []
+
+    def parse(fn, **kwargs):
+        parsed.append(fn)
+        return original(fn, **kwargs)
+
+    monkeypatch.setattr(prepared, "register_all_tools", register)
+    monkeypatch.setattr(Tool, "from_function", parse)
+    factory = prepared.prepared_tool_factory.__wrapped__()
+    monkeypatch.setattr(Tool, "from_function", factory)
+    first = FastMCP("first-pattern")
+    register(first)
+    before = anyio.run(first.get_tool, "constrained")
+    assert len(parsed) == 1, "Unchanged field metadata must not rebuild the schema"
+    assert before.parameters["properties"]["value"]["pattern"] == "^before$"
+
+    constraint.metadata[0].pattern = "^after$"
+    second = FastMCP("changed-pattern")
+    register(second)
+    after = anyio.run(second.get_tool, "constrained")
+    assert len(parsed) == 2, "Changed constraints must use the real SDK parser"
+    assert after.parameters["properties"]["value"]["pattern"] == "^after$"
+    assert before.parameters["properties"]["value"]["pattern"] == "^before$"

@@ -46,8 +46,23 @@ Prepare the locked development environment as described in [Dev Setup](./dev-set
 ```bash
 uv run --locked --extra dev python ../tools/lint_python.py
 uv run --locked --extra dev pytest tests/test_manage_material.py -v -W error
-uv run --locked --extra dev pytest tests/ -v -W error
+uv run --locked --extra dev pytest tests/ -n 4 --dist=loadfile --max-worker-restart=0 -q -W error
 ```
+
+The HTTP suite runs in its own real-SDK subprocess so unit-test SDK stubs cannot
+leak into transport checks. Run the normal wrapper from `Server/`:
+
+```bash
+uv run --locked --extra dev pytest tests/test_http_security.py -q -W error
+```
+
+The child uses four workers with complete files kept together. Each worker reuses
+prepared tool-schema templates, but each server receives deep copies and fresh
+session/authentication state. Schema changes invalidate the prepared entry. The
+wrapper's 180-second deadline and individual request deadlines remain unchanged.
+CI also runs the server and tooling suites on four workers and starts measured
+long-running files early. Keep the two suites in separate pytest processes because
+both contain a package named `tests`.
 
 From the repository root, using that prepared environment:
 
@@ -57,9 +72,9 @@ uv run --directory Server --locked --extra dev pytest ../tools/tests/test_update
 
 Pylint checks all server sources and tests, repository tools and their tests, `mcp_source.py`, and `.github/scripts`. The shared policy in `Server/pyproject.toml` enables all error/fatal diagnostics plus selected correctness warnings, including mutable defaults, loop closures, unreachable code and invalid format strings. Formatting, naming and complexity rules are outside this check. Confirmed framework/platform inference limitations and intentional test fixtures have local, explained suppressions; do not globally disable error categories to make a change pass.
 
-The lint entry point runs the server and repository tooling in separate processes with explicit source roots because both contain a package named `tests`. It checks both groups and exits nonzero if either fails. CI enforces this check on the newer interpreter; its analysis targets Python 3.11 and the test matrix still covers both interpreters. There is no warning-only phase, score threshold or saved diagnostic baseline.
+The lint entry point runs the server and repository tooling in separate processes with explicit source roots because both contain a package named `tests`. It checks both groups and exits nonzero if either fails. CI enforces this check on the newer interpreter; its analysis targets Python 3.11 and the test matrix covers every supported minor from Python 3.11 through 3.15. There is no warning-only phase, score threshold or saved diagnostic baseline.
 
-CI tests the Python 3.11 support floor and a newer interpreter with locked dependencies. It also installs the candidate server without the lock and checks real tool/resource registration. The pinned distribution gets cold-cache and offline registration checks on Windows, macOS and Linux: `--help` alone does not exercise lazy dependency imports. These checks do not start a listener or connect to Unity. Most Server tests exercise controlled fixtures; a directory named `integration` does not prove live Unity/provider execution. Keep external scenarios explicit and secrets out of test output. Coverage upload is upstream-only; fork jobs retain test artifacts instead.
+CI tests Python 3.11 through 3.15 with locked dependencies. It also installs the candidate server without the lock and checks real tool/resource registration. The pinned distribution gets cold-cache and offline registration checks on Windows, macOS and Linux: `--help` alone does not exercise lazy dependency imports. These checks do not start a listener or connect to Unity. Most Server tests exercise controlled fixtures; a directory named `integration` does not prove live Unity/provider execution. Keep external scenarios explicit and secrets out of test output. Coverage upload is upstream-only; fork jobs retain test artifacts instead.
 
 ## Unity compile versus runtime
 

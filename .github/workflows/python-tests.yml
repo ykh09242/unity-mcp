@@ -58,9 +58,9 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: "0.13.0"
+          version: "0.13.3"
           python-version: "3.11"
           enable-cache: false
 
@@ -113,9 +113,9 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: "0.13.0"
+          version: "0.13.3"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-suffix: python-${{ matrix.python-version }}
@@ -158,8 +158,8 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          # Start the measured long HTTP child early; keep complete files on two workers.
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
+          # Start the measured long HTTP child early; keep complete files on four workers.
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20 --cov --cov-report=xml --cov-report=html --cov-report=term
 
       - name: Run server tests
         if: matrix.suite == 'server' && matrix.python-version != '3.14'
@@ -168,7 +168,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" pytest tests/ -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=test_http_security.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Run local harness unit tests (hermetic, no Unity)
         if: matrix.suite == 'tools'
@@ -176,7 +176,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -n 2 --dist=loadfile --max-worker-restart=0 -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=tools/tests/test_bench_transport.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -198,7 +198,7 @@ jobs:
           TIMING_SUITE: ${{ matrix.suite }}
         run: |
           cd Server
-          options=(--workers 2)
+          options=(--workers 4)
           if [ "$TIMING_SUITE" = server ] && [ "$TIMING_PYTHON" = 3.14 ]; then options+=(--coverage); fi
           uv run --python "$TIMING_PYTHON" --locked --extra dev python ../tools/ci_test_performance.py snapshot \
             --junit test-results.xml --nested-junit test-results-http.xml \
@@ -207,7 +207,7 @@ jobs:
             --output "../.tmp/test-timings/$TIMING_PYTHON-$TIMING_SUITE.json"
 
       - name: Upload compact timing snapshot
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         continue-on-error: true
         with:
@@ -217,7 +217,7 @@ jobs:
           retention-days: ${{ job.status == 'success' && 7 || 30 }}
 
       - name: Upload test results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: pytest-results-${{ matrix.python-version }}-${{ matrix.suite }}

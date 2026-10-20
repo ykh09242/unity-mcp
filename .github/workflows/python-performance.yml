@@ -31,7 +31,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.ref || github.sha }}
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: pytest-timing-*
           path: .tmp/test-timings
@@ -43,7 +43,7 @@ jobs:
           python3 tools/ci_test_performance.py report --current .tmp/test-timings \
             --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
             --workload python --output .tmp/performance-report
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-test-timings
           path: .tmp/performance-report/
@@ -57,7 +57,7 @@ jobs:
         run: |
           python3 tools/ci_test_performance.py stages --repository "$GITHUB_REPOSITORY" \
             --run-id "$GITHUB_RUN_ID" --output .tmp/ci-stage-timings
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && inputs.include_ci_stages
         with:
           name: ci-stage-timings

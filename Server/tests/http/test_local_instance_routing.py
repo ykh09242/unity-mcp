@@ -11,7 +11,6 @@ from main import create_mcp_server
 from services.custom_tool_service import CustomToolService
 from transport.models import SessionDetails, SessionList
 from transport.plugin_hub import PluginHub
-from tests.http.prepared_tool_registration import prepared_tool_factory
 
 
 @pytest.fixture

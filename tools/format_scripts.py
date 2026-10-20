@@ -13,7 +13,7 @@ import tempfile
 from typing import Final
 
 ROOT: Final = Path(__file__).resolve().parents[1]
-RUFF_VERSION: Final = "0.17.0"
+RUFF_VERSION: Final = "0.17.1"
 CSHARPIER_VERSION: Final = "1.3.0"
 PYTHON_SUFFIXES: Final = frozenset({".py", ".pyi"})
 CSHARP_SUFFIXES: Final = frozenset({".cs", ".csx"})

@@ -9,7 +9,6 @@ import pytest
 from services.api_key_service import ApiKeyService, ValidationResult
 from services.credential_lease import CredentialLeaseError
 from services.operation_permissions import OperationPermissionError
-from tests.http.prepared_tool_registration import prepared_tool_factory  # pylint: disable=unused-import
 from tests.http.test_mcp_catalog_subscription_limits import (
     ListenStream,
     PluginStream,

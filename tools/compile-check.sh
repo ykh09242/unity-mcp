@@ -115,9 +115,12 @@ mkdir -p "$OUT" && OUT=$(winpath "$OUT")
 LIBCACHE="$UNITY_DATA/Resources/PackageManager/ProjectTemplates/libcache"
 UNITY_VERSION=${UNITY_VERSION:-}
 [ -n "$UNITY_VERSION" ] || die "UNITY_VERSION must be set (e.g. 2021.3.45f2)"
-ver_major=$(echo "$UNITY_VERSION" | cut -d. -f1)
-ver_minor=$(echo "$UNITY_VERSION" | cut -d. -f2)
-ver_patch=$(echo "$UNITY_VERSION" | cut -d. -f3 | sed 's/[a-z].*//')
+ver_major=${UNITY_VERSION%%.*}
+version_tail=${UNITY_VERSION#*.}
+ver_minor=${version_tail%%.*}
+ver_patch=${version_tail#*.}
+ver_patch=${ver_patch%%.*}
+ver_patch=${ver_patch%%[a-z]*}
 
 compiler_failure() {
   echo "Compiler distribution candidates (diagnostic only):" >&2
@@ -202,25 +205,25 @@ version_defines() {
   for rel in $UNITY_RELEASES; do
     rM=${rel%%.*}; rm=${rel##*.}
     if [ "$rM" -lt "$ver_major" ] || { [ "$rM" -eq "$ver_major" ] && [ "$rm" -le "$ver_minor" ]; }; then
-      echo "UNITY_${rM}_${rm}_OR_NEWER"
+      echo "-define:UNITY_${rM}_${rm}_OR_NEWER"
     fi
   done
   # A newly released minor also defines its own OR_NEWER symbol before the static
   # historical ladder is refreshed (including alpha and beta Editor versions).
   case " $UNITY_RELEASES " in
     *" $ver_major.$ver_minor "*) ;;
-    *) echo "UNITY_${ver_major}_${ver_minor}_OR_NEWER" ;;
+    *) echo "-define:UNITY_${ver_major}_${ver_minor}_OR_NEWER" ;;
   esac
-  echo "UNITY_${ver_major}"
-  echo "UNITY_${ver_major}_${ver_minor}"
-  [ -n "$ver_patch" ] && echo "UNITY_${ver_major}_${ver_minor}_${ver_patch}"
+  echo "-define:UNITY_${ver_major}"
+  echo "-define:UNITY_${ver_major}_${ver_minor}"
+  [ -n "$ver_patch" ] && echo "-define:UNITY_${ver_major}_${ver_minor}_${ver_patch}"
 }
 
 platform_defines() {
   case "$1" in
-    win)   printf '%s\n' UNITY_EDITOR_WIN   UNITY_STANDALONE_WIN   PLATFORM_STANDALONE_WIN ;;
-    osx)   printf '%s\n' UNITY_EDITOR_OSX   UNITY_STANDALONE_OSX   PLATFORM_STANDALONE_OSX ;;
-    linux) printf '%s\n' UNITY_EDITOR_LINUX UNITY_STANDALONE_LINUX PLATFORM_STANDALONE_LINUX ;;
+    win)   printf '%s\n' -define:UNITY_EDITOR_WIN -define:UNITY_STANDALONE_WIN -define:PLATFORM_STANDALONE_WIN ;;
+    osx)   printf '%s\n' -define:UNITY_EDITOR_OSX -define:UNITY_STANDALONE_OSX -define:PLATFORM_STANDALONE_OSX ;;
+    linux) printf '%s\n' -define:UNITY_EDITOR_LINUX -define:UNITY_STANDALONE_LINUX -define:PLATFORM_STANDALONE_LINUX ;;
     *) die "unknown platform '$1' (expected win|osx|linux)" ;;
   esac
 }
@@ -282,7 +285,8 @@ load_assembly_sources() {
 # platform suffix in the filename would make Runtime's internals invisible to Editor.
 compile() {
   local name="$1" srcdir="$2" platform="$3" manifest="$4"; shift 4
-  local dir="$OUT/$platform"; mkdir -p "$dir"
+  local dir="$OUT/$platform"
+  [ -d "$dir" ] || mkdir -p "$dir" || return 1
   local rsp="$dir/$name.rsp"
   local missing=0 nrefs=0 nsrc=0 sources
   local bcl="$REFS_ROOT/BCL/Editor.txt"
@@ -330,11 +334,10 @@ compile() {
     case "$name" in
       UnityEngine.UI|UnityEditor.UI)
         # Module versionDefines from the verified bundled uGUI 7.0.0 asmdefs.
-        printf '%s\n' PACKAGE_PHYSICS PACKAGE_PHYSICS2D PACKAGE_ANIMATION \
-          | while read -r d; do echo "-define:$d"; done ;;
+        printf '%s\n' -define:PACKAGE_PHYSICS -define:PACKAGE_PHYSICS2D -define:PACKAGE_ANIMATION ;;
     esac
     if [ "$name" = UnityEngine.UI ]; then
-      printf '%s\n' PACKAGE_TILEMAP PACKAGE_UITOOLKIT | while read -r d; do echo "-define:$d"; done
+      printf '%s\n' -define:PACKAGE_TILEMAP -define:PACKAGE_UITOOLKIT
     fi
     # ${var%$'\r'} strips the CR a core.autocrlf checkout appends to every line: a CR inside
     # -define:FOO silently defines the wrong symbol, and inside a LIBCACHE/ name it makes
@@ -347,11 +350,10 @@ compile() {
       [ -n "$d" ] && echo "-define:$d"
     done < "$REPO/tools/compile-defines.txt"
     if [ "$ver_major.$ver_minor" = 7000.0 ]; then
-      printf '%s\n' ENABLE_CORECLR NET_STANDARD_2_1 NET_STANDARD NETSTANDARD2_1 NETSTANDARD \
-        | while read -r d; do echo "-define:$d"; done
+      printf '%s\n' -define:ENABLE_CORECLR -define:NET_STANDARD_2_1 -define:NET_STANDARD -define:NETSTANDARD2_1 -define:NETSTANDARD
     fi
-    version_defines            | while read -r d; do echo "-define:$d"; done
-    platform_defines "$platform" | while read -r d; do echo "-define:$d"; done
+    version_defines
+    platform_defines "$platform"
     for reference_manifest in "$bcl" "$manifest"; do
       while read -r entry; do
         entry=${entry%$'\r'}
@@ -379,7 +381,14 @@ compile() {
   fi
 
   echo "--- $name [$platform] : $nsrc sources, $nrefs refs ---"
-  "$DOTNET" "$CSC" "@$rsp" 2>&1 | grep -vE '^(Microsoft \(R\)|Copyright)' | sed '/^$/d'
+  # Filter the compiler stream with shell builtins; per-assembly grep/sed forks
+  # are expensive on Windows. Keep the compiler's exit status.
+  "$DOTNET" "$CSC" "@$rsp" 2>&1 | while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'Microsoft (R)'*|Copyright*) ;;
+      *) printf '%s\n' "$line" ;;
+    esac
+  done
   local rc=${PIPESTATUS[0]}
   if [ "$rc" -ne 0 ] || [ ! -f "$dir/$name.dll" ]; then
     echo "::error::$name failed to compile for $platform"

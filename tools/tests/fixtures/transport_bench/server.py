@@ -172,14 +172,25 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
             abandon_on_cancel=False,
         )
 
+    readiness_failure: Exception | None = None
+    http_server: uvicorn.Server | None = None
+
     async def ready() -> None:
+        nonlocal readiness_failure
         await state.registered.wait()
         ready_path = Path(args.directory) / "ready.json"
         pending_path = ready_path.with_name("ready.json.pending")
-        pending_path.write_text(
-            json.dumps({"endpoint": endpoint, "pid": os.getpid()}), encoding="utf-8"
-        )
-        pending_path.replace(ready_path)
+        try:
+            pending_path.write_text(
+                json.dumps({"endpoint": endpoint, "pid": os.getpid()}), encoding="utf-8"
+            )
+            pending_path.replace(ready_path)
+        except Exception as error:
+            readiness_failure = error
+            # A post-startup lifespan error does not stop Uvicorn's listener by itself.
+            if http_server is not None:
+                http_server.should_exit = True
+            raise
 
     @asynccontextmanager
     async def lifespan(_server: FastMCP) -> AsyncIterator[None]:
@@ -419,12 +430,14 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
             app.routes.append(WebSocketRoute("/hub", PluginHub))
             if resources is not None:
                 app.add_middleware(ResourceHold, contract=resources)
-            server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
+            http_server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
             try:
-                await server.serve(sockets=[listener])
+                await http_server.serve(sockets=[listener])
             finally:
                 if listener is not None:
                     listener.close()
+            if readiness_failure is not None:
+                raise RuntimeError("Owned HTTP readiness publication failed") from readiness_failure
 
 
 async def main(args: argparse.Namespace) -> None:

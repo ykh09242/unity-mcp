@@ -10,7 +10,6 @@ import pytest
 import pytest_asyncio
 from starlette.websockets import WebSocket
 
-from tests.http.prepared_tool_registration import prepared_tool_factory
 from tests.http.test_plugin_session_targeting_and_eviction import hub_environment
 
 A_HASH = "a" * 16

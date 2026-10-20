@@ -12,7 +12,6 @@ from fastmcp import Client, Context, FastMCP
 from fastmcp.server.middleware import Middleware
 
 from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
-from tests.http.prepared_tool_registration import prepared_tool_factory  # pylint: disable=unused-import
 
 
 @asynccontextmanager

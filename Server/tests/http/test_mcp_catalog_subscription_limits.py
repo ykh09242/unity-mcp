@@ -15,7 +15,6 @@ from starlette.types import ASGIApp
 from core.config import config
 from core.local_auth import LOCAL_AUTH_HEADER
 from services.api_key_service import ApiKeyService, ValidationResult
-from tests.http.prepared_tool_registration import prepared_tool_factory  # pylint: disable=unused-import
 from tests.http.test_mcp_protocol_wire import _body, _headers
 from tests.http.test_request_body_limit import scope_for
 from transport.catalog_subscriptions import EDITOR_STATE_URI, SubscriptionAdmission, WatchScope

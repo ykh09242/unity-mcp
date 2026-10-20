@@ -239,7 +239,7 @@ For stdio, a producer finishing its SDK queue send does not imply that stdout
 has finished writing. A connection-owned delivery registry retains each charged
 result until the actual stdout write and flush complete. It preserves integer
 and string request IDs and the SDK's stdout descriptor protection. The adapter
-targets the verified FastMCP 4.1.0 / MCP 2.3.0 runner and fails clearly for an
+targets the verified FastMCP 4.1.1 / MCP 2.3.0 runner and fails clearly for an
 unsupported runner or stream shape; dependency upgrades must rerun its real
 subprocess and blocked-writer tests.
 

@@ -16,7 +16,6 @@ from core.config import config
 from core.local_auth import LOCAL_AUTH_HEADER
 from models.response_limits import MAX_RESPONSE_BYTES
 from mcp.shared.inbound import encode_header_value
-from tests.http.prepared_tool_registration import prepared_tool_factory  # pylint: disable=unused-import
 from tests.http.test_mcp_catalog_subscription_limits import hosted_catalog  # pylint: disable=unused-import
 from tests.http.test_mcp_protocol_wire import LEGACY_VERSION, _body, _headers, _message
 
