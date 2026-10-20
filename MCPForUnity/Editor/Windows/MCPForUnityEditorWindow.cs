@@ -880,6 +880,10 @@ namespace MCPForUnity.Editor.Windows
                     {
                         await RoslynInstaller.InstallAsync(interactive: true);
                     }
+                    catch (Exception)
+                    {
+                        // InstallAsync already reports the failure; keep the async UI boundary handled.
+                    }
                     finally
                     {
                         done();
@@ -1233,15 +1237,10 @@ namespace MCPForUnity.Editor.Windows
         private static void UninstallRoslyn()
         {
             string folder = System.IO.Path.Combine(Application.dataPath, "Plugins/Roslyn");
-            if (System.IO.Directory.Exists(folder))
-            {
-                System.IO.Directory.Delete(folder, true);
-                string metaPath = folder + ".meta";
-                if (System.IO.File.Exists(metaPath))
-                    System.IO.File.Delete(metaPath);
+            int removed = RoslynInstaller.UninstallOwned(folder);
+            if (removed > 0)
                 AssetDatabase.Refresh();
-                Debug.Log("[MCP] Roslyn DLLs removed from Assets/Plugins/Roslyn/");
-            }
+            Debug.Log($"[MCP] Removed {removed} owned Roslyn DLLs; unowned or modified files were preserved.");
         }
 
         private static Dictionary<string, string> GetInstalledUpmVersions()
