@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using Microsoft.Win32.SafeHandles;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
@@ -135,6 +139,96 @@ namespace MCPForUnityTests.Editor.Services
             Assert.That(File.ReadAllText(OwnedRelative(target, "Editor/marker.txt")), Is.EqualTo("replacement"));
         }
 
+        [Test]
+        public void FailedPayloadPreparationPreservesBothInstalledSubtrees()
+        {
+            string source = Owned("Incomplete");
+            WriteMarker(source, "new");
+            string target = MakePackage("Target", "old");
+            var method = typeof(PackageDeploymentService).GetMethod("CopyCoreFolders", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.Throws<TargetInvocationException>(() =>
+                method.Invoke(Service("Project", () => target, new Dictionary<string, string>()), new object[] { source, target })
+            );
+            Assert.That(File.ReadAllText(OwnedRelative(target, "Editor/marker.txt")), Is.EqualTo("old"));
+            Assert.That(File.ReadAllText(OwnedRelative(target, "Runtime/marker.txt")), Is.EqualTo("old"));
+        }
+
+        [Test]
+        public void DeploymentAndRestoreKeepMetadataAndBothCodeTreesTogether()
+        {
+            string source = MakePackage("Source", "new");
+            string target = MakePackage("Target", "old");
+            string oldMetadata = File.ReadAllText(OwnedRelative(target, "package.json"));
+            string newMetadata =
+                "{\"name\":\"com.ykh09242.unity-mcp\",\"version\":\"2.0.0\",\"mcpServerSource\":\"https://github.com/ykh09242/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server\",\"dependencies\":{\"example\":\"2.0.0\"}}";
+            File.WriteAllText(OwnedRelative(source, "package.json"), newMetadata);
+            var service = Service("Project", () => target, new Dictionary<string, string>());
+            service.SetStoredSourcePath(source);
+            Assert.That(service.DeployFromStoredSource().Success, Is.True);
+            Assert.That(File.ReadAllText(OwnedRelative(target, "package.json")), Is.EqualTo(newMetadata));
+            Assert.That(File.ReadAllText(OwnedRelative(target, "Runtime/marker.txt")), Is.EqualTo("new"));
+            Assert.That(service.RestoreLastBackup().Success, Is.True);
+            Assert.That(File.ReadAllText(OwnedRelative(target, "package.json")), Is.EqualTo(oldMetadata));
+            Assert.That(File.ReadAllText(OwnedRelative(target, "Editor/marker.txt")), Is.EqualTo("old"));
+        }
+
+        [Test]
+        public void CopyFailureAfterOneStagedSubtreePreservesCompleteTarget()
+        {
+            string target = MakePackage("Target", "old");
+            var original = Directory.GetFiles(target, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
+            Assert.Throws<IOException>(() =>
+                GuardedFileSystem.ReplaceDirectory(
+                    target,
+                    stage =>
+                    {
+                        Directory.CreateDirectory(Path.Combine(stage, "Editor"));
+                        File.WriteAllText(Path.Combine(stage, "Editor/marker.txt"), "new");
+                        throw new IOException("Runtime copy failed after Editor was staged");
+                    }
+                )
+            );
+            foreach (var pair in original)
+                CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key));
+            Assert.IsEmpty(Directory.GetDirectories(_root, ".mcp-stage-*"));
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+
+        [Test]
+        public void BlockedFinalDirectoryRenameRollsBackCompleteTarget()
+        {
+            if (Environment.OSVersion.Platform != PlatformID.Win32NT)
+                Assert.Ignore("Windows directory sharing semantics are required.");
+            string target = MakePackage("Target", "old");
+            string source = MakePackage("Source", "new");
+            var original = Directory.GetFiles(target, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
+            SafeFileHandle held = null;
+            try
+            {
+                Assert.Throws<IOException>(() =>
+                    GuardedFileSystem.ReplaceDirectory(
+                        target,
+                        stage =>
+                        {
+                            GuardedFileSystem.CopyDirectory(source, stage);
+                            // Keep the fully staged directory readable, but deny its final rename.
+                            held = CreateFileW(stage, 0x80000000, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+                            Assert.IsFalse(held.IsInvalid);
+                        }
+                    )
+                );
+                foreach (var pair in original)
+                    CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key));
+                Assert.IsEmpty(Directory.GetDirectories(_root, ".mcp-previous-*"), "The previous target must have been restored.");
+            }
+            finally
+            {
+                held?.Dispose();
+            }
+        }
+
         private PackageDeploymentService Service(string project, Func<string> target, Dictionary<string, string> prefs) =>
             new PackageDeploymentService(
                 Owned(project),
@@ -150,7 +244,10 @@ namespace MCPForUnityTests.Editor.Services
             WriteMarker(target, label);
             Directory.CreateDirectory(OwnedRelative(target, "Runtime"));
             File.WriteAllText(OwnedRelative(target, "Runtime/marker.txt"), label);
-            File.WriteAllText(OwnedRelative(target, "package.json"), "{\"name\":\"com.ykh09242.unity-mcp\",\"version\":\"1.0.0\"}");
+            File.WriteAllText(
+                OwnedRelative(target, "package.json"),
+                "{\"name\":\"com.ykh09242.unity-mcp\",\"version\":\"1.0.0\",\"mcpServerSource\":\"https://github.com/ykh09242/unity-mcp/archive/0123456789abcdef0123456789abcdef01234567.zip#subdirectory=Server\"}"
+            );
             return target;
         }
 

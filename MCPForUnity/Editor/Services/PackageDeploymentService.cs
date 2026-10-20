@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using PackageInfo = UnityEditor.PackageManager.PackageInfo;
@@ -171,7 +172,7 @@ namespace MCPForUnity.Editor.Services
                 Write(EditorPrefKeys.PackageDeployLastSourcePath, sourcePath);
 
                 EditorUtility.DisplayProgressBar("Deploy MCP for Unity", "Replacing package contents...", 0.7f);
-                CopyCoreFolders(sourcePath, targetPath);
+                RunPackageReplacement(() => CopyCoreFolders(sourcePath, targetPath));
 
                 AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
                 return Success("Deployment completed.", sourcePath, targetPath, backupPath);
@@ -200,7 +201,8 @@ namespace MCPForUnity.Editor.Services
             try
             {
                 EditorUtility.DisplayProgressBar("Restore MCP for Unity", "Restoring backup...", 0.5f);
-                ReplaceDirectory(backupPath, targetPath);
+                ValidateSource(backupPath);
+                RunPackageReplacement(() => ReplaceDirectory(backupPath, targetPath));
 
                 AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
                 return Success("Restore completed.", null, targetPath, backupPath);
@@ -230,41 +232,52 @@ namespace MCPForUnity.Editor.Services
                 var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
                 return SamePath(target, recordedTarget)
                     && canonicalBackup.StartsWith(backupRoot + Path.DirectorySeparatorChar, comparison)
-                    && Directory.Exists(canonicalBackup);
+                    && Directory.Exists(GuardedFileSystem.CheckPath(canonicalBackup))
+                    && Directory.Exists(GuardedFileSystem.CheckPath(target));
             }
-            catch (Exception ex) when (ex is ArgumentException || ex is IOException || ex is NotSupportedException)
+            catch (Exception ex) when (ex is ArgumentException || ex is IOException || ex is NotSupportedException || ex is InvalidOperationException)
             {
                 return false;
             }
         }
 
+        private static void RunPackageReplacement(Action replace)
+        {
+            EditorApplication.LockReloadAssemblies();
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                replace();
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+                EditorApplication.UnlockReloadAssemblies();
+            }
+        }
+
         private void CopyCoreFolders(string sourceRoot, string targetRoot)
         {
-            string sourceEditor = Path.Combine(sourceRoot, "Editor");
-            string sourceRuntime = Path.Combine(sourceRoot, "Runtime");
-
-            ReplaceDirectory(sourceEditor, Path.Combine(targetRoot, "Editor"));
-            ReplaceDirectory(sourceRuntime, Path.Combine(targetRoot, "Runtime"));
+            ValidateSource(sourceRoot);
+            ReplaceDirectory(sourceRoot, targetRoot);
         }
 
         private static void ReplaceDirectory(string source, string destination)
         {
-            if (Directory.Exists(destination))
-            {
-                FileUtil.DeleteFileOrDirectory(destination);
-            }
-
-            FileUtil.CopyFileOrDirectory(source, destination);
+            GuardedFileSystem.CheckTree(source);
+            GuardedFileSystem.ReplaceDirectory(destination, stage => GuardedFileSystem.CopyDirectory(source, stage));
         }
 
         private string CreateBackup(string targetPath, string backupRoot)
         {
+            GuardedFileSystem.CheckTree(targetPath);
+            GuardedFileSystem.CheckPath(backupRoot);
             Directory.CreateDirectory(backupRoot);
 
             string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
             string backupPath = Path.Combine(backupRoot, $"backup_{stamp}_{Guid.NewGuid():N}");
 
-            FileUtil.CopyFileOrDirectory(targetPath, backupPath);
+            GuardedFileSystem.CopyDirectory(targetPath, backupPath);
             return backupPath;
         }
 
@@ -302,6 +315,26 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 return message;
+            }
+
+            try
+            {
+                GuardedFileSystem.CheckTree(sourcePath);
+                string manifest = Path.Combine(sourcePath, "package.json");
+                if (!File.Exists(manifest) || new FileInfo(manifest).Length > 1024 * 1024)
+                    throw new ArgumentException("A bounded package.json is required.");
+                var metadata = JObject.Parse(File.ReadAllText(manifest));
+                if (metadata.Value<string>("name") != "com.ykh09242.unity-mcp" || string.IsNullOrWhiteSpace(metadata.Value<string>("version")))
+                    throw new ArgumentException("Source package identity or version is invalid.");
+                AssetPathUtility.GetPinnedServerSource(metadata);
+                if (metadata["dependencies"] != null && !(metadata["dependencies"] is JObject))
+                    throw new ArgumentException("Package dependencies must be an object.");
+            }
+            catch (Exception ex)
+            {
+                if (throwOnError)
+                    throw new ArgumentException("Invalid package source: " + ex.Message, ex);
+                return "Invalid package source: " + ex.Message;
             }
 
             return null;
