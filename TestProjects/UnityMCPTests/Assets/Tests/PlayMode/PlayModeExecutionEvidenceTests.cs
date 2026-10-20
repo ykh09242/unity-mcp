@@ -10,6 +10,58 @@ namespace MCPForUnityTests.PlayMode
     [Category("playmode_evidence")]
     public class PlayModeExecutionEvidenceTests
     {
+#if UNITY_EDITOR
+        [Serializable]
+        private class Readiness
+        {
+            public EditorReadiness editor;
+            public ActivityReadiness activity;
+        }
+
+        [Serializable]
+        private class EditorReadiness
+        {
+            public PlayReadiness play_mode;
+        }
+
+        [Serializable]
+        private class PlayReadiness
+        {
+            public bool is_playing;
+            public bool is_changing;
+        }
+
+        [Serializable]
+        private class ActivityReadiness
+        {
+            public string phase;
+        }
+
+        [Test]
+        public void StablePlayAndPauseAreNotTransitions()
+        {
+            Assert.That(EditorApplication.isPlaying, Is.True);
+            var cache = Type.GetType("MCPForUnity.Editor.Services.EditorStateCache, MCPForUnity.Editor", true);
+            var build = cache.GetMethod("BuildSnapshot", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            bool paused = EditorApplication.isPaused;
+            try
+            {
+                foreach (bool pause in new[] { false, true })
+                {
+                    EditorApplication.isPaused = pause;
+                    var snapshot = JsonUtility.FromJson<Readiness>(build.Invoke(null, new object[] { "play-readiness-evidence" }).ToString());
+                    Assert.That(snapshot.editor.play_mode.is_playing, Is.True);
+                    Assert.That(snapshot.editor.play_mode.is_changing, Is.False);
+                    Assert.That(snapshot.activity.phase, Is.Not.EqualTo("playmode_transition"));
+                }
+            }
+            finally
+            {
+                EditorApplication.isPaused = paused;
+            }
+        }
+#endif
+
         [Test]
         public void RequiredBodyRunsWithRequestedReloadConfiguration()
         {
