@@ -447,6 +447,9 @@ async def test_registered_tool_reports_capacity_through_public_sdk(admission_hub
 
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "transport_mode", "http")
+    # SDK scheduling is outside the admission latency contract. The pending/send
+    # assertions prove refusal and recovery; this timeout only bounds a deadlock.
+    sdk_watchdog_seconds = 10
     mcp = create_mcp_server(False)
     async with Client(mcp) as client:
         PluginHub.configure(admission_hub, mcp=mcp)
@@ -463,7 +466,8 @@ async def test_registered_tool_reports_capacity_through_public_sdk(admission_hub
         try:
             before = socket.send_json.await_count
             response = await asyncio.wait_for(
-                client.call_tool("run_tests", {"clear_stuck": True, "unity_instance": "a"}), 0.5
+                client.call_tool("run_tests", {"clear_stuck": True, "unity_instance": "a"}),
+                sdk_watchdog_seconds,
             )
             result = json.loads(response.content[0].text)
             assert result["success"] is False
@@ -484,7 +488,8 @@ async def test_registered_tool_reports_capacity_through_public_sdk(admission_hub
 
         socket.send_json.side_effect = complete
         response = await asyncio.wait_for(
-            client.call_tool("run_tests", {"clear_stuck": True, "unity_instance": "a"}), 0.5
+            client.call_tool("run_tests", {"clear_stuck": True, "unity_instance": "a"}),
+            sdk_watchdog_seconds,
         )
         assert json.loads(response.content[0].text)["success"] is True
         assert PluginHub._pending == {}
