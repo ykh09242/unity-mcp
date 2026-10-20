@@ -152,7 +152,7 @@ available.
 
 Tasks are disabled by default. Set `UNITY_MCP_TEST_WAIT_TASKS_DIR` in the HTTP server process environment to a dedicated private journal directory, then restart. The normal launcher reads it only for `--transport http`; stdio and the local `unity-mcp` control CLI do not expose this extension. Existing local-token or hosted API-key authentication still applies.
 
-This adapter requires the locked MCP SDK **2.3.0** and FastMCP **4.1.0**. A client must use protocol **2026-07-28**, advertise `io.modelcontextprotocol/tasks` in its per-request `io.modelcontextprotocol/clientCapabilities.extensions`, and support `resultType: "task"` and `tasks/get`, `tasks/update`, and `tasks/cancel`. Confirm the extension in `server/discover`. Unsupported SDK hooks or an unavailable journal leave Tasks unadvertised and ordinary calls available.
+This adapter requires the locked MCP SDK **2.3.0** and FastMCP **4.1.1**. A client must use protocol **2026-07-28**, advertise `io.modelcontextprotocol/tasks` in its per-request `io.modelcontextprotocol/clientCapabilities.extensions`, and support `resultType: "task"` and `tasks/get`, `tasks/update`, and `tasks/cancel`. Confirm the extension in `server/discover`. Unsupported SDK hooks or an unavailable journal leave Tasks unadvertised and ordinary calls available.
 
 Call the existing `get_test_job` with its `job_id`, an integer `wait_timeout` from 1 to 60, and `unity_instance` when routing requires it. Calls requesting details, failed tests, page size, or a cursor remain ordinary. An admitted eligible call returns a Task handle; use a Tasks-capable SDK to poll `tasks/get` with its `taskId` and matching encoded `Mcp-Name` header. The nested result preserves the ordinary tool result. `tasks/update` acknowledges the wait Task without changing native inputs. There is no separate `wait_for_test_job` tool; `run_tests` is unchanged.
 
@@ -168,7 +168,7 @@ Authenticated local clients share the journal installation's nonsecret owner ide
 
 `UNITY_MCP_SCENE_LOAD_INPUTS=1` enables an optional HTTP input round for the built-in
 `manage_scene(action="load")` when no `name`, `path`, or `build_index` was supplied.
-It is disabled by default. The reviewed MCP 2.3.0/FastMCP 4.1.0 APIs and protocol
+It is disabled by default. The reviewed MCP 2.3.0/FastMCP 4.1.1 APIs and protocol
 2026-07-28 are required; the client must support `resultType: "input_required"`
 and form elicitation. Local and hosted HTTP retain their existing authentication
 and instance-selection rules. Unsupported clients, stdio, unavailable SDK hooks,
@@ -198,7 +198,7 @@ any particular host renders the form.
 
 ## Pinned Unity guidance over MCP
 
-On the reviewed MCP SDK **2.3.0** and FastMCP **4.1.0**, the server automatically offers the final `io.modelcontextprotocol/skills` extension when its packaged snapshot validates. Modern **2026-07-28** clients can discover it with `server/discover`, enumerate `skills/list`, and look up `skills/get` with `uri: "skill://unity-mcp-orchestrator/SKILL.md"`. Each entry includes unchanged frontmatter and a complete file manifest with raw-byte SHA-256 digests and sizes. Read individual files on demand with `resources/read`; directory reads are not offered. Explicit legacy clients can read the same ordinary resources but cannot call the modern Skills methods.
+On the reviewed MCP SDK **2.3.0** and FastMCP **4.1.1**, the server automatically offers the final `io.modelcontextprotocol/skills` extension when its packaged snapshot validates. Modern **2026-07-28** clients can discover it with `server/discover`, enumerate `skills/list`, and look up `skills/get` with `uri: "skill://unity-mcp-orchestrator/SKILL.md"`. Each entry includes unchanged frontmatter and a complete file manifest with raw-byte SHA-256 digests and sizes. Read individual files on demand with `resources/read`; directory reads are not offered. Explicit legacy clients can read the same ordinary resources but cannot call the modern Skills methods.
 
 The server serves one immutable copy of the existing Unity skill, built from the package's `mcpSkillRevision` and included in the server distribution. It does not scan user skill directories, fetch guidance, install files, or activate a skill in the host. File bytes stay unchanged; both metadata methods retain zero/private cache hints. Local HTTP token and hosted authentication still apply; the guidance itself contains no tenant or Editor state and needs no running Editor.
 
