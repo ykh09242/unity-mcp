@@ -30,13 +30,30 @@ namespace MCPForUnity.Editor.Helpers
 
         private void OnEnable()
         {
-            EditorApplication.update -= Update;
-            scheduled = false;
+            Undo.undoRedoPerformed -= OnUndoRedo;
+            Undo.undoRedoPerformed += OnUndoRedo;
+            StopUpdating();
             if (entries.Count > 0)
                 Schedule();
         }
 
         private void OnDisable()
+        {
+            Undo.undoRedoPerformed -= OnUndoRedo;
+            StopUpdating();
+        }
+
+        private void OnUndoRedo()
+        {
+            // Undo can restore serialized ownership after an empty registry stopped
+            // polling; its nonserialized scheduling flag is not part of Undo state.
+            if (entries.Count > 0)
+                Schedule();
+            else
+                StopUpdating();
+        }
+
+        private void StopUpdating()
         {
             EditorApplication.update -= Update;
             scheduled = false;
@@ -69,7 +86,7 @@ namespace MCPForUnity.Editor.Helpers
                 || entry.Owner.sharedMaterials[entry.Slot] != entry.Material
             );
             if (entries.Count == 0)
-                OnDisable();
+                StopUpdating();
         }
 
         // The caller owns the Undo group and rolls it back if a later edit/readback fails.
@@ -94,9 +111,10 @@ namespace MCPForUnity.Editor.Helpers
                 return current;
             }
 
-            Undo.RegisterCompleteObjectUndo(this, undoLabel);
             var material = new Material(source) { name = source.name + " (MCP Instance)" };
             Undo.RegisterCreatedObjectUndo(material, undoLabel);
+            // Redo must recreate the material before restoring ownership references.
+            Undo.RegisterCompleteObjectUndo(this, undoLabel);
             Undo.RegisterCompleteObjectUndo(renderer, undoLabel);
             var slots = renderer.sharedMaterials;
             slots[slot] = material;

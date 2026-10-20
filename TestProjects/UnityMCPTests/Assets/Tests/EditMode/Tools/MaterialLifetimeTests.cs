@@ -140,6 +140,40 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(0, type.GetProperty("OwnedCount", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(store));
         }
 
+        [UnityEngine.TestTools.UnityTest]
+        public System.Collections.IEnumerator RedoAfterEmptyPruneRestartsOwnershipCleanup()
+        {
+            Command("set_render_state", new JObject { ["renderState"] = new JObject { ["render_queue"] = 2501 } });
+            yield return null;
+            Undo.FlushUndoRecordObjects();
+            Type type = typeof(ManageMaterial).Assembly.GetType("MCPForUnity.Editor.Helpers.MaterialLifetimeStore", true);
+            object store = type.GetProperty("instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy).GetValue(null);
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var prune = type.GetMethod("Prune", flags);
+            var scheduled = type.GetField("scheduled", flags);
+            Undo.PerformUndo();
+            yield return null;
+            Assert.AreEqual(source, renderer.sharedMaterials[1]);
+            prune.Invoke(store, null);
+            Assert.IsFalse((bool)scheduled.GetValue(store), "An empty registry must stop polling.");
+            Undo.PerformRedo();
+            yield return null;
+            Material restored = renderer.sharedMaterials[1];
+            generated.Add(restored);
+            Assert.AreEqual(2501, restored.renderQueue);
+            Assert.AreEqual(1, type.GetProperty("OwnedCount", flags).GetValue(store));
+            Assert.IsTrue((bool)scheduled.GetValue(store), "Redo must restart cleanup after restoring ownership entries.");
+            Command("set_render_state", new JObject { ["renderState"] = new JObject { ["render_queue"] = 2502 } });
+            Assert.AreEqual(restored, renderer.sharedMaterials[1], "The restored ownership must keep subsequent edits on the same material.");
+            AssertNativeInstanceCount(1);
+            UnityEngine.Object.DestroyImmediate(target);
+            target = null;
+            Undo.ClearAll();
+            prune.Invoke(store, null);
+            Assert.AreEqual(0, type.GetProperty("OwnedCount", flags).GetValue(store));
+            Assert.IsFalse((bool)scheduled.GetValue(store));
+        }
+
         private void AssertNativeInstanceCount(int expected)
         {
             Assert.AreEqual(
