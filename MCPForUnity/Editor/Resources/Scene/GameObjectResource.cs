@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -186,11 +187,12 @@ namespace MCPForUnity.Editor.Resources.Scene
                 var pagedComponents = allComponents.Skip(cursor).Take(pageSize).ToList();
 
                 var componentData = new List<object>();
+                var budget = new BoundedResponseJson.Budget();
                 foreach (var component in pagedComponents)
                 {
                     if (includeProperties)
                     {
-                        componentData.Add(GameObjectSerializer.GetComponentData(component));
+                        componentData.Add(GameObjectSerializer.GetComponentDataBounded(component, budget));
                     }
                     else
                     {
