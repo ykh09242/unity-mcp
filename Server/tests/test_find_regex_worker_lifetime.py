@@ -339,6 +339,9 @@ async def test_sdk_reports_busy_and_recovers_with_the_same_search_result(routing
         await asyncio.gather(*tasks, return_exceptions=True)
     assert routing.reads == 2
     gc.collect()
+    # A Future can publish its result before the executor drops its result frame.
+    # Observe bounded finalization instead of requiring same-turn destruction.
+    await until(lambda: not any(ref() is not None for ref in routing.refs))
     assert not any(ref() is not None for ref in routing.refs)
 
 
