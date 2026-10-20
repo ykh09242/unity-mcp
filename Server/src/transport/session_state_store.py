@@ -1,8 +1,9 @@
 """Bounded session storage with physical expiration and owned maintenance."""
 
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
+import asyncio
 import time
 
 import anyio
@@ -149,12 +150,16 @@ class SessionStateStore(BaseDestroyStore, BaseEnumerateKeysStore):
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator[None]:
         """Keep idle expiration owned by the server and clear it on shutdown."""
+        # FastMCP shields teardown inside its AsyncExitStack. An AnyIO cancel scope
+        # spanning this yield would then be exited beneath that newer scope.
+        # The server is asyncio-based: own, cancel and join a child task instead.
+        task = asyncio.create_task(self._maintain(), name="unity-session-state-maintenance")
         try:
-            async with anyio.create_task_group() as tasks:
-                tasks.start_soon(self._maintain)
-                try:
-                    yield
-                finally:
-                    tasks.cancel_scope.cancel()
+            yield
         finally:
-            self.clear()
+            task.cancel()
+            try:
+                with suppress(asyncio.CancelledError):
+                    await task
+            finally:
+                self.clear()

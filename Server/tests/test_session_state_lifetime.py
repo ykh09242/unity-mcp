@@ -162,3 +162,38 @@ async def test_unknown_collections_do_not_allocate_unbounded_setup_metadata():
             await store.put("key", {"value": 1}, collection=f"unknown-{number}")
     assert not store._setup_collection_complete
     assert not store._setup_collection_locks
+
+
+@pytest.mark.asyncio
+async def test_real_http_sdk_shielded_teardown_joins_session_maintenance(monkeypatch):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from fastmcp import FastMCP
+    from transport.session_state_store import SessionStateStore
+
+    store = SessionStateStore()
+    started = asyncio.Event()
+    tasks = []
+    maintain = store._maintain
+
+    async def observed_maintenance():
+        tasks.append(asyncio.current_task())
+        started.set()
+        await maintain()
+
+    monkeypatch.setattr(store, "_maintain", observed_maintenance)
+
+    @asynccontextmanager
+    async def lifespan(_server):
+        async with store.lifespan():
+            yield {}
+
+    server = FastMCP("session-state-lifecycle", lifespan=lifespan, session_state_store=store)
+    app = server.http_app()
+    async with app.router.lifespan_context(app):
+        await asyncio.wait_for(started.wait(), timeout=2)
+        await store.put("live:key", {"value": "live"}, ttl=3600)
+        assert store.retained_entries == 1
+    assert store.retained_entries == store.retained_bytes == 0
+    assert len(tasks) == 1
+    assert tasks[0].done()
