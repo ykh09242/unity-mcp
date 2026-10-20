@@ -29,12 +29,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (!AssetGenJobManager.IsAllowedResultExtension("image", Path.GetExtension(rel)))
                     return Fail(job, "Refusing to import a non-image file type.");
 
-                AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                if (!ImportFingerprintCache.IsUnchanged(rel, out string fingerprint))
+                    AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceSynchronousImport);
 
                 var importer = AssetImporter.GetAtPath(rel) as TextureImporter;
                 if (importer == null)
                     return Fail(job, "Unity did not create a TextureImporter for the generated image.");
 
+                bool changed =
+                    importer.textureType != (asSprite ? TextureImporterType.Sprite : TextureImporterType.Default)
+                    || importer.alphaIsTransparency != transparent
+                    || importer.sRGBTexture != isColor
+                    || (asSprite && (importer.spriteImportMode != SpriteImportMode.Single || importer.mipmapEnabled));
                 importer.textureType = asSprite ? TextureImporterType.Sprite : TextureImporterType.Default;
                 importer.alphaIsTransparency = transparent;
                 importer.sRGBTexture = isColor; // color maps sRGB; normal/roughness/metallic would be linear
@@ -43,7 +49,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     importer.spriteImportMode = SpriteImportMode.Single;
                     importer.mipmapEnabled = false;
                 }
-                importer.SaveAndReimport();
+                if (changed)
+                    importer.SaveAndReimport();
 
                 if (AssetDatabase.LoadAssetAtPath<Texture2D>(rel) == null)
                     return Fail(job, "Unity did not produce a usable Texture2D from the generated image after reimport.");
@@ -55,6 +62,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (string.IsNullOrEmpty(job.AssetGuid))
                     return Fail(job, "Imported the image but Unity did not register it as an asset.");
 
+                ImportFingerprintCache.Remember(rel, fingerprint);
                 if (job.State != AssetGenJobState.Failed)
                     job.State = AssetGenJobState.Done;
                 return job;

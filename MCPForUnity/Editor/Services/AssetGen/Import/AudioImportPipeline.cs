@@ -31,7 +31,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (!AssetGenJobManager.IsAllowedResultExtension("audio", Path.GetExtension(rel)))
                     return Fail(job, "Refusing to import a non-audio file type.");
 
-                AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                if (!ImportFingerprintCache.IsUnchanged(rel, out string fingerprint))
+                    AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceSynchronousImport);
                 ApplyAudioImporterSettings(rel);
                 if (AssetDatabase.LoadAssetAtPath<AudioClip>(rel) == null)
                     return Fail(job, "Audio import did not produce a usable AudioClip after reimport.");
@@ -41,6 +42,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (string.IsNullOrEmpty(job.AssetGuid))
                     return Fail(job, "Imported the audio but Unity did not register it as an asset.");
 
+                ImportFingerprintCache.Remember(rel, fingerprint);
                 if (job.State != AssetGenJobState.Failed)
                     job.State = AssetGenJobState.Done;
                 return job;
@@ -68,6 +70,9 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 s.loadType = AudioClipLoadType.CompressedInMemory; // medium track
             else
                 s.loadType = AudioClipLoadType.DecompressOnLoad; // short SFX one-shot
+            bool changed = importer.defaultSampleSettings.loadType != s.loadType || importer.forceToMono || importer.loadInBackground;
+            if (!changed)
+                return;
             importer.defaultSampleSettings = s;
 
             importer.forceToMono = false;
