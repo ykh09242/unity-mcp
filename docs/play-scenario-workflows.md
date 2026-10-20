@@ -419,3 +419,20 @@ without false added/removed rows, and rebinding to a different item reports remo
 and added identities. These IDs are comparison evidence, not editing handles.
 See [UI Toolkit target semantics](UI_TOOLKIT_TARGETS.md) for partial-map and selector
 limitations. Never use editable contents or credentials as explicit IDs.
+
+
+## Consume a completed JSON/JUnit export
+
+Suite and Player exports retain their fixed JSON and `junit.xml` filenames and publish
+`report.complete.json` last. The completion manifest records a generation ID and SHA-256
+for every member, including unchanged native `run.json` bytes. Old members are withdrawn
+before new members are published; interruption cannot leave a completed mixed pair. Failed
+publication restores the previous reports and completion manifest. A blocked rollback retains
+its private recovery directory and reports its path instead of discarding the originals.
+
+A consumer that can run concurrently with export must require the completion manifest,
+verify each member's hash, and re-read the unchanged manifest after reading all members.
+The server environment provides `cli.utils.play_scenario_artifact_io.read_completed_reports`
+for this contract; it raises `OSError` while a writer is active or a generation is incomplete
+or changes during the read. Retry after publication finishes. Missing members or a missing
+completion manifest are incomplete output, even when an older export used only fixed filenames.

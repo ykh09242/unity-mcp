@@ -376,5 +376,6 @@ def write_player_artifacts(
     # run.json is native evidence: preserve its exact bytes when it already exists.
     if not json_path.exists():
         reports["run.json"] = (json.dumps(raw, ensure_ascii=True, indent=2) + "\n").encode("utf-8")
-    publish_reports(directory, reports)
+    preserved = {"run.json": json_path.read_bytes()} if json_path.exists() else {}
+    publish_reports(directory, reports, preserved=preserved)
     return json_path, xml_path

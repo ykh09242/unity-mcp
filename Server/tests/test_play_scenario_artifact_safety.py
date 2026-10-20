@@ -101,3 +101,66 @@ def test_player_export_preserves_exact_native_bytes(tmp_path):
     json_path, xml_path = write_player_artifacts({"status": "succeeded"}, tmp_path)
     assert json_path.read_bytes() == original
     assert xml_path.read_bytes().startswith(b"<?xml")
+
+
+def test_publication_never_exposes_a_complete_mixed_pair(tmp_path, monkeypatch):
+    from cli.utils.play_scenario_artifact_io import publish_reports
+
+    publish_reports(tmp_path, {"suite.json": b"old", "junit.xml": b"old"})
+    replace = os.replace
+    observed = []
+
+    def observe(source, target):
+        result = replace(source, target)
+        json_path, xml_path = tmp_path / "suite.json", tmp_path / "junit.xml"
+        if json_path.exists() and xml_path.exists():
+            observed.append((json_path.read_bytes(), xml_path.read_bytes()))
+        return result
+
+    monkeypatch.setattr(os, "replace", observe)
+    publish_reports(tmp_path, {"suite.json": b"new", "junit.xml": b"new"})
+    assert all(first == second for first, second in observed)
+
+
+def test_manifest_is_last_and_restored_after_failed_commit(tmp_path, monkeypatch):
+    from cli.utils.play_scenario_artifact_io import (
+        COMPLETION_MANIFEST,
+        publish_reports,
+        read_completed_reports,
+    )
+
+    old = {"suite.json": b"old", "junit.xml": b"old"}
+    publish_reports(tmp_path, old)
+    marker = (tmp_path / COMPLETION_MANIFEST).read_bytes()
+    replace = os.replace
+    observed_busy = []
+    failed = False
+
+    def interrupt(source, target):
+        nonlocal failed
+        with pytest.raises(OSError):
+            read_completed_reports(tmp_path)
+        observed_busy.append(True)
+        if Path(source).name == COMPLETION_MANIFEST and not failed:
+            failed = True
+            raise OSError("completion interrupted")
+        return replace(source, target)
+
+    monkeypatch.setattr(os, "replace", interrupt)
+    with pytest.raises(OSError, match="completion interrupted"):
+        publish_reports(tmp_path, {"suite.json": b"new", "junit.xml": b"new"})
+    assert observed_busy
+    assert read_completed_reports(tmp_path) == old
+    assert (tmp_path / COMPLETION_MANIFEST).read_bytes() == marker
+
+
+def test_completed_reader_rejects_modified_member_and_player_includes_native_bytes(tmp_path):
+    from cli.utils.play_scenario_artifact_io import read_completed_reports
+
+    native = b'{"status":"succeeded", "evidence":"native bytes"}\n'
+    (tmp_path / "run.json").write_bytes(native)
+    write_player_artifacts({"status": "succeeded"}, tmp_path)
+    assert read_completed_reports(tmp_path)["run.json"] == native
+    (tmp_path / "junit.xml").write_bytes(b"modified")
+    with pytest.raises(OSError, match="differs"):
+        read_completed_reports(tmp_path)
