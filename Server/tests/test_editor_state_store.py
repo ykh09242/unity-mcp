@@ -283,3 +283,46 @@ def test_change_tokens_remain_bounded_and_reset_only_for_a_new_slot(store):
     assert cache.accept("replacement", message(sequence=0, epoch="replacement")) is True
     cache.reset()
     assert not cache._changes
+
+
+def test_heartbeats_reuse_detached_content_without_redumping(store, monkeypatch):
+    from transport.editor_state_store import PushedState
+
+    cache, clock = store
+    dumps = []
+    original = PushedState.model_dump
+
+    def tracked_dump(self, *args, **kwargs):
+        dumps.append(1)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(PushedState, "model_dump", tracked_dump)
+    payload = message()
+    payload["state"]["extension"] = [{"name": str(i), "values": [i, i + 1]} for i in range(200)]
+    assert cache.accept("actual-socket", payload)
+    initial_content = cache._states["actual-socket"].state["extension"]
+    for i in range(1, 101):
+        heartbeat = deepcopy(payload)
+        heartbeat["observed_at_unix_ms"] += i
+        heartbeat["state"]["observed_at_unix_ms"] += i
+        clock["wall"] = 100.0 + i / 1000
+        clock["mono"] += 0.001
+        assert cache.accept("actual-socket", heartbeat)
+        heartbeat["state"]["extension"][0]["values"][0] = -1
+    assert len(dumps) == 1
+    assert cache._states["actual-socket"].state["extension"] is initial_content
+    snapshot = cache.get("actual-socket", "alice")
+    assert snapshot["observed_at_unix_ms"] == 100_100
+    assert snapshot["extension"][0]["values"][0] == 0
+    snapshot["extension"][0]["values"][0] = -2
+    assert cache.get("actual-socket", "alice")["extension"][0]["values"][0] == 0
+
+
+@pytest.mark.parametrize("field", ["sequence", "observed_at_unix_ms"])
+def test_equivalent_heartbeat_values_still_require_strict_validation(store, field):
+    cache, _ = store
+    payload = message(sequence=1, observed=1)
+    assert cache.accept("actual-socket", payload)
+    payload[field] = True
+    payload["state"][field] = True
+    assert not cache.accept("actual-socket", payload)
