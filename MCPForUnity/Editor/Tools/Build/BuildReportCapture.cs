@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using MCPForUnity.Editor.Tools.Build;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -9,6 +10,29 @@ namespace MCPForUnity.Editor.Tools.Build
     /// <summary>Extracts only bounded scalar detail rows; never retains native BuildReport objects or message text.</summary>
     internal static class BuildReportCapture
     {
+        internal static IEnumerable<JObject> AllSteps(BuildReport report)
+        {
+            foreach (BuildStep step in report.steps)
+                yield return new JObject
+                {
+                    ["name"] = BuildReportStore.SafeText(step.name),
+                    ["depth"] = step.depth,
+                    ["duration_seconds"] = Math.Max(0, step.duration.TotalSeconds),
+                    ["message_count"] = step.messages?.Length ?? 0,
+                };
+        }
+
+        internal static IEnumerable<JObject> AllPackedAssets(BuildReport report)
+        {
+            foreach (PackedAssets container in report.packedAssets)
+            foreach (PackedAssetInfo asset in container.contents)
+                yield return new JObject
+                {
+                    ["source_asset_path"] = BuildReportStore.AssetName(asset.sourceAssetPath),
+                    ["packed_size_bytes"] = asset.packedSize,
+                };
+        }
+
         internal static void AddDetails(JObject record, BuildReport report)
         {
             var steps = new JArray();
