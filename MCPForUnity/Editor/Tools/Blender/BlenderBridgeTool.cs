@@ -1096,8 +1096,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 r = ScaleToHeight(right, h);
                 ScreenshotUtility.ValidateFrameDimensions(checked(l.width + r.width), h);
                 outTex = new Texture2D(l.width + r.width, h, TextureFormat.RGBA32, false);
-                outTex.SetPixels(0, 0, l.width, h, l.GetPixels());
-                outTex.SetPixels(l.width, 0, r.width, h, r.GetPixels());
+                CopyPixels(l, outTex, 0);
+                CopyPixels(r, outTex, l.width);
                 outTex.Apply();
                 ScreenshotUtility.WriteCaptureBytes(outPath, outTex.EncodeToPNG());
                 return (outTex.width, h);
@@ -1107,6 +1107,35 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                 foreach (Texture2D t in new[] { outTex, l == left ? null : l, r == right ? null : r, left, right })
                     if (t != null)
                         UnityEngine.Object.DestroyImmediate(t);
+            }
+        }
+
+        private static void CopyPixels(Texture2D source, Texture2D destination, int offsetX)
+        {
+            var output = destination.GetPixelData<Color32>(0);
+            if (source.format == TextureFormat.RGBA32)
+            {
+                var input = source.GetPixelData<Color32>(0);
+                for (int y = 0; y < source.height; y++)
+                for (int x = 0; x < source.width; x++)
+                    output[y * destination.width + offsetX + x] = input[y * source.width + x];
+            }
+            else if (source.format == TextureFormat.RGB24)
+            {
+                var input = source.GetPixelData<byte>(0);
+                for (int y = 0; y < source.height; y++)
+                for (int x = 0; x < source.width; x++)
+                {
+                    int index = (y * source.width + x) * 3;
+                    output[y * destination.width + offsetX + x] = new Color32(input[index], input[index + 1], input[index + 2], 255);
+                }
+            }
+            else
+            {
+                var input = source.GetPixels32();
+                for (int y = 0; y < source.height; y++)
+                for (int x = 0; x < source.width; x++)
+                    output[y * destination.width + offsetX + x] = input[y * source.width + x];
             }
         }
 
@@ -1138,11 +1167,10 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             var dst = new Texture2D(width, height, TextureFormat.RGBA32, false);
             try
             {
-                var pixels = new Color[width * height];
+                var pixels = dst.GetPixelData<Color32>(0);
                 for (int y = 0; y < height; y++)
                 for (int x = 0; x < width; x++)
                     pixels[y * width + x] = src.GetPixelBilinear((x + 0.5f) / width, (y + 0.5f) / height);
-                dst.SetPixels(pixels);
                 dst.Apply();
                 return dst;
             }
