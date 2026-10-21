@@ -1,5 +1,4 @@
 using System;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine.Networking;
@@ -77,15 +76,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 {
                     try
                     {
-                        byte[] body = download.GetBody();
+                        var body = download.GetBody();
                         var result = new HttpResult
                         {
                             Status = (int)request.responseCode,
-                            Body = body,
-                            Text = Encoding.UTF8.GetString(body),
                             IsSuccess = request.result == UnityWebRequest.Result.Success,
                             RetryAfterSeconds = int.TryParse(request.GetResponseHeader("Retry-After"), out int retryAfter) ? (int?)retryAfter : null,
                         };
+                        result.SetBody(body);
                         tcs.TrySetResult(result);
                     }
                     catch (Exception e)
