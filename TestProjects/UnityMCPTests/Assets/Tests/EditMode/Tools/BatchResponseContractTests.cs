@@ -672,6 +672,7 @@ namespace MCPForUnityTests.Editor.Tools
             var register = typeof(CommandRegistry).GetMethod("RegisterCommandType", BindingFlags.NonPublic | BindingFlags.Static);
             object owner = handlers["batch_execute"],
                 alias = handlers["batch_validate"],
+                applyAlias = handlers["batch_apply_preview"],
                 component = handlers[tool];
             using var state = EnableTools("batch_execute", tool);
             try
@@ -698,6 +699,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 handlers["batch_execute"] = owner;
                 handlers["batch_validate"] = alias;
+                handlers["batch_apply_preview"] = applyAlias;
                 handlers[tool] = component;
             }
         }
