@@ -1,4 +1,4 @@
-# Foreground command progress
+# Command and operation progress
 
 Unity MCP can report optional progress for an active `batch_execute` request. A client
 requests MCP progress through the request's standard progress token; no additional
@@ -71,3 +71,41 @@ Counts must increase and match the original admitted total, from 1 through 100.
 
 These bounds limit reporting overhead. They do not extend command execution
 deadlines or change batch admission limits.
+
+## Long asset operation observations
+
+Asset generation/import status responses add `progress_detail` from the existing
+job owner. This is a pull snapshot and does not borrow the foreground MCP reporter
+or send notifications after the starting request has returned. Closing a client
+has no subscription to retain; the next explicit status request reads the latest
+primitive snapshot. Older clients can ignore this additive field.
+
+The phase is one of `queued`, `preparing`, `submitting`, `waiting_provider`,
+`downloading`, `importing`, or `reconnecting`. `phase_elapsed_seconds` measures
+local time in that phase. Downloading exposes `completed` bytes staged and hashed,
+`total` only when the HTTP content length is known, and `unit="bytes"`. Counts are
+monotonic within `phase_sequence`; entering another phase or another physical
+transfer increments that sequence and resets its counts. Values use 64-bit counters
+and preserve the existing 8 GiB download and one-hour download limits.
+
+Preparation, provider processing, and indivisible Unity import calls have unknown
+work totals. The historical `progress` field remains compatible but represents
+provider evidence, not an overall completion estimate. The status message no longer
+formats it as an overall percentage. No estimated completion time is produced.
+
+`cancellation_requested` is intent. `active` describes this telemetry cell's
+lifetime, not proof that all native/provider resources have stopped. The ordinary
+job state, recovery evidence and owner cancellation rules remain authoritative.
+Finalization/reload closes the cell so late workers cannot update it. Progress is
+not persisted as an execution checkpoint: restored terminal/legacy jobs have null
+`progress_detail`, and safely resumed jobs start a new session-local observation.
+A snapshot does not authorize resume, retry, or import.
+
+Each admitted job owns one small cell containing only primitives and a lock. The
+existing 64 KiB stream loop updates it without per-chunk allocation or event
+queues; JSON is created only for a requested status. Existing job retention bounds
+apply. The native regression fixture measures 200,000 counter updates separately
+from actual staged-download tests, using `GC.Alloc` instrumentation. Timing is
+advisory; assertions cover zero update allocations, monotonic large counters,
+unknown totals, late-worker closure, and identical download results with and
+without observation. This does not claim measured multi-gigabyte network speed.

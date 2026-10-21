@@ -344,8 +344,50 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
+        public void ProgressObservation_QueuedAndCancellationDoNotDispatchOrInventUnits()
+        {
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            JObject Status() => JObject.FromObject(GenerateModel.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = job.JobId }));
+            JObject queued = Status();
+            Assert.AreEqual("queued", (string)queued["data"]?["progress_detail"]?["phase"]);
+            Assert.AreEqual(JTokenType.Null, queued["data"]["progress_detail"]["completed"].Type);
+            Assert.IsEmpty(_fake.RecordedRequests);
+            Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
+            JObject canceled = Status();
+            Assert.IsTrue((bool)canceled["data"]["progress_detail"]["cancellation_requested"]);
+            Assert.IsFalse((bool)canceled["data"]["progress_detail"]["active"]);
+            Assert.IsEmpty(_fake.RecordedRequests);
+        }
+
+        [Test]
+        public void ProgressObservation_ProviderWaitingNeverClaimsOverallPercentage()
+        {
+            _fake.Handler = spec =>
+                Json(
+                    spec.Method == "POST"
+                        ? "{\"code\":0,\"data\":{\"task_id\":\"task_progress\"}}"
+                        : "{\"code\":0,\"data\":{\"status\":\"running\",\"progress\":50}}"
+                );
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            for (int i = 0; i < 5; i++)
+                AssetGenJobManager.TryAdvanceForTests(job.JobId);
+            JObject status = JObject.FromObject(GenerateModel.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = job.JobId }));
+            Assert.AreEqual("waiting_provider", (string)status["data"]?["progress_detail"]?["phase"]);
+            Assert.AreEqual(JTokenType.Null, status["data"]["progress_detail"]["total"].Type);
+            Assert.IsFalse(((string)status["message"]).Contains("%"));
+            Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
+        }
+
+        [Test]
         public void EndToEnd_ReachesDone_WithAssetPath()
         {
+            AssetGenJobManager.ImportOverrideForTests = (importing, path) =>
+            {
+                Assert.AreEqual("importing", importing.ProgressEvidence.Read().phase);
+                Assert.IsNull(importing.ProgressEvidence.Read().total);
+                importing.AssetPath = path;
+                return importing;
+            };
             _fake.Handler = spec =>
             {
                 if (spec.Method == "POST" && spec.Url.EndsWith("/v3/generation/text-to-model"))
@@ -371,6 +413,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(1f, job.Progress);
             HttpRequestSpec download = _fake.RecordedRequests.Find(spec => spec.DownloadProvider != null);
             Assert.IsNotNull(download, "Artifacts must select the restricted download transport.");
+            Assert.AreSame(job.ProgressEvidence, download.DownloadProgress);
+            Assert.IsFalse(job.ProgressEvidence.Read().active);
             Assert.AreEqual("tripo", download.DownloadProvider);
             Assert.IsEmpty(download.Headers, "Provider API credentials must not be sent to the artifact host.");
         }

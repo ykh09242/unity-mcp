@@ -19,16 +19,19 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         internal const long MaxDownloadBytes = 8L * 1024 * 1024 * 1024;
         internal static readonly TimeSpan DownloadTimeout = TimeSpan.FromHours(1);
         private readonly string _projectRoot;
+        private readonly AssetOperationProgress _progress;
         private readonly Func<string, Task<IPAddress[]>> _resolve;
         private readonly Func<Uri, IPAddress, CancellationToken, Task<HttpResult>> _send;
 
         internal AssetDownloadTransport(
             Func<string, Task<IPAddress[]>> resolve = null,
             Func<Uri, IPAddress, CancellationToken, Task<HttpResult>> send = null,
-            string projectRoot = null
+            string projectRoot = null,
+            AssetOperationProgress progress = null
         )
         {
             _projectRoot = projectRoot;
+            _progress = progress;
             _resolve = resolve ?? Dns.GetHostAddressesAsync;
             _send = send ?? SendPinnedAsync;
         }
@@ -155,7 +158,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                             return result;
                         using Stream body = response.GetResponseStream();
                         result.DownloadedFile = await DownloadedArtifact
-                            .ReadAsync(body, response.ContentLength, MaxDownloadBytes, _projectRoot, ct)
+                            .ReadAsync(body, response.ContentLength, MaxDownloadBytes, _projectRoot, ct, _progress)
                             .ConfigureAwait(false);
                         return result;
                     }
@@ -232,7 +235,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
 
         public void Dispose() => Interlocked.Exchange(ref stream, null)?.Dispose();
 
-        internal static async Task<DownloadedArtifact> ReadAsync(Stream body, long contentLength, long maxBytes, string projectRoot, CancellationToken ct)
+        internal static async Task<DownloadedArtifact> ReadAsync(
+            Stream body,
+            long contentLength,
+            long maxBytes,
+            string projectRoot,
+            CancellationToken ct,
+            AssetOperationProgress progress = null
+        )
         {
             ct.ThrowIfCancellationRequested();
             if (body == null || maxBytes <= 0 || contentLength > maxBytes || contentLength < -1)
@@ -258,6 +268,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 var buffer = new byte[64 * 1024];
                 long length = 0;
                 int read;
+                progress?.BeginTransfer();
+                progress?.ReportBytes(0, contentLength);
                 while ((read = await body.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) != 0)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -266,6 +278,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                     await output.WriteAsync(buffer, 0, read, ct).ConfigureAwait(false);
                     sha.TransformBlock(buffer, 0, read, null, 0);
                     length += read;
+                    progress?.ReportBytes(length, contentLength);
                 }
                 if (contentLength >= 0 && length != contentLength)
                     throw new IOException("Provider download ended before its declared length.");
