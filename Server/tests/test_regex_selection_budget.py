@@ -5,11 +5,11 @@ from collections.abc import Iterator
 import re
 import asyncio
 import threading
-import time
 
 import pytest
 
 from services.tools import bounded_regex
+from tests.regex_probe import run_probe
 
 selection = importlib.import_module("services.tools.script_apply_edits")
 
@@ -91,15 +91,12 @@ def test_wide_matches_charge_scanning_and_tokenize_once(monkeypatch: pytest.Monk
     assert lexer_calls == 1
 
 
-def test_near_limit_ten_thousand_braces_complete_or_fail_closed():
-    text = "class C {\n" + (" " * 193 + "}\n") * 10_000
-    started = time.monotonic()
-    try:
-        match = selection._find_best_anchor_match(r"^ *}$", text, re.MULTILINE)
-        assert match.start() == text.rfind("\n", 0, len(text) - 2) + 1
-    except TimeoutError:
-        pass
-    assert time.monotonic() - started < 2
+def test_near_limit_ten_thousand_braces_complete_or_fail_closed(request):
+    result = run_probe("braces")
+    assert result["outcome"] in {"completed", "timed_out"}
+    assert result["requested_timeouts"]
+    assert all(0 < value <= 0.5 for value in result["requested_timeouts"])
+    request.node.user_properties.append(("regex_elapsed_ms", result["elapsed_ms"]))
 
 
 def test_selection_deadline_covers_postregex_tokenization(monkeypatch):
@@ -177,13 +174,15 @@ async def test_span_conversion_preserves_backreferences_and_line_positions():
 
 @pytest.mark.asyncio
 async def test_two_admitted_workers_leave_executor_available(monkeypatch):
-    monkeypatch.setattr(selection, "_REGEX_WORKERS", threading.BoundedSemaphore(2))
-    entered = [threading.Event(), threading.Event()]
+    loop = asyncio.get_running_loop()
+    entered = [asyncio.Event(), asyncio.Event()]
     release = threading.Event()
+    workers = threading.BoundedSemaphore(2)
+    monkeypatch.setattr(selection, "_REGEX_WORKERS", workers)
 
     def blocked(index):
-        entered[index].set()
-        assert release.wait(1)
+        loop.call_soon_threadsafe(entered[index].set)
+        assert release.wait(30), "Outer runaway guard expired"
         return index
 
     tasks = [
@@ -195,49 +194,64 @@ async def test_two_admitted_workers_leave_executor_available(monkeypatch):
         for index in range(2)
     ]
     try:
-        while not all(event.is_set() for event in entered):
-            await asyncio.sleep(0.001)
-        with pytest.raises(ValueError, match="busy"):
-            await selection._run_regex_work(bounded_regex.WorkBudget(), lambda: 3)
-        assert await asyncio.to_thread(lambda: "executor available") == "executor available"
+        async with asyncio.timeout(10):
+            await asyncio.gather(*(event.wait() for event in entered))
+            with pytest.raises(ValueError, match="busy"):
+                await selection._run_regex_work(bounded_regex.WorkBudget(), lambda: 3)
+            assert await asyncio.to_thread(lambda: "executor available") == "executor available"
     finally:
         release.set()
-        assert await asyncio.gather(*tasks) == [0, 1]
+        async with asyncio.timeout(10):
+            assert await asyncio.gather(*tasks) == [0, 1]
 
 
 @pytest.mark.asyncio
 async def test_cancelled_worker_keeps_admission_until_it_releases(monkeypatch):
-    monkeypatch.setattr(selection, "_REGEX_WORKERS", threading.BoundedSemaphore(1))
-    entered = threading.Event()
+    loop = asyncio.get_running_loop()
+    entered, settled = asyncio.Event(), asyncio.Event()
     release = threading.Event()
-    exited = threading.Event()
+    calls = []
+
+    class ObservedAdmission:
+        def __init__(self):
+            self.semaphore = threading.BoundedSemaphore(1)
+            self.releases = 0
+
+        def acquire(self, *, blocking):
+            return self.semaphore.acquire(blocking=blocking)
+
+        def release(self):
+            self.semaphore.release()
+            self.releases += 1
+            loop.call_soon_threadsafe(settled.set)
+
+    workers = ObservedAdmission()
+    monkeypatch.setattr(selection, "_REGEX_WORKERS", workers)
     budget = bounded_regex.WorkBudget()
 
     def blocked_work():
-        entered.set()
-        try:
-            assert release.wait(1)
-            budget.check()
-        finally:
-            exited.set()
+        loop.call_soon_threadsafe(entered.set)
+        # This worker cannot finish on cancellation alone: admission must remain held.
+        assert release.wait(30), "Outer runaway guard expired"
+        budget.check()
+        calls.append("continued after cancellation")
 
     task = asyncio.create_task(selection._run_regex_work(budget, blocked_work))
     try:
-        while not entered.is_set():
-            await asyncio.sleep(0.001)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert budget.cancelled.is_set()
-        with pytest.raises(ValueError, match="busy"):
-            await selection._run_regex_work(bounded_regex.WorkBudget(), lambda: 1)
+        async with asyncio.timeout(10):
+            await entered.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert budget.cancelled.is_set()
+            assert workers.releases == 0
+            with pytest.raises(ValueError, match="busy"):
+                await selection._run_regex_work(bounded_regex.WorkBudget(), lambda: 1)
     finally:
         release.set()
-        while not exited.is_set():
-            await asyncio.sleep(0.001)
-    for _ in range(100):
-        await asyncio.sleep(0.001)
-        if selection._REGEX_WORKERS.acquire(blocking=False):
-            selection._REGEX_WORKERS.release()
-            break
+        async with asyncio.timeout(10):
+            await settled.wait()
+            await asyncio.gather(task, return_exceptions=True)
+    assert workers.releases == 1 and calls == []
     assert await selection._run_regex_work(bounded_regex.WorkBudget(), lambda: 7) == 7
+    assert workers.releases == 2

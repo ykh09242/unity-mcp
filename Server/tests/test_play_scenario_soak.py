@@ -33,6 +33,26 @@ request = json.loads(path.read_text())
 manifest = json.loads(pathlib.Path(sys.argv[2]).read_text())
 mode = sys.argv[3]
 root = path.parent
+
+def publish_progress(document):
+    encoded = json.dumps(document)
+    target = root / 'progress.json.tmp'
+    with target.open('w', encoding='utf-8') as stream:
+        if mode.endswith('-staged'):
+            midpoint = len(encoded) // 2
+            stream.write(encoded[:midpoint])
+            stream.flush()
+            (root / 'progress-staged').touch()
+            deadline = time.monotonic() + 10
+            while not (root / 'progress-read').exists():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('Outer progress publication guard expired')
+                time.sleep(.005)
+            stream.write(encoded[midpoint:])
+        else:
+            stream.write(encoded)
+    os.replace(target, root / 'progress.json')
+
 config = request['soak']
 identity = {key: request[key] for key in ('job_id', 'definition_hash', 'build_id', 'build_source_revision', 'payload_hash')}
 identity['process_id'] = os.getpid()
@@ -43,13 +63,13 @@ if mode == 'delayed-timeout':
     initial = dict(identity, schema_version=1, sequence=1, main_loop_sequence=1,
         heartbeat_unix_ms=started, elapsed_ms=0, phase='running', iteration=1,
         stage='steps', step_index=0, status='running')
-    (root / 'progress.json').write_text(json.dumps(initial))
+    publish_progress(initial)
     time.sleep(config['max_runtime_seconds'] + .1)
 if mode == 'cancel':
     while not (root / 'cancel').exists(): time.sleep(.01)
 rows, reports = [], []
 for index in range(1, config['iterations'] + 1):
-    status = 'timed_out' if mode == 'delayed-timeout' else ('cancelled' if mode == 'cancel' or (mode == 'unstarted-after-success' and index == 2) else ('failed' if mode == 'unstarted' or (index == 2 and mode in ('failure', 'failure-control')) else 'succeeded'))
+    status = 'timed_out' if mode == 'delayed-timeout' else ('cancelled' if mode == 'cancel' or (mode == 'unstarted-after-success' and index == 2) else ('failed' if mode in ('unstarted', 'unstarted-staged') or (index == 2 and mode in ('failure', 'failure-control')) else 'succeeded'))
     begin = started + index * 10
     end = begin + 5
     reproduction = {key: manifest[key] for key in ('definition_hash', 'unity_version', 'package_version', 'build_id', 'build_source_revision', 'payload_hash')}
@@ -65,14 +85,14 @@ for index in range(1, config['iterations'] + 1):
         player_schema_version=2, iteration_results_version=1,
         iteration_results=[dict(iteration=1, status='passed' if status == 'succeeded' else status, started_unix_ms=begin, finished_unix_ms=end)],
         metrics=[sample] if metrics_enabled else [])
-    if mode == 'unstarted' or (mode == 'unstarted-after-success' and index == 2):
+    if mode in ('unstarted', 'unstarted-staged') or (mode == 'unstarted-after-success' and index == 2):
         report['iteration_results'][0].update(status='skipped', started_unix_ms=None, finished_unix_ms=None)
     filename = 'iteration-%04d.json' % index
     error = 'fixture failure\\u0001<&' if status == 'failed' else None
     row = dict(identity, schema_version=1, iteration=index, status=status, started_unix_ms=begin,
         finished_unix_ms=end, runner_resources_released=True, failure_code=None, error=error,
         cleanup_error=None, unexpected_log_count=0, query_counts=None, metrics=[dict(sample, iteration=index)] if metrics_enabled else [], report_file=filename)
-    if mode == 'unstarted' or (mode == 'unstarted-after-success' and index == 2): row.update(started_unix_ms=None, finished_unix_ms=None)
+    if mode in ('unstarted', 'unstarted-staged') or (mode == 'unstarted-after-success' and index == 2): row.update(started_unix_ms=None, finished_unix_ms=None)
     rows.append(row)
     reports.append(report)
     (root / filename).write_text(json.dumps(report))
@@ -99,7 +119,7 @@ summary = dict(identity, schema_version=1, process_scope='same-process', request
     journal_bytes=len(journal), journal_sha256=hashlib.sha256(journal).hexdigest(), journal_complete=True,
     runner_resources_released=True, selected_iteration=selected, retained_report_files=retained, error=None, metrics_summary=None)
 code = 1 if failed or len(started_rows) != config['iterations'] else 0
-if mode == 'unstarted':
+if mode in ('unstarted', 'unstarted-staged'):
     summary.update(attempted_iterations=0, passed_iterations=0, failed_iterations=0,
         skipped_iterations=config['iterations'], first_failure_iteration=None, selected_iteration=None,
         status='failed', finished_unix_ms=started+15, error='Startup failed before iteration admission')
@@ -134,7 +154,7 @@ if mode == 'retained':
 progress = dict(identity, schema_version=1, sequence=len(rows)+1, main_loop_sequence=len(rows)+1,
     heartbeat_unix_ms=summary['finished_unix_ms'], elapsed_ms=len(rows)*10, phase='finished',
     iteration=len(rows), stage='cleanup', step_index=-1, status=summary['status'])
-(root / 'progress.json').write_text(json.dumps(progress))
+publish_progress(progress)
 if mode == 'forced': time.sleep(30)
 sys.exit(code)
 """,
@@ -733,3 +753,30 @@ def test_user_cancellation_preserves_exit_130_and_confirmed_native_finalization(
     assert outcome.summary.evidence_state == "complete"
     assert (outcome.directory / "cancel").read_text() == "cancel\n"
     assert soak_child[1][0].poll() == 1
+
+
+@pytest.mark.parametrize("mode,exit_code", [("success-staged", 0), ("unstarted-staged", 1)])
+def test_fixture_progress_publication_is_atomic(
+    verified_bundle, soak_child, monkeypatch, mode, exit_code
+):
+    build, output, _manifest = verified_bundle
+    soak_child[0][0] = mode
+    observed_staging = []
+    original = player.ProgressObserver
+
+    class ObservePublication(original):
+        def observe(self, path):
+            super().observe(path)
+            marker = path.parent / "progress-staged"
+            acknowledged = path.parent / "progress-read"
+            if marker.exists() and not acknowledged.exists():
+                observed_staging.append(self.first_error)
+                acknowledged.touch()
+
+    monkeypatch.setattr(player, "ProgressObserver", ObservePublication)
+    outcome = run_player_soak(PlayerRunOptions(build, output, soak=SoakRequest(iterations=2)))
+    assert observed_staging == [None], outcome.summary.client_error
+    assert outcome.exit_code == exit_code
+    assert outcome.summary.evidence_state == "complete", outcome.summary.client_error
+    assert not (outcome.directory / "progress.json.tmp").exists()
+    assert soak_child[1][0].poll() is not None
