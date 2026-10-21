@@ -166,6 +166,222 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void InterruptedMarkersCannotExhaustNewSessionAdmissionAndRemainObservable()
+        {
+            var interrupted = new List<BuildJob>();
+            for (int i = 0; i < 64; i++)
+            {
+                var job = new BuildJob("interrupted-" + i, BuildTarget.StandaloneWindows64, "Builds/Owned/Game.exe");
+                BuildJobStore.AddBuildJob(job);
+                Assert.IsNull(job.ReportPersistenceError);
+                interrupted.Add(job);
+            }
+            ForgetStaticJobs();
+            var current = new BuildJob("current-session", BuildTarget.StandaloneWindows64, "Builds/Owned/Game.exe");
+            BuildJobStore.AddBuildJob(current);
+            Assert.IsNull(current.ReportPersistenceError, "Prior-session observations cannot consume live marker capacity forever.");
+            var history = Success(Send("report_history"));
+            Assert.AreEqual(64, history["active_observations"].Count(row => (string)row["state"] == "interrupted"));
+            Assert.AreEqual("pending", (string)history["active_observations"].Single(row => (string)row["job_id"] == current.JobId)["state"]);
+            Assert.AreEqual(1, Directory.GetFiles(ownedRoot, "*.active.json").Length);
+            Assert.IsFalse(history["reports"].Any(), "Retired markers are not completed native reports.");
+            foreach (var job in interrupted)
+                Assert.IsNull(BuildJobStore.GetBuildJob(job.JobId), "Recovery must not restart an interrupted build.");
+        }
+
+        [Test]
+        public void RecoveryRemovesOnlyAbandonedOwnedArtifactsAndIgnoresForeignInventory()
+        {
+            Directory.CreateDirectory(ownedRoot);
+            string currentSession = (string)Field("sessionId").GetValue(null);
+            string oldSession = Guid.NewGuid().ToString("N");
+            string oldTemporary = Path.Combine(ownedRoot, "write-v2-" + oldSession + "-" + Guid.NewGuid().ToString("N") + ".tmp");
+            string liveTemporary = Path.Combine(ownedRoot, "write-v2-" + currentSession + "-" + Guid.NewGuid().ToString("N") + ".tmp");
+            string legacyTemporary = Path.Combine(ownedRoot, "write-" + Guid.NewGuid().ToString("N") + ".tmp");
+            foreach (string path in new[] { oldTemporary, liveTemporary, legacyTemporary })
+                WriteFixtureFile(path, "owned partial write fixture");
+            // Unrelated files must neither be deleted nor exhaust report inventory admission.
+            for (int i = 0; i < 300; i++)
+                WriteFixtureFile(Path.Combine(ownedRoot, "foreign-" + i + ".txt"), "preserve");
+            string abandoned = GenerationFixture("abandoned", oldSession);
+            string live = GenerationFixture("live-publisher", currentSession);
+            string foreign = GenerationFixture("foreign-generation", oldSession);
+            WriteFixtureFile(Path.Combine(foreign, "foreign.txt"), "preserve");
+            var completed = Complete(BuildJobState.Succeeded);
+            Assert.IsNull(completed.ReportPersistenceError);
+            Assert.IsFalse(Directory.Exists(abandoned));
+            Assert.IsTrue(Directory.Exists(live));
+            Assert.IsTrue(Directory.Exists(foreign));
+            Assert.IsFalse(File.Exists(oldTemporary));
+            Assert.IsTrue(File.Exists(liveTemporary));
+            Assert.IsTrue(File.Exists(legacyTemporary), "Legacy temporary names have no session ownership evidence.");
+            Assert.AreEqual(300, Directory.GetFiles(ownedRoot, "foreign-*.txt").Length);
+            string report = Id(completed);
+            string revision = (string)Success(Send("report", "report_id", report))["report_revision"];
+            ForgetStaticJobs();
+            Complete(BuildJobState.Succeeded);
+            Assert.AreEqual(revision, (string)Success(Send("report", "report_id", report))["report_revision"], "Published generations must survive recovery.");
+            Assert.IsFalse(Directory.Exists(live), "A subsequent session can reclaim an unpublished owned generation.");
+        }
+
+        [Test]
+        public void InterruptedArchiveRetentionIsIndependentOfCurrentJobsAndDeduplicatesCrashReplay()
+        {
+            var old = new BuildJob("archived-observation", BuildTarget.StandaloneWindows64, "Builds/Owned/Game.exe");
+            BuildJobStore.AddBuildJob(old);
+            string markerPath = Directory.GetFiles(ownedRoot, "*.active.json").Single();
+            string markerText = File.ReadAllText(markerPath);
+            ForgetStaticJobs();
+            Complete(BuildJobState.Succeeded);
+            Assert.IsFalse(File.Exists(markerPath));
+            // Simulate a crash after archive publication but before removal of the source marker.
+            WriteFixtureFile(markerPath, markerText);
+            var history = Success(Send("report_history"));
+            Assert.AreEqual(1, history["active_observations"].Count(row => (string)row["job_id"] == old.JobId));
+            ForgetStaticJobs();
+            Complete(BuildJobState.Succeeded);
+            Assert.IsFalse(File.Exists(markerPath));
+            Field("UtcNow").SetValue(null, new Func<DateTime>(() => DateTime.UtcNow.AddDays(31)));
+            Complete(BuildJobState.Succeeded);
+            Assert.AreEqual(0, Success(Send("report_history"))["active_observations"].Count());
+        }
+
+        [Test]
+        public void IncrementalRecoveryKeepsOwnerUntilAllShardsAreDeleted()
+        {
+            Directory.CreateDirectory(ownedRoot);
+            string directory = GenerationFixture("many-orphan-shards", Guid.NewGuid().ToString("N"));
+            for (int i = 1; i <= 300; i++)
+                WriteFixtureFile(Path.Combine(directory, "packed_assets-" + i.ToString("D6") + ".json"), "{\"rows\":[]}");
+            var completed = Complete(BuildJobState.Succeeded);
+            Assert.IsNull(completed.ReportPersistenceError);
+            Assert.IsTrue(Directory.Exists(directory));
+            Assert.IsTrue(File.Exists(Path.Combine(directory, "owner.json")));
+            Assert.AreEqual(46, Directory.GetFiles(directory).Length, "A recovery pass deletes at most 256 files.");
+            Field("UtcNow").SetValue(null, new Func<DateTime>(() => DateTime.UtcNow.AddSeconds(6)));
+            Complete(BuildJobState.Succeeded);
+            Assert.IsFalse(Directory.Exists(directory));
+            Assert.IsFalse(((System.Collections.IEnumerable)Field("PublishingGenerations").GetValue(null)).Cast<object>().Any());
+        }
+
+        [Test]
+        public void CorruptInterruptedArchiveCannotBlockValidPriorMarkers()
+        {
+            Directory.CreateDirectory(ownedRoot);
+            const string corrupt = "{preserve this corrupt evidence";
+            WriteFixtureFile(Path.Combine(ownedRoot, "interrupted.json"), corrupt);
+            for (int i = 0; i < 64; i++)
+                BuildJobStore.AddBuildJob(new BuildJob("prior-" + i, BuildTarget.StandaloneWindows64, "Builds/Owned/Game.exe"));
+            ForgetStaticJobs();
+            var current = new BuildJob("current-after-corruption", BuildTarget.StandaloneWindows64, "Builds/Owned/Game.exe");
+            BuildJobStore.AddBuildJob(current);
+            Assert.IsNull(current.ReportPersistenceError);
+            var history = Success(Send("report_history"));
+            Assert.AreEqual(64, history["active_observations"].Count(row => (string)row["state"] == "interrupted"));
+            var preserved = Directory.GetFiles(ownedRoot, "interrupted-*.corrupt.json");
+            Assert.AreEqual(1, preserved.Length);
+            string streamPath = (string)Store.GetMethod("StreamPath", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { preserved[0] });
+            using var stream = new FileStream(streamPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var reader = new StreamReader(stream);
+            Assert.AreEqual(corrupt, reader.ReadToEnd());
+            Assert.IsTrue(history["active_observations"].Any(row => (string)row["state"] == "corrupt_observation"));
+        }
+
+        [Test]
+        public void RecoveryAdvancesPastProtectedRootsGenerationsTemporaryFilesAndMarkers()
+        {
+            Directory.CreateDirectory(ownedRoot);
+            string oldSession = Guid.NewGuid().ToString("N");
+            string currentSession = (string)Field("sessionId").GetValue(null);
+            var roots = new List<string>();
+            for (int i = 0; i < 140; i++)
+                roots.Add(GenerationFixture("protected-" + i, currentSession));
+            // Select the last enumerated directory, independent of filesystem enumeration order.
+            string lastRoot = Directory.EnumerateDirectories(ownedRoot, "br-*.details").Last();
+            string reclaim = Directory.EnumerateDirectories(lastRoot).Single();
+            string ownerPath = Path.Combine(reclaim, "owner.json");
+            var owner = new JObject
+            {
+                ["report_id"] = Path.GetFileName(lastRoot).Replace(".details", ""),
+                ["generation"] = Path.GetFileName(reclaim),
+                ["session"] = oldSession,
+            };
+            Store
+                .GetMethod("Atomic", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { ownerPath, System.Text.Encoding.UTF8.GetBytes(owner.ToString()) });
+            for (int i = 0; i < 140; i++)
+                WriteFixtureFile(Path.Combine(ownedRoot, "br-foreign-" + i + ".active.json"), "preserve");
+            var marker = new BuildJob("beyond-foreign-markers", BuildTarget.StandaloneWindows64, "Builds/Owned/Game.exe");
+            BuildJobStore.AddBuildJob(marker);
+            string validMarker = Directory.GetFiles(ownedRoot, "*.active.json").Single(path => !Path.GetFileName(path).StartsWith("br-foreign-"));
+            var oldMarker = JObject.Parse(File.ReadAllText(validMarker));
+            oldMarker["session"] = oldSession;
+            Store
+                .GetMethod("Atomic", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { validMarker, System.Text.Encoding.UTF8.GetBytes(oldMarker.ToString()) });
+            for (int i = 0; i < 260; i++)
+                WriteFixtureFile(Path.Combine(ownedRoot, "write-v2-" + currentSession + "-" + Guid.NewGuid().ToString("N") + ".tmp"), "live");
+            // Invalid reserved-prefix names must also be advanced past and preserved.
+            string oldTemporary = Path.Combine(ownedRoot, "write-v2-" + oldSession + "-" + Guid.NewGuid().ToString("N") + ".tmp");
+            WriteFixtureFile(oldTemporary, "old");
+            string nestedRoot = null;
+            for (int i = 0; i < 140; i++)
+                nestedRoot = Path.GetDirectoryName(GenerationFixture("protected-generations", currentSession));
+            string nestedReclaim = Directory.EnumerateDirectories(nestedRoot).Last();
+            var nestedOwner = new JObject
+            {
+                ["report_id"] = Path.GetFileName(nestedRoot).Replace(".details", ""),
+                ["generation"] = Path.GetFileName(nestedReclaim),
+                ["session"] = oldSession,
+            };
+            Store
+                .GetMethod("Atomic", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { Path.Combine(nestedReclaim, "owner.json"), System.Text.Encoding.UTF8.GetBytes(nestedOwner.ToString()) });
+            for (int pass = 1; pass <= 8; pass++)
+            {
+                int advance = pass * 6;
+                Field("UtcNow").SetValue(null, new Func<DateTime>(() => DateTime.UtcNow.AddSeconds(advance)));
+                Store.GetMethod("RecoverArtifacts", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            }
+            Assert.IsFalse(Directory.Exists(reclaim), "Retained roots cannot permanently hide a later orphan.");
+            Assert.IsFalse(File.Exists(oldTemporary));
+            Assert.IsFalse(File.Exists(validMarker));
+            Assert.AreEqual(139, roots.Count(Directory.Exists));
+            Assert.IsFalse(Directory.Exists(nestedReclaim), "Continuation must also advance inside one report's generation tree.");
+            Assert.AreEqual(139, Directory.GetDirectories(nestedRoot).Length);
+            Assert.AreEqual(260, Directory.GetFiles(ownedRoot, "write-v2-*.tmp").Length);
+            Assert.AreEqual(140, Directory.GetFiles(ownedRoot, "br-foreign-*.active.json").Length);
+        }
+
+        private void WriteFixtureFile(string path, string text)
+        {
+            StringAssert.StartsWith(ownedRoot + Path.DirectorySeparatorChar, path);
+            string streamPath = (string)Store.GetMethod("StreamPath", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { path });
+            using var stream = new FileStream(streamPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            using var writer = new StreamWriter(stream);
+            writer.Write(text);
+        }
+
+        private string GenerationFixture(string job, string session)
+        {
+            string id = (string)Store.GetMethod("Identity", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { job });
+            string generation = Guid.NewGuid().ToString("N");
+            string path = Path.Combine(ownedRoot, id + ".details", generation);
+            Directory.CreateDirectory(path);
+            WriteFixtureFile(
+                Path.Combine(path, "owner.json"),
+                new JObject
+                {
+                    ["report_id"] = id,
+                    ["generation"] = generation,
+                    ["session"] = session,
+                }.ToString()
+            );
+            WriteFixtureFile(Path.Combine(path, "packed_assets-000000.json"), "{\"rows\":[]}");
+            return path;
+        }
+
+        [Test]
         public void BatchTerminalSummaryAndChildrenSurviveStaticJobLoss()
         {
             // Given: mixed terminal child outcomes and a completed ordinary batch.

@@ -42,3 +42,24 @@ Windows stream paths use the [extended-length form](https://learn.microsoft.com/
 after containment/link checks; this keeps nested project locations readable on
 Unity Mono. Cleanup requires a matching generation owner marker and refuses
 unknown entries before deleting any files.
+
+On the next write after an Editor domain change, valid prior-session active
+markers move into a compact interrupted-observation archive (latest 64, 30 days).
+They remain visible in `active_observations` as `interrupted`, never as completed
+or resumed builds. Archive publication precedes removal of the original markers.
+Current-session markers keep their existing capacity independently of this history.
+
+Optional recovery passes reclaim abandoned owned generations and session-tagged
+temporary files in bounded batches, at most once per five seconds per store/session.
+Published revisions, in-flight publishers, current-session files, unknown content,
+invalid owner markers and linked paths remain protected. Legacy temporary filenames
+without session ownership remain untouched, and unrelated files no longer consume
+the report inventory budget. Recovery does not cancel, restart or time out work.
+
+Recovery carries scalar scan positions across passes, including preserved entries,
+and wraps at the end of each inventory; it retains no directory handles between
+writes. Candidate validation and deletion are bounded, while resuming a position
+may enumerate earlier filenames without opening them. Corrupt interrupted archives
+are preserved under a unique `interrupted-*.corrupt.json` name before a fresh
+archive is published. History keeps an explicit corrupt-observation indication;
+these preserved files are not automatically deleted.
