@@ -12,7 +12,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
     /// <summary>Owned, validated staging output. Workers never access Unity or publish into Assets.</summary>
     internal sealed class PreparedArtifact : IDisposable
     {
-        private static readonly SemaphoreSlim Workers = new(2);
+        private static readonly ArtifactPreparationQueue Workers = new();
         internal const int BackgroundThreshold = 256 * 1024;
         private readonly string root;
         private string path;
@@ -35,15 +35,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             using (input)
             {
-                await Workers.WaitAsync(token).ConfigureAwait(false);
-                try
+                long bytes = input.DownloadedFile?.Length ?? input.Body?.LongLength ?? long.MaxValue;
+                using (await Workers.AcquireAsync(bytes, token).ConfigureAwait(false))
                 {
                     // Do not pass cancellation to Task.Run: the delegate owns cleanup even if canceled before dispatch.
                     return await Task.Run(() => Create(input, root, kind, provider, extension, declaredExtension, token)).ConfigureAwait(false);
-                }
-                finally
-                {
-                    Workers.Release();
                 }
             }
         }
