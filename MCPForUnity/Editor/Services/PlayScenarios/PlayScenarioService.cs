@@ -28,6 +28,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static long _savedPollRevision;
         private static long _savedLogRevision;
         private static long _checkpointAt;
+        private static string _activityJobId;
+        private static int _activityRevision = -1;
+        private static bool _activityFinalized;
+        private static bool? _activityResourcesReleased;
         private static PlayScenarioStore Store => new PlayScenarioStore(Path.GetDirectoryName(Application.dataPath));
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -66,6 +70,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 SessionState.EraseString(SessionKey);
                 Debug.LogWarning("MCP play scenario restore failed: " + exception.Message);
             }
+        }
+
+        internal static void AppendActivity(System.Collections.Generic.List<OperationActivityRow> rows)
+        {
+            if (_engine != null)
+                rows.Add(OperationActivity.ScenarioRow(_engine.State, _finalized));
         }
 
         internal static bool IsBusy => (_engine != null && (!_finalized || _engine.Running)) || _failureCapture?.Pending == true;
@@ -380,16 +390,36 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             EditorApplication.quitting -= Quit;
         }
 
+        private static void ObserveActivityChange()
+        {
+            if (_engine == null)
+                return;
+            if (
+                _activityJobId == _engine.State.JobId
+                && _activityRevision == _engine.Revision
+                && _activityFinalized == _finalized
+                && _activityResourcesReleased == _engine.State.RunnerResourcesReleased
+            )
+                return;
+            _activityJobId = _engine.State.JobId;
+            _activityRevision = _engine.Revision;
+            _activityFinalized = _finalized;
+            _activityResourcesReleased = _engine.State.RunnerResourcesReleased;
+            OperationActivity.Invalidate();
+        }
+
         private static void Synchronize(bool force)
         {
             if (_engine == null)
                 return;
             DrainAndApplyErrors();
+            ObserveActivityChange();
             long now = Now;
             if (!_engine.Running && !_finalized)
             {
                 _logs?.Close();
                 DrainAndApplyErrors();
+                ObserveActivityChange();
                 if (_failureCapture?.Pending == true)
                     return;
                 Detach();
@@ -399,6 +429,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 _engine.Release();
                 _engine.State.RunnerResourcesReleased = _engine.State.RunnerResourcesReleased != false && !_attached && _logCallback == null;
                 _finalized = true;
+                ObserveActivityChange();
                 try
                 {
                     _engine.State.ReportPath = Store.SaveReport(_engine.State);

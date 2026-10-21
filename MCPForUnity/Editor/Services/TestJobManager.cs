@@ -465,6 +465,7 @@ namespace MCPForUnity.Editor.Services
 
         private static bool PersistToSessionState(bool force = false)
         {
+            OperationActivity.Invalidate();
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             // Throttle non-critical updates to reduce overhead during large test runs
@@ -555,6 +556,13 @@ namespace MCPForUnity.Editor.Services
                 McpLog.Warn("[TestJobManager] Failed to persist bounded job metadata.");
                 return false;
             }
+        }
+
+        internal static void AppendActivity(List<OperationActivityRow> rows)
+        {
+            lock (LockObj)
+                foreach (var job in Jobs.Values)
+                    rows.Add(OperationActivity.TestRow(job));
         }
 
         internal static bool PersistResultArtifactMetadata() => PersistToSessionState(force: true);

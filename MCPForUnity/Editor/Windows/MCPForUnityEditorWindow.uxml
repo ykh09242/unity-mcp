@@ -16,9 +16,13 @@
             <uie:ToolbarToggle name="tools-tab" text="Tools" class="navigation-tab" />
             <uie:ToolbarToggle name="resources-tab" text="Resources" class="navigation-tab" />
             <uie:ToolbarToggle name="assetgen-tab" text="Generation" class="navigation-tab" />
+            <uie:ToolbarToggle name="activity-tab" text="Activity" class="navigation-tab" />
             <uie:ToolbarToggle name="deps-tab" text="Dependencies" class="navigation-tab" />
             <uie:ToolbarToggle name="advanced-tab" text="Advanced" class="navigation-tab" />
         </ui:VisualElement>
+        <ui:ScrollView name="activity-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-activity-scroll">
+            <ui:VisualElement name="activity-container" class="section-stack" />
+        </ui:ScrollView>
         <ui:ScrollView name="clients-panel" class="panel-scroll" mode="Vertical" view-data-key="mcp-connection-scroll">
             <ui:VisualElement name="clients-container" class="section-stack" />
         </ui:ScrollView>
