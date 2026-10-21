@@ -12,7 +12,7 @@ description: "Inspect asset bundles, their contents and dependencies."
 
 ## Description
 
-Inspect asset bundles, their contents and dependencies. Read-only inspection; results can change with Unity state.
+Inspect asset bundles, their contents and dependencies. Read-only inspection; results can change with Unity state. Action inputs: list_asset_bundles: no action-specific required inputs. get_bundle_assets: requires bundle_name. get_bundle_dependencies: requires bundle_name.
 
 ## Parameters
 

@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import TypeVar
 
 from fastmcp import Context, FastMCP
+from fastmcp.tools import FunctionTool
 from core.telemetry_decorator import telemetry_tool
 from core.logging_decorator import log_execution
 from utils.module_discovery import discover_modules
 from services.registry import get_registered_tools, TOOL_GROUPS, DEFAULT_ENABLED_GROUPS
+from services.registry.action_contracts import ACTION_RULES, action_input_schema
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -64,7 +66,14 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         wrapped = log_execution(tool_name, "Tool")(func)
         wrapped = telemetry_tool(tool_name)(wrapped)
         # Keep the global declaration unchanged: each server owns its decorators.
-        mcp.tool(name=tool_name, description=description, **kwargs)(wrapped)
+        if tool_name in ACTION_RULES:
+            registered = FunctionTool.from_function(
+                wrapped, name=tool_name, description=description, run_in_thread=True, **kwargs
+            )
+            registered.parameters = action_input_schema(tool_name, registered.parameters)
+            mcp.add_tool(registered)
+        else:
+            mcp.tool(name=tool_name, description=description, **kwargs)(wrapped)
         logger.debug(f"Registered tool: {tool_name} - {description}")
 
     logger.info(f"Registered {len(tools)} MCP tools")

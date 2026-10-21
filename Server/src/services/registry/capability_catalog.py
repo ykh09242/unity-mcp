@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from services.registry.action_contracts import action_help
+
 
 @dataclass(frozen=True)
 class CapabilityEffects:
@@ -50,7 +52,14 @@ class Capability:
     @property
     def description(self) -> str:
         return " ".join(
-            filter(None, (CAPABILITY_DESCRIPTIONS[self.name], self.effects.description_suffix))
+            filter(
+                None,
+                (
+                    CAPABILITY_DESCRIPTIONS[self.name],
+                    self.effects.description_suffix,
+                    action_help(self.name),
+                ),
+            )
         )
 
 

@@ -328,7 +328,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("prefab_contents", AutoRegister = false, Group = "prefabs",
-        DisplayName = "Prefab Contents & Previews", Description = "Edit prefab contents or preview and apply a guarded transform change.")]
+        DisplayName = "Prefab Contents & Previews", Description = "Edit prefab contents or preview and apply a guarded transform change. Action inputs: modify_contents: requires prefab_path; excludes non-null preview_id. preview_modify_contents: requires prefab_path; excludes non-null target, name, tag, layer, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_id. apply_preview: requires preview_id; excludes non-null prefab_path, target, position, rotation, scale, name, tag, layer, set_active, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties.")]
     public static class PrefabContents
     {
         private static readonly string[] Actions = { "modify_contents", "preview_modify_contents", "apply_preview" };
@@ -411,7 +411,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("asset_edit", AutoRegister = false, Group = "assets",
-        DisplayName = "Create, Change & Move Assets", Description = "Create, import, modify, duplicate, move or delete assets and folders.")]
+        DisplayName = "Create, Change & Move Assets", Description = "Create, import, modify, duplicate, move or delete assets and folders. Action inputs: import: requires path. create: requires path, asset_type. modify: requires path, properties. delete: requires path. duplicate: requires path. move: requires path, destination. rename: requires path, destination. create_folder: requires path.")]
     public static class AssetEdit
     {
         private static readonly string[] Actions = { "import", "create", "modify", "delete", "duplicate", "move", "rename", "create_folder" };
@@ -438,7 +438,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("asset_bundles", AutoRegister = false, Group = "assets",
-        DisplayName = "Asset Bundle Inspection", Description = "Inspect asset bundles, their contents and dependencies. Read-only inspection; results can change with Unity state.")]
+        DisplayName = "Asset Bundle Inspection", Description = "Inspect asset bundles, their contents and dependencies. Read-only inspection; results can change with Unity state. Action inputs: list_asset_bundles: no action-specific required inputs. get_bundle_assets: requires bundle_name. get_bundle_dependencies: requires bundle_name.")]
     public static class AssetBundles
     {
         private static readonly string[] Actions = { "list_asset_bundles", "get_bundle_assets", "get_bundle_dependencies" };
