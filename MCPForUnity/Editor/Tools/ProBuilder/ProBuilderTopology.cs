@@ -17,10 +17,10 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
     /// <summary>Bounded snapshots retain the same native index ordering used by existing mutations.</summary>
     internal static class ProBuilderTopology
     {
-        private const int MaxVertices = 32768;
-        private const int MaxFaces = 16384;
-        private const int MaxIndices = 131072;
-        private const int MaxEdges = 65536;
+        private const int MaxVertices = 65535;
+        private const int MaxFaces = 65536;
+        private const int MaxIndices = 1048576;
+        private const int MaxEdges = 262144;
         private const int MaxFaceIndices = 512;
         private const int MaxResponseBytes = 256 * 1024;
         private static readonly string Session = Guid.NewGuid().ToString("N");

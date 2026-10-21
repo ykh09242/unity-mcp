@@ -197,6 +197,33 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void EngineSupportedLargeMeshRetainsAllVerticesInTopology()
+        {
+            var positions = new List<Vector3>(Positions());
+            while (positions.Count < 40000)
+                positions.Add(new Vector3(positions.Count, 1, 2));
+            Array faces = Array.CreateInstance(faceType, Faces().Count);
+            Faces().CopyTo(faces, 0);
+            MethodInfo create = meshType.GetMethod(
+                "Create",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(IEnumerable<Vector3>), typeof(IEnumerable<>).MakeGenericType(faceType) },
+                null
+            );
+            Component replacement = (Component)create.Invoke(null, new object[] { positions, faces });
+            CaptureMesh();
+            UnityEngine.Object.DestroyImmediate(mesh.gameObject);
+            mesh = replacement;
+            CaptureMesh();
+            JObject page = Page("vertices", 100);
+            Assert.AreEqual(40000, page.Value<int>("total"));
+            Assert.AreEqual(40000, Positions().Count);
+            Assert.AreEqual(100, ((JArray)page["items"]).Count);
+            Assert.IsNotEmpty(page.Value<string>("next_cursor"));
+        }
+
+        [Test]
         public void AllPagesExposeExactly300Faces500Edges201VerticesAndLegacyCaps()
         {
             List<JObject> faces = All("faces", 300);
@@ -363,13 +390,13 @@ namespace MCPForUnityTests.Editor.Tools
                 UnityEngine.Object.DestroyImmediate(clone);
             }
             var oversized = Positions().ToList();
-            while (oversized.Count < 32769)
+            while (oversized.Count < 65536)
                 oversized.Add(Vector3.zero);
             meshType.GetProperty("positions").SetValue(mesh, oversized);
             JObject limited = Command("get_topology", new JObject { ["kind"] = "vertices" });
             Assert.IsFalse(limited.Value<bool>("success"), limited.ToString());
             Assert.AreEqual("topology_budget_exceeded", limited.Value<string>("code"), limited.ToString());
-            Assert.AreEqual(32769, Positions().Count, "Budget refusal must preserve source state.");
+            Assert.AreEqual(65536, Positions().Count, "Budget refusal must preserve source state.");
         }
 
         [Test]
