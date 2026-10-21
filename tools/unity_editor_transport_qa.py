@@ -17,6 +17,37 @@ import subprocess
 import shutil
 import tarfile
 import time
+import sys
+import tempfile
+
+try:
+    from .check_unity_test_results import check_results
+    from .native_test_inputs import (
+        apply_refresh,
+        capture_inputs,
+        checked_path,
+        digest,
+        load_selection,
+        operation_lock,
+        refresh_plan,
+        refresh_tree,
+        tree_files,
+        verify_inputs,
+    )
+except ImportError:  # Direct script invocation.
+    from check_unity_test_results import check_results
+    from native_test_inputs import (
+        apply_refresh,
+        capture_inputs,
+        checked_path,
+        digest,
+        load_selection,
+        operation_lock,
+        refresh_plan,
+        refresh_tree,
+        tree_files,
+        verify_inputs,
+    )
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +55,7 @@ DEFAULT_EDITOR = Path("C:/Program Files/Unity/Hub/Editor/6000.0.69f1/Editor/Unit
 
 
 def owned_path(value):
-    path = Path(value).resolve()
+    path = checked_path(value)
     if not path.is_relative_to(ROOT / "reports") or path == ROOT / "reports":
         raise ValueError("QA output must be a task-owned directory beneath repository reports")
     return path
@@ -34,8 +65,7 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
-def prepare(args):
-    output = owned_path(args.output)
+def snapshot_source(args, output):
     output.mkdir(parents=True, exist_ok=True)
     snapshot = output / "snapshot"
     if snapshot.exists():
@@ -67,7 +97,7 @@ def prepare(args):
             return result
 
         for relative in paths:
-            src, dst = ROOT / relative, snapshot / relative
+            src, dst = checked_path(ROOT / relative), snapshot / relative
             if src.is_dir():
                 shutil.copytree(src, dst, ignore=excluded)
             else:
@@ -94,6 +124,11 @@ def prepare(args):
             archive.extractall(snapshot, filter="data")
         source["archiveSha256"] = hashlib.sha256(content).hexdigest()
     write_json(output / "source.json", source)
+
+
+def prepare(args):
+    output = owned_path(args.output)
+    snapshot_source(args, output)
     resolve(args)
 
 
@@ -103,8 +138,6 @@ def resolve(args):
     module_path = snapshot / "tools/unity_ci_packages.py"
     spec = importlib.util.spec_from_file_location("editor_qa_packages", module_path)
     module = importlib.util.module_from_spec(spec)
-    import sys
-
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     result = module.prepare(
@@ -117,29 +150,42 @@ def resolve(args):
     )
     from dataclasses import asdict
 
-    write_json(
-        output / "preparation.json",
-        {**asdict(result), "projectAbsolute": str(snapshot / result.project_path)},
-    )
+    prep = {
+        **asdict(result),
+        "projectAbsolute": str(snapshot / result.project_path),
+        "unityVersion": args.version,
+    }
+    prep["inputs"] = capture_inputs(output, prep, args.editor)
+    write_json(output / "preparation.json", prep)
     print(json.dumps({"status": "PREPARED", "project": str(snapshot / result.project_path)}))
 
 
-def launch(args):
+def _launch(args):
     output = owned_path(args.output)
     prep = json.loads((output / "preparation.json").read_text(encoding="utf-8"))
     project = Path(prep["projectAbsolute"]).resolve()
-    if not project.is_relative_to(output):
+    if not project.is_relative_to(output) or project == output:
         raise ValueError("Project is not owned by this QA output")
+    if prep.get("refreshPending"):
+        raise ValueError("Interrupted source refresh; preparation is not launchable")
+    verify_inputs(output, prep, args.editor, prep["inputs"])
+    selection = load_selection(
+        args.groups_manifest, args.group or ["transport-readiness"], sys.platform
+    )
+    if args.filter is not None and args.filter != selection["filter"]:
+        raise ValueError("Filter must equal the complete selected method inventory")
+    if (project / "Temp/UnityLockfile").exists():
+        raise ValueError("Owned project is already open")
     if not args.editor.is_file():
         raise ValueError("Explicit Editor executable is missing")
     if not args.isolation_verified:
         raise ValueError("Launch requires confirmed package lifecycle isolation")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.label):
         raise ValueError("Evidence label must be a plain filename component")
-    result_path = output / f"{args.label}-results.xml"
-    log_path = output / f"{args.label}-editor.log"
-    record_path = output / f"{args.label}-launch.json"
-    if record_path.exists():
+    result_path = checked_path(output / f"{args.label}-results.xml")
+    log_path = checked_path(output / f"{args.label}-editor.log")
+    record_path = checked_path(output / f"{args.label}-launch.json")
+    if any(path.exists() for path in (record_path, result_path, log_path)):
         raise ValueError("Launch evidence already exists; use a fresh label")
     command = [
         str(args.editor),
@@ -152,7 +198,7 @@ def launch(args):
         "-testPlatform",
         "EditMode",
         "-testFilter",
-        args.filter,
+        selection["filter"],
         "-testResults",
         str(result_path),
         "-logFile",
@@ -192,6 +238,12 @@ def launch(args):
         "isolationVerified": True,
         "ownedTransportTests": True,
         "stdioCommandTimeoutMs": args.stdio_command_timeout_ms,
+        "selection": selection,
+        "inputs": prep["inputs"],
+        "cacheReused": (project / "Library").is_dir(),
+        "projectSettingsBefore": tree_files(project / "ProjectSettings")
+        if (project / "ProjectSettings").is_dir()
+        else {},
     }
     failure = None
     try:
@@ -233,15 +285,16 @@ def launch(args):
                 for case in root.iter("test-case")
             ]
             if "status" not in record:
-                record["status"] = (
-                    "PASS"
-                    if (
-                        record.get("exitCode") == 0
-                        and int(root.get("total", "0")) > 0
-                        and root.get("result") == "Passed"
-                        and int(root.get("skipped", "0")) == 0
+                valid = (
+                    check_results(
+                        result_path,
+                        "success" if record.get("exitCode") == 0 else "failure",
+                        selection["required"],
                     )
-                    else "FAIL"
+                    == 0
+                )
+                record["status"] = (
+                    "PASS" if valid and int(root.get("skipped", "0")) == 0 else "FAIL"
                 )
         except (ET.ParseError, ValueError) as error:
             record.setdefault("status", "BLOCKED")
@@ -252,6 +305,18 @@ def launch(args):
         record.setdefault(
             "reason", "Editor did not produce NUnit result XML; inspect owned launch log"
         )
+    try:
+        verify_inputs(output, prep, args.editor, prep["inputs"])
+        record["projectSettingsAfter"] = (
+            tree_files(project / "ProjectSettings")
+            if (project / "ProjectSettings").is_dir()
+            else {}
+        )
+        if digest(args.groups_manifest) != selection["manifestSha256"]:
+            raise ValueError("Native selection manifest changed during launch")
+    except (OSError, ValueError) as error:
+        record["status"] = "BLOCKED"
+        record["reason"] = str(error)
     write_json(record_path, record)
     print(json.dumps(record))
     if failure is not None:
@@ -259,9 +324,79 @@ def launch(args):
     return 0 if record["status"] == "PASS" else 2 if record["status"] == "FAIL" else 3
 
 
+def launch(args):
+    output = owned_path(args.output)
+    with operation_lock(output):
+        return _launch(args)
+
+
+def refresh(args):
+    output = owned_path(args.output)
+    with operation_lock(output):
+        prep = json.loads((output / "preparation.json").read_text(encoding="utf-8"))
+        project = checked_path(prep["projectAbsolute"])
+        if prep.get("refreshPending") or (project / "Temp/UnityLockfile").exists():
+            raise ValueError("Project is open or refresh is incomplete")
+        verify_inputs(output, prep, args.editor, prep["inputs"])
+        if args.version != prep["unityVersion"]:
+            raise ValueError("Editor version change requires new preparation")
+        with tempfile.TemporaryDirectory(prefix=".refresh-", dir=output) as temporary:
+            stage = owned_path(temporary)
+            snapshot_source(args, stage)
+            old, new = output / "snapshot", stage / "snapshot"
+            for rel in ("tools/unity_ci_packages.py", "tools/unity-ci-packages.json"):
+                if (old / rel).read_bytes() != (new / rel).read_bytes():
+                    raise ValueError("Package resolver changes require new preparation")
+            before = json.loads((old / "MCPForUnity/package.json").read_text(encoding="utf-8"))
+            after = json.loads((new / "MCPForUnity/package.json").read_text(encoding="utf-8"))
+            if before.get("dependencies") != after.get("dependencies"):
+                raise ValueError("Package dependency changes require new preparation")
+            if tree_files(old / "TestProjects/UnityMCPTests/ProjectSettings") != tree_files(
+                new / "TestProjects/UnityMCPTests/ProjectSettings"
+            ):
+                raise ValueError("Project settings changes require new preparation")
+            package = project.parent / "package"
+            installed = json.loads((package / "package.json").read_text(encoding="utf-8"))
+            before["dependencies"] = installed["dependencies"]
+            if before != installed:
+                raise ValueError("Prepared package metadata changed")
+            after["dependencies"] = installed["dependencies"]
+            mappings = [
+                ("MCPForUnity", package, ("package.json",)),
+                ("TestProjects/UnityMCPTests/Assets/Tests", project / "Assets/Tests", ()),
+                ("TestProjects/UnityMCPTests/Assets/Scripts", project / "Assets/Scripts", ()),
+            ]
+            plans = []
+            for rel, target, exclude in mappings:
+                plans.extend(refresh_plan(old / rel, new / rel, target, exclude=exclude))
+                plans.extend(refresh_plan(old / rel, new / rel, old / rel))
+            # Validate every conflict first; a failed/interrupted publication cannot be launched.
+            prep["refreshPending"] = True
+            write_json(output / "preparation.json", prep)
+            apply_refresh(plans)
+            if installed != after:
+                write_json(package / "package.json", after)
+            write_json(
+                output / "source.json",
+                json.loads((stage / "source.json").read_text(encoding="utf-8")),
+            )
+            prep["inputs"] = capture_inputs(output, prep, args.editor)
+            prep.pop("refreshPending")
+            write_json(output / "preparation.json", prep)
+            print(
+                json.dumps(
+                    {
+                        "status": "REFRESHED",
+                        "filesChanged": len(plans),
+                        "cacheReused": (project / "Library").is_dir(),
+                    }
+                )
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare", "resolve", "launch"])
+    parser.add_argument("command", choices=["prepare", "resolve", "refresh", "launch"])
     parser.add_argument("--output", required=True)
     parser.add_argument("--ref", default="HEAD")
     parser.add_argument("--version", default="6000.0.69f1")
@@ -270,9 +405,10 @@ def main():
     parser.add_argument("--working-tree", action="store_true")
     parser.add_argument("--label", default="editmode")
     parser.add_argument(
-        "--filter",
-        default="StdioTransportClientReadinessTests;TransportArchitectureTests;TransportCommandDispatcherTests",
+        "--groups-manifest", type=Path, default=ROOT / "tools/unity-native-groups.json"
     )
+    parser.add_argument("--group", action="append")
+    parser.add_argument("--filter", help="Optional assertion of the exact selected method filter")
     parser.add_argument("--timeout", type=int, default=240)
     parser.add_argument("--stdio-command-timeout-ms", type=int)
     parser.add_argument("--isolation-verified", action="store_true")
@@ -281,6 +417,8 @@ def main():
         prepare(args)
     elif args.command == "resolve":
         resolve(args)
+    elif args.command == "refresh":
+        refresh(args)
     else:
         return launch(args)
     return 0

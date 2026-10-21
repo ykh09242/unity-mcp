@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "groups": {
+    "transport-readiness": {
+      "methods": [
+        "MCPForUnityTests.Editor.Transport.StdioTransportClientReadinessTests.KeepsWaiting_WhenNotReady_AndWithinWindow",
+        "MCPForUnityTests.Editor.Transport.StdioTransportClientReadinessTests.StopsWaiting_AsSoonAsReady",
+        "MCPForUnityTests.Editor.Transport.StdioTransportClientReadinessTests.StopsWaiting_WhenWindowElapses_EvenIfNotReady",
+        "MCPForUnityTests.Editor.Transport.StdioTransportClientReadinessTests.ReadyWindow_IsGenerousEnoughForPortRelease"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
+    "transport-architecture": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.TransportArchitectureTests.MainThreadCallback_WithMissingContext_WaitsForEditorPump",
+        "MCPForUnityTests.Editor.Services.TransportArchitectureTests.OwnedWork_BoundsIdsAndRetainsFifoUntilExecutionCompletes",
+        "MCPForUnityTests.Editor.Services.TransportArchitectureTests.TypedAndLegacySyncResponses_PreserveExactEnvelope",
+        "MCPForUnityTests.Editor.Services.TransportArchitectureTests.TypedAndLegacyAsyncResponses_PreserveExactEnvelope",
+        "MCPForUnityTests.Editor.Services.TransportArchitectureTests.RawCommandAndAsyncResponse_PreserveDateShapedLiteral",
+        "MCPForUnityTests.Editor.Services.TransportArchitectureTests.ActiveDeadline_CancelsResponseButTracksActualAsyncSettlement"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
+    "transport-dispatch": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.SlowQueuedCommandsLeaveUnstartedWorkForTheNextPump",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.BudgetedDispatchKeepsOlderCommandsAheadOfReplacementArrivals",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.ExecuteCommandJsonAsync_AlreadyCanceled_CompletesWithoutEditorPump",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.ExecuteCommandJsonAsync_CanceledBeforeEditorPump_RemovesQueuedCommand",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.ExecuteCommandJsonAsync_CompletedAsyncCommand_CleansUpWithoutEditorFrame",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.ExecuteCommandJsonAsync_LargeAsyncResponseWithLoggingDisabled_PreservesResultAndCleansUp",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.TimedQueuedCancellationPreservesCompletionAndOmitsUnrunHandler",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.RunOnMainThreadAsync_CanceledFallback_ReleasesQueuedCallbackWithoutEditorPump",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.RunOnMainThreadAsync_FallbackCancellation_PreservesLiveCallbackOrderAndThread",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.RunOnMainThreadAsync_CancellationRacingFallbackEnqueue_ReleasesEveryCallback",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.RunOnMainThreadAsync_CanceledDuringExecution_AllowsStartedCallbackToFinish",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.ProgressiveDispatch_CloseAndResponseCancellationDoNotReleaseActualChild",
+        "MCPForUnityTests.Editor.Services.TransportCommandDispatcherTests.UnknownCommand_IsAnsweredWithoutAnErrorInTheConsole"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
+    "transport-lifetime": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.TransportMainThreadLifetimeTests.CanceledWork_ReleasesCaptureBeforeEditorPump",
+        "MCPForUnityTests.Editor.Services.TransportMainThreadLifetimeTests.CancellationAfterQueueConsumption_DoesNotInvokeWork",
+        "MCPForUnityTests.Editor.Services.TransportMainThreadLifetimeTests.AlreadyCanceledWork_IsNeverPosted",
+        "MCPForUnityTests.Editor.Services.TransportMainThreadLifetimeTests.QueuedWork_ReturnsResultOnMainThread",
+        "MCPForUnityTests.Editor.Services.TransportMainThreadLifetimeTests.CallbackFailure_FaultsReturnedTask",
+        "MCPForUnityTests.Editor.Services.TransportMainThreadLifetimeTests.CancellationDuringCallback_CancelsResponseWithoutRepeatingExecution"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
+    "script-reload": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.ScriptChangeSetReloadTests.ActualDomainReload_RetainsAndRecoversInterruptedApplication"
+      ],
+      "disruptive": true,
+      "platform_exclusions": {
+        "linux": "This reload cohort has only Windows native evidence.",
+        "darwin": "This reload cohort has only Windows native evidence."
+      }
+    }
+  }
+}
