@@ -160,8 +160,8 @@ class InputCommand(BaseModel):
         "control scheme remain. release_player(target) ends that owned device lease. "
         "press holds for 1..36000 game input updates then releases; use release for an earlier release. "
         "touch_id 1..10 permits concurrent contacts across calls; move preserves the original release deadline. "
-        "release_all removes only MCP virtual devices. A hard 30-second lease and play exit/reload cleanup "
-        "prevent stuck input. Pause also cleans pairing; release_player/release_all remain callable while paused. "
+        "release_all removes only MCP virtual devices. Active input updates renew a 30-second inactivity lease "
+        "up to 1 hour; play exit/reload cleans devices. Pause also cleans pairing; release_player/release_all remain callable while paused. "
         "PlayerInput eligibility does not guarantee gameplay handling. Legacy UnityEngine.Input and OS input are unsupported."
     ),
     annotations=ToolAnnotations(title="Manage Input", readOnlyHint=False, destructiveHint=True),

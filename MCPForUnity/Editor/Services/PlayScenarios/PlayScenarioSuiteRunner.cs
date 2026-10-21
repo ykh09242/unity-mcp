@@ -192,7 +192,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (Encoding.UTF8.GetByteCount(JObject.FromObject(State.Report).ToString(Formatting.None)) > PlayScenarioSuiteStore.ReportLimit - 65536)
                 {
                     child.Report = null;
-                    State.Report.ReportError = "Suite embedded child reports exceed the 2 MiB aggregate limit; the child report remains referenced by job_id.";
+                    State.Report.ReportError =
+                        $"Suite embedded child reports exceed the {PlayScenarioSuiteStore.ReportLimit / (1024 * 1024)} MiB aggregate limit; the child report remains referenced by job_id.";
                     State.Report.Error = State.Report.Error ?? State.Report.ReportError;
                     RequestStop("failed", State.Report.ReportError, now);
                 }

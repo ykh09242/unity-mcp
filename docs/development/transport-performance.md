@@ -109,7 +109,7 @@ registered slots.
 
 ## `large_result_v1`
 
-Results below 256 KiB use the existing text message. Larger results up to 32 MiB
+Results below 256 KiB use the existing text message. Larger results up to 64 MiB
 use a text start followed by complete binary WebSocket messages:
 
 ```json
@@ -136,7 +136,7 @@ allocating a buffer. It validates size, chunk count, offsets, JSON bounds and th
 final envelope. Raw buffers and decoded text share the existing per-session,
 per-user and global result budgets. Completed result objects remain charged
 until their response owner releases them. Aggregate raw assembly is also capped
-at 64 MiB. A transfer has a 30-second local deadline, bounded further by the
+at 128 MiB. A transfer has a 300-second local deadline, bounded further by the
 original command deadline; heartbeat maintenance reclaims stalled transfers.
 Cancellation, disconnect and replacement reclaim partial results. Valid late
 chunks are ignored without disturbing other commands. Malformed active
@@ -162,12 +162,12 @@ the completed compressed representation must also meet the savings threshold.
 ```
 
 `total_bytes` and frame offsets refer to compressed wire bytes. `decoded_bytes`
-is the exact uncompressed JSON length, still capped at 32 MiB. Identity starts
+is the exact uncompressed JSON length, still capped at 64 MiB. Identity starts
 remain unchanged. The decoder writes one gzip member directly into the reserved
 decoded buffer, uses bounded output chunks, and rejects bad CRC, truncated,
 trailing, multi-member or length-mismatched data. Before allocation it reserves
 `5 * decoded_bytes + 4096 + 512 KiB` against the shared result budgets. The
-separate 64 MiB assembly cap counts decoded buffers; decompressor working space
+separate 128 MiB assembly cap counts decoded buffers; decompressor working space
 is included in the shared reservation. Compression reduces wire traffic, not
 the JSON content presented to an MCP client or model.
 

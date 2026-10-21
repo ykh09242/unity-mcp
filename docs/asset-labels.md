@@ -17,7 +17,7 @@ Read `data.results[0].revision` and submit it with a mutation:
 ```
 
 The Python tool uses `label_revision` and `label_targets`; the native/CLI wire uses
-`labelRevision` and `labelTargets`. A batch has 1-32 closed rows, for example:
+`labelRevision` and `labelTargets`. A batch has 1-1024 closed rows, for example:
 
 ```json
 {"action":"remove_labels","label_targets":[{"path":"Assets/a.txt","revision":"<a revision>"},{"path":"Assets/b.txt","revision":"<b revision>"}],"labels":["obsolete"]}
@@ -87,14 +87,14 @@ provide filesystem transaction isolation.
 
 ## Bounds and side effects
 
-The tool enforces 128 labels per asset, 256 UTF-16 units per label, 16 KiB of
-requested UTF-8 label text and 32 KiB of aggregate target-path UTF-8 text. Cumulative
-observed/planned label text is limited to 64 KiB, including pre-write rechecks and
-readback. Meta observations read at most 1 MiB per file and 4 MiB cumulatively per
+The tool enforces 1024 labels per asset, 256 UTF-16 units per label, 256 KiB of
+requested UTF-8 label text and 1 MiB of aggregate target-path UTF-8 text. Cumulative
+observed/planned label text is limited to 8 MiB, including pre-write rechecks and
+readback. Meta observations stream at most 16 MiB per file and 256 MiB cumulatively per
 request. A changed observation may exhaust the remaining budget: refusal before a
 write is bounded; inability to confirm a write is reported as unknown. Results are
 never truncated to admit a mutation. Bounded row/string counts and text budgets
-keep serialized native responses below 1 MiB, including JSON escaping/row fields.
+also remain subject to the shared response envelope ceiling.
 Intrinsic malformed/budget requests fail before context resolution or I/O.
 
 Assets mutation queries meta editability and refuses read-only/inaccessible

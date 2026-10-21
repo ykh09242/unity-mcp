@@ -1,7 +1,7 @@
 # Same-process Player soak contract
 
 Version 1 of soak evidence extends Player request schema 2. Bundles remain schema 2.
-Normal requests retain repeat_count 1-10 and timeout_seconds 1-1800. An optional
+Normal requests permit repeat_count 1-100 and timeout_seconds 1-86400. An optional
 `soak` object is accepted only in schema 2, requires repeat_count 1, and contains
 exactly `iterations` (integer 2-1000), `max_runtime_seconds` (integer 1-86400),
 `failure_policy` (`stop` or `continue`), and `retain_reports` (integer 1-64).

@@ -16,7 +16,7 @@ Generate 2D images with AI providers (fal.ai, OpenRouter) and import them as tex
 
 ACTIONS:
 - generate: Submit an image job (text->image or image->image). Returns { job_id }; poll with the status action. Params: provider, mode (text|image), prompt, image_path|image_url, model, transparent, width, height, name, output_folder.
-- status: Poll an async job by job_id; includes recovery_state, recovery_code, provider_task_id and provider_phase. Recorded provider tasks can reconnect after a domain reload within the same Editor session and original 600-second budget. Unknown submission/import outcomes are not replayed; inspect retained output before retrying. Saved local output can resume without a provider key when its recorded file/metadata identity still matches. OpenRouter responses not yet saved locally cannot reconnect.
+- status: Poll an async job by job_id; includes recovery_state, recovery_code, provider_task_id and provider_phase. Recorded provider tasks can reconnect after a domain reload within the same Editor session and original two-hour budget. Unknown submission/import outcomes are not replayed; inspect retained output before retrying. Saved local output can resume without a provider key when its recorded file/metadata identity still matches. OpenRouter responses not yet saved locally cannot reconnect.
 - cancel: Stop local job continuation by job_id; this does not guarantee provider-side cancellation or a refund.
 - list_providers: List configured image providers and capabilities (no key values).
 - list_models: Search/paginate live fal and OpenRouter models, modes and freshness.

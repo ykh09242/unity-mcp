@@ -84,9 +84,9 @@ Supply the build label through the Editor's source revision field or
 The external bundle also contains the exact `payload_inventory_json` bytes and their SHA-256
 `payload_hash`. Its inventory covers the executable, managed assemblies and data files, including
 the embedded identity. Only the external bundle itself is excluded to avoid a self-reference.
-The inventory is bounded to 1,024 files, 512 UTF-16-unit relative paths, 1 MiB of inventory text and
-16 GiB of total payload. The complete serialized bundle also has a 1 MiB limit. Discovery stops after
-4,096 directories, including empty ones. Paths must stay inside the build; links, missing files, unexpected files and
+The inventory is bounded to 16,384 files, 512 UTF-16-unit relative paths, 32 MiB of inventory text and
+128 GiB of total payload. The complete serialized bundle has a 96 MiB limit, including both inventory
+representations and scenario definitions. Discovery stops after 32,768 directories, including empty ones. Paths must stay inside the build; links, missing files, unexpected files and
 changed contents are rejected. Keep requests and reports outside the immutable build directory.
 
 Before launching, the CLI checks the inventory against the actual payload. The Player verifies the

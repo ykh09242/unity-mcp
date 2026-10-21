@@ -107,9 +107,9 @@ are not merged or overwritten; source metadata is not copied or rewritten.
 The supported subset rejects traversal, links/junctions, absolute/network paths,
 query/fragment syntax, ambiguous names, executable dependencies, text glTF
 extensions, nested MTL locations, map options, quoted/escaped-space filenames,
-continuations and unknown resource directives. Limits are 256 files, 1024
-references, 512 MiB combined file/embedded bytes, 16 MiB JSON, 4 MiB per MTL,
-32 MiB total JSON/MTL metadata, JSON depth 64 and 64 KiB per text line. Relative
+continuations and unknown resource directives. Limits are 8192 files, 65536
+references, 16 GiB combined file/embedded bytes, 64 MiB JSON, 16 MiB per MTL,
+128 MiB total JSON/MTL metadata, JSON depth 64 and 256 KiB per text line. Relative
 paths have 1024 characters, 32 segments and 255 UTF-8 bytes per segment.
 
 `data.dependency_bundle` distinguishes staging from import:
@@ -218,10 +218,10 @@ Omit the selector to prefer FBX/OBJ, then GLB/glTF, with ordinal full-path order
 within each group. Names such as `main`, `preview` and `LOD` have no special meaning.
 A selected model that fails import never falls back to another candidate.
 
-Inspection allows at most 128 model candidates, 512 UTF-8 bytes per normalized
+Inspection allows at most 1024 model candidates, 512 UTF-8 bytes per normalized
 entry path and 32 path segments. It rejects duplicate/case-colliding destinations
 and file/directory conflicts before extraction. Existing extraction limits remain
-4096 entries, 512 MiB per entry, 2 GiB combined and compression ratio 200, with
+16384 entries, 8 GiB per entry, 8 GiB combined and compression ratio 200, with
 16 MiB of ZIP metadata. Limits fail explicitly rather than returning a partial
 candidate list. Output folders use fresh suffixes within 1000 attempts; existing
 files, metadata and linked paths are not overwritten or adopted.

@@ -35,7 +35,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_object_handles`](./manage_object_handles.md)** — Capture or resolve the original loaded GameObject/Component reference for this Editor session.
 - **[`manage_packages`](./manage_packages.md)** — Manage Unity packages: query, install, remove, embed, and configure registries.
 - **[`manage_recording`](./manage_recording.md)** — Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. start returns job_id immediately; poll status explicitly or stop to finalize.
-- **[`manage_scene_edits`](./manage_scene_edits.md)** — Preview or apply 1-64 allowlisted native Transform, BoxCollider, SphereCollider, Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene.
+- **[`manage_scene_edits`](./manage_scene_edits.md)** — Preview or apply 1-1000 allowlisted native Transform, BoxCollider, SphereCollider, Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene.
 - **[`manage_script`](./manage_script.md)** — Compatibility router for legacy script operations.
 - **[`manage_script_capabilities`](./manage_script_capabilities.md)** — Get manage_script capabilities (supported ops, limits, and guards).
 - **[`manage_terrain`](./manage_terrain.md)** — Inspect and edit existing TerrainData with bounded region/index requests. get_info lists identities/resolutions/layers/prototypes; get_region/set_region use heights, alphamaps, holes (true=surface) or details with exact [y][x] arrays.
@@ -46,6 +46,6 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`scene_inspect`](./scene_inspect.md)** — Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.
 - **[`scene_lifecycle`](./scene_lifecycle.md)** — Create, load, save or close scenes and organize loaded scene objects.
 - **[`script_apply_edits`](./script_apply_edits.md)** — Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text.
-- **[`script_change_set`](./script_change_set.md)** — Prepare, apply, inspect or recover 1–16 existing C# source replacements as one bounded change set.
+- **[`script_change_set`](./script_change_set.md)** — Prepare, apply, inspect or recover 1–256 existing C# source replacements as one bounded change set.
 - **[`set_active_instance`](./set_active_instance.md)** — Set the active Unity instance for this client/session.
 - **[`validate_script`](./validate_script.md)** — Validate a C# script and report diagnostics, the effective validation engine, and context limitations.

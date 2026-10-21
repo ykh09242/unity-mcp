@@ -20,6 +20,8 @@ does not delete persistent MCP session state; the SDK's state TTL remains in for
 Connection retirement runs during discovery and admission, without adding a
 background port scanner.
 
+For workload admission, paging and long operations, see [resource limits](resource-limits.md).
+
 ## Dynamic compilation
 
 Mono cannot unload an individual dynamically loaded assembly. Removing a managed

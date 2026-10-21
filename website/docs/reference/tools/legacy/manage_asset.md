@@ -14,7 +14,7 @@ description: "Performs asset operations (import, create, modify, delete, etc.) i
 
 Performs asset operations (import, create, modify, delete, etc.) in Unity. Read-only get_dependencies/get_reverse_references/preview_move/preview_delete use bounded AssetDatabase references, explicit scan_root, work/assets budgets and pages up to 100. reference_revision rechecks observations and optionally guards move/delete using matching scan options. String/custom-loader/Addressables references are not comprehensively discovered. Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase assignments, not built bundle files; use bundle_name and pages of at most 100.
 
-Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep `generate_preview=false` (previews can add large base64 blobs). Opt-in metadata_only search avoids explicit object/preview loads and returns a short-lived search_snapshot for reusable pages; keep query, scope, date and page_size unchanged. Label actions get/set/add/remove support 1-32 targets; mutations require observed revisions, are sequential rather than atomic, and never automatically retry an uncertain write.
+Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_number`) and keep `generate_preview=false` (previews can add large base64 blobs). Opt-in metadata_only search avoids explicit object/preview loads and returns a short-lived search_snapshot for reusable pages; keep query, scope, date and page_size unchanged. Label actions get/set/add/remove support 1-1024 targets; mutations require observed revisions, are sequential rather than atomic, and never automatically retry an uncertain write.
 
 ## Parameters
 
@@ -39,8 +39,8 @@ Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_n
 | `label_targets` | `list[AssetLabelTarget] \| None` | — | Common-operation batch; each mutation row requires revision. |
 | `label_revision` | `str \| None` | — | Opaque revision from get_labels for a single-target mutation. |
 | `scan_root` | `str \| None` | — | Reference actions: candidate/dependency folder (Assets by default). |
-| `max_assets` | `int \| str \| None` | — | Reference actions: at most 1-4096 candidate/visited assets; default 1024. |
-| `max_work` | `int \| str \| None` | — | Reference actions: at most 1-100000 node/edge work units; default 10000. |
+| `max_assets` | `int \| str \| None` | — | Reference actions: at most 1-250000 candidate/visited assets; default 1024. |
+| `max_work` | `int \| str \| None` | — | Reference actions: at most 1-4000000 node/edge work units; default 10000. |
 | `reference_revision` | `str \| None` | — | Recheck the same bounded read/preview or guard move/delete immediately before mutation. |
 
 ## Returns

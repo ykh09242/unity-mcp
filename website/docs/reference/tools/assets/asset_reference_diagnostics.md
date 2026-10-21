@@ -25,8 +25,8 @@ Inspect dependencies and reverse references, or preview asset moves and deletion
 | `page_number` | `int \| str \| None` | — | Page number for pagination (1-based). |
 | `recursive` | `bool` | — | Include indirect bundle dependencies (default false). |
 | `scan_root` | `str \| None` | — | Reference actions: candidate/dependency folder (Assets by default). |
-| `max_assets` | `int \| str \| None` | — | Reference actions: at most 1-4096 candidate/visited assets; default 1024. |
-| `max_work` | `int \| str \| None` | — | Reference actions: at most 1-100000 node/edge work units; default 10000. |
+| `max_assets` | `int \| str \| None` | — | Reference actions: at most 1-250000 candidate/visited assets; default 1024. |
+| `max_work` | `int \| str \| None` | — | Reference actions: at most 1-4000000 node/edge work units; default 10000. |
 | `reference_revision` | `str \| None` | — | Recheck the same bounded read/preview or guard move/delete immediately before mutation. |
 
 ## Returns
