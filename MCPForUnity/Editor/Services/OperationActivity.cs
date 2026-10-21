@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.Build;
@@ -40,7 +41,37 @@ namespace MCPForUnity.Editor.Services
             TestJobManager.AppendActivity(rows);
             BuildJobStore.AppendActivity(rows);
             PlayScenarioService.AppendActivity(rows);
+            PackageJobManager.AppendActivity(rows);
+            AssetGenJobManager.AppendActivity(rows);
             return rows.OrderByDescending(row => row.Active).ThenByDescending(row => row.Started).ThenBy(row => row.Key, StringComparer.Ordinal).ToList();
+        }
+
+        internal static OperationActivityRow PackageRow(PackageJob job)
+        {
+            bool unknown = job.Status == PackageJobStatus.Unknown;
+            bool active = unknown || job.Status == PackageJobStatus.Running;
+            string package = PackageRecoveryIdentity.IsSourceIdentifier(job.Package) ? "source package" : job.Package;
+            return new OperationActivityRow
+            {
+                Owner = "package",
+                Id = job.JobId,
+                Operation = "Packages · " + job.Operation,
+                State = job.Status.ToString().ToLowerInvariant(),
+                Phase =
+                    unknown ? "outcome_unknown"
+                    : active ? "request_active"
+                    : "finished",
+                Detail =
+                    (job.ResultName ?? package ?? "Package resolution")
+                    + (unknown ? " · Completion is unknown; inspect existing status before any retry" : "")
+                    + (job.RecoveryReason == null ? "" : " · " + job.RecoveryReason),
+                Started = job.StartedUnixMs,
+                Finished = active ? null : job.FinishedUnixMs,
+                Active = active,
+                Cancellation = "Cancellation unavailable: Unity package requests have no supported cancellation owner",
+                CanCancel = false,
+                EvidenceId = job.JobId,
+            };
         }
 
         internal static OperationActivityRow TestRow(TestJob job)
@@ -111,6 +142,12 @@ namespace MCPForUnity.Editor.Services
                 // Resolve the owner/id again after confirmation; never start or replay work.
                 switch (row.Owner)
                 {
+                    case "generation":
+                        return new
+                        {
+                            requested = AssetGenJobManager.Cancel(row.Id),
+                            observation = "Local cancellation only; provider completion is not confirmed.",
+                        };
                     case "test":
                         return TestJobManager.CancelJob(row.Id);
                     case "scenario":
@@ -138,6 +175,10 @@ namespace MCPForUnity.Editor.Services
         {
             switch (row.Owner)
             {
+                case "package":
+                    return PackageJobManager.ActivityEvidence(row.Id) ?? new { observation = "Package job is no longer retained; no operation was started." };
+                case "generation":
+                    return AssetGenJobManager.ActivityEvidence(row.Id);
                 case "test":
                     return TestJobManager.ToSerializable(TestJobManager.GetJob(row.Id), false, false);
                 case "scenario":

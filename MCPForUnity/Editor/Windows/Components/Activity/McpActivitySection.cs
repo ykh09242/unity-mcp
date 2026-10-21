@@ -47,7 +47,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             title.AddToClassList("section-title");
             root.Add(title);
             AddText("Project: " + Path.GetFileName(Path.GetDirectoryName(Application.dataPath)), "activity-project");
-            AddText("Tests, builds and Play scenarios. Client wait timeouts do not stop these jobs.", "activity-scope");
+            AddText("Tests, builds, Play scenarios, packages and asset generation. Client wait timeouts do not stop these jobs.", "activity-scope");
             empty = AddText("No retained activity in these job owners.", "activity-empty");
             list = new VisualElement { name = "activity-rows" };
             root.Add(list);

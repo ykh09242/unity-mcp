@@ -223,12 +223,20 @@ namespace MCPForUnity.Editor.Services
             {
                 McpLog.Warn($"[PackageJobManager] Failed to restore SessionState: {ex.Message}");
             }
+            finally
+            {
+                OperationActivity.Invalidate();
+            }
         }
 
         internal static void TryRecoverJob(PackageJob job, long nowMs)
         {
+            PackageJobStatus? previous = job?.Status;
+            long? updated = job?.LastUpdateUnixMs;
             PackageInfo[] recoveryPackages = null;
             TryRecoverJobWithSnapshot(job, nowMs, ref recoveryPackages);
+            if (previous != job?.Status || updated != job?.LastUpdateUnixMs)
+                OperationActivity.Invalidate();
         }
 
         internal static bool CanReconcile(PackageJob job) =>
@@ -333,6 +341,13 @@ namespace MCPForUnity.Editor.Services
             return packageIdentifier;
         }
 
+        internal static void AppendActivity(List<OperationActivityRow> rows)
+        {
+            lock (LockObj)
+                foreach (var job in Jobs.Values)
+                    rows.Add(OperationActivity.PackageRow(job));
+        }
+
         internal static void PersistToSessionState() => TryPersistToSessionState();
 
         private static bool TryPersistToSessionState()
@@ -384,6 +399,10 @@ namespace MCPForUnity.Editor.Services
             {
                 McpLog.Warn($"[PackageJobManager] Failed to persist SessionState: {ex.Message}");
                 return false;
+            }
+            finally
+            {
+                OperationActivity.Invalidate();
             }
         }
 
@@ -552,6 +571,38 @@ namespace MCPForUnity.Editor.Services
             {
                 return Jobs.Values.OrderByDescending(j => j.StartedUnixMs).FirstOrDefault();
             }
+        }
+
+        internal static object ActivityEvidence(string id)
+        {
+            var job = GetJob(id);
+            if (job == null)
+                return null;
+            // Activity evidence is copyable. Omit raw source identifiers and native errors,
+            // which may embed credentials; the existing status API keeps its full contract.
+            return new
+            {
+                job_id = job.JobId,
+                status = job.Status.ToString().ToLowerInvariant(),
+                operation = job.Operation,
+                package_ = PackageRecoveryIdentity.IsSourceIdentifier(job.Package) ? "source package" : job.Package,
+                started_unix_ms = job.StartedUnixMs,
+                finished_unix_ms = job.FinishedUnixMs,
+                last_update_unix_ms = job.LastUpdateUnixMs,
+                has_error = !string.IsNullOrEmpty(job.Error),
+                result_version = job.ResultVersion,
+                result_name = job.ResultName,
+                recovery = job.RecoveryReason == null
+                    ? null
+                    : new
+                    {
+                        reason = job.RecoveryReason,
+                        native_completion = "unobserved",
+                        retry_safe = false,
+                    },
+                resolve = job.Operation == "resolve" ? NormalizeResolve(job.Resolve) : null,
+                observation = "Source identifiers and native error text are omitted from copyable Activity evidence.",
+            };
         }
 
         public static object ToSerializable(PackageJob job)

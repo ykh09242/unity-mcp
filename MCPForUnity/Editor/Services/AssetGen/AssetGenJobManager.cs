@@ -187,6 +187,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             catch { /* metadata recovery is best-effort */ }
             if (Runners.Count > 0)
                 EnsureTicking();
+            OperationActivity.Invalidate();
         }
 
         private static string RestoreFailure(AssetGenJobCheckpoint cp) =>
@@ -269,6 +270,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 ObservePreparation(runner.PreparationTask);
             }
             Runners.Clear();
+            OperationActivity.Invalidate();
         }
 
         private static void ObserveDownload(Task<HttpResult> task)
@@ -509,6 +511,64 @@ namespace MCPForUnity.Editor.Services.AssetGen
             return job;
         }
 
+        internal static void AppendActivity(List<OperationActivityRow> rows)
+        {
+            foreach (var job in Jobs.Values)
+            {
+                Runners.TryGetValue(job.JobId, out var runner);
+                var progress = job.ProgressEvidence?.Read();
+                bool canceled = job.State == AssetGenJobState.Canceled || progress?.cancellation_requested == true;
+                string detail = "Recovery: " + (job.RecoveryState ?? "not observed") + (job.RecoveryCode == null ? "" : " · " + job.RecoveryCode);
+                if (progress?.completed != null)
+                    detail += " · Downloaded " + progress.Value.completed + (progress.Value.total.HasValue ? " / " + progress.Value.total : "") + " bytes";
+                if (job.ModelImportStage != null)
+                    detail += " · Import: " + job.ModelImportStage;
+                rows.Add(
+                    new OperationActivityRow
+                    {
+                        Owner = "generation",
+                        Id = job.JobId,
+                        Operation = "Asset generation · " + job.Kind + " · " + job.Provider,
+                        State = job.RecoveryState == "outcome_unknown" ? "unknown" : job.State.ToString().ToLowerInvariant(),
+                        Phase = progress?.phase ?? job.ProviderPhase ?? job.State.ToString().ToLowerInvariant(),
+                        Detail = detail,
+                        Active = runner != null || !IsTerminal(job.State),
+                        CanCancel = !canceled && (runner != null || job.State == AssetGenJobState.Queued),
+                        Cancellation =
+                            canceled
+                                ? "Local cancellation requested; provider completion is not confirmed"
+                                    + (runner?.ImportInProgress == true ? " · local import is still running" : "")
+                            : runner != null || job.State == AssetGenJobState.Queued ? "Local cancellation is available; remote provider work may continue"
+                            : "No supported local cancellation owner; inspect provider evidence",
+                        EvidenceId = job.JobId,
+                    }
+                );
+            }
+        }
+
+        internal static object ActivityEvidence(string jobId)
+        {
+            var job = GetJob(jobId);
+            if (job == null)
+                return new { observation = "Generation job is no longer retained; no operation was started or resumed." };
+            return new
+            {
+                job_id = job.JobId,
+                state = job.State.ToString().ToLowerInvariant(),
+                recovery_state = job.RecoveryState,
+                recovery_code = job.RecoveryCode,
+                provider_task_id = AssetGenJobCheckpoint.SafeId(job.ProviderTaskId) ? job.ProviderTaskId : null,
+                provider_phase = job.ProviderPhase,
+                asset_path = job.AssetPath,
+                asset_guid = job.AssetGuid,
+                model_import_stage = job.ModelImportStage,
+                model_import_error_code = job.ModelImportErrorCode,
+                progress_detail = job.ProgressEvidence?.Read(),
+                local_runner_owned = Runners.ContainsKey(jobId),
+                observation = "Existing owner observation only. Local cancellation does not confirm remote provider completion. Use the generation tool status for full result details.",
+            };
+        }
+
         public static AssetGenJob GetJob(string jobId) => string.IsNullOrEmpty(jobId) ? null : (Jobs.TryGetValue(jobId, out var j) ? j : null);
 
         /// <summary>Most-recent-first snapshot of known jobs (for the GUI readout). Never contains keys.</summary>
@@ -607,6 +667,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             public Task<PreparedArtifact> PreparationTask;
             public bool Canceled;
             public bool ImportInProgress;
+            public AssetOperationProgress.Snapshot? ActivityObservation;
         }
 
         private static bool TryResolveKey(string provider, AssetGenJob job, out string apiKey)
@@ -683,8 +744,31 @@ namespace MCPForUnity.Editor.Services.AssetGen
             foreach (string id in _tickIds)
             {
                 if (Runners.TryGetValue(id, out var r))
+                {
                     Advance(r);
+                    ObserveActivity(r);
+                }
             }
+        }
+
+        private static void ObserveActivity(Runner runner)
+        {
+            var current = runner.Job.ProgressEvidence?.Read();
+            var previous = runner.ActivityObservation;
+            if (
+                current.HasValue
+                && (
+                    !previous.HasValue
+                    || current.Value.phase_sequence != previous.Value.phase_sequence
+                    || current.Value.phase != previous.Value.phase
+                    || current.Value.completed != previous.Value.completed
+                    || current.Value.total != previous.Value.total
+                    || current.Value.active != previous.Value.active
+                    || current.Value.cancellation_requested != previous.Value.cancellation_requested
+                )
+            )
+                OperationActivity.Invalidate();
+            runner.ActivityObservation = current;
         }
 
         /// <summary>Advance one job one step. Returns true when the job is terminal.</summary>
@@ -693,6 +777,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (Runners.TryGetValue(jobId, out var r))
             {
                 Advance(r);
+                ObserveActivity(r);
                 return IsTerminal(r.Job.State);
             }
             return Jobs.TryGetValue(jobId, out var j) && IsTerminal(j.State);
@@ -1433,6 +1518,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 return;
             r.Job.ProgressEvidence?.Stop();
             Runners.Remove(r.Job.JobId);
+            OperationActivity.Invalidate();
             try
             {
                 if (r.Job.State == AssetGenJobState.Failed || r.Canceled)
@@ -1493,6 +1579,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
             {
                 throw new RecoveryAbort("checkpoint_write_failed");
             }
+            finally
+            {
+                OperationActivity.Invalidate();
+            }
         }
 
         private static void Persist(AssetGenJob job)
@@ -1508,6 +1598,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 WriteJobIndex();
             }
             catch { /* progress/terminal metadata is best-effort; side-effect admission always uses required writes */ }
+            finally
+            {
+                OperationActivity.Invalidate();
+            }
         }
 
         private static void TrackJob(AssetGenJob job)
