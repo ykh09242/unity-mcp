@@ -15,7 +15,7 @@ description: Launch the pinned Editor-control CLI, target requests explicitly, a
 This beta checkout uses this pinned source. Published stable releases keep their own pins; use the installed package's `mcpServerSource`:
 
 ```bash
-uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/4b997b3a31da3c17e1e0c0a81a609507b231eb54.zip#subdirectory=Server" unity-mcp --help
+uvx --python ">=3.11" --from "https://github.com/ykh09242/unity-mcp/archive/dfa9e61a141aa3853f34005cf900a2948a44ea41.zip#subdirectory=Server" unity-mcp --help
 ```
 
 For another installed Unity revision, use its `mcpServerSource`. If `unity-mcp` is already installed from the matching source, the shorter commands below work directly. Otherwise prepend the same `uvx --python ">=3.11" --from` prefix to each command.
