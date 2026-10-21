@@ -253,7 +253,9 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 budget.Check();
-                return GetComponentDataCore(c, includeNonPublicSerializedFields);
+                var result = GetComponentDataCore(c, includeNonPublicSerializedFields);
+                budget.Check();
+                return result;
             }
             catch (Exception) when (budget.Exceeded)
             {

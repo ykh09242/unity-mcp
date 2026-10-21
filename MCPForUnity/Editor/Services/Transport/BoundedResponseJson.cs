@@ -22,6 +22,8 @@ namespace MCPForUnity.Editor.Services.Transport
 
         internal static JToken Freeze(object payload, JsonSerializer serializer = null, Budget budget = null)
         {
+            budget ??= new Budget();
+            budget.Check();
             if (payload is JToken token)
             {
                 using var reader = token.CreateReader();
@@ -31,6 +33,7 @@ namespace MCPForUnity.Editor.Services.Transport
             }
             using var writer = new TokenWriter(budget: budget);
             (serializer ?? JsonSerializer.CreateDefault()).Serialize(writer, payload);
+            budget.Check(); // User OnError callbacks cannot turn a limit refusal into partial success.
             return writer.Token ?? JValue.CreateNull();
         }
 
@@ -39,6 +42,7 @@ namespace MCPForUnity.Editor.Services.Transport
             using var output = new PlainObjectJsonWriter();
             using var writer = new TokenWriter(output, budget);
             serializer.Serialize(writer, payload);
+            budget.Check();
             return output.Result;
         }
 

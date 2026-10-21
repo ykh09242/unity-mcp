@@ -3,7 +3,9 @@ using System.Collections;
 using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources.Scene;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
@@ -12,6 +14,42 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ComponentSerializationBudgetTests
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void HandledSerializerErrorsCannotTurnAnExceededBudgetIntoSuccess(bool plain)
+        {
+            var sequence = new BudgetSequence(100005);
+            var payload = new HandledOverflowValue { Values = sequence };
+            var budget = new BoundedResponseJson.Budget();
+            Assert.Throws<ResponseLimitException>(() =>
+            {
+                if (plain)
+                    BoundedResponseJson.ToPlain(payload, JsonSerializer.CreateDefault(), budget);
+                else
+                    BoundedResponseJson.Freeze(payload, JsonSerializer.CreateDefault(), budget);
+            });
+            Assert.IsTrue(budget.Exceeded);
+            Assert.IsTrue(sequence.Disposed);
+        }
+
+        [Test]
+        public void LastComponentMemberCannotHideAHandledSerializationLimit()
+        {
+            var go = new GameObject("HandledComponentBudget");
+            try
+            {
+                var component = go.AddComponent<HandledOverflowComponent>();
+                component.last = new HandledOverflowValue { Values = new BudgetSequence(100005) };
+                var data = JObject.FromObject(GameObjectSerializer.GetComponentData(component));
+                Assert.AreEqual("component_serialization_limit", (string)data["serializationError"]);
+                Assert.IsNull(data["properties"], "An oversized value must never expose a partial-success payload.");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
         [Test]
         public void OversizedEnumerableStopsAndDisposesBeforeReadingAllValues()
         {
@@ -83,6 +121,22 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 UnityEngine.Object.DestroyImmediate(go);
             }
+        }
+    }
+
+    public sealed class HandledOverflowComponent : MonoBehaviour
+    {
+        public HandledOverflowValue last;
+    }
+
+    public struct HandledOverflowValue
+    {
+        public IEnumerable<int> Values;
+
+        [Newtonsoft.Json.Serialization.OnError]
+        private void HandleError(System.Runtime.Serialization.StreamingContext context, Newtonsoft.Json.Serialization.ErrorContext error)
+        {
+            error.Handled = true;
         }
     }
 
