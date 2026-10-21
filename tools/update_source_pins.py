@@ -47,6 +47,7 @@ DOCUMENTS = {
 INPUTS = "release-source-inputs.json"
 METADATA = {"MCPForUnity/package.json", "manifest.json", INPUTS, *DOCUMENTS}
 JOURNAL = ".work/source-pin-transaction"
+FINALIZED = JOURNAL + "-finalized"
 
 
 def sha(data: bytes | None) -> str | None:
@@ -133,7 +134,7 @@ class PinPlan:
 def prepare(repo: Path, server: str, skill: str) -> PinPlan:
     repo = repo.resolve(strict=True)
     require(
-        not safe_path(repo, JOURNAL).exists(),
+        not safe_path(repo, JOURNAL).exists() and not safe_path(repo, FINALIZED).exists(),
         "Unfinished source pin transaction; use --recover-pins first",
     )
     remote = git(repo, "remote", "get-url", "origin").decode().strip()
@@ -283,16 +284,14 @@ def clean_journal(folder: Path, count: int) -> None:
         all(p.name in names and p.is_file() and not p.is_symlink() for p in entries),
         "Unknown transaction files preserved",
     )
-    for path in entries:
+    # Keep the descriptor until all blobs are gone; an empty retired directory is valid.
+    for path in sorted(entries, key=lambda p: p.name == "journal.json"):
         path.unlink()
     folder.rmdir()
 
 
-def recover(repo: Path) -> int:
-    repo = repo.resolve(strict=True)
-    folder = safe_path(repo, JOURNAL)
-    require(folder.is_dir(), "No source pin transaction to recover")
-    journal = load_json(content(safe_path(repo, JOURNAL + "/journal.json")))
+def journal_rows(repo: Path, relative: str) -> list:
+    journal = load_json(content(safe_path(repo, relative + "/journal.json")))
     require(
         journal.get("schema_version") == 1 and journal.get("repository") == str(repo),
         "Mismatched source pin transaction",
@@ -302,6 +301,38 @@ def recover(repo: Path) -> int:
     require(
         len({row["path"].casefold() for row in rows}) == len(rows), "Repeated transaction targets"
     )
+    return rows
+
+
+def clean_finalized(repo: Path) -> None:
+    folder = safe_path(repo, FINALIZED)
+    require(folder.is_dir(), "Missing finalized source pin transaction")
+    if content(safe_path(repo, FINALIZED + "/journal.json")) is None:
+        require(not list(folder.iterdir()), "Unknown transaction files preserved")
+        folder.rmdir()
+    else:
+        rows = journal_rows(repo, FINALIZED)
+        clean_journal(folder, len(rows))
+
+
+def finalize(repo: Path) -> None:
+    # Atomic retirement ends rollback eligibility before any backup is deleted.
+    # If cleanup stops, recovery only resumes deleting retired transaction files.
+    target = safe_path(repo, FINALIZED)
+    require(not target.exists(), "Unfinished finalized source pin transaction")
+    os.rename(safe_path(repo, JOURNAL), target)
+    clean_finalized(repo)
+
+
+def recover(repo: Path) -> int:
+    repo = repo.resolve(strict=True)
+    folder = safe_path(repo, JOURNAL)
+    if safe_path(repo, FINALIZED).exists():
+        require(not folder.exists(), "Conflicting source pin transactions preserved")
+        clean_finalized(repo)
+        return 0
+    require(folder.is_dir(), "No source pin transaction to recover")
+    rows = journal_rows(repo, JOURNAL)
     # Validate every target and backup before changing anything during recovery.
     for index, row in enumerate(rows):
         require(owned(row["path"]), "Unowned source pin target")
@@ -325,7 +356,7 @@ def recover(repo: Path) -> int:
                 staging.unlink()
             write_durable(staging, (folder / f"{index}.before").read_bytes())
             os.replace(staging, path)
-    clean_journal(folder, len(rows))
+    finalize(repo)
     return len(rows)
 
 
@@ -334,7 +365,10 @@ def apply(plan: PinPlan) -> int:
         return 0
     repo = plan.repo
     folder = safe_path(repo, JOURNAL)
-    require(not folder.exists(), "Unfinished source pin transaction; use --recover-pins first")
+    require(
+        not folder.exists() and not safe_path(repo, FINALIZED).exists(),
+        "Unfinished source pin transaction; use --recover-pins first",
+    )
     for change in plan.changes:
         require(
             owned(change.path) and content(safe_path(repo, change.path)) == change.before,
@@ -363,7 +397,7 @@ def apply(plan: PinPlan) -> int:
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(folder / f"{index}.after", path)
-        clean_journal(folder, len(plan.changes))
+        finalize(repo)
         return len(plan.changes)
     except BaseException:
         if published and folder.exists():

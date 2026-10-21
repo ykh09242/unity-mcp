@@ -8,6 +8,8 @@ import sys
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools import update_source_pins as pins
 from tools import update_versions
 from tools.check_release_evidence import components
@@ -245,6 +247,7 @@ def test_real_process_termination_has_recoverable_journal(history, edited_after_
     result = subprocess.run(
         [sys.executable, "-c", CRASH, str(repo), new, str(stop_after)],
         capture_output=True,
+        cwd=Path(__file__).resolve().parents[2],
         timeout=30,
     )
     assert result.returncode == 73, result.stderr.decode()
@@ -313,3 +316,63 @@ def test_invalid_committed_components_fail_before_publication(history, defect):
         pins.prepare(repo, invalid, invalid)
     assert snapshot(repo) == before
     assert not (repo / pins.JOURNAL).exists()
+
+
+CLEANUP_CRASH = """import os, sys
+from pathlib import Path
+from tools import update_source_pins as pins
+real = Path.unlink
+def crash(path, *args, **kwargs):
+    real(path, *args, **kwargs)
+    if path.parent.name.startswith('source-pin-transaction'):
+        if (sys.argv[4] == 'backup' and path.suffix == '.before') or path.name == sys.argv[4]:
+            os._exit(74)
+Path.unlink = crash
+repo = Path(sys.argv[1])
+if sys.argv[3] == 'apply':
+    pins.apply(pins.prepare(repo, sys.argv[2], sys.argv[2]))
+else:
+    pins.recover(repo)
+"""
+
+
+@pytest.mark.parametrize("operation", ["apply", "rollback"])
+@pytest.mark.parametrize("stop_after", ["backup", "journal.json"])
+def test_cleanup_interruption_preserves_settled_outcome_and_is_restartable(
+    history, operation, stop_after
+):
+    repo, _, new, _ = history
+    before = snapshot(repo)
+    plan = pins.prepare(repo, new, new)
+    expected = dict(before)
+    if operation == "apply":
+        for change in plan.changes:
+            if change.after is None:
+                expected.pop(change.path)
+            else:
+                expected[change.path] = change.after
+    else:
+        result = subprocess.run(
+            [sys.executable, "-c", CRASH, str(repo), new, "2"],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            timeout=30,
+        )
+        assert result.returncode == 73, result.stderr.decode()
+    result = subprocess.run(
+        [sys.executable, "-c", CLEANUP_CRASH, str(repo), new, operation, stop_after],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 74, result.stderr.decode()
+    assert snapshot(repo) == expected
+    with pytest.raises(ValueError, match="Unfinished"):
+        pins.prepare(repo, new, new)
+    # Finalized cleanup must preserve even a subsequent user edit.
+    put(repo, "Server/README.md", "Subsequent user edit\n")
+    expected["Server/README.md"] = b"Subsequent user edit\n"
+    pins.recover(repo)
+    assert snapshot(repo) == expected
+    assert not (repo / pins.JOURNAL).exists()
+    assert not (repo / (pins.JOURNAL + "-finalized")).exists()
