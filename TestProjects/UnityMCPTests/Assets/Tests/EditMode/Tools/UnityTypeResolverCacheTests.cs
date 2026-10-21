@@ -41,6 +41,40 @@ namespace MCPForUnityTests.EditMode.Tools
             Restore(constrained, previousConstrained);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RepeatedMissReusesDiagnosticButSeesNewTypesInTheSameAssembly(bool qualified)
+        {
+            string name = "OwnedMissing_" + Guid.NewGuid().ToString("N");
+            var module = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(name), AssemblyBuilderAccess.Run).DefineDynamicModule("OwnedModule");
+            string query = qualified ? "Late." + name : name;
+            Assert.IsFalse(UnityTypeResolver.TryResolve(query, out _, out string first, typeof(ResolverCacheBaseA)));
+            Assert.IsFalse(UnityTypeResolver.TryResolve(query, out _, out string second, typeof(ResolverCacheBaseA)));
+            Assert.AreSame(first, second, "An unchanged miss should reuse bounded cached metadata and its diagnostic.");
+            Type late = module.DefineType("Late." + name, TypeAttributes.Public, typeof(ResolverCacheBaseA)).CreateType();
+            Assert.IsTrue(UnityTypeResolver.TryResolve(query, out Type resolved, out string error, typeof(ResolverCacheBaseA)), error);
+            Assert.AreSame(late, resolved);
+        }
+
+        [Test]
+        public void MissCacheBoundsArbitraryQueriesAndRefreshesForNewAssemblies()
+        {
+            string name = "OwnedLaterAssembly_" + Guid.NewGuid().ToString("N");
+            Assert.IsFalse(UnityTypeResolver.TryResolve(name, out _, out _));
+            var misses = ReadField<Dictionary<(string name, Type constraint), string>>("Misses");
+            int limit = ReadField<int>("MaxMissCacheEntries");
+            for (int i = 0; i < limit + 2; i++)
+                UnityTypeResolver.TryResolve(name + i, out _, out _);
+            Assert.LessOrEqual(misses.Count, limit);
+            string large = new string('x', 1024);
+            UnityTypeResolver.TryResolve(large, out _, out _);
+            Assert.IsFalse(misses.ContainsKey((large, null)));
+            var module = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(name), AssemblyBuilderAccess.Run).DefineDynamicModule("OwnedModule");
+            Type late = module.DefineType("Late." + name, TypeAttributes.Public).CreateType();
+            Assert.IsTrue(UnityTypeResolver.TryResolve(name, out Type found, out string error), error);
+            Assert.AreSame(late, found);
+        }
+
         [Test]
         public void RepeatedConstrainedShortNameRetainsItsOwnCachedResolution()
         {

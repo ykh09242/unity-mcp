@@ -23,6 +23,14 @@ namespace MCPForUnity.Editor.Helpers
         private static readonly Dictionary<string, Type> CacheByName = new(StringComparer.Ordinal);
         private static readonly Dictionary<(string name, Type constraint), Type> CacheByConstraint = new();
         private const int MaxConstrainedCacheEntries = 256;
+        private const int MaxMissCacheEntries = 256;
+        private const int MaxMissQueryLength = 512;
+        private static readonly Dictionary<(string name, Type constraint), string> Misses = new();
+        private static readonly Dictionary<System.Reflection.Assembly, Type[]> StaticTypes = new();
+        private static System.Reflection.Assembly[] loadedAssemblies = Array.Empty<System.Reflection.Assembly>();
+#if UNITY_EDITOR
+        private static HashSet<string> playerAssemblyNames;
+#endif
         private static int assemblyGeneration;
         private static int cachedAssemblyGeneration = -1;
         private static System.Reflection.Assembly[] dynamicAssemblies = Array.Empty<System.Reflection.Assembly>();
@@ -41,7 +49,13 @@ namespace MCPForUnity.Editor.Helpers
             CacheByFqn.Clear();
             CacheByName.Clear();
             CacheByConstraint.Clear();
-            dynamicAssemblies = UnityAssembliesCompat.GetLoadedAssemblies().Where(assembly => assembly.IsDynamic).ToArray();
+            Misses.Clear();
+            StaticTypes.Clear();
+            loadedAssemblies = UnityAssembliesCompat.GetLoadedAssemblies();
+            dynamicAssemblies = loadedAssemblies.Where(assembly => assembly.IsDynamic).ToArray();
+#if UNITY_EDITOR
+            playerAssemblyNames = null;
+#endif
             cachedAssemblyGeneration = generation;
         }
 
@@ -89,6 +103,14 @@ namespace MCPForUnity.Editor.Helpers
                 return true;
             }
 
+            // Direct resolution above also handles assembly-qualified names added by Reflection.Emit.
+            if (Misses.TryGetValue((typeName, requiredBaseType), out string missing) && !HasDynamicNameMatch(typeName, requiredBaseType))
+            {
+                type = null;
+                error = missing;
+                return false;
+            }
+
             // Search loaded assemblies (prefer Player assemblies)
             var candidates = FindCandidates(typeName, requiredBaseType);
             if (candidates.Count == 1)
@@ -128,6 +150,12 @@ namespace MCPForUnity.Editor.Helpers
             error =
                 $"Type '{typeName}' not found in loaded runtime assemblies. "
                 + "Use a fully-qualified name (Namespace.TypeName) and ensure the script compiled.";
+            if (typeName.Length <= MaxMissQueryLength)
+            {
+                if (Misses.Count >= MaxMissCacheEntries)
+                    Misses.Clear();
+                Misses[(typeName, requiredBaseType)] = error;
+            }
             type = null;
             return false;
         }
@@ -210,11 +238,11 @@ namespace MCPForUnity.Editor.Helpers
         private static List<Type> FindCandidates(string query, Type requiredBaseType)
         {
             bool isShort = !query.Contains('.');
-            var loaded = UnityAssembliesCompat.GetLoadedAssemblies();
+            var loaded = loadedAssemblies;
 
 #if UNITY_EDITOR
             // Names of Player (runtime) script assemblies
-            var playerAsmNames = new HashSet<string>(CompilationPipeline.GetAssemblies(AssembliesType.Player).Select(a => a.name), StringComparer.Ordinal);
+            var playerAsmNames = PlayerAssemblyNames();
 
             var playerAsms = loaded.Where(a => playerAsmNames.Contains(a.GetName().Name));
             var editorAsms = loaded.Except(playerAsms);
@@ -289,7 +317,12 @@ namespace MCPForUnity.Editor.Helpers
         {
             try
             {
-                return assembly.GetTypes();
+                if (!assembly.IsDynamic && StaticTypes.TryGetValue(assembly, out Type[] cached))
+                    return cached;
+                Type[] types = assembly.GetTypes();
+                if (!assembly.IsDynamic)
+                    StaticTypes[assembly] = types;
+                return types;
             }
             catch (ReflectionTypeLoadException rtle)
             {
@@ -301,10 +334,15 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
+#if UNITY_EDITOR
+        private static HashSet<string> PlayerAssemblyNames() =>
+            playerAssemblyNames ??= new HashSet<string>(CompilationPipeline.GetAssemblies(AssembliesType.Player).Select(a => a.name), StringComparer.Ordinal);
+#endif
+
         private static IEnumerable<Type> PreferPlayer(IEnumerable<Type> types)
         {
 #if UNITY_EDITOR
-            var playerAsmNames = new HashSet<string>(CompilationPipeline.GetAssemblies(AssembliesType.Player).Select(a => a.name), StringComparer.Ordinal);
+            var playerAsmNames = PlayerAssemblyNames();
 
             var list = types.ToList();
             var fromPlayer = list.Where(t => playerAsmNames.Contains(t.Assembly.GetName().Name)).ToList();
