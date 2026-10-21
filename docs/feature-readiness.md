@@ -33,3 +33,36 @@ scene traversal, tool enablement, build, compilation or refresh is triggered.
 
 Unity references: [package registration events](https://docs.unity.com/en-us/engine/6000.0/script-reference/unityeditor/packagemanager/events/registeredpackages)
 and [Cinemachine upgrade guide](https://docs.unity.cn/Packages/com.unity.cinemachine%403.0/manual/CinemachineUpgradeFrom2.html).
+
+
+## Scoped capability reads
+
+`mcpforunity://capabilities` and doctor keep their complete five-source view.
+For focused inspection, read `mcpforunity://capabilities/scoped?features=build`
+or `mcpforunity://capabilities/scoped?features=build,input&sources=manage_recording`.
+Both options accept comma-separated exact names and combine as a union; omitted
+options retain full discovery. Empty or unknown names fail before native dispatch.
+
+Features: `input`, `ui_click`, `recording`, `play_scenario_editor`,
+`play_scenario_player`, `build`, `render_pipeline`, `cinemachine`, `probuilder`,
+`netcode`. Sources: `get_editor_state`, `get_project_info`, `manage_input`,
+`manage_recording`, `manage_play_scenario`. Source selection includes the features
+that source describes. Current Editor evidence is always read, even for a narrow
+selection. Player support still requires the existing bundle preflight.
+
+Unrequested features and sources remain unknown with `reason: not_requested`;
+they are not unsupported or failed. `partial` continues to describe completeness
+of the full view, so a successful narrow read is normally partial. The schema and
+five-probe maximum remain unchanged. Requested observations retain the existing
+single read budget and final connection generation, project and principal checks.
+
+No completed capability response is cached (TTL zero). The native readiness owner
+already reuses stable package-version metadata and invalidates it on package
+registration events; current readiness is always recomputed. CLI doctor and full
+tool inspection keep their existing complete behavior.
+
+The HTTP/SDK regression measures actual production command dispatches with a
+controlled native responder: full discovery sends five commands, build-only sends
+two, and build plus input sends three. This is a command-count reduction, not a
+claim about real Unity latency or serial execution; full probes remain concurrent.
+No workload size, memory allowance or execution timeout is reduced.

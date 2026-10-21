@@ -287,6 +287,17 @@ Snapshot of rendering counters (draw calls, batches, triangles, texture counts a
 Read resolved/reviewed SDK versions and optional adapter state without contacting Unity or changing configuration.
 
 
+## `scoped_project_capabilities`
+
+**URI:** `mcpforunity://capabilities/scoped{?features,sources}`
+
+Optional comma-separated feature/source selection; always reads current Editor state. Unrequested observations are unknown with reason not_requested; partial refers to the full view. Default full resource and doctor are unchanged. No completed-query cache. URI: mcpforunity://capabilities/scoped{?features,sources}
+
+**Parameters:**
+
+- `features` (`str | None`, optional)
+- `sources` (`str | None`, optional)
+
 ## `tool_diagnostics`
 
 **URI:** `mcpforunity://tool-diagnostics`

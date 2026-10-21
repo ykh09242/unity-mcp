@@ -23,3 +23,27 @@ from services.registry import mcp_for_unity_resource
 )
 async def get_capabilities(ctx: Context) -> ProjectCapabilitiesResponse:
     return ProjectCapabilitiesResponse(data=await query_project_capabilities(ctx))
+
+
+@mcp_for_unity_resource(
+    uri="mcpforunity://capabilities/scoped{?features,sources}",
+    name="scoped_project_capabilities",
+    description=(
+        "Optional comma-separated feature/source selection; always reads current Editor state. "
+        "Unrequested observations are unknown with reason not_requested; partial refers to the full view. "
+        "Default full resource and doctor are unchanged. No completed-query cache. "
+        "URI: mcpforunity://capabilities/scoped{?features,sources}"
+    ),
+)
+async def get_scoped_capabilities(
+    ctx: Context,
+    features: str | None = None,
+    sources: str | None = None,
+) -> ProjectCapabilitiesResponse:
+    return ProjectCapabilitiesResponse(
+        data=await query_project_capabilities(
+            ctx,
+            features=tuple(features.split(",")) if features is not None else None,
+            sources=tuple(sources.split(",")) if sources is not None else None,
+        )
+    )

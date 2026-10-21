@@ -339,7 +339,10 @@ async def test_legacy_stdio_without_authenticated_generation_stays_unknown(monke
 
 
 @pytest.mark.asyncio
-async def test_principal_change_discards_selected_project_identity(command_hub, monkeypatch):
+@pytest.mark.parametrize("features", [None, ("build",)])
+async def test_principal_change_discards_selected_project_identity(
+    command_hub, monkeypatch, features
+):
     async with remote_credentials(
         {
             "requester:user-a": "user-a",
@@ -376,6 +379,7 @@ async def test_principal_change_discards_selected_project_identity(command_hub, 
             "requester:user-a",
             capabilities.query_project_capabilities,
             SimpleNamespace(get_state=state),
+            features=features,
         )
 
         assert command_hub.sent, "Principal-change fixture must reach a real native observation"
