@@ -308,7 +308,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("prefab_inspect", AutoRegister = false, Group = "core",
-        DisplayName = "Inspect Prefabs", Description = "Inspect prefab metadata or a bounded hierarchy page. Read-only inspection; results can change with Unity state.")]
+        DisplayName = "Inspect Prefabs", Description = "Inspect prefab metadata or a bounded hierarchy page. Inspection may load assets or invoke user-defined callbacks.")]
     public static class PrefabInspect
     {
         private static readonly string[] Actions = { "get_info", "get_hierarchy" };
@@ -391,7 +391,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("scene_reference_diagnostics", AutoRegister = false, Group = "scene",
-        DisplayName = "Scene Reference Diagnostics", Description = "Inspect scene references within explicit work and result budgets. Read-only inspection; results can change with Unity state.")]
+        DisplayName = "Scene Reference Diagnostics", Description = "Inspect scene references within explicit work and result budgets. Inspection may load assets or invoke user-defined callbacks.")]
     public static class SceneReferenceDiagnostics
     {
         private static readonly string[] Actions = { "validate_references" };
@@ -465,7 +465,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("ui_inspect", AutoRegister = false, Group = "ui",
-        DisplayName = "UI Toolkit / Inspect & Diagnose", Description = "Inspect the visual tree or diagnose UI Toolkit layout and text. Read-only inspection; results can change with Unity state.")]
+        DisplayName = "UI Toolkit / Inspect & Diagnose", Description = "Inspect the visual tree or diagnose UI Toolkit layout and text. Inspection may load assets or invoke user-defined callbacks.")]
     public static class UiInspect
     {
         private static readonly string[] Actions = { "ping", "get_visual_tree", "diagnose" };

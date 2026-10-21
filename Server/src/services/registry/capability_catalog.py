@@ -22,6 +22,9 @@ READ_ONLY_EFFECTS = CapabilityEffects(
     open_world=False,
     description_suffix="Read-only inspection; results can change with Unity state.",
 )
+CALLBACK_INSPECTION_EFFECTS = CapabilityEffects(
+    description_suffix="Inspection may load assets or invoke user-defined callbacks.",
+)
 CONTACT_OBSERVER_EFFECTS = CapabilityEffects(
     open_world=False,
     description_suffix="May start or stop passive contact observation without advancing simulation.",
@@ -259,7 +262,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Inspect Prefabs",
         "get_info get_hierarchy",
         "prefab_path page_size cursor max_depth",
-        effects=READ_ONLY_EFFECTS,
+        effects=CALLBACK_INSPECTION_EFFECTS,
     ),
     _feature(
         "prefab_create",
@@ -319,7 +322,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Scene Reference Diagnostics",
         "validate_references",
         "path reference_scope max_objects max_work page_size page_number reference_revision reference_snapshot reference_cursor",
-        effects=READ_ONLY_EFFECTS,
+        effects=CALLBACK_INSPECTION_EFFECTS,
     ),
     _feature(
         "asset_inspect",
@@ -386,7 +389,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "UI Toolkit / Inspect & Diagnose",
         "ping get_visual_tree diagnose",
         "target component_type max_depth max_nodes max_evaluations max_characters max_pairs max_findings",
-        effects=READ_ONLY_EFFECTS,
+        effects=CALLBACK_INSPECTION_EFFECTS,
     ),
     _feature(
         "ui_element",
