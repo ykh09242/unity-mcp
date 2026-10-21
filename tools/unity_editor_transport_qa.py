@@ -218,6 +218,10 @@ def _launch(args):
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = 0
+    project_settings = (
+        tree_files(project / "ProjectSettings") if (project / "ProjectSettings").is_dir() else {}
+    )
+    cache_reused = (project / "Library").is_dir()
     started = time.time()
     process = subprocess.Popen(
         command,
@@ -240,10 +244,8 @@ def _launch(args):
         "stdioCommandTimeoutMs": args.stdio_command_timeout_ms,
         "selection": selection,
         "inputs": prep["inputs"],
-        "cacheReused": (project / "Library").is_dir(),
-        "projectSettingsBefore": tree_files(project / "ProjectSettings")
-        if (project / "ProjectSettings").is_dir()
-        else {},
+        "cacheReused": cache_reused,
+        "projectSettingsBefore": project_settings,
     }
     failure = None
     try:

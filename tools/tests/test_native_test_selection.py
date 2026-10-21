@@ -216,3 +216,12 @@ def test_repository_manifest_method_inventory_is_valid():
     data = json.loads(path.read_text())
     for name in data["groups"]:
         assert qa.load_selection(path, [name], "win32")["required"]
+
+
+def test_generated_editor_user_settings_do_not_change_source_identity(tmp_path):
+    output, prep, editor, _, _ = owned_inputs(tmp_path)
+    receipt = qa.capture_inputs(output, prep, editor)
+    settings = Path(prep["projectAbsolute"]) / "UserSettings"
+    settings.mkdir()
+    (settings / "EditorUserSettings.asset").write_text("derived local Editor state")
+    qa.verify_inputs(output, prep, editor, receipt)

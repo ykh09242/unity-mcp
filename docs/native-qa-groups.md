@@ -53,7 +53,7 @@ succeed. Every label requires fresh log, XML and receipt paths.
 Unity-generated ProjectSettings are recorded before and after execution separately
 from the authored settings snapshot; import/version normalization does not look
 like a source edit. Initially absent `.meta` and package lock files may be created
-by Unity. Previously captured files remain guarded. Generated caches and outputs
+by Unity. Previously captured files remain guarded. Generated Editor UserSettings, caches and outputs
 are excluded from source identity; new C# or package inputs are not.
 
 Disruptive groups cannot be combined with ordinary groups. A platform exclusion

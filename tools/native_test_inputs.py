@@ -24,7 +24,7 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def tree_files(root):
+def tree_files(root, *, excluded_roots=()):
     root = checked_path(root)
     if not root.is_dir():
         raise ValueError("QA input directory is missing")
@@ -35,7 +35,11 @@ def tree_files(root):
 
     for directory, names, files in os.walk(root, onerror=fail):
         names[:] = sorted(
-            name for name in names if name.lower() not in _EXCLUDED and not name.startswith(".env")
+            name
+            for name in names
+            if name.lower() not in _EXCLUDED
+            and not name.startswith(".env")
+            and (Path(directory) / name).relative_to(root).as_posix() not in excluded_roots
         )
         for name in names:
             checked_path(Path(directory) / name)
@@ -117,13 +121,13 @@ def capture_inputs(output, prep, editor):
             "sha256": digest(editor),
             "version": prep["unityVersion"],
         },
-        "files": {
-            key: value
-            for key, value in tree_files(output / "snapshot").items()
-            if not key.startswith(
-                project.relative_to(output / "snapshot").as_posix() + "/ProjectSettings/"
-            )
-        },
+        "files": tree_files(
+            output / "snapshot",
+            excluded_roots={
+                project.relative_to(output / "snapshot").as_posix() + "/ProjectSettings",
+                project.relative_to(output / "snapshot").as_posix() + "/UserSettings",
+            },
+        ),
     }
 
 

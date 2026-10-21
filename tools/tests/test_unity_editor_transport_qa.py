@@ -195,6 +195,16 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
             self.assertEqual("do-not-forward", qa.os.environ["UNITY_MCP_ALLOW_BATCH"])
             self.assertEqual(1000, self.record()["stdioCommandTimeoutMs"])
 
+    def test_settings_capture_failure_does_not_launch_editor(self):
+        (self.project / "ProjectSettings").mkdir()
+        with (
+            patch.object(qa, "tree_files", side_effect=OSError("settings unavailable")),
+            patch.object(qa.subprocess, "Popen", return_value=OwnedFakeProcess([0])) as popen,
+        ):
+            with self.assertRaises(OSError):
+                qa.launch(self.args)
+        self.assertEqual(0, popen.call_count)
+
     def test_partial_method_selection_cannot_pass(self):
         self.passed_xml()
         data = json.loads(self.groups.read_text())
