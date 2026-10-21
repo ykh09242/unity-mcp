@@ -497,10 +497,19 @@ async def test_sdk_refresh_retains_declared_and_prepared_readiness_policy(
 async def test_rest_command_selection_and_dispatch_share_budget(command_hub, monkeypatch, case):
     import httpx
     from core.config import config
-    from main import create_mcp_server
+    import main as main_module
 
+    request_budgets = []
+    original_request_budget = main_module._HttpRequestBudget
+
+    def observe_request_budget(started_at, budget, scope):
+        request_budget = original_request_budget(started_at, budget, scope)
+        request_budgets.append((request_budget, budget.expires_at))
+        return request_budget
+
+    monkeypatch.setattr(main_module, "_HttpRequestBudget", observe_request_budget)
     monkeypatch.setattr(config, "local_auth_token", "deadline-fixture")
-    app = create_mcp_server(False).http_app()
+    app = main_module.create_mcp_server(False).http_app()
     if case == "custom_long":
         from models.models import ToolDefinitionModel, ToolParameterModel
         from services.custom_tool_service import CustomToolService
@@ -535,7 +544,6 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
             command_hub.registry._lock.release()
 
         release = asyncio.create_task(release_selection())
-    started = asyncio.get_running_loop().time()
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://deadline.invalid"
@@ -560,7 +568,7 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
                 ),
                 # This watchdog catches hangs, not the command's production deadline.
                 # Keep scheduling slack for oversubscribed CI workers; successful requests
-                # still finish immediately and the short-deadline assertions stay below.
+                # still finish immediately. Assert the actual budget below.
                 2.0,
             )
     finally:
@@ -570,6 +578,20 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
             command_hub.registry._lock.release()
     result = response.json()
     assert response.status_code == 200
+    assert len(request_budgets) == 1
+    request_budget, original_expiry = request_budgets[0]
+    expected_timeout = (
+        935 if case == "long" else 905 if case == "custom_long" else PluginHub.COMMAND_TIMEOUT
+    )
+    # Client delivery and runner scheduling can outlast the server's timeout.
+    # Verify the deadline installed at entry, and that dispatch never restarts it.
+    assert original_expiry - request_budget.started_at == pytest.approx(expected_timeout)
+    assert request_budget.budget.expires_at == original_expiry
+    assert request_budget.scope.when() == original_expiry
+    if case == "selection_lock":
+        assert request_budget.scope.expired()
+    else:
+        assert request_budget.budget.active.expires_at == original_expiry
     if case in {"long", "custom_long"}:
         assert result["success"] is True
         assert command_hub.sent[0]["timeout"] == (930 if case == "long" else 900)
@@ -577,7 +599,6 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
         assert result["data"]["reason"] == (
             "command_deadline_exceeded" if case == "selection_lock" else "outcome_unknown"
         )
-        assert asyncio.get_running_loop().time() - started < 0.2
         if case == "selection_lock":
             assert command_hub.sent == []
         else:
