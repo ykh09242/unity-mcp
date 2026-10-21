@@ -25,6 +25,14 @@ namespace MCPForUnity.Editor.Tools.Build
         private static readonly Regex IdPattern = new Regex("\\Abr-[0-9a-f]{32}\\z", RegexOptions.CultureInvariant);
         private static readonly Regex HashPattern = new Regex("\\A[0-9a-f]{64}\\z", RegexOptions.CultureInvariant);
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
+        private static readonly HashSet<string> StepFields = new HashSet<string>(
+            new[] { "name", "depth", "duration_seconds", "message_count" },
+            StringComparer.Ordinal
+        );
+        private static readonly HashSet<string> PackedAssetFields = new HashSet<string>(
+            new[] { "source_asset_path", "packed_size_bytes" },
+            StringComparer.Ordinal
+        );
 
         // Private observation seams used only by owned fixtures; no caller-supplied artifact paths or clocks.
         private static string StorageRootOverride = null;
@@ -60,10 +68,12 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static string Location(string name) => SafePathUtility.ResolveWithinRoot(Root, name);
 
-        private static string Hash(string text)
+        private static string Hash(string text) => HashBytes(Utf8.GetBytes(text));
+
+        private static string HashBytes(byte[] bytes)
         {
             using (var sha = SHA256.Create())
-                return BitConverter.ToString(sha.ComputeHash(Utf8.GetBytes(text))).Replace("-", "").ToLowerInvariant();
+                return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
         }
 
         internal static string Identity(string jobId) => "br-" + Hash(jobId).Substring(0, 32);
@@ -492,24 +502,8 @@ namespace MCPForUnity.Editor.Tools.Build
             foreach (string name in new[] { "child_count", "errors", "warnings", "job_total_size_mb", "duration_seconds", "total_size_bytes" })
                 if (summary[name] != null && summary[name].Type != JTokenType.Null && !NonnegativeNumber(summary[name]))
                     throw new ReportFailure("build_report_corrupt");
-            foreach (JObject row in (JArray)record["steps"])
-                if (
-                    row.Properties().Any(property => !new[] { "name", "depth", "duration_seconds", "message_count" }.Contains(property.Name))
-                    || row["name"]?.Type != JTokenType.String
-                    || row["depth"]?.Type != JTokenType.Integer
-                    || !NonnegativeNumber(row["depth"])
-                    || !NonnegativeNumber(row["duration_seconds"])
-                )
-                    throw new ReportFailure("build_report_corrupt");
-            foreach (JObject row in (JArray)record["packed_assets"])
-                if (
-                    row.Properties().Any(property => !new[] { "source_asset_path", "packed_size_bytes" }.Contains(property.Name))
-                    || row["source_asset_path"]?.Type != JTokenType.String
-                    || ((string)row["source_asset_path"] != "[unavailable]" && AssetName((string)row["source_asset_path"]) != (string)row["source_asset_path"])
-                    || row["packed_size_bytes"]?.Type != JTokenType.Integer
-                    || !NonnegativeNumber(row["packed_size_bytes"])
-                )
-                    throw new ReportFailure("build_report_corrupt");
+            ValidateDetailRows("steps", (JArray)record["steps"]);
+            ValidateDetailRows("packed_assets", (JArray)record["packed_assets"]);
             foreach (JObject row in (JArray)record["children"])
                 if (
                     row.Properties().Any(property => !new[] { "job_id", "report_id", "result", "platform" }.Contains(property.Name))
@@ -519,7 +513,46 @@ namespace MCPForUnity.Editor.Tools.Build
                     || (row["report_id"]?.Type != JTokenType.Null && !IdPattern.IsMatch((string)row["report_id"] ?? ""))
                 )
                     throw new ReportFailure("build_report_corrupt");
-            foreach (JValue value in record.Descendants().OfType<JValue>())
+            ValidateValues(record);
+        }
+
+        // Summary validation and shard validation share the exact row contract.
+        private static void ValidateDetailRows(string section, JArray rows)
+        {
+            int maximum =
+                section == "steps" ? MaxSteps
+                : section == "packed_assets" ? MaxPackedAssets
+                : 0;
+            if (maximum == 0 || rows == null || rows.Count > maximum || rows.Any(row => !(row is JObject)))
+                throw new ReportFailure("build_report_corrupt");
+            if (section == "steps")
+                foreach (JObject row in rows)
+                    if (
+                        row.Properties().Any(property => !StepFields.Contains(property.Name))
+                        || row["name"]?.Type != JTokenType.String
+                        || row["depth"]?.Type != JTokenType.Integer
+                        || !NonnegativeNumber(row["depth"])
+                        || !NonnegativeNumber(row["duration_seconds"])
+                    )
+                        throw new ReportFailure("build_report_corrupt");
+            if (section == "packed_assets")
+                foreach (JObject row in rows)
+                    if (
+                        row.Properties().Any(property => !PackedAssetFields.Contains(property.Name))
+                        || row["source_asset_path"]?.Type != JTokenType.String
+                        || (
+                            (string)row["source_asset_path"] != "[unavailable]"
+                            && AssetName((string)row["source_asset_path"]) != (string)row["source_asset_path"]
+                        )
+                        || row["packed_size_bytes"]?.Type != JTokenType.Integer
+                        || !NonnegativeNumber(row["packed_size_bytes"])
+                    )
+                        throw new ReportFailure("build_report_corrupt");
+        }
+
+        private static void ValidateValues(JContainer container)
+        {
+            foreach (JValue value in container.Descendants().OfType<JValue>())
             {
                 if (value.Type == JTokenType.String)
                 {

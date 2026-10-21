@@ -70,3 +70,12 @@ expiry. It does not scan unrelated completed reports. An unspecified/latest
 status query retains the existing inventory selection. Returned summaries remain
 detached values; unavailable, corrupt or expired evidence still cannot become a
 successful status observation.
+
+### Detail page validation costs
+
+Each requested detail page still rereads and verifies its index and overlapping
+shards. Shard validation shares the row contract with legacy reports, without
+cloning the enclosing summary or attaching the rows to a temporary record. Hashes
+use the original bytes after strict UTF-8 decoding, avoiding a second encoding.
+No parsed-page cache is retained; corruption and replacement between requests
+remain observable, and response rows remain detached from later requests.

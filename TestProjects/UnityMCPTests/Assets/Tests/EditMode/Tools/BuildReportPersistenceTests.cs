@@ -698,6 +698,190 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(Directory.EnumerateFiles(ownedRoot, "write-*.tmp").Any());
         }
 
+        private (double milliseconds, long allocated) MeasureReportWork(Action work)
+        {
+            using var recorder = Unity.Profiling.ProfilerRecorder.StartNew(
+                Unity.Profiling.ProfilerCategory.Memory,
+                "GC.Alloc",
+                131072,
+                Unity.Profiling.ProfilerRecorderOptions.StartImmediately | Unity.Profiling.ProfilerRecorderOptions.CollectOnlyOnCurrentThread
+            );
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            work();
+            clock.Stop();
+            recorder.Stop();
+            Assert.Less(recorder.Count, recorder.Capacity, "Allocation samples must not be truncated.");
+            long bytes = 0;
+            for (int i = 0; i < recorder.Count; i++)
+                bytes += recorder.GetSample(i).Value;
+            return (clock.Elapsed.TotalMilliseconds, recorder.Valid && bytes > 0 ? bytes : -1);
+        }
+
+        [Test]
+        public void DetailRowValidationMatchesLegacyRulesAndMeasuresAllocation()
+        {
+            var source = Prepared(Complete(BuildJobState.Succeeded));
+            string id = Persist(source);
+            var record = (JObject)Store.GetMethod("Load", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { id, null, false });
+            var owner = new JObject { ["rows"] = new JArray(PackedRows(256)) };
+            var rows = (JArray)owner["rows"];
+            var validate = (Action<JObject>)Store.GetMethod("Validate", BindingFlags.NonPublic | BindingFlags.Static).CreateDelegate(typeof(Action<JObject>));
+            var candidate =
+                (Action<JObject, string, JArray>)
+                    Store.GetMethod("ValidateRows", BindingFlags.NonPublic | BindingFlags.Static).CreateDelegate(typeof(Action<JObject, string, JArray>));
+            // Exact previous validation path, against the same parsed summary and shard rows.
+            void Legacy()
+            {
+                var ordinary = (JObject)record.DeepClone();
+                ordinary["schema_version"] = 1;
+                ordinary.Remove("detail_index");
+                ordinary.Remove("report_revision");
+                ordinary["packed_assets"] = rows;
+                validate(ordinary);
+            }
+            void Current() => candidate(record, "packed_assets", rows);
+            Legacy();
+            Current();
+            for (int repetition = 0; repetition < 3; repetition++)
+            {
+                (double milliseconds, long allocated) before,
+                    after;
+                if (repetition % 2 == 0)
+                {
+                    before = MeasureReportWork(Legacy);
+                    after = MeasureReportWork(Current);
+                }
+                else
+                {
+                    after = MeasureReportWork(Current);
+                    before = MeasureReportWork(Legacy);
+                }
+                TestContext.WriteLine(
+                    $"BETA06_ROWS repetition={repetition} rows=256 legacy_ms={before.milliseconds:F3} current_ms={after.milliseconds:F3} legacy_alloc={before.allocated} current_alloc={after.allocated}"
+                );
+            }
+            Assert.AreSame(owner.Property("rows"), rows.Parent);
+            Assert.AreEqual(256, rows.Count);
+        }
+
+        [TestCase("sequential")]
+        [TestCase("random")]
+        [TestCase("repeated")]
+        public void DetailPagesRetainOrderedDetachedRowsAndReadCoverage(string mode)
+        {
+            var source = Prepared(Complete(BuildJobState.Succeeded));
+            source["packed_assets_complete"] = true;
+            string id = (string)
+                Store
+                    .GetMethod("WriteSnapshot", BindingFlags.NonPublic | BindingFlags.Static)
+                    .Invoke(null, new object[] { source, Enumerable.Empty<JObject>(), PackedRows(10000) });
+            int[] pages =
+                mode == "sequential" ? Enumerable.Range(1, 12).ToArray()
+                : mode == "random" ? new[] { 91, 3, 79, 10, 40, 100, 1, 36, 85, 62, 25, 7 }
+                : Enumerable.Repeat(51, 12).ToArray();
+            var reads = new List<string>();
+            Field("ReadFileForTests").SetValue(null, (Action<string>)(path => reads.Add(Path.GetFileName(path))));
+            // Warm the same page order, then measure complete public responses.
+            foreach (int page in pages)
+                Success(Send("report", "report_id", id, "report_section", "packed_assets", "page_size", 100, "page_number", page));
+            reads.Clear();
+            double milliseconds = 0;
+            long allocated = 0;
+            foreach (int page in pages)
+            {
+                var measured = MeasureReportWork(() =>
+                {
+                    var data = Success(Send("report", "report_id", id, "report_section", "packed_assets", "page_size", 100, "page_number", page));
+                    Assert.AreEqual(10000, data.Value<int>("total_entries"));
+                    var entries = (JArray)data["entries"];
+                    Assert.AreEqual(100, entries.Count);
+                    for (int i = 0; i < 100; i++)
+                        Assert.AreEqual("Assets/Owned/Entry" + ((page - 1) * 100 + i) + ".asset", (string)entries[i]["source_asset_path"]);
+                    entries[0]["source_asset_path"] = "Assets/CallerEdited.asset";
+                });
+                milliseconds += measured.milliseconds;
+                allocated = allocated >= 0 && measured.allocated >= 0 ? allocated + measured.allocated : -1;
+            }
+            int shards = pages.Sum(page => ((page * 100 - 1) / 256) - (((page - 1) * 100) / 256) + 1);
+            Assert.AreEqual(shards, reads.Count(name => name.StartsWith("packed_assets-", StringComparison.Ordinal) && name != "packed_assets-index.json"));
+            Assert.AreEqual(pages.Length, reads.Count(name => name == "packed_assets-index.json"));
+            TestContext.WriteLine(
+                $"BETA06_PAGES mode={mode} pages={pages.Length} rows=10000 ms={milliseconds:F3} alloc={allocated} reads={reads.Count} cache_bytes=0"
+            );
+        }
+
+        [TestCase("steps", "unknown")]
+        [TestCase("steps", "path")]
+        [TestCase("steps", "negative")]
+        [TestCase("steps", "infinite")]
+        [TestCase("steps", "scalar")]
+        [TestCase("packed_assets", "unknown")]
+        [TestCase("packed_assets", "path")]
+        [TestCase("packed_assets", "negative")]
+        [TestCase("packed_assets", "scalar")]
+        public void DetailRowsRejectInvalidDataUnderBothValidationPaths(string section, string defect)
+        {
+            JObject row =
+                section == "steps"
+                    ? new JObject
+                    {
+                        ["name"] = "Compile",
+                        ["depth"] = 0,
+                        ["duration_seconds"] = 1.0,
+                    }
+                    : new JObject { ["source_asset_path"] = "Assets/Owned.asset", ["packed_size_bytes"] = 20 };
+            if (defect == "unknown")
+                row["unexpected"] = "value";
+            if (defect == "path")
+                row[section == "steps" ? "name" : "source_asset_path"] = "C:/private/file";
+            if (defect == "negative")
+                row[section == "steps" ? "duration_seconds" : "packed_size_bytes"] = -1;
+            if (defect == "infinite")
+                row["message_count"] = double.PositiveInfinity;
+            var rows = new JArray(defect == "scalar" ? (JToken)new JValue("bad") : row);
+            var source = Prepared(Complete(BuildJobState.Succeeded));
+            var validate = Store.GetMethod("Validate", BindingFlags.NonPublic | BindingFlags.Static);
+            var validateRows = Store.GetMethod("ValidateRows", BindingFlags.NonPublic | BindingFlags.Static);
+            var legacy = (JObject)source.DeepClone();
+            legacy[section] = rows;
+            Assert.Throws<TargetInvocationException>(() => validate.Invoke(null, new object[] { legacy }));
+            Assert.Throws<TargetInvocationException>(() => validateRows.Invoke(null, new object[] { source, section, rows }));
+        }
+
+        [TestCase("valid")]
+        [TestCase("invalid_utf8")]
+        [TestCase("duplicate")]
+        [TestCase("trailing")]
+        [TestCase("wrong_hash")]
+        public void VerifiedDetailBytesPreserveStrictDecodingAndIntegrity(string mode)
+        {
+            Directory.CreateDirectory(ownedRoot);
+            byte[] bytes = new System.Text.UTF8Encoding(false, true).GetBytes("{\"text\":\"한글 🏰\"}");
+            if (mode == "invalid_utf8")
+                bytes = new byte[] { 0xff };
+            if (mode == "duplicate")
+                bytes = System.Text.Encoding.UTF8.GetBytes("{\"text\":1,\"text\":2}");
+            if (mode == "trailing")
+                bytes = System.Text.Encoding.UTF8.GetBytes("{} {}");
+            string path = Path.Combine(ownedRoot, "verified-bytes.json");
+            File.WriteAllBytes(path, bytes);
+            string hash;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                hash = BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
+            if (mode == "wrong_hash")
+                hash = new string('0', 64);
+            var read = Store.GetMethod("ReadVerified", BindingFlags.NonPublic | BindingFlags.Static);
+            if (mode == "valid")
+            {
+                var parsed = (JObject)read.Invoke(null, new object[] { path, hash });
+                Assert.AreEqual("한글 🏰", (string)parsed["text"]);
+                parsed["text"] = "caller-edit";
+                Assert.AreEqual("한글 🏰", (string)((JObject)read.Invoke(null, new object[] { path, hash }))["text"]);
+            }
+            else
+                Assert.Throws<TargetInvocationException>(() => read.Invoke(null, new object[] { path, hash }));
+        }
+
         [Test, Explicit("Controller-owned large workload cohort only.")]
         public void LargeReportCohortReadsCompleteOrderedPages()
         {
