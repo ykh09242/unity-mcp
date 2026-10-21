@@ -225,3 +225,21 @@ def test_generated_editor_user_settings_do_not_change_source_identity(tmp_path):
     settings.mkdir()
     (settings / "EditorUserSettings.asset").write_text("derived local Editor state")
     qa.verify_inputs(output, prep, editor, receipt)
+
+
+def test_graphics_requirement_combines_selected_groups_and_rejects_invalid_flag(tmp_path):
+    path = manifest(tmp_path)
+    data = json.loads(path.read_text())
+    data["groups"]["panels"] = {
+        "methods": ["Panels.Attached"],
+        "disruptive": False,
+        "platform_exclusions": {},
+        "requires_graphics": True,
+    }
+    path.write_text(json.dumps(data))
+    assert qa.load_selection(path, ["ordinary", "panels"], "win32")["requiresGraphics"]
+    assert not qa.load_selection(path, ["ordinary"], "win32")["requiresGraphics"]
+    data["groups"]["panels"]["requires_graphics"] = "false"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="boolean"):
+        qa.load_selection(path, ["panels"], "win32")

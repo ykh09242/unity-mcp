@@ -65,6 +65,7 @@ def load_selection(path, groups, platform):
         raise ValueError("Choose nonempty, distinct native groups")
     required = []
     exclusions = {}
+    requires_graphics = False
     for name in groups:
         group = manifest["groups"].get(name)
         if not isinstance(group, dict):
@@ -73,6 +74,10 @@ def load_selection(path, groups, platform):
             raise ValueError("Group must declare whether it is disruptive")
         if group["disruptive"] and len(groups) != 1:
             raise ValueError("A disruptive group requires a separate launch")
+        graphics = group.get("requires_graphics", False)
+        if type(graphics) is not bool:
+            raise ValueError("Graphics requirement must be a boolean")
+        requires_graphics |= graphics
         excluded = group.get("platform_exclusions")
         if not isinstance(excluded, dict) or any(
             not isinstance(v, str) or not v for v in excluded.values()
@@ -102,6 +107,7 @@ def load_selection(path, groups, platform):
         "groups": list(groups),
         "required": required,
         "filter": ";".join(required),
+        "requiresGraphics": requires_graphics,
         "manifestSha256": hashlib.sha256(raw).hexdigest(),
         "platform": platform,
         "platformExclusions": exclusions,

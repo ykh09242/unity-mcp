@@ -1,5 +1,6 @@
 using System;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Tools;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
@@ -37,6 +38,7 @@ namespace MCPForUnity.Editor.Windows.Components.Validation
             CacheUIElements();
             InitializeUI();
             RegisterCallbacks();
+            Root.RegisterCallback<AttachToPanelEvent>(_ => UpdateValidationDescription());
         }
 
         private void CacheUIElements()
@@ -56,6 +58,9 @@ namespace MCPForUnity.Editor.Windows.Components.Validation
 
         private void RegisterCallbacks()
         {
+            var consoleButton = Root.Q<Button>("validation-console");
+            if (consoleButton != null)
+                consoleButton.clicked += () => EditorApplication.ExecuteMenuItem("Window/General/Console");
             validationLevelField.RegisterValueChangedCallback(evt =>
             {
                 currentValidationLevel = (ValidationLevel)evt.newValue;
@@ -66,14 +71,28 @@ namespace MCPForUnity.Editor.Windows.Components.Validation
 
         private void UpdateValidationDescription()
         {
-            validationDescription.text = currentValidationLevel switch
+            validationDescription.text = Describe(currentValidationLevel, ManageScript.RoslynValidationAvailable, EditorApplication.isCompiling);
+        }
+
+        internal static string Describe(ValidationLevel level, bool roslynAvailable, bool compiling)
+        {
+            string engine = roslynAvailable ? "Roslyn enabled" : "lexical heuristics (Roslyn not enabled)";
+            string checks = level switch
             {
-                ValidationLevel.Basic => "Basic: Validates syntax only. Fast compilation checks.",
-                ValidationLevel.Standard => "Standard (Recommended): Checks syntax + common errors. Balanced speed and coverage.",
-                ValidationLevel.Comprehensive => "Comprehensive: Detailed validation including code quality. Slower but thorough.",
-                ValidationLevel.Strict => "Strict: Maximum validation + warnings as errors. Slowest but catches all issues.",
-                _ => "Unknown validation level",
+                ValidationLevel.Basic => "Structural checks: balanced delimiters and duplicate method signatures. No compiler syntax or semantic checks.",
+                ValidationLevel.Standard => roslynAvailable
+                    ? "Roslyn syntax and Unity lexical rules. Semantic compilation, references and cross-file partial types are not checked at this level."
+                    : "Structural and Unity lexical rules. Compiler syntax, semantics, references and cross-file partial types are not checked.",
+                ValidationLevel.Comprehensive => roslynAvailable
+                    ? "Roslyn syntax, Unity rules and additional quality heuristics. Semantic compilation, references and cross-file partial types are not checked at this level."
+                    : "Structural, Unity and quality heuristics. Compiler syntax, semantics, references and cross-file partial types are not checked.",
+                ValidationLevel.Strict => roslynAvailable
+                    ? "Roslyn syntax and semantic compilation plus heuristic rules; warnings fail validation. Reference and partial-type coverage depends on the script's owning assembly. Check the per-file validation report for actual coverage."
+                    : "Structural, Unity and quality heuristics; warnings fail validation. Compiler syntax, semantics, references and cross-file partial types are not checked.",
+                _ => "Unknown validation level; inspect the per-file validation report.",
             };
+            string compilation = compiling ? "active" : "idle; last result not checked here";
+            return $"Requested: {level}\nAvailable engine: {engine}\n{checks}\n\nUnity project compilation is separate and is not run by validation. Compilation snapshot when settings last updated: {compilation}. Open Console for existing diagnostics.";
         }
     }
 }

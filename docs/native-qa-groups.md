@@ -65,3 +65,10 @@ The existing owned warm-project controller may also consume `load_selection` and
 `check_results` to validate its exact method inventory, preserving its stronger
 lifecycle controls and existing input receipts. It must retain those receipts and
 record its overlays; it must not relabel an arbitrary old result as a new launch.
+
+Groups with `requires_graphics: true` (including `validation-capabilities`) launch
+with a graphics device: the runner omits `-nographics` for that entire selection.
+Other groups retain the headless default. The selected requirement is recorded
+in launch evidence. Run graphics groups on a host with a usable graphics device;
+a skipped panel case still fails the required-method gate. External owned warm
+controllers consuming `load_selection` must honor its `requiresGraphics` field.

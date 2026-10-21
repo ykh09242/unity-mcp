@@ -7,6 +7,7 @@
                 <ui:Label text="Validation Level:" class="setting-label" />
                 <uie:EnumField name="validation-level" class="setting-dropdown" />
                 <ui:Label name="validation-description" class="validation-description" />
+                <ui:Button name="validation-console" text="Open Compilation Diagnostics" tooltip="Open the Unity Console. Does not request compilation or refresh." class="secondary-button" />
             </ui:VisualElement>
         </ui:VisualElement>
     </ui:VisualElement>

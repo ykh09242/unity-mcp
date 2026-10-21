@@ -190,7 +190,7 @@ def _launch(args):
     command = [
         str(args.editor),
         "-batchmode",
-        "-nographics",
+        *([] if selection["requiresGraphics"] else ["-nographics"]),
         "-forgetProjectPath",
         "-projectPath",
         str(project),
