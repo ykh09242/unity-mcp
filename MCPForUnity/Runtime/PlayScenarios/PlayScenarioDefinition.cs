@@ -9,6 +9,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 {
     public sealed class PlayScenarioDefinition
     {
+        public const int MaximumRepeats = 100;
+        public const int MaximumSteps = 128;
+        public const int MaximumAuxiliarySteps = 32;
+        public const int MaximumSuiteScenarios = 64;
+        public const int MaximumDefinitionBytes = 1024 * 1024;
+        public const int MaximumReportBytes = 16 * 1024 * 1024;
+        public const int MaximumStepResults = (MaximumSteps + 2 * MaximumAuxiliarySteps) * MaximumRepeats;
+
         [JsonProperty("name")]
         public string Name;
 
@@ -110,9 +118,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Name = name,
                 Draft = value.Property("draft") == null ? (bool?)null : Boolean(value, "draft", false),
                 PollIntervalMs = Integer(value, "poll_interval_ms", 100, 2000, 250),
-                Steps = ParseSteps(value["steps"], 1, 32),
-                SetupSteps = value.Property("setup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["setup_steps"], 0, 16),
-                CleanupSteps = value.Property("cleanup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["cleanup_steps"], 0, 16),
+                Steps = ParseSteps(value["steps"], 1, MaximumSteps),
+                SetupSteps = value.Property("setup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["setup_steps"], 0, MaximumAuxiliarySteps),
+                CleanupSteps =
+                    value.Property("cleanup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["cleanup_steps"], 0, MaximumAuxiliarySteps),
                 CleanupTimeoutSeconds = Integer(value, "cleanup_timeout_seconds", 1, 1800, 30),
                 CompletionStableMs = Integer(value, "completion_stable_ms", 0, 10000, 250),
                 LogPolicy = ParseLogPolicy(value),
@@ -498,8 +507,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return new PlayScenarioMetricsOptions
             {
                 Enabled = Boolean(options, "enabled", false),
-                WarmupIterations = Integer(options, "warmup_iterations", 0, 9, 1),
-                ConsecutiveIncreases = Integer(options, "consecutive_increases", 2, 9, 2),
+                WarmupIterations = Integer(options, "warmup_iterations", 0, MaximumRepeats - 1, 1),
+                ConsecutiveIncreases = Integer(options, "consecutive_increases", 2, MaximumRepeats - 1, 2),
                 ManagedGrowthBytes = Integer(options, "managed_growth_bytes", 0, int.MaxValue, 1048576),
                 AllocatedGrowthBytes = Integer(options, "allocated_growth_bytes", 0, int.MaxValue, 1048576),
                 ObjectGrowthCount = Integer(options, "object_growth_count", 0, 10000, 0),

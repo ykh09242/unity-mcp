@@ -16,8 +16,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     {
         private const string Definitions = "ProjectSettings/MCPForUnity/PlayScenarios";
         private const string Reports = "Library/MCPForUnity/PlayScenarioRuns";
-        private const int DefinitionLimit = 64 * 1024;
-        private const int ReportLimit = 2 * 1024 * 1024;
+        private const int DefinitionLimit = PlayScenarioDefinition.MaximumDefinitionBytes;
+        private const int ReportLimit = PlayScenarioDefinition.MaximumReportBytes;
         private readonly string root;
         private readonly object gate = new object();
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
@@ -203,7 +203,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 int count = 0;
                 foreach (string existing in Directory.EnumerateFiles(Checked(Reports), jobId + "-*.png", SearchOption.TopDirectoryOnly))
                 {
-                    if (++count > 640)
+                    if (++count > PlayScenarioDefinition.MaximumStepResults)
                         throw new IOException("Checkpoint file count exceeds the bounded run budget.");
                     bytes += new FileInfo(Checked(existing)).Length;
                 }
@@ -331,7 +331,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (!(value["scenario"] is JObject scenario))
                 throw new ArgumentException("Report scenario is required.");
             PlayScenarioDefinition definition = PlayScenarioDefinition.Parse(scenario);
-            int repeats = PlayScenarioDefinition.Integer(value, "repeat_count", 1, 10, 0);
+            int repeats = PlayScenarioDefinition.Integer(value, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats, 0);
             if (repeats == 0)
                 throw new ArgumentException("Report repeat_count is required.");
             var steps = (JArray)value["steps"];
@@ -390,7 +390,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             var failures = (JArray)value["cleanup_failures"];
             var checks = (JArray)value["resource_checks"];
-            if (failures.Count > 16 || checks.Count > 10)
+            if (failures.Count > 16 || checks.Count > PlayScenarioDefinition.MaximumRepeats)
                 throw new ArgumentException("Operation result arrays exceed their bounds.");
             if (value["failure"] is JObject primary)
                 ValidateFailure(primary, repeats);
@@ -423,7 +423,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             var metrics = (JArray)value["metrics"];
             var warnings = (JArray)value["metric_warnings"];
-            if (metrics.Count > 10 || warnings.Count > 16)
+            if (metrics.Count > PlayScenarioDefinition.MaximumRepeats || warnings.Count > 16)
                 throw new ArgumentException("Metric arrays exceed their bounds.");
             foreach (JObject snapshot in metrics)
             {
@@ -541,8 +541,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             // cannot be reconstructed safely from step rows.
             if (value.Property("iteration_results_version") == null && value.Property("iteration_results") == null)
                 return;
-            if (repeats < 1 || repeats > 10)
-                throw new ArgumentException("Iteration repeat_count must be 1-10.");
+            if (repeats < 1 || repeats > PlayScenarioDefinition.MaximumRepeats)
+                throw new ArgumentException("Iteration repeat_count must be 1-100.");
             if (value["iteration_results_version"]?.Type != JTokenType.Integer || (long)value["iteration_results_version"] != 1)
                 throw new ArgumentException("Unsupported iteration_results_version.");
             if (!(value["iteration_results"] is JArray results) || results.Count != repeats)
@@ -619,7 +619,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 string stage = (string)item["stage"];
                 State(stage, "run", "setup", "main", "cleanup");
                 int iteration = PlayScenarioDefinition.Integer(item, "iteration", 0, repeats, -1);
-                int index = PlayScenarioDefinition.Integer(item, "step_index", -1, 31, -2);
+                int index = PlayScenarioDefinition.Integer(item, "step_index", -1, PlayScenarioDefinition.MaximumSteps - 1, -2);
                 if ((stage == "run" && (iteration != 0 || index != -1)) || (stage != "run" && (iteration == 0 || index < 0)))
                     throw new ArgumentException("Timeline attribution is invalid.");
                 Bound(item, "event", 64);
@@ -698,7 +698,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (failure["iteration"].Type != JTokenType.Null)
                 PlayScenarioDefinition.Integer(failure, "iteration", 1, repeats, 0);
             if (failure["step_index"].Type != JTokenType.Null)
-                PlayScenarioDefinition.Integer(failure, "step_index", 0, 31, 0);
+                PlayScenarioDefinition.Integer(failure, "step_index", 0, PlayScenarioDefinition.MaximumSteps - 1, 0);
             Bound(failure, "target", 4096);
             Bound(failure, "component", 256);
             Bound(failure, "property_path", 256);
@@ -931,12 +931,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     int maximum =
                         itemType == typeof(PlayScenarioTimelineEvent) ? 128
                         : itemType == typeof(PlayScenarioRetainedResource) ? 32
-                        : itemType == typeof(PlayScenarioStepResult) ? 640
+                        : itemType == typeof(PlayScenarioStepResult) ? PlayScenarioDefinition.MaximumStepResults
                         : itemType == typeof(PlayScenarioLog) ? 50
                         : itemType == typeof(PlayScenarioResourceCheck)
                         || itemType == typeof(PlayScenarioMetricsSnapshot)
                         || itemType == typeof(PlayScenarioIterationResult)
-                            ? 10
+                            ? PlayScenarioDefinition.MaximumRepeats
                         : 16;
                     if (array.Count > maximum)
                         throw new ArgumentException("Report array exceeds its bound: " + pair.Key);

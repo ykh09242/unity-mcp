@@ -14,6 +14,28 @@ from pydantic import TypeAdapter, ValidationError
 from services.tools.manage_play_scenario import manage_play_scenario
 
 
+def test_large_scenario_and_suite_admission_preserves_full_definitions():
+    from models.play_scenarios import PlayScenarioSuite
+
+    scene = "Assets/" + "a" * 1000 + ".unity"
+    step = {"name": "load", "action": "load_scene", "scene": scene}
+    definition = {
+        "name": "large",
+        "steps": [step] * 128,
+        "setup_steps": [step] * 32,
+        "cleanup_steps": [step] * 32,
+    }
+    parsed = PlayScenario.model_validate(definition)
+    encoded = parsed.model_dump_json(exclude_none=True)
+    assert len(encoded.encode()) > 65536
+    assert len(PlayScenario.model_validate_json(encoded).steps) == 128
+    assert PlayScenarioCommand(action="run", name="large", repeat_count=100).repeat_count == 100
+    assert (
+        len(PlayScenarioSuite(name="large", scenarios=[f"case-{i}" for i in range(64)]).scenarios)
+        == 64
+    )
+
+
 def test_long_scenario_policies_survive_public_model_round_trips():
     definition = copy.deepcopy(DEFINITION)
     definition["steps"][0]["timeout_seconds"] = 3600
@@ -117,7 +139,7 @@ async def test_action_dispatches_once_without_reload_replay(route, arguments, ex
         {"action": "run", "name": "menu-start", "repeat_count": True},
         {"action": "run", "name": "menu-start", "repeat_count": "2"},
         {"action": "run", "name": "menu-start", "timeout_seconds": 1.5},
-        {"action": "run", "name": "menu-start", "repeat_count": 11},
+        {"action": "run", "name": "menu-start", "repeat_count": 101},
         {"action": "run", "name": "menu-start", "timeout_seconds": 86401},
         {"action": "status", "job_id": JOB_ID.upper()},
         {"action": "status", "job_id": "short"},
@@ -174,7 +196,7 @@ def test_invalid_step_is_rejected(changes):
     "change",
     [
         {"steps": []},
-        {"steps": [DEFINITION["steps"][0]] * 33},
+        {"steps": [DEFINITION["steps"][0]] * 129},
         {"steps": [DEFINITION["steps"][1]]},
         {"poll_interval_ms": 99},
         {"poll_interval_ms": 2001},
@@ -269,7 +291,7 @@ def test_schema_advertises_definition_and_run_limits():
     schema = TypeAdapter(PlayScenarioCommand).json_schema()
     # When/Then: hard bounds and unsupported fields are represented for callers.
     definition = schema["$defs"]["PlayScenario"]
-    assert definition["properties"]["steps"]["maxItems"] == 32
+    assert definition["properties"]["steps"]["maxItems"] == 128
     assert definition["properties"]["poll_interval_ms"]["minimum"] == 100
     assert schema["additionalProperties"] is False
 

@@ -996,7 +996,7 @@ def test_default_output_does_not_add_step_counter_requirements(tmp_path, value):
     assert "step_details" not in json.loads(current.stdout)
 
 
-@pytest.mark.parametrize("limit", [0, -1, 641, "true", "1.5"])
+@pytest.mark.parametrize("limit", [0, -1, 19201, "true", "1.5"])
 def test_cli_rejects_invalid_step_detail_limits_before_loading(tmp_path, monkeypatch, limit):
     def forbidden(*_args, **_kwargs):
         pytest.fail("Invalid detail limit reached the report loader")
@@ -1008,7 +1008,7 @@ def test_cli_rejects_invalid_step_detail_limits_before_loading(tmp_path, monkeyp
     assert "--step-details-limit" in result.stderr
 
 
-@pytest.mark.parametrize("limit", [0, -1, 641, True, 1.0, "1"])
+@pytest.mark.parametrize("limit", [0, -1, 19201, True, 1.0, "1"])
 def test_python_api_requires_a_strict_bounded_step_detail_limit(limit):
     from cli.utils.play_scenario_query_compare import QueryComparisonError, compare_reports
 

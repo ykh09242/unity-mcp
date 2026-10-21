@@ -1,5 +1,7 @@
 """Export native suite reports as bounded JUnit XML and original JSON artifacts."""
 
+from models.play_scenario_limits import MAX_REPEATS, MAX_STEP_RESULTS, MAX_SUITE_SCENARIOS
+
 import json
 import re
 from pathlib import Path
@@ -19,7 +21,7 @@ class ReportEvidence(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
     job_id: str = ""
     status: str | None = None
-    repeat_count: Annotated[int, Field(strict=True, ge=1, le=10)] | None = None
+    repeat_count: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)] | None = None
     iteration_results_version: Annotated[int, Field(strict=True, ge=1, le=1)] | None = None
     iteration_results: list[dict[str, JsonValue]] | None = Field(default=None, max_length=10)
     started_unix_ms: int | None = None
@@ -36,7 +38,7 @@ class ReportEvidence(BaseModel):
     timeline: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=128)
     dropped_timeline_count: int = 0
     resource_checks: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=10)
-    steps: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=640)
+    steps: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=MAX_STEP_RESULTS)
 
 
 class SuiteCase(BaseModel):
@@ -63,7 +65,7 @@ class SuiteReport(BaseModel):
     finished_unix_ms: int | None = None
     report_error: str | None = None
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
-    scenarios: list[SuiteCase] = Field(max_length=16)
+    scenarios: list[SuiteCase] = Field(max_length=MAX_SUITE_SCENARIOS)
     source_revision: str | None = None
     client_error: str | None = None
     report_path: str | None = None

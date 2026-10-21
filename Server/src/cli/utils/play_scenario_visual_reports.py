@@ -1,5 +1,7 @@
 """Pair one named screenshot checkpoint from two explicit native reports."""
 
+from models.play_scenario_limits import MAX_REPEATS, MAX_SCENARIO_STEPS, MAX_STEP_RESULTS
+
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -16,8 +18,8 @@ class CheckpointSelection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: Annotated[str, Field(strict=True, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
     stage: Literal["setup", "main", "cleanup"]
-    step_index: Annotated[int, Field(strict=True, ge=0, le=63)]
-    iteration: Annotated[int, Field(strict=True, ge=1, le=10)]
+    step_index: Annotated[int, Field(strict=True, ge=0, le=MAX_SCENARIO_STEPS - 1)]
+    iteration: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]
 
 
 class ScreenshotEvidence(BaseModel):
@@ -35,8 +37,8 @@ class ScreenshotEvidence(BaseModel):
 class CheckpointStep(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
     stage: Literal["setup", "main", "cleanup"]
-    step_index: Annotated[int, Field(strict=True, ge=0, le=63)]
-    iteration: Annotated[int, Field(strict=True, ge=1, le=10)]
+    step_index: Annotated[int, Field(strict=True, ge=0, le=MAX_SCENARIO_STEPS - 1)]
+    iteration: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]
     name: Annotated[str, Field(strict=True, max_length=128)]
     action: Annotated[str, Field(strict=True, max_length=128)]
     screenshot: ScreenshotEvidence | None = None
@@ -56,7 +58,7 @@ class CheckpointReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
     execution_environment: Literal["editor", "player"]
     reproduction: CaptureReproduction
-    steps: list[CheckpointStep] = Field(max_length=2048)
+    steps: list[CheckpointStep] = Field(max_length=MAX_STEP_RESULTS)
 
 
 def pair_visual_reports(

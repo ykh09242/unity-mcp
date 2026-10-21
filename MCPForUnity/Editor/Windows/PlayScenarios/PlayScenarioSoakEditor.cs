@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using MCPForUnity.Editor.Services.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -483,7 +484,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 result.Completeness = "Incomplete: verified journal, but final run.json is missing; success is unverified.";
                 return result;
             }
-            JObject report = PlayScenarioPlayerSessionEditor.ReadJson(reportFile, 2 * 1024 * 1024, cancellation);
+            JObject report = PlayScenarioPlayerSessionEditor.ReadJson(reportFile, PlayScenarioDefinition.MaximumReportBytes, cancellation);
             cancellation.ThrowIfCancellationRequested();
             if (!JToken.DeepEquals(report["soak"], source) || (string)report["job_id"] != (string)source["job_id"])
                 throw new InvalidDataException("Final report soak checkpoint or job identity differs.");

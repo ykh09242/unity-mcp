@@ -1,5 +1,13 @@
 """Validated wire definitions shared by the play-scenario tool and CLI."""
 
+from models.play_scenario_limits import (
+    DEFINITION_BYTES,
+    MAX_AUXILIARY_STEPS,
+    MAX_REPEATS,
+    MAX_SCENARIO_STEPS,
+    MAX_SUITE_SCENARIOS,
+)
+
 import json
 from typing import Annotated, Literal, assert_never
 from unicodedata import category
@@ -23,7 +31,7 @@ from pydantic import (
 
 ScenarioName = Annotated[str, Field(strict=True, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 JobId = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{32}$")]
-RepeatCount = Annotated[int, Field(strict=True, ge=1, le=10)]
+RepeatCount = Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]
 RunTimeout = Annotated[int, Field(strict=True, ge=1, le=86400)]
 ScenarioAction = Literal[
     "save",
@@ -273,8 +281,8 @@ class PlayScenarioMetricsOptions(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     enabled: Annotated[bool, Field(strict=True)] = False
-    warmup_iterations: Annotated[int, Field(strict=True, ge=0, le=9)] = 1
-    consecutive_increases: Annotated[int, Field(strict=True, ge=2, le=9)] = 2
+    warmup_iterations: Annotated[int, Field(strict=True, ge=0, le=MAX_REPEATS - 1)] = 1
+    consecutive_increases: Annotated[int, Field(strict=True, ge=2, le=MAX_REPEATS - 1)] = 2
     managed_growth_bytes: Annotated[int, Field(strict=True, ge=0, le=2147483647)] = 1048576
     allocated_growth_bytes: Annotated[int, Field(strict=True, ge=0, le=2147483647)] = 1048576
     object_growth_count: Annotated[int, Field(strict=True, ge=0, le=10000)] = 0
@@ -828,9 +836,13 @@ class PlayScenario(BaseModel):
     resources: PlayScenarioResourceOptions = Field(default_factory=PlayScenarioResourceOptions)
     query_budget: PlayScenarioQueryBudget = Field(default_factory=PlayScenarioQueryBudget)
     poll_interval_ms: Annotated[int, Field(strict=True, ge=100, le=2000)] = 250
-    steps: Annotated[list[ScenarioStep], Field(min_length=1, max_length=32)]
-    setup_steps: Annotated[list[ScenarioStep], Field(max_length=16)] = Field(default_factory=list)
-    cleanup_steps: Annotated[list[ScenarioStep], Field(max_length=16)] = Field(default_factory=list)
+    steps: Annotated[list[ScenarioStep], Field(min_length=1, max_length=MAX_SCENARIO_STEPS)]
+    setup_steps: Annotated[list[ScenarioStep], Field(max_length=MAX_AUXILIARY_STEPS)] = Field(
+        default_factory=list
+    )
+    cleanup_steps: Annotated[list[ScenarioStep], Field(max_length=MAX_AUXILIARY_STEPS)] = Field(
+        default_factory=list
+    )
     cleanup_timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=1800)] = 30
     completion_stable_ms: Annotated[int, Field(strict=True, ge=0, le=10000)] = 250
     log_policy: PlayScenarioLogPolicy = Field(default_factory=PlayScenarioLogPolicy)
@@ -892,16 +904,13 @@ class PlayScenario(BaseModel):
         if first.action != "load_scene" or first.load_mode == "additive":
             message = "The first executed step must be a Single load_scene anchor"
             raise ValueError(message)
-        if len(self.setup_steps) + len(self.steps) + len(self.cleanup_steps) > 64:
-            message = "The combined step count must not exceed 64"
-            raise ValueError(message)
         encoded = json.dumps(
             self.model_dump(mode="json", exclude_none=True),
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
-        if len(encoded) > 65536:
-            message = "Scenario definition exceeds 64 KiB"
+        if len(encoded) > DEFINITION_BYTES:
+            message = "Scenario definition exceeds 1 MiB"
             raise ValueError(message)
         return self
 
@@ -912,8 +921,12 @@ class PlayScenarioSuite(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     schema_version: Annotated[int, Field(strict=True, ge=1, le=1)] = 1
     name: ScenarioName
-    scenarios: Annotated[list[ScenarioName], Field(max_length=16)] = Field(default_factory=list)
-    tags: Annotated[list[ScenarioName], Field(max_length=16)] = Field(default_factory=list)
+    scenarios: Annotated[list[ScenarioName], Field(max_length=MAX_SUITE_SCENARIOS)] = Field(
+        default_factory=list
+    )
+    tags: Annotated[list[ScenarioName], Field(max_length=MAX_SUITE_SCENARIOS)] = Field(
+        default_factory=list
+    )
     failure_policy: Literal["stop", "continue"] = "stop"
 
     @field_validator("scenarios", "tags")

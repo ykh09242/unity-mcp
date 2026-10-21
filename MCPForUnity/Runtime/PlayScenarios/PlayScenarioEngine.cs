@@ -48,8 +48,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new ArgumentException("Recorded scenario drafts must be reviewed and saved with draft=false before execution.");
             if (scenario == null)
                 throw new ArgumentNullException(nameof(scenario));
-            if (repeatCount < 1 || repeatCount > 10 || timeoutSeconds < 1 || timeoutSeconds > 86400)
-                throw new ArgumentException("repeat_count must be 1-10 and timeout_seconds must be 1-86400.");
+            if (repeatCount < 1 || repeatCount > PlayScenarioDefinition.MaximumRepeats || timeoutSeconds < 1 || timeoutSeconds > 86400)
+                throw new ArgumentException("repeat_count must be 1-100 and timeout_seconds must be 1-86400.");
             var run = new PlayScenarioRun
             {
                 JobId = jobId,
@@ -770,7 +770,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private void CaptureMetrics(int iteration, long now)
         {
             PlayScenarioMetricsOptions options = State.Scenario.Metrics;
-            if (!options.Enabled || State.Metrics.Count >= 10)
+            if (!options.Enabled || State.Metrics.Count >= PlayScenarioDefinition.MaximumRepeats)
                 return;
             PlayScenarioMetricsSnapshot snapshot;
             try

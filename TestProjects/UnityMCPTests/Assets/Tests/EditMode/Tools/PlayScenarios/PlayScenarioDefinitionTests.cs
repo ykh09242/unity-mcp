@@ -164,7 +164,7 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             empty["steps"] = new JArray();
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(empty));
             var many = Valid();
-            many["steps"] = new JArray(Enumerable.Range(0, 33).Select(_ => Valid()["steps"][0].DeepClone()));
+            many["steps"] = new JArray(Enumerable.Range(0, 129).Select(_ => Valid()["steps"][0].DeepClone()));
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(many));
             var wrong = Valid();
             wrong["steps"] = new JArray(1);
@@ -290,7 +290,7 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             valueWithSetup["setup_steps"] = new JArray(valueWithSetup["steps"][1].DeepClone());
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(valueWithSetup));
             var overflow = Valid();
-            overflow["cleanup_steps"] = new JArray(Enumerable.Range(0, 17).Select(_ => overflow["steps"][0].DeepClone()));
+            overflow["cleanup_steps"] = new JArray(Enumerable.Range(0, 33).Select(_ => overflow["steps"][0].DeepClone()));
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(overflow));
             var legacy = PlayScenarioDefinition.Parse(Valid());
             Assert.AreEqual(0, legacy.SetupSteps.Count);

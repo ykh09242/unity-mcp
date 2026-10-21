@@ -1,5 +1,7 @@
 """Observe intermittent outcomes from explicit saved reports without execution or retry."""
 
+from models.play_scenario_limits import MAX_REPEATS, MAX_SCENARIO_STEPS, MAX_STEP_RESULTS
+
 from collections import Counter
 from hashlib import sha256
 import json
@@ -20,8 +22,8 @@ class FailureEvidence(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
     stage: Literal["setup", "main", "cleanup"] | None = None
-    iteration: Annotated[int, Field(strict=True, ge=1, le=10)] | None = None
-    step_index: Annotated[int, Field(strict=True, ge=0, le=63)] | None = None
+    iteration: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)] | None = None
+    step_index: Annotated[int, Field(strict=True, ge=0, le=MAX_SCENARIO_STEPS - 1)] | None = None
     name: IdentityText | None = None
     code: IdentityText | None = None
     message: Text | None = None
@@ -50,14 +52,14 @@ class RunEvidence(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
     job_id: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     status: Literal["succeeded", "failed", "timed_out", "cancelled", "running", "pending"]
-    repeat_count: Annotated[int, Field(strict=True, ge=1, le=10)]
+    repeat_count: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]
     execution_environment: Literal["editor", "player"] | None = None
     reproduction: Reproduction = Field(default_factory=Reproduction)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
     scenario: dict[str, JsonValue] | None = None
     failure: FailureEvidence | None = None
     cleanup_failures: list[FailureEvidence] = Field(default_factory=list, max_length=640)
-    steps: list[StepEvidence] = Field(default_factory=list, max_length=2048)
+    steps: list[StepEvidence] = Field(default_factory=list, max_length=MAX_STEP_RESULTS)
 
 
 class OriginalOutcome(BaseModel):

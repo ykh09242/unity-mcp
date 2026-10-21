@@ -1,5 +1,7 @@
 """Launch one explicitly selected standalone Player and verify its actual final report."""
 
+from models.play_scenario_limits import DEFINITION_BYTES, REPORT_BYTES
+
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
@@ -55,7 +57,7 @@ from cli.utils.play_scenario_player_platform import (
 from cli.utils.play_scenario_soak import SoakIdentity, SoakJournal, SoakRequest
 
 MANIFEST_LIMIT: Final = PAYLOAD_MANIFEST_LIMIT
-REPORT_LIMIT: Final = 2097152
+REPORT_LIMIT: Final = REPORT_BYTES
 PROCESS_LOG_LIMIT: Final = 1048576
 
 
@@ -86,7 +88,7 @@ class PlayerBundle(BaseModel):
         Field(min_length=1, max_length=64),
     ]
     definition: PlayScenario
-    definition_json: Annotated[str, Field(strict=True, max_length=65536)]
+    definition_json: Annotated[str, Field(strict=True, max_length=DEFINITION_BYTES)]
     unity_version: Annotated[str, Field(strict=True, max_length=128)]
     package_version: Annotated[str, Field(strict=True, max_length=128)]
 
@@ -436,7 +438,9 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                 bundle.build_source_revision,
                 process.pid,
             ),
-            max_iteration=options.soak.iterations if options.soak is not None else 10,
+            max_iteration=options.soak.iterations
+            if options.soak is not None
+            else options.repeat_count,
         )
         if payload is not None
         else None

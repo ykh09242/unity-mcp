@@ -142,7 +142,7 @@ def test_all_effective_cases_and_bounds_are_admitted_before_save(mutation):
     elif mutation == "string":
         value["parameters"]["score"] = {"type": "string", "default": "😀" * 513}
     elif mutation == "size":
-        value["steps"] *= 33
+        value["steps"] *= 129
     elif mutation == "identity":
         value["name"] = "a" * 64
     elif mutation == "case_limit":
@@ -273,5 +273,14 @@ def test_combined_dataset_metadata_byte_limit_is_checked_before_save():
     value["datasets"] = [
         {"name": f"case-{i}", "values": {f"p{j}": "x" * 1024 for j in range(4)}} for i in range(16)
     ]
-    with pytest.raises(ValidationError, match="64 KiB"):
+    value["steps"] += [
+        {
+            "name": "object",
+            "action": "wait_object",
+            "target": "a" * 4000,
+            "scene": "Assets/" + "a" * 4000 + ".unity",
+        }
+        for _ in range(128 - len(value["steps"]))
+    ]
+    with pytest.raises(ValidationError, match="1 MiB"):
         PlayScenario.model_validate(value)

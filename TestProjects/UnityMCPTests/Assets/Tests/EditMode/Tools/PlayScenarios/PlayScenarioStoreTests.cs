@@ -72,10 +72,20 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             Assert.Throws<InvalidOperationException>(() => store.Save(Definition("overflow")));
             store.Save(Definition("scenario-0"));
             Assert.AreEqual(100, store.List().Count);
-            File.WriteAllText(Path.Combine(Definitions, "scenario-0.json"), new string(' ', 65537));
+            File.WriteAllText(Path.Combine(Definitions, "scenario-0.json"), new string(' ', PlayScenarioDefinition.MaximumDefinitionBytes + 1));
             Assert.Throws<InvalidDataException>(() => store.Get("scenario-0"));
             var huge = Definition("scenario-1");
             huge.Steps = Enumerable
+                .Range(0, 128)
+                .Select(_ => new PlayScenarioStep
+                {
+                    Name = "object",
+                    Action = "wait_object",
+                    Target = new string('a', 4000),
+                    Scene = "Assets/" + new string('a', 4000) + ".unity",
+                })
+                .ToList();
+            huge.SetupSteps = Enumerable
                 .Range(0, 32)
                 .Select(_ => new PlayScenarioStep
                 {

@@ -1,5 +1,12 @@
 """Compare complete saved native runs without transport, replay or inferred query counts."""
 
+from models.play_scenario_limits import (
+    MAX_REPEATS,
+    MAX_SCENARIO_STEPS,
+    MAX_STEP_RESULTS,
+    REPORT_BYTES,
+)
+
 import json
 import math
 import os
@@ -19,9 +26,9 @@ from models.play_scenarios import (
 )
 from cli.utils.play_scenario_iterations import IterationResult, validate_iteration_results
 
-REPORT_LIMIT: Final = 2097152
+REPORT_LIMIT: Final = REPORT_BYTES
 MAX_COUNT: Final = 2**63 - 1
-MAX_STEPS: Final = 640
+MAX_STEPS: Final = MAX_STEP_RESULTS
 QUERY_METRICS: Final = ("target_searches", "hierarchy_visits")
 Count = Annotated[int, Field(strict=True, ge=0, le=MAX_COUNT)]
 EmptyError = Literal[None, ""]
@@ -59,7 +66,7 @@ class _Step(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
     stage: Literal["setup", "main", "cleanup"]
     iteration: RepeatCount
-    step_index: Annotated[int, Field(strict=True, ge=0, le=31)]
+    step_index: Annotated[int, Field(strict=True, ge=0, le=MAX_SCENARIO_STEPS - 1)]
     name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     action: StepAction
     status: Literal["passed"]
@@ -101,7 +108,7 @@ class _Run(BaseModel):
     unexpected_log_count: Annotated[int, Field(strict=True, ge=0, le=0)]
     unexpected_log_error: EmptyError
     last_unexpected_log_error: EmptyError
-    resource_checks: Annotated[list[_ResourceCheck], Field(strict=True, max_length=10)]
+    resource_checks: Annotated[list[_ResourceCheck], Field(strict=True, max_length=MAX_REPEATS)]
     query_counts: _Counts
     reproduction: _Reproduction
     steps: Annotated[list[_Step], Field(strict=True, min_length=1, max_length=MAX_STEPS)]
@@ -399,7 +406,7 @@ def read_report(source: Path, label: str) -> dict[str, JsonValue]:
                 raise ValueError("Linked or reparse input path")
         before = path.lstat()
         if not stat.S_ISREG(before.st_mode) or before.st_size > REPORT_LIMIT:
-            raise ValueError("Input is not a regular file within 2 MiB")
+            raise ValueError("Input is not a regular file within 16 MiB")
         flags = (
             os.O_RDONLY
             | getattr(os, "O_BINARY", 0)
@@ -413,9 +420,11 @@ def read_report(source: Path, label: str) -> dict[str, JsonValue]:
                 before.st_ino,
             ):
                 raise ValueError("Input changed before reading")
-            encoded = stream.read(REPORT_LIMIT + 1)
-        if len(encoded) > REPORT_LIMIT:
-            raise ValueError("Input exceeds 2 MiB")
+            if opened.st_size > REPORT_LIMIT:
+                raise ValueError("Opened input exceeds 16 MiB")
+            encoded = stream.read(opened.st_size + 1)
+        if len(encoded) != opened.st_size:
+            raise ValueError("Input changed while reading")
         decoded = encoded.decode("utf-8-sig")
         _check_depth(decoded)
         value = json.loads(
@@ -429,5 +438,5 @@ def read_report(source: Path, label: str) -> dict[str, JsonValue]:
         return value
     except (OSError, ValueError, RecursionError) as exc:
         raise QueryComparisonError(
-            f"{label} report must be a readable, unlinked regular UTF-8 JSON file within 2 MiB and 32 levels"
+            f"{label} report must be a readable, unlinked regular UTF-8 JSON file within 16 MiB and 32 levels"
         ) from exc

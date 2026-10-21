@@ -1,5 +1,7 @@
 """One verified frozen build, ordered children and a fresh owned Player process per child."""
 
+from models.play_scenario_limits import DEFINITION_BYTES, MAX_SUITE_SCENARIOS
+
 from dataclasses import dataclass
 from hashlib import sha256
 import json
@@ -44,7 +46,7 @@ class FrozenChild(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     scenario_name: ScenarioName
     definition_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
-    definition_json: Annotated[str, Field(strict=True, max_length=65536)]
+    definition_json: Annotated[str, Field(strict=True, max_length=DEFINITION_BYTES)]
     definition: dict[str, JsonValue]
 
 
@@ -56,7 +58,7 @@ class PlayerSuiteBundle(PlayerPayload):
     suite_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
     failure_policy: Literal["stop", "continue"]
     isolation: Literal["fresh-process"]
-    children: Annotated[list[FrozenChild], Field(min_length=1, max_length=16)]
+    children: Annotated[list[FrozenChild], Field(min_length=1, max_length=MAX_SUITE_SCENARIOS)]
     scene_paths: Annotated[
         list[Annotated[str, Field(strict=True, max_length=4096)]],
         Field(min_length=1, max_length=64),

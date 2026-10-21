@@ -286,11 +286,22 @@ def test_cli_reports_invalid_arguments_have_no_request(wire, args):
 
 
 def test_cli_oversized_definition_has_no_request(wire, tmp_path):
-    # Given: a valid-shaped definition exceeds the existing 64 KiB file budget.
+    # Given: a valid-shaped definition exceeds the 1 MiB file budget.
     definition = {
         "name": "oversized",
-        "steps": [DEFINITION["steps"][0]]
-        + [{"name": "Player", "action": "wait_object", "target": "x" * 4096}] * 31,
+        "steps": [
+            {
+                "name": "Player",
+                "action": "wait_object",
+                "target": "x" * 4000,
+                "scene": "Assets/" + "a" * 4000 + ".unity",
+            }
+        ]
+        * 128,
+        "setup_steps": [
+            {"name": "Load", "action": "load_scene", "scene": "Assets/" + "a" * 4000 + ".unity"}
+        ]
+        * 32,
     }
     path = tmp_path / "oversized.json"
     path.write_text(json.dumps(definition), encoding="utf-8")

@@ -1,5 +1,7 @@
 """Admit only native report-referenced bounded PNGs for owned artifact retention."""
 
+from models.play_scenario_limits import MAX_STEP_RESULTS
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -21,7 +23,7 @@ class _CaptureStep(BaseModel):
 
 class _CaptureReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
-    steps: list[_CaptureStep] = Field(default_factory=list, max_length=2048)
+    steps: list[_CaptureStep] = Field(default_factory=list, max_length=MAX_STEP_RESULTS)
 
 
 @dataclass(frozen=True, slots=True)

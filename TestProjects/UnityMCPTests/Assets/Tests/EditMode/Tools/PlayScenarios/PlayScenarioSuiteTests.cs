@@ -63,6 +63,24 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(admittedHash, Is.EqualTo(PlayScenarioReproduction.Hash(state.Definitions[0])));
         }
 
+        [Test]
+        public void SubstantialSuiteKeepsEverySelectedChildThroughSavedAdmission()
+        {
+            var names = Enumerable.Range(0, 64).Select(i => "scenario-" + i.ToString("D2")).ToList();
+            foreach (string name in names)
+                scenarios.Save(Definition(name));
+            var suite = PlayScenarioSuiteDefinition.Parse(new JObject { ["name"] = "large", ["scenarios"] = new JArray(names) });
+            var selected = suite.Resolve(scenarios);
+            Assert.AreEqual(64, selected.Count);
+            var state = PlayScenarioSuiteRunner.Create(suite, selected, 100, 86400, "large-build", 1000);
+            suites.Save(suite);
+            suites.SaveReport(state.Report);
+            var restored = suites.GetReport(state.Report.SuiteId);
+            Assert.AreEqual(64, restored.Scenarios.Count);
+            Assert.AreEqual(names.Last(), restored.Scenarios.Last().Name);
+            Assert.AreEqual(100, restored.RepeatCount);
+        }
+
         [TestCase("{'name':'suite','scenarios':['a','a']}")]
         [TestCase("{'name':'suite','tags':['smoke','smoke']}")]
         [TestCase("{'name':'suite','scenarios':[],'tags':[]}")]
@@ -82,7 +100,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 Tags = new List<string> { "smoke" },
             };
             Assert.Throws<ArgumentException>(() => suite.Resolve(scenarios));
-            for (int i = 0; i < 17; i++)
+            for (int i = 0; i < 65; i++)
             {
                 PlayScenarioDefinition definition = Definition("scenario-" + i);
                 definition.Tags.Add("smoke");
@@ -264,7 +282,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             harness = new Harness(Suite("continue"));
             harness.Runner.Tick(1001, true);
             harness.Complete("succeeded", null);
-            harness.Snapshot["oversized_test_value"] = new string('x', 2 * 1024 * 1024);
+            harness.Snapshot["oversized_test_value"] = new string('x', PlayScenarioDefinition.MaximumReportBytes);
             harness.Runner.Tick(1002, true);
             Assert.That(harness.Runner.State.Report.Status, Is.EqualTo("failed"));
             Assert.That(harness.Runner.State.Report.ReportError, Does.Contain("aggregate limit"));

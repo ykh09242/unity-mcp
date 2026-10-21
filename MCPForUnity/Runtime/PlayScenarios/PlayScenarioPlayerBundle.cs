@@ -126,7 +126,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             if (
                 Text(value, "scenario_name", 64) != definition.Name
                 || hash != PlayScenarioReproduction.Hash(definition)
-                || Text(value, "definition_json", 65536) != DefinitionJson(definition)
+                || Text(value, "definition_json", PlayScenarioDefinition.MaximumDefinitionBytes) != DefinitionJson(definition)
             )
                 throw new ArgumentException("Player bundle frozen definition identity does not match.");
             string[] scenes = Scenes(definition);
@@ -325,7 +325,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 revision = PlayScenarioPlayerBundle.Text(value, "source_revision", 128);
                 PlayScenarioReproduction.ValidateSourceRevision(revision);
             }
-            int repeatCount = Integer(value, "repeat_count", 1, 10);
+            int repeatCount = Integer(value, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats);
             PlayScenarioPlayerSoakOptions soak = null;
             if (value.Property("soak") != null)
             {

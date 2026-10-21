@@ -54,7 +54,7 @@ namespace MCPForUnity.Editor.Tools
                         Allow(parameters, "action", "name", "job_id", "repeat_count", "timeout_seconds", "source_revision", "dataset");
                         return PlayScenarioService.Start(
                             Name(parameters),
-                            Integer(parameters, "repeat_count", 1, 10, 1),
+                            Integer(parameters, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats, 1),
                             Integer(parameters, "timeout_seconds", 1, 86400, 300),
                             JobId(parameters, false),
                             SourceRevision(parameters),

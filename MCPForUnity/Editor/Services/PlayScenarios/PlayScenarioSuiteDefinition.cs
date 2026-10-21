@@ -48,8 +48,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (value.Property(key) == null)
                 return new List<string>();
-            if (!(value[key] is JArray array) || array.Count > 16)
-                throw new ArgumentException(key + " must contain at most 16 unique lowercase slugs.");
+            if (!(value[key] is JArray array) || array.Count > PlayScenarioDefinition.MaximumSuiteScenarios)
+                throw new ArgumentException(key + " must contain at most 64 unique lowercase slugs.");
             var result = new List<string>();
             foreach (JToken token in array)
             {
@@ -86,8 +86,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         names.Add(name);
                     }
                 }
-            if (selected.Count < 1 || selected.Count > 16)
-                throw new ArgumentException("Suite selection must resolve to 1-16 scenarios.");
+            if (selected.Count < 1 || selected.Count > PlayScenarioDefinition.MaximumSuiteScenarios)
+                throw new ArgumentException("Suite selection must resolve to 1-64 scenarios.");
             return selected.AsReadOnly();
         }
     }

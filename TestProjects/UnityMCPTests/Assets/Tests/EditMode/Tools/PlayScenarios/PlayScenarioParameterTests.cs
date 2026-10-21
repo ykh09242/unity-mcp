@@ -225,12 +225,22 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                     values["p" + j] = new string('x', 1024);
                 datasets.Add(new JObject { ["name"] = "case-" + i, ["values"] = values });
             }
+            while (steps.Count < 128)
+                steps.Add(
+                    new JObject
+                    {
+                        ["name"] = "object",
+                        ["action"] = "wait_object",
+                        ["target"] = new string('a', 4000),
+                        ["scene"] = "Assets/" + new string('a', 4000) + ".unity",
+                    }
+                );
             value["parameters"] = parameters;
             value["parameter_bindings"] = bindings;
             value["steps"] = steps;
             value["datasets"] = datasets;
             var error = Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(value));
-            StringAssert.Contains("64 KiB", error.Message);
+            StringAssert.Contains("1 MiB", error.Message);
         }
 
         [Test]

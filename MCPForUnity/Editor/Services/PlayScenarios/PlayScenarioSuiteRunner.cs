@@ -85,13 +85,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             string suiteId = null
         )
         {
-            if (repeats < 1 || repeats > 10 || timeout < 1 || timeout > 86400)
+            if (repeats < 1 || repeats > PlayScenarioDefinition.MaximumRepeats || timeout < 1 || timeout > 86400)
                 throw new ArgumentException("Suite repeats/timeout exceed their bounds.");
             PlayScenarioService.ValidateSourceRevision(revision);
             if (suiteId != null)
                 PlayScenarioSuiteStore.ValidateId(suiteId);
-            if (selected == null || selected.Count < 1 || selected.Count > 16)
-                throw new ArgumentException("Suite selection must contain 1-16 scenarios.");
+            if (selected == null || selected.Count < 1 || selected.Count > PlayScenarioDefinition.MaximumSuiteScenarios)
+                throw new ArgumentException("Suite selection must contain 1-64 scenarios.");
             var state = new PlayScenarioSuiteState
             {
                 Report = new PlayScenarioSuiteReport
@@ -121,7 +121,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     }
                 );
             }
-            if (Encoding.UTF8.GetByteCount(JArray.FromObject(state.Definitions).ToString(Formatting.None)) > 1024 * 1024)
+            if (Encoding.UTF8.GetByteCount(JArray.FromObject(state.Definitions).ToString(Formatting.None)) > 16 * 1024 * 1024)
                 throw new ArgumentException("Frozen suite definitions exceed the snapshot limit.");
             return state;
         }

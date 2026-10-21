@@ -33,8 +33,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         internal static void Validate(JObject source)
         {
-            if (Encoding.UTF8.GetByteCount(source.ToString(Formatting.None)) > 65536)
-                throw new ArgumentException("Scenario definition exceeds 64 KiB.");
+            if (Encoding.UTF8.GetByteCount(source.ToString(Formatting.None)) > PlayScenarioDefinition.MaximumDefinitionBytes)
+                throw new ArgumentException("Scenario definition exceeds 1 MiB.");
             bool any = Metadata.Any(key => source.Property(key) != null);
             if (!any)
                 return;

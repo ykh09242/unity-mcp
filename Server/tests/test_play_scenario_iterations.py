@@ -44,6 +44,14 @@ def _report(rows: list[dict[str, JsonValue]]) -> dict[str, JsonValue]:
     }
 
 
+def test_hundred_iteration_ledger_retains_the_last_completion():
+    report = _report([_row(index) for index in range(1, 101)])
+    report.update(status="succeeded", finished_unix_ms=2000)
+    counts = iteration_counts(report, 100)
+    assert counts["planned"] == counts["executed"] == counts["passed"] == 100
+    assert validate_iteration_results(report, 100, terminal=True)[-1].iteration == 100
+
+
 def test_native_failure_preserves_passed_and_skipped_slots():
     report = _report([_row(1), _row(2, "failed"), _row(3, "skipped")])
     counts = iteration_counts(report, 3)
@@ -181,7 +189,7 @@ def test_native_intervals_must_fit_report_and_repeat_order():
         iteration_counts(_report(rows), 2)
 
 
-@pytest.mark.parametrize("repeat_count", [True, 0, 11, 1.0, "1"])
+@pytest.mark.parametrize("repeat_count", [True, 0, 101, 1.0, "1"])
 def test_repeat_count_is_strict_even_for_legacy(repeat_count):
     with pytest.raises(IterationResultsError):
         iteration_counts({"status": "succeeded"}, repeat_count)

@@ -427,7 +427,12 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 persistence.Execute(
                     "final_report",
                     null,
-                    () => PlayScenarioPlayerFiles.WriteNew(Path.Combine(directory, "run.json"), report.ToString(Formatting.None), 2 * 1024 * 1024)
+                    () =>
+                        PlayScenarioPlayerFiles.WriteNew(
+                            Path.Combine(directory, "run.json"),
+                            report.ToString(Formatting.None),
+                            PlayScenarioDefinition.MaximumReportBytes
+                        )
                 );
             }
             catch (Exception error)

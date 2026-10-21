@@ -58,7 +58,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         Allow(parameters, "action", "name", "suite_id", "repeat_count", "timeout_seconds", "source_revision");
                         return Start(
                             Name(parameters),
-                            PlayScenarioDefinition.Integer(parameters, "repeat_count", 1, 10, 1),
+                            PlayScenarioDefinition.Integer(parameters, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats, 1),
                             PlayScenarioDefinition.Integer(parameters, "timeout_seconds", 1, 86400, 300),
                             Revision(parameters),
                             parameters.Property("suite_id") == null ? null : Id(parameters)
@@ -255,8 +255,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (_runner == null)
                 return;
             string json = JObject.FromObject(_runner.State, PlayScenarioSuiteStore.Serializer()).ToString(Formatting.None);
-            if (Encoding.UTF8.GetByteCount(json) > 3 * 1024 * 1024)
-                throw new InvalidOperationException("Suite session snapshot exceeds its 3 MiB limit.");
+            if (Encoding.UTF8.GetByteCount(json) > 40 * 1024 * 1024)
+                throw new InvalidOperationException("Suite session snapshot exceeds its 40 MiB limit.");
             SessionState.SetString(SessionKey, json);
         }
 
@@ -267,7 +267,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return;
             try
             {
-                if (Encoding.UTF8.GetByteCount(saved) > 3 * 1024 * 1024)
+                if (Encoding.UTF8.GetByteCount(saved) > 40 * 1024 * 1024)
                     throw new InvalidDataException("Suite session snapshot exceeds its limit.");
                 JObject value;
                 using (var reader = new JsonTextReader(new StringReader(saved)) { DateParseHandling = DateParseHandling.None, MaxDepth = 48 })
@@ -289,10 +289,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "finalization_deadline_unix_ms"
                 );
                 PlayScenarioSuiteStore.ValidateReport(value["report"] as JObject);
-                if (!(value["definitions"] is JArray definitions) || definitions.Count < 1 || definitions.Count > 16)
+                if (!(value["definitions"] is JArray definitions) || definitions.Count < 1 || definitions.Count > PlayScenarioDefinition.MaximumSuiteScenarios)
                     throw new InvalidDataException("Invalid frozen suite definitions.");
                 var normalized = definitions.Select(token => PlayScenarioDefinition.Parse(token as JObject)).ToList();
-                PlayScenarioDefinition.Integer(value, "repeat_count", 1, 10, 0);
+                PlayScenarioDefinition.Integer(value, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats, 0);
                 PlayScenarioDefinition.Integer(value, "cursor", 0, definitions.Count, -1);
                 if (
                     value["cancel_sent"]?.Type != JTokenType.Boolean
@@ -317,7 +317,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     || state.Cursor < 0
                     || state.Cursor > state.Definitions.Count
                     || state.RepeatCount < 1
-                    || state.RepeatCount > 10
+                    || state.RepeatCount > PlayScenarioDefinition.MaximumRepeats
                     || state.RepeatCount != state.Report.RepeatCount
                     || state.DeadlineUnixMs - state.Report.StartedUnixMs != state.Report.TimeoutSeconds * 1000L
                     || state.DeadlineUnixMs < state.Report.StartedUnixMs
