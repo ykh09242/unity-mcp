@@ -54,9 +54,9 @@ def test_label_actions_use_only_label_wire_and_never_refresh_or_retry(monkeypatc
         {"labels": ["x "]},
         {"labels": ["x\n"]},
         {"labels": ["x" * 257]},
-        {"labels": ["x" + str(i) for i in range(129)]},
+        {"labels": ["x" + str(i) for i in range(1025)]},
         {"labels": ["\U0001f600" * 129]},
-        {"labels": [str(i) + "x" * 250 for i in range(66)]},
+        {"labels": [str(i) + "한" * 240 for i in range(400)]},
         {"label_revision": "invalid"},
         {"label_revision": REVISION.upper()},
         {"label_targets": []},
@@ -64,7 +64,11 @@ def test_label_actions_use_only_label_wire_and_never_refresh_or_retry(monkeypatc
         {"label_targets": [{"path": True, "revision": REVISION}]},
         {"label_targets": [{"path": "Assets/a.txt", "revision": None}]},
         {"label_targets": [{"path": "Assets/a.txt", "revision": REVISION}] * 2},
-        {"label_targets": [{"path": "Assets/" + str(i), "revision": REVISION} for i in range(33)]},
+        {
+            "label_targets": [
+                {"path": "Assets/" + str(i), "revision": REVISION} for i in range(1025)
+            ]
+        },
         {"properties": {}},
         {"generate_preview": True},
         {"page_number": 1},
@@ -86,9 +90,9 @@ def test_invalid_label_requests_refuse_before_context_preflight_or_transport(mon
     context.assert_not_awaited()
 
 
-def test_batch_32_and_empty_delta_preserve_exact_revision_rows(monkeypatch):
-    # Given: the largest allowed common-operation batch and an explicit empty delta.
-    rows = [{"path": f"Assets/{i}.txt", "revision": REVISION} for i in range(32)]
+def test_batch_300_and_empty_delta_preserve_exact_revision_rows(monkeypatch):
+    # Given: a substantial common-operation batch and an explicit empty delta.
+    rows = [{"path": f"Assets/{i}.txt", "revision": REVISION} for i in range(300)]
     send = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value="owned"))
     monkeypatch.setattr(module, "preflight", AsyncMock(return_value=None))
@@ -97,7 +101,7 @@ def test_batch_32_and_empty_delta_preserve_exact_revision_rows(monkeypatch):
     result = asyncio.run(
         module.manage_asset(None, action="remove_labels", label_targets=rows, labels=[])
     )
-    # Then: all 32 revisions and the intentional empty list reach exactly one command.
+    # Then: all 300 revisions and the intentional empty list reach exactly one command.
     assert result["success"] is True
     assert send.await_args.args[3] == {
         "action": "remove_labels",

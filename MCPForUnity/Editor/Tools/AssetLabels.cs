@@ -17,10 +17,11 @@ namespace MCPForUnity.Editor.Tools
     /// <summary>Bounded label operations, with observed revisions and sequential, non-atomic writes.</summary>
     internal static class AssetLabels
     {
-        private const int MaxTargets = 32;
-        private const int MaxLabels = 128;
+        private const int MaxTargets = 1024;
+        private const int MaxLabels = 1024;
         private const int MaxLabelUnits = 256;
-        private const int MaxMetaBytes = 1024 * 1024;
+        private const int MaxMetaBytes = 16 * 1024 * 1024;
+        private const long MaxTotalMetaBytes = 256L * 1024 * 1024;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
         private static readonly Regex RevisionPattern = new Regex("\\Amcp-al-v1_[0-9a-f]{32}_[0-9a-f]{64}_[0-9a-f]{64}\\z", RegexOptions.CultureInvariant);
 
@@ -53,8 +54,8 @@ namespace MCPForUnity.Editor.Tools
                     Target target = request.Targets[i];
                     Resolve(target, mutation);
                     budget.PathBytes += Bytes(target.Path);
-                    if (budget.PathBytes > 32768)
-                        Fail("asset_labels_limit_exceeded", "Canonical target paths exceed 32 KiB.");
+                    if (budget.PathBytes > 1024 * 1024)
+                        Fail("asset_labels_limit_exceeded", "Canonical target paths exceed 1 MiB.");
                     if (!paths.Add(target.Path))
                         Fail("invalid_asset_labels", "Duplicate canonical target.");
                     target.Initial = Observe(target, budget);
@@ -160,7 +161,7 @@ namespace MCPForUnity.Editor.Tools
                 if (parameters["path"] != null || parameters["labelRevision"] != null)
                     Fail("invalid_asset_labels", "Use either a single path/revision or labelTargets.");
                 if (!(targetsToken is JArray targets) || targets.Count < 1 || targets.Count > MaxTargets)
-                    Fail("invalid_asset_labels", "Expected 1-32 target rows.");
+                    Fail("invalid_asset_labels", "Expected 1-1024 target rows.");
                 foreach (JToken token in (JArray)targetsToken)
                 {
                     if (!(token is JObject row) || row.Properties().Any(property => property.Name != "path" && property.Name != "revision"))
@@ -184,7 +185,7 @@ namespace MCPForUnity.Editor.Tools
                 if (string.IsNullOrWhiteSpace(target.Input) || target.Input.Trim() != target.Input || target.Input.Any(char.IsControl))
                     Fail("invalid_asset_labels", "Invalid target path string.");
                 pathBytes += Bytes(target.Input);
-                if (pathBytes > 32768 || !literalPaths.Add(target.Input))
+                if (pathBytes > 1024 * 1024 || !literalPaths.Add(target.Input))
                     Fail("invalid_asset_labels", "Target path budget or duplicate target.");
                 if (mutation && !RevisionPattern.IsMatch(target.Revision))
                     Fail("invalid_asset_labels", "Each mutation requires an observed label revision.");
@@ -192,7 +193,7 @@ namespace MCPForUnity.Editor.Tools
             if (mutation)
             {
                 if (!(parameters["labels"] is JArray labels) || labels.Count > MaxLabels)
-                    Fail("invalid_asset_labels", "labels must contain at most 128 strings.");
+                    Fail("invalid_asset_labels", "labels must contain at most 1024 strings.");
                 var requested = new List<string>();
                 long labelBytes = 0;
                 foreach (JToken token in (JArray)parameters["labels"])
@@ -201,8 +202,8 @@ namespace MCPForUnity.Editor.Tools
                     if (string.IsNullOrWhiteSpace(value) || value.Trim() != value || value.Length > MaxLabelUnits || value.Any(char.IsControl))
                         Fail("invalid_asset_labels", "Invalid label string.");
                     labelBytes += Bytes(value);
-                    if (labelBytes > 16384)
-                        Fail("invalid_asset_labels", "Requested labels exceed 16 KiB.");
+                    if (labelBytes > 256 * 1024)
+                        Fail("invalid_asset_labels", "Requested labels exceed 256 KiB.");
                     requested.Add(value);
                 }
                 request.Labels = Canonical(requested);
@@ -284,22 +285,25 @@ namespace MCPForUnity.Editor.Tools
                 using (var stream = new FileStream(target.Meta, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                 {
                     long length = stream.Length;
-                    if (length > MaxMetaBytes || length > 4 * MaxMetaBytes - budget.MetaBytes)
-                        Fail("asset_labels_limit_exceeded", "Metadata exceeds 1 MiB per file or 4 MiB cumulative reads.");
-                    using (var bytes = new MemoryStream())
+                    if (length > MaxMetaBytes || length > MaxTotalMetaBytes - budget.MetaBytes)
+                        Fail("asset_labels_limit_exceeded", "Metadata exceeds 16 MiB per file or 256 MiB cumulative reads.");
+                    using (var sha = SHA256.Create())
                     {
-                        var buffer = new byte[8192];
-                        while (bytes.Length < length)
+                        byte[] buffer = budget.ReadBuffer;
+                        long read = 0;
+                        while (read < length)
                         {
-                            int count = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, length - bytes.Length));
+                            int count = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, length - read));
                             if (count == 0)
                                 Fail("asset_labels_unavailable", "Metadata changed during observation.");
                             budget.MetaBytes += count;
-                            bytes.Write(buffer, 0, count);
+                            read += count;
+                            sha.TransformBlock(buffer, 0, count, buffer, 0);
                         }
                         if (stream.Length != length)
                             Fail("asset_labels_unavailable", "Metadata changed during observation.");
-                        metaDigest = Digest(bytes.ToArray());
+                        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                        metaDigest = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
                     }
                 }
             }
@@ -344,7 +348,7 @@ namespace MCPForUnity.Editor.Tools
                     break;
             }
             if (labels.Count > MaxLabels)
-                Fail("asset_labels_limit_exceeded", "Planned labels exceed 128 entries.");
+                Fail("asset_labels_limit_exceeded", "Planned labels exceed 1024 entries.");
             return Canonical(labels);
         }
 
@@ -419,6 +423,7 @@ namespace MCPForUnity.Editor.Tools
         private sealed class Budget
         {
             internal long MetaBytes;
+            internal readonly byte[] ReadBuffer = new byte[8192];
             internal long PathBytes;
             private long _labelBytes;
 
@@ -426,8 +431,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 foreach (string label in labels)
                     _labelBytes += Bytes(label);
-                if (_labelBytes > 65536)
-                    Fail("asset_labels_limit_exceeded", "Cumulative observed/planned label text exceeds 64 KiB.");
+                if (_labelBytes > 8 * 1024 * 1024)
+                    Fail("asset_labels_limit_exceeded", "Cumulative observed/planned label text exceeds 8 MiB.");
             }
         }
     }

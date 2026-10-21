@@ -57,8 +57,8 @@ def asset_label_params(
     if label_targets is not None:
         if path is not None or label_revision is not None:
             raise ValueError("Use either path/revision or label_targets.")
-        if type(label_targets) is not list or not 1 <= len(label_targets) <= 32:
-            raise ValueError("label_targets must contain 1-32 closed target rows.")
+        if type(label_targets) is not list or not 1 <= len(label_targets) <= 1024:
+            raise ValueError("label_targets must contain 1-1024 closed target rows.")
         try:
             rows = [AssetLabelTarget.model_validate(row) for row in label_targets]
         except ValidationError as exc:
@@ -90,8 +90,8 @@ def asset_label_params(
     if len(set(paths)) != len(paths):
         raise ValueError("Duplicate target paths are not allowed.")
     try:
-        if sum(len(value.encode("utf-8")) for value in paths) > 32768:
-            raise ValueError("Target paths exceed 32 KiB.")
+        if sum(len(value.encode("utf-8")) for value in paths) > 1024 * 1024:
+            raise ValueError("Target paths exceed 1 MiB.")
         if mutation:
             if any(
                 row.revision is None
@@ -102,10 +102,10 @@ def asset_label_params(
                 raise ValueError("Each mutation requires an observed label revision.")
             if (
                 type(labels) is not list
-                or len(labels) > 128
+                or len(labels) > 1024
                 or any(type(value) is not str for value in labels)
             ):
-                raise ValueError("labels must be an array of at most 128 strings.")
+                raise ValueError("labels must be an array of at most 1024 strings.")
             if any(
                 not value
                 or value != value.strip()
@@ -116,8 +116,8 @@ def asset_label_params(
                 raise ValueError(
                     "Labels require 1-256 UTF-16 units, no controls or edge whitespace."
                 )
-            if sum(len(value.encode("utf-8")) for value in labels) > 16384:
-                raise ValueError("Requested labels exceed 16 KiB.")
+            if sum(len(value.encode("utf-8")) for value in labels) > 256 * 1024:
+                raise ValueError("Requested labels exceed 256 KiB.")
             params["labels"] = labels
         elif labels is not None:
             raise ValueError("get_labels does not accept labels.")
@@ -140,7 +140,7 @@ def asset_label_params(
         "`generate_preview=false` (previews can add large base64 blobs). "
         "Opt-in metadata_only search avoids explicit object/preview loads and returns a short-lived "
         "search_snapshot for reusable pages; keep query, scope, date and page_size unchanged."
-        " Label actions get/set/add/remove support 1-32 targets; mutations require observed revisions, "
+        " Label actions get/set/add/remove support 1-1024 targets; mutations require observed revisions, "
         "are sequential rather than atomic, and never automatically retry an uncertain write."
     ),
     annotations=ToolAnnotations(
@@ -229,12 +229,12 @@ async def manage_asset(
     ]
     | None = None,
     labels: Annotated[
-        list[StrictStr], Field(max_length=128), "Exact labels; set replaces, empty set clears."
+        list[StrictStr], Field(max_length=1024), "Exact labels; set replaces, empty set clears."
     ]
     | None = None,
     label_targets: Annotated[
         list[AssetLabelTarget],
-        Field(min_length=1, max_length=32),
+        Field(min_length=1, max_length=1024),
         "Common-operation batch; each mutation row requires revision.",
     ]
     | None = None,
