@@ -101,7 +101,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("query_physics", AutoRegister = false, Group = "physics",
-        DisplayName = "Physics Queries", Description = "Run ray, shape and overlap queries in 2D or 3D.")]
+        DisplayName = "Physics Queries", Description = "Run ray, shape and overlap queries in 2D or 3D. Read-only inspection; results can change with Unity state.")]
     public static class QueryPhysics
     {
         private static readonly string[] Actions = { "raycast", "raycast_all", "linecast", "shapecast", "overlap" };
@@ -128,7 +128,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("diagnose_physics", AutoRegister = false, Group = "physics",
-        DisplayName = "Physics Diagnostics", Description = "Validate physics setup or inspect a pair of colliders and passive contacts.")]
+        DisplayName = "Physics Diagnostics", Description = "Validate physics setup or inspect a pair of colliders and passive contacts. May start or stop passive contact observation without advancing simulation.")]
     public static class DiagnosePhysics
     {
         private static readonly string[] Actions = { "validate", "diagnose_pair" };
@@ -308,7 +308,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("prefab_inspect", AutoRegister = false, Group = "core",
-        DisplayName = "Inspect Prefabs", Description = "Inspect prefab metadata or a bounded hierarchy page.")]
+        DisplayName = "Inspect Prefabs", Description = "Inspect prefab metadata or a bounded hierarchy page. Inspection may load assets or invoke user-defined callbacks.")]
     public static class PrefabInspect
     {
         private static readonly string[] Actions = { "get_info", "get_hierarchy" };
@@ -391,7 +391,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("scene_reference_diagnostics", AutoRegister = false, Group = "scene",
-        DisplayName = "Scene Reference Diagnostics", Description = "Inspect scene references within explicit work and result budgets.")]
+        DisplayName = "Scene Reference Diagnostics", Description = "Inspect scene references within explicit work and result budgets. Inspection may load assets or invoke user-defined callbacks.")]
     public static class SceneReferenceDiagnostics
     {
         private static readonly string[] Actions = { "validate_references" };
@@ -420,7 +420,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("asset_reference_diagnostics", AutoRegister = false, Group = "assets",
-        DisplayName = "Asset References & Change Previews", Description = "Inspect dependencies and reverse references, or preview asset moves and deletion.")]
+        DisplayName = "Asset References & Change Previews", Description = "Inspect dependencies and reverse references, or preview asset moves and deletion. Read-only inspection; results can change with Unity state.")]
     public static class AssetReferenceDiagnostics
     {
         private static readonly string[] Actions = { "get_dependencies", "get_reverse_references", "preview_move", "preview_delete" };
@@ -438,7 +438,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("asset_bundles", AutoRegister = false, Group = "assets",
-        DisplayName = "Asset Bundle Inspection", Description = "Inspect asset bundles, their contents and dependencies.")]
+        DisplayName = "Asset Bundle Inspection", Description = "Inspect asset bundles, their contents and dependencies. Read-only inspection; results can change with Unity state.")]
     public static class AssetBundles
     {
         private static readonly string[] Actions = { "list_asset_bundles", "get_bundle_assets", "get_bundle_dependencies" };
@@ -465,7 +465,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("ui_inspect", AutoRegister = false, Group = "ui",
-        DisplayName = "UI Toolkit / Inspect & Diagnose", Description = "Inspect the visual tree or diagnose UI Toolkit layout and text.")]
+        DisplayName = "UI Toolkit / Inspect & Diagnose", Description = "Inspect the visual tree or diagnose UI Toolkit layout and text. Inspection may load assets or invoke user-defined callbacks.")]
     public static class UiInspect
     {
         private static readonly string[] Actions = { "ping", "get_visual_tree", "diagnose" };

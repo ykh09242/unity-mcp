@@ -12,7 +12,7 @@ description: "Inspect dependencies and reverse references, or preview asset move
 
 ## Description
 
-Inspect dependencies and reverse references, or preview asset moves and deletion.
+Inspect dependencies and reverse references, or preview asset moves and deletion. Read-only inspection; results can change with Unity state.
 
 ## Parameters
 

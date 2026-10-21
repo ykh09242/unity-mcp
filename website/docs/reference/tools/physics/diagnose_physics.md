@@ -12,7 +12,7 @@ description: "Validate physics setup or inspect a pair of colliders and passive 
 
 ## Description
 
-Validate physics setup or inspect a pair of colliders and passive contacts.
+Validate physics setup or inspect a pair of colliders and passive contacts. May start or stop passive contact observation without advancing simulation.
 
 ## Parameters
 

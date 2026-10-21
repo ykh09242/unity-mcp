@@ -12,7 +12,7 @@ description: "Inspect prefab metadata or a bounded hierarchy page."
 
 ## Description
 
-Inspect prefab metadata or a bounded hierarchy page.
+Inspect prefab metadata or a bounded hierarchy page. Inspection may load assets or invoke user-defined callbacks.
 
 ## Parameters
 

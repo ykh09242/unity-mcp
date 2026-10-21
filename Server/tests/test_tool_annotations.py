@@ -33,6 +33,10 @@ from utils.module_discovery import discover_modules
 # tool that writes to the project, and do not set readOnlyHint on a tool whose
 # body calls preflight(refresh_if_dirty=True) -- that can trigger a domain reload.
 READ_ONLY = {
+    # Focused read-only native queries: no refresh, asset loads or mutation callbacks.
+    "asset_bundles",
+    "asset_reference_diagnostics",
+    "query_physics",
     "capture_ui_snapshot",  # Reads UI state; preflight does not refresh project assets.
     "debug_request_context",
     # Completed-result cache only; no job retirement or project/Editor settings mutation.
