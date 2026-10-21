@@ -162,3 +162,13 @@ def test_real_check_process_is_current_fork_code_with_preserved_exit(history, tm
     assert check["returncode"] == exit_code
     assert check["log_sha256"] == compat.digest(check["log"])
     assert report["validation"]["checkout_unchanged"]
+
+
+def test_all_check_selection_does_not_invent_path_impacts(history):
+    root, start, inventory, path = history
+    inventory["checks"]["unaffected"] = {"kind": "components"}
+    report = compat.inspect_range(root, start, "HEAD", inventory, path, all_checks=True)
+    assert report["check_selection"] == "all_inventory"
+    assert report["check_ids"] == ["test", "unaffected"]
+    assert report["impacts"][0]["checks"] == ["test"]
+    assert report["unclassified_paths"] == ["new unknown.txt"]

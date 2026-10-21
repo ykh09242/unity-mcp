@@ -108,7 +108,7 @@ def select(inventory, paths):
     return selected, sorted(set(paths) - covered)
 
 
-def inspect_range(root, base, head, inventory, inventory_path):
+def inspect_range(root, base, head, inventory, inventory_path, *, all_checks=False):
     start, end = revision(root, base), revision(root, head)
     # Reject ambiguous/non-ancestral inputs rather than silently choosing a merge base.
     subprocess.run(
@@ -145,7 +145,10 @@ def inspect_range(root, base, head, inventory, inventory_path):
         "version_policy_inputs": [{"path": p, "sha256": digest(root / p)} for p in version_paths],
         "impacts": impacts,
         "unclassified_paths": unclassified,
-        "check_ids": sorted({c for row in impacts for c in row["checks"]}),
+        "check_selection": "all_inventory" if all_checks else "affected_paths",
+        "check_ids": sorted(
+            inventory["checks"] if all_checks else {c for row in impacts for c in row["checks"]}
+        ),
         "validation": {"status": "not_run", "checks": []},
         "limitations": [
             "Path selection identifies review scope, not semantic compatibility.",
@@ -228,9 +231,16 @@ def main():
     parser.add_argument("--head", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--run-checks", action="store_true")
+    parser.add_argument(
+        "--all-checks",
+        action="store_true",
+        help="Select the full inventory while preserving the actual path impacts",
+    )
     args = parser.parse_args()
     inventory = load_inventory()
-    report = inspect_range(ROOT, args.base, args.head, inventory, INVENTORY)
+    report = inspect_range(
+        ROOT, args.base, args.head, inventory, INVENTORY, all_checks=args.all_checks
+    )
     if args.run_checks:
         run_checks(ROOT, inventory, report, args.output.parent)
     args.output.parent.mkdir(parents=True, exist_ok=True)
