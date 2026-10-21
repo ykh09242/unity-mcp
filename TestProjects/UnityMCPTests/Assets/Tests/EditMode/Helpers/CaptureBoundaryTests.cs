@@ -55,6 +55,18 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [Test]
+        public void EightKSquareAndSubstantialCaptureBatchAreAdmitted()
+        {
+            Assert.DoesNotThrow(() => ScreenshotUtility.ValidateFrameDimensions(8192, 8192));
+            Assert.DoesNotThrow(() => ScreenshotUtility.ValidateBatchCapture(7680, 4320, 36, 320));
+            var budget = new ScreenshotUtility.CaptureBatchBudget();
+            for (int index = 0; index < 36; index++)
+                Assert.DoesNotThrow(() => budget.AdmitFrame(7680, 4320, 320, 180));
+            Type type = typeof(MCPForUnity.Editor.Tools.ManageEditor).Assembly.GetType("MCPForUnity.Editor.Helpers.GameViewSizeControl", true);
+            type.GetMethod("ValidateFixedSize", StaticPrivate).Invoke(null, new object[] { 7680, 4320 });
+        }
+
+        [Test]
         public void PlayerContainmentUsesCanonicalDirectoryBoundaries()
         {
             string child = Path.Combine(root, "child");
@@ -176,7 +188,7 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [TestCase(8193, 1)]
-        [TestCase(8192, 8192)]
+        [TestCase(8192, 8193)]
         [TestCase(int.MaxValue, int.MaxValue)]
         public void PngHeaderBudgetIsCheckedBeforeTextureAllocation(int width, int height)
         {

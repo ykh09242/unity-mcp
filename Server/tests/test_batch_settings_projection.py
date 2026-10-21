@@ -212,7 +212,7 @@ async def test_invalid_projection_preserves_uncached_default(settings, limit):
             await settings.request(
                 module._get_max_commands_from_editor_state, context(), "Selected@fixture"
             )
-            == 25
+            == module.DEFAULT_MAX_COMMANDS_PER_BATCH
         )
         assert not module._cached_max_commands
         assert not settings.copies and not settings.hub._retained_results
@@ -232,7 +232,7 @@ async def test_rpc_exception_preserves_default_and_releases_raw_owner(settings, 
             await settings.request(
                 module._get_max_commands_from_editor_state, context(), "Selected@fixture"
             )
-            == 25
+            == module.DEFAULT_MAX_COMMANDS_PER_BATCH
         )
         assert not settings.hub._retained_results and not owner.entries
         assert not owner.released
@@ -253,7 +253,7 @@ async def test_actual_rpc_capacity_refusal_keeps_existing_default_policy(setting
             await settings.request(
                 module._get_max_commands_from_editor_state, context(), "Selected@fixture"
             )
-            == 25
+            == module.DEFAULT_MAX_COMMANDS_PER_BATCH
         )
         assert not module._cached_max_commands and not settings.hub._retained_results
     finally:

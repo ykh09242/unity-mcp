@@ -485,7 +485,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [TestCase(32, true)]
-        [TestCase(33, false)]
+        [TestCase(33, true)]
         public void TargetCount_IsBoundedBeforeLoads(int count, bool expected)
         {
             var targets = new JArray(
@@ -498,7 +498,7 @@ namespace MCPForUnityTests.Editor.Tools
                 var result = Call(new JObject { ["action"] = "get_labels", ["labelTargets"] = targets });
                 Assert.That((bool)result["success"], Is.EqualTo(expected), result.ToString());
                 if (expected)
-                    Assert.That(((JArray)result["data"]["results"]).Count, Is.EqualTo(32));
+                    Assert.That(((JArray)result["data"]["results"]).Count, Is.EqualTo(count));
                 else
                     Assert.That(observations, Is.Zero);
             }
@@ -511,7 +511,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("", 1)]
         [TestCase(" x", 1)]
         [TestCase("x\n", 1)]
-        [TestCase("x", 129)]
+        [TestCase("x", 1025)]
         public void InvalidLabels_RefuseBeforeObjectOrMetaObservation(string label, int count)
         {
             int observations = 0;
@@ -537,12 +537,40 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void LargeMetadataRevisionHashesEveryByteWithoutMaterializingTheFile()
+        {
+            byte[] original = File.ReadAllBytes(_first + ".meta");
+            try
+            {
+                using (var stream = new FileStream(_first + ".meta", FileMode.Append, FileAccess.Write))
+                {
+                    var padding = System.Text.Encoding.ASCII.GetBytes("# " + new string('x', 8190) + "\n");
+                    for (int index = 0; index < 256; index++)
+                        stream.Write(padding, 0, padding.Length);
+                }
+                string expected;
+                using (var stream = File.OpenRead(_first + ".meta"))
+                using (var sha = SHA256.Create())
+                    expected = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                JObject result = Get(_first);
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(expected, Row(result).Value<string>("revision").Substring(43, 64));
+                Assert.AreEqual(0, _writes);
+            }
+            finally
+            {
+                File.WriteAllBytes(_first + ".meta", original);
+            }
+        }
+
+        [Test]
         public void OversizedMeta_RefusesWithoutTruncationOrWrite()
         {
             byte[] original = File.ReadAllBytes(_first + ".meta");
             try
             {
-                File.WriteAllText(_first + ".meta", new string(' ', 1024 * 1024 + 1));
+                using (var stream = new FileStream(_first + ".meta", FileMode.Open, FileAccess.Write))
+                    stream.SetLength(16 * 1024 * 1024 + 1);
                 var result = Get(_first);
                 Assert.That((string)result["code"], Is.EqualTo("asset_labels_limit_exceeded"));
                 Assert.That(_writes, Is.Zero);
@@ -554,7 +582,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void AggregateObservedLabels_RefuseWithoutReturningTruncatedSuccess()
+        public void AggregateObservedLabels_ExceedOldLimitWithoutTruncation()
         {
             string[] labels = Enumerable.Range(0, 128).Select(i => i.ToString("D3") + new string('x', 253)).ToArray();
             NativeSet(_first, labels);
@@ -567,14 +595,15 @@ namespace MCPForUnityTests.Editor.Tools
                     ["labelTargets"] = new JArray(new JObject { ["path"] = _first }, new JObject { ["path"] = _second }, new JObject { ["path"] = _third }),
                 }
             );
-            Assert.That((bool)result["success"], Is.False, result.ToString());
-            Assert.That((string)result["code"], Is.EqualTo("asset_labels_limit_exceeded"));
+            Assert.That((bool)result["success"], Is.True, result.ToString());
+            Assert.That(((JArray)result["data"]["results"]).Count, Is.EqualTo(3));
+            for (int index = 0; index < 3; index++)
+                Assert.AreEqual(128, ((JArray)Row(result, index)["labels"]).Count);
             Assert.That(_writes, Is.Zero);
-            Assert.That(System.Text.Encoding.UTF8.GetByteCount(result.ToString(Formatting.None)), Is.LessThan(1024 * 1024));
         }
 
         [Test]
-        public void AggregateMetaRead_RefusesBeyondFourMiBAndRestoresOwnedMeta()
+        public void AggregateMetaRead_AcceptsBeyondFourMiBAndRestoresOwnedMeta()
         {
             string[] paths = Enumerable.Range(0, 5).Select(i => CreateText("large" + i)).ToArray();
             byte[][] original = paths.Select(path => File.ReadAllBytes(path + ".meta")).ToArray();
@@ -591,7 +620,8 @@ namespace MCPForUnityTests.Editor.Tools
                 }
                 var targets = new JArray(paths.Select(path => new JObject { ["path"] = path }));
                 var result = Call(new JObject { ["action"] = "get_labels", ["labelTargets"] = targets });
-                Assert.That((string)result["code"], Is.EqualTo("asset_labels_limit_exceeded"));
+                Assert.That((bool)result["success"], Is.True, result.ToString());
+                Assert.AreEqual(paths.Length, ((JArray)result["data"]["results"]).Count);
                 Assert.That(_writes, Is.Zero);
             }
             finally
@@ -599,6 +629,39 @@ namespace MCPForUnityTests.Editor.Tools
                 for (int i = 0; i < paths.Length; i++)
                     File.WriteAllBytes(paths[i] + ".meta", original[i]);
             }
+        }
+
+        [Test]
+        public void AggregateLabelBudgetRejectsTheFirstByteBeyondEightMiB()
+        {
+            Type budgetType = _helper.GetNestedType("Budget", BindingFlags.NonPublic);
+            object budget = Activator.CreateInstance(budgetType, true);
+            MethodInfo add = budgetType.GetMethod("Labels", BindingFlags.Instance | BindingFlags.NonPublic);
+            string[] labels = Enumerable.Repeat(new string('x', 256), 1024).ToArray();
+            for (int index = 0; index < 32; index++)
+                add.Invoke(budget, new object[] { labels });
+            var error = Assert.Throws<TargetInvocationException>(() => add.Invoke(budget, new object[] { new[] { "x" } }));
+            StringAssert.Contains("8 MiB", error.InnerException.Message);
+        }
+
+        [Test]
+        public void AggregateMetadataBudgetRefusesBeforeReadingBeyondItsRemainingAllowance()
+        {
+            Type budgetType = _helper.GetNestedType("Budget", BindingFlags.NonPublic);
+            Type targetType = _helper.GetNestedType("Target", BindingFlags.NonPublic);
+            object budget = Activator.CreateInstance(budgetType, true);
+            object target = Activator.CreateInstance(targetType, true);
+            targetType.GetField("Path", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, _first);
+            targetType.GetField("Asset", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, AssetDatabase.LoadMainAssetAtPath(_first));
+            var spent = budgetType.GetField("MetaBytes", BindingFlags.Instance | BindingFlags.NonPublic);
+            long length = new FileInfo(_first + ".meta").Length;
+            spent.SetValue(budget, 256L * 1024 * 1024 - length);
+            MethodInfo observe = _helper.GetMethod("Observe", BindingFlags.Static | BindingFlags.NonPublic);
+            observe.Invoke(null, new[] { target, budget });
+            Assert.AreEqual(256L * 1024 * 1024, spent.GetValue(budget));
+            var error = Assert.Throws<TargetInvocationException>(() => observe.Invoke(null, new[] { target, budget }));
+            StringAssert.Contains("256 MiB", error.InnerException.Message);
+            Assert.AreEqual(256L * 1024 * 1024, spent.GetValue(budget));
         }
 
         private static string RevisionLiteral() => "mcp-al-v1_" + new string('a', 32) + "_" + new string('b', 64) + "_" + new string('c', 64);

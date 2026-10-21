@@ -1683,7 +1683,7 @@ class TestTransportEdgeCases:
         """
         assert PluginHub.KEEP_ALIVE_INTERVAL == 15
         assert PluginHub.SERVER_TIMEOUT == 30
-        assert PluginHub.COMMAND_TIMEOUT == 30
+        assert PluginHub.COMMAND_TIMEOUT == 300
         assert PluginHub.FAST_FAIL_TIMEOUT == 2.0
 
 

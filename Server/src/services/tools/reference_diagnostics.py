@@ -39,9 +39,7 @@ def reference_page(
     params = {
         "pageSize": page_integer(page_size, 50, 1, 100, "page_size"),
         "pageNumber": page_integer(page_number, 1, 1, 2_147_483_647, "page_number"),
-        "maxWork": page_integer(
-            max_work, 100000 if scene else 10000, 1, 1000000 if scene else 100000, "max_work"
-        ),
+        "maxWork": page_integer(max_work, 100000 if scene else 10000, 1, 4000000, "max_work"),
     }
     if reference_revision is not None:
         if (

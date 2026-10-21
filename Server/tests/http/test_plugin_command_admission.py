@@ -398,15 +398,23 @@ async def test_invalid_or_complex_payload_is_bounded(admission_hub, monkeypatch,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", ["ascii", '\x00\\"', "\U0001f600\uac00"])
-async def test_payload_boundary_charges_unicode_and_json_escapes(admission_hub, monkeypatch, text):
+@pytest.mark.parametrize("budget", ["wire", "retained"])
+async def test_payload_boundary_charges_unicode_and_json_escapes(
+    admission_hub, monkeypatch, text, budget
+):
     socket = await register_socket(admission_hub, "a", "alice")
     params = {"script": text * 10}
     estimator = getattr(PluginHub, "_command_payload_size", None)
     assert estimator is not None, "Command payload requires bounded size admission"
-    size = estimator("run_tests", params)
-    monkeypatch.setattr(PluginHub, "MAX_COMMAND_PAYLOAD_BYTES", size - 1)
+    ceiling = "MAX_COMMAND_PAYLOAD_BYTES" if budget == "wire" else "MAX_COMMAND_RETAINED_BYTES"
+    size = (
+        len(json.dumps({"type": "run_tests", "params": params}, ensure_ascii=False).encode("utf-8"))
+        if budget == "wire"
+        else estimator("run_tests", params)
+    )
+    monkeypatch.setattr(PluginHub, ceiling, size - 1)
     await reject_without_send("a", socket, params)
-    monkeypatch.setattr(PluginHub, "MAX_COMMAND_PAYLOAD_BYTES", size)
+    monkeypatch.setattr(PluginHub, ceiling, size)
     accepted = await start_command("a", params)
     accepted.cancel()
     await asyncio.gather(accepted, return_exceptions=True)

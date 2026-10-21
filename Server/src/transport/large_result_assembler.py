@@ -16,7 +16,7 @@ CAPABILITY: Final = "large_result_v1"
 COMPRESSION_CAPABILITY: Final = "large_result_gzip_v1"
 COMPRESSION_THRESHOLD_BYTES: Final = 1024 * 1024
 THRESHOLD_BYTES: Final = 256 * 1024
-MAX_RESULT_BYTES: Final = 32 * 1024 * 1024
+MAX_RESULT_BYTES: Final = 64 * 1024 * 1024
 MAX_FRAME_BYTES: Final = 64 * 1024
 HEADER_BYTES: Final = 44
 CHUNK_PAYLOAD_BYTES: Final = MAX_FRAME_BYTES - HEADER_BYTES
@@ -73,8 +73,8 @@ class LargeResultAssembler:
         reserve: Callable[[str, str, int], bool],
         release: Callable[[str, str], None],
         *,
-        timeout_seconds: float = 30.0,
-        max_total_bytes: int = 64 * 1024 * 1024,
+        timeout_seconds: float = 300.0,
+        max_total_bytes: int = 128 * 1024 * 1024,
         clock: Callable[[], float] = time.monotonic,
         reserve_compressed: Callable[[str, str, int, int], bool] | None = None,
     ) -> None:

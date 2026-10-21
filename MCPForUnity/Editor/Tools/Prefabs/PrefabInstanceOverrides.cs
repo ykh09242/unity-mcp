@@ -14,9 +14,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
     /// <summary>Explicit, bounded selection of overrides on the nearest scene instance root.</summary>
     internal static class PrefabInstanceOverrides
     {
-        private const int MaxObjects = 10000;
-        private const int MaxProperties = 100000;
-        private const int MaxRows = 20000;
+        private const int MaxObjects = 100000;
+        private const int MaxProperties = 4000000;
+        private const int MaxRows = 250000;
 
         private sealed class Entry
         {

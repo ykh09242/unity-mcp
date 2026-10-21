@@ -41,16 +41,21 @@ def screenshot_html(
         unlinked(path)
         path.resolve().relative_to(root.resolve())
         info = path.stat()
-        if not stat.S_ISREG(info.st_mode) or info.st_size > min(remaining, IMAGE_LIMIT):
+        if not stat.S_ISREG(info.st_mode):
             return unavailable, 0
+        if info.st_size > min(remaining, IMAGE_LIMIT):
+            return (
+                '<p class="muted">Image omitted: portable HTML attachment budget exceeded. The original artifact is unchanged.</p>',
+                0,
+            )
         with path.open("rb") as stream:
-            data = stream.read(min(remaining, IMAGE_LIMIT) + 1)
+            data = stream.read(min(info.st_size, remaining, IMAGE_LIMIT) + 1)
         if len(data) > min(remaining, IMAGE_LIMIT) or sha256(data).hexdigest() != fingerprint:
             return unavailable, 0
         if len(data) < 33 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
             return unavailable, 0
         width, height = struct.unpack(">II", data[16:24])
-        if not (1 <= width <= 4096 and 1 <= height <= 4096 and width * height <= 8_388_608):
+        if not (1 <= width <= 8192 and 1 <= height <= 8192 and width * height <= 67_108_864):
             return unavailable, 0
         if metadata.get("width") != width or metadata.get("height") != height:
             return unavailable, 0

@@ -73,14 +73,29 @@ namespace MCPForUnityTests.EditMode.Tools
 
         [TestCase(15, 32, 10, 1)]
         [TestCase(33, 32, 10, 1)]
-        [TestCase(32, 1922, 10, 1)]
+        [TestCase(32, 4098, 10, 1)]
         [TestCase(32, 32, 0, 1)]
-        [TestCase(32, 32, 31, 1)]
+        [TestCase(32, 32, 61, 1)]
         [TestCase(32, 32, 10, 0)]
-        [TestCase(32, 32, 10, 61)]
-        [TestCase(1920, 1920, 30, 60)]
+        [TestCase(32, 32, 10, 3601)]
         public void RejectsUnboundedAndInvalidOptions(int width, int height, int fps, double duration) =>
             Assert.Throws<ArgumentException>(() => new RecordingOptions("game_view", width, height, fps, duration));
+
+        [Test]
+        public void LongFourKRecordingStaysActivePastOneMinuteAndFinalizes()
+        {
+            var options = new RecordingOptions("game_view", 3840, 2160, 60, 3600);
+            var encoder = Start(options);
+            _job.AddFrame(null, 3840, 2160, 100);
+            _job.Tick(161);
+            Assert.IsTrue(_job.IsActive);
+            _job.AddFrame(null, 3840, 2160, 3699);
+            Assert.AreEqual(2, _job.Frames);
+            _job.Tick(3700);
+            Assert.AreEqual("completed", _job.Status);
+            Assert.AreEqual(1, encoder.Disposals);
+            Assert.IsTrue(File.Exists(_job.OutputPath));
+        }
 
         [Test]
         public void RejectsNonFiniteDurationAndUnknownSource()
@@ -206,11 +221,15 @@ namespace MCPForUnityTests.EditMode.Tools
         public void SourceReadbackIsIncludedInAggregateBudget()
         {
             Start(new RecordingOptions("game_view", 32, 32, 30, 60));
-            for (int index = 0; index < 59; index++)
-                _job.AddFrame(null, 8192, 4096, 100 + index * 0.04);
+            // Advance the aggregate counter near its limit without encoding hours of video.
+            long frameCost = 8192L * 4096 + 32L * 32;
+            typeof(RecordingJob)
+                .GetField("_pixelFrames", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .SetValue(_job, RecordingOptions.MaxPixelFrames - frameCost);
+            _job.AddFrame(null, 8192, 4096, 100);
             Assert.Throws<InvalidOperationException>(() => _job.ValidateSourceBudget(8192, 4096));
             Assert.Throws<InvalidOperationException>(() => _job.AddFrame(null, 8192, 4096, 103));
-            Assert.That(_job.Frames, Is.EqualTo(59));
+            Assert.That(_job.Frames, Is.EqualTo(1));
         }
 
         [Test]

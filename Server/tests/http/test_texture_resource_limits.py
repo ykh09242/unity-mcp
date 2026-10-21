@@ -49,16 +49,16 @@ async def texture_sdk(monkeypatch, texture_server):
 @pytest.mark.parametrize(
     "options",
     [
-        {"action": action, "width": 4097, "height": 1}
+        {"action": action, "width": 8193, "height": 1}
         for action in ("create", "create_sprite", "apply_pattern", "apply_gradient", "apply_noise")
     ]
     + [
-        {"width": 1, "height": 4097},
+        {"width": 1, "height": 8193},
         {"width": 2147483647, "height": 2147483647},
-        {"action": "apply_noise", "width": 4096, "height": 4096, "octaves": 3},
-        {"action": "apply_noise", "width": 1, "height": 1, "octaves": 33554433},
+        {"action": "apply_noise", "width": 8192, "height": 8192, "octaves": 9},
+        {"action": "apply_noise", "width": 1, "height": 1, "octaves": 536870913},
         {"action": "apply_noise", "width": 1, "height": 1, "octaves": 2147483647},
-        {"action": "modify", "set_pixels": {"width": 4097, "height": 1, "color": [0, 0, 0, 0]}},
+        {"action": "modify", "set_pixels": {"width": 8193, "height": 1, "color": [0, 0, 0, 0]}},
         {
             "action": "modify",
             "set_pixels": {"width": 2147483647, "height": 2147483647, "pixels": []},
@@ -86,8 +86,10 @@ async def test_reject_before_preflight_or_unity_send(texture_sdk, options):
     [
         {"width": 1, "height": 1, "pixels": "AAAAAA=="},
         {"width": 4096, "height": 4096},
+        {"width": 8192, "height": 8192},
+        {"action": "apply_noise", "width": 8192, "height": 8192, "octaves": 8},
         {"action": "apply_noise", "width": 2048, "height": 2048, "octaves": 8},
-        {"action": "apply_noise", "width": 1, "height": 1, "octaves": 33554432},
+        {"action": "apply_noise", "width": 1, "height": 1, "octaves": 536870912},
         {"action": "apply_noise", "width": 4096, "height": 4096, "octaves": 2},
         {"action": "apply_gradient", "width": 2, "height": 2},
         {

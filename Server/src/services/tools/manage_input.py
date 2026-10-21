@@ -50,7 +50,7 @@ AnalogScalar = Annotated[float, Field(strict=True, ge=-1, le=1, allow_inf_nan=Fa
 WheelCoordinate = Annotated[float, Field(strict=True, ge=-10000, le=10000, allow_inf_nan=False)]
 InputState = Literal["press", "release", "move"]
 InputButton = Literal["left", "right", "middle"]
-FrameCount = Annotated[int, Field(strict=True, ge=1, le=600)]
+FrameCount = Annotated[int, Field(strict=True, ge=1, le=36000)]
 TouchId = Annotated[int, Field(strict=True, ge=1, le=10)]
 InstanceId = Annotated[int, Field(strict=True, ge=-(2**31), le=2**31 - 1)]
 HierarchyPath = Annotated[str, Field(strict=True, min_length=1, max_length=4096)]
@@ -158,10 +158,10 @@ class InputCommand(BaseModel):
         "player_status(target) reads actual PlayerInput action/device resolution. pair_player(target) "
         "adds only a neutral MCP-owned gamepad to one selected player; existing paired devices and "
         "control scheme remain. release_player(target) ends that owned device lease. "
-        "press holds for 1..600 game input updates then releases; use release for an earlier release. "
+        "press holds for 1..36000 game input updates then releases; use release for an earlier release. "
         "touch_id 1..10 permits concurrent contacts across calls; move preserves the original release deadline. "
-        "release_all removes only MCP virtual devices. A hard 30-second lease and play exit/reload cleanup "
-        "prevent stuck input. Pause also cleans pairing; release_player/release_all remain callable while paused. "
+        "release_all removes only MCP virtual devices. Active input updates renew a 30-second inactivity lease "
+        "up to 1 hour; play exit/reload cleans devices. Pause also cleans pairing; release_player/release_all remain callable while paused. "
         "PlayerInput eligibility does not guarantee gameplay handling. Legacy UnityEngine.Input and OS input are unsupported."
     ),
     annotations=ToolAnnotations(title="Manage Input", readOnlyHint=False, destructiveHint=True),

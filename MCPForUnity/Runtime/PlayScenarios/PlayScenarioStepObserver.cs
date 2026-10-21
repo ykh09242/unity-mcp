@@ -128,7 +128,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Texture2D frame = null;
             try
             {
-                if (Screen.width < 1 || Screen.height < 1 || Screen.width > 4096 || Screen.height > 4096 || (long)Screen.width * Screen.height > 8388608)
+                if (
+                    Screen.width < 1
+                    || Screen.height < 1
+                    || Screen.width > PlayScenarioScreenshotOptions.MaximumDimension
+                    || Screen.height > PlayScenarioScreenshotOptions.MaximumDimension
+                    || (long)Screen.width * Screen.height > PlayScenarioScreenshotOptions.MaximumPixels
+                )
                     throw new InvalidOperationException("Rendered dimensions exceed the bounded screenshot budget.");
                 frame = ScreenCapture.CaptureScreenshotAsTexture();
                 if (frame == null)
@@ -138,8 +144,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (frame.width != step.Screenshot.Width || frame.height != step.Screenshot.Height)
                     throw new InvalidOperationException("Rendered screenshot dimensions do not match the requested resolution.");
                 byte[] png = frame.EncodeToPNG();
-                if (png == null || png.Length == 0 || png.Length > 4 * 1024 * 1024)
-                    throw new InvalidOperationException("Checkpoint PNG exceeds the four-MiB screenshot budget.");
+                if (png == null || png.Length == 0 || png.Length > PlayScenarioScreenshotOptions.MaximumPngBytes)
+                    throw new InvalidOperationException("Checkpoint PNG exceeds the 320-MiB screenshot budget.");
                 using (SHA256 hash = SHA256.Create())
                     result.Screenshot.Sha256 = BitConverter.ToString(hash.ComputeHash(png)).Replace("-", "").ToLowerInvariant();
                 result.Screenshot.Path = saveScreenshot(result, png);

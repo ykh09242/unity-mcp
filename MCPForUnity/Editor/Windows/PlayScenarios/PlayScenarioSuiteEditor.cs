@@ -99,7 +99,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             section.Add(revision);
             section.Add(
                 new Label(
-                    "Suite uses saved scenario definitions frozen at admission. Total timeout: 1–1800 s. Cleanup and report finalization finish before the next child."
+                    "Suite uses saved scenario definitions frozen at admission. Total timeout: 1–86400 s. Cleanup and report finalization finish before the next child."
                 )
             );
             run = new Button(Run) { name = "runSuite", text = "Save & Run suite" };

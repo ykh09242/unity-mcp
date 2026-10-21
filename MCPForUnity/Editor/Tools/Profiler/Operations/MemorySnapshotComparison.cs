@@ -92,7 +92,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             {
                 if (!totals.TryGetValue(type, out var total))
                 {
-                    if (totals.Count == 512)
+                    if (totals.Count == 4096)
                         throw new LimitException();
                     total = new TypeTotals();
                     totals.Add(type, total);

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Tools;
@@ -11,10 +12,7 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ManageScriptPreviewTests
     {
-        private bool? _savedEnabled,
-            _savedConsent;
-        private const string EnabledKey = "MCPForUnity.ToolEnabled.manage_script";
-        private const string ConsentKey = "MCPForUnity.ToolEnabled.ExplicitConsent.manage_script";
+        private MCPForUnityTests.Editor.Services.ScopedConsentTestState consent;
         private string _folder;
         private string _path;
         private const string Original = "namespace Demo\r\n{\r\n  public class PreviewProbe\r\n  {\r\n    public void Anchor() { }\r\n  }\r\n}\r\n";
@@ -22,10 +20,7 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
-            _savedEnabled = EditorPrefs.HasKey(EnabledKey) ? EditorPrefs.GetBool(EnabledKey) : (bool?)null;
-            _savedConsent = EditorPrefs.HasKey(ConsentKey) ? EditorPrefs.GetBool(ConsentKey) : (bool?)null;
-            EditorPrefs.SetBool(EnabledKey, true);
-            EditorPrefs.SetBool(ConsentKey, true);
+            consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("manage_script");
             _folder = "Assets/ScriptPreviewTests_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(_folder));
             _path = _folder + "/PreviewProbe.cs";
@@ -41,14 +36,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (_savedEnabled.HasValue)
-                    EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
-                else
-                    EditorPrefs.DeleteKey(EnabledKey);
-                if (_savedConsent.HasValue)
-                    EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
-                else
-                    EditorPrefs.DeleteKey(ConsentKey);
+                consent?.Dispose();
             }
         }
 
@@ -203,11 +191,29 @@ namespace MCPForUnityTests.Editor.Tools
             AssertUnchanged(before, mtime);
         }
 
+        [Test]
+        public void LongLeadingCommentDoesNotExhaustDuplicateSignatureValidation()
+        {
+            string source = "// " + new string('x', 1400000) + "\r\n" + Original;
+            var check = typeof(ManageScript).GetMethod(
+                "CheckDuplicateMethodSignatures",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
+            );
+            var errors = new System.Collections.Generic.List<string>();
+            check.Invoke(null, new object[] { source, errors });
+            Assert.IsEmpty(errors);
+            string duplicates = source + "\nclass DuplicateProbe { void Run() {} void Run() {} }";
+            typeof(ManageScript)
+                .GetMethod("CheckDuplicateMethodSignatures", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { duplicates, errors });
+            Assert.IsTrue(errors.Exists(error => error.Contains("Duplicate method signature")));
+        }
+
         [TestCase("edit")]
         [TestCase("apply_text_edits")]
         public void PreviewOverBound_IsReadOnlyAndReturnsNoPartialProposal(string action)
         {
-            string original = "// " + new string('\uAC00', 180000) + "\r\n" + Original;
+            string original = "// " + new string('\uAC00', 1400000) + "\r\n" + Original;
             Write(original);
             var request = action == "edit" ? Structural("replace_method") : Text("    public void Anchor() { /* exact */ }\r\n");
             if (action == "apply_text_edits")
@@ -220,6 +226,7 @@ namespace MCPForUnityTests.Editor.Tools
             var mtime = File.GetLastWriteTimeUtc(_path);
             var response = Send(request);
             Assert.IsFalse(response.Value<bool>("success"));
+            Assert.IsNotNull(response["data"], response.ToString());
             Assert.AreEqual("too_large", response["data"].Value<string>("status"));
             Assert.IsNull(response["data"]["new_contents"]);
             Assert.IsNull(response["data"]["original_contents"]);
@@ -229,7 +236,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void PreviewAtBound_IsReadOnlyAndComplete()
         {
-            string original = "/*" + new string('x', 524288 - Encoding.UTF8.GetByteCount(Original) - 4) + "*/" + Original;
+            string original = "/*" + new string('x', 4 * 1024 * 1024 - Encoding.UTF8.GetByteCount(Original) - 4) + "*/" + Original;
             Write(original);
             var before = File.ReadAllBytes(_path);
             var mtime = File.GetLastWriteTimeUtc(_path);

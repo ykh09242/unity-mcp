@@ -69,7 +69,7 @@ FRAME DEBUGGER:
 | `window_id` | `str \| None` | — | Session-scoped ID returned by window_start; required for status/result/cancel. |
 | `include_samples` | `bool \| None` | — | Include bounded completed samples in window result (default false). |
 | `targets` | `list[str] \| None` | — | Loaded GameObject session ID strings for memory_aggregate; duplicate roots deduplicate. |
-| `max_objects` | `int \| None` | — | Read work budget: aggregate at most 4096 (default1024), snapshot at most200000. |
+| `max_objects` | `int \| None` | — | Read work budget: at most 1000000 objects; aggregate default250000, snapshot default1000000. |
 | `include_references` | `bool \| None` | — | Include declared shared runtime resources in memory_aggregate (default true). |
 | `include_objects` | `bool \| None` | — | Return bounded object rows for memory_aggregate (default false). |
 | `object_limit` | `int \| None` | — | Maximum returned object rows per list (default128); totals remain separately scoped. |

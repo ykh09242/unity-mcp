@@ -63,8 +63,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new InvalidOperationException("A scenario recording has not been saved or cancelled. Stop or cancel it first.");
             if (!EditorApplication.isPlaying || EditorApplication.isPaused || EditorApplication.isPlayingOrWillChangePlaymode != EditorApplication.isPlaying)
                 throw new InvalidOperationException("Scenario recording requires running, unpaused Play Mode.");
-            if (durationSeconds < 1 || durationSeconds > 600)
-                throw new ArgumentException("duration_seconds must be an integer between 1 and 600.");
+            if (durationSeconds < 1 || durationSeconds > 3600)
+                throw new ArgumentException("duration_seconds must be an integer between 1 and 3600.");
             if (Backend == null && InputBackend == null)
                 throw new InvalidOperationException("No supported scenario recorder is available. Enable uGUI Button or optional Input System observation.");
             var store = Store();
@@ -76,8 +76,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             string[] context = null;
             if (sceneScope == "all_loaded")
             {
-                if (SceneManager.sceneCount < 1 || SceneManager.sceneCount > 16)
-                    throw new InvalidOperationException("Recording context requires one to sixteen loaded normal scenes.");
+                if (SceneManager.sceneCount < 1 || SceneManager.sceneCount > PlayScenarioDefinition.MaximumAuxiliarySteps)
+                    throw new InvalidOperationException("Recording context requires one to thirty-two loaded normal scenes.");
                 var paths = new List<string>();
                 for (int i = 0; i < SceneManager.sceneCount; i++)
                 {
@@ -257,7 +257,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (draft == null || !draft.Recording)
                 return;
-            if (PendingScenes.Count >= 31)
+            if (PendingScenes.Count >= PlayScenarioDefinition.MaximumSteps - 1)
             {
                 Interrupt("scene_transition_limit");
                 return;
@@ -271,7 +271,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 try
                 {
-                    if (!PlayScenarioSceneScope.Normal(scene) || ScenePaths.Count >= 32 || SceneManager.sceneCount > 32)
+                    if (!PlayScenarioSceneScope.Normal(scene) || ScenePaths.Count >= 256 || SceneManager.sceneCount > 256)
                         throw new InvalidOperationException("Unsupported or excessive loaded scene context.");
                     UnityPlayScenarioHost.RequireSceneAsset(scene.path);
                     if (ScenePaths.Values.Contains(scene.path, StringComparer.Ordinal) && !ScenePaths.ContainsKey(scene))
@@ -306,7 +306,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private static void QueueScene(string path, string state)
         {
-            if (PendingScenes.Count >= 31)
+            if (PendingScenes.Count >= PlayScenarioDefinition.MaximumSteps - 1)
             {
                 Interrupt("scene_transition_limit");
                 return;
@@ -455,9 +455,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 while (queue.Count > 0)
                 {
                     Transform node = queue.Dequeue();
-                    if (++visited > 10000)
+                    if (++visited > 250000)
                     {
-                        result.Error = "The stable target ID uniqueness check exceeded 10000 hierarchy nodes.";
+                        result.Error = "The stable target ID uniqueness check exceeded 250000 hierarchy nodes.";
                         return result;
                     }
                     PlayScenarioTarget marker = node.GetComponent<PlayScenarioTarget>();

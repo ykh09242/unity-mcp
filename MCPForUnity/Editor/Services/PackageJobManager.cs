@@ -110,7 +110,7 @@ namespace MCPForUnity.Editor.Services
     {
         private const string SessionKeyJobs = "MCPForUnity.PackageJobsV1";
         private const int MaxJobsToKeep = 10;
-        private const long DomainReloadTimeoutMs = 120_000;
+        private const long DomainReloadTimeoutMs = 600_000;
 
         private static readonly object LockObj = new();
         private static readonly Dictionary<string, PackageJob> Jobs = new();

@@ -19,6 +19,22 @@ namespace MCPForUnityTests.Editor.Tools
             ExecuteCode.HandleCommand(new JObject { ["action"] = "clear_history" });
         }
 
+        [Test]
+        public void SubstantialSnippetCompilesAndRetainedHistoryStaysBounded()
+        {
+            string code = "/*" + new string('x', 70000) + "*/ return 42;";
+            JObject result = ToJObject(ExecuteCode.HandleCommand(new JObject { ["action"] = "execute", ["code"] = code }));
+            Assert.That(result.Value<bool>("success"), Is.True, result.ToString());
+            Assert.That((int)result["data"]["result"], Is.EqualTo(42));
+            MethodInfo add = typeof(ExecuteCode).GetMethod("AddToHistory", BindingFlags.Static | BindingFlags.NonPublic);
+            for (int i = 0; i < 25; i++)
+                add.Invoke(null, new object[] { new string('x', 512 * 1024), null, 0d, true, "auto" });
+            Assert.That(GetHistoryTotal(), Is.EqualTo(16));
+            ExecuteCode.HandleCommand(new JObject { ["action"] = "clear_history" });
+            add.Invoke(null, new object[] { code, null, 0d, true, "auto" });
+            Assert.That(GetHistoryTotal(), Is.EqualTo(1));
+        }
+
         // ──────────────────── Execute: success cases ────────────────────
 
         [Test]

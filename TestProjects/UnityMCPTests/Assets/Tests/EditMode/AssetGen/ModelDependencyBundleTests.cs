@@ -22,7 +22,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [SetUp]
         public void SetUp()
         {
-            root = "Assets/__model_dependency_bundle_" + Guid.NewGuid().ToString("N");
+            root = "Assets/__bundle_" + Guid.NewGuid().ToString("N");
             sourceRoot = root + "/Sources";
             outputRoot = root + "/Output";
             Directory.CreateDirectory(sourceRoot);
@@ -39,6 +39,28 @@ namespace MCPForUnityTests.Editor.AssetGen
                 Directory.Delete(absolute, true);
             if (File.Exists(absolute + ".meta"))
                 File.Delete(absolute + ".meta");
+        }
+
+        [Test]
+        public void SubstantialGltfBundleIncludesEveryDependencyAndRepeatedReference()
+        {
+            var buffers = new JArray();
+            for (int i = 0; i < 300; i++)
+                Write("part" + i + ".bin", new byte[] { (byte)i });
+            for (int i = 0; i < 2000; i++)
+                buffers.Add(new JObject { ["uri"] = "part" + (i % 300) + ".bin", ["byteLength"] = 1 });
+            string main = Write(
+                "model.gltf",
+                new JObject
+                {
+                    ["asset"] = new JObject { ["version"] = "2.0" },
+                    ["buffers"] = buffers,
+                }.ToString(Formatting.None)
+            );
+            var plan = ModelDependencyBundle.Plan(Path.GetFullPath(main));
+            Assert.AreEqual(301, plan.Entries.Count);
+            Assert.AreEqual(2000, plan.References);
+            Assert.AreEqual("part299.bin", plan.Entries[300].RelativePath);
         }
 
         private JObject Import(string source, string name = "Renamed") =>

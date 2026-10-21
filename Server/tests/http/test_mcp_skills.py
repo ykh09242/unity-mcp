@@ -235,7 +235,7 @@ async def test_result_metadata_is_admitted_before_optional_publication(
             value = {"nested": value}
         record["payload"]["frontmatter"]["extra"] = value
     else:
-        record["payload"]["frontmatter"]["extra"] = [None] * 100_001
+        record["payload"]["frontmatter"]["extra"] = [None] * 1_000_001
     # When: both list/get projections are checked with the shared response-size helper.
     installed = module.install_skills(bare_skills_server, bundle_bytes=encode_record(record))
     # Then: failed admission publishes neither capability nor resources.

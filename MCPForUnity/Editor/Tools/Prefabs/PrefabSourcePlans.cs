@@ -17,7 +17,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
     internal static class PrefabSourcePlans
     {
         private const double Lifetime = 600;
-        private const long MaxBytes = 16777216;
+        private const long MaxBytes = 256L * 1024 * 1024;
         private static readonly Dictionary<string, Plan> Previews = new Dictionary<string, Plan>(StringComparer.Ordinal);
 
         private sealed class Plan
@@ -207,8 +207,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             while (pending.Count > 0)
             {
                 Transform node = pending.Pop();
-                if (++count > 256 || pending.Count + node.childCount > 256)
-                    throw new ArgumentException("Safe prefab sources are limited to 256 objects.");
+                if (++count > 10000 || pending.Count + node.childCount > 10000)
+                    throw new ArgumentException("Safe prefab sources are limited to 10000 objects.");
                 if (
                     PrefabUtility.IsPartOfPrefabInstance(node.gameObject)
                     || node.gameObject.GetComponents<Component>()
@@ -230,10 +230,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(item => item, StringComparer.Ordinal)
                 .ToArray();
-            if (dependencies.Length > 256)
-                throw new ArgumentException("Safe prefab plans are limited to 256 dependencies.");
+            if (dependencies.Length > 4096)
+                throw new ArgumentException("Safe prefab plans are limited to 4096 dependencies.");
             var fingerprint = new StringBuilder(AssetDatabase.AssetPathToGUID(path) + ":" + AssetDatabase.GetAssetDependencyHash(path));
             long bytes = 0;
+            var buffer = new byte[65536];
             using (SHA256 sha = SHA256.Create())
             {
                 foreach (string dependency in dependencies.Where(dependency => dependency.StartsWith("Assets/", StringComparison.Ordinal)))
@@ -245,18 +246,32 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     {
                         if (!File.Exists(file))
                             throw new ArgumentException("Prefab source/dependency file is unavailable.");
-                        var info = new FileInfo(file);
-                        if (info.Length > MaxBytes - bytes)
-                            throw new ArgumentException("Safe prefab source/dependency bytes exceed 16 MiB.");
-                        byte[] content = File.ReadAllBytes(file);
-                        bytes += content.LongLength;
-                        if (bytes > MaxBytes)
-                            throw new ArgumentException("Safe prefab source/dependency bytes exceed 16 MiB.");
-                        fingerprint
-                            .Append('\n')
-                            .Append(dependency)
-                            .Append(file.EndsWith(".meta", StringComparison.Ordinal) ? ":meta:" : ":asset:")
-                            .Append(Convert.ToBase64String(sha.ComputeHash(content)));
+                        using (var stream = File.OpenRead(file))
+                        {
+                            long length = stream.Length;
+                            if (length > MaxBytes - bytes)
+                                throw new ArgumentException("Safe prefab source/dependency bytes exceed 256 MiB.");
+                            sha.Initialize();
+                            long read = 0;
+                            while (read < length)
+                            {
+                                int count = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, length - read));
+                                if (count == 0)
+                                    throw new IOException("Prefab source changed during hashing.");
+                                sha.TransformBlock(buffer, 0, count, buffer, 0);
+                                read += count;
+                            }
+                            if (stream.Length != length || stream.ReadByte() != -1)
+                                throw new IOException("Prefab source changed during hashing.");
+                            sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                            bytes += read;
+                            fingerprint
+                                .Append('\n')
+                                .Append(dependency)
+                                .Append(file.EndsWith(".meta", StringComparison.Ordinal) ? ":meta:" : ":asset:")
+                                .Append(Convert.ToBase64String(sha.Hash));
+                            sha.Initialize();
+                        }
                     }
                 }
                 return Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(fingerprint.ToString())));

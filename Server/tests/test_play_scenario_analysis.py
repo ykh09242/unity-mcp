@@ -59,6 +59,106 @@ def png(path, color=(0, 0, 0, 255), size=(2, 2)):
     return path
 
 
+def test_eight_k_edge_png_above_old_encoded_limit_is_compared(tmp_path):
+    import random
+
+    content = random.Random(17).randbytes(8192 * 129 * 4)
+    left = tmp_path / "large.png"
+    with Image.frombytes("RGBA", (8192, 129), content) as image:
+        image.save(left)
+    assert left.stat().st_size > 4 * 1024 * 1024
+    result = compare_visual(
+        VisualPair(left, left), VisualPolicy.model_validate(policy(width=8192, height=129))
+    )
+    assert result.compared_pixels == 8192 * 129
+    assert result.changed_pixels == 0
+
+
+def test_small_artifact_read_does_not_allocate_its_large_admission_limit(tmp_path):
+    import tracemalloc
+    from cli.utils.play_scenario_analysis_io import read_bytes
+
+    source = tmp_path / "tiny.bin"
+    source.write_bytes(b"small")
+    tracemalloc.start()
+    try:
+        assert read_bytes(source, 320 * 1024 * 1024) == b"small"
+        assert tracemalloc.get_traced_memory()[1] < 1024 * 1024
+    finally:
+        tracemalloc.stop()
+
+
+def test_strip_edges_and_ignored_rectangles_preserve_exact_pixel_counts(tmp_path):
+    left = png(tmp_path / "left.png", size=(7, 513))
+    right = png(tmp_path / "right.png", size=(7, 513))
+    with Image.open(right) as image:
+        for y in (0, 255, 256, 511, 512):
+            image.putpixel((3, y), (1, 2, 3, 254))
+        image.save(right)
+    selected = VisualPolicy.model_validate(
+        policy(
+            width=7, height=513, ignored_rectangles=[{"x": 3, "y": 255, "width": 1, "height": 2}]
+        )
+    )
+    result = compare_visual(VisualPair(left, right), selected, tmp_path / "output")
+    assert result.changed_pixels == 3
+    assert result.compared_pixels == 7 * 513 - 2
+    with Image.open(result.heatmap_path) as image:
+        assert image.getpixel((3, 512)) == (255, 0, 0)
+        assert image.getpixel((3, 255)) == (96, 96, 96)
+
+
+def test_failed_candidate_decode_releases_already_loaded_image(tmp_path, monkeypatch):
+    from cli.utils import play_scenario_visual_compare as visual
+
+    first = Image.new("RGBA", (2, 2))
+    calls = 0
+
+    def load(_path, _hash):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return first, "a" * 64
+        raise AnalysisError("candidate invalid")
+
+    monkeypatch.setattr(visual, "_load_png", load)
+    with pytest.raises(AnalysisError, match="candidate invalid"):
+        compare_visual(
+            VisualPair(tmp_path / "a.png", tmp_path / "b.png"),
+            VisualPolicy.model_validate(policy()),
+        )
+    with pytest.raises(ValueError, match="closed"):
+        first.getpixel((0, 0))
+
+
+def test_encoder_failure_removes_only_outputs_created_by_this_comparison(tmp_path, monkeypatch):
+    from cli.utils import play_scenario_visual_compare as visual
+
+    left = png(tmp_path / "a.png")
+    right = png(tmp_path / "b.png")
+    output = tmp_path / "output"
+    output.mkdir()
+    preserved = output / "notes.txt"
+    preserved.write_text("keep")
+    original = Image.Image.save
+    writes = 0
+
+    def save(image, target, *args, **kwargs):
+        nonlocal writes
+        if isinstance(target, visual._PngWriter):
+            writes += 1
+            if writes == 2:
+                target.write(b"partial")
+                raise OSError("encoder failed")
+        return original(image, target, *args, **kwargs)
+
+    monkeypatch.setattr(Image.Image, "save", save)
+    with pytest.raises(OSError, match="encoder failed"):
+        compare_visual(VisualPair(left, right), VisualPolicy.model_validate(policy()), output)
+    assert sorted(path.name for path in output.iterdir()) == ["notes.txt"]
+    assert preserved.read_text() == "keep"
+
+
 def test_channel_threshold_and_ratio_are_inclusive(tmp_path):
     left = png(tmp_path / "left.png")
     right = png(tmp_path / "right.png")
@@ -101,7 +201,7 @@ def test_overlapping_ignore_rectangles_count_once_and_alpha_matters(tmp_path):
     [
         {"ignored_rectangles": [{"x": 2, "y": 0, "width": 1, "height": 1}]},
         {"width": True},
-        {"width": 4096, "height": 4096},
+        {"width": 8193, "height": 8192},
         {"max_changed_pixel_ratio": float("nan")},
         {"unexpected": "<script>"},
     ],
@@ -156,7 +256,8 @@ def test_bounds_and_existing_outputs_preserve_files(tmp_path):
         compare_visual(VisualPair(left, right), VisualPolicy.model_validate(policy()), output)
     assert (output / "heatmap.png").read_bytes() == b"preserved"
     oversized = tmp_path / "oversized.png"
-    oversized.write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+    with oversized.open("wb") as stream:
+        stream.truncate(320 * 1024 * 1024 + 1)
     with pytest.raises(AnalysisError):
         compare_visual(VisualPair(left, oversized), VisualPolicy.model_validate(policy()))
 
@@ -197,6 +298,6 @@ def test_unsafe_image_paths_are_rejected_before_file_access(monkeypatch, spellin
 
 
 def test_dimension_bomb_is_rejected_before_png_decode(tmp_path):
-    left, right = png(tmp_path / "left.png"), png(tmp_path / "right.png", size=(4097, 1))
+    left, right = png(tmp_path / "left.png"), png(tmp_path / "right.png", size=(8193, 1))
     with pytest.raises(AnalysisError, match="dimensions"):
         compare_visual(VisualPair(left, right), VisualPolicy.model_validate(policy()))

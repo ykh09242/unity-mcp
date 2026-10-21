@@ -75,7 +75,7 @@ class TestConfig:
         config = CLIConfig()
         assert config.host == "127.0.0.1"
         assert config.port == 8080
-        assert config.timeout == 30
+        assert config.timeout == 300
         assert config.format == "text"
         assert config.unity_instance is None
 

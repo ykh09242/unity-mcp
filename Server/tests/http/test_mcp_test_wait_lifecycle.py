@@ -67,6 +67,19 @@ def test_interrupted_work_is_honest_jsonrpc_failure_on_reopen(tmp_path):
         assert record.result is None
 
 
+@pytest.mark.parametrize("seconds", [300, 86400])
+def test_outer_deadline_preserves_large_command_policy_across_persistence(seconds):
+    captured = operation().model_copy(
+        update={"outer": DeadlineCheckpoint.capture(seconds, now=1000.0)}
+    )
+    restored = WaitOperation.model_validate_json(captured.model_dump_json())
+    assert restored.outer.remaining(now=1002.0) == seconds - 2
+    assert restored.wait_timeout <= 60
+    assert restored.outer.remaining(now=999.0) == 0
+    with pytest.raises(ValueError):
+        DeadlineCheckpoint.capture(86401, now=1000.0)
+
+
 def test_deadlines_never_gain_time_on_restart_or_clock_rollback():
     checkpoint = DeadlineCheckpoint.capture(10, now=100)
     assert checkpoint.remaining(now=103) == 7

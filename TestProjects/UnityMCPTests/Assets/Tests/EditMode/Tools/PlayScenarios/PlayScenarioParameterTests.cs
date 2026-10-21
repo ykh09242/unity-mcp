@@ -28,6 +28,41 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }"
             );
 
+        [Test]
+        public void LargeParameterMatrixMaterializesItsLastCaseAndBinding()
+        {
+            JObject value = Template();
+            var steps = new JArray(value["steps"][0].DeepClone());
+            var parameters = new JObject();
+            var bindings = new JArray();
+            var datasets = new JArray();
+            for (int index = 0; index < 64; index++)
+            {
+                string key = "p" + index;
+                parameters[key] = new JObject { ["type"] = "integer", ["default"] = 0 };
+                steps.Add(
+                    new JObject
+                    {
+                        ["name"] = key,
+                        ["action"] = "wait_state",
+                        ["state_id"] = key,
+                        ["state_equals"] = 0,
+                    }
+                );
+                bindings.Add(new JObject { ["path"] = "/steps/" + (index + 1) + "/state_equals", ["parameter"] = key });
+                var values = new JObject();
+                for (int parameter = 0; parameter < 64; parameter++)
+                    values["p" + parameter] = index + parameter;
+                datasets.Add(new JObject { ["name"] = "case-" + index, ["values"] = values });
+            }
+            value["steps"] = steps;
+            value["parameters"] = parameters;
+            value["parameter_bindings"] = bindings;
+            value["datasets"] = datasets;
+            var result = Materialize(PlayScenarioDefinition.Parse(value), "case-63");
+            Assert.That((int)result.Steps[64].StateEquals, Is.EqualTo(126));
+        }
+
         private static PlayScenarioDefinition Materialize(PlayScenarioDefinition definition, string dataset)
         {
             Type helper = typeof(PlayScenarioDefinition).Assembly.GetType("MCPForUnity.Editor.Services.PlayScenarios.PlayScenarioParameters");
@@ -192,7 +227,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(template));
             template = Template();
             template["parameter_bindings"][0]["path"] = "/steps/1/timeout_seconds";
-            template["datasets"][0]["values"]["score"] = 121;
+            template["datasets"][0]["values"]["score"] = 3601;
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(template));
         }
 
@@ -225,12 +260,22 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                     values["p" + j] = new string('x', 1024);
                 datasets.Add(new JObject { ["name"] = "case-" + i, ["values"] = values });
             }
+            while (steps.Count < 128)
+                steps.Add(
+                    new JObject
+                    {
+                        ["name"] = "object",
+                        ["action"] = "wait_object",
+                        ["target"] = new string('a', 4000),
+                        ["scene"] = "Assets/" + new string('a', 4000) + ".unity",
+                    }
+                );
             value["parameters"] = parameters;
             value["parameter_bindings"] = bindings;
             value["steps"] = steps;
             value["datasets"] = datasets;
             var error = Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(value));
-            StringAssert.Contains("64 KiB", error.Message);
+            StringAssert.Contains("1 MiB", error.Message);
         }
 
         [Test]

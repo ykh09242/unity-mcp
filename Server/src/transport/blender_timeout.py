@@ -4,6 +4,8 @@ import math
 import re
 from typing import Any
 
+from transport.command_timeout import MAX_COMMAND_TIMEOUT
+
 DEFAULT_BLENDER_TIMEOUT = 180
 UNITY_FINISH_TIMEOUT = 30
 SERVER_RESPONSE_GRACE = 5
@@ -13,7 +15,7 @@ CLI_RESPONSE_GRACE = 5
 def blender_command_timeout(params: dict[str, Any]) -> float:
     """Allow the Blender socket budget plus Unity import/placement work.
 
-    Match the Editor's five-second minimum and the hub's one-hour ceiling.
+    Match the Editor's five-second minimum and the hub's 24-hour ceiling.
     Both parameter spellings are accepted, with snake_case taking precedence.
     """
     # ToolParams.GetInt treats an explicit null as present, and falls back to
@@ -31,4 +33,4 @@ def blender_command_timeout(params: dict[str, Any]) -> float:
             seconds = int(digits) * (-1 if text.startswith("-") else 1)
     if not -(2**31) <= seconds < 2**31:
         seconds = DEFAULT_BLENDER_TIMEOUT
-    return max(5.0, min(seconds, 3600.0)) + UNITY_FINISH_TIMEOUT
+    return max(5.0, min(seconds, MAX_COMMAND_TIMEOUT)) + UNITY_FINISH_TIMEOUT

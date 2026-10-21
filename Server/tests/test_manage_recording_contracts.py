@@ -53,18 +53,18 @@ def test_recording_registered_schema_and_routed_jobs(monkeypatch, mode):
             properties = tool.input_schema["properties"]
             assert properties["action"]["enum"] == ["capabilities", "start", "status", "stop"]
             assert properties["fps"]["minimum"] == 1
-            assert properties["fps"]["maximum"] == 30
-            assert properties["duration_seconds"]["maximum"] == 60
-            assert properties["width"]["maximum"] == 1920
+            assert properties["fps"]["maximum"] == 60
+            assert properties["duration_seconds"]["maximum"] == 3600
+            assert properties["width"]["maximum"] == 4096
             assert "job_id" in properties
             payloads = [
                 {
                     "action": "start",
                     "capture_source": "scene_view",
-                    "duration_seconds": 1.5,
-                    "width": 640,
-                    "height": 480,
-                    "fps": 10,
+                    "duration_seconds": 3600,
+                    "width": 3840,
+                    "height": 2160,
+                    "fps": 60,
                     "file_name": "fixture.mp4",
                     "output_folder": "Captures/Recordings/Fixture",
                 },
@@ -102,10 +102,10 @@ def test_recording_rejects_invalid_request_before_transport(monkeypatch):
             schema_invalid = (
                 [
                     {"action": "start", "duration_seconds": value}
-                    for value in (0, 61, "2", True, float("nan"), float("inf"))
+                    for value in (0, 3601, "2", True, float("nan"), float("inf"))
                 ]
-                + [{"action": "start", "fps": value} for value in (0, 31, 1.5, "15", True)]
-                + [{"action": "start", "width": value} for value in (0, 1922, 640.0, True)]
+                + [{"action": "start", "fps": value} for value in (0, 61, 1.5, "15", True)]
+                + [{"action": "start", "width": value} for value in (0, 4098, 640.0, True)]
                 + [{"action": "start", "capture_source": "camera"}, {"action": "erase"}]
             )
             for payload in schema_invalid:
@@ -113,13 +113,6 @@ def test_recording_rejects_invalid_request_before_transport(monkeypatch):
                 assert result.is_error, payload
             contract_invalid = [
                 {"action": "start", "width": 641},
-                {
-                    "action": "start",
-                    "width": 1920,
-                    "height": 1920,
-                    "fps": 30,
-                    "duration_seconds": 60,
-                },
                 {"action": "start", "output_folder": "Captures/Recordings/../Recordings"},
                 {"action": "start", "file_name": "../fixture.mp4"},
                 {"action": "status"},

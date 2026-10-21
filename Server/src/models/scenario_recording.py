@@ -8,8 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 RecordingSceneScope = Literal["active", "all_loaded"]
 
 RecordingAction = Literal["start", "status", "stop", "cancel", "checkpoint"]
-RecordingMaxEvents = Annotated[int, Field(strict=True, ge=1, le=31)]
-RecordingDuration = Annotated[int, Field(strict=True, ge=1, le=600)]
+RecordingMaxEvents = Annotated[int, Field(strict=True, ge=1, le=127)]
+RecordingDuration = Annotated[int, Field(strict=True, ge=1, le=3600)]
 
 
 class ScenarioRecordingCommand(BaseModel):

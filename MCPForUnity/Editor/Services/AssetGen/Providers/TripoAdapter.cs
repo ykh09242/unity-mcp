@@ -189,29 +189,55 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         // by the installed Unity packages. Never infer those properties from its extension.
         internal static string ValidateModelBytes(byte[] bytes, string declaredExtension)
         {
+            using var stream = new MemoryStream(bytes ?? Array.Empty<byte>(), false);
+            return ValidateModelStream(stream, declaredExtension);
+        }
+
+        internal static string ValidateModelStream(Stream stream, string declaredExtension)
+        {
             if (!string.IsNullOrEmpty(declaredExtension) && !string.Equals(declaredExtension.TrimStart('.'), "glb", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Tripo artifact format does not match the supported GLB result.");
             const string error = "Tripo returned an invalid GLB 2.0 container; no model file was written.";
-            if (bytes == null || bytes.Length < 20 || UInt32At(bytes, 0) != 0x46546C67 || UInt32At(bytes, 4) != 2 || UInt32At(bytes, 8) != bytes.Length)
+            if (stream == null || !stream.CanSeek || stream.Length < 20 || stream.Length > uint.MaxValue)
                 throw new InvalidDataException(error);
-            int offset = 12;
+            stream.Position = 0;
+            byte[] ReadExactly(int count)
+            {
+                var result = new byte[count];
+                int offset = 0;
+                while (offset < count)
+                {
+                    int read = stream.Read(result, offset, count - offset);
+                    if (read == 0)
+                        throw new InvalidDataException(error);
+                    offset += read;
+                }
+                return result;
+            }
+            byte[] header = ReadExactly(12);
+            if (UInt32At(header, 0) != 0x46546C67 || UInt32At(header, 4) != 2 || UInt32At(header, 8) != stream.Length)
+                throw new InvalidDataException(error);
+            long offset = 12;
             int index = 0;
             bool binarySeen = false;
-            while (offset < bytes.Length)
+            while (offset < stream.Length)
             {
-                if (bytes.Length - offset < 8)
+                if (stream.Length - offset < 8)
                     throw new InvalidDataException(error);
-                uint length = UInt32At(bytes, offset);
-                uint type = UInt32At(bytes, offset + 4);
-                if (length % 4 != 0 || length > bytes.Length - offset - 8)
+                stream.Position = offset;
+                byte[] chunkHeader = ReadExactly(8);
+                uint length = UInt32At(chunkHeader, 0);
+                uint type = UInt32At(chunkHeader, 4);
+                if (length % 4 != 0 || length > stream.Length - offset - 8)
                     throw new InvalidDataException(error);
                 if (index == 0)
                 {
-                    if (type != 0x4E4F534A)
+                    // Only metadata is decoded. The binary chunk can span GiB without a byte array.
+                    if (type != 0x4E4F534A || length > 64 * 1024 * 1024)
                         throw new InvalidDataException(error);
                     try
                     {
-                        string json = new UTF8Encoding(false, true).GetString(bytes, offset + 8, (int)length);
+                        string json = new UTF8Encoding(false, true).GetString(ReadExactly((int)length));
                         if (!IsStrictJson(json))
                             throw new InvalidDataException(error);
                         JObject document = JObject.Parse(json, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
@@ -234,7 +260,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                         throw new InvalidDataException(error);
                     binarySeen = true;
                 }
-                offset += 8 + (int)length;
+                offset += 8L + length;
                 index++;
             }
             return "glb";

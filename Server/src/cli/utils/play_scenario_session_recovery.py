@@ -1,6 +1,8 @@
 # noqa: SIZE_OK - One recovery boundary keeps strict models and journal reconciliation together.
 """Recover a bounded session evidence snapshot without touching its original artifacts."""
 
+from models.play_scenario_limits import MAX_REPEATS, MAX_SCENARIO_STEPS
+
 from collections import deque
 from dataclasses import dataclass
 import json
@@ -42,7 +44,7 @@ from cli.utils.play_scenario_player_session import (
 )
 
 Mode = Literal["shared-batches", "fresh-process"]
-Count = Annotated[int, Field(strict=True, ge=0, le=10)]
+Count = Annotated[int, Field(strict=True, ge=0, le=MAX_REPEATS)]
 Identity = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{32}$")]
 Stamp = Annotated[int, Field(strict=True, ge=0, le=2**63 - 1)]
 BoundedText = Annotated[str, Field(strict=True, max_length=2048)]
@@ -58,7 +60,7 @@ class _Header(BaseModel):
     session_id: Identity
     mode: Literal["shared-batches", "fresh-process", "compare"]
     requested_iterations: Annotated[int, Field(strict=True, ge=1, le=1000)]
-    iterations_per_process: dict[Mode, Annotated[int, Field(strict=True, ge=1, le=10)]]
+    iterations_per_process: dict[Mode, Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]]
     started_unix_ms: Stamp
     source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
     expected_build_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
@@ -86,7 +88,7 @@ class _Admission(BaseModel):
     sequence: Annotated[int, Field(strict=True, ge=1, le=MAX_RECORDS)]
     mode: Mode
     job_id: Identity
-    repeat_count: Annotated[int, Field(strict=True, ge=1, le=10)]
+    repeat_count: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]
 
 
 class _Counts(BaseModel):
@@ -120,8 +122,8 @@ class _Failure(BaseModel):
     code: Annotated[str, Field(strict=True, max_length=128, pattern=r"\S")]
     message: Annotated[str, Field(strict=True, max_length=512)] | None = None
     stage: Literal["setup", "main", "cleanup"] | None = None
-    iteration: Annotated[int, Field(strict=True, ge=0, le=10)] | None = None
-    step_index: Annotated[int, Field(strict=True, ge=-1, le=63)] | None = None
+    iteration: Annotated[int, Field(strict=True, ge=0, le=MAX_REPEATS)] | None = None
+    step_index: Annotated[int, Field(strict=True, ge=-1, le=MAX_SCENARIO_STEPS - 1)] | None = None
 
 
 class _Outcome(BaseModel):
@@ -134,7 +136,7 @@ class _Outcome(BaseModel):
     mode: Mode
     process_scope: Literal["batch"] = "batch"
     job_id: Identity
-    repeat_count: Annotated[int, Field(strict=True, ge=1, le=10)]
+    repeat_count: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]
     status: Literal["succeeded", "failed", "timed_out", "cancelled", "infrastructure_error"]
     exit_code: Annotated[int, Field(strict=True, ge=0, le=130)]
     native_report_available: Annotated[bool, Field(strict=True)] = False

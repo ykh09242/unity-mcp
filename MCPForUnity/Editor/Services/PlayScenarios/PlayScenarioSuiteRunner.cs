@@ -85,13 +85,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             string suiteId = null
         )
         {
-            if (repeats < 1 || repeats > 10 || timeout < 1 || timeout > 1800)
+            if (repeats < 1 || repeats > PlayScenarioDefinition.MaximumRepeats || timeout < 1 || timeout > 86400)
                 throw new ArgumentException("Suite repeats/timeout exceed their bounds.");
             PlayScenarioService.ValidateSourceRevision(revision);
             if (suiteId != null)
                 PlayScenarioSuiteStore.ValidateId(suiteId);
-            if (selected == null || selected.Count < 1 || selected.Count > 16)
-                throw new ArgumentException("Suite selection must contain 1-16 scenarios.");
+            if (selected == null || selected.Count < 1 || selected.Count > PlayScenarioDefinition.MaximumSuiteScenarios)
+                throw new ArgumentException("Suite selection must contain 1-64 scenarios.");
             var state = new PlayScenarioSuiteState
             {
                 Report = new PlayScenarioSuiteReport
@@ -121,7 +121,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     }
                 );
             }
-            if (Encoding.UTF8.GetByteCount(JArray.FromObject(state.Definitions).ToString(Formatting.None)) > 1024 * 1024)
+            if (Encoding.UTF8.GetByteCount(JArray.FromObject(state.Definitions).ToString(Formatting.None)) > 16 * 1024 * 1024)
                 throw new ArgumentException("Frozen suite definitions exceed the snapshot limit.");
             return state;
         }
@@ -192,7 +192,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (Encoding.UTF8.GetByteCount(JObject.FromObject(State.Report).ToString(Formatting.None)) > PlayScenarioSuiteStore.ReportLimit - 65536)
                 {
                     child.Report = null;
-                    State.Report.ReportError = "Suite embedded child reports exceed the 2 MiB aggregate limit; the child report remains referenced by job_id.";
+                    State.Report.ReportError =
+                        $"Suite embedded child reports exceed the {PlayScenarioSuiteStore.ReportLimit / (1024 * 1024)} MiB aggregate limit; the child report remains referenced by job_id.";
                     State.Report.Error = State.Report.Error ?? State.Report.ReportError;
                     RequestStop("failed", State.Report.ReportError, now);
                 }

@@ -22,8 +22,8 @@ Inspect scene references within explicit work and result budgets.
 | `path` | `str \| None` | — | Scene path, under Assets/ or Packages/. A bare path is treated as relative to Assets/. |
 | `page_size` | `int \| str \| None` | — | Page size for get_hierarchy paging. |
 | `reference_scope` | `Literal['active_scene', 'loaded_scenes', 'prefab', 'scriptable_object'] \| None` | — | validate_references only; loaded scopes never open scenes. |
-| `max_objects` | `int \| str \| None` | — | validate_references: maximum 1-4096 owners/objects, default 1024. |
-| `max_work` | `int \| str \| None` | — | validate_references: maximum 1-1000000 traversal/property steps, default 100000. |
+| `max_objects` | `int \| str \| None` | — | validate_references: maximum 1-250000 owners/objects, default 1024. |
+| `max_work` | `int \| str \| None` | — | validate_references: maximum 1-4000000 traversal/property steps, default 100000. |
 | `page_number` | `int \| str \| None` | — | validate_references: 1-based page, maximum page_size 100. |
 | `reference_revision` | `str \| None` | — | validate_references: refuse if the repeated observation has drifted. |
 

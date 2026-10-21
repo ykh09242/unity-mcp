@@ -30,7 +30,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "status action. Params: provider (fal), prompt, model, duration (seconds), name, "
         "output_folder.\n"
         "- status: Poll an async job by job_id; includes recovery_state, recovery_code, provider_task_id and provider_phase. "
-        "Recorded provider tasks can reconnect after a domain reload within the same Editor session and original 600-second budget. "
+        "Recorded provider tasks can reconnect after a domain reload within the same Editor session and original two-hour budget. "
         "Unknown submission/import outcomes are not replayed; inspect retained output before retrying. "
         "Saved local output can resume without a provider key when its recorded file/metadata identity still matches. "
         "No recovery across Editor exit is promised.\n"

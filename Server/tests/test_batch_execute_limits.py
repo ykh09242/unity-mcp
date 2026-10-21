@@ -23,6 +23,14 @@ def batch_module(monkeypatch):
     module.invalidate_cached_max_commands()
 
 
+@pytest.mark.asyncio
+async def test_large_batch_honors_selected_editor_capacity(batch_module, monkeypatch):
+    sends, _ = install_editor(monkeypatch, batch_module, {"A@hash-a": 500})
+    result = await batch_module.batch_execute(Context("A@hash-a"), [{"tool": "read_console"}] * 300)
+    assert result["success"] is True
+    assert len(sends[-1][2]["commands"]) == 300
+
+
 class Context:
     def __init__(self, instance, user="user-a"):
         self.instance = instance
@@ -178,7 +186,7 @@ async def test_batch_limit_cache_is_isolated_between_users(batch_module, monkeyp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("invalid_limit", [True, False, 0, -1, 101, "3", None])
+@pytest.mark.parametrize("invalid_limit", [True, False, 0, -1, 1001, "3", None])
 async def test_malformed_editor_batch_limits_use_default(batch_module, monkeypatch, invalid_limit):
     install_editor(monkeypatch, batch_module, {"A@hash-a": invalid_limit})
     result = await batch_module.batch_execute(Context("A@hash-a"), [{"tool": "read_console"}] * 2)

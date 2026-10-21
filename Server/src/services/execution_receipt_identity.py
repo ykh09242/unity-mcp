@@ -17,8 +17,8 @@ JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dic
 Surface = Literal["mcp-tool", "/api/command", "/api/context-command"]
 PERMISSIONS = frozenset({"read", "test", "edit", "run"})
 # Match the pinned PluginHub command graph ceilings without importing its runtime.
-MAX_ARGUMENT_BYTES = 4 * 1024 * 1024
-MAX_ARGUMENT_NODES = 65_536
+MAX_ARGUMENT_BYTES = 32 * 1024 * 1024
+MAX_ARGUMENT_NODES = 1_000_000
 MAX_ARGUMENT_DEPTH = 64
 KEY_PATTERN = re.compile(r"[A-Za-z0-9_.:-]{16,128}\Z")
 HEX_ID = re.compile(r"[0-9a-f]{32}\Z")

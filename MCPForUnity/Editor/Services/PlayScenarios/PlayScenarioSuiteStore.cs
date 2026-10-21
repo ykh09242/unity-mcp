@@ -13,9 +13,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     /// <summary>Bounded saved suite definitions and reports in checked project-local paths.</summary>
     public sealed class PlayScenarioSuiteStore
     {
+        private const int MaximumDefinitions = 256;
         private const string Definitions = "ProjectSettings/MCPForUnity/PlayScenarioSuites";
         internal const string Reports = "Library/MCPForUnity/PlayScenarioSuiteRuns";
-        internal const int ReportLimit = 2 * 1024 * 1024;
+        internal const int ReportLimit = PlayScenarioDefinition.MaximumReportBytes;
         private const int DefinitionLimit = 64 * 1024;
         private static readonly object Gate = new object();
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
@@ -38,9 +39,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             lock (Gate)
             {
                 string path = DefinitionPath(validated.Name);
-                string[] saved = Files(Definitions, 100);
-                if (!File.Exists(path) && saved.Length >= 100)
-                    throw new InvalidOperationException("At most 100 suites may be saved.");
+                string[] saved = Files(Definitions, MaximumDefinitions);
+                if (!File.Exists(path) && saved.Length >= MaximumDefinitions)
+                    throw new InvalidOperationException("At most 256 suites may be saved.");
                 Write(path, bytes);
             }
         }
@@ -60,7 +61,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             lock (Gate)
             {
-                var names = Files(Definitions, 100).Select(Path.GetFileNameWithoutExtension).ToList();
+                var names = Files(Definitions, MaximumDefinitions).Select(Path.GetFileNameWithoutExtension).ToList();
                 foreach (string name in names)
                     PlayScenarioDefinition.ValidateName(name);
                 names.Sort(StringComparer.Ordinal);
@@ -160,8 +161,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             PlayScenarioSuiteDefinition suite = PlayScenarioSuiteDefinition.Parse(value["suite"] as JObject);
             State(RequiredText(value, "status", 16), "running", "succeeded", "failed", "timed_out", "cancelled");
             if (
-                PlayScenarioDefinition.Integer(value, "repeat_count", 1, 10, 0) == 0
-                || PlayScenarioDefinition.Integer(value, "timeout_seconds", 1, 1800, 0) == 0
+                PlayScenarioDefinition.Integer(value, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats, 0) == 0
+                || PlayScenarioDefinition.Integer(value, "timeout_seconds", 1, 86400, 0) == 0
             )
                 throw new ArgumentException("Suite report requires original repeat_count and timeout_seconds.");
             Timestamp(value, "started_unix_ms", false);
@@ -172,8 +173,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             string path = OptionalText(value, "report_path", 256);
             if (path != null && path != Reports + "/" + (string)value["suite_id"] + ".json")
                 throw new ArgumentException("Suite report path does not belong to its suite.");
-            if (!(value["scenarios"] is JArray entries) || entries.Count < 1 || entries.Count > 16)
-                throw new ArgumentException("Suite report must contain 1-16 child entries.");
+            if (!(value["scenarios"] is JArray entries) || entries.Count < 1 || entries.Count > PlayScenarioDefinition.MaximumSuiteScenarios)
+                throw new ArgumentException("Suite report must contain 1-64 child entries.");
             var names = new HashSet<string>(StringComparer.Ordinal);
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (JToken token in entries)

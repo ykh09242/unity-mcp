@@ -58,13 +58,18 @@ async def main():
             response = await client.call_tool("script_change_set", {"action": action, "change_set_id": "a" * 32}, raise_on_error=False)
             assert unpack(response)["success"], repr(response)
             assert calls[-1][2] == {"action": native, "change_set_id": "a" * 32}
+        large = [{"path": f"Assets/Source{i}.cs", "expected_bytes_sha256": "b" * 64,
+                  "contents": f"class Source{i} {{}}" + ("/*" + "x" * 700000 + "*/" if i == 0 else "")} for i in range(40)]
+        result = await client.call_tool("script_change_set", {"action": "prepare", "files": large}, raise_on_error=False)
+        assert unpack(result).get("success"), repr(result)
+        assert calls[-1][2]["files"] == large
         invalid = [
             {"action": "prepare", "files": []},
             {"action": "prepare", "files": files * 9},
             {"action": "prepare", "files": [files[0], files[0]]},
             {"action": "prepare", "files": [{**files[0], "path": "Assets/../Outside.cs"}]},
             {"action": "prepare", "files": [{**files[0], "expected_bytes_sha256": "bad"}]},
-            {"action": "prepare", "files": [{**files[0], "contents": "x" * (256 * 1024 + 1)}]},
+            {"action": "prepare", "files": [{**files[0], "contents": "x" * (2 * 1024 * 1024 + 1)}]},
             {"action": "prepare", "files": [{**files[0], "extra": True}]},
             {"action": "prepare", "files": files, "change_set_id": "a" * 32},
             {"action": "apply", "change_set_id": "../manifest"},

@@ -38,7 +38,7 @@ namespace MCPForUnity.Editor.Services.Blender
     public static class BlenderSocketClient
     {
         private const int ConnectTimeoutSeconds = 3;
-        internal const int MaxResponseBytes = 16 * 1024 * 1024;
+        internal const int MaxResponseBytes = 64 * 1024 * 1024;
 
         /// <summary>Sends one command and blocks until the addon answers or the timeout elapses.</summary>
         public static JToken Send(
@@ -50,7 +50,7 @@ namespace MCPForUnity.Editor.Services.Blender
         )
         {
             cancellationToken.ThrowIfCancellationRequested();
-            timeoutSeconds = Math.Max(1, Math.Min(3600, timeoutSeconds));
+            timeoutSeconds = Math.Max(1, Math.Min(86400, timeoutSeconds));
             var request = new JObject { ["type"] = type, ["params"] = @params ?? new JObject() };
             byte[] payload = Encoding.UTF8.GetBytes(request.ToString(Formatting.None));
 

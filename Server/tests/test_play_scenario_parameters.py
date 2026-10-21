@@ -28,6 +28,23 @@ def template():
     }
 
 
+def test_large_parameter_matrix_materializes_last_values():
+    value = template()
+    value["steps"] = value["steps"][:1] + [
+        {"name": f"p{i}", "action": "wait_state", "state_id": f"p{i}", "state_equals": 0}
+        for i in range(64)
+    ]
+    value["parameters"] = {f"p{i}": {"type": "integer", "default": 0} for i in range(64)}
+    value["parameter_bindings"] = [
+        {"path": f"/steps/{i + 1}/state_equals", "parameter": f"p{i}"} for i in range(64)
+    ]
+    value["datasets"] = [
+        {"name": f"case-{i}", "values": {f"p{j}": i + j for j in range(64)}} for i in range(64)
+    ]
+    result = PlayScenario.model_validate(value).materialize("case-63")
+    assert result.steps[-1].state_equals == 126
+
+
 def test_three_effective_cases_have_distinct_scalar_values_names_and_hashes():
     saved = PlayScenario.model_validate(template())
     cases = [saved.materialize(name) for name in ("easy", "normal", "hard")]
@@ -130,7 +147,7 @@ def test_all_effective_cases_and_bounds_are_admitted_before_save(mutation):
     value = template()
     if mutation == "overflow":
         value["parameter_bindings"][0]["path"] = "/steps/1/timeout_seconds"
-        value["datasets"][0]["values"]["score"] = 121
+        value["datasets"][0]["values"]["score"] = 3601
     elif mutation == "unknown":
         value["datasets"][0]["values"]["undeclared"] = 1
     elif mutation == "duplicate":
@@ -142,11 +159,11 @@ def test_all_effective_cases_and_bounds_are_admitted_before_save(mutation):
     elif mutation == "string":
         value["parameters"]["score"] = {"type": "string", "default": "😀" * 513}
     elif mutation == "size":
-        value["steps"] *= 33
+        value["steps"] *= 129
     elif mutation == "identity":
         value["name"] = "a" * 64
     elif mutation == "case_limit":
-        value["datasets"] = [{"name": f"case-{i}", "values": {}} for i in range(17)]
+        value["datasets"] = [{"name": f"case-{i}", "values": {}} for i in range(65)]
     with pytest.raises(ValidationError):
         PlayScenario.model_validate(value)
 
@@ -273,5 +290,14 @@ def test_combined_dataset_metadata_byte_limit_is_checked_before_save():
     value["datasets"] = [
         {"name": f"case-{i}", "values": {f"p{j}": "x" * 1024 for j in range(4)}} for i in range(16)
     ]
-    with pytest.raises(ValidationError, match="64 KiB"):
+    value["steps"] += [
+        {
+            "name": "object",
+            "action": "wait_object",
+            "target": "a" * 4000,
+            "scene": "Assets/" + "a" * 4000 + ".unity",
+        }
+        for _ in range(128 - len(value["steps"]))
+    ]
+    with pytest.raises(ValidationError, match="1 MiB"):
         PlayScenario.model_validate(value)

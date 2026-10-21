@@ -150,7 +150,7 @@ def test_valid_wait_object_conditions(fields):
         {"stable_for_ms": "1"},
         {"stable_for_ms": -1},
         {"stable_for_ms": 30000},
-        {"stable_for_ms": 60001, "timeout_seconds": 120},
+        {"stable_for_ms": 600001, "timeout_seconds": 120},
     ],
 )
 def test_invalid_wait_object_conditions_are_rejected(fields):
@@ -225,11 +225,11 @@ def test_wait_scene_accepts_stability_without_object_fields():
     [
         {"setup_steps": None},
         {"cleanup_steps": None},
-        {"setup_steps": [DEFINITION["steps"][0]] * 17},
-        {"cleanup_steps": [DEFINITION["steps"][0]] * 17},
+        {"setup_steps": [DEFINITION["steps"][0]] * 33},
+        {"cleanup_steps": [DEFINITION["steps"][0]] * 33},
         {"setup_steps": [DEFINITION["steps"][1]]},
         {"cleanup_timeout_seconds": 0},
-        {"cleanup_timeout_seconds": 301},
+        {"cleanup_timeout_seconds": 1801},
         {"cleanup_timeout_seconds": True},
         {"cleanup_timeout_seconds": "30"},
         {"completion_stable_ms": -1},
@@ -247,9 +247,9 @@ def test_wait_scene_accepts_stability_without_object_fields():
         {"metrics": None},
         {"metrics": {"enabled": 1}},
         {"metrics": {"warmup_iterations": -1}},
-        {"metrics": {"warmup_iterations": 10}},
+        {"metrics": {"warmup_iterations": 100}},
         {"metrics": {"consecutive_increases": 1}},
-        {"metrics": {"consecutive_increases": 10}},
+        {"metrics": {"consecutive_increases": 100}},
         {"metrics": {"managed_growth_bytes": -1}},
         {"metrics": {"managed_growth_bytes": 2147483648}},
         {"metrics": {"allocated_growth_bytes": -1}},
@@ -347,7 +347,7 @@ def test_literal_log_allowlist_preserves_case_and_message_whitespace(mode):
 def test_maximum_lifecycle_counts_and_condition_stability_are_accepted():
     # Given: each stage and wait condition reaches its documented upper bound.
     definition = copy.deepcopy(DEFINITION)
-    definition["setup_steps"] = [definition["steps"][0]] * 16
+    definition["setup_steps"] = [definition["steps"][0]] * 32
     definition["steps"] = [
         {
             "name": "Player",
@@ -356,14 +356,14 @@ def test_maximum_lifecycle_counts_and_condition_stability_are_accepted():
             "timeout_seconds": 120,
             "stable_for_ms": 60000,
         }
-    ] * 32
-    definition["cleanup_steps"] = [definition["steps"][0]] * 16
+    ] * 128
+    definition["cleanup_steps"] = [definition["steps"][0]] * 32
     definition["cleanup_timeout_seconds"] = 300
     definition["completion_stable_ms"] = 10000
     # When: the definition crosses the shared save boundary.
     scenario = PlayScenario.model_validate(definition)
-    # Then: 64 total steps and the upper stability/cleanup limits stay supported.
-    assert len(scenario.setup_steps) + len(scenario.steps) + len(scenario.cleanup_steps) == 64
+    # Then: 192 total steps and the upper stability/cleanup limits stay supported.
+    assert len(scenario.setup_steps) + len(scenario.steps) + len(scenario.cleanup_steps) == 192
     assert scenario.steps[0].stable_for_ms == 60000
     assert scenario.cleanup_timeout_seconds == 300
     assert scenario.completion_stable_ms == 10000
@@ -374,9 +374,15 @@ def test_maximum_lifecycle_counts_and_condition_stability_are_accepted():
 async def test_definition_byte_limit_rejects_before_selection_or_dispatch(route, character):
     # Given: individually valid targets exceed the shared serialized UTF-8 definition budget.
     definition = copy.deepcopy(DEFINITION)
-    definition["steps"] = [definition["steps"][0]] + [
-        {"name": "Player", "action": "wait_object", "target": character * 4096}
-    ] * 31
+    definition["setup_steps"] = [definition["steps"][0]] * 32
+    definition["steps"] = [
+        {
+            "name": "Player",
+            "action": "wait_object",
+            "target": character * 4096,
+            "scene": "Assets/" + character * 4000 + ".unity",
+        }
+    ] * 128
     # When: save parses the whole definition at the public boundary.
     result = await manage_play_scenario(SimpleNamespace(), "save", scenario=definition)
     # Then: the oversized definition never reaches Unity or instance selection.

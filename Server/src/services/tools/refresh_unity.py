@@ -23,7 +23,7 @@ from services.tools.get_compile_job import parse_compile_job, read_compile_job, 
 
 logger = logging.getLogger(__name__)
 
-REFRESH_READY_TIMEOUT_SECONDS = 60.0
+REFRESH_READY_TIMEOUT_SECONDS = 300.0
 
 # Blocking reasons that indicate Unity is actually busy (not just stale status).
 # Includes canonical editor_state advice reasons and the legacy asset_import reason.
@@ -330,12 +330,15 @@ async def refresh_unity(
 
         # If we timed out without confirming readiness, log and return failure
         if not ready_confirmed:
-            logger.warning("refresh_unity: Timed out after 60s waiting for editor to become ready")
+            logger.warning(
+                "refresh_unity: Timed out after %ss waiting for editor to become ready",
+                REFRESH_READY_TIMEOUT_SECONDS,
+            )
             return with_compilation(
                 MCPResponse(
                     success=False,
-                    message="Refresh triggered but timed out after 60s waiting for editor readiness.",
-                    data={"timeout": True, "wait_seconds": 60.0},
+                    message=f"Refresh triggered but timed out after {REFRESH_READY_TIMEOUT_SECONDS:g}s waiting for editor readiness.",
+                    data={"timeout": True, "wait_seconds": REFRESH_READY_TIMEOUT_SECONDS},
                 )
             )
 

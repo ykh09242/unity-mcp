@@ -31,6 +31,33 @@ namespace MCPForUnityTests.Editor.Tools
         public void TearDown() => AssetDatabase.DeleteAsset(folder);
 
         [Test]
+        public void LargeGraphCanReadTheFinalPageWithoutTruncation()
+        {
+            var fixture = Fixture();
+            fixture[0]["authoring_data"] = new string('x', 5 * 1024 * 1024);
+            var refs = (JArray)fixture[0]["m_Nodes"];
+            for (int index = 5; index < 5005; index++)
+            {
+                refs.Add(new JObject { ["m_Id"] = Id(index) });
+                fixture.Add(
+                    new JObject
+                    {
+                        ["m_ObjectId"] = Id(index),
+                        ["m_Type"] = "Example.Node",
+                        ["m_Name"] = "Node" + index,
+                    }
+                );
+            }
+            Seed(fixture);
+            JObject response = Inspect(100, 51);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(5002, (int)response["data"]["nodeCount"]);
+            Assert.AreEqual(2, ((JArray)response["data"]["nodes"]).Count);
+            Assert.AreEqual(Id(5004), (string)response["data"]["nodes"][1]["id"]);
+            Assert.IsFalse((bool)response["data"]["hasMore"]);
+        }
+
+        [Test]
         public void InspectsMultiJsonNodesEdgesPropertiesKeywordsAndPreservesSource()
         {
             List<JObject> fixture = Fixture();
@@ -185,23 +212,23 @@ namespace MCPForUnityTests.Editor.Tools
             switch (budget)
             {
                 case "file":
-                    File.WriteAllBytes(fullPath, new byte[4 * 1024 * 1024 + 1]);
+                    File.WriteAllBytes(fullPath, new byte[16 * 1024 * 1024 + 1]);
                     break;
                 case "objects":
-                    for (int index = 5; index <= 16384; index++)
+                    for (int index = 5; index <= 65536; index++)
                         fixture.Add(new JObject { ["m_ObjectId"] = Id(index), ["m_Type"] = "Example" });
                     Seed(fixture);
                     break;
                 case "nodes":
-                    fixture[0]["m_Nodes"] = new JArray(Enumerable.Range(1, 4097).Select(index => new JObject { ["m_Id"] = Id(index) }));
+                    fixture[0]["m_Nodes"] = new JArray(Enumerable.Range(1, 16385).Select(index => new JObject { ["m_Id"] = Id(index) }));
                     Seed(fixture);
                     break;
                 case "edges":
-                    fixture[0]["m_Edges"] = new JArray(Enumerable.Range(0, 8193).Select(_ => fixture[0]["m_Edges"][0].DeepClone()));
+                    fixture[0]["m_Edges"] = new JArray(Enumerable.Range(0, 32769).Select(_ => fixture[0]["m_Edges"][0].DeepClone()));
                     Seed(fixture);
                     break;
                 case "tokens":
-                    fixture[0]["unknown"] = new JArray(Enumerable.Repeat(0, 262144));
+                    fixture[0]["unknown"] = new JArray(Enumerable.Repeat(0, 1000000));
                     Seed(fixture);
                     break;
                 case "depth":

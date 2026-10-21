@@ -16,7 +16,7 @@ from .test_helpers import DummyContext
 @pytest.mark.parametrize("compile_mode", ["none", "request"])
 @pytest.mark.parametrize(
     "busy_polls,stale,expected_success,expected_polls",
-    [(1, False, True, 2), (1, True, True, 2), (None, False, False, 240), (0, True, True, 1)],
+    [(1, False, True, 2), (1, True, True, 2), (None, False, False, 1200), (0, True, True, 1)],
 )
 async def test_refresh_waits_for_canonical_asset_refresh(
     monkeypatch, busy_polls, stale, expected_success, expected_polls, compile_mode
@@ -78,13 +78,13 @@ async def test_refresh_waits_for_canonical_asset_refresh(
     assert scanner._states[instance].dirty is (not expected_success)
     if not expected_success:
         if compile_mode == "none":
-            assert response.data == {"timeout": True, "wait_seconds": 60.0}
+            assert response.data == {"timeout": True, "wait_seconds": 300.0}
             assert dispatched_compile_id is None
         else:
             data = dict(response.data)
             compilation = data.pop("compilation")
             assert data.pop("source_revision_confirmed") is False
-            assert data == {"timeout": True, "wait_seconds": 60.0}
+            assert data == {"timeout": True, "wait_seconds": 300.0}
             assert compilation["compile_id"] == dispatched_compile_id
             assert len(dispatched_compile_id) == 32
             assert compilation["outcome"] == "unknown"

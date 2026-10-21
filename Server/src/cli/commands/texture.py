@@ -57,8 +57,8 @@ _SPRITE_MESH_TYPES = {"full_rect": "FullRect", "tight": "Tight"}
 
 _MIPMAP_FILTERS = {"box": "BoxFilter", "kaiser": "KaiserFilter"}
 
-_MAX_TEXTURE_DIMENSION = 1024
-_MAX_TEXTURE_PIXELS = 1024 * 1024
+_MAX_TEXTURE_DIMENSION = 8192
+_MAX_TEXTURE_PIXELS = 8192 * 8192
 
 
 def _validate_texture_dimensions(width: int, height: int) -> list[str]:

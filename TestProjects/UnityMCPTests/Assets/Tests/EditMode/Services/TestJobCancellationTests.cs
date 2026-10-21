@@ -185,7 +185,7 @@ namespace MCPForUnityTests.Editor.Services
 
         [TestCase(-1)]
         [TestCase(0)]
-        [TestCase(600001)]
+        [TestCase(86400001)]
         [TestCase("not-a-number")]
         public void InvalidOptInDeadlineRejectsBeforeStartingAnyService(object timeout)
         {

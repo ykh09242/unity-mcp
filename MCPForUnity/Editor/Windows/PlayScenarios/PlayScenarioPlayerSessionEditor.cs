@@ -416,7 +416,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 string activeMode = Text(active, "mode", 32);
                 if (!arms.Contains(activeMode))
                     throw new InvalidDataException("Active child mode differs from the session.");
-                Integer(active, "repeat_count", 1, activeMode == "fresh-process" ? 1 : 10);
+                Integer(active, "repeat_count", 1, activeMode == "fresh-process" ? 1 : PlayScenarioDefinition.MaximumRepeats);
                 ArtifactDirectory(root, active);
                 if (status != "running")
                     throw new InvalidDataException("Terminal session cannot retain an active child.");
@@ -443,7 +443,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             string mode = Text(item, "mode", 32);
             if (!Modes.Contains(mode) || ((string)value["mode"] != "compare" && mode != (string)value["mode"]))
                 throw new InvalidDataException("Outcome mode differs from session.");
-            long repeats = Integer(item, "repeat_count", 1, mode == "fresh-process" ? 1 : 10);
+            long repeats = Integer(item, "repeat_count", 1, mode == "fresh-process" ? 1 : PlayScenarioDefinition.MaximumRepeats);
             string status = Text(item, "status", 64);
             if (!new[] { "running", "succeeded", "failed", "timed_out", "cancelled", "infrastructure_error", "interrupted" }.Contains(status))
                 throw new InvalidDataException("Unknown outcome status.");
@@ -679,7 +679,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     string expectedHash = Text(item, "native_report_sha256", 64, true);
                     if (expectedHash == null || !Regex.IsMatch(expectedHash, "^[0-9a-f]{64}$"))
                         throw new InvalidDataException("Saved native report hash unavailable.");
-                    byte[] reportBytes = ReadBytes(reportFile, JsonLimit);
+                    byte[] reportBytes = ReadBytes(reportFile, PlayScenarioDefinition.MaximumReportBytes);
                     using (SHA256 hash = SHA256.Create())
                     {
                         string actual = string.Concat(hash.ComputeHash(reportBytes).Select(value => value.ToString("x2")));
@@ -727,7 +727,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         {
             if (report.Property("iteration_results_version") != null || report.Property("iteration_results") != null)
             {
-                long repeats = Integer(report, "repeat_count", 1, 10);
+                long repeats = Integer(report, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats);
                 string status = Text(report, "status", 32);
                 if (!new[] { "succeeded", "failed", "timed_out", "cancelled" }.Contains(status))
                     throw new InvalidDataException("Saved native report must have a terminal status.");
@@ -739,7 +739,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     throw new InvalidDataException("Saved report steps exceed their bound or contain invalid rows.");
                 foreach (JObject step in steps)
                 {
-                    Integer(step, "iteration", 1, 10);
+                    Integer(step, "iteration", 1, PlayScenarioDefinition.MaximumRepeats);
                     Integer(step, "step_index", 0, 63);
                     string stage = Text(step, "stage", 32, true);
                     if (stage != null && !new[] { "setup", "main", "cleanup" }.Contains(stage))

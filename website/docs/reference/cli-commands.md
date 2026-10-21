@@ -21,7 +21,7 @@ Unity MCP (ykh09242) Command Line Interface. Control Unity Editor directly from 
 | --version | boolean | optional | nargs=1, flag | — | — | Show the version and exit. |
 | --host / -h | text | optional | nargs=1 | "127.0.0.1" | UNITY_MCP_HOST | MCP server host address. |
 | --port / -p | integer range: [1..65535] | optional | nargs=1 | 8080 | UNITY_MCP_HTTP_PORT | MCP server port. |
-| --timeout / -t | integer range: [1..None] | optional | nargs=1 | 30 | UNITY_MCP_TIMEOUT | Command timeout in seconds. |
+| --timeout / -t | integer range: [1..None] | optional | nargs=1 | 300 | UNITY_MCP_TIMEOUT | Command timeout in seconds. |
 | --format / -f | choice: text, json, table | optional | nargs=1 | "text" | UNITY_MCP_FORMAT | Output format. |
 | --instance / -i | text | optional | nargs=1 | — | UNITY_MCP_INSTANCE | Target Unity instance (hash or Name@hash). |
 | --verbose / -v | boolean | optional | nargs=1, flag | — | — | Print each command sent to Unity and its raw response to stderr. |
@@ -1601,7 +1601,7 @@ Run Unity tests. Examples: unity-mcp editor tests unity-mcp editor tests --mode 
 | --mode / -m | choice: EditMode, PlayMode | optional | nargs=1 | "EditMode" | — | Test mode to run. |
 | --async | boolean | optional | nargs=1, flag | — | — | Run asynchronously and return job ID for polling. |
 | --wait / -w | integer | optional | nargs=1 | — | — | Wait up to N seconds for completion (default: no wait). |
-| --run-timeout-ms | integer range: [1..600000] | optional | nargs=1 | — | — | Opt-in native job deadline; requires supported native control. |
+| --run-timeout-ms | integer range: [1..86400000] | optional | nargs=1 | — | — | Opt-in native job deadline; requires supported native control. |
 | --details | boolean | optional | nargs=1, flag | — | — | Include detailed results for all tests. |
 | --failed-only | boolean | optional | nargs=1, flag | — | — | Include details for failed/skipped tests only. |
 | --clear-stuck | boolean | optional | nargs=1, flag | — | — | Clear an orphaned running job that is blocking new runs, instead of starting a run. |
@@ -2768,7 +2768,7 @@ Compare two saved native reports offline; exit 0 within limits, 1 exceeded, 2 in
 | candidate | text | required | nargs=1 | — | — |  |
 | --max-target-searches-increase | integer range: [0..9223372036854775807] | required | nargs=1 | — | — |  |
 | --max-hierarchy-visits-increase | integer range: [0..9223372036854775807] | required | nargs=1 | — | — |  |
-| --step-details-limit | integer range: [1..640] | optional | nargs=1 | — | — | Include up to N steps in execution order after validating all recorded step counts. |
+| --step-details-limit | integer range: [1..19200] | optional | nargs=1 | — | — | Include up to N steps in execution order after validating all recorded step counts. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario compare-soak-metrics`
@@ -2870,14 +2870,14 @@ Launch an explicit local Player bundle, wait, and export actual run.json plus JU
 | --- | --- | --- | --- | --- | --- | --- |
 | build_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
 | --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --repeat-count | integer range: [1..10] | optional | nargs=1 | 1 | — |  |
-| --timeout-seconds | integer range: [1..1800] | optional | nargs=1 | 300 | — |  |
+| --repeat-count | integer range: [1..100] | optional | nargs=1 | 1 | — |  |
+| --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
 | --source-revision | text | optional | nargs=1 | — | — |  |
 | --expected-build-revision | text | optional | nargs=1 | — | — | Require the frozen build label to match. |
 | --expected-build-id | text | optional | nargs=1 | — | — |  |
 | --require-verified-payload | boolean | optional | nargs=1, flag | — | — | Reject legacy unverified bundles. |
 | --graphical | boolean | optional | nargs=1, flag | — | — | Run with graphics for screenshot checkpoints. |
-| --cleanup-wait-seconds | integer range: [1..600] | optional | nargs=1 | 360 | — |  |
+| --cleanup-wait-seconds | integer range: [1..3600] | optional | nargs=1 | 1860 | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario player-session`
@@ -2890,10 +2890,10 @@ Run bounded verified Player batches and stream outcomes with explicit process sc
 | --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
 | --mode | choice: shared-batches, fresh-process, compare | optional | nargs=1 | "shared-batches" | — |  |
 | --iterations | integer range: [1..1000] | optional | nargs=1 | 100 | — |  |
-| --batch-size | integer range: [2..10] | optional | nargs=1 | 10 | — |  |
+| --batch-size | integer range: [2..100] | optional | nargs=1 | 10 | — |  |
 | --max-runtime-seconds | integer range: [1..86400] | optional | nargs=1 | 3600 | — |  |
-| --timeout-seconds | integer range: [1..1800] | optional | nargs=1 | 300 | — |  |
-| --cleanup-wait-seconds | integer range: [1..600] | optional | nargs=1 | 360 | — |  |
+| --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
+| --cleanup-wait-seconds | integer range: [1..3600] | optional | nargs=1 | 1860 | — |  |
 | --interval-seconds | float range: [0..60] | optional | nargs=1 | 0.5 | — |  |
 | --failure-policy | choice: stop, continue | optional | nargs=1 | "stop" | — |  |
 | --retain-reports | integer range: [1..64] | optional | nargs=1 | 16 | — |  |
@@ -2923,13 +2923,13 @@ Execute bounded iterations in one verified native Player process and export evid
 | --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
 | --iterations | integer range: [2..1000] | optional | nargs=1 | 100 | — |  |
 | --max-runtime-seconds | integer range: [1..86400] | optional | nargs=1 | 3600 | — |  |
-| --timeout-seconds | integer range: [1..1800] | optional | nargs=1 | 300 | — |  |
+| --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
 | --failure-policy | choice: stop, continue | optional | nargs=1 | "stop" | — |  |
 | --retain-reports | integer range: [1..64] | optional | nargs=1 | 4 | — |  |
 | --source-revision | text | optional | nargs=1 | — | — |  |
 | --expected-build-revision | text | optional | nargs=1 | — | — |  |
 | --expected-build-id | text | optional | nargs=1 | — | — |  |
-| --cleanup-wait-seconds | integer range: [1..600] | optional | nargs=1 | 360 | — |  |
+| --cleanup-wait-seconds | integer range: [1..3600] | optional | nargs=1 | 1860 | — |  |
 | --graphical | boolean | optional | nargs=1, flag | — | — | Run with graphics for screenshot checkpoints. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -2958,9 +2958,9 @@ Run all frozen children from one verified build, with child and suite JUnit. Fre
 | --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
 | --failure-policy | choice: stop, continue | optional | nargs=1 | — | — |  |
 | --isolation | choice: fresh-process | optional | nargs=1 | "fresh-process" | — |  |
-| --timeout-seconds | integer range: [1..1800] | optional | nargs=1 | 300 | — |  |
+| --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
 | --max-runtime-seconds | integer range: [1..86400] | optional | nargs=1 | 3600 | — |  |
-| --cleanup-wait-seconds | integer range: [1..600] | optional | nargs=1 | 360 | — |  |
+| --cleanup-wait-seconds | integer range: [1..3600] | optional | nargs=1 | 1860 | — |  |
 | --source-revision | text | optional | nargs=1 | — | — |  |
 | --expected-build-revision | text | optional | nargs=1 | — | — |  |
 | --expected-build-id | text | optional | nargs=1 | — | — |  |
@@ -2994,8 +2994,8 @@ Start once and return immediately; use status for later observations. An idempot
 | --- | --- | --- | --- | --- | --- | --- |
 | name | text | required | nargs=1 | — | — |  |
 | --job-id | text | optional | nargs=1 | — | — | Optional 32-character lowercase hex request key. |
-| --repeat-count | integer range: [1..10] | optional | nargs=1 | 1 | — |  |
-| --timeout-seconds | integer range: [1..1800] | optional | nargs=1 | 300 | — |  |
+| --repeat-count | integer range: [1..100] | optional | nargs=1 | 1 | — |  |
+| --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
 | --source-revision | text | optional | nargs=1 | — | — | Optional caller-provided reproduction label. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -3069,12 +3069,12 @@ Run one native suite, explicitly wait, and save suite.json plus junit.xml. Requi
 | --- | --- | --- | --- | --- | --- | --- |
 | name | text | required | nargs=1 | — | — |  |
 | --suite-id | text | optional | nargs=1 | — | — | Optional 32-character lowercase hex request key. |
-| --repeat-count | integer range: [1..10] | optional | nargs=1 | 1 | — |  |
-| --timeout-seconds | integer range: [1..1800] | optional | nargs=1 | 300 | — |  |
+| --repeat-count | integer range: [1..100] | optional | nargs=1 | 1 | — |  |
+| --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
 | --source-revision | text | optional | nargs=1 | — | — |  |
 | --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
 | --poll-interval-seconds | float range: [0.1..10] | optional | nargs=1 | 0.5 | — |  |
-| --cleanup-wait-seconds | integer range: [1..600] | optional | nargs=1 | 360 | — |  |
+| --cleanup-wait-seconds | integer range: [1..3600] | optional | nargs=1 | 1860 | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario suite-save`
@@ -3669,8 +3669,8 @@ Observe supported Buttons in current Play Mode; return immediately.
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | name | text | required | nargs=1 | — | — |  |
-| --max-events | integer range: [1..31] | optional | nargs=1 | 31 | — |  |
-| --duration-seconds | integer range: [1..600] | optional | nargs=1 | 300 | — |  |
+| --max-events | integer range: [1..127] | optional | nargs=1 | 31 | — |  |
+| --duration-seconds | integer range: [1..3600] | optional | nargs=1 | 300 | — |  |
 | --scene-scope | choice: active, all_loaded | optional | nargs=1 | "active" | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 

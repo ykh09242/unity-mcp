@@ -38,10 +38,10 @@ namespace MCPForUnity.Editor.Tools
     public static class BatchExecute
     {
         /// <summary>Default limit when no EditorPrefs override is set.</summary>
-        internal const int DefaultMaxCommandsPerBatch = 25;
+        internal const int DefaultMaxCommandsPerBatch = 100;
 
         /// <summary>Hard ceiling to prevent extreme editor freezes regardless of user setting.</summary>
-        internal const int AbsoluteMaxCommandsPerBatch = 100;
+        internal const int AbsoluteMaxCommandsPerBatch = 1000;
 
         /// <summary>
         /// Returns the user-configured max commands per batch, clamped between 1 and <see cref="AbsoluteMaxCommandsPerBatch"/>.

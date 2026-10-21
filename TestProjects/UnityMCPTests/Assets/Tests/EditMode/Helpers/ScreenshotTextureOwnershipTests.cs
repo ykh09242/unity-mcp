@@ -75,7 +75,7 @@ namespace MCPForUnityTests.EditMode.Helpers
         }
 
         [TestCase(8193, 1)]
-        [TestCase(8192, 8192)]
+        [TestCase(8192, 8193)]
         [TestCase(int.MaxValue, int.MaxValue)]
         [TestCase(0, 1)]
         public void FrameBudgetRejectsOversizedOrOverflowingDimensions(int width, int height)
@@ -130,7 +130,7 @@ namespace MCPForUnityTests.EditMode.Helpers
         }
 
         [TestCase(8193, 1)]
-        [TestCase(8192, 8192)]
+        [TestCase(8192, 8193)]
         [TestCase(int.MaxValue, int.MaxValue)]
         [TestCase(0, 1)]
         public void SceneViewViewportBudgetRejectsBeforeResolvingEngineHost(int width, int height)

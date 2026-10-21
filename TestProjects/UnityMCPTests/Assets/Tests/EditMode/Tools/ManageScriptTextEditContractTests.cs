@@ -12,10 +12,7 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ManageScriptTextEditContractTests
     {
-        private bool? _savedEnabled,
-            _savedConsent;
-        private const string EnabledKey = "MCPForUnity.ToolEnabled.manage_script";
-        private const string ConsentKey = "MCPForUnity.ToolEnabled.ExplicitConsent.manage_script";
+        private MCPForUnityTests.Editor.Services.ScopedConsentTestState consent;
         private string _folder;
         private string _path;
         private const string Original = "using System;\npublic class ContractEditProbe\n{\n    public void A() { }\n    public void B() { }\n}\n";
@@ -23,10 +20,7 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
-            _savedEnabled = EditorPrefs.HasKey(EnabledKey) ? EditorPrefs.GetBool(EnabledKey) : (bool?)null;
-            _savedConsent = EditorPrefs.HasKey(ConsentKey) ? EditorPrefs.GetBool(ConsentKey) : (bool?)null;
-            EditorPrefs.SetBool(EnabledKey, true);
-            EditorPrefs.SetBool(ConsentKey, true);
+            consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("manage_script");
             _folder = "Assets/TextEditContractTests_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(_folder));
             _path = _folder + "/ContractEditProbe.cs";
@@ -42,14 +36,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                if (_savedEnabled.HasValue)
-                    EditorPrefs.SetBool(EnabledKey, _savedEnabled.Value);
-                else
-                    EditorPrefs.DeleteKey(EnabledKey);
-                if (_savedConsent.HasValue)
-                    EditorPrefs.SetBool(ConsentKey, _savedConsent.Value);
-                else
-                    EditorPrefs.DeleteKey(ConsentKey);
+                consent?.Dispose();
             }
         }
 
@@ -73,9 +60,18 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void LargeMethodReplacementPreservesCompletePayload()
+        {
+            string replacement = "    public void A() { /*" + new string('x', 120000) + "*/ }\n";
+            JObject response = Apply(replacement, endLine: 5);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(replacement, File.ReadAllText(_path));
+        }
+
+        [Test]
         public void OversizedMethodReplacement_ReturnsTooLargeWithoutWriting()
         {
-            var response = Apply("    public void A() { /*" + new string('x', 65536) + "*/ }\n", endLine: 5);
+            var response = Apply("    public void A() { /*" + new string('x', 2 * 1024 * 1024) + "*/ }\n", endLine: 5);
 
             Assert.IsFalse(response.Value<bool>("success"));
             Assert.AreEqual("too_large", response["data"]["status"].Value<string>());

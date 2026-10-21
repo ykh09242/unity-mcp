@@ -10,13 +10,15 @@ namespace MCPForUnity.Editor.Tools.Build
     /// <summary>Bounded cleanup of explicit build outputs, never project source directories.</summary>
     internal static class BuildOutputCleaner
     {
-        internal const int MaxEntries = 5000;
+        internal const int MaxEntries = 250000;
         private const int MaxDepth = 64;
         private const int MaxPreviewEntries = 100;
-        private const int MaxScanMilliseconds = 2000;
+        private const int MaxScanMilliseconds = 120000;
 
-        internal static object Clean(string projectRoot, string outputPath, bool dryRun, bool buildActive = false)
+        internal static object Clean(string projectRoot, string outputPath, bool dryRun, bool buildActive = false, int maxEntries = MaxEntries)
         {
+            if (maxEntries < 1 || maxEntries > MaxEntries)
+                throw new ArgumentOutOfRangeException(nameof(maxEntries));
             if (buildActive)
                 return new ErrorResponse("Cannot clean build outputs while a build is pending or running.");
             if (string.IsNullOrWhiteSpace(outputPath))
@@ -68,11 +70,11 @@ namespace MCPForUnity.Editor.Tools.Build
                     while (pending.Count > 0)
                     {
                         if (timer.ElapsedMilliseconds > MaxScanMilliseconds)
-                            throw new InvalidOperationException("Build-output scan exceeded the 2-second budget; select a smaller output subtree.");
+                            throw new InvalidOperationException("Build-output scan exceeded the 120-second budget; select a smaller output subtree.");
                         var current = pending.Pop();
-                        if (current.depth > MaxDepth || ++entries > MaxEntries)
+                        if (current.depth > MaxDepth || ++entries > maxEntries)
                             throw new InvalidOperationException(
-                                $"Build-output cleanup is limited to {MaxEntries} entries and {MaxDepth} directory levels; select a smaller output subtree."
+                                $"Build-output cleanup is limited to {maxEntries} entries and {MaxDepth} directory levels; select a smaller output subtree."
                             );
                         SafePathUtility.ResolveWithinRoot(Path.GetPathRoot(root), current.path);
                         var attributes = File.GetAttributes(current.path);
@@ -86,7 +88,7 @@ namespace MCPForUnity.Editor.Tools.Build
                             foreach (string child in Directory.EnumerateFileSystemEntries(current.path))
                             {
                                 // Bound even a single very wide directory before materializing it.
-                                if (pending.Count + entries >= MaxEntries || timer.ElapsedMilliseconds > MaxScanMilliseconds)
+                                if (pending.Count + entries >= maxEntries || timer.ElapsedMilliseconds > MaxScanMilliseconds)
                                     throw new InvalidOperationException("Build-output scan limit reached; select a smaller output subtree.");
                                 pending.Push((child, current.depth + 1));
                             }

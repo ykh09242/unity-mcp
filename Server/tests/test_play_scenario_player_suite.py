@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 from xml.etree import ElementTree
 
 from click.testing import CliRunner
@@ -121,7 +122,17 @@ if evidence_mode=='report-error': report['report_error']='Failure diagnostics un
         processes.append(process)
         return process
 
-    monkeypatch.setattr(player.subprocess, "Popen", launch)
+    # Patch only the launcher; platform inspection may spawn its own Windows helper.
+    monkeypatch.setattr(
+        player,
+        "subprocess",
+        SimpleNamespace(
+            Popen=launch,
+            PIPE=subprocess.PIPE,
+            STDOUT=subprocess.STDOUT,
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
     return modes, processes
 
 

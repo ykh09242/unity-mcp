@@ -21,8 +21,8 @@ namespace MCPForUnity.Editor.Tools.Localization
     [McpForUnityTool("manage_localization", AutoRegister = false, Group = "core")]
     public static class ManageLocalization
     {
-        private const int MaxKeys = 4096;
-        private const int MaxBytes = 1048576;
+        private const int MaxKeys = 100000;
+        private const int MaxBytes = 16 * 1024 * 1024;
 
         private static Type Kind(string name) =>
             AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("UnityEngine.Localization." + name)).FirstOrDefault(t => t != null);
@@ -103,7 +103,7 @@ namespace MCPForUnity.Editor.Tools.Localization
             if (!Kind("Tables.StringTable").IsInstanceOfType(obj) && !Kind("Tables.AssetTable").IsInstanceOfType(obj))
                 throw new ArgumentException("Only StringTable and AssetTable are supported.");
             if (Convert.ToInt32(Get(obj, "Count"), CultureInfo.InvariantCulture) > MaxKeys)
-                throw new ArgumentException("table_limit: table exceeds 4096 entries.");
+                throw new ArgumentException("table_limit: table exceeds 100000 entries.");
             SharedEntries(obj);
             return obj;
         }
@@ -115,7 +115,7 @@ namespace MCPForUnity.Editor.Tools.Localization
                 throw new ArgumentException("SharedTableData must be a persistent asset.");
             object[] entries = ((IEnumerable)Get(shared, "Entries")).Cast<object>().Take(MaxKeys + 1).ToArray();
             if (entries.Length > MaxKeys)
-                throw new ArgumentException("table_limit: shared data exceeds 4096 keys.");
+                throw new ArgumentException("table_limit: shared data exceeds 100000 keys.");
             return entries;
         }
 
@@ -127,40 +127,48 @@ namespace MCPForUnity.Editor.Tools.Localization
                 callback.OnBeforeSerialize();
             string json = EditorJsonUtility.ToJson(obj);
             if (Encoding.UTF8.GetByteCount(json) > MaxBytes)
-                throw new ArgumentException("asset_limit: serialized asset exceeds 1 MiB.");
+                throw new ArgumentException("asset_limit: serialized asset exceeds 16 MiB.");
             return json;
         }
 
         private static string Revision(Object obj, Object shared = null)
         {
-            var input = new StringBuilder();
-            foreach (Object asset in shared == null ? new[] { obj } : new[] { obj, shared })
-            {
-                string path = AssetDatabase.GetAssetPath(asset);
-                string full = AssetPathUtility.GetFullAssetPath(PathValue(path));
-                if (!File.Exists(full) || new FileInfo(full).Length > MaxBytes)
-                    throw new ArgumentException("asset_limit: source asset must exist and be at most 1 MiB.");
-                input.Append(AssetDatabase.AssetPathToGUID(path)).Append('\n').Append(Serialize(asset)).Append('\n');
-                using (var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-                {
-                    if (stream.Length > MaxBytes)
-                        throw new ArgumentException("asset_limit: source asset exceeds 1 MiB.");
-                    var bytes = new byte[(int)stream.Length];
-                    int read = 0;
-                    while (read < bytes.Length)
-                    {
-                        int count = stream.Read(bytes, read, bytes.Length - read);
-                        if (count == 0)
-                            throw new IOException("source_changed: source was truncated while reading.");
-                        read += count;
-                    }
-                    if (stream.ReadByte() != -1)
-                        throw new IOException("source_changed: source grew while reading.");
-                    input.Append(Convert.ToBase64String(bytes)).Append('\n');
-                }
-            }
+            // Revisions are opaque. Version this digest composition so old observations
+            // safely become stale after upgrading, instead of retaining raw file/base64 copies.
+            var input = new StringBuilder("mcp-localization-revision-v2\n");
+            var buffer = new byte[65536];
             using (var hash = SHA256.Create())
+            {
+                foreach (Object asset in shared == null ? new[] { obj } : new[] { obj, shared })
+                {
+                    string path = AssetDatabase.GetAssetPath(asset);
+                    string full = AssetPathUtility.GetFullAssetPath(PathValue(path));
+                    input.Append(AssetDatabase.AssetPathToGUID(path)).Append('\n');
+                    input.Append(Convert.ToBase64String(hash.ComputeHash(Encoding.UTF8.GetBytes(Serialize(asset))))).Append('\n');
+                    using (var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        long length = stream.Length;
+                        if (length > MaxBytes)
+                            throw new ArgumentException("asset_limit: source asset exceeds 16 MiB.");
+                        hash.Initialize();
+                        long read = 0;
+                        while (read < length)
+                        {
+                            int count = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, length - read));
+                            if (count == 0)
+                                throw new IOException("source_changed: source was truncated while reading.");
+                            hash.TransformBlock(buffer, 0, count, buffer, 0);
+                            read += count;
+                        }
+                        if (stream.Length != length || stream.ReadByte() != -1)
+                            throw new IOException("source_changed: source grew while reading.");
+                        hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                        input.Append(Convert.ToBase64String(hash.Hash)).Append('\n');
+                        hash.Initialize();
+                    }
+                }
                 return string.Concat(hash.ComputeHash(Encoding.UTF8.GetBytes(input.ToString())).Select(b => b.ToString("x2", CultureInfo.InvariantCulture)));
+            }
         }
 
         private static void Expected(JObject p, Object obj, Object shared = null)
@@ -274,12 +282,12 @@ namespace MCPForUnity.Editor.Tools.Localization
         {
             string[] paths;
             if (p["paths"] != null)
-                paths = Paths(p, "paths", 1, 16);
+                paths = Paths(p, "paths", 1, 256);
             else
             {
                 string[] ids = AssetDatabase.FindAssets(locales ? "t:Locale" : "t:LocalizationTable", new[] { "Assets" });
                 if (ids.Length > MaxKeys)
-                    throw new ArgumentException("discovery_limit: more than 4096 matching assets; supply exact paths.");
+                    throw new ArgumentException("discovery_limit: more than 100000 matching assets; supply exact paths.");
                 paths = ids.Select(AssetDatabase.GUIDToAssetPath).OrderBy(s => s, StringComparer.Ordinal).ToArray();
             }
             int offset = Page(p, "offset", 0, 0, MaxKeys);
@@ -352,7 +360,7 @@ namespace MCPForUnity.Editor.Tools.Localization
 
         private static object Inspect(JObject p)
         {
-            string[] paths = Paths(p, "table_paths", 1, 16);
+            string[] paths = Paths(p, "table_paths", 1, 256);
             string[] arguments = null;
             if (p["argument_names"] != null)
             {
@@ -371,7 +379,7 @@ namespace MCPForUnity.Editor.Tools.Localization
             Action<string, string, string> finding = (code, path, key) =>
             {
                 if (++outputCount > MaxKeys)
-                    throw new ArgumentException("output_limit: more than 4096 findings; inspect fewer tables.");
+                    throw new ArgumentException("output_limit: more than 100000 findings; inspect fewer tables.");
                 findings.Add(
                     new JObject
                     {
@@ -399,10 +407,10 @@ namespace MCPForUnity.Editor.Tools.Localization
                     long id = (long)Get(key, "Id");
                     object entry = Call(table, "GetEntry", new[] { typeof(long) }, id);
                     string value = entry == null ? null : (string)GetNullable(entry, "LocalizedValue");
-                    if (value != null && value.Length > 8192)
-                        throw new ArgumentException("entry_limit: string value exceeds 8192 characters.");
+                    if (value != null && value.Length > 65536)
+                        throw new ArgumentException("entry_limit: string value exceeds 65536 characters.");
                     if (++outputCount > MaxKeys)
-                        throw new ArgumentException("output_limit: more than 4096 rows/findings; inspect fewer tables.");
+                        throw new ArgumentException("output_limit: more than 100000 rows/findings; inspect fewer tables.");
                     var keyRow = new JObject
                     {
                         ["key_id"] = id.ToString(CultureInfo.InvariantCulture),
@@ -525,7 +533,7 @@ namespace MCPForUnity.Editor.Tools.Localization
                 || keys.GroupBy(k => (string)Get(k, "Key"), StringComparer.Ordinal).Any(g => g.Count() != 1)
             )
                 throw new ArgumentException("ambiguous_shared_key: corrections require existing unique shared IDs and names.");
-            string value = Text(p, "value", 8192);
+            string value = Text(p, "value", 65536);
             if (p["is_smart"] != null && p["is_smart"].Type != JTokenType.Boolean)
                 throw new ArgumentException("is_smart must be a JSON boolean when supplied.");
             object entry = Call(table, "GetEntry", new[] { typeof(long) }, id);
@@ -581,7 +589,7 @@ namespace MCPForUnity.Editor.Tools.Localization
         private static object SetFallbacks(JObject p)
         {
             Object locale = Load(Text(p, "locale_path"), "Locale");
-            Object[] targets = Paths(p, "fallback_locale_paths", 0, 8).Select(path => Load(path, "Locale")).ToArray();
+            Object[] targets = Paths(p, "fallback_locale_paths", 0, 32).Select(path => Load(path, "Locale")).ToArray();
             foreach (Object target in targets)
                 if (HasCycle(target, locale, new HashSet<int>(), 0, true))
                     throw new ArgumentException("fallback_cycle: requested fallbacks return to the selected locale.");

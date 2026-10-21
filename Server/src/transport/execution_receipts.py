@@ -36,6 +36,8 @@ from models.response_limits import (
 from services.credential_lease import CredentialLease, require_credential_lease
 from services.execution_receipt_context import execution_owner
 from services.execution_receipt_identity import (
+    MAX_ARGUMENT_BYTES,
+    MAX_ARGUMENT_NODES,
     JsonValue,
     ReceiptInvalid,
     ReceiptNotFound,
@@ -55,7 +57,7 @@ META_KEY = "io.github.ykh09242.unity-mcp/execution"
 RESULT_BYTES = 1024 * 1024
 RESULT_WORKING_BYTES = 32 * 1024 * 1024
 METADATA_WORKING_BYTES = 256 * 1024
-EXECUTION_SECONDS = 3600
+EXECUTION_SECONDS = 24 * 60 * 60 + 60  # Includes result/transport grace for a day-long operation.
 T = TypeVar("T")
 
 
@@ -648,8 +650,8 @@ class ExecutionReceipts:
         try:
             charge = response_size(
                 {"arguments": arguments, "context": semantic_context},
-                max_bytes=4 * 1024 * 1024,
-                max_nodes=65536,
+                max_bytes=MAX_ARGUMENT_BYTES,
+                max_nodes=MAX_ARGUMENT_NODES,
             )
             if charge is None:
                 raise ReceiptInvalid("receipt_request_graph_limit")
@@ -800,8 +802,8 @@ class ExecutionReceipts:
                     "active_result_slots": 2,
                     "workers_per_invocation": 64,
                     "execution_seconds": EXECUTION_SECONDS,
-                    "argument_bytes": 4 * RESULT_BYTES,
-                    "argument_nodes": 65536,
+                    "argument_bytes": MAX_ARGUMENT_BYTES,
+                    "argument_nodes": MAX_ARGUMENT_NODES,
                     "argument_depth": 64,
                     "working_bytes": MAX_RESPONSE_RETAINED_BYTES,
                 },

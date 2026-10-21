@@ -1,0 +1,9 @@
+"""Workload admission shared by scenario execution, persistence and analysis readers."""
+
+MAX_REPEATS = 100
+MAX_SCENARIO_STEPS = 128
+MAX_AUXILIARY_STEPS = 32
+MAX_SUITE_SCENARIOS = 64
+DEFINITION_BYTES = 1048576
+REPORT_BYTES = 16777216
+MAX_STEP_RESULTS = 19200

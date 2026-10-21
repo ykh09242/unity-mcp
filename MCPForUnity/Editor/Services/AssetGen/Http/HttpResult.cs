@@ -9,9 +9,20 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
     /// of success (e.g. UnityWebRequest.Result.Success), which adapters combine with their own
     /// body-level checks.
     /// </summary>
-    public sealed class HttpResult
+    public sealed class HttpResult : IDisposable
     {
         public int Status;
+        internal DownloadedArtifact DownloadedFile;
+
+        public void Dispose()
+        {
+            DownloadedFile?.Dispose();
+            DownloadedFile = null;
+            body = null;
+            buffer = default;
+            text = null;
+        }
+
         private byte[] body;
         private ArraySegment<byte> buffer;
         private string text;

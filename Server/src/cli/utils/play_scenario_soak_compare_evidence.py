@@ -52,7 +52,7 @@ class _Request(BaseModel):
     payload_hash: Digest
     scenario_name: Annotated[str, Field(min_length=1, max_length=128)]
     repeat_count: Annotated[int, Field(ge=1, le=1)]
-    timeout_seconds: Annotated[int, Field(ge=1, le=1800)]
+    timeout_seconds: Annotated[int, Field(ge=1, le=86400)]
     source_revision: Label | None = None
     soak: SoakRequest
 

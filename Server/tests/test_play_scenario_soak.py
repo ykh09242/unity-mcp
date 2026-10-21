@@ -346,7 +346,7 @@ def test_normal_progress_does_not_admit_global_soak_iteration(tmp_path):
                 heartbeat_unix_ms=1,
                 elapsed_ms=1,
                 phase="running",
-                iteration=11,
+                iteration=101,
                 stage="steps",
                 step_index=0,
                 status="running",
@@ -355,7 +355,7 @@ def test_normal_progress_does_not_admit_global_soak_iteration(tmp_path):
     )
     # When: an unexpected global iteration is observed.
     observer.observe(path)
-    # Then: normal native repetition remains bounded at ten.
+    # Then: normal native repetition remains bounded at one hundred.
     assert observer.first_error == "player_progress_invalid"
 
 

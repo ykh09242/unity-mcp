@@ -15,7 +15,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
     /// <summary>The versioned, frozen definition shipped only by explicit scenario builds.</summary>
     public sealed class PlayScenarioPlayerBundle
     {
-        public const int Limit = 1024 * 1024;
+        // Includes both the inventory object and its canonical JSON identity, plus definitions.
+        public const int Limit = 96 * 1024 * 1024;
         public const string ResourceName = "MCPPlayScenarioBundle";
         public const string ManifestName = "scenario-bundle.json";
         public const string ExecutableName = "MCPScenarioPlayer.exe";
@@ -125,13 +126,13 @@ namespace MCPForUnity.Runtime.PlayScenarios
             if (
                 Text(value, "scenario_name", 64) != definition.Name
                 || hash != PlayScenarioReproduction.Hash(definition)
-                || Text(value, "definition_json", 65536) != DefinitionJson(definition)
+                || Text(value, "definition_json", PlayScenarioDefinition.MaximumDefinitionBytes) != DefinitionJson(definition)
             )
                 throw new ArgumentException("Player bundle frozen definition identity does not match.");
             string[] scenes = Scenes(definition);
             if (
                 !(value["scene_paths"] is JArray paths)
-                || paths.Count > 64
+                || paths.Count > 256
                 || !paths.SequenceEqual(scenes.Select(path => (JToken)new JValue(path)), JToken.EqualityComparer)
             )
                 throw new ArgumentException("Player bundle scene inventory does not match its definition.");
@@ -324,7 +325,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 revision = PlayScenarioPlayerBundle.Text(value, "source_revision", 128);
                 PlayScenarioReproduction.ValidateSourceRevision(revision);
             }
-            int repeatCount = Integer(value, "repeat_count", 1, 10);
+            int repeatCount = Integer(value, "repeat_count", 1, PlayScenarioDefinition.MaximumRepeats);
             PlayScenarioPlayerSoakOptions soak = null;
             if (value.Property("soak") != null)
             {
@@ -342,7 +343,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 ScenarioName = name,
                 DefinitionHash = hash,
                 RepeatCount = repeatCount,
-                TimeoutSeconds = Integer(value, "timeout_seconds", 1, 1800),
+                TimeoutSeconds = Integer(value, "timeout_seconds", 1, 86400),
                 SourceRevision = revision,
                 Soak = soak,
             };

@@ -67,6 +67,52 @@ namespace MCPForUnityTests.Editor.Tools
 
         private string Revision(Object table) => Inspect(table)["tables"][0].Value<string>("revision");
 
+        [Test]
+        public void LongLocalizedTextRoundTripsWithoutTruncation()
+        {
+            string value = new string('x', 16000);
+            string revision = Revision(frTable);
+            JObject result = Send(
+                "set_string_entry",
+                new JObject
+                {
+                    ["table_path"] = PathOf(frTable),
+                    ["key_id"] = "101",
+                    ["value"] = value,
+                    ["expected_revision"] = revision,
+                }
+            );
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(value, Get(Entry(frTable, 101), "Value"));
+            Assert.AreNotEqual(revision, Revision(frTable));
+        }
+
+        [Test]
+        public void LargeLocalizationTableIncludesKeysBeyondTheOldLimit()
+        {
+            for (int index = 0; index < 5000; index++)
+            {
+                long id = 1000 + index;
+                Call(shared, "AddKey", new[] { typeof(string), typeof(long) }, "Generated" + index, id);
+                Add(enTable, id, "Translation " + index);
+            }
+            EditorUtility.SetDirty(shared);
+            EditorUtility.SetDirty(enTable);
+            AssetDatabase.SaveAssets();
+            using (var stream = new System.IO.FileStream(PathOf(enTable), System.IO.FileMode.Append, System.IO.FileAccess.Write))
+            {
+                byte[] padding = System.Text.Encoding.ASCII.GetBytes("#" + new string('x', 8190) + "\n");
+                for (int index = 0; index < 256; index++)
+                    stream.Write(padding, 0, padding.Length);
+            }
+            JObject data = Inspect(enTable);
+            Assert.IsTrue(data.ToString().Contains("Generated4999"));
+            string first = (string)data["tables"][0]["revision"];
+            Assert.AreEqual(first, Revision(enTable), "Unchanged large table revisions must remain stable.");
+            Set(Entry(enTable, 5999L), "Value", "Changed final translation");
+            Assert.AreNotEqual(first, Revision(enTable), "Late-entry edits must invalidate the complete revision.");
+        }
+
         [SetUp]
         public void Setup()
         {

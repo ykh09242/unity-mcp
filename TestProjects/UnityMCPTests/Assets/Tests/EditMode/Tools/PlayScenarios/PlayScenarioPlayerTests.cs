@@ -13,6 +13,53 @@ namespace MCPForUnityTests
 {
     public sealed class PlayScenarioPlayerTests
     {
+        [Test]
+        public void LargeLoadedSceneKeepsLateTargetsAndCompleteMetrics()
+        {
+            Scene previous = SceneManager.GetActiveScene();
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            SceneManager.SetActiveScene(scene);
+            var host = new PlayScenarioPlayerHost(Array.Empty<string>());
+            try
+            {
+                for (int index = 0; index < 100001; index++)
+                    new GameObject(index == 100000 ? "late-large-target" : "filler");
+                var matches = PlayScenarioObjectCondition.Resolve(scene, new[] { "late-large-target" });
+                Assert.That(matches.Count, Is.EqualTo(1));
+                var result = host.Evaluate(new PlayScenarioStep { Action = "wait_object", Target = "late-large-target" }, true);
+                Assert.That(result.Ready, Is.True, result.Detail);
+                Assert.That(host.CaptureQueryCounts().HierarchyVisits, Is.EqualTo(100001));
+                var metrics = host.CaptureMetrics(1, 0);
+                Assert.That(metrics.ObjectCount, Is.GreaterThanOrEqualTo(100001));
+            }
+            finally
+            {
+                host.Release();
+                SceneManager.SetActiveScene(previous);
+                EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+
+        [Test]
+        public void LargePlayerSceneInventoryKeepsEveryRequiredScene()
+        {
+            var steps = new JArray();
+            for (int index = 0; index < 128; index++)
+                steps.Add(
+                    new JObject
+                    {
+                        ["name"] = "scene-" + index,
+                        ["action"] = "load_scene",
+                        ["scene"] = "Assets/scene-" + index + ".unity",
+                    }
+                );
+            var definition = PlayScenarioDefinition.Parse(new JObject { ["name"] = "large-player", ["steps"] = steps });
+            var manifest = PlayScenarioPlayerBundle.Create(definition, "fixture", "fixture");
+            var parsed = PlayScenarioPlayerBundle.Parse(manifest.ToString());
+            Assert.That(parsed.ScenePaths.Length, Is.EqualTo(128));
+            Assert.That(parsed.ScenePaths, Does.Contain("Assets/scene-127.unity"));
+        }
+
         private static PlayScenarioDefinition Definition() =>
             PlayScenarioDefinition.Parse(
                 new JObject
@@ -53,9 +100,9 @@ namespace MCPForUnityTests
         }
 
         [TestCase("repeat_count", 0)]
-        [TestCase("repeat_count", 11)]
+        [TestCase("repeat_count", 101)]
         [TestCase("timeout_seconds", 0)]
-        [TestCase("timeout_seconds", 1801)]
+        [TestCase("timeout_seconds", 86401)]
         public void RequestRejectsOutOfRangeOverrides(string field, int value)
         {
             JObject request = Request();

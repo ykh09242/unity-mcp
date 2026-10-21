@@ -66,7 +66,7 @@ namespace MCPForUnityTests.Editor.Services
             int visited = 0;
             IEnumerable<int> Items()
             {
-                for (int i = 0; i < 200000; i++)
+                for (int i = 0; i < BoundedResponseJson.MaxNodes * 2; i++)
                 {
                     visited++;
                     yield return i;
@@ -74,7 +74,7 @@ namespace MCPForUnityTests.Editor.Services
             }
             var response = TransportCommandResponse.FromObject(Items());
             Assert.AreEqual("error", (string)(response.Payload as JObject)?["status"]);
-            Assert.Less(visited, 200000);
+            Assert.Less(visited, BoundedResponseJson.MaxNodes * 2);
         }
 
         [TestCase(false)]
@@ -111,8 +111,8 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
-        [TestCase('x', 33 * 1024 * 1024)]
-        [TestCase('\u6f22', 12 * 1024 * 1024)]
+        [TestCase('x', 65 * 1024 * 1024)]
+        [TestCase('\u6f22', 22 * 1024 * 1024)]
         public void OversizedValuesAreRefusedDuringFreeze(char character, int count)
         {
             var value = new Values { Text = new string(character, count) };

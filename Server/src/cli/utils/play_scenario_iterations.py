@@ -1,5 +1,7 @@
 """Parse native repetition ledgers and conservatively infer legacy iteration accounting."""
 
+from models.play_scenario_limits import MAX_REPEATS
+
 from typing import Annotated, Final, Literal, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
@@ -30,7 +32,7 @@ class IterationResult(BaseModel):
     """One strictly parsed native repetition with state-specific timestamp evidence."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-    iteration: Annotated[int, Field(strict=True, ge=1, le=10)]
+    iteration: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]
     status: IterationStatus
     started_unix_ms: Timestamp | None
     finished_unix_ms: Timestamp | None
@@ -61,7 +63,9 @@ class _NativeLedger(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
     status: Annotated[str, Field(strict=True)] | None = None
     iteration_results_version: Annotated[int, Field(strict=True, ge=1, le=1)]
-    iteration_results: list[IterationResult] = Field(strict=True, min_length=1, max_length=10)
+    iteration_results: list[IterationResult] = Field(
+        strict=True, min_length=1, max_length=MAX_REPEATS
+    )
 
 
 def validate_iteration_results(
@@ -72,8 +76,8 @@ def validate_iteration_results(
     JSON dictionaries are the shared report boundary; parsed rows are immutable models.
     Explicit terminal admission also rejects active rows even if run status is missing.
     """
-    if type(repeat_count) is not int or not 1 <= repeat_count <= 10:
-        raise IterationResultsError("Iteration repeat_count must be an integer between 1 and 10")
+    if type(repeat_count) is not int or not 1 <= repeat_count <= MAX_REPEATS:
+        raise IterationResultsError("Iteration repeat_count must be an integer between 1 and 100")
     fields = {"iteration_results_version", "iteration_results"} & report.keys()
     if not fields:
         return None
@@ -123,7 +127,7 @@ class _LegacyStep(BaseModel):
     """Read optional historical step evidence; malformed rows provide no proof."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
-    iteration: Annotated[int, Field(strict=True, ge=1, le=10)]
+    iteration: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]
     status: str
     started_unix_ms: Timestamp | None = None
     finished_unix_ms: Timestamp | None = None

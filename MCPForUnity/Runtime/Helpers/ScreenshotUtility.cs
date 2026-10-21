@@ -86,11 +86,11 @@ namespace MCPForUnity.Runtime.Helpers
 
         // Support 8K UHD captures, with independent batch work and retained-image limits.
         public const int MaxCaptureDimension = 8192;
-        public const long MaxCapturePixels = 32L * 1024 * 1024;
+        public const long MaxCapturePixels = 64L * 1024 * 1024;
         public const int MaxSuperSize = 4;
         public const int MaxBatchShots = 128;
         public const int MaxOrbitElevations = 16;
-        public const long MaxBatchRenderedPixels = 256L * 1024 * 1024;
+        public const long MaxBatchRenderedPixels = 8L * 1024 * 1024 * 1024;
         public const long MaxRetainedTilePixels = 32L * 1024 * 1024;
         public const long MaxContactSheetPixels = 32L * 1024 * 1024;
 

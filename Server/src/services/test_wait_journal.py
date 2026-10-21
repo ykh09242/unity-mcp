@@ -46,7 +46,7 @@ class DeadlineCheckpoint(BaseModel):
     """Persisted clock evidence, never a new countdown after restart."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
-    remaining_seconds: float = Field(ge=0, le=60)
+    remaining_seconds: float = Field(ge=0, le=86400)
     checkpoint_wall: float
     wall_deadline: float
 
@@ -114,7 +114,7 @@ class WaitJournal:
     Each live record reserves TWO (ordinary response ceiling + metadata ceiling)
     slots. After terminal commit only actual file bytes remain charged. The
     current file and its sole .stage replacement fit that reservation together.
-    With the default 128 MiB quota this intentionally permits only ONE worst-case
+    With the default 256 MiB quota this intentionally permits only ONE worst-case
     active wait, even though a runtime's independent worker cap may be four.
 
     POSIX roots/entries must be current-user owned and private. Windows uses
@@ -151,7 +151,7 @@ class WaitJournal:
         clock: Callable[[], float] = time.time,
         result_bytes: int = MAX_RESPONSE_BYTES,
         metadata_bytes: int = 65_536,
-        quota_bytes: int = 128 * 1024 * 1024,
+        quota_bytes: int = 256 * 1024 * 1024,
         max_records: int = 256,
         ttl_seconds: float = 3600,
     ) -> None:

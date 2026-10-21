@@ -1,5 +1,7 @@
 """Bounded non-authoritative receipts from the owned Player main loop."""
 
+from models.play_scenario_limits import MAX_REPEATS, MAX_SCENARIO_STEPS
+
 from collections import deque
 from contextlib import ExitStack, contextmanager
 import ctypes
@@ -105,9 +107,9 @@ class PlayerProgress(BaseModel):
     heartbeat_unix_ms: Annotated[int, Field(strict=True, ge=0)]
     elapsed_ms: Annotated[int, Field(strict=True, ge=0)]
     phase: Annotated[str, Field(strict=True, max_length=64)]
-    iteration: Annotated[int, Field(strict=True, ge=0, le=10)]
+    iteration: Annotated[int, Field(strict=True, ge=0, le=MAX_REPEATS)]
     stage: Annotated[str, Field(strict=True, max_length=64)]
-    step_index: Annotated[int, Field(strict=True, ge=-1, le=63)]
+    step_index: Annotated[int, Field(strict=True, ge=-1, le=MAX_SCENARIO_STEPS - 1)]
     status: Annotated[str, Field(strict=True, max_length=64)]
     last_observation: Annotated[str, Field(strict=True, max_length=512)] | None = None
 
@@ -139,7 +141,11 @@ class ProgressObserver:
     """Mutable bounded observer retains one scalar receipt and one first integrity error."""
 
     def __init__(
-        self, identity: ProgressIdentity, stale_seconds: float = 30, *, max_iteration: int = 10
+        self,
+        identity: ProgressIdentity,
+        stale_seconds: float = 30,
+        *,
+        max_iteration: int = MAX_REPEATS,
     ) -> None:
         self.identity = identity
         self.stale_seconds = stale_seconds
@@ -158,7 +164,7 @@ class ProgressObserver:
             if path.is_symlink():
                 raise ValueError("progress is linked")
             encoded = read_progress_bytes(path)
-            parser = SoakPlayerProgress if self.max_iteration > 10 else PlayerProgress
+            parser = SoakPlayerProgress if self.max_iteration > MAX_REPEATS else PlayerProgress
             receipt = parser.model_validate_json(encoded)
             if receipt.iteration > self.max_iteration:
                 raise ValueError("progress iteration exceeds the owned request")

@@ -586,8 +586,8 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// Apply simple text edits specified by line/column ranges. Applies transactionally and validates result.
         /// </summary>
-        private const int MaxEditPayloadBytes = 64 * 1024;
-        private const int MaxPreviewTextBytes = 1024 * 1024;
+        private const int MaxEditPayloadBytes = 2048 * 1024;
+        private const int MaxPreviewTextBytes = 8 * 1024 * 1024;
 
         private static object ApplyTextEdits(
             string fullPath,
@@ -887,7 +887,7 @@ namespace MCPForUnity.Editor.Tools
                         status = "too_large",
                         preview = true,
                         limitBytes = MaxPreviewTextBytes,
-                        hint = "Inline preparation is limited to 1 MiB of combined original and candidate UTF-8 text.",
+                        hint = "Inline preparation is limited to 8 MiB of combined original and candidate UTF-8 text.",
                     }
                 );
 
@@ -1060,7 +1060,7 @@ namespace MCPForUnity.Editor.Tools
         {
             byte[] bytes = OrderedBytes(candidate, original.Bom);
             if ((long)original.ByteCount + bytes.Length > MaxPreviewTextBytes)
-                return OrderedRefusal("payload_too_large", "Original/final buffers exceed 1 MiB.");
+                return OrderedRefusal("payload_too_large", "Original/final buffers exceed 8 MiB.");
             bool noOp = original.Text == candidate;
             return new SuccessResponse(
                 "Prepared ordered buffer without writing or refreshing.",
@@ -1170,7 +1170,7 @@ namespace MCPForUnity.Editor.Tools
                 else if (!final)
                     return OrderedRefusal("invalid_edit", "An empty operation is permitted only for final validation.");
                 if ((long)original.ByteCount + sourceBytes.Length + OrderedBytes(candidate, bom).Length > MaxPreviewTextBytes)
-                    return OrderedRefusal("payload_too_large", "Original/current/next buffers exceed 1 MiB.");
+                    return OrderedRefusal("payload_too_large", "Original/current/next buffers exceed 8 MiB.");
                 if (final)
                 {
                     var validationError = ValidateOrderedFinal(candidate, options);
@@ -1217,7 +1217,7 @@ namespace MCPForUnity.Editor.Tools
                 if (original.RawSha != originalSha || original.Bom != bom)
                     return OrderedRefusal("stale_file", "Original bytes or BOM changed before commit.");
                 if ((long)original.ByteCount + bytes.Length > MaxPreviewTextBytes)
-                    return OrderedRefusal("payload_too_large", "Original/final buffers exceed 1 MiB.");
+                    return OrderedRefusal("payload_too_large", "Original/final buffers exceed 8 MiB.");
                 var validationError = ValidateOrderedFinal(candidate, options);
                 if (validationError != null)
                     return OrderedRefusal("validation_failed", JObject.FromObject(validationError).ToString());
@@ -4037,12 +4037,12 @@ namespace MCPForUnity.Editor.Tools
         {
             try
             {
-                const int maxSources = 256;
-                const int maxReferences = 512;
-                const long maxSourceBytes = 8 * 1024 * 1024;
+                const int maxSources = 4096;
+                const int maxReferences = 2048;
+                const long maxSourceBytes = 64 * 1024 * 1024;
                 if (context != null && System.Text.Encoding.UTF8.GetByteCount(contents) > maxSourceBytes)
                 {
-                    context?.Limitations.Add("Semantic validation skipped: the requested source exceeds 8 MiB.");
+                    context?.Limitations.Add("Semantic validation skipped: the requested source exceeds 64 MiB.");
                     return true;
                 }
                 var trees = new List<SyntaxTree>();
@@ -4068,7 +4068,7 @@ namespace MCPForUnity.Editor.Tools
                         totalBytes += bytes;
                         if (totalBytes > maxSourceBytes)
                         {
-                            context.Limitations.Add("Assembly semantic validation skipped: source context exceeds 8 MiB.");
+                            context.Limitations.Add("Assembly semantic validation skipped: source context exceeds 64 MiB.");
                             return true;
                         }
                         string text = requestedSource ? contents : ReadScriptContents(sourcePath);
@@ -4117,7 +4117,7 @@ namespace MCPForUnity.Editor.Tools
                     new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
                 );
 
-                using var cancellation = context == null ? new CancellationTokenSource() : new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                using var cancellation = context == null ? new CancellationTokenSource() : new CancellationTokenSource(TimeSpan.FromSeconds(60));
                 var diagnostics = compilation.GetDiagnostics(cancellation.Token);
                 if (context != null)
                 {
@@ -4501,24 +4501,27 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         private static void CheckDuplicateMethodSignatures(string contents, System.Collections.Generic.List<string> errors)
         {
-            // Step 1: Build a code-only view (comments/strings replaced with spaces)
-            var codeChars = contents.ToCharArray();
+            // This view needs token boundaries, not source offsets. Collapse masked
+            // comments/literals and whitespace so a large generated comment does not
+            // become millions of regex start positions or per-position scope entries.
+            var code = new System.Text.StringBuilder(Math.Min(contents.Length, 65536));
+            var lexer = new CSharpLexer(contents);
+            bool separator = true;
+            while (lexer.Advance(out char c))
             {
-                var lexer = new CSharpLexer(contents);
-                while (true)
+                if (lexer.InNonCode || char.IsWhiteSpace(c))
                 {
-                    int startPos = lexer.Position;
-                    if (!lexer.Advance(out _))
-                        break;
-                    if (lexer.InNonCode)
-                    {
-                        for (int i = startPos; i < lexer.Position && i < codeChars.Length; i++)
-                            if (codeChars[i] != '\n')
-                                codeChars[i] = ' ';
-                    }
+                    if (!separator)
+                        code.Append(' ');
+                    separator = true;
+                }
+                else
+                {
+                    code.Append(c);
+                    separator = false;
                 }
             }
-            var codeOnly = new string(codeChars);
+            var codeOnly = code.ToString();
 
             // Step 2: Build containing type name at each position via single pass
             var typePattern = new Regex(@"\b(?:class|struct|interface|record)\s+(\w+)", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));

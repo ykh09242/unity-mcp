@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
@@ -29,6 +30,31 @@ namespace MCPForUnityTests.Editor.Tools
         private class ExpensivePayload
         {
             public object Data => throw new InvalidOperationException("Do not serialize status payload.");
+        }
+
+        [Test]
+        public void LargeConfiguredBatchPreservesEveryIndexedOutcome()
+        {
+            const string key = EditorPrefKeys.BatchExecuteMaxCommands;
+            bool existed = EditorPrefs.HasKey(key);
+            int original = EditorPrefs.GetInt(key);
+            try
+            {
+                EditorPrefs.SetInt(key, 500);
+                var commands = new JArray();
+                for (int index = 0; index < 300; index++)
+                    commands.Add(new JObject { ["tool"] = "" });
+                var result = JObject.FromObject(BatchExecute.HandleCommand(new JObject { ["commands"] = commands }).GetAwaiter().GetResult());
+                Assert.AreEqual(300, ((JArray)result.SelectToken("data.results")).Count, result.ToString());
+                Assert.AreEqual(300, result.SelectToken("data.callFailureCount").Value<int>());
+            }
+            finally
+            {
+                if (existed)
+                    EditorPrefs.SetInt(key, original);
+                else
+                    EditorPrefs.DeleteKey(key);
+            }
         }
 
         [Test]

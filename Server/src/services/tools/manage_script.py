@@ -969,7 +969,7 @@ async def manage_script_capabilities(ctx: Context) -> dict[str, Any]:
         ]
         text_ops = ["replace_range", "regex_replace", "prepend", "append"]
         # Match the Editor's ManageScript.MaxEditPayloadBytes text-edit budget.
-        max_edit_payload_bytes = 64 * 1024
+        max_edit_payload_bytes = 2048 * 1024
         guards = {"using_guard": True}
         extras = {"get_sha": True}
         return {

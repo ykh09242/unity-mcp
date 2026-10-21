@@ -27,10 +27,10 @@ from transport.legacy.unity_connection import (
 logger = logging.getLogger(__name__)
 
 # Fallback used when the Unity-side configured limit is not yet known.
-DEFAULT_MAX_COMMANDS_PER_BATCH = 25
+DEFAULT_MAX_COMMANDS_PER_BATCH = 100
 
 # Hard ceiling matching the C# AbsoluteMaxCommandsPerBatch.
-ABSOLUTE_MAX_COMMANDS_PER_BATCH = 100
+ABSOLUTE_MAX_COMMANDS_PER_BATCH = 1000
 
 # Settings are mutable and belong to a selected user's editor instance.
 _LIMIT_CACHE_TTL_SECONDS = 5.0

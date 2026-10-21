@@ -50,15 +50,15 @@ class ScriptChangeFile(BaseModel):
     @classmethod
     def validate_contents(cls, value: str) -> str:
         """Bound actual encoded bytes rather than Unicode character count."""
-        if "\0" in value or len(value.encode("utf-8")) > 256 * 1024:
-            raise ValueError("Each candidate must be NUL-free UTF-8 of at most 256 KiB.")
+        if "\0" in value or len(value.encode("utf-8")) > 2 * 1024 * 1024:
+            raise ValueError("Each candidate must be NUL-free UTF-8 of at most 2 MiB.")
         return value
 
 
 @mcp_for_unity_tool(
     unity_target="manage_script",
     description=(
-        "Prepare, apply, inspect or recover 1–16 existing C# source replacements as one bounded "
+        "Prepare, apply, inspect or recover 1–256 existing C# source replacements as one bounded "
         "change set. Prepare takes final contents plus each original raw-byte SHA256 (including BOM), "
         "validates each file and retains a local recovery manifest without source writes. Apply checks "
         "all original source/metadata preconditions before writes. Failures retain ordered confirmed, "
@@ -86,11 +86,11 @@ async def script_change_set(
     params: dict[str, JsonValue]
     match action:
         case "prepare":
-            if change_set_id is not None or files is None or not 1 <= len(files) <= 16:
+            if change_set_id is not None or files is None or not 1 <= len(files) <= 256:
                 return {
                     "success": False,
                     "code": "invalid_change_set",
-                    "message": "prepare requires 1–16 files and no change_set_id.",
+                    "message": "prepare requires 1–256 files and no change_set_id.",
                 }
             paths = [file.path.casefold() for file in files]
             if len(set(paths)) != len(paths):
@@ -99,11 +99,11 @@ async def script_change_set(
                     "code": "duplicate_path",
                     "message": "Each source path may occur only once.",
                 }
-            if sum(len(file.contents.encode("utf-8")) for file in files) > 2 * 1024 * 1024:
+            if sum(len(file.contents.encode("utf-8")) for file in files) > 16 * 1024 * 1024:
                 return {
                     "success": False,
                     "code": "payload_too_large",
-                    "message": "Combined candidates exceed 2 MiB.",
+                    "message": "Combined candidates exceed 16 MiB.",
                 }
             params = {
                 "action": "prepare_change_set",

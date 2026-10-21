@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 from xml.etree import ElementTree
 
 from cli.main import cli
@@ -106,8 +107,31 @@ def child(monkeypatch, tmp_path):
         owned.append(process)
         return process
 
-    monkeypatch.setattr(player.subprocess, "Popen", start)
+    # Patch only the launcher; platform inspection may spawn its own Windows helper.
+    monkeypatch.setattr(
+        player,
+        "subprocess",
+        SimpleNamespace(
+            Popen=start,
+            PIPE=subprocess.PIPE,
+            STDOUT=subprocess.STDOUT,
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
     return modes, owned
+
+
+def test_small_manifest_read_does_not_allocate_its_maximum_allowance(tmp_path):
+    import tracemalloc
+
+    path = tmp_path / "small.json"
+    path.write_text('{"value": 1}', encoding="utf-8")
+    tracemalloc.start()
+    try:
+        assert player._read_json(path, player.MANIFEST_LIMIT) == {"value": 1}
+        assert tracemalloc.get_traced_memory()[1] < 1024 * 1024
+    finally:
+        tracemalloc.stop()
 
 
 def test_foreground_player_owns_unique_output_and_real_success_report(bundle, child):

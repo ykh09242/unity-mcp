@@ -5,7 +5,7 @@ import math
 from typing import Final
 
 MAX_RENDER_SIDE: Final[int] = 8192
-MAX_FRAME_PIXELS: Final[int] = 33_554_432
+MAX_FRAME_PIXELS: Final[int] = 67_108_864
 MAX_SUPER_SIZE: Final[int] = 4
 MAX_ORBIT_ELEVATIONS: Final[int] = 16
 MAX_ORBIT_SHOTS: Final[int] = 128

@@ -18,9 +18,9 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             Matrix4x4 rootToMeasurement,
             out Bounds bounds,
             out string errorCode,
-            int maxNodes = 10000,
+            int maxNodes = 250000,
             int maxDepth = 256,
-            int maxMeshes = 10000
+            int maxMeshes = 250000
         )
         {
             bounds = default;

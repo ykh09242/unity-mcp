@@ -24,9 +24,9 @@ from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
 
-MAX_TEXTURE_DIMENSION = 4096
-MAX_TEXTURE_PIXELS = 4096 * 4096
-MAX_NOISE_WORK = 32 * 1024 * 1024
+MAX_TEXTURE_DIMENSION = 8192
+MAX_TEXTURE_PIXELS = 8192 * 8192
+MAX_NOISE_WORK = 512 * 1024 * 1024
 
 
 def _validate_dimensions(width: int, height: int) -> str | None:
@@ -583,8 +583,8 @@ async def manage_texture(
     path: Annotated[str, "Output texture path (e.g., 'Assets/Textures/MyTexture.png')"]
     | None = None,
     # Dimensions (defaults to 64x64)
-    width: Annotated[int, "Texture width in pixels (1-4096, default: 64)"] | None = None,
-    height: Annotated[int, "Texture height in pixels (1-4096, default: 64)"] | None = None,
+    width: Annotated[int, "Texture width in pixels (1-8192, default: 64)"] | None = None,
+    height: Annotated[int, "Texture height in pixels (1-8192, default: 64)"] | None = None,
     # Solid fill (accepts both 0-255 integers and 0.0-1.0 normalized floats)
     fill_color: Annotated[
         list[int | float] | dict[str, int | float] | str,
@@ -619,7 +619,7 @@ async def manage_texture(
     | None = None,
     image_path: Annotated[
         str,
-        "Source PNG/JPG/JPEG for create/create_sprite (up to 4096 per side and 96 MiB encoded).",
+        "Source PNG/JPG/JPEG for create/create_sprite (up to 8192 per side and 512 MiB encoded).",
     ]
     | None = None,
     # Gradient settings

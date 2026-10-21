@@ -25,7 +25,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             var result = new PlayScenarioPerformanceOptions
             {
                 SampleLimit = PlayScenarioDefinition.Integer(value, "sample_limit", 1, 4096, 4096),
-                MaxDurationMs = value.Property("max_duration_ms") == null ? (int?)null : PlayScenarioDefinition.Integer(value, "max_duration_ms", 0, 120000, 0),
+                MaxDurationMs =
+                    value.Property("max_duration_ms") == null ? (int?)null : PlayScenarioDefinition.Integer(value, "max_duration_ms", 0, 3600000, 0),
                 MaxGcAllocatedBytesPerFrame =
                     value.Property("max_gc_allocated_bytes_per_frame") == null
                         ? (int?)null
@@ -56,6 +57,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
     public sealed class PlayScenarioScreenshotOptions
     {
+        public const int MaximumDimension = 8192;
+        public const long MaximumPixels = 64L * 1024 * 1024;
+        public const int MaximumPngBytes = 320 * 1024 * 1024;
+        public const long MaximumRunPngBytes = 8L * 1024 * 1024 * 1024;
+
         [JsonProperty("name")]
         public string Name;
 
@@ -72,10 +78,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             PlayScenarioDefinition.ValidateName(name);
             if (value.Property("width") == null || value.Property("height") == null)
                 throw new ArgumentException("Screenshot width and height are required.");
-            int width = PlayScenarioDefinition.Integer(value, "width", 1, 4096, 1);
-            int height = PlayScenarioDefinition.Integer(value, "height", 1, 4096, 1);
-            if ((long)width * height > 8388608)
-                throw new ArgumentException("Screenshot dimensions exceed the eight-megapixel budget.");
+            int width = PlayScenarioDefinition.Integer(value, "width", 1, MaximumDimension, 1);
+            int height = PlayScenarioDefinition.Integer(value, "height", 1, MaximumDimension, 1);
+            if ((long)width * height > MaximumPixels)
+                throw new ArgumentException("Screenshot dimensions exceed the 64-Mi-pixel budget.");
             return new PlayScenarioScreenshotOptions
             {
                 Name = name,

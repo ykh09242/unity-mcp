@@ -9,6 +9,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 {
     public sealed class PlayScenarioDefinition
     {
+        public const int MaximumRepeats = 100;
+        public const int MaximumSteps = 128;
+        public const int MaximumAuxiliarySteps = 32;
+        public const int MaximumSuiteScenarios = 64;
+        public const int MaximumDefinitionBytes = 1024 * 1024;
+        public const int MaximumReportBytes = 16 * 1024 * 1024;
+        public const int MaximumStepResults = (MaximumSteps + 2 * MaximumAuxiliarySteps) * MaximumRepeats;
+
         [JsonProperty("name")]
         public string Name;
 
@@ -110,10 +118,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Name = name,
                 Draft = value.Property("draft") == null ? (bool?)null : Boolean(value, "draft", false),
                 PollIntervalMs = Integer(value, "poll_interval_ms", 100, 2000, 250),
-                Steps = ParseSteps(value["steps"], 1, 32),
-                SetupSteps = value.Property("setup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["setup_steps"], 0, 16),
-                CleanupSteps = value.Property("cleanup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["cleanup_steps"], 0, 16),
-                CleanupTimeoutSeconds = Integer(value, "cleanup_timeout_seconds", 1, 300, 30),
+                Steps = ParseSteps(value["steps"], 1, MaximumSteps),
+                SetupSteps = value.Property("setup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["setup_steps"], 0, MaximumAuxiliarySteps),
+                CleanupSteps =
+                    value.Property("cleanup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["cleanup_steps"], 0, MaximumAuxiliarySteps),
+                CleanupTimeoutSeconds = Integer(value, "cleanup_timeout_seconds", 1, 1800, 30),
                 CompletionStableMs = Integer(value, "completion_stable_ms", 0, 10000, 250),
                 LogPolicy = ParseLogPolicy(value),
                 Metrics = ParseMetrics(value),
@@ -217,7 +226,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 {
                     Name = Text(step, "name", 128),
                     Action = Text(step, "action", 32),
-                    TimeoutSeconds = Integer(step, "timeout_seconds", 1, 120, 30),
+                    TimeoutSeconds = Integer(step, "timeout_seconds", 1, 3600, 30),
                     Performance = step.Property("performance") == null ? null : PlayScenarioPerformanceOptions.Parse(Object(step, "performance")),
                     Screenshot = step.Property("screenshot") == null ? null : PlayScenarioScreenshotOptions.Parse(Object(step, "screenshot")),
                 };
@@ -284,7 +293,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     parsed.Input = Object(step, "input");
                     var request = MCPForUnity.Editor.Tools.Input.InputSimulationRequest.ParseScenario(parsed.Input);
                     if (step.Property("wait_frames") != null)
-                        parsed.WaitFrames = Integer(step, "wait_frames", 1, 600, 1);
+                        parsed.WaitFrames = Integer(step, "wait_frames", 1, MCPForUnity.Editor.Tools.Input.InputSimulationRequest.MaxFrames, 1);
                     if (request.Action == "release_all" && parsed.WaitFrames.HasValue)
                         throw new ArgumentException("release_all does not accept wait_frames.");
                     parsed.Input = (JObject)parsed.Input.DeepClone();
@@ -321,7 +330,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     }
                     if (step.Property("stable_for_ms") != null)
                     {
-                        parsed.StableForMs = Integer(step, "stable_for_ms", 0, 60000, 0);
+                        parsed.StableForMs = Integer(step, "stable_for_ms", 0, 600000, 0);
                         if (parsed.StableForMs >= parsed.TimeoutSeconds * 1000)
                             throw new ArgumentException("stable_for_ms must be less than the step timeout.");
                     }
@@ -400,7 +409,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 {
                     if (parsed.Action != "wait_object" && parsed.Action != "wait_scene")
                         throw new ArgumentException("stable_for_ms is permitted only on wait actions.");
-                    parsed.StableForMs = Integer(step, "stable_for_ms", 0, 60000, 0);
+                    parsed.StableForMs = Integer(step, "stable_for_ms", 0, 600000, 0);
                     if (parsed.StableForMs >= parsed.TimeoutSeconds * 1000)
                         throw new ArgumentException("stable_for_ms must be less than the step timeout.");
                 }
@@ -498,8 +507,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return new PlayScenarioMetricsOptions
             {
                 Enabled = Boolean(options, "enabled", false),
-                WarmupIterations = Integer(options, "warmup_iterations", 0, 9, 1),
-                ConsecutiveIncreases = Integer(options, "consecutive_increases", 2, 9, 2),
+                WarmupIterations = Integer(options, "warmup_iterations", 0, MaximumRepeats - 1, 1),
+                ConsecutiveIncreases = Integer(options, "consecutive_increases", 2, MaximumRepeats - 1, 2),
                 ManagedGrowthBytes = Integer(options, "managed_growth_bytes", 0, int.MaxValue, 1048576),
                 AllocatedGrowthBytes = Integer(options, "allocated_growth_bytes", 0, int.MaxValue, 1048576),
                 ObjectGrowthCount = Integer(options, "object_growth_count", 0, 10000, 0),

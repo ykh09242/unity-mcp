@@ -58,7 +58,7 @@ async def test_suite_adapter_dispatches_once_when_action_is_valid(route, action,
         {"action": "suite_save", "suite": {**SUITE, "scenarios": ["one", "one"]}},
         {"action": "suite_save", "suite": {**SUITE, "tags": ["UPPER"]}},
         {"action": "suite_save", "suite": {**SUITE, "schema_version": True}},
-        {"action": "suite_save", "suite": {**SUITE, "scenarios": [f"s{i}" for i in range(17)]}},
+        {"action": "suite_save", "suite": {**SUITE, "scenarios": [f"s{i}" for i in range(65)]}},
         {"action": "suite_run", "name": "smoke", "job_id": JOB_ID},
         {"action": "suite_status", "job_id": JOB_ID},
         {"action": "suite_run", "name": "smoke", "source_revision": "\n"},
@@ -415,7 +415,7 @@ async def test_live_sdk_suite_schema_dispatches_expanded_definition_when_saved(r
     server = FastMCP("scenario-operations-contract")
     server.tool(manage_play_scenario)
     schema = (await server.list_tools(run_middleware=False))[0].parameters
-    assert schema["$defs"]["PlayScenarioSuite"]["properties"]["scenarios"]["maxItems"] == 16
+    assert schema["$defs"]["PlayScenarioSuite"]["properties"]["scenarios"]["maxItems"] == 64
     assert "suite_run" in schema["properties"]["action"]["enum"]
     assert "source_revision" in schema["properties"]
     async with Client(server, mode=mode) as client:

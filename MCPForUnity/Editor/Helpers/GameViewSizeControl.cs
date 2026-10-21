@@ -18,7 +18,7 @@ namespace MCPForUnity.Editor.Helpers
         private const string RestoreKey = "MCPForUnity.GameViewRestoreV1";
         private const string Prefix = "MCP ";
         private const int MaxDimension = 8192;
-        private const long MaxFixedPixels = 16777216;
+        private const long MaxFixedPixels = 64L * 1024 * 1024;
 
         private sealed class Selection
         {

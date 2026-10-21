@@ -86,11 +86,25 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void HundredsOfTypesKeepCompleteTotalsAndSmallObjectPreviews()
+        {
+            var a = new Snapshot { Session = 1, Format = 18 };
+            var b = new Snapshot { Session = 1, Format = 18 };
+            for (int i = 0; i < 513; i++)
+                Add(b, i.ToString(), 1, "Type" + i);
+            var result = MemorySnapshotComparison.Compare(a, b, 1);
+            Assert.AreEqual(513, result.Types.Count);
+            Assert.AreEqual(513, result.BytesB);
+            Assert.AreEqual(513, (int)result.Delta["added_count"]);
+            Assert.AreEqual(1, ((JArray)result.Delta["added"]).Count);
+        }
+
+        [Test]
         public void TypeAndByteWorkLimitsAreStillEnforced()
         {
             var a = new Snapshot();
             var b = new Snapshot();
-            for (int i = 0; i < 513; i++)
+            for (int i = 0; i < 4097; i++)
                 Add(a, i.ToString(), 1, "Type" + i);
             Assert.Throws<MemorySnapshotComparison.LimitException>(() => MemorySnapshotComparison.Compare(a, b, 1));
             a.Objects.Clear();

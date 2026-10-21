@@ -19,7 +19,7 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_scene_edits")]
     public static class ManageSceneEdits
     {
-        private const int MaxEdits = 64;
+        private const int MaxEdits = 1000;
         private const int MaxPreviews = 32;
         private const double PreviewLifetimeSeconds = 600;
         private static readonly Dictionary<string, Plan> Previews = new Dictionary<string, Plan>(StringComparer.Ordinal);
@@ -67,8 +67,8 @@ namespace MCPForUnity.Editor.Tools
                 EnsureEditMode();
                 if (parameters == null)
                     throw new ArgumentException("Parameters are required.");
-                if (parameters.ToString(Newtonsoft.Json.Formatting.None).Length > 65536)
-                    throw new ArgumentException("Scene edit request exceeds 65536 characters.");
+                if (parameters.ToString(Newtonsoft.Json.Formatting.None).Length > 4 * 1024 * 1024)
+                    throw new ArgumentException("Scene edit request exceeds 4 Mi characters.");
                 string action = RequiredString(parameters, "action");
                 switch (action)
                 {

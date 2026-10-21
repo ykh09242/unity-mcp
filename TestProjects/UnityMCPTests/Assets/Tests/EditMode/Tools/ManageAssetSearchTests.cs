@@ -245,10 +245,10 @@ namespace MCPForUnityTests.Editor.Tools
                 var first = Metadata(2, 1);
                 Assert.IsTrue(first.Value<bool>("success"), first.ToString());
                 string token = first["data"].Value<string>("searchSnapshot");
-                now = 159.999;
+                now = 1899.999;
                 Assert.IsTrue(Metadata(2, 2, token).Value<bool>("success"));
                 // When: reaching the original deadline, despite the recent read.
-                now = 160;
+                now = 1900;
                 var expired = Metadata(2, 2, token);
                 // Then: no read extends the token lifetime, and a fresh query is the positive control.
                 Assert.AreEqual("stale_search_snapshot", expired.Value<string>("code"));
@@ -369,10 +369,44 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void MetadataRowsBeyondOldLimitRemainFullyPageable()
+        {
+            var rows = new List<JObject>();
+            var append = SnapshotType.GetMethod("TryAppendRow", BindingFlags.NonPublic | BindingFlags.Static);
+            int bytes = 0;
+            for (int i = 0; i < 5000; i++)
+            {
+                object[] input =
+                {
+                    rows,
+                    new JObject { ["path"] = "Assets/Item" + i + ".asset" },
+                    bytes,
+                };
+                Assert.IsTrue((bool)append.Invoke(null, input), "Metadata row " + i + " must be admitted.");
+                bytes = (int)input[2];
+            }
+            var type = SnapshotType.GetNestedType("Snapshot", BindingFlags.NonPublic);
+            object snapshot = Activator.CreateInstance(
+                type,
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                null,
+                new object[] { "owned", "query", rows, bytes, double.MaxValue, "future" },
+                null
+            );
+            long epoch = (long)SnapshotType.GetField("Epoch", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            var page = SnapshotType.GetMethod("Page", BindingFlags.NonPublic | BindingFlags.Static);
+            JObject result = JObject.FromObject(page.Invoke(null, new object[] { snapshot, 1000, 5, epoch }));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(5000, (int)result["data"]["totalAssets"]);
+            Assert.AreEqual("Assets/Item4999.asset", (string)result["data"]["assets"][999]["path"]);
+            Assert.IsFalse((bool)result["data"]["hasMore"]);
+        }
+
+        [Test]
         public void RowLimit_RefusesTheNextRowWithoutAppending()
         {
             // Given: the documented maximum count, independent of production constants.
-            var rows = Enumerable.Range(0, 4096).Select(_ => new JObject { ["path"] = "owned" }).ToList();
+            var rows = Enumerable.Repeat(new JObject { ["path"] = "owned" }, 250000).ToList();
             object[] arguments =
             {
                 rows,
@@ -383,7 +417,7 @@ namespace MCPForUnityTests.Editor.Tools
             bool accepted = (bool)SnapshotType.GetMethod("TryAppendRow", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, arguments);
             // Then: no truncated-success snapshot can be built past the limit.
             Assert.IsFalse(accepted);
-            Assert.AreEqual(4096, rows.Count);
+            Assert.AreEqual(250000, rows.Count);
             Assert.AreEqual(0, arguments[2]);
         }
 
@@ -395,9 +429,9 @@ namespace MCPForUnityTests.Editor.Tools
             int bytes = Encoding.UTF8.GetByteCount(row.ToString(Formatting.None));
             var rows = new List<JObject>();
             var append = SnapshotType.GetMethod("TryAppendRow", BindingFlags.NonPublic | BindingFlags.Static);
-            object[] exact = { rows, row, 8 * 1024 * 1024 - bytes };
+            object[] exact = { rows, row, 64 * 1024 * 1024 - bytes };
             Assert.IsTrue((bool)append.Invoke(null, exact));
-            Assert.AreEqual(8 * 1024 * 1024, exact[2]);
+            Assert.AreEqual(64 * 1024 * 1024, exact[2]);
             // When: appending even one additional row.
             object[] overflow = { rows, row, exact[2] };
             bool accepted = (bool)append.Invoke(null, overflow);
@@ -487,7 +521,7 @@ namespace MCPForUnityTests.Editor.Tools
             string token = Metadata(2, 1)["data"].Value<string>("searchSnapshot");
             var row = new JObject { ["path"] = "owned" };
             int bytes = Encoding.UTF8.GetByteCount(row.ToString(Formatting.None));
-            object[] arguments = { new List<JObject>(), row, 8 * 1024 * 1024 - bytes };
+            object[] arguments = { new List<JObject>(), row, 64 * 1024 * 1024 - bytes };
             // When: the same incremental admission method needs the whole accounted budget.
             Assert.IsTrue((bool)SnapshotType.GetMethod("TryAppendRow", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, arguments));
             // Then: previous retained rows have already been evicted, before the new row is retained.
@@ -600,7 +634,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 var entries = (System.Collections.IDictionary)SnapshotType.GetField("Entries", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
                 Assert.AreEqual(1, entries.Count);
-                now += 61;
+                now += 1801;
                 yield return null;
                 yield return null;
                 Assert.AreEqual(0, entries.Count, "Expired rows must be released even when no new search arrives.");

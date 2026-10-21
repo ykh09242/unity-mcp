@@ -22,12 +22,12 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
         internal static object Read(JObject parameters)
         {
-            int maximum = MemoryAnalysisParams.Integer(parameters, "max_objects", 1, 4096, 1024);
+            int maximum = MemoryAnalysisParams.Integer(parameters, "max_objects", 1, 1000000, 250000);
             int outputLimit = MemoryAnalysisParams.Integer(parameters, "object_limit", 1, 256, 128);
             bool references = MemoryAnalysisParams.Boolean(parameters, "include_references", true);
             bool objects = MemoryAnalysisParams.Boolean(parameters, "include_objects", false);
-            if (!(parameters["targets"] is JArray targets) || targets.Count < 1 || targets.Count > 32)
-                throw new ArgumentException("targets must contain 1–32 loaded hierarchy GameObject IDs.");
+            if (!(parameters["targets"] is JArray targets) || targets.Count < 1 || targets.Count > 256)
+                throw new ArgumentException("targets must contain 1–256 loaded hierarchy GameObject IDs.");
             var roots = new HashSet<GameObject>();
             foreach (JToken token in targets)
             {
@@ -42,6 +42,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             var rows = new Dictionary<Object, Row>();
             int work = 0;
             int missingComponents = 0;
+            var components = new List<Component>();
             try
             {
                 foreach (GameObject root in roots)
@@ -58,7 +59,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
                         if (depth > 128 || go.transform.childCount > maximum)
                             throw new MemoryWorkLimit();
                         Visit(go, owner, 0);
-                        foreach (Component component in go.GetComponents<Component>())
+                        go.GetComponents(components);
+                        foreach (Component component in components)
                         {
                             if (component == null)
                             {
@@ -75,7 +77,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     {
                         if (value == null || !seen.Add(value))
                             return;
-                        if (++work > 65536 || depth > 32)
+                        if (++work > 4000000 || depth > 32)
                             throw new MemoryWorkLimit();
                         if (!rows.TryGetValue(value, out Row row))
                         {
@@ -125,7 +127,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 foreach (Row row in rows.Values)
                     total = checked(total + row.Bytes);
                 var types = rows.Values.GroupBy(row => row.Object.GetType().FullName).OrderBy(group => group.Key, StringComparer.Ordinal).ToArray();
-                if (types.Length > 256)
+                if (types.Length > 4096)
                     throw new MemoryWorkLimit();
                 var result = new JObject
                 {
@@ -178,7 +180,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
                     new
                     {
                         max_objects = maximum,
-                        work_limit = 65536,
+                        work_limit = 4000000,
                         message = "No successful partial total is returned after a work/depth/output type budget is exceeded.",
                     }
                 );

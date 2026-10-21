@@ -34,6 +34,18 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         [Test]
+        public void SubstantialRecordingKeepsAllObservedEventsAndLongSelectors()
+        {
+            var draft = new PlayScenarioRecordingDraft("large-recording", Menu, 127);
+            for (int index = 0; index < 127; index++)
+                Assert.That(draft.Click(new PlayScenarioRecordedTarget { Scene = Menu, Target = "Canvas/" + new string('x', 1000) }), Is.True);
+            Assert.That(draft.Definition().Steps.Count, Is.EqualTo(128));
+            Assert.That(draft.Status, Is.EqualTo("limit_reached"));
+            Assert.That(draft.Click(new PlayScenarioRecordedTarget { Scene = Menu, Target = "Canvas/Extra" }), Is.False);
+            Assert.That(draft.Definition().Steps.Last().Target.Length, Is.EqualTo(1007));
+        }
+
+        [Test]
         public void RecordedTransitionsPreserveActionsWithoutInventedStateOrTiming()
         {
             var draft = new PlayScenarioRecordingDraft("menu-draft", Menu);
@@ -62,7 +74,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(draft.Definition().Steps.Count, Is.EqualTo(3));
             Assert.That((int)draft.Snapshot()["event_count"], Is.EqualTo(2));
             Assert.That(draft.Snapshot()["diagnostics"].Count(), Is.EqualTo(1));
-            Assert.Throws<ArgumentException>(() => new PlayScenarioRecordingDraft("oversized-draft", Menu, 32));
+            Assert.Throws<ArgumentException>(() => new PlayScenarioRecordingDraft("oversized-draft", Menu, 128));
         }
 
         [Test]

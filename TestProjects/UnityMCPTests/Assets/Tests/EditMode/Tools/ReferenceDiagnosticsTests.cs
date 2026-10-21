@@ -74,6 +74,31 @@ namespace MCPForUnityTests.EditMode.Tools
             }
         }
 
+        [Test]
+        public void LargeAssetReferenceRequestHashesCompleteSourceWithoutSmallProjectClamps()
+        {
+            string path = root + "/large.bytes";
+            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                stream.SetLength(17 * 1024 * 1024);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            JObject response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "get_dependencies",
+                        ["path"] = path,
+                        ["scanRoot"] = root,
+                        ["maxAssets"] = 250000,
+                        ["maxWork"] = 4000000,
+                    }
+                )
+            );
+            JToken data = Success(response);
+            Assert.That((bool)data["scanComplete"], Is.True);
+            Assert.That((int)data["maxAssets"], Is.EqualTo(250000));
+            Assert.That(new FileInfo(path).Length, Is.EqualTo(17 * 1024 * 1024));
+        }
+
         private Scene OwnedScene()
         {
             // The helper-owned saved base makes additive creation safe without touching caller scenes.

@@ -34,8 +34,10 @@ and connection reuse. A retry can use another address only from the same validat
 
 Redirects (301, 302, 303, 307, 308) are processed manually, with URL and DNS validation
 at every hop, including redirects to the same hostname. At most five redirects are allowed.
-Requests have a two-minute total deadline, honor job cancellation and buffer at most
-512 MiB. Only successful response bodies are returned for asset import. Rejected URL
+Requests have a one-hour total deadline and honor job cancellation. Successful
+artifacts stream into owned project-contained temporary files, up to 8 GiB, using
+64 KiB buffers and incremental hashes. Only successful responses reach asset import;
+cancellation, failure and reload dispose temporary file ownership. Rejected URL
 messages omit the URL so signed query parameters do not appear in logs.
 
 Provider API requests also disable automatic redirects. They remain on their existing

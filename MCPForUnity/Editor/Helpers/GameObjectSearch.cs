@@ -26,11 +26,11 @@ namespace MCPForUnity.Editor.Helpers
     internal static class GameObjectSearch
     {
         internal const int WorkLimit = 4096;
-        internal const int RootLimit = 4096;
-        internal const int SceneLimit = 32;
+        internal const int RootLimit = 250000;
+        internal const int SceneLimit = 256;
         internal const int OutputLimit = 16384;
         private const int CacheLimit = 32;
-        private const double Lifetime = 30;
+        private const double Lifetime = 300;
         private static readonly Dictionary<string, State> States = new Dictionary<string, State>();
         private static int _epoch;
 
@@ -179,7 +179,7 @@ namespace MCPForUnity.Editor.Helpers
                     // Unity obtains all roots in one synchronous native operation. Admit BEFORE that call.
                     int count = scene.rootCount;
                     if (count > RootLimit)
-                        throw Limit("Selected scene exceeds the 4096-root admission limit.");
+                        throw Limit("Selected scene exceeds the 250000-root admission limit.");
                     var roots = new List<GameObject>(count);
                     token.ThrowIfCancellationRequested();
                     BeforeRootEnumerationForTests?.Invoke();
@@ -599,7 +599,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 int count = SceneManager.sceneCount;
                 if (count > SceneLimit)
-                    throw Limit("all_loaded supports at most 32 SceneManager entries.");
+                    throw Limit("all_loaded supports at most 256 SceneManager entries.");
                 for (int i = 0; i < count; i++)
                 {
                     token.ThrowIfCancellationRequested();
@@ -620,7 +620,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 int count = SceneManager.sceneCount;
                 if (count > SceneLimit)
-                    throw Limit("all_loaded supports at most 32 SceneManager entries.");
+                    throw Limit("all_loaded supports at most 256 SceneManager entries.");
                 if (selected.ManagerIndex < 0 || selected.ManagerIndex >= count)
                     throw Stale();
                 scene = SceneManager.GetSceneAt(selected.ManagerIndex);
@@ -642,7 +642,7 @@ namespace MCPForUnity.Editor.Helpers
         {
             int roots = scene.rootCount;
             if (roots > RootLimit)
-                throw Limit("Selected scene exceeds the 4096-root admission limit. Handle: " + scene.handle);
+                throw Limit("Selected scene exceeds the 250000-root admission limit. Handle: " + scene.handle);
             result.Add(
                 new SceneInfo
                 {

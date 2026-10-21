@@ -1,5 +1,7 @@
 """Strict user-project regression profiles, independent of repository QA presets."""
 
+from models.play_scenario_limits import MAX_REPEATS
+
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
@@ -19,15 +21,15 @@ class Execution(ProfileValue):
     kind: Literal["run", "soak", "session"] = "run"
     build_directory: Annotated[str, Field(min_length=1, max_length=1024)]
     graphical: bool = False
-    timeout_seconds: Annotated[int, Field(ge=1, le=1800)] = 300
-    cleanup_wait_seconds: Annotated[int, Field(ge=1, le=600)] = 360
+    timeout_seconds: Annotated[int, Field(ge=1, le=86400)] = 300
+    cleanup_wait_seconds: Annotated[int, Field(ge=1, le=3600)] = 1860
     expected_build_revision: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     expected_build_id: Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")] | None = None
-    repeat_count: Annotated[int, Field(ge=1, le=10)] = 1
+    repeat_count: Annotated[int, Field(ge=1, le=MAX_REPEATS)] = 1
     soak: SoakRequest | None = None
     session_mode: Literal["shared-batches", "fresh-process", "compare"] = "shared-batches"
     iterations: Annotated[int, Field(ge=1, le=1000)] = 100
-    batch_size: Annotated[int, Field(ge=2, le=10)] = 10
+    batch_size: Annotated[int, Field(ge=2, le=MAX_REPEATS)] = 10
     max_runtime_seconds: Annotated[int, Field(ge=1, le=86400)] = 3600
     failure_policy: Literal["stop", "continue"] = "stop"
     retain_reports: Annotated[int, Field(ge=1, le=64)] = 16

@@ -1,5 +1,13 @@
 """Validated wire definitions shared by the play-scenario tool and CLI."""
 
+from models.play_scenario_limits import (
+    DEFINITION_BYTES,
+    MAX_AUXILIARY_STEPS,
+    MAX_REPEATS,
+    MAX_SCENARIO_STEPS,
+    MAX_SUITE_SCENARIOS,
+)
+
 import json
 from typing import Annotated, Literal, assert_never
 from unicodedata import category
@@ -23,8 +31,8 @@ from pydantic import (
 
 ScenarioName = Annotated[str, Field(strict=True, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 JobId = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{32}$")]
-RepeatCount = Annotated[int, Field(strict=True, ge=1, le=10)]
-RunTimeout = Annotated[int, Field(strict=True, ge=1, le=1800)]
+RepeatCount = Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)]
+RunTimeout = Annotated[int, Field(strict=True, ge=1, le=86400)]
 ScenarioAction = Literal[
     "save",
     "get",
@@ -273,8 +281,8 @@ class PlayScenarioMetricsOptions(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     enabled: Annotated[bool, Field(strict=True)] = False
-    warmup_iterations: Annotated[int, Field(strict=True, ge=0, le=9)] = 1
-    consecutive_increases: Annotated[int, Field(strict=True, ge=2, le=9)] = 2
+    warmup_iterations: Annotated[int, Field(strict=True, ge=0, le=MAX_REPEATS - 1)] = 1
+    consecutive_increases: Annotated[int, Field(strict=True, ge=2, le=MAX_REPEATS - 1)] = 2
     managed_growth_bytes: Annotated[int, Field(strict=True, ge=0, le=2147483647)] = 1048576
     allocated_growth_bytes: Annotated[int, Field(strict=True, ge=0, le=2147483647)] = 1048576
     object_growth_count: Annotated[int, Field(strict=True, ge=0, le=10000)] = 0
@@ -306,7 +314,7 @@ class PlayScenarioPerformanceOptions(BaseModel):
     """Opt into duration and selected real-frame budgets; unsupported counters fail explicitly."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-    max_duration_ms: Annotated[int, Field(strict=True, ge=0, le=120000)] | None = None
+    max_duration_ms: Annotated[int, Field(strict=True, ge=0, le=3600000)] | None = None
     max_frame_time_p95_ms: (
         Annotated[float, Field(strict=True, ge=0, le=120000, allow_inf_nan=False)] | None
     ) = None
@@ -328,14 +336,14 @@ class PlayScenarioScreenshotOptions(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: ScenarioName
-    width: Annotated[int, Field(strict=True, ge=1, le=4096)]
-    height: Annotated[int, Field(strict=True, ge=1, le=4096)]
+    width: Annotated[int, Field(strict=True, ge=1, le=8192)]
+    height: Annotated[int, Field(strict=True, ge=1, le=8192)]
 
     @model_validator(mode="after")
     def check_pixel_budget(self) -> "PlayScenarioScreenshotOptions":
-        """Match the native eight-megapixel capture bound."""
-        if self.width * self.height > 8388608:
-            raise ValueError("Screenshot dimensions exceed the eight-megapixel budget")
+        """Match the native 64-Mi-pixel capture bound."""
+        if self.width * self.height > 67108864:
+            raise ValueError("Screenshot dimensions exceed the 64-Mi-pixel budget")
         return self
 
 
@@ -347,7 +355,7 @@ class ScenarioInput(BaseModel):
     state: Literal["press", "move", "release"] = "press"
     key: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
     button: Literal["left", "right", "middle"] = "left"
-    frames: Annotated[int, Field(strict=True, ge=1, le=600)] = 1
+    frames: Annotated[int, Field(strict=True, ge=1, le=36000)] = 1
     touch_id: Annotated[int, Field(strict=True, ge=1, le=10)] = 1
     position: (
         list[Annotated[float, Field(strict=True, ge=0, le=1000000, allow_inf_nan=False)]] | None
@@ -459,7 +467,7 @@ class ScenarioStep(BaseModel):
     name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     action: StepAction
     input: ScenarioInput | None = None
-    wait_frames: Annotated[int, Field(strict=True, ge=1, le=600)] | None = None
+    wait_frames: Annotated[int, Field(strict=True, ge=1, le=36000)] | None = None
     scene: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
     load_mode: Literal["single", "additive"] | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -485,12 +493,12 @@ class ScenarioStep(BaseModel):
         default=None, exclude_if=lambda value: value is None
     )
     click_mode: Literal["direct", "raycast"] | None = None
-    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=120)] = 30
+    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=3600)] = 30
     count: Annotated[int, Field(strict=True, ge=0, le=10000)] | None = None
     active: Annotated[bool, Field(strict=True)] | None = None
     component: Annotated[str, Field(strict=True, min_length=1, max_length=256)] | None = None
     property: PlayScenarioPropertyCondition | None = None
-    stable_for_ms: Annotated[int, Field(strict=True, ge=0, le=60000)] | None = None
+    stable_for_ms: Annotated[int, Field(strict=True, ge=0, le=600000)] | None = None
     performance: PlayScenarioPerformanceOptions | None = None
     screenshot: PlayScenarioScreenshotOptions | None = None
 
@@ -828,10 +836,14 @@ class PlayScenario(BaseModel):
     resources: PlayScenarioResourceOptions = Field(default_factory=PlayScenarioResourceOptions)
     query_budget: PlayScenarioQueryBudget = Field(default_factory=PlayScenarioQueryBudget)
     poll_interval_ms: Annotated[int, Field(strict=True, ge=100, le=2000)] = 250
-    steps: Annotated[list[ScenarioStep], Field(min_length=1, max_length=32)]
-    setup_steps: Annotated[list[ScenarioStep], Field(max_length=16)] = Field(default_factory=list)
-    cleanup_steps: Annotated[list[ScenarioStep], Field(max_length=16)] = Field(default_factory=list)
-    cleanup_timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=300)] = 30
+    steps: Annotated[list[ScenarioStep], Field(min_length=1, max_length=MAX_SCENARIO_STEPS)]
+    setup_steps: Annotated[list[ScenarioStep], Field(max_length=MAX_AUXILIARY_STEPS)] = Field(
+        default_factory=list
+    )
+    cleanup_steps: Annotated[list[ScenarioStep], Field(max_length=MAX_AUXILIARY_STEPS)] = Field(
+        default_factory=list
+    )
+    cleanup_timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=1800)] = 30
     completion_stable_ms: Annotated[int, Field(strict=True, ge=0, le=10000)] = 250
     log_policy: PlayScenarioLogPolicy = Field(default_factory=PlayScenarioLogPolicy)
     metrics: PlayScenarioMetricsOptions = Field(default_factory=PlayScenarioMetricsOptions)
@@ -841,16 +853,16 @@ class PlayScenario(BaseModel):
 
     parameters: (
         Annotated[
-            dict[ScenarioName, ScenarioParameter], Field(strict=True, min_length=1, max_length=16)
+            dict[ScenarioName, ScenarioParameter], Field(strict=True, min_length=1, max_length=64)
         ]
         | None
     ) = Field(default=None, exclude_if=lambda value: value is None)
     parameter_bindings: (
-        Annotated[list[ScenarioParameterBinding], Field(strict=True, min_length=1, max_length=32)]
+        Annotated[list[ScenarioParameterBinding], Field(strict=True, min_length=1, max_length=256)]
         | None
     ) = Field(default=None, exclude_if=lambda value: value is None)
     datasets: (
-        Annotated[list[ScenarioDataset], Field(strict=True, min_length=1, max_length=16)] | None
+        Annotated[list[ScenarioDataset], Field(strict=True, min_length=1, max_length=64)] | None
     ) = Field(default=None, exclude_if=lambda value: value is None)
 
     def materialize(self, dataset: str | None = None) -> "PlayScenario":
@@ -892,16 +904,13 @@ class PlayScenario(BaseModel):
         if first.action != "load_scene" or first.load_mode == "additive":
             message = "The first executed step must be a Single load_scene anchor"
             raise ValueError(message)
-        if len(self.setup_steps) + len(self.steps) + len(self.cleanup_steps) > 64:
-            message = "The combined step count must not exceed 64"
-            raise ValueError(message)
         encoded = json.dumps(
             self.model_dump(mode="json", exclude_none=True),
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
-        if len(encoded) > 65536:
-            message = "Scenario definition exceeds 64 KiB"
+        if len(encoded) > DEFINITION_BYTES:
+            message = "Scenario definition exceeds 1 MiB"
             raise ValueError(message)
         return self
 
@@ -912,8 +921,12 @@ class PlayScenarioSuite(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     schema_version: Annotated[int, Field(strict=True, ge=1, le=1)] = 1
     name: ScenarioName
-    scenarios: Annotated[list[ScenarioName], Field(max_length=16)] = Field(default_factory=list)
-    tags: Annotated[list[ScenarioName], Field(max_length=16)] = Field(default_factory=list)
+    scenarios: Annotated[list[ScenarioName], Field(max_length=MAX_SUITE_SCENARIOS)] = Field(
+        default_factory=list
+    )
+    tags: Annotated[list[ScenarioName], Field(max_length=MAX_SUITE_SCENARIOS)] = Field(
+        default_factory=list
+    )
     failure_policy: Literal["stop", "continue"] = "stop"
 
     @field_validator("scenarios", "tags")

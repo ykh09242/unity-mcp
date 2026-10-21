@@ -1,5 +1,7 @@
 """Admit only native report-referenced bounded PNGs for owned artifact retention."""
 
+from models.play_scenario_limits import MAX_STEP_RESULTS
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -10,8 +12,8 @@ from cli.utils.play_scenario_analysis_io import AnalysisError, read_json, safe_l
 from cli.utils.play_scenario_visual_compare import _load_png
 from cli.utils.play_scenario_visual_reports import ScreenshotEvidence
 
-CHECKPOINT_BYTES_LIMIT: Final = 64 * 1024**2
-CHECKPOINT_FILE_LIMIT: Final = 4096
+CHECKPOINT_BYTES_LIMIT: Final = 8 * 1024**3
+CHECKPOINT_FILE_LIMIT: Final = MAX_STEP_RESULTS
 
 
 class _CaptureStep(BaseModel):
@@ -21,7 +23,7 @@ class _CaptureStep(BaseModel):
 
 class _CaptureReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
-    steps: list[_CaptureStep] = Field(default_factory=list, max_length=2048)
+    steps: list[_CaptureStep] = Field(default_factory=list, max_length=MAX_STEP_RESULTS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +83,7 @@ def admit_checkpoint_artifacts(
         byte_count = path.lstat().st_size
         total += byte_count
         if total > CHECKPOINT_BYTES_LIMIT:
-            raise AnalysisError("Checkpoint PNG aggregate exceeds 64 MiB")
+            raise AnalysisError("Checkpoint PNG aggregate exceeds 8 GiB")
         artifacts.append(CheckpointArtifact(filename, byte_count))
     for filename, capture in captures.items():
         path = root / filename

@@ -16,7 +16,7 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("refresh_unity", AutoRegister = false)]
     public static class RefreshUnity
     {
-        private const int DefaultWaitTimeoutSeconds = 60;
+        private const int DefaultWaitTimeoutSeconds = 300;
 
         /// <summary>Backstop on the wait for compilation to begin. Not the normal
         /// exit: RequestScriptCompilation records a pending request that the

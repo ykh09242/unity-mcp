@@ -19,7 +19,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     /// <summary>Bounded, metadata-only selection from the same archive that will be extracted.</summary>
     internal static class ModelArchiveSelection
     {
-        internal const int MaxCandidates = 128;
+        internal const int MaxCandidates = 1024;
         internal const int MaxPathBytes = 512;
         internal const int MaxDepth = 32;
         private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -151,7 +151,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (!directory && IsModel(path))
                 {
                     if (candidates.Count == maxCandidates)
-                        throw Limit(evidence, "candidate_count", "Archive exceeds the 128-model candidate limit; split the archive before importing.");
+                        throw Limit(
+                            evidence,
+                            "candidate_count",
+                            $"Archive exceeds the {maxCandidates}-model candidate limit; split the archive before importing."
+                        );
                     candidates.Add(path);
                 }
             }

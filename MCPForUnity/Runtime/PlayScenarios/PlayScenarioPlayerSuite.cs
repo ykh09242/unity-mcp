@@ -15,7 +15,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public static JObject Create(JObject request)
         {
             if (request == null || Encoding.UTF8.GetByteCount(request.ToString(Formatting.None)) > PlayScenarioPlayerBundle.Limit)
-                throw new ArgumentException("Player suite request exceeds one MiB.");
+                throw new ArgumentException("Player suite request exceeds its manifest byte budget.");
             PlayScenarioPlayerBundle.Fields(
                 request,
                 "name",
@@ -35,8 +35,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
             string policy = request.Property("failure_policy") == null ? "stop" : PlayScenarioPlayerBundle.Text(request, "failure_policy", 8);
             if (policy != "stop" && policy != "continue")
                 throw new ArgumentException("Player suite failure_policy must be stop or continue.");
-            if (!(request["children"] is JArray inputs) || inputs.Count < 1 || inputs.Count > 16)
-                throw new ArgumentException("Player suite requires 1-16 distinct frozen children.");
+            if (!(request["children"] is JArray inputs) || inputs.Count < 1 || inputs.Count > PlayScenarioDefinition.MaximumSuiteScenarios)
+                throw new ArgumentException("Player suite requires 1-64 distinct frozen children.");
             string buildId = request.Property("build_id") == null ? Guid.NewGuid().ToString("N") : PlayScenarioPlayerBundle.Text(request, "build_id", 32);
             string revision = PlayScenarioPlayerBundle.OptionalRevision(request, "build_source_revision");
             var children = new JArray();
@@ -69,8 +69,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 );
                 scenes.UnionWith(PlayScenarioPlayerBundle.Scenes(definition));
             }
-            if (scenes.Count > 64)
-                throw new ArgumentException("Player suite scene union exceeds 64 scenes.");
+            if (scenes.Count > 256)
+                throw new ArgumentException("Player suite scene union exceeds 256 scenes.");
             var manifest = new JObject
             {
                 ["schema_version"] = 3,
@@ -116,8 +116,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
             string policy = PlayScenarioPlayerBundle.Text(value, "failure_policy", 8);
             if (PlayScenarioPlayerBundle.Text(value, "isolation", 32) != "fresh-process" || (policy != "stop" && policy != "continue"))
                 throw new ArgumentException("Player suites require fresh-process isolation and stop/continue failure policy.");
-            if (!(value["children"] is JArray inputs) || inputs.Count < 1 || inputs.Count > 16)
-                throw new ArgumentException("Player suite requires 1-16 children.");
+            if (!(value["children"] is JArray inputs) || inputs.Count < 1 || inputs.Count > PlayScenarioDefinition.MaximumSuiteScenarios)
+                throw new ArgumentException("Player suite requires 1-64 children.");
             if (PlayScenarioPlayerBundle.Text(value, "suite_hash", 64) != Hash(value))
                 throw new ArgumentException("Player suite frozen identity does not match.");
             PlayScenarioPlayerPayload.ValidateManifest(value);
@@ -154,7 +154,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             }
             if (
                 !(value["scene_paths"] is JArray paths)
-                || scenes.Count > 64
+                || scenes.Count > 256
                 || !paths.SequenceEqual(scenes.Select(scene => (JToken)new JValue(scene)), JToken.EqualityComparer)
             )
                 throw new ArgumentException("Player suite scene inventory does not match the exact frozen union.");
@@ -176,7 +176,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     throw new ArgumentException("Frozen Player suite child must be an object.");
                 AppendIdentity(identity, PlayScenarioPlayerBundle.Text(child, "scenario_name", 64));
                 AppendIdentity(identity, PlayScenarioPlayerBundle.Text(child, "definition_hash", 64));
-                AppendIdentity(identity, PlayScenarioPlayerBundle.Text(child, "definition_json", 65536));
+                AppendIdentity(identity, PlayScenarioPlayerBundle.Text(child, "definition_json", PlayScenarioDefinition.MaximumDefinitionBytes));
             }
             return PlayScenarioPlayerPayload.HashText(identity.ToString());
         }

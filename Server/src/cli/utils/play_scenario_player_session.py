@@ -1,5 +1,7 @@
 """Bounded foreground sessions compare shared batches with fresh owned Player processes."""
 
+from models.play_scenario_limits import MAX_REPEATS
+
 from collections import deque
 from hashlib import sha256
 import json
@@ -31,7 +33,7 @@ from cli.utils.play_scenario_checkpoint_artifacts import (
 OUTCOME_LIMIT: Final = 4096
 OUTCOME_FILE_LIMIT: Final = 8 * 1024**2
 SUMMARY_LIMIT: Final = 65536
-CHILD_ARTIFACT_LIMIT: Final = 8 * 1024**2
+CHILD_ARTIFACT_LIMIT: Final = 32 * 1024**2
 OWNED_FILES: Final = frozenset(
     {
         "request.json",
@@ -58,10 +60,10 @@ class PlayerSessionOptions(BaseModel):
     output_directory: Path
     mode: Literal["shared-batches", "fresh-process", "compare"] = "shared-batches"
     iterations: Annotated[int, Field(strict=True, ge=1, le=1000)] = 100
-    batch_size: Annotated[int, Field(strict=True, ge=2, le=10)] = 10
+    batch_size: Annotated[int, Field(strict=True, ge=2, le=MAX_REPEATS)] = 10
     max_runtime_seconds: Annotated[int, Field(strict=True, ge=1, le=86400)] = 3600
-    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=1800)] = 300
-    cleanup_wait_seconds: Annotated[int, Field(strict=True, ge=1, le=600)] = 360
+    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=86400)] = 300
+    cleanup_wait_seconds: Annotated[int, Field(strict=True, ge=1, le=3600)] = 1860
     interval_seconds: Annotated[float, Field(strict=True, ge=0, le=60, allow_inf_nan=False)] = 0.5
     failure_policy: Literal["stop", "continue"] = "stop"
     retain_reports: Annotated[int, Field(strict=True, ge=1, le=64)] = 16

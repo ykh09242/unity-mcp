@@ -83,6 +83,56 @@ namespace MCPForUnityTests.Editor.Tools
             );
 
         [Test]
+        public void HundredsOfEditsApplyAndUndoAsOnePlan()
+        {
+            var edits = new JObject[300];
+            for (int index = 0; index < edits.Length; index++)
+                edits[index] = Edit(Create("bulk-" + index), "localPosition", new JArray(index + 1, 2, 3));
+            string token = Token(Preview(edits));
+            JObject applied = Apply(token);
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            for (int index = 0; index < edits.Length; index++)
+                Assert.AreEqual(new Vector3(index + 1, 2, 3), _objects[index].transform.localPosition);
+            Undo.PerformUndo();
+            foreach (GameObject go in _objects)
+                Assert.AreEqual(Vector3.zero, go.transform.localPosition);
+        }
+
+        [Test]
+        public void StructuralPlanSupportsLargeScopeAndHundredsOfOperations()
+        {
+            GameObject root = Create("bulk-structure");
+            for (int index = 0; index < 300; index++)
+                Create("existing-" + index).transform.SetParent(root.transform, false);
+            var operations = new JArray();
+            for (int index = 0; index < 100; index++)
+                operations.Add(
+                    new JObject
+                    {
+                        ["op"] = "create",
+                        ["temp_id"] = "$node" + index,
+                        ["name"] = "new-" + index,
+                        ["parent"] = root.GetInstanceIDCompat(),
+                    }
+                );
+            string token = Token(
+                Send(
+                    new JObject
+                    {
+                        ["action"] = "preview_structure",
+                        ["target"] = root.GetInstanceIDCompat(),
+                        ["operations"] = operations,
+                    }
+                )
+            );
+            JObject applied = Send(new JObject { ["action"] = "apply_structure", ["preview_id"] = token });
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            Assert.AreEqual(400, root.transform.childCount);
+            Undo.PerformUndo();
+            Assert.AreEqual(300, root.transform.childCount);
+        }
+
+        [Test]
         public void Preview_DeterministicValuesWithoutSceneOrUndoMutation()
         {
             var go = Create("scene-edit-preview");

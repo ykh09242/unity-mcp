@@ -411,11 +411,11 @@ async def run_tests(
     init_timeout: Annotated[
         int | None,
         "Initialization timeout in milliseconds (1..2147483647). PlayMode tests may need longer "
-        "due to domain reload (default: 15000). Recommended: 120000 for PlayMode.",
+        "due to domain reload (default: 120000; native maximum: 3600000).",
     ] = None,
     run_timeout_ms: Annotated[
         int | None,
-        Field(strict=True, ge=1, le=600000),
+        Field(strict=True, ge=1, le=86400000),
         "Opt-in native job deadline in milliseconds, including queue/setup. Requires exact supported native control; wait timeout does not cancel Unity.",
     ] = None,
     clear_stuck: Annotated[
@@ -449,9 +449,9 @@ async def run_tests(
         )
 
     if run_timeout_ms is not None and (
-        type(run_timeout_ms) is not int or not 1 <= run_timeout_ms <= 600000
+        type(run_timeout_ms) is not int or not 1 <= run_timeout_ms <= 86400000
     ):
-        return MCPResponse(success=False, error="run_timeout_ms must be 1..600000 milliseconds")
+        return MCPResponse(success=False, error="run_timeout_ms must be 1..86400000 milliseconds")
 
     gate = await preflight(
         ctx, requires_no_tests=True, wait_for_no_compile=True, refresh_if_dirty=True

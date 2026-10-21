@@ -15,7 +15,7 @@ namespace MCPForUnity.Editor.Tools
     // Edits existing lexical value spans, never serializes the source document.
     internal static class UISourcePatch
     {
-        private const int MaxBytes = 1048576;
+        private const int MaxBytes = 8 * 1024 * 1024;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
         private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
 
@@ -62,7 +62,7 @@ namespace MCPForUnity.Editor.Tools
             )
             {
                 if (stream.Length > MaxBytes)
-                    return new ErrorResponse("Source exceeds the 1 MiB patch limit.");
+                    return new ErrorResponse("Source exceeds the 8 MiB patch limit.");
                 original = new byte[(int)stream.Length];
                 int read = 0;
                 while (read < original.Length)
@@ -83,7 +83,7 @@ namespace MCPForUnity.Editor.Tools
                     builder.Remove(edit.Offset, edit.Before.Length).Insert(edit.Offset, edit.After);
                 byte[] body = Utf8.GetBytes(builder.ToString());
                 if (body.Length + bom > MaxBytes)
-                    return new ErrorResponse("Patched source exceeds the 1 MiB patch limit.");
+                    return new ErrorResponse("Patched source exceeds the 8 MiB patch limit.");
                 updated = new byte[body.Length + bom];
                 Array.Copy(original, updated, bom);
                 Array.Copy(body, 0, updated, bom, body.Length);

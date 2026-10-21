@@ -23,8 +23,8 @@ def validate_memory_analysis(
     if action == "memory_snapshot_reader_status":
         return None
     if action == "memory_aggregate":
-        if not isinstance(targets, list) or not 1 <= len(targets) <= 32:
-            return "targets must contain 1–32 loaded hierarchy GameObject session IDs."
+        if not isinstance(targets, list) or not 1 <= len(targets) <= 256:
+            return "targets must contain 1–256 loaded hierarchy GameObject session IDs."
         for identity in targets:
             if not isinstance(identity, str):
                 return "Each target must be a GameObject session ID string."
@@ -34,14 +34,14 @@ def validate_memory_analysis(
                 return "Each target must be a GameObject session ID string."
             if not -2147483648 <= value <= 2147483647 or value == 0:
                 return "Target ID is outside the nonzero session-handle range."
-        maximum = 4096
+        maximum = 1000000
     else:
         for name, path in (("snapshot_a", snapshot_a), ("snapshot_b", snapshot_b)):
             if not isinstance(path, str) or not path.strip():
                 return f"{name} must be a nonempty snapshot path."
         if name_prefix is not None and (not isinstance(name_prefix, str) or len(name_prefix) > 128):
             return "name_prefix must be a string of at most 128 characters."
-        maximum = 200000
+        maximum = 1000000
     for name, value, bound in (
         ("max_objects", max_objects, maximum),
         ("object_limit", object_limit, 256),

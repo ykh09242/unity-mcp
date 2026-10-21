@@ -79,7 +79,7 @@ async def test_touch_preserves_independent_contact_and_screen_coordinates(unity_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("frames", [0, 601, True, 1.5, "5"])
+@pytest.mark.parametrize("frames", [0, 36001, True, 1.5, "5"])
 async def test_invalid_duration_never_reaches_unity(unity_route, frames):
     # Given: an unbounded or coerced duration would alter input lifetime.
     # When: the client sends that duration.
@@ -130,7 +130,7 @@ def test_input_command_schema_exposes_strict_bounds_and_actions():
     # When: a client requests its JSON schema.
     schema = TypeAdapter(InputCommand).json_schema()
     # Then: callers can discover the accepted operations and hard resource limits.
-    assert schema["properties"]["frames"]["maximum"] == 600
+    assert schema["properties"]["frames"]["maximum"] == 36000
     assert schema["properties"]["touch_id"]["minimum"] == 1
     assert set(schema["properties"]["action"]["enum"]) == {
         "status",

@@ -20,14 +20,14 @@ Procedural texture generation for Unity. Creates textures with solid fills, patt
 |------|------|----------|-------------|
 | `action` | `Literal['create', 'modify', 'delete', 'create_sprite', 'apply_pattern', 'apply_gradient', 'apply_noise', 'set_import_settings']` | yes | Action to perform. |
 | `path` | `str \| None` | — | Output texture path (e.g., 'Assets/Textures/MyTexture.png') |
-| `width` | `int \| None` | — | Texture width in pixels (1-4096, default: 64) |
-| `height` | `int \| None` | — | Texture height in pixels (1-4096, default: 64) |
+| `width` | `int \| None` | — | Texture width in pixels (1-8192, default: 64) |
+| `height` | `int \| None` | — | Texture height in pixels (1-8192, default: 64) |
 | `fill_color` | `list[int \| float] \| dict[str, int \| float] \| str \| None` | — | Fill color as [r, g, b] or [r, g, b, a] array, {r, g, b, a} object, or hex string. Accepts both 0-255 range (e.g., [255, 0, 0]) or 0.0-1.0 normalized range (e.g., [1.0, 0, 0]) |
 | `pattern` | `Literal['checkerboard', 'stripes', 'stripes_h', 'stripes_v', 'stripes_diag', 'dots', 'grid', 'brick'] \| None` | — | Pattern type for apply_pattern action |
 | `palette` | `list[list[int \| float]] \| str \| None` | — | Color palette as [[r,g,b,a], ...]. Accepts both 0-255 range or 0.0-1.0 normalized range |
 | `pattern_size` | `int \| None` | — | Pattern cell size in pixels (default: 8) |
 | `pixels` | `list[list[int]] \| str \| None` | — | Pixel data as JSON array of [r,g,b,a] values or base64 string |
-| `image_path` | `str \| None` | — | Source PNG/JPG/JPEG for create/create_sprite (up to 4096 per side and 96 MiB encoded). |
+| `image_path` | `str \| None` | — | Source PNG/JPG/JPEG for create/create_sprite (up to 8192 per side and 512 MiB encoded). |
 | `gradient_type` | `Literal['linear', 'radial'] \| None` | — | Gradient type (default: linear) |
 | `gradient_angle` | `float \| None` | — | Gradient angle in degrees for linear gradient (default: 0) |
 | `noise_scale` | `float \| None` | — | Noise scale/frequency (default: 0.1) |

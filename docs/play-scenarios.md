@@ -123,7 +123,8 @@ unity-mcp --format json play-scenario get menu-start
 
 The equivalent save call is `manage_play_scenario(action="save", scenario=<whole definition>)`;
 do not supply a separate `name`. Definitions live in `ProjectSettings/MCPForUnity/PlayScenarios` and
-can be versioned. Storage accepts at most 100 definitions, each at most 64 KiB.
+can be versioned. Storage accepts at most 1000 definitions, each at most 1 MiB.
+See [resource limits](development/resource-limits.md) for steps, suites, repetition, input and evidence budgets.
 
 ## Readiness and error policies
 

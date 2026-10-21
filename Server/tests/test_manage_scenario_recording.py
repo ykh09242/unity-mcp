@@ -15,6 +15,15 @@ from models.scenario_recording import ScenarioRecordingCommand
 from services.registry.tool_registry import get_registered_tools
 from services.tools.manage_scenario_recording import manage_scenario_recording
 
+
+def test_substantial_recording_request_keeps_explicit_capacity():
+    result = ScenarioRecordingCommand(
+        action="start", name="large", max_events=127, duration_seconds=3600
+    ).wire_parameters()
+    assert result["max_events"] == 127
+    assert result["duration_seconds"] == 3600
+
+
 RECORDING_ID = "0123456789abcdef0123456789abcdef"
 
 
@@ -89,8 +98,8 @@ async def test_dispatches_once_without_reload_replay(route, arguments, expected)
     [
         {"action": "start"},
         {"action": "start", "name": "menu-draft", "max_events": True},
-        {"action": "start", "name": "menu-draft", "max_events": 32},
-        {"action": "start", "name": "menu-draft", "duration_seconds": 601},
+        {"action": "start", "name": "menu-draft", "max_events": 128},
+        {"action": "start", "name": "menu-draft", "duration_seconds": 3601},
         {"action": "start", "name": "../menu"},
         {"action": "status", "name": "menu-draft"},
         {"action": "stop"},
@@ -146,7 +155,7 @@ async def test_actual_sdk_dispatch_and_schema(route, mode):
     )
     server.tool(**metadata["kwargs"])(manage_scenario_recording)
     registered = (await server.list_tools(run_middleware=False))[0]
-    assert registered.parameters["properties"]["max_events"]["anyOf"][0]["maximum"] == 31
+    assert registered.parameters["properties"]["max_events"]["anyOf"][0]["maximum"] == 127
     async with Client(server, mode=mode) as client:
         advertised = (await client.list_tools())[0]
         hints = advertised.annotations.model_dump(by_alias=True)

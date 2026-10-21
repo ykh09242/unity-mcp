@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Runtime;
@@ -100,6 +101,99 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             ]}"
                 )
             );
+
+        [Test]
+        public void DayLongPolicyAllowsSlowSceneWorkAndStillCancelsWithoutReplay()
+        {
+            var scenario = Definition();
+            scenario.Steps[0].TimeoutSeconds = 3600;
+            var host = new Host { EvaluateStep = (_, __) => new PlayScenarioObservation(false, "loading") };
+            var state = PlayScenarioEngine.Create(scenario, new string('a', 32), 1, 86400, 1000);
+            var engine = new PlayScenarioEngine(state, host);
+            engine.EnteredPlayMode();
+            engine.Tick(1000, true);
+            engine.Tick(1802000, true);
+            Assert.AreEqual("running", state.Status);
+            Assert.AreEqual(86401000, state.DeadlineUnixMs);
+            Assert.AreEqual(1, host.Loads);
+            engine.Cancel(1803000);
+            engine.Tick(1804000, true);
+            Assert.AreEqual("cancelled", state.Status);
+            Assert.AreEqual(1, host.Releases);
+        }
+
+        [Test]
+        public void SubstantialRepeatedScenarioPersistsEveryStageAndIteration()
+        {
+            var scenario = Definition();
+            scenario.Steps = Enumerable
+                .Range(0, 128)
+                .Select(i => new PlayScenarioStep
+                {
+                    Name = "wait-" + i,
+                    Action = "wait_scene",
+                    Scene = "Assets/Scenes/Menu.unity",
+                    TimeoutSeconds = 30,
+                })
+                .ToList();
+            scenario.SetupSteps = Enumerable
+                .Range(0, 32)
+                .Select(i => new PlayScenarioStep
+                {
+                    Name = "load-" + i,
+                    Action = "load_scene",
+                    Scene = "Assets/Scenes/Menu.unity",
+                    TimeoutSeconds = 30,
+                })
+                .ToList();
+            scenario.CleanupSteps = Enumerable
+                .Range(0, 32)
+                .Select(i => new PlayScenarioStep
+                {
+                    Name = "cleanup-" + i,
+                    Action = "wait_scene",
+                    Scene = "Assets/Scenes/Menu.unity",
+                    TimeoutSeconds = 30,
+                })
+                .ToList();
+            scenario.Metrics.Enabled = true;
+            scenario.Resources.Enabled = true;
+            scenario = PlayScenarioDefinition.Parse(JObject.FromObject(scenario));
+            var host = new Host();
+            var state = PlayScenarioEngine.Create(scenario, new string('a', 32), 100, 86400, 1000);
+            var engine = new PlayScenarioEngine(state, host);
+            engine.EnteredPlayMode();
+            for (long tick = 0; tick < 50000 && engine.Running; tick++)
+                engine.Tick(1000 + tick * 250, true);
+            Assert.AreEqual("succeeded", state.Status, state.Error);
+            Assert.AreEqual(19200, state.Steps.Count);
+            Assert.IsTrue(state.Steps.All(step => step.Status == "passed"));
+            Assert.AreEqual(100, state.IterationResults.Count);
+            Assert.AreEqual(100, state.Metrics.Count);
+            Assert.AreEqual(100, state.ResourceChecks.Count);
+            Assert.AreEqual(3200, host.Loads);
+            Assert.AreEqual(1, host.Releases);
+            string root = Path.Combine(Path.GetTempPath(), "McpLargeScenario_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                var store = new PlayScenarioStore(root);
+                store.Save(scenario);
+                Assert.AreEqual(128, store.Get(scenario.Name).Steps.Count);
+                string report = store.SaveReport(state);
+                Assert.Greater(new FileInfo(Path.Combine(root, report)).Length, 2 * 1024 * 1024);
+                var restored = store.GetReport(state.JobId);
+                Assert.AreEqual(19200, restored.Steps.Count);
+                Assert.AreEqual(100, restored.Metrics.Count);
+                Assert.AreEqual(100, restored.ResourceChecks.Count);
+                Assert.AreEqual(127, restored.Steps.Last(step => step.Stage == "main").StepIndex);
+                Assert.AreEqual(100, restored.Steps.Last().Iteration);
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
 
         private static PlayScenarioEngine Engine(Host host, int repeats = 1, int timeout = 30)
         {

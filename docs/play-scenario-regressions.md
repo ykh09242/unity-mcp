@@ -256,9 +256,10 @@ half-open pixel coordinates, stay inside the image and number at most 64. Overla
 masking every pixel is invalid. The changed ratio uses only unmasked pixels and passes at or below
 `max_changed_pixel_ratio` (0-1).
 
-Each single-frame PNG is at most 4 MiB, with dimensions 1-4,096 and at most 8,388,608 pixels. Animated,
-corrupt or oversized inputs are refused. Optional new `heatmap.png` and `diff.png` outputs retain
-fingerprinted artifact metadata; each output is bounded to 32 MiB. Missing captures and unavailable
+Each single-frame PNG is at most 320 MiB, with dimensions 1-8,192 and at most 67,108,864 pixels. Animated,
+corrupt or oversized inputs are refused. Comparison uses bounded row strips. Optional new `heatmap.png`
+and `diff.png` outputs retain fingerprinted artifact metadata and stream their encoded bytes to owned
+files; each output is bounded to 320 MiB. Missing captures and unavailable
 headless checkpoints are not matching images and cannot pass comparison.
 
 ## Export one portable HTML report

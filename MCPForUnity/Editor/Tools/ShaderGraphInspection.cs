@@ -13,10 +13,10 @@ namespace MCPForUnity.Editor.Tools
     /// <summary>Bounded structural inspection only; never instantiates serialized Shader Graph types.</summary>
     internal static class ShaderGraphInspection
     {
-        private const int MaxBytes = 4 * 1024 * 1024;
-        private const int MaxObjects = 16384;
-        private const int MaxNodes = 4096;
-        private const int MaxEdges = 8192;
+        private const int MaxBytes = 16 * 1024 * 1024;
+        private const int MaxObjects = 65536;
+        private const int MaxNodes = 16384;
+        private const int MaxEdges = 32768;
         private const int MaxPageSize = 100;
         private static readonly Regex ObjectId = new Regex(@"\A[0-9a-fA-F]{32}\z", RegexOptions.CultureInvariant);
 
@@ -243,7 +243,7 @@ namespace MCPForUnity.Editor.Tools
             public override bool Read()
             {
                 bool result = base.Read();
-                if (result && (++tokens > 262144 || TokenType == JsonToken.Comment))
+                if (result && (++tokens > 1000000 || TokenType == JsonToken.Comment))
                     throw new JsonReaderException("JSON token budget exceeded or unsupported JSON comments.");
                 return result;
             }

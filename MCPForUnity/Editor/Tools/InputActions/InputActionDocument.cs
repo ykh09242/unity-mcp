@@ -13,7 +13,7 @@ namespace MCPForUnity.Editor.Tools.InputActions
 {
     internal static class InputActionDocument
     {
-        internal const int MaxBytes = 256 * 1024;
+        internal const int MaxBytes = 16 * 1024 * 1024;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
 
         internal static byte[] ReadBytes(string path)
@@ -25,7 +25,7 @@ namespace MCPForUnity.Editor.Tools.InputActions
         internal static byte[] ReadStream(Stream stream)
         {
             if (stream.Length > MaxBytes)
-                throw new InvalidOperationException("InputAction source exceeds 256 KiB.");
+                throw new InvalidOperationException("InputAction source exceeds 16 MiB.");
             var bytes = new byte[(int)stream.Length];
             int offset = 0;
             while (offset < bytes.Length)
@@ -70,7 +70,7 @@ namespace MCPForUnity.Editor.Tools.InputActions
                     .ToArray()
                 : body;
             if (bytes.Length > MaxBytes)
-                throw new InvalidOperationException("The candidate InputAction source exceeds 256 KiB.");
+                throw new InvalidOperationException("The candidate InputAction source exceeds 16 MiB.");
             return bytes;
         }
 
@@ -102,8 +102,8 @@ namespace MCPForUnity.Editor.Tools.InputActions
             var ids = new HashSet<Guid>();
             var mapNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             JArray maps = Array(document, "maps");
-            if (maps.Count > 32 || Array(document, "controlSchemes").Count > 32)
-                throw new InvalidOperationException("InputAction maps/control schemes exceed 32.");
+            if (maps.Count > 256 || Array(document, "controlSchemes").Count > 256)
+                throw new InvalidOperationException("InputAction maps/control schemes exceed 256.");
             int actions = 0,
                 bindings = 0;
             foreach (JObject map in Objects(maps))
@@ -111,12 +111,10 @@ namespace MCPForUnity.Editor.Tools.InputActions
                 Id(map, ids);
                 if (!mapNames.Add(Name(map)))
                     throw new ArgumentException("Duplicate map names are not supported.");
-                var actionNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var actionIds = new ActionIdentities(map);
                 foreach (JObject action in Objects(Array(map, "actions")))
                 {
                     Id(action, ids);
-                    if (!actionNames.Add(Name(action)))
-                        throw new ArgumentException("Duplicate action names are not supported.");
                     actions++;
                 }
                 foreach (JObject binding in Objects(Array(map, "bindings")))
@@ -126,13 +124,13 @@ namespace MCPForUnity.Editor.Tools.InputActions
                         if (binding[flag] != null && binding[flag].Type != JTokenType.Boolean)
                             throw new ArgumentException("Binding flags must be JSON booleans.");
                     string reference = ManageInputActions.Text(binding, "action", true, 128);
-                    ResolveActionIdentity(map, reference);
+                    actionIds.Resolve(reference);
                     bindings++;
                 }
             }
             if (
-                actions > 256
-                || bindings > 1024
+                actions > 8192
+                || bindings > 32768
                 || document.Descendants().OfType<JValue>().Any(value => value.Type == JTokenType.String && value.ToString().Length > 1024)
             )
                 throw new InvalidOperationException("InputAction document exceeds action/binding/string bounds.");
@@ -214,7 +212,8 @@ namespace MCPForUnity.Editor.Tools.InputActions
             Copy(request, selected, "groups", "groups");
             Copy(request, selected, "processors", "processors");
             Copy(request, selected, "interactions", "interactions");
-            if (Objects(bindings).Any(binding => (string)binding["id"] != (string)selected["id"] && SameBinding(selectedMap, binding, selected)))
+            var actionIds = new ActionIdentities(selectedMap);
+            if (Objects(bindings).Any(binding => (string)binding["id"] != (string)selected["id"] && SameBinding(actionIds, binding, selected)))
                 throw new ArgumentException("An equivalent action/path/group binding already exists.");
             if (operation == "add_binding")
                 bindings.Add(selected);
@@ -310,19 +309,38 @@ namespace MCPForUnity.Editor.Tools.InputActions
                 target[destination] = value;
         }
 
-        private static Guid ResolveActionIdentity(JObject map, string reference)
+        private sealed class ActionIdentities
         {
-            bool isId = Guid.TryParse(reference, out Guid id);
-            JObject action = Objects(Array(map, "actions"))
-                .SingleOrDefault(candidate =>
-                    string.Equals((string)candidate["name"], reference, StringComparison.OrdinalIgnoreCase)
-                    || (isId && Guid.Parse((string)candidate["id"]) == id)
-                );
-            return action == null ? throw new ArgumentException("A binding references an unavailable action in its map.") : Guid.Parse((string)action["id"]);
+            private readonly Dictionary<string, Guid> names = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+            private readonly HashSet<Guid> ids = new HashSet<Guid>();
+
+            internal ActionIdentities(JObject map)
+            {
+                foreach (JObject action in Objects(Array(map, "actions")))
+                {
+                    Guid id = Guid.Parse((string)action["id"]);
+                    if (!names.TryAdd(Name(action), id))
+                        throw new ArgumentException("Duplicate action names are not supported.");
+                    ids.Add(id);
+                }
+            }
+
+            internal Guid Resolve(string reference)
+            {
+                bool named = reference != null && names.TryGetValue(reference, out _);
+                bool identified = Guid.TryParse(reference, out Guid id) && ids.Contains(id);
+                if (named && identified && names[reference] != id)
+                    throw new ArgumentException("A binding reference is ambiguous between an action name and GUID.");
+                if (named)
+                    return names[reference];
+                if (identified)
+                    return id;
+                throw new ArgumentException("A binding references an unavailable action in its map.");
+            }
         }
 
-        private static bool SameBinding(JObject map, JObject first, JObject second) =>
-            ResolveActionIdentity(map, (string)first["action"]) == ResolveActionIdentity(map, (string)second["action"])
+        private static bool SameBinding(ActionIdentities actions, JObject first, JObject second) =>
+            actions.Resolve((string)first["action"]) == actions.Resolve((string)second["action"])
             && string.Equals((string)first["path"], (string)second["path"], StringComparison.OrdinalIgnoreCase)
             && string.Equals((string)first["groups"] ?? "", (string)second["groups"] ?? "", StringComparison.OrdinalIgnoreCase);
     }

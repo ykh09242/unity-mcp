@@ -1,5 +1,7 @@
 """One verified frozen build, ordered children and a fresh owned Player process per child."""
 
+from models.play_scenario_limits import DEFINITION_BYTES, MAX_SUITE_SCENARIOS
+
 from dataclasses import dataclass
 from hashlib import sha256
 import json
@@ -44,7 +46,7 @@ class FrozenChild(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     scenario_name: ScenarioName
     definition_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
-    definition_json: Annotated[str, Field(strict=True, max_length=65536)]
+    definition_json: Annotated[str, Field(strict=True, max_length=DEFINITION_BYTES)]
     definition: dict[str, JsonValue]
 
 
@@ -56,10 +58,10 @@ class PlayerSuiteBundle(PlayerPayload):
     suite_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
     failure_policy: Literal["stop", "continue"]
     isolation: Literal["fresh-process"]
-    children: Annotated[list[FrozenChild], Field(min_length=1, max_length=16)]
+    children: Annotated[list[FrozenChild], Field(min_length=1, max_length=MAX_SUITE_SCENARIOS)]
     scene_paths: Annotated[
         list[Annotated[str, Field(strict=True, max_length=4096)]],
-        Field(min_length=1, max_length=64),
+        Field(min_length=1, max_length=256),
     ]
     executable: Annotated[str, Field(strict=True, max_length=128)]
     build_target: BuildTarget = "windows64"
@@ -160,9 +162,9 @@ class PlayerSuiteOptions(BaseModel):
     output_directory: Path
     isolation: Literal["fresh-process"] = "fresh-process"
     failure_policy: Literal["stop", "continue"] | None = None
-    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=1800)] = 300
+    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=86400)] = 300
     max_runtime_seconds: Annotated[int, Field(strict=True, ge=1, le=86400)] = 3600
-    cleanup_wait_seconds: Annotated[int, Field(strict=True, ge=1, le=600)] = 360
+    cleanup_wait_seconds: Annotated[int, Field(strict=True, ge=1, le=3600)] = 1860
     graphical: Annotated[bool, Field(strict=True)] = False
     source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
     expected_build_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None

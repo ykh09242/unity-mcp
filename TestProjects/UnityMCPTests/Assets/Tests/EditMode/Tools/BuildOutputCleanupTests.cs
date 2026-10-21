@@ -116,14 +116,27 @@ namespace MCPForUnityTests.Editor.Tools
         public void LargeOutput_RefusesBeforeAnyDeletion()
         {
             // Given an output beyond the scan budget.
-            for (int i = 0; i <= BuildOutputCleaner.MaxEntries; i++)
+            for (int i = 0; i <= 100; i++)
                 File.WriteAllText(Path.Combine(_root, "Builds", "Fixture", "entry-" + i), "x");
-            // When requesting deletion.
-            var result = JObject.FromObject(BuildOutputCleaner.Clean(_root, "Builds/Fixture", false));
+            // Exercise refusal with a smaller policy rather than creating 250,000 fixture files.
+            var result = JObject.FromObject(BuildOutputCleaner.Clean(_root, "Builds/Fixture", false, maxEntries: 100));
             // Then even the original files remain.
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             Assert.IsTrue(File.Exists(Path.Combine(_root, "Builds", "Fixture", "Game.exe")));
             Assert.IsTrue(File.Exists(Path.Combine(_root, "Builds", "Fixture", "entry-0")));
+        }
+
+        [Test]
+        public void LargeOutput_PreviewsEveryFileWithoutExpandingTheResponse()
+        {
+            for (int i = 0; i < 5001; i++)
+                File.WriteAllText(Path.Combine(_root, "Builds", "Fixture", "entry-" + i), "x");
+            var result = JObject.FromObject(BuildOutputCleaner.Clean(_root, "Builds/Fixture", true));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(5003, result["data"].Value<int>("file_count"));
+            Assert.AreEqual(100, ((JArray)result["data"]["entries"]).Count);
+            Assert.AreEqual(0, result["data"].Value<int>("deleted_entries"));
+            Assert.IsTrue(File.Exists(Path.Combine(_root, "Builds", "Fixture", "entry-5000")));
         }
 
         [Test]

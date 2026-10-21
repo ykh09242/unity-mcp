@@ -166,10 +166,10 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         {
             var draft = new PlayScenarioRecordingDraft("raw-overflow", Menu);
             Observe(draft, Key("press"), 1);
-            Assert.IsFalse(Observe(draft, Key("release"), 602));
+            Assert.IsFalse(Observe(draft, Key("release"), 36002));
             Assert.AreEqual("interrupted", draft.Status);
             Assert.AreEqual(1, draft.Snapshot().Value<int>("event_count"));
-            Assert.IsTrue(draft.Snapshot()["diagnostics"].Any(x => ((string)x).Contains("600")));
+            Assert.IsTrue(draft.Snapshot()["diagnostics"].Any(x => ((string)x).Contains("36000")));
         }
 
         [UnityTearDown]

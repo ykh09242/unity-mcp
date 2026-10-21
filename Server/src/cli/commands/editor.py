@@ -495,7 +495,7 @@ def execute_menu(menu_path: str):
 )
 @click.option(
     "--run-timeout-ms",
-    type=click.IntRange(1, 600000),
+    type=click.IntRange(1, 86400000),
     default=None,
     help="Opt-in native job deadline; requires supported native control.",
 )

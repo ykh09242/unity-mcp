@@ -86,7 +86,7 @@ namespace MCPForUnity.Editor.Tools.Blender
 
             var p = new ToolParams(@params);
             string action = (p.Get("action") ?? "status").Trim().ToLowerInvariant();
-            int timeout = Math.Max(5, Math.Min(3600, p.GetInt("timeout_seconds", 180) ?? 180));
+            int timeout = Math.Max(5, Math.Min(86400, p.GetInt("timeout_seconds", 180) ?? 180));
 
             try
             {

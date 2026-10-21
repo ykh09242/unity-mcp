@@ -33,15 +33,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         internal static void Validate(JObject source)
         {
-            if (Encoding.UTF8.GetByteCount(source.ToString(Formatting.None)) > 65536)
-                throw new ArgumentException("Scenario definition exceeds 64 KiB.");
+            if (Encoding.UTF8.GetByteCount(source.ToString(Formatting.None)) > PlayScenarioDefinition.MaximumDefinitionBytes)
+                throw new ArgumentException("Scenario definition exceeds 1 MiB.");
             bool any = Metadata.Any(key => source.Property(key) != null);
             if (!any)
                 return;
-            if (!(source["parameters"] is JObject parameters) || parameters.Count < 1 || parameters.Count > 16)
-                throw new ArgumentException("parameters must contain one to sixteen declarations.");
-            if (!(source["parameter_bindings"] is JArray bindings) || bindings.Count < 1 || bindings.Count > 32)
-                throw new ArgumentException("parameter_bindings must contain one to thirty-two bindings.");
+            if (!(source["parameters"] is JObject parameters) || parameters.Count < 1 || parameters.Count > 64)
+                throw new ArgumentException("parameters must contain one to sixty-four declarations.");
+            if (!(source["parameter_bindings"] is JArray bindings) || bindings.Count < 1 || bindings.Count > 256)
+                throw new ArgumentException("parameter_bindings must contain one to 256 bindings.");
             foreach (JProperty parameter in parameters.Properties())
             {
                 PlayScenarioDefinition.ValidateName(parameter.Name);
@@ -71,8 +71,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             PlayScenarioDefinition.Parse(Expand(source, null));
             if (source.Property("datasets") == null)
                 return;
-            if (!(source["datasets"] is JArray datasets) || datasets.Count < 1 || datasets.Count > 16)
-                throw new ArgumentException("datasets must contain one to sixteen cases.");
+            if (!(source["datasets"] is JArray datasets) || datasets.Count < 1 || datasets.Count > 64)
+                throw new ArgumentException("datasets must contain one to sixty-four cases.");
             var names = new HashSet<string>(StringComparer.Ordinal);
             foreach (JToken item in datasets)
             {
@@ -83,7 +83,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 PlayScenarioDefinition.ValidateName(name);
                 if (!names.Add(name))
                     throw new ArgumentException("Dataset names must be unique.");
-                if (!(dataset["values"] is JObject values) || values.Count > 16)
+                if (!(dataset["values"] is JObject values) || values.Count > 64)
                     throw new ArgumentException("Dataset values must be a bounded object.");
                 foreach (JProperty value in values.Properties())
                 {

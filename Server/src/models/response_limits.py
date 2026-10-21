@@ -13,10 +13,10 @@ from typing import Any, Callable
 from pydantic import BaseModel, AnyUrl
 from pydantic_core import SchemaSerializer, to_json
 
-MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 MAX_RESPONSE_DEPTH = 64
-MAX_RESPONSE_NODES = 100_000
-MAX_RESPONSE_RETAINED_BYTES = 256 * 1024 * 1024
+MAX_RESPONSE_NODES = 1_000_000
+MAX_RESPONSE_RETAINED_BYTES = 512 * 1024 * 1024
 # Limit whole-document encoding to a small, conservatively bounded allocation.
 _MAX_FAST_JSON_BYTES = 2 * 1024 * 1024
 _MIN_LARGE_ASCII_CHARS = 256 * 1024

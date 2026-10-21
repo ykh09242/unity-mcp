@@ -159,8 +159,13 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 + step.Screenshot.Name
                 + ".png";
             string path = PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(directory, filename));
-            if (png == null || png.Length == 0 || png.Length > 4 * 1024 * 1024 || checkpointBytes + png.Length > 64 * 1024 * 1024)
-                throw new IOException("Checkpoint PNG exceeds the four-MiB image or 64-MiB session artifact budget.");
+            if (
+                png == null
+                || png.Length == 0
+                || png.Length > PlayScenarioScreenshotOptions.MaximumPngBytes
+                || checkpointBytes + png.Length > PlayScenarioScreenshotOptions.MaximumRunPngBytes
+            )
+                throw new IOException("Checkpoint PNG exceeds the 320-MiB image or 8-GiB session artifact budget.");
             using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 stream.Write(png, 0, png.Length);
@@ -427,7 +432,12 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 persistence.Execute(
                     "final_report",
                     null,
-                    () => PlayScenarioPlayerFiles.WriteNew(Path.Combine(directory, "run.json"), report.ToString(Formatting.None), 2 * 1024 * 1024)
+                    () =>
+                        PlayScenarioPlayerFiles.WriteNew(
+                            Path.Combine(directory, "run.json"),
+                            report.ToString(Formatting.None),
+                            PlayScenarioDefinition.MaximumReportBytes
+                        )
                 );
             }
             catch (Exception error)

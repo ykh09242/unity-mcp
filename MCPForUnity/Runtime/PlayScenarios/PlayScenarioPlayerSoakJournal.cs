@@ -16,7 +16,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public const int RowLimit = 16384;
         public const int JournalLimit = RowLimit * 1000;
         public const int SummaryLimit = 65536;
-        public const int ReportLimit = 2 * 1024 * 1024;
+        public const int ReportLimit = PlayScenarioDefinition.MaximumReportBytes;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
         private readonly string directory;
         private readonly string journalPath;

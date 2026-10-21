@@ -1,9 +1,12 @@
 """Launch one explicitly selected standalone Player and verify its actual final report."""
 
+from models.play_scenario_limits import DEFINITION_BYTES, REPORT_BYTES
+
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 from threading import Thread
@@ -30,6 +33,8 @@ from pydantic import (
     model_validator,
 )
 from cli.utils.play_scenario_player_payload import (
+    PAYLOAD_FILE_LIMIT,
+    PAYLOAD_INVENTORY_LIMIT,
     PAYLOAD_MANIFEST_LIMIT,
     PayloadFile,
     PlayerPayload,
@@ -52,7 +57,7 @@ from cli.utils.play_scenario_player_platform import (
 from cli.utils.play_scenario_soak import SoakIdentity, SoakJournal, SoakRequest
 
 MANIFEST_LIMIT: Final = PAYLOAD_MANIFEST_LIMIT
-REPORT_LIMIT: Final = 2097152
+REPORT_LIMIT: Final = REPORT_BYTES
 PROCESS_LOG_LIMIT: Final = 1048576
 
 
@@ -80,20 +85,20 @@ class PlayerBundle(BaseModel):
     scripting_backend: Backend = "mono"
     scene_paths: Annotated[
         list[Annotated[str, Field(strict=True, max_length=4096)]],
-        Field(min_length=1, max_length=64),
+        Field(min_length=1, max_length=256),
     ]
     definition: PlayScenario
-    definition_json: Annotated[str, Field(strict=True, max_length=65536)]
+    definition_json: Annotated[str, Field(strict=True, max_length=DEFINITION_BYTES)]
     unity_version: Annotated[str, Field(strict=True, max_length=128)]
     package_version: Annotated[str, Field(strict=True, max_length=128)]
 
     build_id: JobId | None = None
     build_source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
-    payload_inventory: Annotated[list[PayloadFile], Field(min_length=1, max_length=1024)] | None = (
-        None
-    )
+    payload_inventory: (
+        Annotated[list[PayloadFile], Field(min_length=1, max_length=PAYLOAD_FILE_LIMIT)] | None
+    ) = None
     payload_inventory_json: (
-        Annotated[str, Field(strict=True, max_length=PAYLOAD_MANIFEST_LIMIT)] | None
+        Annotated[str, Field(strict=True, max_length=PAYLOAD_INVENTORY_LIMIT)] | None
     ) = None
     payload_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")] | None = None
 
@@ -215,7 +220,7 @@ class PlayerRunOptions:
     repeat_count: int = 1
     timeout_seconds: int = 300
     source_revision: str | None = None
-    cleanup_wait_seconds: float = 360
+    cleanup_wait_seconds: float = 1860
     poll_interval_seconds: float = 0.1
     deadline_monotonic: float | None = None
     expected_build_revision: str | None = None
@@ -234,10 +239,10 @@ class PlayerRunOptions:
             raise PlayerLaunchError("Player soak requires repeat_count 1")
         if (
             not math.isfinite(self.cleanup_wait_seconds)
-            or not 0.05 <= self.cleanup_wait_seconds <= 600
+            or not 0.05 <= self.cleanup_wait_seconds <= 3600
         ):
             raise PlayerLaunchError(
-                "Player cleanup wait must be bounded between 0.05 and 600 seconds"
+                "Player cleanup wait must be bounded between 0.05 and 3600 seconds"
             )
         if (
             not math.isfinite(self.poll_interval_seconds)
@@ -265,9 +270,13 @@ def _read_json(path: Path, limit: int) -> dict[str, JsonValue]:
     if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
         raise PlayerLaunchError("Player artifact is missing, linked or exceeds its byte bound")
     with path.open("rb") as stream:
-        payload = stream.read(limit + 1)
-    if len(payload) > limit:
-        raise PlayerLaunchError("Player artifact exceeds its byte bound")
+        size = os.fstat(stream.fileno()).st_size
+        if size > limit:
+            raise PlayerLaunchError("Player artifact exceeds its byte bound")
+        # Allocate for this opened file, not the maximum large-build allowance.
+        payload = stream.read(size + 1)
+    if len(payload) != size:
+        raise PlayerLaunchError("Player artifact changed while being read")
     value = json.loads(payload)
     if not isinstance(value, dict):
         raise PlayerLaunchError("Player artifact must be a JSON object")
@@ -429,7 +438,9 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                 bundle.build_source_revision,
                 process.pid,
             ),
-            max_iteration=options.soak.iterations if options.soak is not None else 10,
+            max_iteration=options.soak.iterations
+            if options.soak is not None
+            else options.repeat_count,
         )
         if payload is not None
         else None

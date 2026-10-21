@@ -34,7 +34,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "Other formats require a separate conversion workflow, which this tool does not submit. "
         "target_size applies only when Auto-Normalize Imported Models is enabled; finite zero or negative values preserve imported scale. Successful normalization of a model without ModelImporter may return a prefab variant while retaining its source model.\n"
         "- status: Poll an async job by job_id; includes recovery_state, recovery_code, provider_task_id and provider_phase. "
-        "Recorded provider tasks can reconnect after a domain reload within the same Editor session and original 600-second budget. "
+        "Recorded provider tasks can reconnect after a domain reload within the same Editor session and original two-hour budget. "
         "Unknown submission/import outcomes are not replayed; inspect retained output before retrying. "
         "Saved local output can resume without a provider key when its recorded file/metadata identity still matches. "
         "No recovery across Editor exit is promised.\n"

@@ -41,6 +41,7 @@ from services.command_progress import (
     ProgressSource,
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
+from transport.command_timeout import requested_command_timeout
 from transport.legacy.stdio_port_registry import stdio_port_registry
 from transport.legacy.stdio_auth import (
     StdioAuthentication,
@@ -56,8 +57,8 @@ logger = logging.getLogger("mcp-for-unity-server")
 # Module-level lock to guard global connection initialization
 _connection_lock = threading.Lock()
 
-# Maximum allowed framed payload size (64 MiB)
-FRAMED_MAX = 64 * 1024 * 1024
+# Maximum allowed framed payload size (128 MiB, including envelope overhead)
+FRAMED_MAX = 128 * 1024 * 1024
 
 
 class _UnityProtocolError(ValueError):
@@ -713,6 +714,7 @@ class UnityConnection:
         blender_timeout = (
             blender_command_timeout(params) if command_type == "blender_bridge" else None
         )
+        requested_timeout = requested_command_timeout(params)
         command_sent = False
         receipt_owner = execution_owner.get()
         if receipt_owner is not None:
@@ -726,6 +728,8 @@ class UnityConnection:
         total_timeout = max(0.0, float(getattr(config, "command_total_timeout", 90.0)))
         if blender_timeout is not None:
             total_timeout = blender_timeout + SERVER_RESPONSE_GRACE
+        elif requested_timeout is not None:
+            total_timeout = max(total_timeout, requested_timeout + SERVER_RESPONSE_GRACE)
         if deadline is None and total_timeout > 0:
             deadline = time.monotonic() + total_timeout
 
@@ -874,6 +878,10 @@ class UnityConnection:
                             if blender_timeout is not None
                             else (1.0 if attempt > 0 else restore_timeout)
                         )
+                        if requested_timeout is not None and blender_timeout is None:
+                            recv_timeout = max(
+                                recv_timeout or 0, requested_timeout + SERVER_RESPONSE_GRACE
+                            )
                         if deadline is not None:
                             recv_timeout = self._cap_to_deadline(
                                 recv_timeout or config.connection_timeout, deadline
@@ -1624,6 +1632,8 @@ def _command_deadline(command_type: str, params: dict[str, Any]) -> float | None
     total_timeout = max(0.0, float(getattr(config, "command_total_timeout", 90.0)))
     if command_type == "blender_bridge":
         total_timeout = blender_command_timeout(params) + SERVER_RESPONSE_GRACE
+    elif (requested := requested_command_timeout(params)) is not None:
+        total_timeout = max(total_timeout, requested + SERVER_RESPONSE_GRACE)
     return time.monotonic() + total_timeout if total_timeout > 0 else None
 
 
