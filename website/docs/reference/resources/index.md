@@ -280,6 +280,13 @@ Lists all URP renderer features on the active renderer with type, name, and acti
 Snapshot of rendering counters (draw calls, batches, triangles, texture counts and bytes, etc.).
 
 
+## `runtime_doctor`
+
+**URI:** `mcpforunity://doctor/runtime`
+
+Read resolved/reviewed SDK versions and optional adapter state without contacting Unity or changing configuration.
+
+
 ## `tool_diagnostics`
 
 **URI:** `mcpforunity://tool-diagnostics`

@@ -32,7 +32,9 @@ async def check_registration():
     # Verify the installed package's optional kernels and owned stores, not just imports.
     # Enter only their lifespans: the full server lifespan would attempt Unity discovery.
     with TemporaryDirectory(prefix="unity-mcp-sdk-") as store_dir:
-        root = Path(store_dir)
+        # The OS temp directory may use a system alias (for example macOS /var).
+        # Canonicalize this freshly created owned directory, keeping store guards intact.
+        root = Path(store_dir).resolve(strict=True)
         server = create_mcp_server(
             project_scoped_tools=False,
             test_wait_tasks_root=root / "waits",
