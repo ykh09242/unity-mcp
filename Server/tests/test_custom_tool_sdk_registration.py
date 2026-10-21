@@ -122,7 +122,8 @@ def test_custom_structured_output_flag_controls_schema_and_result():
                 assert text.structured_content is None
                 assert json.loads(text.content[0].text) == structured.structured_content
                 module.get_unity_instance_from_context.return_value = None
-                error = await client.call_tool("text_echo", {})
+                error = await client.call_tool("text_echo", {}, raise_on_error=False)
+                assert error.is_error is True
                 assert error.structured_content is None
                 assert json.loads(error.content[0].text)["success"] is False
         asyncio.run(scenario())

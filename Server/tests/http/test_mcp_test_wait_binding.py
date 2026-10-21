@@ -317,7 +317,7 @@ async def test_journal_admission_spends_original_inner_deadline_even_when_capaci
                     client, "tasks/get", {"taskId": response["result"]["taskId"]}, tasks=True
                 )
             )["result"]["result"]
-        assert final["isError"] is False
+        assert final["isError"] is True
         assert final["structuredContent"]["result"]["success"] is False
         assert command_hub.sent == []
 

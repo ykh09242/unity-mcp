@@ -85,6 +85,7 @@ async def sdk_wire(
         checked: Annotated[int, AfterValidator(validate)],
         count: int = Field(default_factory=default),
         as_error: bool = False,
+        native_failure: bool = False,
     ) -> ToolResult:
         counts["body"] += 1
         return ToolResult.from_mcp_result(
@@ -93,7 +94,11 @@ async def sdk_wire(
                     TextContent(type="text", text="application output"),
                     ImageContent(type="image", data="AA==", mimeType="image/png"),
                 ],
-                structuredContent={"checked": checked, "count": count},
+                structuredContent=(
+                    {"success": False, "code": "native_refused", "data": {"applied": False}}
+                    if native_failure
+                    else {"checked": checked, "count": count}
+                ),
                 isError=as_error,
                 _meta={"application": {"sensitive_example": "explicit retained output"}},
             )
@@ -995,4 +1000,43 @@ async def test_focused_scene_operation_is_receipted_and_replayed_once(
         assert first["structuredContent"] == {"action": "load", "path": "Assets/Scenes/A.unity"}
         assert replay["structuredContent"] == first["structuredContent"]
         assert first["_meta"][META_KEY]["status"] == "completed"
+        assert counts["body"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["2025-11-25", "2026-07-28"])
+async def test_native_failure_is_stored_and_replayed_without_reexecution(
+    tmp_path, monkeypatch, protocol
+):
+    # Given a real SDK endpoint and private ledger receiving a native failure envelope.
+    async with sdk_wire(tmp_path, monkeypatch, protocol) as (runtime, counts, call):
+        params = {
+            "name": "receipt_exercise",
+            "arguments": {"checked": 4, "native_failure": True},
+            "_meta": {META_KEY: options(runtime)},
+        }
+        # When a retained result is returned, replayed and retrieved from the durable store.
+        first = await call("tools/call", params, "first")
+        replay = await call("tools/call", params, "replay")
+        rid = first["result"]["_meta"][META_KEY]["receipt_id"]
+        lookup = await call(
+            "tools/call",
+            {
+                "name": "get_execution_receipt",
+                "arguments": {
+                    "action": "get",
+                    "store_id": runtime.store.store_id,
+                    "project_hash": PROJECT,
+                    "receipt_id": rid,
+                    "include_result": True,
+                },
+            },
+            "lookup",
+        )
+        # Then every representation retains failure and the application ran only once.
+        assert first["result"]["isError"] is True
+        assert replay["result"]["isError"] is True
+        stored = lookup["result"]["structuredContent"]["result"]
+        assert stored["isError"] is True
+        assert stored["structuredContent"]["code"] == "native_refused"
         assert counts["body"] == 1

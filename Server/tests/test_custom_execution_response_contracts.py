@@ -43,6 +43,8 @@ async def main():
     module.get_unity_connection_pool = lambda: SimpleNamespace(discover_all_instances=lambda: [])
     app = FastMCP("custom-response-contract")
     app.add_middleware(Selected())
+    from transport.response_limit_middleware import ResponseLimitMiddleware
+    app.add_middleware(ResponseLimitMiddleware())
     app.tool(name="execute_custom_tool")(execute_custom_tool)
     service = module.CustomToolService(app)
     parameters = [ToolParameterModel(name="count", type="integer", required=False, default_value="3")]
@@ -83,7 +85,8 @@ async def main():
                     return {"success": True, "message": "fixture completed", "data": {"value": 1}}
                 PluginHub.send_command_for_instance = send
                 arguments = {"tool_name": target, "parameters": {"count": 7}} if entry == "execute_custom_tool" else {}
-                result = await client.call_tool(entry, arguments)
+                result = await client.call_tool(entry, arguments, raise_on_error=False)
+                assert result.is_error is (case != "success_without_hint")
                 response = json.loads(result.content[0].text)
                 if case == "transport_timeout":
                     passed = (response.get("success") is False and response.get("hint") == "inspect_state_before_retry"

@@ -721,6 +721,7 @@ class CustomToolService:
                 if response.get("_mcp_status") == "error"
                 else response.get("success", True),
                 message=response.get("message"),
+                code=response.get("code"),
                 error=response.get("error"),
                 hint=response.get("hint"),
                 data=response.get(
@@ -1312,7 +1313,8 @@ class CustomToolService:
             async def content_only_handler(*args, **kwargs):
                 response = await handler(*args, **kwargs)
                 return ToolResult(
-                    content=[TextContent(type="text", text=response.model_dump_json())]
+                    content=[TextContent(type="text", text=response.model_dump_json())],
+                    is_error=not response.success,
                 )
 
             tool_handler = content_only_handler

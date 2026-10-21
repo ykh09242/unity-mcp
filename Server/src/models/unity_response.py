@@ -48,6 +48,10 @@ def normalize_unity_response(response: Any) -> Any:
         "data": data,
     }
 
+    code = payload.get("code", response.get("code"))
+    if code is not None:
+        normalized["code"] = code
+
     if not success and not normalized["error"]:
         normalized["error"] = message or "Unity command failed"
 
@@ -69,6 +73,7 @@ def parse_resource_response(response: Any, typed_cls: Type[MCPResponse]) -> MCPR
     if response.get("success") is False or response.get("status") == "error":
         return MCPResponse(
             success=False,
+            code=response.get("code"),
             error=response.get("error"),
             message=response.get("message"),
             data=response.get("data"),
