@@ -359,6 +359,45 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(Directory.EnumerateFiles(ownedRoot, "write-*.tmp").Any());
         }
 
+        [Test, Explicit("Controller-owned large workload cohort only.")]
+        public void LargeReportCohortReadsCompleteOrderedPages()
+        {
+            var job = Complete(BuildJobState.Succeeded);
+            var record = Prepared(job);
+            record["packed_assets_complete"] = true;
+            string id = (string)
+                Store
+                    .GetMethod("WriteSnapshot", BindingFlags.NonPublic | BindingFlags.Static)
+                    .Invoke(null, new object[] { record, Enumerable.Empty<JObject>(), PackedRows(10000) });
+            for (int i = 0; i < 63; i++)
+                Complete(BuildJobState.Succeeded);
+            MCPForUnityTests.WorkloadProbe.Run(
+                "report_pages",
+                "indexed",
+                10000,
+                () =>
+                {
+                    Assert.AreEqual(64, Success(Send("report_history", "page_size", 100)).Value<int>("total_reports"));
+                    var rows = new System.Text.StringBuilder();
+                    for (int page = 1; page <= 100; page++)
+                    {
+                        var data = Success(Send("report", "report_id", id, "report_section", "packed_assets", "page_size", 100, "page_number", page));
+                        Assert.IsTrue(data.Value<bool>("details_complete"));
+                        Assert.AreEqual(10000, data.Value<int>("total_entries"));
+                        var entries = (JArray)data["entries"];
+                        Assert.AreEqual(100, entries.Count);
+                        for (int i = 0; i < entries.Count; i++)
+                        {
+                            string expected = "Assets/Owned/Entry" + ((page - 1) * 100 + i) + ".asset";
+                            Assert.AreEqual(expected, entries[i].Value<string>("source_asset_path"));
+                            rows.Append(entries[i].ToString(Newtonsoft.Json.Formatting.None)).Append('\n');
+                        }
+                    }
+                    return rows.ToString();
+                }
+            );
+        }
+
         private double MeasureHistory()
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();

@@ -199,6 +199,49 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.That(actions, Is.Zero);
         }
 
+        [Test, Explicit("Controller-owned large workload cohort only.")]
+        public void SustainedActivityCohortPreservesIdleAndActiveCaptureCounts()
+        {
+            MCPForUnityTests.WorkloadProbe.Run(
+                "editor_activity",
+                "tick_cycles",
+                32000,
+                () =>
+                {
+                    var root = new VisualElement();
+                    long revision = 0;
+                    int captures = 0;
+                    using var section = new McpActivitySection(
+                        root,
+                        () =>
+                        {
+                            captures++;
+                            return SampleRows();
+                        },
+                        () => revision,
+                        _ => Assert.Fail("Unexpected action"),
+                        _ => Assert.Fail("Unexpected action")
+                    );
+                    for (int cycle = 0; cycle < 32; cycle++)
+                    {
+                        section.SetVisible(true);
+                        int before = captures;
+                        for (int idle = 0; idle < 1000; idle++)
+                            section.Tick();
+                        Assert.AreEqual(before, captures, "Unchanged visible ticks must not recapture.");
+                        revision++;
+                        section.Tick();
+                        Assert.AreEqual(before + 1, captures);
+                        section.SetVisible(false);
+                        revision++;
+                        section.Tick();
+                        Assert.AreEqual(before + 1, captures, "Hidden transitions must not capture.");
+                    }
+                    return captures.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                }
+            );
+        }
+
         private static List<OperationActivityRow> SampleRows() =>
             new List<OperationActivityRow>
             {

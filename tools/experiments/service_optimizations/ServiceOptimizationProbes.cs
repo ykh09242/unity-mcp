@@ -303,6 +303,9 @@ namespace MCPForUnityTests.Editor.Performance
                 byte[] signature = { 137, 80, 78, 71, 13, 10, 26, 10 };
                 Buffer.BlockCopy(signature, 0, large, 0, 8);
                 Buffer.BlockCopy(signature, 0, small, 0, 8);
+                using var digest = SHA256.Create();
+                string largeHash = BitConverter.ToString(digest.ComputeHash(large)).Replace("-", "").ToLowerInvariant();
+                string smallHash = BitConverter.ToString(digest.ComputeHash(small)).Replace("-", "").ToLowerInvariant();
                 int[] sizes = { 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0 };
                 using (await PreparedArtifact.CreateAsync(new HttpResult { Body = small }, root, "image", "fal", "png", "png", CancellationToken.None)) { }
                 using var fifo = new SemaphoreSlim(2);
@@ -331,6 +334,7 @@ namespace MCPForUnityTests.Editor.Performance
                     int[] order = Enumerable.Range(0, sizes.Length).ToArray();
                     var timer = Stopwatch.StartNew();
                     double[] completed = new double[sizes.Length];
+                    string[] hashes = new string[sizes.Length];
                     var tasks = new List<Task>();
                     foreach (int index in order)
                     {
@@ -343,6 +347,8 @@ namespace MCPForUnityTests.Editor.Performance
                                     : PreparedArtifact.CreateAsync(input, root, "image", "fal", "png", "png", CancellationToken.None)
                             ).ConfigureAwait(false);
                             Assert.AreEqual(sizes[identity] == 1 ? large.Length : small.Length, output.Length);
+                            Assert.AreEqual(sizes[identity] == 1 ? largeHash : smallHash, output.Hash);
+                            hashes[identity] = output.Hash;
                             completed[identity] = timer.Elapsed.TotalMilliseconds;
                         }
                         tasks.Add(Run(index));
@@ -359,6 +365,7 @@ namespace MCPForUnityTests.Editor.Performance
                             totalMs = timer.Elapsed.TotalMilliseconds,
                             sizes,
                             completed,
+                            outputHashes = hashes,
                         }
                     );
                 }
@@ -368,6 +375,51 @@ namespace MCPForUnityTests.Editor.Performance
                 Directory.Delete(root, true);
             }
             Save("opt12-mixed-queue", results);
+            var raw = JArray.FromObject(results);
+            var environment = new
+            {
+                editor = Application.unityVersion,
+                backend = "Editor Mono",
+                os = SystemInfo.operatingSystem,
+                cpu = SystemInfo.processorType,
+                processors = SystemInfo.processorCount,
+                memory_mb = SystemInfo.systemMemorySize,
+                gpu = SystemInfo.graphicsDeviceType.ToString(),
+            };
+            var cohorts = new List<object>();
+            using var cohortDigest = SHA256.Create();
+            foreach (string arm in new[] { "A", "B" })
+            {
+                var samples = raw.Where(row => row.Value<string>("arm") == arm)
+                    .Select(row => new
+                    {
+                        preparation = "warm",
+                        elapsed_ms = row.Value<double>("totalMs"),
+                        completed_units = 12,
+                        output_sha256 = BitConverter
+                            .ToString(cohortDigest.ComputeHash(Encoding.UTF8.GetBytes(row["outputHashes"].ToString(Formatting.None))))
+                            .Replace("-", "")
+                            .ToLowerInvariant(),
+                    })
+                    .ToArray();
+                cohorts.Add(
+                    new
+                    {
+                        schema = "unity-mcp-workload-raw-v1",
+                        scenario = "mixed_artifacts",
+                        variant = arm == "A" ? "FIFO" : "size_age",
+                        inputs_sha256 = Environment.GetEnvironmentVariable("UNITY_MCP_WORKLOAD_INPUTS_SHA256"),
+                        expected_units = 12,
+                        completed = true,
+                        environment,
+                        samples,
+                        allocation_bytes = (long?)null,
+                        retained_managed_delta_bytes = (long?)null,
+                        main_thread_stall_ms = (double?)null,
+                    }
+                );
+            }
+            Save("mixed-artifacts", cohorts);
         }
 
         [UnityTest]

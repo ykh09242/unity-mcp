@@ -74,6 +74,47 @@ namespace MCPForUnityTests.EditMode.Tools
             }
         }
 
+        [Test, Explicit("Controller-owned large workload cohort only.")]
+        public void LargeReferenceCohortCompletesFullSourceHash()
+        {
+            string path = root + "/cohort.bytes";
+            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                stream.SetLength(17 * 1024 * 1024);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            MCPForUnityTests.WorkloadProbe.Run(
+                "hierarchy_references",
+                "reference_bytes",
+                17 * 1024 * 1024,
+                () =>
+                {
+                    var data = Success(
+                        JObject.FromObject(
+                            ManageAsset.HandleCommand(
+                                new JObject
+                                {
+                                    ["action"] = "get_dependencies",
+                                    ["path"] = path,
+                                    ["scanRoot"] = root,
+                                    ["maxAssets"] = 250000,
+                                    ["maxWork"] = 4000000,
+                                }
+                            )
+                        )
+                    );
+                    Assert.IsTrue(data.Value<bool>("scanComplete"));
+                    Assert.AreEqual(250000, data.Value<int>("maxAssets"));
+                    Assert.AreEqual(17 * 1024 * 1024, new FileInfo(path).Length);
+                    Assert.AreEqual(0, data.Value<int>("totalEntries"));
+                    Assert.AreEqual(0, ((JArray)data["entries"]).Count);
+                    Assert.AreEqual(AssetDatabase.AssetPathToGUID(path), data.Value<string>("guid"));
+                    // Fixture GUIDs and importer revisions differ between independent runs.
+                    foreach (string field in new[] { "guid", "sourceRevision", "referenceRevision" })
+                        ((JObject)data).Remove(field);
+                    return data.ToString(Newtonsoft.Json.Formatting.None).Replace(root, "Assets/Owned");
+                }
+            );
+        }
+
         [Test]
         public void LargeAssetReferenceRequestHashesCompleteSourceWithoutSmallProjectClamps()
         {
