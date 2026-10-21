@@ -67,7 +67,12 @@ async def test_search_timeout_returns_error_and_event_loop_stays_responsive(monk
 
 @pytest.mark.parametrize(
     "pattern,text",
-    [("x" * 2049, "x"), ("x", "x" * 2_000_001), ("a{999999999}", "a"), ("a{1,999999999}", "a")],
+    [
+        ("x" * 2049, "x"),
+        ("x", "x" * (bounded_regex.MAX_TEXT_CHARS + 1)),
+        ("a{999999999}", "a"),
+        ("a{1,999999999}", "a"),
+    ],
     ids=["pattern-size", "text-size", "repetition-size", "repetition-upper-bound"],
 )
 def test_oversized_pattern_or_input_is_rejected(pattern, text):

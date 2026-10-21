@@ -174,7 +174,7 @@ async def test_invalid_result_replaced_with_small_error(isolated, monkeypatch, k
         for _ in range(70):
             result = {"nested": result}
     else:
-        result["data"] = [None] * 100_001
+        result["data"] = [None] * 1_000_001
     hub = PluginHub({"type": "websocket"}, None, None)
     await hub._handle_command_result(ws, CommandResultMessage(id="command", result=result))
     assert future.done()
@@ -188,7 +188,7 @@ async def test_invalid_result_replaced_with_small_error(isolated, monkeypatch, k
 
 
 def test_final_response_bound_before_normalization():
-    response = {"success": True, "data": {"wide": [None] * 100_001}}
+    response = {"success": True, "data": {"wide": [None] * 1_000_001}}
     reply = normalize_unity_response(response)
     assert reply["success"] is False, (
         "The final response seam must independently bound oversized data"
@@ -326,7 +326,10 @@ async def test_final_resource_text_and_base64_envelopes_have_independent_limit(m
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "raw",
-    ['{"data":' + "[" * 70 + "0" + "]" * 70 + "}", '{"data":[' + ",".join(["0"] * 100_001) + "]}"],
+    [
+        '{"data":' + "[" * 70 + "0" + "]" * 70 + "}",
+        '{"data":[' + ",".join(["0"] * 1_000_001) + "]}",
+    ],
     ids=["depth", "nodes"],
 )
 async def test_raw_graph_rejected_before_json_decoder(isolated, monkeypatch, raw):

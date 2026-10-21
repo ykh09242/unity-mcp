@@ -240,7 +240,7 @@ async def test_queue_wait_is_part_of_the_search_budget(routing, executor, monkey
     task = asyncio.create_task(search.find_in_file(None, "Assets/Test.cs", "needle"))
     try:
         await until(lambda: pool.submissions == 2)
-        clock[0] = 102.0
+        clock[0] = 100.0 + bounded_regex.TOTAL_TIMEOUT_SECONDS + 1
         release.set()
         await asyncio.wrap_future(blocker)
         result = await task
