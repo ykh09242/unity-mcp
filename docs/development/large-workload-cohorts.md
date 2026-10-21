@@ -18,14 +18,14 @@ python tools/experiments/service_optimizations/shared_read.py
 
 `UNITY_MCP_WORKLOAD_OUTPUT` also selects its output directory; otherwise the existing `.work/service-optimization-probes` location is used. It verifies exact ordered output, copy isolation, a single upstream read and released shared-read accounting for all 18 shape/reader/arm combinations. Python source and harness fingerprints are checked before and after measurement. No optional Python package is needed.
 
-Run `ScriptChangeSetReloadTests.ActualDomainReload_RetainsAndRecoversInterruptedApplication` three times through the existing owned reload controller, reusing the same project and inputs. Each run must contain `inputs.json`, `invocation.json`, `process-result.json` and `results.xml`. The invocation identifies its unique run, selected fixture, project and reused cache; the process receipt must show success, no timeout/survivors and preserved unrelated processes. Actual interrupted-application recovery checks original file bytes and metadata after each domain replacement. Reload XML duration is not interpreted as reload latency.
+Run `ScriptChangeSetReloadTests.ActualDomainReload_RetainsAndRecoversInterruptedApplication` three times through the existing owned reload controller, reusing the same project and inputs. Each run must contain `inputs.json`, `invocation.json`, `process-result.json` and the controller's NUnit result (`results.xml` or `lifecycle-results.xml`). Select the latter explicitly with `--reload-results-name lifecycle-results.xml`; filenames are never guessed. The invocation identifies its unique run, selected fixture, project and reused cache; the process receipt must show success, no timeout/survivors and preserved unrelated processes. Actual interrupted-application recovery checks original file bytes and metadata after each domain replacement. Reload XML duration is not interpreted as reload latency.
 
 ## Capture and comparison
 
-Pass all raw cohort JSON files explicitly (exclude the legacy `shared-read.json` and `opt12-mixed-queue.json`). The capture adapter verifies input fingerprints and required NUnit inventory. It reads the supplied evidence; it never launches Unity, downloads anything or changes workload limits.
+Pass all raw cohort JSON files explicitly (exclude the legacy `shared-read.json` and `opt12-mixed-queue.json`). The capture adapter verifies exact staged input fingerprints and required NUnit inventory. Repository source provenance permits only CRLF/LF checkout conversion for known text files, records those exceptions, and lists retained prepared overlays whose original sources are absent or outside the selected checkout. Overlay hashes remain mandatory; this is not a claim that the entire isolated project is an exact checkout. Tracked Git diff fingerprints hash raw bytes, including non-UTF8 content. It reads the supplied evidence; it never launches Unity, downloads anything or changes workload limits.
 
 ```sh
-python tools/workload_cohorts.py capture <raw-json-files> --inputs inputs.json --nunit results.xml --reload-run reload-1 --reload-run reload-2 --reload-run reload-3 --output capture.json
+python tools/workload_cohorts.py capture <raw-json-files> --inputs inputs.json --nunit results.xml --reload-run reload-1 --reload-run reload-2 --reload-run reload-3 --reload-results-name lifecycle-results.xml --output capture.json
 python tools/workload_cohorts.py compare baseline.json capture.json --output comparison.json
 ```
 

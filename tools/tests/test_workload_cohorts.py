@@ -190,3 +190,95 @@ def test_native_capture_requires_real_inventory_and_marks_partial_scope(tmp_path
     results.write_text(results.read_text().replace(method, "Unrelated.Test"))
     with pytest.raises(ValueError, match="inventory failed"):
         capture([artifact], inputs=frozen, nunit=results, allow_partial=True)
+
+
+@pytest.mark.parametrize("kind", ["crlf", "content", "binary"])
+def test_source_provenance_accepts_only_checkout_newlines(tmp_path, monkeypatch, kind):
+    from tools import workload_cohorts as cohorts
+
+    monkeypatch.setattr(cohorts, "ROOT", tmp_path)
+    source = tmp_path / ("source.cs" if kind != "binary" else "source.bin")
+    staged = tmp_path / "staged.cs"
+    staged.write_bytes(b"first\nsecond\n")
+    source.write_bytes(b"first\r\nsecond\r\n" if kind != "content" else b"first\nchanged\n")
+    entry = {"source": str(source), "path": str(staged), "sha256": cohorts.digest(staged)}
+    if kind == "crlf":
+        assert cohorts.source_provenance(entry) == "crlf_only"
+    else:
+        with pytest.raises(ValueError, match="differs"):
+            cohorts.source_provenance(entry)
+
+
+def test_capture_real_reload_bundles_and_binary_git_diff(tmp_path, monkeypatch):
+    import hashlib
+    from tools import workload_cohorts as cohorts
+
+    source = tmp_path / "prepared.cs"
+    source.write_text("retained prepared overlay")
+    frozen = tmp_path / "inputs.json"
+    frozen.write_text(
+        json.dumps({"files": [{"path": str(source), "sha256": cohorts.digest(source)}]})
+    )
+    value = raw()
+    value["inputs_sha256"] = cohorts.digest(frozen)
+    artifact = tmp_path / "raw.json"
+    artifact.write_text(json.dumps(value))
+
+    def xml(path, method, stamp):
+        path.write_text(
+            f'<test-run result="Passed" total="1" passed="1" failed="0" skipped="0" inconclusive="0" start-time="{stamp}"><test-case fullname="{method}" result="Passed" /></test-run>'
+        )
+
+    manifest = cohorts.load_manifest()
+    results = tmp_path / "results.xml"
+    xml(results, manifest["scenarios"]["report_pages"]["producer"][0], "native")
+    directories = []
+    for n in range(3):
+        directory = tmp_path / str(n)
+        directory.mkdir()
+        (directory / "inputs.json").write_bytes(frozen.read_bytes())
+        (directory / "invocation.json").write_text(
+            json.dumps(
+                {
+                    "runId": str(n),
+                    "project": "owned-project",
+                    "cacheReused": True,
+                    "filters": manifest["scenarios"]["repeated_reload"]["producer"],
+                }
+            )
+        )
+        (directory / "process-result.json").write_text(
+            json.dumps(
+                {
+                    "runId": str(n),
+                    "exitCode": 0,
+                    "timeout": False,
+                    "ownedSurvivors": 0,
+                    "protectedPreserved": True,
+                }
+            )
+        )
+        xml(
+            directory / "lifecycle-results.xml",
+            manifest["scenarios"]["repeated_reload"]["producer"][0],
+            str(n),
+        )
+        directories.append(directory)
+    binary_diff = b"diff with non-UTF8 \x95\x00\n"
+
+    def git_output(args):
+        if "rev-parse" in args:
+            return b"123456\n"
+        assert "--no-ext-diff" in args and "--no-textconv" in args
+        return binary_diff
+
+    monkeypatch.setattr(cohorts.subprocess, "check_output", git_output)
+    kwargs = dict(inputs=frozen, nunit=results, reload_runs=directories, allow_partial=True)
+    captured = cohorts.capture([artifact], reload_results_name="lifecycle-results.xml", **kwargs)
+    assert captured["cases"][-1]["verified_reloads"] == 3
+    assert len(captured["native_source_provenance"]["prepared_overlays"]) == 1
+    assert captured["source"]["tracked_diff_sha256"] == hashlib.sha256(binary_diff).hexdigest()
+    with pytest.raises(ValueError, match="reload verification failed"):
+        cohorts.capture([artifact], **kwargs)
+    with pytest.raises(ValueError, match="Unsupported"):
+        cohorts.capture([artifact], reload_results_name="../results.xml", **kwargs)

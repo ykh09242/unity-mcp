@@ -194,8 +194,33 @@ def compare(before, after):
     }
 
 
-def capture(paths, *, inputs=None, nunit=None, reload_runs=(), allow_partial=False):
+def source_provenance(entry):
+    """Keep staged bytes exact; allow only Git's CRLF checkout conversion for text."""
+    source = Path(entry.get("source", ""))
+    if not source.is_file() or not source.resolve().is_relative_to(ROOT):
+        return "prepared_overlay"
+    if digest(source) == entry["sha256"]:
+        return "exact"
+    if source.suffix.lower() in {".cs", ".meta", ".json", ".uxml", ".uss", ".asmdef", ".asmref"}:
+        original, staged = source.read_bytes(), Path(entry["path"]).read_bytes()
+        if original.replace(b"\r\n", b"\n") == staged.replace(b"\r\n", b"\n"):
+            return "crlf_only"
+    raise ValueError("Native staged source differs from the selected repository")
+
+
+def capture(
+    paths,
+    *,
+    inputs=None,
+    nunit=None,
+    reload_runs=(),
+    reload_results_name="results.xml",
+    allow_partial=False,
+):
+    if reload_results_name not in {"results.xml", "lifecycle-results.xml"}:
+        raise ValueError("Unsupported reload result filename")
     manifest = load_manifest()
+    provenance = {"exact": 0, "crlf_only": [], "prepared_overlays": []}
     rows, evidence = [], []
     for path in paths:
         value = json.loads(Path(path).read_text(encoding="utf-8-sig"))
@@ -214,13 +239,17 @@ def capture(paths, *, inputs=None, nunit=None, reload_runs=(), allow_partial=Fal
         for entry in frozen["files"]:
             if digest(entry["path"]) != entry["sha256"]:
                 raise ValueError("Native inputs changed after measurement")
-            source = Path(entry.get("source", ""))
-            if (
-                source.is_file()
-                and source.resolve().is_relative_to(ROOT)
-                and digest(source) != entry["sha256"]
-            ):
-                raise ValueError("Native staged source differs from the selected repository")
+            kind = source_provenance(entry)
+            if kind == "exact":
+                provenance["exact"] += 1
+            else:
+                provenance["crlf_only" if kind == "crlf_only" else "prepared_overlays"].append(
+                    {
+                        "path": entry["path"],
+                        "source": entry.get("source"),
+                        "sha256": entry["sha256"],
+                    }
+                )
         input_hash = digest(inputs)
         if any(r.get("inputs_sha256") != input_hash for r in native):
             raise ValueError("Native raw samples are bound to different inputs")
@@ -267,16 +296,17 @@ def capture(paths, *, inputs=None, nunit=None, reload_runs=(), allow_partial=Fal
                 raise ValueError("Reload did not finish with owned cleanup")
             if process.get("runId") != invocation.get("runId") or not invocation.get("runId"):
                 raise ValueError("Reload invocation identity differs")
-            if check_results(directory / "results.xml", "success", required):
+            if check_results(directory / reload_results_name, "success", required):
                 raise ValueError("Actual reload verification failed")
             identities.add(invocation["runId"])
             projects.add(invocation["project"])
-            hashes.append(digest(directory / "results.xml"))
+            hashes.append(digest(directory / reload_results_name))
             evidence.append(
                 {
                     "name": directory.name,
                     "invocation_sha256": digest(directory / "invocation.json"),
                     "nunit_sha256": hashes[-1],
+                    "nunit_name": reload_results_name,
                     "inputs_sha256": digest(directory / "inputs.json"),
                 }
             )
@@ -303,11 +333,13 @@ def capture(paths, *, inputs=None, nunit=None, reload_runs=(), allow_partial=Fal
         )
 
     def git(*args):
-        return subprocess.check_output(["git", "-C", str(ROOT), *args], text=True).strip()
+        return subprocess.check_output(["git", "-C", str(ROOT), *args])
 
     source = {
-        "commit": git("rev-parse", "HEAD"),
-        "tracked_diff_sha256": hashlib.sha256(git("diff", "HEAD", "--binary").encode()).hexdigest(),
+        "commit": git("rev-parse", "HEAD").decode("ascii").strip(),
+        "tracked_diff_sha256": hashlib.sha256(
+            git("diff", "--no-ext-diff", "--no-textconv", "HEAD", "--binary")
+        ).hexdigest(),
     }
     harness = harness_fingerprint()
     return {
@@ -316,6 +348,7 @@ def capture(paths, *, inputs=None, nunit=None, reload_runs=(), allow_partial=Fal
         "manifest_sha256": digest(MANIFEST),
         "harness_sha256": harness,
         "native_inputs_sha256": input_hash,
+        "native_source_provenance": provenance,
         "evidence": evidence,
         "partial": present != expected,
         "cases": rows,
@@ -332,6 +365,11 @@ def main():
     record.add_argument("--nunit", type=Path)
     record.add_argument("--allow-partial", action="store_true")
     record.add_argument("--reload-run", action="append", type=Path, default=[])
+    record.add_argument(
+        "--reload-results-name",
+        choices=("results.xml", "lifecycle-results.xml"),
+        default="results.xml",
+    )
     record.add_argument("--output", type=Path, required=True)
     diff = sub.add_parser("compare")
     diff.add_argument("before", type=Path)
@@ -344,6 +382,7 @@ def main():
             inputs=args.inputs,
             nunit=args.nunit,
             reload_runs=args.reload_run,
+            reload_results_name=args.reload_results_name,
             allow_partial=args.allow_partial,
         )
     else:
