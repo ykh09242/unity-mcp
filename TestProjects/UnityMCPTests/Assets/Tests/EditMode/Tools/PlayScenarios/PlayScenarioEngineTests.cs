@@ -101,6 +101,26 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 )
             );
 
+        [Test]
+        public void DayLongPolicyAllowsSlowSceneWorkAndStillCancelsWithoutReplay()
+        {
+            var scenario = Definition();
+            scenario.Steps[0].TimeoutSeconds = 3600;
+            var host = new Host { EvaluateStep = (_, __) => new PlayScenarioObservation(false, "loading") };
+            var state = PlayScenarioEngine.Create(scenario, new string('a', 32), 1, 86400, 1000);
+            var engine = new PlayScenarioEngine(state, host);
+            engine.EnteredPlayMode();
+            engine.Tick(1000, true);
+            engine.Tick(1802000, true);
+            Assert.AreEqual("running", state.Status);
+            Assert.AreEqual(86401000, state.DeadlineUnixMs);
+            Assert.AreEqual(1, host.Loads);
+            engine.Cancel(1803000);
+            engine.Tick(1804000, true);
+            Assert.AreEqual("cancelled", state.Status);
+            Assert.AreEqual(1, host.Releases);
+        }
+
         private static PlayScenarioEngine Engine(Host host, int repeats = 1, int timeout = 30)
         {
             var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(Definition(), new string('a', 32), repeats, timeout, 1000), host);

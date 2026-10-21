@@ -218,7 +218,7 @@ class PlayerRunOptions:
     repeat_count: int = 1
     timeout_seconds: int = 300
     source_revision: str | None = None
-    cleanup_wait_seconds: float = 360
+    cleanup_wait_seconds: float = 1860
     poll_interval_seconds: float = 0.1
     deadline_monotonic: float | None = None
     expected_build_revision: str | None = None
@@ -237,10 +237,10 @@ class PlayerRunOptions:
             raise PlayerLaunchError("Player soak requires repeat_count 1")
         if (
             not math.isfinite(self.cleanup_wait_seconds)
-            or not 0.05 <= self.cleanup_wait_seconds <= 600
+            or not 0.05 <= self.cleanup_wait_seconds <= 3600
         ):
             raise PlayerLaunchError(
-                "Player cleanup wait must be bounded between 0.05 and 600 seconds"
+                "Player cleanup wait must be bounded between 0.05 and 3600 seconds"
             )
         if (
             not math.isfinite(self.poll_interval_seconds)

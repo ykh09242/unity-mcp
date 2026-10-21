@@ -85,7 +85,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             string suiteId = null
         )
         {
-            if (repeats < 1 || repeats > 10 || timeout < 1 || timeout > 1800)
+            if (repeats < 1 || repeats > 10 || timeout < 1 || timeout > 86400)
                 throw new ArgumentException("Suite repeats/timeout exceed their bounds.");
             PlayScenarioService.ValidateSourceRevision(revision);
             if (suiteId != null)

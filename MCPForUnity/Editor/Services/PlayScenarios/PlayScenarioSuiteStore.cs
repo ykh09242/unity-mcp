@@ -161,7 +161,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State(RequiredText(value, "status", 16), "running", "succeeded", "failed", "timed_out", "cancelled");
             if (
                 PlayScenarioDefinition.Integer(value, "repeat_count", 1, 10, 0) == 0
-                || PlayScenarioDefinition.Integer(value, "timeout_seconds", 1, 1800, 0) == 0
+                || PlayScenarioDefinition.Integer(value, "timeout_seconds", 1, 86400, 0) == 0
             )
                 throw new ArgumentException("Suite report requires original repeat_count and timeout_seconds.");
             Timestamp(value, "started_unix_ms", false);

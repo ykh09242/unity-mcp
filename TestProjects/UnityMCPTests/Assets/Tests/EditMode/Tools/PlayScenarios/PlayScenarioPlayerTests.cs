@@ -55,7 +55,7 @@ namespace MCPForUnityTests
         [TestCase("repeat_count", 0)]
         [TestCase("repeat_count", 11)]
         [TestCase("timeout_seconds", 0)]
-        [TestCase("timeout_seconds", 1801)]
+        [TestCase("timeout_seconds", 86401)]
         public void RequestRejectsOutOfRangeOverrides(string field, int value)
         {
             JObject request = Request();

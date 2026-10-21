@@ -19,8 +19,8 @@ class Execution(ProfileValue):
     kind: Literal["run", "soak", "session"] = "run"
     build_directory: Annotated[str, Field(min_length=1, max_length=1024)]
     graphical: bool = False
-    timeout_seconds: Annotated[int, Field(ge=1, le=1800)] = 300
-    cleanup_wait_seconds: Annotated[int, Field(ge=1, le=600)] = 360
+    timeout_seconds: Annotated[int, Field(ge=1, le=86400)] = 300
+    cleanup_wait_seconds: Annotated[int, Field(ge=1, le=3600)] = 1860
     expected_build_revision: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     expected_build_id: Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")] | None = None
     repeat_count: Annotated[int, Field(ge=1, le=10)] = 1

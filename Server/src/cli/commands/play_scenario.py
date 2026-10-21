@@ -277,7 +277,7 @@ def delete(name: str):
 @click.argument("name")
 @click.option("--job-id", default=None, help="Optional 32-character lowercase hex request key.")
 @click.option("--repeat-count", type=click.IntRange(1, 10), default=1, show_default=True)
-@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option("--timeout-seconds", type=click.IntRange(1, 86400), default=300, show_default=True)
 @click.option(
     "--source-revision", default=None, help="Optional caller-provided reproduction label."
 )
@@ -399,13 +399,15 @@ def suite_reports(name: str | None) -> None:
 @click.argument("name")
 @click.option("--suite-id", default=None, help="Optional 32-character lowercase hex request key.")
 @click.option("--repeat-count", type=click.IntRange(1, 10), default=1, show_default=True)
-@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option("--timeout-seconds", type=click.IntRange(1, 86400), default=300, show_default=True)
 @click.option("--source-revision", default=None)
 @click.option("--output-dir", type=click.Path(file_okay=False, path_type=Path), required=True)
 @click.option(
     "--poll-interval-seconds", type=click.FloatRange(0.1, 10), default=0.5, show_default=True
 )
-@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+@click.option(
+    "--cleanup-wait-seconds", type=click.IntRange(1, 3600), default=1860, show_default=True
+)
 @handle_unity_errors
 def suite_run(
     name: str,
@@ -485,7 +487,7 @@ def suite_run(
 @click.argument("build_directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("--output-dir", type=click.Path(file_okay=False, path_type=Path), required=True)
 @click.option("--repeat-count", type=click.IntRange(1, 10), default=1, show_default=True)
-@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option("--timeout-seconds", type=click.IntRange(1, 86400), default=300, show_default=True)
 @click.option("--source-revision", default=None)
 @click.option(
     "--expected-build-revision", default=None, help="Require the frozen build label to match."
@@ -493,7 +495,9 @@ def suite_run(
 @click.option("--expected-build-id", default=None)
 @click.option("--require-verified-payload", is_flag=True, help="Reject legacy unverified bundles.")
 @click.option("--graphical", is_flag=True, help="Run with graphics for screenshot checkpoints.")
-@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+@click.option(
+    "--cleanup-wait-seconds", type=click.IntRange(1, 3600), default=1860, show_default=True
+)
 def player_run(
     build_directory: Path,
     output_dir: Path,
@@ -546,13 +550,15 @@ def player_run(
 @click.option(
     "--max-runtime-seconds", type=click.IntRange(1, 86400), default=3600, show_default=True
 )
-@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option("--timeout-seconds", type=click.IntRange(1, 86400), default=300, show_default=True)
 @click.option("--failure-policy", type=click.Choice(["stop", "continue"]), default="stop")
 @click.option("--retain-reports", type=click.IntRange(1, 64), default=4, show_default=True)
 @click.option("--source-revision", default=None)
 @click.option("--expected-build-revision", default=None)
 @click.option("--expected-build-id", default=None)
-@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+@click.option(
+    "--cleanup-wait-seconds", type=click.IntRange(1, 3600), default=1860, show_default=True
+)
 @click.option("--graphical", is_flag=True, help="Run with graphics for screenshot checkpoints.")
 def player_soak(
     build_directory: Path,
@@ -617,8 +623,10 @@ def player_soak(
 @click.option(
     "--max-runtime-seconds", type=click.IntRange(1, 86400), default=3600, show_default=True
 )
-@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
-@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+@click.option("--timeout-seconds", type=click.IntRange(1, 86400), default=300, show_default=True)
+@click.option(
+    "--cleanup-wait-seconds", type=click.IntRange(1, 3600), default=1860, show_default=True
+)
 @click.option("--interval-seconds", type=click.FloatRange(0, 60), default=0.5, show_default=True)
 @click.option(
     "--failure-policy", type=click.Choice(["stop", "continue"]), default="stop", show_default=True
@@ -720,11 +728,13 @@ def player_suite_build(
 @click.option(
     "--isolation", type=click.Choice(["fresh-process"]), default="fresh-process", show_default=True
 )
-@click.option("--timeout-seconds", type=click.IntRange(1, 1800), default=300, show_default=True)
+@click.option("--timeout-seconds", type=click.IntRange(1, 86400), default=300, show_default=True)
 @click.option(
     "--max-runtime-seconds", type=click.IntRange(1, 86400), default=3600, show_default=True
 )
-@click.option("--cleanup-wait-seconds", type=click.IntRange(1, 600), default=360, show_default=True)
+@click.option(
+    "--cleanup-wait-seconds", type=click.IntRange(1, 3600), default=1860, show_default=True
+)
 @click.option("--source-revision", default=None)
 @click.option("--expected-build-revision", default=None)
 @click.option("--expected-build-id", default=None)

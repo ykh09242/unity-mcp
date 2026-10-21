@@ -229,7 +229,7 @@ def test_wait_scene_accepts_stability_without_object_fields():
         {"cleanup_steps": [DEFINITION["steps"][0]] * 17},
         {"setup_steps": [DEFINITION["steps"][1]]},
         {"cleanup_timeout_seconds": 0},
-        {"cleanup_timeout_seconds": 301},
+        {"cleanup_timeout_seconds": 1801},
         {"cleanup_timeout_seconds": True},
         {"cleanup_timeout_seconds": "30"},
         {"completion_stable_ms": -1},

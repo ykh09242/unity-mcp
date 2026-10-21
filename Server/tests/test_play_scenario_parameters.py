@@ -130,7 +130,7 @@ def test_all_effective_cases_and_bounds_are_admitted_before_save(mutation):
     value = template()
     if mutation == "overflow":
         value["parameter_bindings"][0]["path"] = "/steps/1/timeout_seconds"
-        value["datasets"][0]["values"]["score"] = 121
+        value["datasets"][0]["values"]["score"] = 3601
     elif mutation == "unknown":
         value["datasets"][0]["values"]["undeclared"] = 1
     elif mutation == "duplicate":

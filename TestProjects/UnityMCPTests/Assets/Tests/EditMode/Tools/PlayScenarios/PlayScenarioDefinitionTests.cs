@@ -53,6 +53,18 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
         }
 
         [Test]
+        public void LongSceneWorkRetainsExplicitStepAndCleanupDurations()
+        {
+            var value = Valid();
+            value["steps"][0]["timeout_seconds"] = 3600;
+            value["cleanup_timeout_seconds"] = 1800;
+            var parsed = PlayScenarioDefinition.Parse(value);
+            Assert.AreEqual(3600, parsed.Steps[0].TimeoutSeconds);
+            Assert.AreEqual(1800, parsed.CleanupTimeoutSeconds);
+            Assert.AreEqual(3600, PlayScenarioDefinition.Parse(JObject.FromObject(parsed)).Steps[0].TimeoutSeconds);
+        }
+
+        [Test]
         public void RejectsInvalidNamesAndUnknownFields()
         {
             foreach (string name in new[] { "", "Upper", "../a", "a/b", "a\\b", "-a", "a\n", new string('a', 65) })
@@ -74,7 +86,7 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
                 value["poll_interval_ms"] = number;
                 Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(value));
             }
-            foreach (JToken number in new JToken[] { 0, 121, 30.0, "30", JValue.CreateNull() })
+            foreach (JToken number in new JToken[] { 0, 3601, 30.0, "30", JValue.CreateNull() })
             {
                 var value = Valid();
                 value["steps"][0]["timeout_seconds"] = number;
@@ -146,7 +158,7 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             scene["steps"][0]["target"] = JValue.CreateNull();
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(scene));
             var target = Valid();
-            target["steps"][1]["scene"] = "Assets/Menu.unity";
+            target["steps"][1]["load_mode"] = "additive";
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(target));
             var empty = Valid();
             empty["steps"] = new JArray();

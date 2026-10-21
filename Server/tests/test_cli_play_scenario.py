@@ -95,7 +95,7 @@ def test_cli_save_validates_whole_definition_before_dispatch(wire, tmp_path):
     [
         ["run", "Menu"],
         ["run", "menu-start", "--repeat-count", "0"],
-        ["run", "menu-start", "--timeout-seconds", "1801"],
+        ["run", "menu-start", "--timeout-seconds", "86401"],
         ["run", "menu-start", "--job-id", "short"],
         ["status", "short"],
         ["cancel", JOB_ID.upper()],

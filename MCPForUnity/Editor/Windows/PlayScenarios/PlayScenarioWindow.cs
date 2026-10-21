@@ -322,7 +322,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             panel.Add(revision);
             panel.Add(
                 Note(
-                    "Repeat: 1–10. Total timeout: 1–1800 s. Each repeat executes setup → main → cleanup. Use reset_state after the first load_scene in Setup to reset registered state before each repeat. Static state and DontDestroyOnLoad objects otherwise persist."
+                    "Repeat: 1–10. Total timeout: 1–86400 s. Each repeat executes setup → main → cleanup. Use reset_state after the first load_scene in Setup to reset registered state before each repeat. Static state and DontDestroyOnLoad objects otherwise persist."
                 )
             );
             var toolbar = Row();
@@ -848,9 +848,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private void RunScenario()
         {
-            if (repeatCount < 1 || repeatCount > 10 || runTimeoutSeconds < 1 || runTimeoutSeconds > 1800)
+            if (repeatCount < 1 || repeatCount > 10 || runTimeoutSeconds < 1 || runTimeoutSeconds > 86400)
             {
-                SetMessage("Repeat count must be 1–10 and run timeout 1–1800 seconds.", true);
+                SetMessage("Repeat count must be 1–10 and run timeout 1–86400 seconds.", true);
                 return;
             }
             if (!TrySave())

@@ -24,7 +24,7 @@ from pydantic import (
 ScenarioName = Annotated[str, Field(strict=True, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")]
 JobId = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{32}$")]
 RepeatCount = Annotated[int, Field(strict=True, ge=1, le=10)]
-RunTimeout = Annotated[int, Field(strict=True, ge=1, le=1800)]
+RunTimeout = Annotated[int, Field(strict=True, ge=1, le=86400)]
 ScenarioAction = Literal[
     "save",
     "get",
@@ -485,7 +485,7 @@ class ScenarioStep(BaseModel):
         default=None, exclude_if=lambda value: value is None
     )
     click_mode: Literal["direct", "raycast"] | None = None
-    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=120)] = 30
+    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=3600)] = 30
     count: Annotated[int, Field(strict=True, ge=0, le=10000)] | None = None
     active: Annotated[bool, Field(strict=True)] | None = None
     component: Annotated[str, Field(strict=True, min_length=1, max_length=256)] | None = None
@@ -831,7 +831,7 @@ class PlayScenario(BaseModel):
     steps: Annotated[list[ScenarioStep], Field(min_length=1, max_length=32)]
     setup_steps: Annotated[list[ScenarioStep], Field(max_length=16)] = Field(default_factory=list)
     cleanup_steps: Annotated[list[ScenarioStep], Field(max_length=16)] = Field(default_factory=list)
-    cleanup_timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=300)] = 30
+    cleanup_timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=1800)] = 30
     completion_stable_ms: Annotated[int, Field(strict=True, ge=0, le=10000)] = 250
     log_policy: PlayScenarioLogPolicy = Field(default_factory=PlayScenarioLogPolicy)
     metrics: PlayScenarioMetricsOptions = Field(default_factory=PlayScenarioMetricsOptions)

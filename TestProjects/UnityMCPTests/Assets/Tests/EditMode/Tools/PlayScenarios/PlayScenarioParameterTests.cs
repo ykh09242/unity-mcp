@@ -192,7 +192,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(template));
             template = Template();
             template["parameter_bindings"][0]["path"] = "/steps/1/timeout_seconds";
-            template["datasets"][0]["values"]["score"] = 121;
+            template["datasets"][0]["values"]["score"] = 3601;
             Assert.Throws<ArgumentException>(() => PlayScenarioDefinition.Parse(template));
         }
 

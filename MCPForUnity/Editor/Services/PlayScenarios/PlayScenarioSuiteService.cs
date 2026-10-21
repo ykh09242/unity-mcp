@@ -59,7 +59,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         return Start(
                             Name(parameters),
                             PlayScenarioDefinition.Integer(parameters, "repeat_count", 1, 10, 1),
-                            PlayScenarioDefinition.Integer(parameters, "timeout_seconds", 1, 1800, 300),
+                            PlayScenarioDefinition.Integer(parameters, "timeout_seconds", 1, 86400, 300),
                             Revision(parameters),
                             parameters.Property("suite_id") == null ? null : Id(parameters)
                         );
@@ -321,7 +321,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     || state.RepeatCount != state.Report.RepeatCount
                     || state.DeadlineUnixMs - state.Report.StartedUnixMs != state.Report.TimeoutSeconds * 1000L
                     || state.DeadlineUnixMs < state.Report.StartedUnixMs
-                    || state.DeadlineUnixMs - state.Report.StartedUnixMs > 1800000
+                    || state.DeadlineUnixMs - state.Report.StartedUnixMs > 86400000
                 )
                     throw new InvalidDataException("Invalid restored suite queue.");
                 for (int index = 0; index < state.Definitions.Count; index++)
@@ -347,7 +347,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         && (
                             !state.FinalizationDeadlineUnixMs.HasValue
                             || state.FinalizationDeadlineUnixMs.Value < state.Report.StartedUnixMs
-                            || state.FinalizationDeadlineUnixMs.Value > Now + 360000
+                            || state.FinalizationDeadlineUnixMs.Value > Now + 1860000
                         )
                     )
                 )

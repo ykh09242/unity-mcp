@@ -98,6 +98,17 @@ namespace MCPForUnityTests
         }
 
         [Test]
+        public void PlayerRequestRetainsTheFullLongRunPolicy()
+        {
+            var manifest = Manifest();
+            var request = Request(manifest);
+            request["timeout_seconds"] = 86400;
+            var parsed = PlayScenarioPlayerRequest.Parse(request.ToString());
+            parsed.ValidateBundle(PlayScenarioPlayerBundle.Parse(manifest.ToString()));
+            Assert.AreEqual(86400, parsed.TimeoutSeconds);
+        }
+
+        [Test]
         public void LegacyVersionCannotPromoteItselfToVerifiedPayload()
         {
             JObject manifest = Manifest();

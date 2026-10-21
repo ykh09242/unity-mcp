@@ -160,9 +160,9 @@ class PlayerSuiteOptions(BaseModel):
     output_directory: Path
     isolation: Literal["fresh-process"] = "fresh-process"
     failure_policy: Literal["stop", "continue"] | None = None
-    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=1800)] = 300
+    timeout_seconds: Annotated[int, Field(strict=True, ge=1, le=86400)] = 300
     max_runtime_seconds: Annotated[int, Field(strict=True, ge=1, le=86400)] = 3600
-    cleanup_wait_seconds: Annotated[int, Field(strict=True, ge=1, le=600)] = 360
+    cleanup_wait_seconds: Annotated[int, Field(strict=True, ge=1, le=3600)] = 1860
     graphical: Annotated[bool, Field(strict=True)] = False
     source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
     expected_build_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None

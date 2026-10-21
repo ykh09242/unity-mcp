@@ -13,6 +13,17 @@ from models.play_scenarios import PlayScenario, PlayScenarioCommand, ScenarioSte
 from pydantic import TypeAdapter, ValidationError
 from services.tools.manage_play_scenario import manage_play_scenario
 
+
+def test_long_scenario_policies_survive_public_model_round_trips():
+    definition = copy.deepcopy(DEFINITION)
+    definition["steps"][0]["timeout_seconds"] = 3600
+    definition["cleanup_timeout_seconds"] = 1800
+    parsed = PlayScenario.model_validate(definition)
+    assert PlayScenario.model_validate_json(parsed.model_dump_json(exclude_none=True)) == parsed
+    command = PlayScenarioCommand(action="run", name="menu-start", timeout_seconds=86400)
+    assert command.timeout_seconds == 86400
+
+
 JOB_ID = "0123456789abcdef0123456789abcdef"
 DEFINITION = {
     "name": "menu-start",
@@ -107,7 +118,7 @@ async def test_action_dispatches_once_without_reload_replay(route, arguments, ex
         {"action": "run", "name": "menu-start", "repeat_count": "2"},
         {"action": "run", "name": "menu-start", "timeout_seconds": 1.5},
         {"action": "run", "name": "menu-start", "repeat_count": 11},
-        {"action": "run", "name": "menu-start", "timeout_seconds": 1801},
+        {"action": "run", "name": "menu-start", "timeout_seconds": 86401},
         {"action": "status", "job_id": JOB_ID.upper()},
         {"action": "status", "job_id": "short"},
     ],
@@ -134,7 +145,7 @@ async def test_invalid_request_has_no_selection_or_side_effect(route, arguments)
         {"scene": "Assets/Folder./Menu.unity"},
         {"scene": "Assets/Folder /Menu.unity"},
         {"timeout_seconds": True},
-        {"timeout_seconds": 121},
+        {"timeout_seconds": 3601},
         {"action": "click_ui", "target": 123, "scene": None},
         {"action": "click_ui", "target": "/Canvas/Start", "scene": None},
         {"action": "click_ui", "target": "Canvas/../Start", "scene": None},

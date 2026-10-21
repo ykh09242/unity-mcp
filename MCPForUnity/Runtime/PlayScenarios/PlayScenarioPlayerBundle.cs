@@ -343,7 +343,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 ScenarioName = name,
                 DefinitionHash = hash,
                 RepeatCount = repeatCount,
-                TimeoutSeconds = Integer(value, "timeout_seconds", 1, 1800),
+                TimeoutSeconds = Integer(value, "timeout_seconds", 1, 86400),
                 SourceRevision = revision,
                 Soak = soak,
             };

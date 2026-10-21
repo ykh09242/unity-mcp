@@ -113,7 +113,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Steps = ParseSteps(value["steps"], 1, 32),
                 SetupSteps = value.Property("setup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["setup_steps"], 0, 16),
                 CleanupSteps = value.Property("cleanup_steps") == null ? new List<PlayScenarioStep>() : ParseSteps(value["cleanup_steps"], 0, 16),
-                CleanupTimeoutSeconds = Integer(value, "cleanup_timeout_seconds", 1, 300, 30),
+                CleanupTimeoutSeconds = Integer(value, "cleanup_timeout_seconds", 1, 1800, 30),
                 CompletionStableMs = Integer(value, "completion_stable_ms", 0, 10000, 250),
                 LogPolicy = ParseLogPolicy(value),
                 Metrics = ParseMetrics(value),
@@ -217,7 +217,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 {
                     Name = Text(step, "name", 128),
                     Action = Text(step, "action", 32),
-                    TimeoutSeconds = Integer(step, "timeout_seconds", 1, 120, 30),
+                    TimeoutSeconds = Integer(step, "timeout_seconds", 1, 3600, 30),
                     Performance = step.Property("performance") == null ? null : PlayScenarioPerformanceOptions.Parse(Object(step, "performance")),
                     Screenshot = step.Property("screenshot") == null ? null : PlayScenarioScreenshotOptions.Parse(Object(step, "screenshot")),
                 };
