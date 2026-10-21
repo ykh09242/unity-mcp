@@ -176,11 +176,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
         }
 
-        public string SaveFailureScreenshot(string jobId, byte[] png)
+        public string SaveFailureScreenshot(string jobId, byte[] png) => SaveFailureScreenshot(jobId, png, PlayScenarioScreenshotOptions.MaximumPngBytes);
+
+        internal string SaveFailureScreenshot(string jobId, byte[] png, int maximumBytes)
         {
+            if (maximumBytes < 1 || maximumBytes > PlayScenarioScreenshotOptions.MaximumPngBytes)
+                throw new ArgumentOutOfRangeException(nameof(maximumBytes));
             ValidateJobId(jobId);
-            if (png == null || png.Length == 0 || png.Length > 4 * 1024 * 1024)
-                throw new ArgumentException("Failure screenshot must contain 1 byte to 4 MiB.");
+            if (png == null || png.Length == 0 || png.Length > maximumBytes)
+                throw new ArgumentException("Failure screenshot must contain 1 byte to 320 MiB.");
             string relative = Reports + "/" + jobId + ".png";
             lock (gate)
                 AtomicWrite(Checked(relative), png);
@@ -190,8 +194,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         public string SaveCheckpointScreenshot(string jobId, PlayScenarioStepResult step, byte[] png)
         {
             ValidateJobId(jobId);
-            if (step?.Screenshot == null || png == null || png.Length == 0 || png.Length > 4 * 1024 * 1024)
-                throw new ArgumentException("Checkpoint screenshot must contain 1 byte to 4 MiB and an owned step identity.");
+            if (step?.Screenshot == null || png == null || png.Length == 0 || png.Length > PlayScenarioScreenshotOptions.MaximumPngBytes)
+                throw new ArgumentException("Checkpoint screenshot must contain 1 byte to 320 MiB and an owned step identity.");
             PlayScenarioDefinition.ValidateName(step.Screenshot.Name);
             string filename = jobId + "-" + step.Iteration + "-" + step.Stage + "-" + step.StepIndex + "-" + step.Screenshot.Name + ".png";
             if (step.Stage != "setup" && step.Stage != "main" && step.Stage != "cleanup")
@@ -207,8 +211,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         throw new IOException("Checkpoint file count exceeds the bounded run budget.");
                     bytes += new FileInfo(Checked(existing)).Length;
                 }
-                if (bytes + png.Length > 64 * 1024 * 1024)
-                    throw new IOException("Checkpoint screenshots exceed the 64-MiB run artifact budget.");
+                if (bytes + png.Length > PlayScenarioScreenshotOptions.MaximumRunPngBytes)
+                    throw new IOException("Checkpoint screenshots exceed the 8-GiB run artifact budget.");
                 AtomicWrite(Checked(Reports + "/" + filename), png);
             }
             return filename;

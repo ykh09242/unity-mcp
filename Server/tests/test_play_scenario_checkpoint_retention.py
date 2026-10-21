@@ -102,7 +102,7 @@ def test_checkpoint_aggregate_budget_is_checked_before_png_decode(tmp_path, monk
         actual = real_lstat(path)
         return (
             SimpleNamespace(
-                st_size=64 * 1024**2 + 1,
+                st_size=8 * 1024**3 + 1,
                 st_mode=actual.st_mode,
                 st_file_attributes=getattr(actual, "st_file_attributes", 0),
             )

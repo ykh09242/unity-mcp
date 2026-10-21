@@ -64,7 +64,7 @@ def test_observations_are_orthogonal_to_all_actions(action, selectors):
         {"screenshot": None},
         {"screenshot": {"name": "../menu", "width": 1, "height": 1}},
         {"screenshot": {"name": "menu", "width": True, "height": 1}},
-        {"screenshot": {"name": "menu", "width": 4096, "height": 4096}},
+        {"screenshot": {"name": "menu", "width": 8193, "height": 8192}},
         {"screenshot": {"name": "menu", "width": 1}},
     ],
 )

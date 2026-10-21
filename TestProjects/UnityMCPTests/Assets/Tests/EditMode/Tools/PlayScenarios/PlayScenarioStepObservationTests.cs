@@ -45,6 +45,29 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             );
 
         [Test]
+        public void EightKCheckpointDefinitionAndSubstantialEncodedEvidenceArePreserved()
+        {
+            var definition = Definition(",'screenshot':{'name':'large','width':8192,'height':8192}");
+            string root = Path.Combine(Path.GetTempPath(), "mcp-large-capture-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var store = new PlayScenarioStore(root);
+                store.Save(definition);
+                Assert.That(store.Get(definition.Name).Steps[0].Screenshot.Width, Is.EqualTo(8192));
+                var run = PlayScenarioEngine.Create(definition, new string('d', 32), 1, 300, 1000);
+                run.Steps[0].Screenshot = new PlayScenarioScreenshotResult { Name = "large" };
+                byte[] encoded = new byte[4 * 1024 * 1024 + 1];
+                string name = store.SaveCheckpointScreenshot(run.JobId, run.Steps[0], encoded);
+                Assert.That(new FileInfo(Path.Combine(root, "Library/MCPForUnity/PlayScenarioRuns", name)).Length, Is.EqualTo(encoded.Length));
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, true);
+            }
+        }
+
+        [Test]
         public void PersistedLegacyReportsOmitObservationFieldsAndKeepRequiredStepFieldsStrict()
         {
             string directory = Path.Combine(Path.GetTempPath(), "mcp-observation-" + Guid.NewGuid().ToString("N"));
@@ -124,7 +147,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         [TestCase("'performance':{'max_duration_ms':-1}")]
         [TestCase("'performance':{'max_frame_time_p95_ms':null}")]
         [TestCase("'screenshot':{'name':'../bad','width':1,'height':1}")]
-        [TestCase("'screenshot':{'name':'ok','width':4096,'height':4096}")]
+        [TestCase("'screenshot':{'name':'ok','width':8193,'height':8192}")]
         [TestCase("'screenshot':{'name':'ok','width':1}")]
         public void InvalidObservationOptionsAreRejected(string options) => Assert.Throws<ArgumentException>(() => Definition("," + options));
 

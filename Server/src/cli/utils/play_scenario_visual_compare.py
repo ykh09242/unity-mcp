@@ -1,6 +1,9 @@
 """Strict pixel comparison of bounded local PNG artifacts under an explicit policy."""
 
+from contextlib import ExitStack, closing
 from dataclasses import dataclass
+import os
+import stat
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -15,13 +18,12 @@ from cli.utils.play_scenario_analysis_io import (
     read_bytes,
     read_json,
     safe_local_path,
-    write_new,
 )
 
-Dimension = Annotated[int, Field(strict=True, ge=1, le=4096)]
+Dimension = Annotated[int, Field(strict=True, ge=1, le=8192)]
 Channel = Annotated[int, Field(strict=True, ge=0, le=255)]
-PNG_LIMIT = 4 * 1024 * 1024
-PIXEL_LIMIT = 8 * 1024 * 1024
+PNG_LIMIT = 320 * 1024 * 1024
+PIXEL_LIMIT = 64 * 1024 * 1024
 
 
 class Rectangle(BaseModel):
@@ -56,7 +58,7 @@ class VisualPolicy(BaseModel):
     @model_validator(mode="after")
     def bounded_geometry(self) -> "VisualPolicy":
         if self.width * self.height > PIXEL_LIMIT:
-            raise AnalysisError("Policy exceeds 8 Mi pixels")
+            raise AnalysisError("Policy exceeds 64 Mi pixels")
         if any(
             rect.x + rect.width > self.width or rect.y + rect.height > self.height
             for rect in self.ignored_rectangles
@@ -110,18 +112,18 @@ def _load_png(source: Path, expected_hash: str | None) -> tuple[Image.Image, str
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(BytesIO(content), formats=("PNG",)) as image:
+            with closing(Image.open(BytesIO(content), formats=("PNG",))) as image:
                 width, height = image.size
                 if (
-                    not 1 <= width <= 4096
-                    or not 1 <= height <= 4096
+                    not 1 <= width <= 8192
+                    or not 1 <= height <= 8192
                     or width * height > PIXEL_LIMIT
                 ):
                     raise AnalysisError("PNG dimensions exceed screenshot bounds")
                 if getattr(image, "n_frames", 1) != 1:
                     raise AnalysisError("Animated PNG is unsupported")
                 image.verify()
-            with Image.open(BytesIO(content), formats=("PNG",)) as image:
+            with closing(Image.open(BytesIO(content), formats=("PNG",))) as image:
                 image.load()
                 return image.convert("RGBA"), fingerprint
     except AnalysisError:
@@ -136,78 +138,167 @@ def _load_png(source: Path, expected_hash: str | None) -> tuple[Image.Image, str
         raise AnalysisError(f"PNG validation failed: {exc}") from exc
 
 
+class _PngWriter:
+    """Bound encoder output while hashing the exact bytes written to an owned file."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.count = 0
+        self.digest = sha256()
+
+    def write(self, content: bytes) -> int:
+        if self.count + len(content) > PNG_LIMIT:
+            raise AnalysisError("Diff output exceeds 320 MiB")
+        written = self.stream.write(content)
+        if written != len(content):
+            raise OSError("Incomplete PNG write")
+        self.digest.update(content)
+        self.count += written
+        return written
+
+    def tell(self) -> int:
+        return self.count
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+
+def _save_visual_outputs(images, output_dir: Path, policy: VisualPolicy):
+    """Stream both outputs; remove only files created by this invocation on failure."""
+    destinations = [safe_local_path(output_dir / name) for name in ("heatmap.png", "diff.png")]
+    for path in destinations:
+        if path.exists():
+            raise FileExistsError(f"Output already exists: {path}")
+    destinations[0].parent.mkdir(parents=True, exist_ok=True)
+    owned = []
+    artifacts = []
+    try:
+        for name, path, image in zip(("heatmap", "diff"), destinations, images):
+            safe_local_path(path)
+            with path.open("xb") as stream:
+                identity = os.fstat(stream.fileno())
+                owned.append((path, identity.st_dev, identity.st_ino))
+                writer = _PngWriter(stream)
+                image.save(writer, format="PNG")
+                artifacts.append(
+                    {
+                        "name": name,
+                        "path": str(path),
+                        "sha256": writer.digest.hexdigest(),
+                        "width": policy.width,
+                        "height": policy.height,
+                    }
+                )
+    except Exception:
+        for path, device, inode in owned:
+            try:
+                safe_local_path(path)
+                current = path.lstat()
+                if stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == (
+                    device,
+                    inode,
+                ):
+                    path.unlink()
+            except (OSError, AnalysisError):
+                pass
+        raise
+    return artifacts
+
+
+def _compare_strip(
+    left, right, top: int, policy: VisualPolicy, heatmap, diff_image
+) -> tuple[int, int]:
+    """Keep intermediate masks and channel differences within 256 rows."""
+    box = (0, top, policy.width, min(policy.height, top + 256))
+    size = (policy.width, box[3] - top)
+    with ExitStack() as stack:
+
+        def own(image):
+            return stack.enter_context(closing(image))
+
+        difference = own(ImageChops.difference(own(left.crop(box)), own(right.crop(box))))
+        included = own(Image.new("L", size, 255))
+        painter = ImageDraw.Draw(included)
+        for rect in policy.ignored_rectangles:
+            if rect.y < box[3] and rect.y + rect.height > top:
+                painter.rectangle(
+                    (
+                        rect.x,
+                        max(0, rect.y - top),
+                        rect.x + rect.width - 1,
+                        min(size[1], rect.y + rect.height - top) - 1,
+                    ),
+                    fill=0,
+                )
+        changed = own(Image.new("L", size, 0))
+        for channel, threshold in zip("RGBA", policy.channel_threshold.model_dump().values()):
+            over = own(
+                own(difference.getchannel(channel)).point(
+                    [255 if value > threshold else 0 for value in range(256)]
+                )
+            )
+            changed = own(ImageChops.lighter(changed, over))
+        changed = own(ImageChops.multiply(changed, included))
+        if heatmap is not None:
+            inverse = own(ImageChops.invert(included))
+            heat = own(Image.new("RGB", size, (0, 0, 0)))
+            heat.paste((255, 0, 0), mask=changed)
+            heat.paste((96, 96, 96), mask=inverse)
+            heatmap.paste(heat, box)
+            red = own(
+                ImageChops.lighter(own(difference.getchannel("R")), own(difference.getchannel("A")))
+            )
+            diff = own(
+                Image.merge(
+                    "RGB", (red, own(difference.getchannel("G")), own(difference.getchannel("B")))
+                )
+            )
+            diff.paste((0, 0, 0), mask=inverse)
+            diff_image.paste(diff, box)
+        return included.histogram()[255], changed.histogram()[255]
+
+
 def compare_visual(
     pair: VisualPair, policy: VisualPolicy, output_dir: Path | None = None
 ) -> VisualComparison:
-    """Compare RGBA channels; delta equal to threshold remains within tolerance.
+    """Compare exact RGBA pixels in bounded strips, with optional streamed PNG outputs.
 
-    A pixel changes if any channel delta exceeds its threshold. Ignored pixels
-    are excluded from the denominator, with overlapping rectangles counted once.
-    PNG bytes <=4 MiB, decoded pixels <=8 Mi and dimensions <=4096 each.
-    Optional diff/heatmap outputs are PNGs <=32 MiB each, created without overwrite.
+    Any channel delta above its threshold marks a changed pixel. Overlapping
+    ignored rectangles count once. Images admit 8192 edges and 64 Mi pixels;
+    encoded input/output is bounded to 320 MiB each. Source images and every
+    temporary image are explicitly released on success and failure.
     """
-    left, left_hash = _load_png(pair.baseline, pair.baseline_sha256)
-    right, right_hash = _load_png(pair.candidate, pair.candidate_sha256)
-    expected = (policy.width, policy.height)
-    if left.size != expected or right.size != expected:
-        raise AnalysisError("Both PNG dimensions must match the explicit policy")
-    included = Image.new("L", expected, 255)
-    painter = ImageDraw.Draw(included)
-    for rect in policy.ignored_rectangles:
-        painter.rectangle(
-            (rect.x, rect.y, rect.x + rect.width - 1, rect.y + rect.height - 1), fill=0
-        )
-    compared_pixels = included.histogram()[255]
-    if compared_pixels == 0:
-        raise AnalysisError("Ignored rectangles cover every pixel")
-    difference = ImageChops.difference(left, right)
-    changed = Image.new("L", expected, 0)
-    thresholds = policy.channel_threshold.model_dump().values()
-    for channel, threshold in zip(difference.split(), thresholds):
-        over = channel.point([255 if value > threshold else 0 for value in range(256)])
-        changed = ImageChops.lighter(changed, over)
-    changed = ImageChops.multiply(changed, included)
-    changed_pixels = changed.histogram()[255]
-    ratio = changed_pixels / compared_pixels
-    heatmap_path = diff_path = None
-    artifacts: list[dict[str, JsonValue]] = []
     if output_dir is not None:
         for name in ("heatmap.png", "diff.png"):
             destination = safe_local_path(output_dir / name)
             if destination.exists():
                 raise FileExistsError(f"Output already exists: {destination}")
-        heatmap = Image.new("RGB", expected, (0, 0, 0))
-        heatmap.paste((255, 0, 0), mask=changed)
-        heatmap.paste((96, 96, 96), mask=ImageChops.invert(included))
-        diff_image = Image.merge(
-            "RGB",
-            (
-                ImageChops.lighter(difference.getchannel("R"), difference.getchannel("A")),
-                difference.getchannel("G"),
-                difference.getchannel("B"),
-            ),
+    with ExitStack() as outputs:
+        heatmap = diff_image = None
+        with ExitStack() as sources:
+            left, left_hash = _load_png(pair.baseline, pair.baseline_sha256)
+            sources.enter_context(closing(left))
+            right, right_hash = _load_png(pair.candidate, pair.candidate_sha256)
+            sources.enter_context(closing(right))
+            if left.size != (policy.width, policy.height) or right.size != left.size:
+                raise AnalysisError("Both PNG dimensions must match the explicit policy")
+            if output_dir is not None:
+                heatmap = outputs.enter_context(closing(Image.new("RGB", left.size)))
+                diff_image = outputs.enter_context(closing(Image.new("RGB", left.size)))
+            compared_pixels = changed_pixels = 0
+            for top in range(0, policy.height, 256):
+                compared, changed = _compare_strip(left, right, top, policy, heatmap, diff_image)
+                compared_pixels += compared
+                changed_pixels += changed
+            if compared_pixels == 0:
+                raise AnalysisError("Ignored rectangles cover every pixel")
+        # Release full source RGBA images before encoding any optional output.
+        artifacts = (
+            _save_visual_outputs((heatmap, diff_image), output_dir, policy)
+            if output_dir is not None
+            else []
         )
-        diff_image.paste((0, 0, 0), mask=ImageChops.invert(included))
-        encoded: list[bytes] = []
-        for output_image in (heatmap, diff_image):
-            stream = BytesIO()
-            output_image.save(stream, format="PNG")
-            content = stream.getvalue()
-            if len(content) > 32 * 1024 * 1024:
-                raise AnalysisError("Diff output exceeds 32 MiB")
-            encoded.append(content)
-        heatmap_path = str(write_new(output_dir / "heatmap.png", encoded[0]))
-        diff_path = str(write_new(output_dir / "diff.png", encoded[1]))
-        artifacts = [
-            {
-                "name": name,
-                "path": path,
-                "sha256": sha256(content).hexdigest(),
-                "width": policy.width,
-                "height": policy.height,
-            }
-            for name, path, content in zip(("heatmap", "diff"), (heatmap_path, diff_path), encoded)
-        ]
+    ratio = changed_pixels / compared_pixels
     return VisualComparison(
         status="within_budget" if ratio <= policy.max_changed_pixel_ratio else "exceeded",
         changed_pixels=changed_pixels,
@@ -217,7 +308,7 @@ def compare_visual(
         baseline_sha256=left_hash,
         candidate_sha256=right_hash,
         policy=policy,
-        heatmap_path=heatmap_path,
-        diff_path=diff_path,
+        heatmap_path=artifacts[0]["path"] if artifacts else None,
+        diff_path=artifacts[1]["path"] if artifacts else None,
         artifacts=artifacts,
     )

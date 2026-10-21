@@ -322,7 +322,7 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             string latest = 24.ToString("x32");
             string path = store.SaveFailureScreenshot(latest, new byte[] { 137, 80, 78, 71 });
             Assert.IsTrue(File.Exists(Path.Combine(root, path)));
-            Assert.Throws<ArgumentException>(() => store.SaveFailureScreenshot(latest, new byte[4 * 1024 * 1024 + 1]));
+            Assert.Throws<ArgumentException>(() => store.SaveFailureScreenshot(latest, new byte[5], 4));
             Assert.Throws<ArgumentException>(() => store.SaveFailureScreenshot("../bad", new byte[] { 1 }));
             Assert.AreEqual(4, File.ReadAllBytes(Path.Combine(root, path)).Length);
         }

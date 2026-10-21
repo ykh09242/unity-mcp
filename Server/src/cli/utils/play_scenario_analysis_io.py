@@ -61,9 +61,11 @@ def read_bytes(source: Path, limit: int) -> bytes:
             before.st_ino,
         ):
             raise AnalysisError("Artifact changed before reading")
-        content = stream.read(limit + 1)
-    if len(content) > limit:
-        raise AnalysisError("Artifact exceeds its byte limit")
+        if opened.st_size > limit:
+            raise AnalysisError("Opened artifact exceeds its byte limit")
+        content = stream.read(opened.st_size + 1)
+    if len(content) != opened.st_size:
+        raise AnalysisError("Artifact changed while reading")
     return content
 
 

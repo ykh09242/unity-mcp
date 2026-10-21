@@ -28,10 +28,10 @@ class ScreenshotEvidence(BaseModel):
     status: Literal["captured", "unavailable", "failed"]
     path: Annotated[str, Field(strict=True, max_length=4096)] | None = None
     sha256: Annotated[str, Field(strict=True, pattern=r"^[a-f0-9]{64}$")] | None = None
-    requested_width: Annotated[int, Field(strict=True, ge=1, le=4096)]
-    requested_height: Annotated[int, Field(strict=True, ge=1, le=4096)]
-    width: Annotated[int, Field(strict=True, ge=1, le=4096)] | None = None
-    height: Annotated[int, Field(strict=True, ge=1, le=4096)] | None = None
+    requested_width: Annotated[int, Field(strict=True, ge=1, le=8192)]
+    requested_height: Annotated[int, Field(strict=True, ge=1, le=8192)]
+    width: Annotated[int, Field(strict=True, ge=1, le=8192)] | None = None
+    height: Annotated[int, Field(strict=True, ge=1, le=8192)] | None = None
 
 
 class CheckpointStep(BaseModel):

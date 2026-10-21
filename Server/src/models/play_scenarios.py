@@ -336,14 +336,14 @@ class PlayScenarioScreenshotOptions(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: ScenarioName
-    width: Annotated[int, Field(strict=True, ge=1, le=4096)]
-    height: Annotated[int, Field(strict=True, ge=1, le=4096)]
+    width: Annotated[int, Field(strict=True, ge=1, le=8192)]
+    height: Annotated[int, Field(strict=True, ge=1, le=8192)]
 
     @model_validator(mode="after")
     def check_pixel_budget(self) -> "PlayScenarioScreenshotOptions":
-        """Match the native eight-megapixel capture bound."""
-        if self.width * self.height > 8388608:
-            raise ValueError("Screenshot dimensions exceed the eight-megapixel budget")
+        """Match the native 64-Mi-pixel capture bound."""
+        if self.width * self.height > 67108864:
+            raise ValueError("Screenshot dimensions exceed the 64-Mi-pixel budget")
         return self
 
 
