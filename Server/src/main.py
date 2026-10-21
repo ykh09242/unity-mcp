@@ -154,6 +154,9 @@ try:
 
     _log_dir = resolve_log_dir()
     os.makedirs(_log_dir, exist_ok=True)
+    from core.phase_diagnostics import configure_file
+
+    configure_file(_log_dir)
     _file_path = os.path.join(_log_dir, "unity_mcp_server.log")
     _fh = WindowsSafeRotatingFileHandler(
         _file_path, maxBytes=512 * 1024, backupCount=2, encoding="utf-8"

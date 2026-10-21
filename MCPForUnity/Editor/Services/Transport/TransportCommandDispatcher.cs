@@ -546,14 +546,18 @@ namespace MCPForUnity.Editor.Services.Transport
                 pending.LogWatch = sw;
                 pending.Timing?.Stop(CommandPhaseTiming.Phase.Queue);
                 pending.Timing?.Start(CommandPhaseTiming.Phase.Handler);
-                var result = CommandRegistry.ExecuteCommand(
-                    command.type,
-                    parameters,
-                    pending.CompletionSource,
-                    pending.CancellationToken,
-                    pending.Progress,
-                    McpLogRecord.IsEnabled ? outcome => pending.Outcome = outcome : null
-                );
+                object result;
+                using (CommandPhaseTiming.EnterHandler(pending.Timing))
+                {
+                    result = CommandRegistry.ExecuteCommand(
+                        command.type,
+                        parameters,
+                        pending.CompletionSource,
+                        pending.CancellationToken,
+                        pending.Progress,
+                        McpLogRecord.IsEnabled ? outcome => pending.Outcome = outcome : null
+                    );
+                }
 
                 if (result == null)
                 {

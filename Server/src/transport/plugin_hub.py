@@ -31,6 +31,7 @@ from services.command_progress import (
     ProgressSink,
     ProgressSource,
 )
+from core import phase_diagnostics
 from core.config import config
 from core.constants import API_KEY_HEADER
 from models.models import MCPResponse
@@ -427,6 +428,7 @@ class PluginHub(WebSocketEndpoint):
             CANCELLATION_CAPABILITY,
             TOOL_SETTINGS_CAPABILITY,
             PROGRESS_CAPABILITY,
+            phase_diagnostics.CAPABILITY,
         }
     )
     _editor_states: ClassVar[EditorStateStore] = EditorStateStore()
@@ -1457,6 +1459,7 @@ class PluginHub(WebSocketEndpoint):
         _catalog_guard=None,
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
+        phase_diagnostics.step(command_type, "admission")
         result = await cls._send_command_response(
             session_id,
             command_type,
@@ -1471,6 +1474,7 @@ class PluginHub(WebSocketEndpoint):
             _catalog_guard=_catalog_guard,
             **({"_progress": _progress} if _progress is not None else {}),
         )
+        phase_diagnostics.step(command_type, "return")
         observe_native_result(result)
         return result
 
@@ -1681,6 +1685,11 @@ class PluginHub(WebSocketEndpoint):
             # Admission, serialization and all earlier phases spend this same budget.
             # Omit only the optional envelope field; preserve nested null values.
             payload = msg.model_dump(exclude={"progress"})
+            diagnostic = phase_diagnostics.request(
+                command_type, cls._supports(websocket, phase_diagnostics.CAPABILITY)
+            )
+            if diagnostic is not None:
+                payload["diagnostics"] = diagnostic
             progress = (
                 _progress
                 if _progress is not None
@@ -1769,6 +1778,7 @@ class PluginHub(WebSocketEndpoint):
             if budget.remaining() <= 0:
                 raise TimeoutError
             deadline = budget.expires_at
+            phase_diagnostics.step(command_type, "send")
             phase = budget.phase = "send"
             budget.command_id = command_id
             try:
@@ -1877,6 +1887,7 @@ class PluginHub(WebSocketEndpoint):
                 if send_task not in done:
                     raise asyncio.TimeoutError
                 send_task.result()
+                phase_diagnostics.step(command_type, "response")
                 phase = budget.phase = "response"
                 remaining = max(0.0, deadline - asyncio.get_running_loop().time())
                 result = await asyncio.wait_for(future, timeout=remaining)
@@ -3348,54 +3359,57 @@ class PluginHub(WebSocketEndpoint):
             user_id: User ID for session isolation in remote-hosted mode
             retry_on_reload: If False, do not wait for session reconnect on reload.
         """
-        timeout_s = cls._command_timeouts(command_type, params)[1]
-        request = http_request_budget.get()
-        budget = (
-            request.command_budget(command_type, timeout_s)
-            if request is not None
-            else _CommandBudget(asyncio.get_running_loop().time() + timeout_s, command=command_type)
-        )
-        try:
-            async with asyncio.timeout_at(budget.expires_at):
-                result = await cls._send_command_for_instance(
-                    unity_instance,
-                    command_type,
-                    params,
-                    user_id,
-                    retry_on_reload,
-                    editor_state_read_mode=editor_state_read_mode,
-                    budget=budget,
-                    _catalog_guard=_catalog_guard,
-                    **({"_progress": _progress} if _progress is not None else {}),
+        with phase_diagnostics.invocation(command_type):
+            timeout_s = cls._command_timeouts(command_type, params)[1]
+            request = http_request_budget.get()
+            budget = (
+                request.command_budget(command_type, timeout_s)
+                if request is not None
+                else _CommandBudget(
+                    asyncio.get_running_loop().time() + timeout_s, command=command_type
                 )
-        except OperationPermissionError:
-            if budget.dispatched:
-                result = command_outcome_unknown(
-                    command_type,
-                    "Remote operation permission ended",
-                    session_id=budget.session_id,
-                    command_id=budget.command_id,
-                    phase=budget.phase,
-                    cause="permission_ended",
-                )
-            else:
-                result = MCPResponse(success=False, error="permission_denied").model_dump()
-        except CredentialLeaseError:
-            if budget.dispatched:
-                result = command_outcome_unknown(
-                    command_type,
-                    "Remote authorization ended",
-                    session_id=budget.session_id,
-                    command_id=budget.command_id,
-                    phase=budget.phase,
-                    cause="authentication_ended",
-                )
-            else:
-                result = MCPResponse(success=False, error="auth_required").model_dump()
-        except TimeoutError:
-            result = budget.timeout_response(command_type)
-        observe_native_result(result)
-        return result
+            )
+            try:
+                async with asyncio.timeout_at(budget.expires_at):
+                    result = await cls._send_command_for_instance(
+                        unity_instance,
+                        command_type,
+                        params,
+                        user_id,
+                        retry_on_reload,
+                        editor_state_read_mode=editor_state_read_mode,
+                        budget=budget,
+                        _catalog_guard=_catalog_guard,
+                        **({"_progress": _progress} if _progress is not None else {}),
+                    )
+            except OperationPermissionError:
+                if budget.dispatched:
+                    result = command_outcome_unknown(
+                        command_type,
+                        "Remote operation permission ended",
+                        session_id=budget.session_id,
+                        command_id=budget.command_id,
+                        phase=budget.phase,
+                        cause="permission_ended",
+                    )
+                else:
+                    result = MCPResponse(success=False, error="permission_denied").model_dump()
+            except CredentialLeaseError:
+                if budget.dispatched:
+                    result = command_outcome_unknown(
+                        command_type,
+                        "Remote authorization ended",
+                        session_id=budget.session_id,
+                        command_id=budget.command_id,
+                        phase=budget.phase,
+                        cause="authentication_ended",
+                    )
+                else:
+                    result = MCPResponse(success=False, error="auth_required").model_dump()
+            except TimeoutError:
+                result = budget.timeout_response(command_type)
+            observe_native_result(result)
+            return result
 
     @classmethod
     async def _send_command_for_instance(
@@ -3411,6 +3425,7 @@ class PluginHub(WebSocketEndpoint):
         _catalog_guard=None,
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
+        phase_diagnostics.step(command_type, "preflight")
         requester = await require_credential_lease(user_id) if config.http_remote_hosted else None
         if requester is not None:
             authorize_operation(

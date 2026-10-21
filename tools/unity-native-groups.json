@@ -168,6 +168,16 @@
       "disruptive": false,
       "platform_exclusions": {},
       "requires_graphics": true
+    },
+    "phase-diagnostics": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.CommandPhaseTimingTests.ServerCorrelationRequiresBothNegotiationAndLocalOptIn",
+        "MCPForUnityTests.Editor.Services.CommandPhaseTimingTests.ImportSpansKeepConcurrentOwnersSeparateAndDoNotRecordPaths",
+        "MCPForUnityTests.Editor.Services.CommandPhaseTimingTests.DeliveryCancellationWaitsForActualExecutionAndEmitsOnce",
+        "MCPForUnityTests.Editor.Services.WebSocketTransportClientTests.PhaseDiagnostics_RealPeerNegotiationPreservesImportAndResult"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
     }
   }
 }

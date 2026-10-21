@@ -23,6 +23,7 @@ namespace MCPForUnity.Editor.Services.Transport
             Prepare,
             Serialization,
             Send,
+            Import,
         }
 
         internal enum Delivery
@@ -33,15 +34,18 @@ namespace MCPForUnity.Editor.Services.Transport
             Failed,
         }
 
+        internal const string Capability = "phase_timing_v1";
+        private static readonly AsyncLocal<CommandPhaseTiming> CurrentHandler = new();
         private static long _admissions;
         private readonly object _gate = new();
         private readonly Func<long> _clock;
         private readonly long _frequency;
         private readonly Action<JObject> _sink;
         private readonly Transport _transport;
-        private readonly long[] _starts = new long[5];
-        private readonly long[] _elapsed = new long[5];
-        private readonly string _correlation = Guid.NewGuid().ToString("N");
+        private readonly long[] _starts = new long[6];
+        private readonly long[] _elapsed = new long[6];
+        private readonly string _correlation;
+        private readonly bool _serverCorrelation;
         private long _admitted;
         private long _deliveryAt;
         private int _active;
@@ -69,9 +73,76 @@ namespace MCPForUnity.Editor.Services.Transport
             }
         }
 
+        internal static CommandPhaseTiming CreateForCommand(bool enabled, bool negotiated, JObject payload)
+        {
+            if (!enabled)
+                return null;
+            try
+            {
+                var diagnostic = payload["diagnostics"] as JObject;
+                string token = diagnostic?.Count == 1 && diagnostic["correlation"]?.Type == JTokenType.String ? diagnostic.Value<string>("correlation") : null;
+                if (negotiated && IsCorrelation(token))
+                    return new CommandPhaseTiming(Stopwatch.GetTimestamp, Stopwatch.Frequency, McpLogRecord.LogTiming, Transport.WebSocket, token);
+            }
+            catch { }
+            return Create(enabled, Transport.WebSocket);
+        }
+
+        private static bool IsCorrelation(string value)
+        {
+            if (value == null || value.Length != 32)
+                return false;
+            foreach (char c in value)
+                if (!(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f'))
+                    return false;
+            return true;
+        }
+
+        internal readonly struct HandlerScope : IDisposable
+        {
+            private readonly CommandPhaseTiming _previous;
+            private readonly bool _changed;
+
+            internal HandlerScope(CommandPhaseTiming timing)
+            {
+                _previous = CurrentHandler.Value;
+                _changed = !ReferenceEquals(_previous, timing);
+                if (_changed)
+                    CurrentHandler.Value = timing;
+            }
+
+            public void Dispose()
+            {
+                if (_changed)
+                    CurrentHandler.Value = _previous;
+            }
+        }
+
+        internal readonly struct ImportScope : IDisposable
+        {
+            private readonly CommandPhaseTiming _timing;
+
+            internal ImportScope(CommandPhaseTiming timing)
+            {
+                _timing = timing;
+                timing?.Start(Phase.Import);
+            }
+
+            public void Dispose() => _timing?.Stop(Phase.Import);
+        }
+
+        internal static HandlerScope EnterHandler(CommandPhaseTiming timing) => new(timing);
+
+        internal static ImportScope MeasureImport() => new(CurrentHandler.Value);
+
         // Instance-only clock/sink seam; tests do not change global preferences or clocks.
         internal CommandPhaseTiming(Func<long> clock, long frequency, Action<JObject> sink, Transport transport)
+            : this(clock, frequency, sink, transport, null) { }
+
+        internal CommandPhaseTiming(Func<long> clock, long frequency, Action<JObject> sink, Transport transport, string correlation)
         {
+            _serverCorrelation = IsCorrelation(correlation);
+            _correlation = _serverCorrelation ? correlation : Guid.NewGuid().ToString("N");
             _clock = clock;
             _frequency = frequency;
             _sink = sink;
@@ -166,6 +237,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 ["event"] = "phase_timing",
                 ["sample_every"] = 64,
                 ["correlation"] = _correlation,
+                ["correlation_source"] = _serverCorrelation ? "server" : "native",
                 ["transport"] =
                     _transport == Transport.WebSocket ? "websocket"
                     : _transport == Transport.Stdio ? "stdio"
@@ -180,7 +252,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 ["total_ms"] = Milliseconds(_deliveryAt - _admitted),
             };
             var incomplete = new JArray();
-            string[] names = { "queue", "handler", "prepare", "serialization", "send" };
+            string[] names = { "queue", "handler", "prepare", "serialization", "send", "import" };
             for (int i = 0; i < names.Length; i++)
             {
                 if ((_active & (1 << i)) != 0)

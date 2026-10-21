@@ -20,6 +20,112 @@ namespace MCPForUnityTests.Editor.Services
     [TestFixture]
     public class WebSocketTransportClientTests
     {
+        [TestCase(true)]
+        [TestCase(false)]
+        public async Task PhaseDiagnostics_RealPeerNegotiationPreservesImportAndResult(bool negotiated)
+        {
+            RequireOwnedProgressEditor();
+            string asset = "Assets/__PhaseDiagnostic_" + Guid.NewGuid().ToString("N") + ".txt";
+            string correlation = Guid.NewGuid().ToString("N");
+            var logType = typeof(WebSocketTransportClient).Assembly.GetType("MCPForUnity.Editor.Helpers.McpLogRecord");
+            var cached = logType.GetField("_isEnabledCached", BindingFlags.Static | BindingFlags.NonPublic);
+            bool previous = (bool)cached.GetValue(null);
+            const string child = "__next15_import";
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            int calls = 0;
+            handlers.Set(
+                child,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    child,
+                    _ =>
+                    {
+                        calls++;
+                        return MCPForUnity.Editor.Tools.ManageAsset.HandleCommand(new JObject { ["action"] = "import", ["path"] = asset });
+                    },
+                    null
+                )
+            );
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            try
+            {
+                System.IO.File.WriteAllText(asset, "owned diagnostic fixture");
+                cached.SetValue(null, true); // Restore the in-memory switch; never change user preferences.
+                Assert.IsTrue(await client.StartAsync());
+                var registration = await peer.Negotiate(false, negotiated);
+                CollectionAssert.Contains(registration["capabilities"].Values<string>().ToArray(), "phase_timing_v1");
+                Assert.AreEqual(negotiated, GetField(client, "_phaseTimingNegotiated"));
+                string id = Guid.NewGuid().ToString("D");
+                peer.Send(
+                    new JObject
+                    {
+                        ["type"] = "execute",
+                        ["id"] = id,
+                        ["name"] = "batch_execute",
+                        ["timeout"] = 30,
+                        ["params"] = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = child }), ["private"] = "secret/path" },
+                        ["diagnostics"] = new JObject { ["correlation"] = correlation },
+                    }
+                );
+                var result = await peer.Result(id);
+                Assert.AreEqual(1, calls);
+                Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<UnityEngine.TextAsset>(asset));
+                CollectionAssert.AreEquivalent(new[] { "type", "id", "result" }, result.Properties().Select(property => property.Name));
+                await peer.Barrier();
+                JObject row = null;
+                string root = System.IO.Path.GetFullPath(System.IO.Path.Combine(UnityEngine.Application.dataPath, "../Library/MCPForUnity/Logs"));
+                for (int attempt = 0; attempt < 100; attempt++)
+                {
+                    logType.GetMethod("Flush", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { 2000 });
+                    if (System.IO.Directory.Exists(root))
+                        foreach (string file in System.IO.Directory.GetFiles(root))
+                        {
+                            using var stream = new System.IO.FileStream(
+                                file,
+                                System.IO.FileMode.Open,
+                                System.IO.FileAccess.Read,
+                                System.IO.FileShare.ReadWrite | System.IO.FileShare.Delete
+                            );
+                            using var reader = new System.IO.StreamReader(stream);
+                            while (reader.ReadLine() is string line)
+                                if (line.Contains(correlation))
+                                    row = JObject.Parse(line);
+                        }
+                    if (row != null || !negotiated)
+                        break;
+                    await Task.Delay(10);
+                }
+                if (negotiated)
+                {
+                    Assert.IsNotNull(row, "Actual command must emit a joined record after execution and delivery settle.");
+                    Assert.AreEqual("server", row.Value<string>("correlation_source"));
+                    Assert.GreaterOrEqual(row.Value<double>("import_ms"), 0d);
+                    Assert.IsNotNull(row["import_ms"]);
+                    Assert.AreEqual("sent", row.Value<string>("delivery"));
+                    Assert.IsFalse(row.ToString().Contains(asset));
+                    Assert.IsFalse(row.ToString().Contains("secret"));
+                }
+                else
+                    Assert.IsNull(row, "Old peers cannot inject a correlation.");
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                try
+                {
+                    await StopOwnedProgressClient(client);
+                }
+                finally
+                {
+                    cached.SetValue(null, previous);
+                    AssetDatabase.DeleteAsset(asset);
+                    if (System.IO.File.Exists(asset))
+                        System.IO.File.Delete(asset);
+                }
+            }
+        }
+
         private sealed class TimingSerializationProbe
         {
             internal int Reads;
@@ -1393,13 +1499,15 @@ namespace MCPForUnityTests.Editor.Services
 
             internal Task<JObject> Result(string id) => (Task<JObject>)Call("Result", id);
 
-            internal async Task<JObject> Negotiate(bool supported)
+            internal async Task<JObject> Negotiate(bool supported, bool phaseTiming = false)
             {
                 await (Task)Call("WaitRegistered", 1);
                 JObject registration = await Message(message => message.Value<string>("type") == "register");
                 var capabilities = new JArray("large_result_v1", "command_cancel_v1");
                 if (supported)
                     capabilities.Add("command_progress_v1");
+                if (phaseTiming)
+                    capabilities.Add("phase_timing_v1");
                 Send(new JObject { ["type"] = "welcome", ["capabilities"] = capabilities.DeepClone() });
                 Send(
                     new JObject
