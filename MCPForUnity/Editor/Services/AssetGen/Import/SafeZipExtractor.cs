@@ -76,6 +76,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 }
                 inspectArchive?.Invoke(archive); // Same bounded archive; selection can reject before any extracted file is written.
                 long totalWritten = 0;
+                byte[] buffer = null;
                 var createdFiles = new List<string>();
                 // Asset imports share their outer folder scope, including explicit directory entries.
                 Action<string> prepareDirectory = ensureDirectory ?? (path => Directory.CreateDirectory(path));
@@ -122,7 +123,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         using (FileStream dst = new FileStream(target, FileMode.CreateNew, FileAccess.Write))
                         {
                             createdFiles.Add(target);
-                            var buffer = new byte[81920];
+                            buffer ??= new byte[81920];
                             long entryWritten = 0;
                             int count;
                             while ((count = src.Read(buffer, 0, buffer.Length)) != 0)
