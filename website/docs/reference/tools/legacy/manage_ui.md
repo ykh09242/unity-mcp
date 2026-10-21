@@ -77,6 +77,7 @@ Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not ba
 | `filter_type` | `str \| None` | — | Filter UI assets by type: 'uxml', 'uss', 'PanelSettings', or omit for all. For list. |
 | `page_size` | `int \| None` | — | Number of results per page: 1-1000 (default 50). For list. |
 | `page_number` | `int \| None` | — | Page number, 1-based (default 1). For list. |
+| `inventory_revision` | `str \| None` | — | list: reuse the returned inventory_revision with the same scope/filter to reject pages after asset changes, expiry or eviction. Omit for the latest cached inventory; oversized inventories remain complete but uncached. |
 | `element_name` | `str \| None` | — | Visual element name. Legacy first match unless strict_name=true. Optional exact name guard with element_path or element_id. For modify_visual_element. |
 | `element_path` | `str` | — | Current snapshot/content-container child-index path, e.g. '/0/1'; empty string selects root. Zero-based decimal indices, no leading zeros. No persistent identity or replacement detection. Mutually exclusive with element_id; no name fallback. Omit when unused; explicit null is invalid. |
 | `element_id` | `str` | — | Exact current UI Toolkit snapshot node ID. Uses the snapshot's auto-selected UI component; use element_path for another component_type. Semantic path, not a persistent handle; same-path replacement is not detected. No name fallback. Omit when unused; null/empty invalid. |

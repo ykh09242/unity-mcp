@@ -301,7 +301,10 @@ namespace MCPForUnity.Editor.Helpers
         )
         {
             if (didDomainReload || importedAssets.Length > 0 || deletedAssets.Length > 0 || movedAssets.Length > 0 || movedFromAssetPaths.Length > 0)
+            {
                 AssetSearchSnapshots.Invalidate();
+                UIAssetInventory.Invalidate();
+            }
         }
     }
 }
