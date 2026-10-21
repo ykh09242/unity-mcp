@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
@@ -38,6 +39,12 @@ class ObservationTarget:
     session_id: str | None
     generation: str
     user_id: str | None
+
+
+# Journal fallback stays bound to the same immutable observation identity.
+operation_wait_target: ContextVar[ObservationTarget | None] = ContextVar(
+    "operation_wait_target", default=None
+)
 
 
 def unavailable(reason: str) -> dict:
@@ -77,7 +84,9 @@ async def capture_target(ctx: Context) -> ObservationTarget | None:
         and expected != generation
     ):
         return None
-    return ObservationTarget(instance, session, generation, user_id)
+    target = ObservationTarget(instance, session, generation, user_id)
+    captured = operation_wait_target.get()
+    return target if captured is None or captured == target else None
 
 
 async def fetch_status(target: ObservationTarget, kind: JobKind, job_id: str):
@@ -133,6 +142,13 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
         and state in _TERMINAL
     ):
         phase, terminal = "finalizing", False
+    elif (
+        kind == "package"
+        and data.get("operation") == "resolve"
+        and isinstance(data.get("resolve"), dict)
+        and data["resolve"].get("completion") == "unknown"
+    ):
+        phase, terminal = "unknown", False
     elif state in _TERMINAL:
         phase, terminal = "terminal", True
     elif state in {"pending", "queued", "starting", "waiting"}:

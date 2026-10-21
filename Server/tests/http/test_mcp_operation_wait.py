@@ -264,3 +264,53 @@ async def test_scenario_wire_parameters_match_existing_owner_contract(monkeypatc
         send.await_args.args[2]
         == PlayScenarioCommand(action="status", job_id="a" * 32).wire_parameters()
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replace", [False, True])
+async def test_journal_capacity_fallback_preserves_captured_generation(
+    command_hub, tmp_path, monkeypatch, replace
+):
+    from services.test_wait_journal import JournalCapacity
+
+    async def answer(message):
+        command_hub.sent.append(message)
+        await command_hub.endpoint._handle_command_result(
+            command_hub.websocket,
+            CommandResultMessage(
+                id=message["id"],
+                result={"success": True, "data": {"job_id": "job", "result": "succeeded"}},
+            ),
+        )
+
+    command_hub.websocket.send_json = answer
+    async with bound_http(tmp_path, monkeypatch, operation_wait=True) as (client, runtime):
+
+        def capacity(*args, **kwargs):
+            if replace:
+                command_hub.websocket.state.plugin_generation = "replacement"
+            raise JournalCapacity("full")
+
+        monkeypatch.setattr(runtime.journal, "create", capacity)
+        response = await bound_call(
+            client,
+            "tools/call",
+            {
+                "name": "wait_for_operation",
+                "arguments": {"kind": "build", "job_id": "job", "wait_timeout": 1},
+            },
+            tasks=True,
+        )
+        result = response["result"]
+        assert result["resultType"] == "complete"
+        assert result["isError"] is replace
+        if replace:
+            assert (
+                result["structuredContent"]["data"]["reason"]
+                == "observation_connection_unavailable_or_changed"
+            )
+            assert command_hub.sent == []
+        else:
+            assert result["structuredContent"]["data"]["terminal"] is True
+            assert len(command_hub.sent) == 1
+    assert module.operation_wait_target.get() is None

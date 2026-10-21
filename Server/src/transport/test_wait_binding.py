@@ -29,7 +29,11 @@ from services.test_wait_journal import (
     WaitOperation,
 )
 from services.tools.test_job_wait import test_job_wait_deadline
-from services.tools.wait_for_operation import capture_target
+from services.tools.wait_for_operation import (
+    ObservationTarget,
+    capture_target,
+    operation_wait_target,
+)
 from transport.local_auth_middleware import AUTHENTICATED_LOCAL_STATE
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from transport.plugin_hub import capture_http_request_budget, detached_http_request_budget
@@ -199,9 +203,18 @@ def install_test_job_tasks(
 
     async def fallback(captured, call_next):
         token = test_job_wait_deadline.set(captured.wait_deadline)
+        operation = captured.operation
+        target_token = operation_wait_target.set(
+            ObservationTarget(
+                operation.instance, operation.session_id, operation.generation, operation.user_id
+            )
+            if operation.tool_name == "wait_for_operation"
+            else None
+        )
         try:
             return await call_next()
         finally:
+            operation_wait_target.reset(target_token)
             test_job_wait_deadline.reset(token)
 
     async def execute(captured):

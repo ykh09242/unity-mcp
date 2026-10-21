@@ -109,3 +109,17 @@ async def test_unknown_package_outcome_returns_once_without_waiting_for_guessed_
     result = await wait_module.wait_for_operation(AsyncMock(), "package", "job", 60)
     assert result["data"]["phase"] == "unknown" and not result["data"]["terminal"]
     fetch.assert_awaited_once()
+
+
+def test_failed_resolve_trigger_preserves_unknown_native_completion():
+    data = {
+        "job_id": "job",
+        "operation": "resolve",
+        "status": "failed",
+        "resolve": {"completion": "unknown", "trigger_state": "failed"},
+    }
+    result = wait_module.project_observation("package", "job", {"success": True, "data": data})
+    assert result["data"]["phase"] == "unknown"
+    assert result["data"]["terminal"] is False
+    assert result["data"]["job_status"] == "failed"
+    assert result["data"]["job"] is data
