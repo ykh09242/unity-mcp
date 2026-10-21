@@ -76,13 +76,13 @@ _EDITS = TypeAdapter(list[SceneEdit])
 
 @mcp_for_unity_tool(
     description=(
-        "Preview or apply 1-64 allowlisted native Transform, BoxCollider, SphereCollider, "
+        "Preview or apply 1-1000 allowlisted native Transform, BoxCollider, SphereCollider, "
         "Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene. Preview returns "
         "before/after values and a one-attempt token valid for 10 minutes. Apply accepts "
         "preview_id, or edits with expected_old for every field. Rejects drift before mutation; "
         "one named Undo restores supported recorded component values. No arbitrary transaction "
         "or filesystem, build, package, custom callback, dirty-flag rollback is promised. "
-        "preview_structure takes an integer scene-root target scope and 1-32 ordered create/delete/reparent "
+        "preview_structure takes an integer scene-root target scope and 1-256 ordered create/delete/reparent "
         "operations. Only ordinary Transform-only subtrees are supported; prefab instances and "
         "custom/native component subtrees are refused. create assigns a $temporary ID that later "
         "operations may reference. reparent preserves local transforms. apply_structure requires "
@@ -117,8 +117,8 @@ async def manage_scene_edits(
             }
         try:
             parsed_operations = _OPERATIONS.validate_python(operations)
-            if not 1 <= len(parsed_operations) <= 32:
-                return {"success": False, "message": "operations must contain 1-32 entries."}
+            if not 1 <= len(parsed_operations) <= 256:
+                return {"success": False, "message": "operations must contain 1-256 entries."}
             known = set()
             for operation in parsed_operations:
                 for reference in (
@@ -144,8 +144,8 @@ async def manage_scene_edits(
                 "target": target,
                 "operations": [item.model_dump() for item in parsed_operations],
             }
-            if len(json.dumps(params, ensure_ascii=True)) > 65536:
-                return {"success": False, "message": "Structure request exceeds 65536 characters."}
+            if len(json.dumps(params, ensure_ascii=True)) > 4 * 1024 * 1024:
+                return {"success": False, "message": "Structure request exceeds 4 Mi characters."}
         except ValidationError as error:
             return {"success": False, "message": f"Invalid structure operations: {error}"}
     elif preview_id is not None:
@@ -164,8 +164,8 @@ async def manage_scene_edits(
             return {"success": False, "message": "Structural apply requires preview_id only."}
         try:
             parsed = _EDITS.validate_python(edits)
-            if not 1 <= len(parsed) <= 64:
-                return {"success": False, "message": "edits must contain 1-64 entries."}
+            if not 1 <= len(parsed) <= 1000:
+                return {"success": False, "message": "edits must contain 1-1000 entries."}
             if action == "apply" and any(
                 "expected_old" not in item.model_fields_set for item in parsed
             ):
@@ -178,8 +178,8 @@ async def manage_scene_edits(
                 "edits": [item.model_dump(exclude_unset=True) for item in parsed],
                 "undo_name": undo_name,
             }
-            if len(json.dumps(params, allow_nan=False, ensure_ascii=True)) > 65536:
-                return {"success": False, "message": "Scene edit request exceeds 65536 characters."}
+            if len(json.dumps(params, allow_nan=False, ensure_ascii=True)) > 4 * 1024 * 1024:
+                return {"success": False, "message": "Scene edit request exceeds 4 Mi characters."}
         except (ValidationError, ValueError) as error:
             return {"success": False, "message": f"Invalid scene edits: {error}"}
 

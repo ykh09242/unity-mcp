@@ -17,7 +17,7 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
     // This plan deliberately excludes component lifecycle, prefab instances and callbacks.
     internal static class SceneStructurePlans
     {
-        private const int MaxNodes = 256;
+        private const int MaxNodes = 10000;
         private const double Lifetime = 600;
         private static readonly Dictionary<string, Plan> Previews = new Dictionary<string, Plan>(StringComparer.Ordinal);
 
@@ -38,8 +38,8 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
                 throw new ArgumentException("Structural target must be a scene root instance ID.");
             GameObject root = GameObjectLookup.FindById(request["target"].Value<int>());
             string hash = Snapshot(root);
-            if (!(request["operations"] is JArray operations) || operations.Count < 1 || operations.Count > 32)
-                throw new ArgumentException("operations must contain 1-32 ordered operations.");
+            if (!(request["operations"] is JArray operations) || operations.Count < 1 || operations.Count > 256)
+                throw new ArgumentException("operations must contain 1-256 ordered operations.");
             var parents = Objects(root)
                 .ToDictionary(node => Key(node.gameObject), node => node.parent == null ? null : Key(node.parent.gameObject), StringComparer.Ordinal);
             string rootKey = Key(root);

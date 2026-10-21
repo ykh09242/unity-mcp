@@ -36,11 +36,29 @@ def bridge(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_hundreds_of_scene_edits_and_structure_operations_are_forwarded(bridge):
+    send, _ = bridge
+    edits = [edit(target=index) for index in range(300)]
+    result = await tool.manage_scene_edits(None, "preview", edits=edits)
+    assert result["success"] is True
+    assert send.call_args.args[3]["edits"] == edits
+    operations = [
+        {"op": "create", "temp_id": f"$node{index}", "name": f"Node{index}", "parent": 42}
+        for index in range(100)
+    ]
+    result = await tool.manage_scene_edits(
+        None, "preview_structure", target=42, operations=operations
+    )
+    assert result["success"] is True
+    assert len(send.call_args.args[3]["operations"]) == 100
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "arguments",
     [
         {"action": "preview", "edits": []},
-        {"action": "preview", "edits": [edit()] * 65},
+        {"action": "preview", "edits": [edit()] * 1001},
         {"action": "preview", "preview_id": "token"},
         {"action": "apply", "preview_id": "token", "edits": [edit()]},
         {"action": "apply", "edits": [edit()]},
@@ -53,7 +71,7 @@ def bridge(monkeypatch):
         {"action": "apply", "preview_id": " "},
         {"action": "apply", "preview_id": "x" * 65},
         {"action": "apply", "preview_id": "token", "undo_name": " "},
-        {"action": "preview", "edits": [edit(value="x" * 66000)]},
+        {"action": "preview", "edits": [edit(value="x" * (4 * 1024 * 1024 + 1))]},
     ],
 )
 async def test_invalid_inputs_never_preflight_or_dispatch(bridge, arguments):

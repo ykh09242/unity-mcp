@@ -15,12 +15,12 @@ from pydantic import TypeAdapter, ValidationError
 def _read_edits(path: str, require_expected: bool) -> list[dict]:
     source = Path(path)
     try:
-        if source.stat().st_size > 65536:
-            raise click.ClickException("Edit file exceeds 65536 bytes.")
+        if source.stat().st_size > 4 * 1024 * 1024:
+            raise click.ClickException("Edit file exceeds 4 MiB.")
         payload = json.loads(source.read_text(encoding="utf-8"))
         edits = TypeAdapter(list[SceneEdit]).validate_python(payload)
-        if not 1 <= len(edits) <= 64:
-            raise click.ClickException("Edit file must contain 1-64 entries.")
+        if not 1 <= len(edits) <= 1000:
+            raise click.ClickException("Edit file must contain 1-1000 entries.")
         if require_expected and any("expected_old" not in edit.model_fields_set for edit in edits):
             raise click.ClickException("Direct apply requires expected_old for every edit.")
         result = [edit.model_dump(exclude_unset=True) for edit in edits]
