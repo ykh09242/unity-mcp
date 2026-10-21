@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "checks": {
+    "catalog": {
+      "kind": "pytest",
+      "targets": [
+        "Server/tests/test_functional_tool_catalog.py",
+        "Server/tests/test_functional_tool_permissions.py"
+      ]
+    },
+    "catalog_generation": {
+      "kind": "generator",
+      "path": "tools/generate_tool_capabilities.py"
+    },
+    "consent": {
+      "kind": "pytest",
+      "targets": [
+        "Server/tests/http/test_remote_permissions.py",
+        "Server/tests/http/test_local_project_context.py"
+      ]
+    },
+    "identity": {
+      "kind": "components"
+    },
+    "identity_regressions": {
+      "kind": "pytest",
+      "targets": [
+        "tools/tests/test_check_release_evidence.py",
+        "tools/tests/test_update_source_pins.py"
+      ]
+    },
+    "defaults": {
+      "kind": "pytest",
+      "targets": [
+        "Server/tests/test_fork_identity.py"
+      ]
+    },
+    "ownership": {
+      "kind": "pytest",
+      "targets": [
+        "Server/tests/http/test_server_lifecycle_ownership.py",
+        "Server/tests/http/test_plugin_command_admission.py",
+        "Server/tests/test_http_command_outcome.py",
+        "Server/tests/test_command_budget_boundary.py"
+      ]
+    },
+    "protocol": {
+      "kind": "pytest",
+      "targets": [
+        "Server/tests/http/test_mcp_protocol_wire.py",
+        "Server/tests/http/test_mcp_test_wait_binding.py",
+        "Server/tests/test_tool_execution_outcomes.py"
+      ]
+    },
+    "sdk_generation": {
+      "kind": "generator",
+      "path": "tools/generate_sdk_compatibility.py"
+    }
+  },
+  "invariants": [
+    {
+      "id": "focused_catalog",
+      "contract": "Focused public tools retain narrow schemas; broad compatibility tools require explicit legacy activation and session visibility remains isolated.",
+      "owners": [
+        "Server/src/services/tools/*",
+        "Server/src/services/registry/*",
+        "MCPForUnity/Editor/Tools/*",
+        "tools/generate_tool_capabilities.py"
+      ],
+      "checks": [
+        "catalog",
+        "catalog_generation"
+      ],
+      "version_evidence": [
+        "Server/src/core/sdk_compatibility.json",
+        "tools/unity-versions.json"
+      ]
+    },
+    {
+      "id": "project_consent",
+      "contract": "Project selection, explicit operation permissions and credential ownership gate dispatch; discovery hints do not grant authority.",
+      "owners": [
+        "Server/src/services/operation_permissions.py",
+        "Server/src/services/credential_lease.py",
+        "Server/src/transport/local_project_context.py",
+        "Server/src/transport/remote_*",
+        "Server/src/transport/plugin_hub.py",
+        "MCPForUnity/Editor/Services/ToolConsentService.cs",
+        "MCPForUnity/Editor/Security/*"
+      ],
+      "checks": [
+        "consent"
+      ],
+      "version_evidence": [
+        "Server/pyproject.toml",
+        "tools/unity-versions.json"
+      ]
+    },
+    {
+      "id": "immutable_identity",
+      "contract": "Fork package/server/skill identities and immutable inputs agree across distribution surfaces; release evidence uses actual source provenance.",
+      "owners": [
+        "MCPForUnity/package.json",
+        "manifest.json",
+        "release-source-inputs.json",
+        "Server/pyproject.toml",
+        "Server/uv.lock",
+        "Server/src/core/telemetry.py",
+        "tools/update*",
+        "tools/check_release_evidence.py",
+        "unity-mcp-skill/*",
+        ".claude/skills/unity-mcp-skill/*",
+        ".github/workflows/*release*"
+      ],
+      "checks": [
+        "identity",
+        "identity_regressions"
+      ],
+      "version_evidence": [
+        "release-source-inputs.json",
+        "Server/pyproject.toml",
+        "MCPForUnity/package.json"
+      ]
+    },
+    {
+      "id": "opt_in_defaults",
+      "contract": "Default telemetry stays inert without an explicit valid endpoint; caller opt-out takes precedence.",
+      "owners": [
+        "Server/src/core/config.py",
+        "Server/src/core/telemetry.py",
+        "Server/src/main.py"
+      ],
+      "checks": [
+        "defaults"
+      ],
+      "version_evidence": [
+        "Server/pyproject.toml"
+      ]
+    },
+    {
+      "id": "lifecycle_ownership",
+      "contract": "One owner admits, accounts for and closes commands/sockets; lost mutation replies stay unknown and cancellation cannot silently replay work or refresh its deadline.",
+      "owners": [
+        "Server/src/main.py",
+        "Server/src/transport/plugin_hub.py",
+        "Server/src/transport/command_budget.py",
+        "Server/src/transport/plugin_registry.py",
+        "Server/src/transport/unity_transport.py",
+        "Server/src/transport/legacy/*",
+        "Server/src/transport/large_result_assembler.py",
+        "MCPForUnity/Editor/Services/Transport/*"
+      ],
+      "checks": [
+        "ownership"
+      ],
+      "version_evidence": [
+        "Server/pyproject.toml",
+        "tools/unity-versions.json",
+        "tools/unity-native-groups.json"
+      ]
+    },
+    {
+      "id": "protocol_adapters",
+      "contract": "Modern and legacy protocol paths preserve result/error contracts; optional adapters are advertised only for their supported SDK and negotiated capability.",
+      "owners": [
+        "Server/pyproject.toml",
+        "Server/uv.lock",
+        "Server/src/core/sdk_*",
+        "Server/src/main.py",
+        "Server/src/models/*",
+        "Server/src/transport/test_*",
+        "Server/src/transport/execution_receipts.py",
+        "Server/src/services/tool_execution_outcomes.py",
+        "tools/generate_sdk_compatibility.py",
+        ".github/workflows/python-tests.yml"
+      ],
+      "checks": [
+        "protocol",
+        "sdk_generation"
+      ],
+      "version_evidence": [
+        "Server/src/core/sdk_compatibility.json",
+        "Server/pyproject.toml",
+        ".github/workflows/python-tests.yml"
+      ]
+    }
+  ]
+}
