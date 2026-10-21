@@ -182,6 +182,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return state == null ? new ErrorResponse("play_scenario_job_not_found") : new SuccessResponse("Scenario job status.", Snapshot(state));
         }
 
+        internal static object EditorStatus(string jobId)
+        {
+            PlayScenarioRun state = Find(jobId);
+            return state == null
+                ? new ErrorResponse("play_scenario_job_not_found")
+                : new SuccessResponse("Scenario job status.", new PlayScenarioEditorSnapshot(SnapshotCore(state, true)));
+        }
+
         public static object Cancel(string jobId)
         {
             if (_engine?.State.JobId == jobId)
@@ -212,16 +220,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
         }
 
-        private static JObject Snapshot(PlayScenarioRun state)
+        private static JObject Snapshot(PlayScenarioRun state) => SnapshotCore(state, false);
+
+        private static JObject SnapshotCore(PlayScenarioRun state, bool forEditor)
         {
             if (ReferenceEquals(state, _engine?.State))
                 _logs?.DrainTo(state);
-            var snapshot = JObject.FromObject(state, JsonSerializer.Create());
+            var snapshot = forEditor ? PlayScenarioEditorSnapshot.FromState(state) : JObject.FromObject(state, JsonSerializer.Create());
             if (ReferenceEquals(state, _engine?.State) && !_engine.Running && !_finalized)
             {
                 // Publish a terminal outcome only after optional evidence and report saving finish.
                 // Otherwise the Editor/CLI can stop observing before the final report exists.
-                snapshot["pending_status"] = state.Status;
+                if (!forEditor)
+                    snapshot["pending_status"] = state.Status;
                 snapshot["status"] = "running";
                 snapshot["phase"] = "finalizing";
                 snapshot["runner_resources_released"] = false;

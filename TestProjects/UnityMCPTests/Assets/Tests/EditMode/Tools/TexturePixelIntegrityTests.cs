@@ -27,6 +27,26 @@ namespace MCPForUnityTests.EditMode.Tools
                 Object.DestroyImmediate(_texture);
         }
 
+        [Test]
+        public void RgbaFillDoesNotAllocateAnImageSizedManagedBuffer()
+        {
+            var texture = new Texture2D(512, 512, TextureFormat.RGBA32, false);
+            try
+            {
+                var color = new Color32(19, 41, 83, 127);
+                TextureOps.FillTexture(texture, color);
+                Assert.Greater(ManagedAllocation.Count(() => System.GC.KeepAlive(new byte[65536])), 0);
+                long allocated = ManagedAllocation.Count(() => TextureOps.FillTexture(texture, color));
+                Assert.That(allocated, Is.EqualTo(0), "RGBA32 fill must write to the owned pixel storage.");
+                foreach (var pixel in texture.GetPixels32())
+                    Assert.AreEqual(color, pixel);
+            }
+            finally
+            {
+                Object.DestroyImmediate(texture);
+            }
+        }
+
         [TestCase("[[1,2,3],false]")]
         [TestCase("[[1,2,3],['bad',2,3]]")]
         [TestCase("[[1,2,3],[NaN,2,3]]")]

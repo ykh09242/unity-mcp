@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnity.Runtime.Serialization; // For Converters
 using Newtonsoft.Json;
@@ -237,7 +238,41 @@ namespace MCPForUnity.Editor.Helpers
         /// public properties and fields using reflection, with caching and control over non-public fields.
         /// </summary>
         // Add the flag parameter here
-        public static object GetComponentData(Component c, bool includeNonPublicSerializedFields = true)
+        [ThreadStatic]
+        private static BoundedResponseJson.Budget _serializationBudget;
+
+        public static object GetComponentData(Component c, bool includeNonPublicSerializedFields = true) =>
+            GetComponentDataBounded(c, new BoundedResponseJson.Budget(), includeNonPublicSerializedFields);
+
+        internal static object GetComponentDataBounded(Component c, BoundedResponseJson.Budget budget, bool includeNonPublicSerializedFields = true)
+        {
+            if (c == null)
+                return null;
+            var previous = _serializationBudget;
+            _serializationBudget = budget;
+            try
+            {
+                budget.Check();
+                var result = GetComponentDataCore(c, includeNonPublicSerializedFields);
+                budget.Check();
+                return result;
+            }
+            catch (Exception) when (budget.Exceeded)
+            {
+                return new Dictionary<string, object>
+                {
+                    ["typeName"] = c.GetType().FullName,
+                    ["instanceID"] = c.GetInstanceIDCompat(),
+                    ["serializationError"] = "component_serialization_limit",
+                };
+            }
+            finally
+            {
+                _serializationBudget = previous;
+            }
+        }
+
+        private static object GetComponentDataCore(Component c, bool includeNonPublicSerializedFields)
         {
             // --- Add Early Logging ---
             // McpLog.Info($"[GetComponentData] Starting for component: {c?.GetType()?.FullName ?? "null"} (ID: {c?.GetInstanceIDCompat() ?? 0})");
@@ -323,7 +358,7 @@ namespace MCPForUnity.Editor.Helpers
                             AddSerializableValue(cameraProperties, prop.Key, value.GetType(), value);
                         }
                     }
-                    catch (Exception)
+                    catch (Exception) when (_serializationBudget?.Exceeded != true)
                     {
                         // Silently skip any property that fails
                         continue;
@@ -390,7 +425,7 @@ namespace MCPForUnity.Editor.Helpers
                     // parent/child references that cause infinite serialization loops
                     uiDocProperties["_note"] = "rootVisualElement skipped to prevent circular reference loops";
                 }
-                catch (Exception e)
+                catch (Exception e) when (_serializationBudget?.Exceeded != true)
                 {
                     McpLog.Warn($"[GetComponentData] Error reading UIDocument properties: {e.Message}");
                 }
@@ -624,7 +659,7 @@ namespace MCPForUnity.Editor.Helpers
                     Type propType = propInfo.PropertyType;
                     AddSerializableValue(serializablePropertiesOutput, propName, propType, value);
                 }
-                catch (Exception)
+                catch (Exception) when (_serializationBudget?.Exceeded != true)
                 {
                     // McpLog.Warn($"Could not read property {propName} on {componentType.Name}");
                 }
@@ -647,7 +682,7 @@ namespace MCPForUnity.Editor.Helpers
                     Type fieldType = fieldInfo.FieldType;
                     AddSerializableValue(serializablePropertiesOutput, fieldName, fieldType, value);
                 }
-                catch (Exception)
+                catch (Exception) when (_serializationBudget?.Exceeded != true)
                 {
                     // McpLog.Warn($"Could not read field {fieldInfo.Name} on {componentType.Name}");
                 }
@@ -665,32 +700,20 @@ namespace MCPForUnity.Editor.Helpers
         // Helper function to decide how to serialize different types
         private static void AddSerializableValue(Dictionary<string, object> dict, string name, Type type, object value)
         {
-            // Simplified: Directly use CreateTokenFromValue which uses the serializer
-            if (value == null)
-            {
-                dict[name] = null;
-                return;
-            }
-
+            var budget = _serializationBudget ?? new BoundedResponseJson.Budget();
+            budget.Value(name);
             try
             {
-                // Use the helper that employs our custom serializer settings
-                JToken token = CreateTokenFromValue(value, type);
-                if (token != null) // Check if serialization succeeded in the helper
-                {
-                    // Convert JToken back to a basic object structure for the dictionary
-                    dict[name] = ConvertJTokenToPlainObject(token);
-                }
-                // If token is null, it means serialization failed and a warning was logged.
+                dict[name] = value is JToken token
+                    ? ConvertJTokenToPlainObject(BoundedResponseJson.Freeze(token, _outputSerializer, budget))
+                    : BoundedResponseJson.ToPlain(value, _outputSerializer, budget);
             }
-            catch (Exception e)
+            catch (Exception e) when (!budget.Exceeded)
             {
-                // Catch potential errors during JToken conversion or addition to dictionary
                 McpLog.Warn($"[AddSerializableValue] Error processing value for '{name}' (Type: {type.FullName}): {e.Message}. Skipping.");
             }
         }
 
-        // Helper to convert JToken back to basic object structure
         private static object ConvertJTokenToPlainObject(JToken token)
         {
             if (token == null)
@@ -782,14 +805,14 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 // Use the pre-configured OUTPUT serializer instance
-                return JToken.FromObject(value, _outputSerializer);
+                return BoundedResponseJson.Freeze(value, _outputSerializer, _serializationBudget);
             }
-            catch (JsonSerializationException e)
+            catch (JsonSerializationException e) when (_serializationBudget?.Exceeded != true)
             {
                 McpLog.Warn($"[GameObjectSerializer] Newtonsoft.Json Error serializing value of type {type.FullName}: {e.Message}. Skipping property/field.");
                 return null; // Indicate serialization failure
             }
-            catch (Exception e) // Catch other unexpected errors
+            catch (Exception e) when (_serializationBudget?.Exceeded != true) // Catch other unexpected errors
             {
                 McpLog.Warn($"[GameObjectSerializer] Unexpected error serializing value of type {type.FullName}: {e}. Skipping property/field.");
                 return null; // Indicate serialization failure

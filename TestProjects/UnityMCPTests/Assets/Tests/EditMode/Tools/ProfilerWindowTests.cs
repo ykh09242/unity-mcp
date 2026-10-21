@@ -81,6 +81,47 @@ namespace MCPForUnityTests.Editor.Tools
             windows.Clear();
         }
 
+        private static int AllocationCount(Action action)
+        {
+            using var recorder = Unity.Profiling.ProfilerRecorder.StartNew(
+                Unity.Profiling.ProfilerCategory.Memory,
+                "GC.Alloc",
+                8192,
+                Unity.Profiling.ProfilerRecorderOptions.StartImmediately | Unity.Profiling.ProfilerRecorderOptions.CollectOnlyOnCurrentThread
+            );
+            if (!recorder.Valid)
+                throw new InvalidOperationException("GC.Alloc instrumentation is unavailable.");
+            action();
+            recorder.Stop();
+            return recorder.Count;
+        }
+
+        [Test]
+        public void RetainedCompletedWindowTicksAllocateNothingAndStillExpire()
+        {
+            var type = typeof(ManageProfiler).Assembly.GetType("MCPForUnity.Editor.Tools.Profiler.WindowOps");
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+            var tick = (Action)Delegate.CreateDelegate(typeof(Action), type.GetMethod("Tick", flags));
+            string id = Start(new[] { "McpMissingAllocationMarker" }, 600).Value<string>("window_id");
+            Success(Query(id, "window_cancel"));
+            for (int i = 0; i < 10; i++)
+                tick();
+            Assert.Greater(AllocationCount(() => GC.KeepAlive(new byte[32])), 0);
+            int allocations = AllocationCount(() =>
+            {
+                for (int i = 0; i < 100; i++)
+                    tick();
+            });
+            Assert.AreEqual(0, allocations, "Completed result retention must not allocate per Editor update.");
+            var stored = (System.Collections.IDictionary)type.GetField("windows", flags).GetValue(null);
+            object item = stored[id];
+            item.GetType()
+                .GetField("Finished", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .SetValue(item, EditorApplication.timeSinceStartup - 121);
+            tick();
+            Assert.IsFalse(stored.Contains(id), "Idle expiry must still remove the retained result.");
+        }
+
         [UnityTest]
         public IEnumerator OwnedCpuSpike_ReportsActualSamplesUnitsAndNearestRankStatistics()
         {

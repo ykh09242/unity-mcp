@@ -361,6 +361,102 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
 #if UNITY_6000_0_OR_NEWER
+        private static int AllocationCount(Action action)
+        {
+            using var recorder = Unity.Profiling.ProfilerRecorder.StartNew(
+                Unity.Profiling.ProfilerCategory.Memory,
+                "GC.Alloc",
+                8192,
+                Unity.Profiling.ProfilerRecorderOptions.StartImmediately | Unity.Profiling.ProfilerRecorderOptions.CollectOnlyOnCurrentThread
+            );
+            if (!recorder.Valid)
+                throw new InvalidOperationException("GC.Alloc instrumentation is unavailable.");
+            action();
+            recorder.Stop();
+            return recorder.Count;
+        }
+
+        [Test]
+        public void WatchedPairPruningAllocatesNothingAndContactReadsRemainDetached()
+        {
+            AddPair("3d");
+            first.GetComponent<Collider>().providesContacts = true;
+            var extra = CreateIsolatedPreview("3d");
+            SceneManager.MoveGameObjectToScene(first, extra);
+            SceneManager.MoveGameObjectToScene(second, extra);
+            first.GetComponent<Rigidbody>().constraints = RigidbodyConstraints.FreezeAll;
+            UnityEngine.Object.DestroyImmediate(second.GetComponent<Rigidbody>());
+            var options = Request();
+            options["observe_contacts"] = true;
+            Success(Call(options));
+            var type = typeof(ManagePhysics).Assembly.GetType("MCPForUnity.Editor.Tools.Physics.PhysicsPairContactObserver");
+            var prune = (Action)
+                Delegate.CreateDelegate(
+                    typeof(Action),
+                    type.GetMethod("Prune", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                );
+            for (int i = 0; i < 10; i++)
+                prune();
+            Assert.Greater(AllocationCount(() => GC.KeepAlive(new byte[32])), 0);
+            Assert.AreEqual(
+                0,
+                AllocationCount(() =>
+                {
+                    for (int i = 0; i < 100; i++)
+                        prune();
+                })
+            );
+            extra.GetPhysicsScene().Simulate(0.02f);
+            options.Remove("observe_contacts");
+            var observed = Call(options);
+            var evidence = observed["data"]["contact_observation"];
+            Assert.AreEqual("available", evidence.Value<string>("status"));
+            long sequence = evidence.Value<long>("observed_event_sequence");
+            evidence["contact_count"] = -999;
+            var again = Call(options)["data"]["contact_observation"];
+            Assert.GreaterOrEqual(again.Value<int>("contact_count"), 0);
+            Assert.AreEqual(sequence, again.Value<long>("observed_event_sequence"));
+            extra.GetPhysicsScene().Simulate(0.02f);
+            Assert.Greater(Call(options)["data"]["contact_observation"].Value<long>("observed_event_sequence"), sequence);
+        }
+
+        [Test]
+        public void ContactCallbacksMatchUnobservedAllocationBudget()
+        {
+            AddPair("3d");
+            first.GetComponent<Collider>().providesContacts = true;
+            var extra = CreateIsolatedPreview("3d");
+            SceneManager.MoveGameObjectToScene(first, extra);
+            SceneManager.MoveGameObjectToScene(second, extra);
+            var body = first.GetComponent<Rigidbody>();
+            body.constraints = RigidbodyConstraints.FreezeAll;
+            body.sleepThreshold = 0;
+            UnityEngine.Object.DestroyImmediate(second.GetComponent<Rigidbody>());
+            var physics = extra.GetPhysicsScene();
+            Action simulate = () =>
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    body.WakeUp();
+                    physics.Simulate(0.02f);
+                }
+            };
+            simulate();
+            int withoutObservation = AllocationCount(simulate);
+            var options = Request();
+            options["observe_contacts"] = true;
+            Success(Call(options));
+            simulate();
+            options.Remove("observe_contacts");
+            var before = Call(options)["data"]["contact_observation"];
+            Assert.AreEqual("available", before.Value<string>("status"));
+            long sequence = before.Value<long>("observed_event_sequence");
+            int withObservation = AllocationCount(simulate);
+            var after = Call(options)["data"]["contact_observation"];
+            Assert.Greater(after.Value<long>("observed_event_sequence"), sequence, "Real contact callbacks must occur during the measurement.");
+            Assert.LessOrEqual(withObservation, withoutObservation + 2, "Opt-in contact recording must not allocate JSON per callback.");
+        }
+
         [Test]
         public void Contact3D_IsExplicitlyOptInAndLastObservedRatherThanCurrentTruth()
         {

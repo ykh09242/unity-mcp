@@ -1,8 +1,6 @@
 using System;
-using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
-using System.Text;
 using MCPForUnity.Editor.Constants;
 using UnityEditor;
 using UnityEngine;
@@ -31,8 +29,9 @@ namespace MCPForUnity.Editor.Setup
         private Vector2 _scroll;
         private volatile bool _isRunning;
         private SkillSyncService.SyncPreview _preview;
-        private readonly ConcurrentQueue<string> _pendingLogs = new();
-        private readonly StringBuilder _logBuilder = new(4096);
+        private readonly BoundedEditorLog _log = new();
+        private long _displayedLogRevision;
+        private double _nextRepaintAt;
 
         [MenuItem(ProductInfo.MenuRoot + "/Skill Installer", priority = 4)]
         public static void OpenWindow()
@@ -141,8 +140,7 @@ namespace MCPForUnity.Editor.Setup
 
             if (GUILayout.Button("Clear Log", GUILayout.Width(100f), GUILayout.Height(32f)))
             {
-                _logBuilder.Clear();
-                while (_pendingLogs.TryDequeue(out _)) { }
+                _log.Clear();
             }
             EditorGUILayout.EndHorizontal();
             if (_preview != null)
@@ -158,15 +156,16 @@ namespace MCPForUnity.Editor.Setup
             EditorGUILayout.Space(8f);
             EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
-            EditorGUILayout.TextArea(_logBuilder.ToString(), GUILayout.ExpandHeight(true));
+            EditorGUILayout.TextArea(_log.Snapshot(), GUILayout.ExpandHeight(true));
             EditorGUILayout.EndScrollView();
         }
 
         private void OnEditorUpdate()
         {
             var changed = FlushPendingLogs();
-            if (_isRunning || changed)
+            if (changed || (_isRunning && EditorApplication.timeSinceStartup >= _nextRepaintAt))
             {
+                _nextRepaintAt = EditorApplication.timeSinceStartup + 0.25;
                 Repaint();
             }
         }
@@ -194,7 +193,7 @@ namespace MCPForUnity.Editor.Setup
             SkillSyncService.PreviewSourceAsync(
                 source,
                 _installDir,
-                line => _pendingLogs.Enqueue($"[{DateTime.Now:HH:mm:ss}] {SanitizeLogLine(line)}"),
+                _log.Append,
                 preview =>
                 {
                     if (this == null)
@@ -231,7 +230,7 @@ namespace MCPForUnity.Editor.Setup
             _isRunning = true;
             SkillSyncService.ApplyAsync(
                 preview,
-                line => _pendingLogs.Enqueue($"[{DateTime.Now:HH:mm:ss}] {SanitizeLogLine(line)}"),
+                _log.Append,
                 result =>
                 {
                     if (this == null)
@@ -285,67 +284,19 @@ namespace MCPForUnity.Editor.Setup
 
         private void AppendLineImmediate(string line)
         {
-            var sanitized = SanitizeLogLine(line);
-            if (string.IsNullOrWhiteSpace(sanitized))
-            {
-                return;
-            }
-
-            _logBuilder.AppendLine($"[{DateTime.Now:HH:mm:ss}] {sanitized}");
+            _log.Append(line);
             _scroll.y = float.MaxValue;
             Repaint();
         }
 
         private bool FlushPendingLogs()
         {
-            var hasNewLine = false;
-            while (_pendingLogs.TryDequeue(out var line))
-            {
-                _logBuilder.AppendLine(line);
-                hasNewLine = true;
-            }
-
-            if (hasNewLine)
-            {
-                _scroll.y = float.MaxValue;
-            }
-
-            return hasNewLine;
-        }
-
-        private static string SanitizeLogLine(string line)
-        {
-            if (string.IsNullOrEmpty(line))
-            {
-                return string.Empty;
-            }
-
-            var sb = new StringBuilder(line.Length);
-            var inEscape = false;
-            foreach (var ch in line)
-            {
-                if (inEscape)
-                {
-                    if (ch >= '@' && ch <= '~')
-                    {
-                        inEscape = false;
-                    }
-                    continue;
-                }
-
-                if (ch == '\u001b')
-                {
-                    inEscape = true;
-                    continue;
-                }
-
-                if (ch == '\t' || (ch >= ' ' && ch != 127))
-                {
-                    sb.Append(ch);
-                }
-            }
-
-            return sb.ToString().Trim();
+            long revision = _log.Revision;
+            if (revision == _displayedLogRevision)
+                return false;
+            _displayedLogRevision = revision;
+            _scroll.y = float.MaxValue;
+            return true;
         }
     }
 }

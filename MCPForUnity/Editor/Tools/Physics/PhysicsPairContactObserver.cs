@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -47,10 +46,9 @@ namespace MCPForUnity.Editor.Tools.Physics
             }
             if (!watches.TryGetValue(key, out Watch active))
                 return Missing("No active opt-in observation. This is not evidence of zero contacts.", false);
-            var result =
-                active.Evidence == null
-                    ? Missing("No collision event observed for this pair since opt-in; contact generation may be disabled.", true)
-                    : (JObject)active.Evidence.DeepClone();
+            var result = !active.Evidence.HasValue
+                ? Missing("No collision event observed for this pair since opt-in; contact generation may be disabled.", true)
+                : Describe(active.Evidence.Value);
             result["watching"] = true;
             result["expires_in_seconds"] = Math.Max(0, active.Expires - EditorApplication.timeSinceStartup);
             result["maximum_watched_pairs"] = MaximumPairs;
@@ -79,11 +77,25 @@ namespace MCPForUnity.Editor.Tools.Physics
             internal Collider First;
             internal Collider Second;
             internal double Expires;
-            internal JObject Evidence;
+            internal ContactEvidence? Evidence;
         }
 
         private static readonly Dictionary<(PhysicsScene, ColliderId, ColliderId), Watch> watches =
             new Dictionary<(PhysicsScene, ColliderId, ColliderId), Watch>();
+
+        private struct ContactEvidence
+        {
+            internal int Count;
+            internal ColliderId First;
+            internal ColliderId Second;
+            internal bool Exit;
+            internal bool Enter;
+            internal double EditorTime;
+            internal double FixedTime;
+            internal long Sequence;
+        }
+
+        private static readonly List<(PhysicsScene, ColliderId, ColliderId)> expired = new(MaximumPairs);
         private static bool subscribed;
         private static long eventSequence;
 
@@ -155,9 +167,10 @@ namespace MCPForUnity.Editor.Tools.Physics
         private static void Prune()
         {
             double now = EditorApplication.timeSinceStartup;
-            foreach (
-                var key in watches
-                    .Where(row =>
+            try
+            {
+                foreach (var row in watches)
+                    if (
                         row.Value.Expires <= now
                         || row.Value.First == null
                         || row.Value.Second == null
@@ -166,12 +179,41 @@ namespace MCPForUnity.Editor.Tools.Physics
                         || row.Value.First.gameObject.scene.GetPhysicsScene() != row.Key.Item1
                         || row.Value.Second.gameObject.scene.GetPhysicsScene() != row.Key.Item1
                     )
-                    .Select(row => row.Key)
-                    .ToArray()
-            )
-                watches.Remove(key);
+                        expired.Add(row.Key);
+                foreach (var key in expired)
+                    watches.Remove(key);
+            }
+            finally
+            {
+                expired.Clear();
+            }
             UnsubscribeIfEmpty();
         }
+
+        private static JObject Describe(ContactEvidence evidence) =>
+            new JObject
+            {
+                ["status"] = "available",
+                ["basis"] = "last_observed_collision_event",
+                ["event_type"] =
+                    evidence.Exit ? "exit"
+                    : evidence.Enter ? "enter"
+                    : "stay",
+                ["contact_count"] = evidence.Count,
+                ["native_first_collider_id"] = NativeId(evidence.First),
+                ["native_second_collider_id"] = NativeId(evidence.Second),
+#if UNITY_6000_4_OR_NEWER
+                ["native_collider_id_kind"] = "entity_id_decimal_string",
+#else
+                ["native_collider_id_kind"] = "instance_id",
+#endif
+                ["observed_editor_time_seconds"] = evidence.EditorTime,
+                ["engine_fixed_time_at_event"] = evidence.FixedTime,
+                ["observed_event_sequence"] = evidence.Sequence,
+                ["sequence_is_simulation_step"] = false,
+                ["current_state_proven"] = false,
+                ["scan_limit_per_event"] = MaximumScannedPairsPerEvent,
+            };
 
         private static void OnContactEvent(PhysicsScene scene, NativeArray<ContactPairHeader>.ReadOnly headers)
         {
@@ -211,28 +253,16 @@ namespace MCPForUnity.Editor.Tools.Physics
 #endif
                     if (watches.TryGetValue(Key(scene, first, second), out Watch watch) && EditorApplication.timeSinceStartup < watch.Expires)
                     {
-                        watch.Evidence = new JObject
+                        watch.Evidence = new ContactEvidence
                         {
-                            ["status"] = "available",
-                            ["basis"] = "last_observed_collision_event",
-                            ["event_type"] =
-                                exit ? "exit"
-                                : enter ? "enter"
-                                : "stay",
-                            ["contact_count"] = count,
-                            ["native_first_collider_id"] = NativeId(first),
-                            ["native_second_collider_id"] = NativeId(second),
-#if UNITY_6000_4_OR_NEWER
-                            ["native_collider_id_kind"] = "entity_id_decimal_string",
-#else
-                            ["native_collider_id_kind"] = "instance_id",
-#endif
-                            ["observed_editor_time_seconds"] = EditorApplication.timeSinceStartup,
-                            ["engine_fixed_time_at_event"] = Time.fixedTimeAsDouble,
-                            ["observed_event_sequence"] = sequence,
-                            ["sequence_is_simulation_step"] = false,
-                            ["current_state_proven"] = false,
-                            ["scan_limit_per_event"] = MaximumScannedPairsPerEvent,
+                            Count = count,
+                            First = first,
+                            Second = second,
+                            Exit = exit,
+                            Enter = enter,
+                            EditorTime = EditorApplication.timeSinceStartup,
+                            FixedTime = Time.fixedTimeAsDouble,
+                            Sequence = sequence,
                         };
                     }
                 }

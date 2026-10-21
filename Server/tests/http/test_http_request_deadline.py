@@ -558,7 +558,10 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
                         else {},
                     },
                 ),
-                0.4,
+                # This watchdog catches hangs, not the command's production deadline.
+                # Keep scheduling slack for oversubscribed CI workers; successful requests
+                # still finish immediately and the short-deadline assertions stay below.
+                2.0,
             )
     finally:
         if release is not None:

@@ -352,6 +352,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.IsTrue(UnityTypeResolver.TryResolve(name, out Type actual, out string error, expected.BaseType), error);
                 Assert.AreSame(expected, actual);
             }
+            // Other resolutions may load metadata dependencies and invalidate the generation.
+            // Establish the global FullName entry immediately before testing the warm ambiguity.
+            Assert.IsTrue(UnityTypeResolver.TryResolve(name, out Type globalWarm, out string globalError, global.BaseType), globalError);
+            Assert.AreSame(global, globalWarm);
             Assert.AreSame(global, fqn[name]);
             shortNames.Clear();
             Assert.IsFalse(UnityTypeResolver.TryResolve(name, out Type warm, out string warmError));

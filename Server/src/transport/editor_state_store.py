@@ -134,8 +134,6 @@ class EditorStateStore:
             or message.observed_at_unix_ms != state.observed_at_unix_ms
         ):
             return False
-        snapshot = state.model_dump(mode="json")
-        content = {key: value for key, value in snapshot.items() if key != "observed_at_unix_ms"}
         with self._lock:
             if session_id not in self._owners or session_id in self._invalidated:
                 return False
@@ -149,6 +147,34 @@ class EditorStateStore:
                     or message.observed_at_unix_ms < previous.observed_ms
                 ):
                     return False
+                # Strict model validation still runs for every frame. Only reuse
+                # already-detached content after comparing the complete input.
+                raw_state = payload.get("state") if isinstance(payload, dict) else None
+                if (
+                    message.sequence == previous.sequence
+                    and isinstance(raw_state, dict)
+                    and len(raw_state) == len(previous.state)
+                    and all(
+                        key == "observed_at_unix_ms"
+                        or (key in previous.content and value == previous.content[key])
+                        for key, value in raw_state.items()
+                    )
+                ):
+                    if message.observed_at_unix_ms != previous.observed_ms:
+                        self._states[session_id] = StoredState(
+                            previous.epoch,
+                            previous.sequence,
+                            message.observed_at_unix_ms,
+                            self._monotonic(),
+                            {**previous.state, "observed_at_unix_ms": message.observed_at_unix_ms},
+                            previous.content,
+                        )
+                    return True
+            snapshot = state.model_dump(mode="json")
+            content = {
+                key: value for key, value in snapshot.items() if key != "observed_at_unix_ms"
+            }
+            if previous is not None:
                 # A heartbeat may advance liveness, never change content under a
                 # reused sequence. Duplicates do not extend receive freshness.
                 if message.sequence == previous.sequence:

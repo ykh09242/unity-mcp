@@ -505,7 +505,7 @@ namespace MCPForUnity.Editor.Tools
                     var pixelError = ValidatePixelPayload(pixelsToken, w, h);
                     if (pixelError != null)
                         return pixelError;
-                    Color32[] pixels = null;
+                    TextureOps.PreparedPixelData pixels = null;
                     Color32 color = default;
                     if (pixelsToken != null)
                         pixels = TextureOps.PreparePixelData(pixelsToken, w, h);

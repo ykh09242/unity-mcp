@@ -76,6 +76,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private int runTimeoutSeconds = 300;
         private PlayScenarioDefinition draft;
         private PlayScenarioRun report;
+        private JObject reportSnapshot;
+        private bool draftValid;
         private PlayScenarioStore injectedStore;
         private ScrollView scenarioList;
         private ScrollView stepList;
@@ -588,6 +590,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             try
             {
                 validated = PlayScenarioDefinition.Parse(Json(draft));
+                draftValid = true;
                 validation.text = dirty ? "Valid definition • unsaved changes" : "Valid definition";
                 validation.RemoveFromClassList("scenario-error");
                 return true;
@@ -595,17 +598,20 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             catch (ArgumentException exception)
             {
                 validated = null;
+                draftValid = false;
                 validation.text = exception.Message;
                 validation.AddToClassList("scenario-error");
                 return false;
             }
         }
 
-        private void UpdateValidation()
+        private void UpdateValidation() => UpdateValidationCore(true);
+
+        private void UpdateValidationCore(bool revalidate)
         {
             if (validation == null)
                 return;
-            bool valid = ValidateDraft(out _);
+            bool valid = revalidate ? ValidateDraft(out _) : draftValid;
             undoButton.SetEnabled(undoDrafts.Count > 0);
             redoButton.SetEnabled(redoDrafts.Count > 0);
             saveButton.SetEnabled(valid);
@@ -713,6 +719,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private void SaveCurrent()
         {
             PlayScenarioDefinition validated = PlayScenarioDefinition.Parse(Json(draft));
+            draftValid = true;
             if (string.IsNullOrEmpty(savedName) && Store.List().Contains(validated.Name))
                 throw new InvalidOperationException("This name already exists. Open that scenario to edit it, or choose a new name.");
             Store.Save(validated);
@@ -1015,7 +1022,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     suiteEditor?.RefreshReports();
             }
             SetMessage(success.Message, false);
-            UpdateValidation();
+            UpdateValidationCore(false);
             return true;
         }
 
@@ -1031,15 +1038,23 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             suiteMode = false;
             suiteReport = null;
             SessionState.SetBool(SessionSuiteModeKey, false);
-            JObject data = success.Data as JObject ?? Json(success.Data);
-            report = data.ToObject<PlayScenarioRun>(JsonSerializer.Create());
+            JObject data = success.Data is PlayScenarioEditorSnapshot snapshot
+                ? snapshot.Data
+                : PlayScenarioEditorSnapshot.FromSnapshot(success.Data as JObject ?? Json(success.Data));
+            bool changed = report == null || !JToken.DeepEquals(reportSnapshot, data);
+            if (changed)
+            {
+                report = data.ToObject<PlayScenarioRun>(JsonSerializer.Create());
+                reportSnapshot = data;
+            }
             if (report == null)
                 throw new InvalidOperationException("Scenario response contained no report.");
             string previousReportId = jobId;
             bool completed = report.Status != "running";
             jobId = report.JobId;
             SessionState.SetString(SessionJobKey, jobId ?? "");
-            RenderReport();
+            if (changed)
+                RenderReport();
             if (completed && (wasRunning || previousReportId != jobId))
                 history.Refresh();
             if (report.Status == "running")
@@ -1047,7 +1062,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             else
                 StopPolling();
             SetMessage(success.Message, false);
-            UpdateValidation();
+            UpdateValidationCore(false);
             return true;
         }
 
@@ -1081,7 +1096,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 if (suiteMode)
                     AcceptSuiteReport(CallSuite(new JObject { ["action"] = "suite_status", ["suite_id"] = jobId }));
                 else
-                    AcceptReport(ReadStatus != null ? ReadStatus(jobId) : PlayScenarioService.Status(jobId));
+                    AcceptReport(ReadStatus != null ? ReadStatus(jobId) : PlayScenarioService.EditorStatus(jobId));
             }
             catch (Exception exception)
             {
@@ -1097,7 +1112,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             cancelButton.SetEnabled(Running);
             string currentReportJson =
                 suiteMode && suiteReport != null ? suiteReport.ToString(Formatting.None)
-                : report != null ? ReportDisplayJson(report)
+                : report != null ? (reportSnapshot ?? PlayScenarioEditorSnapshot.FromState(report)).ToString(Formatting.None)
                 : "";
             if (currentReportJson == renderedReportJson)
                 return;
@@ -1116,7 +1131,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
             runResults.Add(new Label(report.Status + " • " + report.Phase) { name = "runStatus" });
             runResults.Add(Note("Job: " + report.JobId));
-            PlayScenarioHistoryEditor.AppendStructuredDetails(Json(report), text => runResults.Add(Note(text)));
+            PlayScenarioHistoryEditor.AppendStructuredDetails(
+                reportSnapshot ?? PlayScenarioEditorSnapshot.FromState(report),
+                text => runResults.Add(Note(text))
+            );
             if (!string.IsNullOrEmpty(report.Error))
             {
                 var error = Note(report.Error);
@@ -1175,50 +1193,6 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             if (report.DroppedLogCount > 0)
                 logs.Add(Note("Older captured logs dropped: " + report.DroppedLogCount));
             runResults.Add(logs);
-        }
-
-        private static string ReportDisplayJson(PlayScenarioRun value)
-        {
-            JObject data = Json(value);
-            var displayed = new JObject();
-            foreach (
-                string field in new[]
-                {
-                    "job_id",
-                    "status",
-                    "phase",
-                    "query_counts",
-                    "timeline",
-                    "dropped_timeline_count",
-                    "failure",
-                    "cleanup_failures",
-                    "resource_checks",
-                    "cleanup_error",
-                    "runner_resources_released",
-                    "reproduction",
-                    "error",
-                    "report_path",
-                    "report_error",
-                    "metrics_summary",
-                    "metric_warnings",
-                    "metrics",
-                    "failure_diagnostics",
-                    "logs",
-                    "dropped_log_count",
-                }
-            )
-                displayed[field] = data[field];
-            var steps = new JArray();
-            foreach (JObject step in ((JArray)data["steps"]).OfType<JObject>())
-            {
-                var row = new JObject();
-                foreach (string field in new[] { "stage", "iteration", "step_index", "name", "status", "detail", "query_counts" })
-                    row[field] = step[field];
-                steps.Add(row);
-            }
-            displayed["steps"] = steps;
-            displayed["screenshot_on_failure"] = value.Scenario?.Diagnostics?.ScreenshotOnFailure ?? false;
-            return displayed.ToString(Formatting.None);
         }
 
         private void SetMessage(string text, bool error)

@@ -20,6 +20,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
         private const double RetentionSeconds = 120;
         private static readonly Dictionary<string, Window> windows = new Dictionary<string, Window>(StringComparer.Ordinal);
         private static bool subscribed;
+        private static readonly List<Window> pruning = new(MaximumStored);
+        private static readonly List<Window> sampling = new(MaximumActive);
 
         private sealed class Marker
         {
@@ -197,15 +199,28 @@ namespace MCPForUnity.Editor.Tools.Profiler
         private static void Prune()
         {
             double now = EditorApplication.timeSinceStartup;
-            foreach (Window window in windows.Values.ToArray())
+            foreach (Window window in windows.Values)
+                pruning.Add(window);
+            try
             {
-                if (!window.Running)
-                    foreach (Marker marker in window.Markers.Where(item => item.Owned))
-                        Dispose(marker);
-                if (window.Running && now >= window.Deadline)
-                    Finish(window, "expired", "deadline_reached");
-                else if (!window.Running && now - window.Finished >= RetentionSeconds && window.Markers.All(marker => !marker.Owned))
-                    windows.Remove(window.Id);
+                foreach (Window window in pruning)
+                {
+                    bool owned = false;
+                    foreach (Marker marker in window.Markers)
+                    {
+                        if (!window.Running && marker.Owned)
+                            Dispose(marker);
+                        owned |= marker.Owned;
+                    }
+                    if (window.Running && now >= window.Deadline)
+                        Finish(window, "expired", "deadline_reached");
+                    else if (!window.Running && now - window.Finished >= RetentionSeconds && !owned)
+                        windows.Remove(window.Id);
+                }
+            }
+            finally
+            {
+                pruning.Clear();
             }
             UnsubscribeIfEmpty();
         }
@@ -213,50 +228,60 @@ namespace MCPForUnity.Editor.Tools.Profiler
         private static void Tick()
         {
             Prune();
-            foreach (Window window in windows.Values.Where(item => item.Running).ToArray())
+            foreach (Window window in windows.Values)
+                if (window.Running)
+                    sampling.Add(window);
+            try
             {
-                long before = Stopwatch.GetTimestamp();
-                try
+                foreach (Window window in sampling)
                 {
-                    int frame = Time.frameCount;
-                    if (frame == window.LastFrame)
+                    long before = Stopwatch.GetTimestamp();
+                    try
                     {
-                        EditorApplication.QueuePlayerLoopUpdate();
-                        continue;
-                    }
-                    window.UnobservedFrames += Math.Max(0, frame - window.LastFrame - 1);
-                    window.LastFrame = frame;
-                    if (!window.Armed)
-                    {
-                        window.Armed = true;
-                        Reset(window);
-                        if (window.Warmup == 0)
+                        int frame = Time.frameCount;
+                        if (frame == window.LastFrame)
                         {
-                            window.Measuring = true;
-                            window.State = "measuring";
+                            EditorApplication.QueuePlayerLoopUpdate();
+                            continue;
                         }
-                    }
-                    else if (!window.Measuring)
-                    {
-                        if (++window.WarmupObserved >= window.Warmup)
+                        window.UnobservedFrames += Math.Max(0, frame - window.LastFrame - 1);
+                        window.LastFrame = frame;
+                        if (!window.Armed)
                         {
+                            window.Armed = true;
                             Reset(window);
-                            window.Measuring = true;
-                            window.State = "measuring";
+                            if (window.Warmup == 0)
+                            {
+                                window.Measuring = true;
+                                window.State = "measuring";
+                            }
                         }
+                        else if (!window.Measuring)
+                        {
+                            if (++window.WarmupObserved >= window.Warmup)
+                            {
+                                Reset(window);
+                                window.Measuring = true;
+                                window.State = "measuring";
+                            }
+                        }
+                        else if (++window.FramesObserved >= window.Frames)
+                            Finish(window, "completed", null);
+                        EditorApplication.QueuePlayerLoopUpdate();
                     }
-                    else if (++window.FramesObserved >= window.Frames)
-                        Finish(window, "completed", null);
-                    EditorApplication.QueuePlayerLoopUpdate();
+                    catch (Exception error)
+                    {
+                        Finish(window, "failed", error.GetType().Name + ": " + error.Message);
+                    }
+                    finally
+                    {
+                        window.CollectorTicks += Stopwatch.GetTimestamp() - before;
+                    }
                 }
-                catch (Exception error)
-                {
-                    Finish(window, "failed", error.GetType().Name + ": " + error.Message);
-                }
-                finally
-                {
-                    window.CollectorTicks += Stopwatch.GetTimestamp() - before;
-                }
+            }
+            finally
+            {
+                sampling.Clear();
             }
         }
 
