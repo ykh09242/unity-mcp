@@ -23,7 +23,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static int _processedUnexpectedLogCount;
         private static PlayScenarioFailureCapture _failureCapture;
         internal static int ActiveSubscriptionCount => _attached ? 5 : 0;
+        private static readonly PlayScenarioSessionCheckpoint Checkpoint = new(SessionKey, typeof(PlayScenarioRun), "scenario");
         private static int _savedRevision;
+        private static long _savedPollRevision;
+        private static long _savedLogRevision;
         private static long _checkpointAt;
         private static PlayScenarioStore Store => new PlayScenarioStore(Path.GetDirectoryName(Application.dataPath));
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -37,9 +40,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return;
             try
             {
-                PlayScenarioRun state;
-                using (var reader = new JsonTextReader(new StringReader(saved)) { DateParseHandling = DateParseHandling.None, MaxDepth = 32 })
-                    state = JsonSerializer.Create().Deserialize<PlayScenarioRun>(reader);
+                PlayScenarioRun state = Checkpoint.Read(saved).ToObject<PlayScenarioRun>(JsonSerializer.Create());
                 if (state == null)
                     return;
                 _engine = CreateEngine(state);
@@ -180,6 +181,27 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             PlayScenarioRun state = Find(jobId);
             return state == null ? new ErrorResponse("play_scenario_job_not_found") : new SuccessResponse("Scenario job status.", Snapshot(state));
+        }
+
+        internal static object CoordinationStatus(string jobId)
+        {
+            PlayScenarioRun state = Find(jobId);
+            if (state == null)
+                return new ErrorResponse("play_scenario_job_not_found");
+            if (ReferenceEquals(state, _engine?.State) && (_engine.Running || !_finalized))
+            {
+                _logs?.DrainTo(state);
+                return new SuccessResponse(
+                    "Scenario job status.",
+                    new JObject
+                    {
+                        ["job_id"] = state.JobId,
+                        ["status"] = "running",
+                        ["runner_resources_released"] = false,
+                    }
+                );
+            }
+            return new SuccessResponse("Scenario job status.", Snapshot(state));
         }
 
         internal static object EditorStatus(string jobId)
@@ -387,11 +409,17 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 }
                 force = true;
             }
-            if (!force && _savedRevision == _engine.Revision && now < _checkpointAt)
+            long logRevision = _logs?.DrainedRevision ?? 0;
+            if (
+                !force
+                && _savedRevision == _engine.Revision
+                && (now < _checkpointAt || (_savedPollRevision == _engine.PollRevision && _savedLogRevision == logRevision))
+            )
                 return;
-            _logs?.DrainTo(_engine.State);
-            SessionState.SetString(SessionKey, JObject.FromObject(_engine.State, JsonSerializer.Create()).ToString(Formatting.None));
+            Checkpoint.Write(_engine.State, _engine.State.Scenario);
             _savedRevision = _engine.Revision;
+            _savedPollRevision = _engine.PollRevision;
+            _savedLogRevision = logRevision;
             _checkpointAt = now + 1000;
         }
     }

@@ -72,3 +72,11 @@ controller-owned isolated Unity project, using Unity Test Framework's reload-cap
 runner. Ordinary fixture groups must not include this test. The Unity 6.6 entity ID
 API requires that Editor version for native validation; compiling the conditional
 code on other versions is not a substitute.
+
+
+## Repeated service work
+
+[Service optimizations](service-optimizations.md) describe captured reference-page
+lifetimes, owner-scoped hierarchy scratch, immutable shared responses and fair
+artifact preparation. These reuse policies preserve existing workload admission
+limits and release only resources owned by the corresponding operation.

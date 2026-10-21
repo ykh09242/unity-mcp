@@ -156,3 +156,27 @@ def test_command_routing_is_task_local_and_restored_after_failure_or_cancellatio
             assert set(observed) == {("raycast", "query_physics"), ("add_joint", "manage_physics_joints")}
         asyncio.run(scenario())
     """)
+
+
+def test_public_scene_reference_capability_exposes_snapshot_options():
+    run_sdk_regression("""
+        import asyncio, sys
+        from unittest.mock import AsyncMock
+        sys.path.insert(0, "src")
+        from services.registry.capability_adapter import register_capability
+        from services.registry.capability_catalog import CAPABILITIES
+        from services.tools import manage_scene as scenes
+
+        scenes.get_unity_instance_from_context = AsyncMock(return_value="owned")
+        scenes.preflight = AsyncMock(return_value=None)
+        scenes.send_with_unity_instance = AsyncMock(return_value={"success": True})
+        feature = next(item for item in CAPABILITIES if item.name == "scene_reference_diagnostics")
+        invoke = register_capability(feature, scenes.manage_scene)
+        async def scenario():
+            result = await invoke(None, action="validate_references", reference_cursor="mcp-ref-snapshot-v1_" + "a" * 32, page_number=2)
+            assert result["success"] is True
+            args = scenes.send_with_unity_instance.await_args.args
+            assert args[2] == "scene_reference_diagnostics"
+            assert args[3]["referenceCursor"] == "mcp-ref-snapshot-v1_" + "a" * 32
+        asyncio.run(scenario())
+    """)

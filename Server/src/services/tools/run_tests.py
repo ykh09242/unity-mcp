@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import count
 import logging
@@ -21,6 +22,7 @@ from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
+from services.tools.immutable_json import prepare_json_copy
 from services.tools.shared_tool_reads import SharedToolReads
 from services.tools.test_job_wait import wait_for_test_job
 import transport.unity_transport as unity_transport
@@ -39,9 +41,19 @@ _MAX_JOB_NUDGES = 3
 _NUDGE_STATE_TTL_S = 3600.0
 _MAX_NUDGE_STATES = 256
 _poll_observation_order = count()
+
+
 # Unity job responses are parsed at the public tool boundary below. Preserve
 # transport errors and the original observation order while sharing raw reads.
-_job_status_reads: SharedToolReads[tuple[Any, int]] = SharedToolReads(freshness_s=2.0)
+def _prepare_status_copy(value: tuple[Any, int]) -> Callable[[], tuple[Any, int]] | None:
+    response, order = value
+    clone = prepare_json_copy(response)
+    return None if clone is None else lambda: (clone(), order)
+
+
+_job_status_reads: SharedToolReads[tuple[Any, int]] = SharedToolReads(
+    freshness_s=2.0, copy_preparer=_prepare_status_copy
+)
 
 
 @dataclass

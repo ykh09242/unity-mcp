@@ -22,6 +22,53 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase(false)]
         [TestCase(true)]
+        public async Task SlowSynchronousChildrenYieldWithoutReorderingOrIgnoringCancellation(bool cancel)
+        {
+            const string tool = "__opt06_slow_child";
+            using var handlers = new MCPForUnityTests.Editor.Services.ProgressHandlerScope();
+            using var cts = new CancellationTokenSource();
+            int calls = 0;
+            handlers.Set(
+                tool,
+                new HandlerInfo(
+                    tool,
+                    parameters =>
+                    {
+                        Assert.AreEqual(calls, (int)parameters["sequence"]);
+                        calls++;
+                        Thread.Sleep(12);
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            var commands = new JArray();
+            for (int i = 0; i < 4; i++)
+                commands.Add(
+                    new JObject
+                    {
+                        ["tool"] = tool,
+                        ["params"] = new JObject { ["sequence"] = i },
+                    }
+                );
+            Task<object> batch = BatchExecute.HandleCommand(new JObject { ["commands"] = commands }, cts.Token);
+            bool yielded = !batch.IsCompleted;
+            int beforeYield = calls;
+            if (cancel)
+                cts.Cancel();
+            try
+            {
+                await batch;
+            }
+            catch (OperationCanceledException) when (cancel) { }
+            Assert.IsTrue(yielded, "Completed synchronous children must yield at a safe boundary during a long batch.");
+            Assert.Less(beforeYield, 4);
+            Assert.AreEqual(cancel ? beforeYield : 4, calls);
+            Assert.AreEqual(cancel, batch.IsCanceled);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public async Task Cancellation_StopsRemainingCommandsAfterActiveChildSettles(bool cooperative)
         {
             const string first = "phase7_batch_active";

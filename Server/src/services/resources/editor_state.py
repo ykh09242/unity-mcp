@@ -14,6 +14,7 @@ from models import MCPResponse
 from models.response_limits import response_limit_error
 from services.registry import mcp_for_unity_resource
 from services.tools import get_unity_instance_from_context
+from services.tools.immutable_json import prepare_json_copy
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 from services.state.external_changes_scanner import external_changes_scanner
 import transport.unity_transport as unity_transport
@@ -28,7 +29,7 @@ logger = logging.getLogger("mcp-for-unity-server")
 # Ordinary stdio resources may share an authenticated raw snapshot for 1s.
 # Authoritative preflight always bypasses and invalidates this bounded cache.
 _stdio_state_reads: SharedToolReads[Any] = SharedToolReads(
-    freshness_s=1.0, retention_s=1.0, max_entries=128
+    freshness_s=1.0, retention_s=1.0, max_entries=128, copy_preparer=prepare_json_copy
 )
 
 

@@ -289,11 +289,19 @@ namespace MCPForUnity.Editor.Tools
             int invocationFailureCount = 0;
             bool anyCommandFailed = false;
 
+            long sliceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            long sliceTicks = Math.Max(1, System.Diagnostics.Stopwatch.Frequency / 250); // Four milliseconds, between settled children only.
             int inputIndex = 0;
             foreach (var token in commandsToken)
             {
                 int index = inputIndex++;
                 cancellationToken.ThrowIfCancellationRequested();
+                if (index > 0 && System.Diagnostics.Stopwatch.GetTimestamp() - sliceStarted >= sliceTicks)
+                {
+                    await Task.Yield();
+                    cancellationToken.ThrowIfCancellationRequested();
+                    sliceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                }
                 // The previous child has settled. Recheck the parent before the
                 // next item; initial dispatcher/preview admission is unchanged.
                 if (index > 0 && !MCPServiceLocator.ToolDiscovery.IsToolEnabled("batch_execute"))

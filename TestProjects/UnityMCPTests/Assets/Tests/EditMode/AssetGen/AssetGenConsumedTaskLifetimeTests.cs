@@ -68,18 +68,22 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 JobId = Guid.NewGuid().ToString("N"),
                 Kind = "audio",
-                Provider = "synthetic",
+                Provider = "fal",
                 State = AssetGenJobState.Running,
             };
             _runner = Activator.CreateInstance(RunnerType, true);
             Set(_runner, "Job", job);
             Set(_runner, "Ext", "wav");
+            Set(_runner, "Subfolder", "Audio");
             Set(_runner, "Name", job.JobId);
             Set(_runner, "OutputFolder", _folder);
             Set(_runner, "StartedAt", EditorApplication.timeSinceStartup);
             Set(_runner, "ImportFn", (Func<AssetGenJob, string, AssetGenJob>)ObserveImport);
             Phase(_runner, phase);
             typeof(AssetGenJobManager).GetMethod("Register", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new[] { (object)job, _runner });
+            Assert.AreEqual(AssetGenJobState.Running, job.State, job.Error);
+            var checkpoint = (AssetGenJobCheckpoint)Get(_runner, "Checkpoint");
+            checkpoint.Receipt = "https://queue.fal.run/fal-ai/owned-audio/requests/owned";
             return job;
         }
 
@@ -174,13 +178,31 @@ namespace MCPForUnityTests.Editor.AssetGen
             return job;
         }
 
+        [Test]
+        public void LargeArtifactsYieldBeforePublicationAndCancellationPreventsImport()
+        {
+            var job = Register("AwaitDownload");
+            Set(_runner, "DownloadTask", DownloadTask());
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            AssetGenJobManager.TryAdvanceForTests(job.JobId);
+            double initialMilliseconds = watch.Elapsed.TotalMilliseconds;
+            bool published = !string.IsNullOrEmpty(job.AssetPath);
+            AssetGenJobManager.Cancel(job.JobId);
+            var preparation = RunnerType.GetField("PreparationTask", Fields)?.GetValue(_runner) as Task;
+            if (preparation != null)
+                SpinWait.SpinUntil(() => preparation.IsCompleted, 5000);
+            Console.WriteLine($"PREPARE bytes={PayloadBytes} initial_update_ms={initialMilliseconds:F3} published={published}");
+            Assert.IsFalse(published, "Large artifacts must prepare off-thread before the publication update.");
+            Assert.AreEqual(0, _imports);
+            Assert.AreEqual(AssetGenJobState.Canceled, job.State);
+        }
+
         [TestCase(true)]
         [TestCase(false)]
         public void ConsumedArtifactTasks_ReleaseBodyBeforeImportAndPreserveFile(bool inline)
         {
             var job = PrepareForImport(inline);
-            Assert.AreEqual(AssetGenJobState.Importing, job.State);
-            Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(job.JobId));
+            Assert.IsTrue(SpinWait.SpinUntil(() => AssetGenJobManager.TryAdvanceForTests(job.JobId), 5000), "Preparation did not settle.");
             Console.WriteLine(
                 $"PAYLOAD inline={inline} bytes={PayloadBytes} alive_at_import={_aliveDuringImport} completed_tasks_at_import={_tasksDuringImport}"
             );

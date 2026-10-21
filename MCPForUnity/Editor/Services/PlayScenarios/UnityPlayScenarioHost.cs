@@ -17,7 +17,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     {
         private readonly PlayScenarioInputSession inputSession = new PlayScenarioInputSession();
 
-        public void MaintainInput() => inputSession.Maintain();
+        public void MaintainInput()
+        {
+            inputSession.Maintain();
+            targetQuery.Maintain();
+        }
 
         public void ReleaseInput() => inputSession.Release();
 
@@ -288,7 +292,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public void Release()
         {
-            targetQuery.Clear();
+            targetQuery.Release();
             ReleaseInput();
             sceneOperation.Release();
             sceneScope.Release();

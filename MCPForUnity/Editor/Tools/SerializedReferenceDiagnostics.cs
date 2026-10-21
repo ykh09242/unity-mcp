@@ -28,7 +28,9 @@ namespace MCPForUnity.Editor.Tools
                     "maxWork",
                     "pageSize",
                     "pageNumber",
-                    "referenceRevision"
+                    "referenceRevision",
+                    "referenceSnapshot",
+                    "referenceCursor"
                 );
                 string scope = ReferenceDiagnosticUtility.Text(parameters, "referenceScope", "active_scene");
                 if (scope != "active_scene" && scope != "loaded_scenes" && scope != "prefab" && scope != "scriptable_object")
@@ -42,6 +44,18 @@ namespace MCPForUnity.Editor.Tools
                 int size = ReferenceDiagnosticUtility.Integer(parameters, "pageSize", 50, 100);
                 int page = ReferenceDiagnosticUtility.Integer(parameters, "pageNumber", 1, int.MaxValue);
                 string expected = ReferenceDiagnosticUtility.ExpectedRevision(parameters);
+                JToken snapshotOption = parameters["referenceSnapshot"];
+                if (snapshotOption != null && snapshotOption.Type != JTokenType.Boolean)
+                    throw new ArgumentException("referenceSnapshot must be a boolean.");
+                bool capture = snapshotOption?.Value<bool>() == true;
+                string cursor = ReferenceDiagnosticUtility.Text(parameters, "referenceCursor", null);
+                string snapshotScope = ReferenceSnapshotStore.Scope(scope, path, maxObjects, maxWork);
+                if (cursor != null)
+                {
+                    if (capture || expected != null)
+                        throw new ArgumentException("A captured page cannot request a new snapshot or a live revision check.");
+                    return new SuccessResponse("Read a page of captured reference evidence.", ReferenceSnapshotStore.Read(cursor, snapshotScope, size, page));
+                }
                 using (var observation = new ReferenceDiagnosticUtility.Observation())
                 {
                     observation.Add(scope);
@@ -132,6 +146,8 @@ namespace MCPForUnity.Editor.Tools
                         ["limitations"] =
                             "Broken PPtrs are null objectReferenceValue with nonzero objectReferenceInstanceIDValue. Ordinary nulls are excluded; missing scripts/prefabs remain in legacy validate. Target GUID/fileID are unavailable from this public SerializedProperty evidence and are never inferred. Loaded scopes never open scenes; asset scopes explicitly load only the selected prefab or ScriptableObject file. Native object-array/asset-load calls are indivisible. Maximum 10000 observed issues and 512 KiB per response page; no automatic repair.",
                     };
+                    if (capture)
+                        ReferenceSnapshotStore.Capture(data, scan.Issues, snapshotScope);
                     ReferenceDiagnosticUtility.PageBytes(data);
                     return new SuccessResponse("Observed broken serialized object references without applying changes.", data);
                 }

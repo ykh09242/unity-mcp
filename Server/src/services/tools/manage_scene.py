@@ -127,6 +127,15 @@ async def manage_scene(
         str, "validate_references: refuse if the repeated observation has drifted."
     ]
     | None = None,
+    reference_snapshot: Annotated[
+        bool, "validate_references: capture stable paged evidence without rescanning later pages."
+    ]
+    | None = None,
+    reference_cursor: Annotated[
+        str,
+        "validate_references: returned snapshot cursor; captured evidence, not a live revision recheck.",
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     if action == "validate_references":
         try:
@@ -158,7 +167,13 @@ async def manage_scene(
             if scope not in {"active_scene", "loaded_scenes", "prefab", "scriptable_object"}:
                 raise ValueError("Unknown reference_scope.")
             params = reference_page(
-                page_size, page_number, max_work, reference_revision, scene=True
+                page_size,
+                page_number,
+                max_work,
+                reference_revision,
+                scene=True,
+                reference_snapshot=reference_snapshot,
+                reference_cursor=reference_cursor,
             )
             params.update(
                 action=action,
@@ -190,7 +205,15 @@ async def manage_scene(
         )
     if any(
         value is not None
-        for value in (reference_scope, max_objects, max_work, page_number, reference_revision)
+        for value in (
+            reference_scope,
+            max_objects,
+            max_work,
+            page_number,
+            reference_revision,
+            reference_snapshot,
+            reference_cursor,
+        )
     ):
         return {
             "success": False,

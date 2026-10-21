@@ -42,6 +42,8 @@ Performs CRUD operations on Unity scenes. Read-only validate_references pages br
 | `max_work` | `int \| str \| None` | — | validate_references: maximum 1-4000000 traversal/property steps, default 100000. |
 | `page_number` | `int \| str \| None` | — | validate_references: 1-based page, maximum page_size 100. |
 | `reference_revision` | `str \| None` | — | validate_references: refuse if the repeated observation has drifted. |
+| `reference_snapshot` | `bool \| None` | — | validate_references: capture stable paged evidence without rescanning later pages. |
+| `reference_cursor` | `str \| None` | — | validate_references: returned snapshot cursor; captured evidence, not a live revision recheck. |
 
 ## Returns
 

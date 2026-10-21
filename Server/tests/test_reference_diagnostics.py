@@ -299,3 +299,44 @@ def test_product_admission_does_not_reserve_user_folder_names(wire, module, tool
     # Then: workspace editing restrictions do not become runtime product path bans.
     assert result["success"] is True
     assert wire.send.await_args.args[3]["path"] == options["path"]
+
+
+@pytest.mark.parametrize("capture", [True, False])
+def test_scene_snapshot_page_options_reach_native_without_rescanning(wire, capture):
+    async def call():
+        return await scenes.manage_scene(
+            None,
+            action="validate_references",
+            reference_snapshot=True if capture else None,
+            reference_cursor=None if capture else "mcp-ref-snapshot-v1_" + "a" * 32,
+            page_number=1 if capture else 3,
+        )
+
+    assert anyio.run(call)["success"] is True
+    params = wire.send.await_args.args[3]
+    assert params["pageNumber"] == (1 if capture else 3)
+    if capture:
+        assert params["referenceSnapshot"] is True
+    else:
+        assert params["referenceCursor"] == "mcp-ref-snapshot-v1_" + "a" * 32
+    wire.scene_gate.assert_awaited_once_with(None, wait_for_no_compile=True, refresh_if_dirty=False)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"reference_cursor": "guess"},
+        {"reference_snapshot": "true"},
+        {
+            "reference_cursor": "mcp-ref-snapshot-v1_" + "a" * 32,
+            "reference_revision": "mcp-ref-v1_" + "b" * 64,
+        },
+        {"reference_cursor": "mcp-ref-snapshot-v1_" + "a" * 32, "reference_snapshot": True},
+    ],
+)
+def test_scene_snapshot_rejects_ambiguous_or_invalid_admission(wire, extra):
+    async def call():
+        return await scenes.manage_scene(None, action="validate_references", **extra)
+
+    assert anyio.run(call)["success"] is False
+    wire.send.assert_not_awaited()

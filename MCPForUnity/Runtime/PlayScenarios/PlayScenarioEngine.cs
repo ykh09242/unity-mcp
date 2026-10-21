@@ -23,6 +23,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private int? _completingIteration;
         public PlayScenarioRun State { get; }
         public int Revision { get; private set; }
+        internal long PollRevision { get; private set; }
         public bool Running => State.Status == "running";
 
         public PlayScenarioEngine(
@@ -206,6 +207,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             State.NextPollUnixMs = now + State.Scenario.PollIntervalMs;
             result.PollCount++;
+            PollRevision++;
             int cursor = State.Cursor;
             string phase = State.Phase;
             try

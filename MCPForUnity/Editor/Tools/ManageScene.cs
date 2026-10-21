@@ -233,7 +233,11 @@ namespace MCPForUnity.Editor.Tools
             catch { }
             if (NormalizeAction(@params?["action"]) == "validate_references")
                 return SerializedReferenceDiagnostics.Handle(@params);
-            if (new[] { "referenceScope", "maxObjects", "maxWork", "pageNumber", "referenceRevision" }.Any(option => @params?[option] != null))
+            if (
+                new[] { "referenceScope", "maxObjects", "maxWork", "pageNumber", "referenceRevision", "referenceSnapshot", "referenceCursor" }.Any(option =>
+                    @params?[option] != null
+                )
+            )
                 return new ErrorResponse("invalid_reference_diagnostics", new { reason = "Reference options require validate_references." });
             SceneCommand cmd;
             try

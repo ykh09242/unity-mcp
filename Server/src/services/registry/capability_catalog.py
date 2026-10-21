@@ -285,7 +285,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "scene",
         "Scene Reference Diagnostics",
         "validate_references",
-        "path reference_scope max_objects max_work page_size page_number reference_revision",
+        "path reference_scope max_objects max_work page_size page_number reference_revision reference_snapshot reference_cursor",
     ),
     _feature(
         "asset_inspect",

@@ -32,6 +32,26 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
+        public async Task FrozenDownloadExposesOnlyReadAccessToItsHashedBytes()
+        {
+            byte[] bytes = { 1, 2, 3, 4 };
+            using var source = new MemoryStream(bytes, false);
+            using var artifact = await DownloadedArtifact.ReadAsync(source, bytes.Length, 100, root, CancellationToken.None);
+            Stream view = artifact.Rewind();
+            Assert.IsFalse(view.CanWrite, "Digest reuse requires an immutable owned source.");
+            Assert.Throws<NotSupportedException>(() => view.WriteByte(7));
+            Assert.Throws<NotSupportedException>(() => view.SetLength(0));
+            Assert.Throws<IOException>(() =>
+            {
+                using var competing = File.OpenWrite(artifact.Path);
+            });
+            using var sha = SHA256.Create();
+            Assert.AreEqual(artifact.Sha256, BitConverter.ToString(sha.ComputeHash(view)).Replace("-", "").ToLowerInvariant());
+            view.Dispose(); // Borrowed reader cleanup must not release the download owner.
+            Assert.AreEqual(1, artifact.Rewind().ReadByte());
+        }
+
+        [Test]
         public void DownloadPolicyAdmitsMultiGiBArtifacts()
         {
             Assert.That((long)AssetDownloadTransport.MaxDownloadBytes, Is.GreaterThanOrEqualTo(8L * 1024 * 1024 * 1024));
