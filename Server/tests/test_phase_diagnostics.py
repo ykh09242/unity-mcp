@@ -157,7 +157,7 @@ def test_blocked_diagnostic_write_does_not_block_real_command_logging(monkeypatc
     from core.logging_decorator import log_execution
 
     entered, release, completed = threading.Event(), threading.Event(), threading.Event()
-    path = tmp_path / "phase-timing-test.log"
+    path = tmp_path / "phase-timing-1234-00000000000000000000000000000001.log"
     monkeypatch.setattr(diag, "_log_path", path, raising=False)
     original_open = Path.open
 
@@ -204,21 +204,24 @@ def test_blocked_diagnostic_write_does_not_block_real_command_logging(monkeypatc
 
 def test_diagnostic_file_is_opt_in_and_rotates_only_its_own_files(monkeypatch, tmp_path):
     import json
-    import os
 
     monkeypatch.setattr(diag, "_log_path", None)
     monkeypatch.setattr(config, "phase_diagnostics", False)
     diag.configure_file(tmp_path)
-    diag.BufferedSink._log({"event": "ignored"})
+    diag.BufferedSink()._log({"event": "ignored"})
     assert list(tmp_path.iterdir()) == []
     monkeypatch.setattr(config, "phase_diagnostics", True)
     diag.configure_file(tmp_path)
     monkeypatch.setattr(diag, "_LOG_BYTES", 1)
     ordinary = tmp_path / "unity_mcp_server.log"
     ordinary.write_text("ordinary")
-    for index in range(4):
-        diag.BufferedSink._log({"event": "server_phase_timing", "total_ms": index})
-    path = tmp_path / f"phase-timing-{os.getpid()}.log"
+    sink = diag.BufferedSink()
+    try:
+        for index in range(4):
+            sink._log({"event": "server_phase_timing", "total_ms": index})
+    finally:
+        sink.file.close()
+    path = diag._log_path
     assert json.loads(path.read_text().split(" ", 1)[1])["total_ms"] == 3
     assert json.loads(path.with_suffix(".log.1").read_text().split(" ", 1)[1])["total_ms"] == 2
     assert json.loads(path.with_suffix(".log.2").read_text().split(" ", 1)[1])["total_ms"] == 1

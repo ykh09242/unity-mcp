@@ -15,6 +15,7 @@ import time
 import uuid
 
 from core.config import config
+from core.phase_log_files import PhaseLogFile
 
 CAPABILITY = "phase_timing_v1"
 STAGES = ("admission", "preflight", "send", "response", "return")
@@ -38,7 +39,9 @@ def configure_file(log_dir):
     """Select an existing local log directory at startup; create files only on the worker."""
     global _log_path
     _log_path = (
-        Path(log_dir) / f"phase-timing-{os.getpid()}.log" if config.phase_diagnostics else None
+        Path(log_dir) / f"phase-timing-{os.getpid()}-{uuid.uuid4().hex}.log"
+        if config.phase_diagnostics
+        else None
     )
 
 
@@ -59,22 +62,32 @@ class BufferedSink:
         self.stop = threading.Event()
         self.worker = None
         self.emit = emit or self._log
+        self.file = None
+        self.retention = None
 
-    @staticmethod
-    def _log(row):
-        # Only this daemon writes the process-specific file. Do not use Python
-        # logging: handler locks can stall ordinary commands or logging.shutdown.
+    def _log(self, row):
+        # Only this daemon owns the file lease and performs maintenance. Ordinary
+        # logging handlers and command execution never acquire these file locks.
         path = _log_path
         if path is None:
             return
+        if self.file is None:
+            self.file = PhaseLogFile(path, _LOG_BYTES)
         encoded = ("phase_timing " + json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8")
-        if path.exists() and path.stat().st_size + len(encoded) > _LOG_BYTES:
-            previous = path.with_suffix(".log.1")
-            if previous.exists():
-                previous.replace(path.with_suffix(".log.2"))
-            path.replace(previous)
-        with path.open("ab") as output:
-            output.write(encoded)
+        self.file.write(encoded)
+
+    def _maintain(self):
+        if self.file is not None:
+            try:
+                result = self.file.maintain()
+                if result is not None:
+                    self.retention = result
+            except OSError:
+                pass
+
+    def retention_snapshot(self):
+        """Last worker scan, possibly partial; reading it performs no file I/O."""
+        return dict(self.retention) if self.retention is not None else None
 
     def offer(self, row):
         if self.stop.is_set():
@@ -99,18 +112,27 @@ class BufferedSink:
             pass
 
     def _run(self):
-        while not self.stop.is_set():
-            try:
-                row = self.queue.get(timeout=0.2)
-            except queue.Empty:
-                continue
-            try:
-                self.emit(row)
-            except Exception:
-                pass
-            finally:
-                del row
-                self.queue.task_done()
+        try:
+            while not self.stop.is_set():
+                try:
+                    row = self.queue.get(timeout=0.2)
+                except queue.Empty:
+                    self._maintain()
+                    continue
+                try:
+                    self.emit(row)
+                except Exception:
+                    pass
+                finally:
+                    del row
+                    self.queue.task_done()
+                self._maintain()
+        finally:
+            if self.file is not None:
+                try:
+                    self.file.close()
+                except OSError:
+                    pass
 
     def close(self):
         self.stop.set()
