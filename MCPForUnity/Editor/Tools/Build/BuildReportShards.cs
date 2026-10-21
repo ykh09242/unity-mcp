@@ -149,7 +149,7 @@ namespace MCPForUnity.Editor.Tools.Build
             {
                 ["row_count"] = count,
                 ["shards"] = hashes.Count,
-                ["sha256"] = Hash(index.ToString(Formatting.None)),
+                ["sha256"] = HashBytes(encoded),
             };
         }
 
@@ -163,19 +163,17 @@ namespace MCPForUnity.Editor.Tools.Build
             if (encoded.Length > MaxFileBytes || bytes + encoded.Length > MaxDetailBytes)
                 return false;
             Atomic(DetailFile(record, section + "-" + hashes.Count.ToString("D6", CultureInfo.InvariantCulture) + ".json"), encoded);
-            hashes.Add(Hash(text));
+            hashes.Add(HashBytes(encoded));
             bytes += encoded.Length;
             return true;
         }
 
         private static void ValidateRows(JObject record, string section, JArray rows)
         {
-            var ordinary = (JObject)record.DeepClone();
-            ordinary["schema_version"] = 1;
-            ordinary.Remove("detail_index");
-            ordinary.Remove("report_revision");
-            ordinary[section] = rows;
-            Validate(ordinary);
+            // The enclosing summary was validated on publication/load. Validate only the
+            // independent shard rows here, without attaching or cloning their JSON graph.
+            ValidateDetailRows(section, rows);
+            ValidateValues(rows);
         }
 
         private static void ValidateIndex(JObject record)
@@ -212,7 +210,7 @@ namespace MCPForUnity.Editor.Tools.Build
             {
                 byte[] bytes = ReadBytes(path);
                 string text = Utf8.GetString(bytes);
-                if (Hash(text) != expected)
+                if (HashBytes(bytes) != expected)
                     throw new ReportFailure("build_report_corrupt");
                 return Parse(text);
             }
