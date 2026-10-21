@@ -70,7 +70,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 result.stream = new FileStream(result.path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 64 * 1024);
                 SafePathUtility.ResolveWithinRoot(root, result.path);
                 var buffer = new byte[64 * 1024];
-                using var sha = SHA256.Create();
+                // The download owns an exclusive handle and exposes only read access.
+                // Carry its digest through the byte-for-byte copy; mutable Body inputs still hash here.
+                string ownedHash = input.DownloadedFile?.Sha256;
+                using var sha = ownedHash == null ? SHA256.Create() : null;
                 long copied = 0;
                 int read;
                 source.Position = 0;
@@ -80,13 +83,13 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     if (read > result.Length - copied)
                         throw new IOException("Provider artifact changed length during preparation.");
                     result.stream.Write(buffer, 0, read);
-                    sha.TransformBlock(buffer, 0, read, null, 0);
+                    sha?.TransformBlock(buffer, 0, read, null, 0);
                     copied += read;
                 }
                 if (copied != result.Length)
                     throw new IOException("Provider artifact ended during preparation.");
-                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                result.Hash = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+                sha?.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                result.Hash = ownedHash ?? BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
                 result.stream.Flush();
                 token.ThrowIfCancellationRequested();
                 return result;

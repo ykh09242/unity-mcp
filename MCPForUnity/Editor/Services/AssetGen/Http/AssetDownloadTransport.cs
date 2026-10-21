@@ -177,6 +177,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
     internal sealed class DownloadedArtifact : IDisposable
     {
         private FileStream stream;
+        private readonly Stream reader;
         internal string Path { get; }
         internal long Length { get; }
         internal string Sha256 { get; }
@@ -184,6 +185,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         private DownloadedArtifact(FileStream stream, string path, string hash)
         {
             this.stream = stream;
+            reader = new ReadOnlyDownload(stream);
             Path = path;
             Length = stream.Length;
             Sha256 = hash;
@@ -193,7 +195,39 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         {
             FileStream current = stream ?? throw new ObjectDisposedException(nameof(DownloadedArtifact));
             current.Position = 0;
-            return current;
+            return reader;
+        }
+
+        // A borrowed view cannot alter bytes covered by Sha256 or close their owner.
+        private sealed class ReadOnlyDownload : Stream
+        {
+            private readonly Stream source;
+
+            internal ReadOnlyDownload(Stream source) => this.source = source;
+
+            public override bool CanRead => source.CanRead;
+            public override bool CanSeek => source.CanSeek;
+            public override bool CanWrite => false;
+            public override long Length => source.Length;
+            public override long Position
+            {
+                get => source.Position;
+                set => source.Position = value;
+            }
+
+            public override int Read(byte[] buffer, int offset, int count) => source.Read(buffer, offset, count);
+
+            public override int ReadByte() => source.ReadByte();
+
+            public override long Seek(long offset, SeekOrigin origin) => source.Seek(offset, origin);
+
+            public override void Flush() { }
+
+            public override void SetLength(long value) => throw new NotSupportedException("Downloaded bytes are immutable.");
+
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException("Downloaded bytes are immutable.");
+
+            protected override void Dispose(bool disposing) { }
         }
 
         public void Dispose() => Interlocked.Exchange(ref stream, null)?.Dispose();
