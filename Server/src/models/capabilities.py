@@ -49,6 +49,14 @@ class CapabilityFeature(CapabilityModel):
     source: str
     next_action: str
     limits: dict[str, int | float] = Field(default_factory=dict)
+    status: Literal["ready", "blocked", "unsupported", "unknown"] = "unknown"
+    reason: str | None = None
+    blocking_reasons: list[str] = Field(default_factory=list)
+    tool_enabled: bool | None = None
+    package_name: str | None = None
+    package_version: str | None = None
+    required_version: str | None = None
+    observed: dict[str, str | bool | None] = Field(default_factory=dict)
 
 
 class CapabilityEvidence(CapabilityModel):

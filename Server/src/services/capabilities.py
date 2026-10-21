@@ -172,7 +172,7 @@ async def _read_source(
                 if name == "manage_recording"
                 else {"action": "list"}
                 if name == "manage_play_scenario"
-                else {}
+                else {"include_readiness": True}
             )
             response = await send_with_unity_instance(
                 async_send_command_with_retry,
@@ -187,6 +187,100 @@ async def _read_source(
     except (OSError, RuntimeError, ValueError):
         logger.debug("Capability source unavailable: %s", name)
         observations[name] = _Observation(evidence=CapabilityEvidence(reason="source_unavailable"))
+
+
+_OPTIONAL_FEATURES: Final = ("build", "render_pipeline", "cinemachine", "probuilder", "netcode")
+_FEATURE_REASONS: Final = {
+    "not_observed",
+    "package_metadata_unknown",
+    "missing_package",
+    "unsupported_package_version",
+    "package_api_unavailable",
+    "preflight_required",
+    "pipeline_support_unknown",
+    "missing_platform_module",
+    "tool_disabled",
+    "editor_busy",
+}
+_FEATURE_ACTIONS: Final = {
+    "inspect_package_requirement",
+    "inspect_package_compatibility",
+    "inspect_camera_targets",
+    "inspect_mesh_and_requested_operation",
+    "run_explicit_scene_netcode_preflight",
+    "inspect_selected_pipeline_settings",
+    "review_tool_enablement",
+    "wait_for_editor_idle",
+    "inspect_build_modules",
+    "preview_selected_build_and_verify_toolchain",
+}
+
+
+def _feature_text(value: JsonValue, maximum: int = 160) -> str | None:
+    return value if isinstance(value, str) and 0 < len(value) <= maximum else None
+
+
+def _optional_features(
+    project: dict[str, JsonValue], editor_ready: bool | None
+) -> dict[str, CapabilityFeature]:
+    rows = _section(project, "featureReadiness")
+    result = {}
+    for name in _OPTIONAL_FEATURES:
+        row = _section(rows, name)
+        supported = _boolean(row.get("supported"))
+        enabled = _boolean(row.get("tool_enabled"))
+        reason = _feature_text(row.get("reason"))
+        reason = reason if reason in _FEATURE_REASONS else "not_observed"
+        raw_blockers = row.get("blocking_reasons")
+        blockers = (
+            list(
+                dict.fromkeys(
+                    item
+                    for item in raw_blockers
+                    if isinstance(item, str) and item in _FEATURE_REASONS
+                )
+            )
+            if isinstance(raw_blockers, list)
+            else []
+        )
+        if supported is False and reason not in blockers:
+            blockers.append(reason)
+        if enabled is False and "tool_disabled" not in blockers:
+            blockers.append("tool_disabled")
+        if editor_ready is False and "editor_busy" not in blockers:
+            blockers.append("editor_busy")
+        blocked = bool(blockers) or row.get("ready") is False
+        action = _feature_text(row.get("next_action"))
+        if editor_ready is False:
+            action = "wait_for_editor_idle"
+        result[name] = CapabilityFeature(
+            supported=supported,
+            ready=False if blocked else None,
+            status="unsupported" if supported is False else "blocked" if blocked else "unknown",
+            reason=reason,
+            blocking_reasons=blockers,
+            tool_enabled=enabled,
+            source="get_project_info/featureReadiness/" + name,
+            next_action=action if action in _FEATURE_ACTIONS else "inspect_feature_readiness",
+            package_name=_feature_text(row.get("package_name")),
+            package_version=_feature_text(row.get("package_version"), 64),
+            required_version=_feature_text(row.get("required_version")),
+            observed={
+                key: value
+                for key, value in _section(row, "observed").items()
+                if key
+                in {
+                    "target",
+                    "backend",
+                    "module_supported",
+                    "backend_toolchain_ready",
+                    "subtarget",
+                    "pipeline",
+                }
+                and (value is None or type(value) is bool or _feature_text(value, 64) is not None)
+            },
+        )
+    return result
 
 
 def _compose(
@@ -288,6 +382,7 @@ def _compose(
             next_action="validate_player_bundle_with_existing_preflight",
         ),
     }
+    features.update(_optional_features(project, ready))
     return ProjectCapabilities(
         partial=any(item.evidence.status != "observed" for item in observations.values()),
         target=CapabilityTarget(
