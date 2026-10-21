@@ -6,48 +6,54 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
 
-def test_inventory_revision_reaches_read_bridge_and_rejects_invalid_calls(tmp_path: Path) -> None:
+
+@pytest.mark.parametrize("tool_name", ["manage_ui", "ui_source"])
+def test_inventory_revision_reaches_read_bridge_and_rejects_invalid_calls(
+    tmp_path: Path, tool_name: str
+) -> None:
     program = textwrap.dedent(r"""
         import anyio
         import importlib
         from fastmcp import Client, FastMCP
-        from services.registry import get_registered_tools
+        from services.tools import register_all_tools
 
         module = importlib.import_module("services.tools.manage_ui")
         sent = []
         async def instance(ctx): return None
         async def read(sender, selected, command, params):
-            sent.append(params)
+            sent.append((command, params))
             return {"success": True, "data": {"assets": [], "total": 0,
                     "inventory_revision": params.get("inventory_revision"), "inventory_retained": True}}
         module.get_unity_instance_from_context = instance
         module.send_with_unity_instance = read
-        entry = next(e for e in get_registered_tools() if e["name"] == "manage_ui")
         server = FastMCP("ui-inventory-contract")
-        server.tool(name=entry["name"], **entry["kwargs"])(entry["func"])
+        register_all_tools(server, project_scoped_tools=False)
+        server.enable(components={"tool"})
+        tool_name = "__TEST_TOOL__"
 
         async def main():
             # Given: actual SDK registration and a fake Unity transport boundary.
             async with Client(server) as client:
-                tool = next(t for t in await client.list_tools() if t.name == "manage_ui")
+                tool = next(t for t in await client.list_tools() if t.name == tool_name)
                 schema = tool.input_schema if hasattr(tool, "input_schema") else tool.inputSchema
                 assert "inventory_revision" in schema["properties"]
                 token = "mcp-ui-v1_" + "a" * 32
                 # When: a caller continues a read-only inventory.
-                result = await client.call_tool("manage_ui", {"action": "list", "path": "Assets/UI",
+                result = await client.call_tool(tool_name, {"action": "list", "path": "Assets/UI",
                         "page_size": 20, "page_number": 2, "inventory_revision": token})
                 # Then: the exact revision and page reach the read bridge and survive the response.
                 assert result.structured_content["success"], result
-                assert sent == [{"action": "list", "path": "Assets/UI", "pageSize": 20,
-                                 "pageNumber": 2, "inventory_revision": token}]
+                assert sent == [(tool_name, {"action": "list", "path": "Assets/UI", "pageSize": 20,
+                                 "pageNumber": 2, "inventory_revision": token})]
                 assert result.structured_content["data"]["inventory_revision"] == token
                 for invalid in ({"inventory_revision": "bad"}, {"inventory_revision": True},
                                 {"inventory_revision": 12}, {"inventory_revision": token + "\n"},
                                 {"action": "ping", "inventory_revision": token}):
                     count = len(sent)
                     try:
-                        rejected = await client.call_tool("manage_ui", {"action": "list", **invalid})
+                        rejected = await client.call_tool(tool_name, {"action": "list", **invalid})
                     except Exception as exc:
                         assert type(exc).__name__ in ("ToolError", "MCPError", "ValidationError"), exc
                     else:
@@ -56,7 +62,7 @@ def test_inventory_revision_reaches_read_bridge_and_rejects_invalid_calls(tmp_pa
         anyio.run(main)
     """)
     result = subprocess.run(
-        [sys.executable, "-B", "-c", program],
+        [sys.executable, "-B", "-c", program.replace("__TEST_TOOL__", tool_name)],
         env={
             **os.environ,
             "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),

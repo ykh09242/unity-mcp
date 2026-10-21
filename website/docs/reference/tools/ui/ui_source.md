@@ -29,6 +29,7 @@ Create, read or edit UXML/USS assets, link stylesheets or preview source patches
 | `filter_type` | `str \| None` | — | Filter UI assets by type: 'uxml', 'uss', 'PanelSettings', or omit for all. For list. |
 | `page_size` | `int \| None` | — | Number of results per page: 1-1000 (default 50). For list. |
 | `page_number` | `int \| None` | — | Page number, 1-based (default 1). For list. |
+| `inventory_revision` | `str \| None` | — | list: reuse the returned inventory_revision with the same scope/filter to reject pages after asset changes, expiry or eviction. Omit for the latest cached inventory; oversized inventories remain complete but uncached. |
 
 ## Returns
 
