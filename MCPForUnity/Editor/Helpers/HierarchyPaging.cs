@@ -24,7 +24,7 @@ namespace MCPForUnity.Editor.Helpers
         internal const int ComponentLimit = 64;
         internal const int StringLimit = 512;
         private const int StateLimit = 32;
-        private const double Lifetime = 30;
+        private const double Lifetime = 300;
         private static readonly Dictionary<string, State> States = new Dictionary<string, State>();
         private static int _hierarchyEpoch;
 

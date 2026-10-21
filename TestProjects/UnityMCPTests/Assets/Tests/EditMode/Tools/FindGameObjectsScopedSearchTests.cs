@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -14,6 +15,14 @@ namespace MCPForUnityTests.Editor.Tools
     [Parallelizable(ParallelScope.None)]
     public class FindGameObjectsScopedSearchTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
+
+        [OneTimeSetUp]
+        public void Bootstrap() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void Restore() => sceneFixture.RestoreRunnerBootstrap();
+
         private string _assetRoot;
         private Scene _originalScene;
         private Scene _firstScene;
@@ -26,7 +35,7 @@ namespace MCPForUnityTests.Editor.Tools
             _originalScene = SceneManager.GetActiveScene();
             _assetRoot = "Assets/__McpScopedSearch_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", _assetRoot.Substring(7));
-            _firstScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            _firstScene = sceneFixture.Create("First", Guid.NewGuid().ToString("N"));
             Assert.IsTrue(EditorSceneManager.SaveScene(_firstScene, _assetRoot + "/First.unity"));
             _secondScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
             Assert.IsTrue(EditorSceneManager.SaveScene(_secondScene, _assetRoot + "/Second.unity"));
@@ -39,9 +48,14 @@ namespace MCPForUnityTests.Editor.Tools
             if (_originalScene.IsValid() && _originalScene.isLoaded)
                 SceneManager.SetActiveScene(_originalScene);
             if (_secondScene.IsValid() && _secondScene.isLoaded)
-                EditorSceneManager.CloseScene(_secondScene, true);
-            if (_firstScene.IsValid() && _firstScene.isLoaded)
-                EditorSceneManager.CloseScene(_firstScene, true);
+            {
+                // The unload-continuation test closes the first owned scene itself.
+                if (!_firstScene.IsValid() && !_originalScene.IsValid() && SceneManager.sceneCount == 1)
+                    EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                else
+                    Assert.IsTrue(EditorSceneManager.CloseScene(_secondScene, true));
+            }
+            sceneFixture.Close();
             if (!string.IsNullOrEmpty(_assetRoot))
                 AssetDatabase.DeleteAsset(_assetRoot);
         }
@@ -275,7 +289,7 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase(4095, true)]
         [TestCase(4096, true)]
-        [TestCase(4097, false)]
+        [TestCase(4097, true)]
         public void RootAdmissionIsDistinctFromTraversalBudget(int roots, bool accepted)
         {
             for (int i = 0; i < roots; i++)
@@ -304,13 +318,16 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.AreEqual(roots, response["data"].Value<int>("rootPreparationCount"));
                 Assert.AreEqual(1, response["data"].Value<int>("rootEnumerationCalls"));
                 Assert.LessOrEqual(response["data"].Value<int>("traversalWorkUsed"), 4096);
+                var all = Query("active", "by_name", "Root");
+                all["page_size"] = 500;
+                Assert.AreEqual(roots, ReadAll(all).Distinct().Count(), "Continuation must reach every root beyond the old admission limit.");
             }
             else
                 Assert.AreEqual("source_limit_exceeded", response.Value<string>("code"));
         }
 
         [Test]
-        public void LoadedSceneAdmissionRejectsTooManyManagerEntries()
+        public void LoadedSceneAdmissionAllowsStreamingWorldAboveThirtyTwoScenes()
         {
             var extra = new System.Collections.Generic.List<Scene>();
             try
@@ -322,8 +339,7 @@ namespace MCPForUnityTests.Editor.Tools
                     Assert.IsTrue(EditorSceneManager.SaveScene(scene, _assetRoot + "/Extra" + extra.Count + ".unity"));
                 }
                 JObject response = JObject.FromObject(FindGameObjects.HandleCommand(Query("all_loaded", "by_name", "Missing")));
-                Assert.IsFalse(response.Value<bool>("success"));
-                Assert.AreEqual("source_limit_exceeded", response.Value<string>("code"));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             }
             finally
             {
@@ -803,7 +819,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             JObject data = (JObject)response["data"];
             Assert.LessOrEqual(data.Value<int>("traversalWorkUsed"), 4096);
-            Assert.LessOrEqual(data.Value<int>("rootPreparationCount"), 4096);
+            Assert.LessOrEqual(data.Value<int>("rootPreparationCount"), 250000);
             Assert.LessOrEqual(data.Value<int>("rootEnumerationCalls"), 1);
             Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(response.ToString(Newtonsoft.Json.Formatting.None)), 16384);
             Assert.AreEqual("stable_source_required", data.Value<string>("consistency"));

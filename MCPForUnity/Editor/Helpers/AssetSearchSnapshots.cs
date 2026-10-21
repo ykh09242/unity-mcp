@@ -16,11 +16,11 @@ namespace MCPForUnity.Editor.Helpers
     internal static class AssetSearchSnapshots
     {
         private const int MaximumSnapshots = 4;
-        private const int MaximumRows = 4096;
+        private const int MaximumRows = 250000;
         private const int MaximumStringCharacters = 4096;
         private const int MaximumRowBytes = 64 * 1024;
-        private const int MaximumPayloadBytes = 8 * 1024 * 1024;
-        private const double LifetimeSeconds = 60;
+        private const int MaximumPayloadBytes = 64 * 1024 * 1024;
+        private const double LifetimeSeconds = 1800;
         private const string TokenPrefix = "mcp-as-v1_";
         private static readonly string Session = Guid.NewGuid().ToString("N");
         private static readonly Dictionary<string, Snapshot> Entries = new Dictionary<string, Snapshot>(StringComparer.Ordinal);
