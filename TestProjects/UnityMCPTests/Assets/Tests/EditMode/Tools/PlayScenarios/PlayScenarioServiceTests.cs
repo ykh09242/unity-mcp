@@ -144,6 +144,12 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That((string)pending["pending_status"], Is.EqualTo("cancelled"));
             Assert.That((bool)pending["runner_resources_released"], Is.False);
             Assert.That(run.Status, Is.EqualTo("cancelled"));
+            var editorResponse = (SuccessResponse)PlayScenarioService.EditorStatus(run.JobId);
+            var editorSnapshot = ((PlayScenarioEditorSnapshot)editorResponse.Data).Data;
+            Assert.That((string)editorSnapshot["status"], Is.EqualTo("running"));
+            Assert.That((string)editorSnapshot["phase"], Is.EqualTo("finalizing"));
+            Assert.That((bool)editorSnapshot["runner_resources_released"], Is.False);
+            Assert.That(editorSnapshot["scenario"]?["steps"], Is.Null);
 
             var replacement = (IMcpResponse)PlayScenarioService.Start("must-not-replace-unfinalized-job", 1, 30, null);
             Assert.That(replacement.Success, Is.False, "A new run must not discard a completed capture before its report is saved.");

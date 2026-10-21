@@ -1141,6 +1141,27 @@ namespace MCPForUnityTests.Editor.Windows
         }
 
         [Test]
+        public void UnchangedPollingReusesParsedReportAndDoesNotRevalidateDraft()
+        {
+            ConfigureTemplate();
+            window.StartRun = (_, __, ___, job) => Response(job);
+            window.ReadStatus = job => Response(job);
+            Click("runScenario");
+            var reportField = typeof(PlayScenarioWindow).GetField("report", PrivateInstance);
+            object previous = reportField.GetValue(window);
+            var validationField = typeof(PlayScenarioWindow).GetField("validation", PrivateInstance);
+            var validation = (Label)validationField.GetValue(window);
+            validation.text = "unchanged draft validation";
+            ForceStatusTick();
+            Assert.AreSame(previous, reportField.GetValue(window), "Unchanged polling must not deserialize another report graph.");
+            Assert.AreEqual("unchanged draft validation", validation.text);
+            window.ReadStatus = job => Response(job, "succeeded");
+            ForceStatusTick();
+            Assert.AreNotSame(previous, reportField.GetValue(window));
+            Assert.IsTrue(Field<Button>("runScenario").enabledSelf);
+        }
+
+        [Test]
         public void IdenticalStatusReportPreservesResultControlsWhileChangedDataUpdatesThem()
         {
             ConfigureTemplate();
