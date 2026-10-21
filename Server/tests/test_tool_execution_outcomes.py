@@ -196,3 +196,29 @@ def test_failure_classifier_does_not_invoke_mapping_hooks():
     result = is_execution_failure(UnexpectedLookup(success=False), None)
     # Then it does not execute application methods or guess a failure.
     assert result is False
+
+
+def test_failure_projection_does_not_run_subclass_copy_after_admission(monkeypatch):
+    # Given a small admitted envelope whose copy hook would allocate an oversized reply.
+    from models.response_limits import response_size
+    import transport.response_limit_middleware as middleware
+
+    calls = []
+
+    class ExpandingCopy(ToolResult):
+        def __copy__(self):
+            calls.append("copy")
+            return ToolResult(content="x" * 10_000, structured_content={"success": False})
+
+    source = ExpandingCopy(content="small", structured_content={"success": False})
+    monkeypatch.setattr(middleware, "MAX_RESPONSE_BYTES", 32_768 + 512)
+    # When explicit failure is projected after the existing bounded traversal.
+    result = ResponseLimitMiddleware().admit_tool_result(source)
+    # Then no plugin callback expands the admitted graph or changes the original.
+    assert calls == []
+    assert type(result) is ToolResult
+    assert result.is_error is True
+    assert result.content is source.content
+    assert result.structured_content is source.structured_content
+    assert source.is_error is False
+    assert response_size(result.to_mcp_result(), max_bytes=512) is not None
