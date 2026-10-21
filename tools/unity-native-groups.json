@@ -63,6 +63,24 @@
         "linux": "This reload cohort has only Windows native evidence.",
         "darwin": "This reload cohort has only Windows native evidence."
       }
+    },
+    "batch-targets": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.PreviewDoesNotMutateAndCurrentObjectGuardApplies",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.StaleLaterObjectRefusesBeforeEarlierMutation",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.TamperedGuardAndChangedCommandsRefuse",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.AssetMoveDetectsDestinationCollisionAndLateSourceBytes",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.CurrentAssetMoveGuardAppliesWithoutPreviewRefresh",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.UnsupportedFutureAndRepeatedTargetsRemainIncomplete",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.PreparedPrefabPlanIsObservedWithoutConsumptionAndRechecked",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.EarlierCallbackInvalidatesLaterTargetWithoutClaimingRollback",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.ReplacedHandlerInvalidatesGuardWithoutDispatch",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.DedicatedApplyRequiresGuardAndRejectsNestedAlias",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.InvalidVectorRejectsWithoutChangingTarget",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.DisabledChildAfterPreviewRefusesWholeGuardedBatch"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
     }
   }
 }

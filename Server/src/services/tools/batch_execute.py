@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -144,7 +144,9 @@ def invalidate_cached_max_commands() -> None:
     _cached_max_commands.clear()
 
 
-def _preview_reply_is_exact(reply: Any, commands: list[dict[str, Any]]) -> bool:
+def _preview_reply_is_exact(
+    reply: Any, commands: list[dict[str, Any]], scope: str = "action_names"
+) -> bool:
     """Accept only the dedicated peer's complete, ordered action-name receipt."""
     if not isinstance(reply, dict) or type(reply.get("success")) is not bool:
         return False
@@ -163,7 +165,7 @@ def _preview_reply_is_exact(reply: Any, commands: list[dict[str, Any]]) -> bool:
         type(validation["contractVersion"]) is not int
         or validation["contractVersion"] != 1
         or validation["validateOnly"] is not True
-        or validation["scope"] != "action_names"
+        or validation["scope"] != scope
     ):
         return False
     if type(validation["complete"]) is not bool or type(validation["valid"]) is not bool:
@@ -186,6 +188,18 @@ def _preview_reply_is_exact(reply: Any, commands: list[dict[str, Any]]) -> bool:
             "action_moved",
         },
     }
+    if scope == "targets":
+        allowed_reasons["incomplete"] = {
+            "unsupported_target_preview",
+            "dependent_target",
+            "editor_not_stable",
+            "prepare_prefab_plan_first",
+            "directory_move_not_modeled",
+            "destination_parent_not_present",
+            "concrete_instance_id_required",
+            "unsupported_parameters",
+        }
+        allowed_reasons["rejected"] = {"invalid_parameters_or_target"}
     for index, (item, command) in enumerate(zip(items, commands)):
         if not isinstance(item, dict) or set(item) != {
             "index",
@@ -218,6 +232,24 @@ def _preview_reply_is_exact(reply: Any, commands: list[dict[str, Any]]) -> bool:
             return False
     complete = all(item["status"] != "incomplete" for item in items)
     valid = all(item["status"] == "valid" for item in items)
+    if scope == "targets":
+        guard = data.get("preview")
+        if not valid:
+            if guard is not None:
+                return False
+        elif (
+            not isinstance(guard, dict)
+            or set(guard) != {"contractVersion", "commandsHash", "revisions", "signature"}
+            or type(guard["contractVersion"]) is not int
+            or guard["contractVersion"] != 1
+            or not isinstance(guard["revisions"], list)
+            or len(guard["revisions"]) != len(commands)
+            or any(
+                not isinstance(value, str) or len(value) != 44
+                for value in [guard["commandsHash"], guard["signature"], *guard["revisions"]]
+            )
+        ):
+            return False
     return (
         validation["complete"] == complete
         and validation["valid"] == valid
@@ -252,16 +284,32 @@ async def batch_execute(
         bool,
         "Validate action names without executing children; requires the peer preview capability",
     ] = False,
+    preview_scope: Annotated[
+        Literal["action_names", "targets"],
+        "With validate_only, inspect action names or supported concrete targets",
+    ] = "action_names",
+    preview: Annotated[
+        dict[str, Any] | None,
+        "Unmodified target-preview guard to recheck before supported mutations; no rollback or retry guarantee",
+    ] = None,
 ) -> dict[str, Any]:
     """Execute sequentially, or request a read-only action-name preview.
 
     Preview uses a distinct native command and the same full member authorization.
-    It does not validate targets/parameters or reserve future permissions. Ordinary
+    The opt-in targets scope validates supported inputs, targets and revisions;
+    unsupported/future dependencies stay incomplete. Applying its guard uses a
+    distinct peer command and rechecks every target and permission. Ordinary
     settled responses add indexed outcomes; cancellation/lost replies retain their
     existing unknown-outcome contract and never imply rollback.
     """
     if type(validate_only) is not bool:
         raise ValueError("validate_only must be a boolean")
+    if preview_scope not in ("action_names", "targets"):
+        raise ValueError("preview_scope must be action_names or targets")
+    if preview_scope != "action_names" and not validate_only:
+        raise ValueError("preview_scope=targets requires validate_only")
+    if preview is not None and (not isinstance(preview, dict) or validate_only):
+        raise ValueError("preview must be an object and cannot be combined with validate_only")
     parallel = coerce_bool(parallel)
     fail_fast = coerce_bool(fail_fast)
     max_parallelism = coerce_int(max_parallelism)
@@ -285,7 +333,7 @@ async def batch_execute(
 
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise ValueError(f"Command at index {index} is missing a valid 'tool' name")
-        if tool_name.casefold() in {"batch_execute", "batch_validate"}:
+        if tool_name.casefold() in {"batch_execute", "batch_validate", "batch_apply_preview"}:
             raise ValueError("Nested batch_execute commands are not allowed")
 
         if params is None:
@@ -331,15 +379,26 @@ async def batch_execute(
     if max_parallelism is not None:
         payload["maxParallelism"] = max_parallelism
 
+    if validate_only and preview_scope == "targets":
+        payload["previewScope"] = "targets"
+    if preview is not None:
+        payload["preview"] = preview
+    native_command = (
+        "batch_validate"
+        if validate_only
+        else "batch_apply_preview"
+        if preview is not None
+        else "batch_execute"
+    )
     progress = None if validate_only else claim_command_progress(len(normalized_commands))
     reply = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
-        "batch_validate" if validate_only else "batch_execute",
+        native_command,
         payload,
         **({"_progress": progress} if progress is not None else {}),
     )
-    if validate_only and not _preview_reply_is_exact(reply, normalized_commands):
+    if validate_only and not _preview_reply_is_exact(reply, normalized_commands, preview_scope):
         if isinstance(reply, dict) and reply.get("success") is False:
             data = reply.get("data")
             if reply.get("error") in ("permission_denied", "auth_required") or (
@@ -349,7 +408,7 @@ async def batch_execute(
         return {
             "success": False,
             "error": "batch_validation_unavailable",
-            "message": "The selected peer did not provide the dedicated batch action validation contract; no execution fallback was attempted.",
+            "message": "The selected peer did not provide the requested dedicated batch validation contract; no execution fallback was attempted.",
             "data": {"reason": "batch_validation_unavailable"},
         }
     return reply

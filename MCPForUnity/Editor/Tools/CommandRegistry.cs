@@ -29,6 +29,9 @@ namespace MCPForUnity.Editor.Tools
 
         internal Func<JObject, BatchActionValidation> BatchValidator { get; set; }
         internal HandlerInfo AliasOwner { get; set; }
+        internal Type SourceType { get; set; }
+        private string previewIdentity;
+        internal string PreviewIdentity => previewIdentity ??= Guid.NewGuid().ToString("N");
 
         public bool IsAsync => AsyncHandler != null || CooperativeAsyncHandler != null || ProgressiveAsyncHandler != null;
 
@@ -222,7 +225,10 @@ namespace MCPForUnity.Editor.Tools
                     commandName = ToSnakeCase(type.Name);
 
                 // Reserved internal alias cannot be published or replaced by custom metadata.
-                if (string.Equals(commandName, "batch_validate", StringComparison.OrdinalIgnoreCase))
+                if (
+                    string.Equals(commandName, "batch_validate", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(commandName, "batch_apply_preview", StringComparison.OrdinalIgnoreCase)
+                )
                     return false;
 
                 var method = GetCommandMethod(type);
@@ -267,10 +273,19 @@ namespace MCPForUnity.Editor.Tools
 
                 // Replacing the owner never inherits its privileged alias or validator.
                 if (commandName == "batch_execute")
+                {
                     _handlers.Remove("batch_validate");
+                    _handlers.Remove("batch_apply_preview");
+                }
+                handlerInfo.SourceType = type;
                 _handlers[commandName] = handlerInfo;
                 if (type == typeof(BatchExecute) && commandName == "batch_execute")
+                {
                     _handlers["batch_validate"] = new HandlerInfo("batch_validate", BatchExecute.ValidateCommand, null) { AliasOwner = handlerInfo };
+                    var apply = HandlerInfo.Progressive("batch_apply_preview", BatchExecute.ApplyPreviewCommand);
+                    apply.AliasOwner = handlerInfo;
+                    _handlers["batch_apply_preview"] = apply;
+                }
                 return true;
             }
             catch (Exception ex)
@@ -287,10 +302,29 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool IsCurrentAlias(HandlerInfo handler) =>
             handler.AliasOwner == null
-            || (handler.CommandName == "batch_validate" && _handlers.TryGetValue("batch_execute", out var owner) && ReferenceEquals(owner, handler.AliasOwner));
+            || (
+                (handler.CommandName == "batch_validate" || handler.CommandName == "batch_apply_preview")
+                && _handlers.TryGetValue("batch_execute", out var owner)
+                && ReferenceEquals(owner, handler.AliasOwner)
+            );
 
         internal static string GetAdmissionName(string commandName) =>
             _handlers.TryGetValue(commandName, out var handler) && handler.AliasOwner != null && IsCurrentAlias(handler) ? "batch_execute" : commandName;
+
+        internal static string GetBatchTargetIdentity(string name)
+        {
+            var handler = GetHandlerInfo(name);
+            Type type = handler.SourceType;
+            return
+                type == typeof(ManageAsset)
+                || type == typeof(AssetEdit)
+                || type == typeof(ManageGameObject)
+                || type == typeof(GameobjectEdit)
+                || type == typeof(Prefabs.ManagePrefabs)
+                || type == typeof(PrefabContents)
+                ? handler.PreviewIdentity
+                : null;
+        }
 
         internal static BatchActionValidation ValidateBatchAction(string commandName, JObject parameters)
         {

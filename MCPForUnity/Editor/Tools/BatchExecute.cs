@@ -56,7 +56,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static bool IsBatchName(string name) =>
             string.Equals(name, "batch_execute", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(name, "batch_validate", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(name, "batch_validate", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, "batch_apply_preview", StringComparison.OrdinalIgnoreCase);
 
         private static string EchoTool(string name) => name == null || name.Length <= 128 ? name : name.Substring(0, 128);
 
@@ -215,6 +216,11 @@ namespace MCPForUnity.Editor.Tools
             object rejected = ReadEnvelope(@params, true, out var commands, out _, out _, out _);
             if (rejected != null)
                 return rejected;
+            if (@params["previewScope"]?.Type == JTokenType.String && @params.Value<string>("previewScope") == "targets")
+            {
+                CommandRegistry.Initialize();
+                return BatchTargetPreview.Prepare(commands);
+            }
             var items = new JArray();
             bool complete = true,
                 valid = true;
@@ -270,6 +276,13 @@ namespace MCPForUnity.Editor.Tools
             return valid ? new SuccessResponse("Batch action validation completed.", data) : new ErrorResponse("Batch action validation did not pass.", data);
         }
 
+        public static Task<object> ApplyPreviewCommand(JObject @params, CancellationToken cancellationToken, ICommandProgress progress)
+        {
+            if (@params?["preview"] is not JObject)
+                return Task.FromResult<object>(new ErrorResponse("A target preview guard is required; no execution fallback is allowed."));
+            return HandleCommand(@params, cancellationToken, progress);
+        }
+
         public static Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken) => HandleCommand(@params, cancellationToken, null);
 
         public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken, ICommandProgress progress)
@@ -278,6 +291,13 @@ namespace MCPForUnity.Editor.Tools
             object rejected = ReadEnvelope(@params, false, out var commandsToken, out bool failFast, out bool parallelRequested, out int? maxParallel);
             if (rejected != null)
                 return rejected;
+            JObject preview = @params["preview"] as JObject;
+            if (@params["preview"] != null && (preview == null || !BatchTargetPreview.Verify(commandsToken, preview)))
+                return InvalidBatch(
+                    "The target preview is stale, invalid or unavailable. Preview again before applying.",
+                    commandsToken,
+                    new { reason = "stale_or_invalid_preview" }
+                );
             if (parallelRequested)
             {
                 McpLog.Warn("batch_execute parallel mode requested, but commands will run sequentially on the main thread for safety.");
@@ -317,6 +337,13 @@ namespace MCPForUnity.Editor.Tools
                     var commandObj = (JObject)token;
                     string toolName = commandObj.Value<string>("tool");
 
+                    if (preview != null && !BatchTargetPreview.Matches(commandObj, preview, index))
+                    {
+                        for (int remaining = index; remaining < commandsToken.Count; remaining++)
+                            SetOutcome(outcomes, remaining, "not_run", "stale_preview");
+                        anyCommandFailed = true;
+                        break;
+                    }
                     // CommandRegistry dispatches resources as well as tools. Apply both policies.
                     var resourceMeta = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(toolName);
                     if (resourceMeta != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(toolName))
@@ -481,7 +508,7 @@ namespace MCPForUnity.Editor.Tools
             return true;
         }
 
-        private static JObject NormalizeParameterKeys(JObject source)
+        internal static JObject NormalizeParameterKeys(JObject source)
         {
             if (source == null)
             {
