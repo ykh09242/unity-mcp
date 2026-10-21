@@ -53,7 +53,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         public void AllLoadedContextRejectsDuplicatesAndExcessWithoutOmittingScenes()
         {
             Assert.Throws<TargetInvocationException>(() => Draft(new[] { "Assets/A.unity", "Assets/A.unity" }));
-            var scenes = new string[17];
+            var scenes = new string[33];
             for (int i = 0; i < scenes.Length; i++)
                 scenes[i] = "Assets/S" + i + ".unity";
             Assert.Throws<TargetInvocationException>(() => Draft(scenes));

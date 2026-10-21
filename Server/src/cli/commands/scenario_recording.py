@@ -23,8 +23,10 @@ def register_recording_commands(group: click.Group) -> None:
 
     @group.command("start")
     @click.argument("name")
-    @click.option("--max-events", type=click.IntRange(1, 31), default=31, show_default=True)
-    @click.option("--duration-seconds", type=click.IntRange(1, 600), default=300, show_default=True)
+    @click.option("--max-events", type=click.IntRange(1, 127), default=31, show_default=True)
+    @click.option(
+        "--duration-seconds", type=click.IntRange(1, 3600), default=300, show_default=True
+    )
     @click.option(
         "--scene-scope",
         type=click.Choice(["active", "all_loaded"]),

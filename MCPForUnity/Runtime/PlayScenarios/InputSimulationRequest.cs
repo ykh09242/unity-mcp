@@ -8,7 +8,8 @@ namespace MCPForUnity.Editor.Tools.Input
     /// <summary>Validated input command shared with optional package adapters.</summary>
     public sealed partial class InputSimulationRequest
     {
-        public const int MaxFrames = 600;
+        public const int MaxFrames = 36000;
+        public const double MaximumActiveSeconds = 3600;
         public const double DeviceTimeoutSeconds = 30;
         public string Action { get; private set; }
         public string State { get; private set; }

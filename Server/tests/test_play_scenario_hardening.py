@@ -150,7 +150,7 @@ def test_valid_wait_object_conditions(fields):
         {"stable_for_ms": "1"},
         {"stable_for_ms": -1},
         {"stable_for_ms": 30000},
-        {"stable_for_ms": 60001, "timeout_seconds": 120},
+        {"stable_for_ms": 600001, "timeout_seconds": 120},
     ],
 )
 def test_invalid_wait_object_conditions_are_rejected(fields):

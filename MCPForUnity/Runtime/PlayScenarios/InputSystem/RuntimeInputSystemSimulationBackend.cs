@@ -25,6 +25,7 @@ namespace MCPForUnity.Editor.Tools.Input
         private Vector2 _mousePosition;
         private long _tick;
         private double _deadline;
+        private double _maximumDeadline;
         private bool _subscribed;
 
         private sealed class TouchContact
@@ -115,6 +116,7 @@ namespace MCPForUnity.Editor.Tools.Input
                 state = request.State,
                 frames = request.Action == "wheel" || request.State == "release" || request.State == "move" ? 0 : request.Frames,
                 auto_cleanup_seconds = InputSimulationRequest.DeviceTimeoutSeconds,
+                maximum_active_seconds = InputSimulationRequest.MaximumActiveSeconds,
                 simulation = Status,
             };
         }
@@ -123,8 +125,9 @@ namespace MCPForUnity.Editor.Tools.Input
         {
             if (!_subscribed)
             {
-                // A hard lease cannot be extended by repeated commands while the game loop is stalled.
+                // Commands alone cannot renew the inactivity lease; only actual held-input updates can.
                 _deadline = Clock + InputSimulationRequest.DeviceTimeoutSeconds;
+                _maximumDeadline = Clock + InputSimulationRequest.MaximumActiveSeconds;
                 InputApi.onBeforeUpdate += BeforeInputUpdate;
                 SubscribeLifetime();
                 _subscribed = true;
@@ -285,6 +288,8 @@ namespace MCPForUnity.Editor.Tools.Input
                     QueueTouch(id, InputTouchPhase.Ended, _touches[id].Position);
                 _touches.Remove(id);
             }
+            if (_keys.Count > 0 || _buttons.Count > 0 || _touches.Count > 0 || _gamepadReleases.Count > 0)
+                _deadline = Math.Min(_maximumDeadline, Clock + InputSimulationRequest.DeviceTimeoutSeconds);
         }
 
         /// <summary>Apply the editor lifetime observation; separate from the clock for deterministic verification.</summary>

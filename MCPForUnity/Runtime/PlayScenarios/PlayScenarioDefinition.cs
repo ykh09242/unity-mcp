@@ -293,7 +293,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     parsed.Input = Object(step, "input");
                     var request = MCPForUnity.Editor.Tools.Input.InputSimulationRequest.ParseScenario(parsed.Input);
                     if (step.Property("wait_frames") != null)
-                        parsed.WaitFrames = Integer(step, "wait_frames", 1, 600, 1);
+                        parsed.WaitFrames = Integer(step, "wait_frames", 1, MCPForUnity.Editor.Tools.Input.InputSimulationRequest.MaxFrames, 1);
                     if (request.Action == "release_all" && parsed.WaitFrames.HasValue)
                         throw new ArgumentException("release_all does not accept wait_frames.");
                     parsed.Input = (JObject)parsed.Input.DeepClone();
@@ -330,7 +330,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     }
                     if (step.Property("stable_for_ms") != null)
                     {
-                        parsed.StableForMs = Integer(step, "stable_for_ms", 0, 60000, 0);
+                        parsed.StableForMs = Integer(step, "stable_for_ms", 0, 600000, 0);
                         if (parsed.StableForMs >= parsed.TimeoutSeconds * 1000)
                             throw new ArgumentException("stable_for_ms must be less than the step timeout.");
                     }
@@ -409,7 +409,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 {
                     if (parsed.Action != "wait_object" && parsed.Action != "wait_scene")
                         throw new ArgumentException("stable_for_ms is permitted only on wait actions.");
-                    parsed.StableForMs = Integer(step, "stable_for_ms", 0, 60000, 0);
+                    parsed.StableForMs = Integer(step, "stable_for_ms", 0, 600000, 0);
                     if (parsed.StableForMs >= parsed.TimeoutSeconds * 1000)
                         throw new ArgumentException("stable_for_ms must be less than the step timeout.");
                 }

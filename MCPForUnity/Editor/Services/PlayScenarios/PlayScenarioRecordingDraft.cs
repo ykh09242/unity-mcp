@@ -39,8 +39,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         public PlayScenarioRecordingDraft(string name, string initialScene, int maxEvents = 31, string sceneScope = "active", string[] initialScenes = null)
         {
             PlayScenarioDefinition.ValidateName(name);
-            if (maxEvents < 1 || maxEvents > 31)
-                throw new ArgumentException("max_events must be an integer between 1 and 31.");
+            if (maxEvents < 1 || maxEvents >= PlayScenarioDefinition.MaximumSteps)
+                throw new ArgumentException("max_events must be an integer between 1 and 127.");
             if (sceneScope != "active" && sceneScope != "all_loaded")
                 throw new ArgumentException("scene_scope must be active or all_loaded.");
             this.sceneScope = sceneScope;
@@ -49,11 +49,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (
                     initialScenes == null
                     || initialScenes.Length < 1
-                    || initialScenes.Length > 16
+                    || initialScenes.Length > PlayScenarioDefinition.MaximumAuxiliarySteps
                     || initialScenes.Distinct(StringComparer.Ordinal).Count() != initialScenes.Length
                     || !initialScenes.Contains(initialScene, StringComparer.Ordinal)
                 )
-                    throw new ArgumentException("all_loaded requires one to sixteen unique initial scenes including the active scene.");
+                    throw new ArgumentException("all_loaded requires one to thirty-two unique initial scenes including the active scene.");
                 foreach (string path in new[] { initialScene }.Concat(initialScenes.Where(path => path != initialScene)))
                 {
                     var load = new JObject
@@ -84,8 +84,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         public PlayScenarioDefinition Definition()
         {
             JObject json = Json();
-            if (Encoding.UTF8.GetByteCount(json.ToString(Formatting.None)) > 60 * 1024)
-                throw new ArgumentException("The recording draft exceeded its 60 KiB authoring budget.");
+            if (Encoding.UTF8.GetByteCount(json.ToString(Formatting.None)) > PlayScenarioDefinition.MaximumDefinitionBytes)
+                throw new ArgumentException("The recording draft exceeded its 1 MiB authoring budget.");
             return PlayScenarioDefinition.Parse(json);
         }
 
@@ -123,9 +123,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Finish("interrupted", "input_clock_changed");
                 return false;
             }
-            if (held.Values.Any(value => frame - value.Started > 600) || (previousInput != null && frame - previousInputFrame > 600))
+            if (
+                held.Values.Any(value => frame - value.Started > InputSimulationRequest.MaxFrames)
+                || (previousInput != null && frame - previousInputFrame > InputSimulationRequest.MaxFrames)
+            )
             {
-                Diagnose("Observed input hold/spacing exceeded the executable 600 input-update bound; recording stopped without clamping timing.");
+                Diagnose("Observed input hold/spacing exceeded the executable 36000 input-update bound; recording stopped without clamping timing.");
                 Finish("interrupted", "input_frame_limit");
                 return false;
             }

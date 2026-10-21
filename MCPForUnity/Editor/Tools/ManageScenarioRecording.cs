@@ -29,8 +29,8 @@ namespace MCPForUnity.Editor.Tools
                         Allow(parameters, "action", "name", "max_events", "duration_seconds", "scene_scope");
                         result = PlayScenarioRecordingService.Start(
                             Text(parameters, "name"),
-                            Integer(parameters, "max_events", 1, 31, 31),
-                            Integer(parameters, "duration_seconds", 1, 600, 300),
+                            Integer(parameters, "max_events", 1, 127, 31),
+                            Integer(parameters, "duration_seconds", 1, 3600, 300),
                             parameters.Property("scene_scope") == null ? "active" : Text(parameters, "scene_scope")
                         );
                         break;

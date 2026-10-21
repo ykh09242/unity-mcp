@@ -1,6 +1,23 @@
 """Persisted device commands retain strict native-compatible bounded payloads."""
 
 import pytest
+
+
+def test_long_explicit_input_preserves_frame_counts():
+    from models.play_scenarios import ScenarioStep
+
+    result = ScenarioStep.model_validate(
+        {
+            "name": "hold",
+            "action": "input",
+            "input": {"action": "key", "key": "Space", "frames": 36000},
+            "wait_frames": 36000,
+            "timeout_seconds": 3600,
+        }
+    )
+    assert result.input.frames == result.wait_frames == 36000
+
+
 from pydantic import ValidationError
 
 from models.play_scenarios import (
@@ -33,7 +50,7 @@ def test_input_command_round_trip_preserves_only_authored_device_fields(payload)
 @pytest.mark.parametrize(
     "payload",
     [
-        {"action": "key", "key": "Space", "frames": 601},
+        {"action": "key", "key": "Space", "frames": 36001},
         {"action": "key", "key": "Space", "frames": True},
         {"action": "key", "key": "Space", "state": "move"},
         {"action": "key", "key": "Space", "position": [1, 2]},

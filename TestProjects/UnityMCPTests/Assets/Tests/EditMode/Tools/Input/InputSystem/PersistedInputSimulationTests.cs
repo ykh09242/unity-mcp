@@ -50,6 +50,44 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             };
 
         [Test]
+        public void LongObservedInputContinuesWhileUpdatesProgressAndExpiresWhenStalled()
+        {
+            var backend = new TimedBackend();
+            PlayScenarioPlayerInput.CreateInputBackend = () => backend;
+            session.Evaluate(Step("{'action':'key','key':'Space','frames':36000}"), true);
+            Keyboard keyboard = Keyboard.current;
+            for (int update = 1; update <= 100; update++)
+            {
+                backend.Now = update * 10;
+                InputApi.Update();
+                session.Maintain();
+                Assert.That(backend.LeaseActive, Is.True);
+                Assert.That(keyboard.spaceKey.isPressed, Is.True);
+            }
+            backend.Now += InputSimulationRequest.DeviceTimeoutSeconds;
+            session.Maintain();
+            Assert.That(keyboard.added, Is.False);
+        }
+
+        [Test]
+        public void ProgressCannotKeepOwnedDevicesBeyondTheActiveLifetime()
+        {
+            var backend = new TimedBackend();
+            PlayScenarioPlayerInput.CreateInputBackend = () => backend;
+            session.Evaluate(Step("{'action':'key','key':'Space','frames':36000}"), true);
+            Keyboard keyboard = Keyboard.current;
+            for (int update = 1; update < 180; update++)
+            {
+                backend.Now = update * 20;
+                InputApi.Update();
+                Assert.That(backend.LeaseActive, Is.True);
+            }
+            backend.Now = InputSimulationRequest.MaximumActiveSeconds;
+            InputApi.Update();
+            Assert.That(keyboard.added, Is.False);
+        }
+
+        [Test]
         public void ExpiredLeaseRemovesOwnedDeviceWithoutAnotherInputUpdate()
         {
             var backend = new TimedBackend();

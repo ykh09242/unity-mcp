@@ -355,7 +355,7 @@ class ScenarioInput(BaseModel):
     state: Literal["press", "move", "release"] = "press"
     key: Annotated[str, Field(strict=True, min_length=1, max_length=128)] | None = None
     button: Literal["left", "right", "middle"] = "left"
-    frames: Annotated[int, Field(strict=True, ge=1, le=600)] = 1
+    frames: Annotated[int, Field(strict=True, ge=1, le=36000)] = 1
     touch_id: Annotated[int, Field(strict=True, ge=1, le=10)] = 1
     position: (
         list[Annotated[float, Field(strict=True, ge=0, le=1000000, allow_inf_nan=False)]] | None
@@ -467,7 +467,7 @@ class ScenarioStep(BaseModel):
     name: Annotated[str, Field(strict=True, min_length=1, max_length=128)]
     action: StepAction
     input: ScenarioInput | None = None
-    wait_frames: Annotated[int, Field(strict=True, ge=1, le=600)] | None = None
+    wait_frames: Annotated[int, Field(strict=True, ge=1, le=36000)] | None = None
     scene: Annotated[str, Field(strict=True, min_length=1, max_length=4096)] | None = None
     load_mode: Literal["single", "additive"] | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -498,7 +498,7 @@ class ScenarioStep(BaseModel):
     active: Annotated[bool, Field(strict=True)] | None = None
     component: Annotated[str, Field(strict=True, min_length=1, max_length=256)] | None = None
     property: PlayScenarioPropertyCondition | None = None
-    stable_for_ms: Annotated[int, Field(strict=True, ge=0, le=60000)] | None = None
+    stable_for_ms: Annotated[int, Field(strict=True, ge=0, le=600000)] | None = None
     performance: PlayScenarioPerformanceOptions | None = None
     screenshot: PlayScenarioScreenshotOptions | None = None
 

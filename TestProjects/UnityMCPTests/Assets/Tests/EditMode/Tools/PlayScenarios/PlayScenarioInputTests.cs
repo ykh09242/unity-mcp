@@ -343,7 +343,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.Throws<ArgumentException>(() => PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000));
         }
 
-        [TestCase("{'action':'key','key':'Space','frames':601}")]
+        [TestCase("{'action':'key','key':'Space','frames':36001}")]
         [TestCase("{'action':'touch','state':'move'}")]
         [TestCase("{'action':'mouse','position':[1,2,3]}")]
         [TestCase("{'action':'release_all','frames':1}")]

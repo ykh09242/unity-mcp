@@ -159,7 +159,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             OptionalInteger(card, "Wait for input updates", "stepWaitFrames" + index, step.WaitFrames, value => edit(() => step.WaitFrames = value));
             card.Add(
                 new Label(
-                    "Commands: key, mouse, touch or release_all. Press frames bounds the hold (1-600); subsequent move/release commands share the scenario devices. Wait defaults to one actual game input update. All devices release on failure, cancellation and iteration completion."
+                    "Commands: key, mouse, touch or release_all. Press frames bounds the hold (1-36000); subsequent move/release commands share the scenario devices. Wait defaults to one actual game input update. All devices release on failure, cancellation and iteration completion."
                 )
             );
         }
