@@ -48,6 +48,26 @@ namespace MCPForUnityTests.Editor.Tools
             folder = null;
         }
 
+        [TestCase("uss")]
+        [TestCase("uxml")]
+        public void LargeSourcePatchPreservesCompleteSource(string extension)
+        {
+            string padding = new string('x', 2 * 1024 * 1024);
+            string source =
+                extension == "uss"
+                    ? "/*" + padding + "*/\n.title { color: red; }"
+                    : "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><!--" + padding + "--><ui:Label name='title' text='Before' /></ui:UXML>";
+            string path = Create(extension, source, import: false);
+            JObject changes = extension == "uss" ? new JObject { ["color"] = "blue" } : new JObject { ["text"] = "After" };
+            string selector = extension == "uss" ? ".title" : "#title";
+            JObject preview = Send(Request(path, selector, changes));
+            Assert.IsTrue(preview.Value<bool>("success"), preview.ToString());
+            Assert.AreEqual(source, File.ReadAllText(Full(path)));
+            JObject result = Send(Request(path, selector, changes, false, preview["data"].Value<string>("source_hash")));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(extension == "uss" ? source.Replace("color: red", "color: blue") : source.Replace("Before", "After"), File.ReadAllText(Full(path)));
+        }
+
         [Test]
         public void Preview_LabelText_DoesNotWrite_AndApplyPersistsAfterImportWithSameGuid()
         {
