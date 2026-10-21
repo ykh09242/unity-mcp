@@ -25,6 +25,7 @@ from mcp_types import CallToolResult
 from pydantic import BaseModel
 
 from core.config import config
+from core.sdk_compatibility import is_reviewed_sdk
 from models.tool_outcome import is_execution_failure
 from models.response_limits import (
     MAX_RESPONSE_BYTES,
@@ -86,14 +87,7 @@ def component_version(ctx) -> str | None:
 
 
 def require_supported_sdk() -> None:
-    if any(
-        version(name) != expected
-        for name, expected in (
-            ("fastmcp", "4.1.1"),
-            ("mcp", "2.3.0"),
-            ("mcp_types", "2.3.0"),
-        )
-    ):
+    if not is_reviewed_sdk(version):
         raise ReceiptUnavailable("execution_receipt_sdk_unsupported")
 
 

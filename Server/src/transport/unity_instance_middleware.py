@@ -756,7 +756,7 @@ class UnityInstanceMiddleware(Middleware):
         """Inject active Unity instance into resource context if available."""
         uri = str(getattr(context.message, "uri", ""))
         await authorize_remote_resource(uri)
-        if uri == TEST_RESULTS_URI:
+        if uri in {TEST_RESULTS_URI, "mcpforunity://doctor/runtime"}:
             return await call_next(context)
         if uri.startswith("ui:"):
             raise ValueError("Unsupported Apps resource URI")

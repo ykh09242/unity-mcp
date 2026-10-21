@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -2264,6 +2264,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "mcp" },
+    { name = "mcp-types" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pydantic-core" },
@@ -2286,9 +2287,10 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.5.0" },
     { name = "fastapi", specifier = ">=0.150.0" },
-    { name = "fastmcp", specifier = ">=4.1.1,<5" },
+    { name = "fastmcp", specifier = "==4.1.1" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "mcp", specifier = ">=2.3.0,<3" },
+    { name = "mcp", specifier = "==2.3.0" },
+    { name = "mcp-types", specifier = "==2.3.0" },
     { name = "pillow", specifier = ">=13.0.0,<14" },
     { name = "pydantic", specifier = ">=2.14.1" },
     { name = "pydantic-core", specifier = ">=2.50.1,<3" },

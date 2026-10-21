@@ -21,3 +21,7 @@ def test_installed_server_startup_probe_accepts_focused_defaults(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     inventory = json.loads(result.stdout.splitlines()[-1])
     assert all(inventory[kind] > 0 for kind in ("tools", "resources", "templates"))
+    assert inventory["runtime"]["sdk"]["supported"] is True
+    assert all(
+        feature["state"] == "active" for feature in inventory["runtime"]["features"].values()
+    )
