@@ -77,7 +77,13 @@
         "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.ReplacedHandlerInvalidatesGuardWithoutDispatch",
         "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.DedicatedApplyRequiresGuardAndRejectsNestedAlias",
         "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.InvalidVectorRejectsWithoutChangingTarget",
-        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.DisabledChildAfterPreviewRefusesWholeGuardedBatch"
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.DisabledChildAfterPreviewRefusesWholeGuardedBatch",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.UnsupportedNullFieldsCannotProduceGuard",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.InactiveTargetRequiresExplicitActivation",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.ExplicitActivationOfInactiveTargetRemainsSupported",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.NonActiveAdditiveSceneTargetCannotProduceGuard",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.ActiveSceneChangeRefusesBeforeFirstMutation",
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.AncestorDeactivationRefusesBeforeFirstMutation"
       ],
       "disruptive": false,
       "platform_exclusions": {}

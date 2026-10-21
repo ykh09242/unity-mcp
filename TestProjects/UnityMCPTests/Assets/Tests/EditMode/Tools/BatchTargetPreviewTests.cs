@@ -10,7 +10,9 @@ using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -295,6 +297,113 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.AreEqual("rejected", (string)result.SelectToken("data.validation.items[0].status"));
             Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+        }
+
+        [Test]
+        public void UnsupportedNullFieldsCannotProduceGuard()
+        {
+            var parent = new GameObject("Parent");
+            root.transform.SetParent(parent.transform);
+            root.tag = "Player";
+            foreach (string field in new[] { "parent", "tag" })
+            {
+                var edit = Edit();
+                edit["params"][field] = JValue.CreateNull();
+                JObject result = Preview(new JArray(edit));
+                Assert.IsFalse(result.Value<bool>("success"), field + result);
+                Assert.AreEqual("incomplete", (string)result.SelectToken("data.validation.items[0].status"));
+                Assert.AreEqual(JTokenType.Null, result["data"]["preview"].Type);
+                Assert.AreEqual(parent.transform, root.transform.parent);
+                Assert.AreEqual("Player", root.tag);
+            }
+        }
+
+        [Test]
+        public void InactiveTargetRequiresExplicitActivation()
+        {
+            root.SetActive(false);
+            JObject result = Preview(new JArray(Edit()));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("rejected", (string)result.SelectToken("data.validation.items[0].status"));
+            Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+        }
+
+        [Test]
+        public void ExplicitActivationOfInactiveTargetRemainsSupported()
+        {
+            root.SetActive(false);
+            var edit = Edit();
+            edit["params"]["set_active"] = true;
+            var commands = new JArray(edit);
+            JObject result = Apply(commands, Guard(Preview(commands)));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsTrue(root.activeSelf);
+            Assert.AreEqual(new Vector3(1, 2, 3), root.transform.localPosition);
+        }
+
+        [Test]
+        public void NonActiveAdditiveSceneTargetCannotProduceGuard()
+        {
+            Scene active = SceneManager.GetActiveScene();
+            Assert.IsTrue(EditorSceneManager.SaveScene(active, folder + "/" + active.name + ".unity"));
+            Scene additive = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                var other = new GameObject("OtherScene");
+                SceneManager.MoveGameObjectToScene(other, additive);
+                SceneManager.SetActiveScene(active);
+                JObject result = Preview(new JArray(Edit(), Edit(other)));
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual("rejected", (string)result.SelectToken("data.validation.items[1].status"));
+                Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+                Assert.AreEqual(Vector3.zero, other.transform.localPosition);
+            }
+            finally
+            {
+                SceneManager.SetActiveScene(active);
+                EditorSceneManager.CloseScene(additive, true);
+            }
+        }
+
+        [Test]
+        public async Task ActiveSceneChangeRefusesBeforeFirstMutation()
+        {
+            var other = new GameObject("LaterTarget");
+            var commands = new JArray(Edit(), Edit(other));
+            Scene active = SceneManager.GetActiveScene();
+            Assert.IsTrue(EditorSceneManager.SaveScene(active, folder + "/" + active.name + ".unity"));
+            JToken guard = Guard(Preview(commands));
+            Scene additive = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                SceneManager.SetActiveScene(additive);
+                JObject result = JObject.FromObject(await BatchExecute.HandleCommand(new JObject { ["commands"] = commands, ["preview"] = guard }));
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(0, result["data"].Value<int>("attemptedCount"));
+                Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+                Assert.AreEqual(Vector3.zero, other.transform.localPosition);
+            }
+            finally
+            {
+                SceneManager.SetActiveScene(active);
+                EditorSceneManager.CloseScene(additive, true);
+            }
+        }
+
+        [Test]
+        public async Task AncestorDeactivationRefusesBeforeFirstMutation()
+        {
+            var parent = new GameObject("Parent");
+            var other = new GameObject("LaterTarget");
+            other.transform.SetParent(parent.transform);
+            var commands = new JArray(Edit(), Edit(other));
+            JToken guard = Guard(Preview(commands));
+            parent.SetActive(false);
+            JObject result = JObject.FromObject(await BatchExecute.HandleCommand(new JObject { ["commands"] = commands, ["preview"] = guard }));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(0, result["data"].Value<int>("attemptedCount"));
+            Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+            Assert.AreEqual(Vector3.zero, other.transform.localPosition);
         }
 
         [Test]

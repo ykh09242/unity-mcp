@@ -14,6 +14,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace MCPForUnity.Editor.Tools
 {
@@ -290,6 +291,9 @@ namespace MCPForUnity.Editor.Tools
                 || EditorUtility.IsPersistent(target)
                 || !target.scene.IsValid()
                 || !target.scene.isLoaded
+                // Match GameObjectModify by_id eligibility without scanning the whole scene.
+                || target.scene != SceneManager.GetActiveScene()
+                || (!target.activeInHierarchy && parameters["setActive"]?.ReadScalar<bool?>() != true)
                 || EditorSceneManager.IsPreviewScene(target.scene)
             )
                 throw new ArgumentException("Target is not an ordinary loaded scene object.");
@@ -306,6 +310,7 @@ namespace MCPForUnity.Editor.Tools
                     new JObject
                     {
                         ["id"] = node.gameObject.GetInstanceIDCompat(),
+                        ["active"] = node.gameObject.activeSelf,
                         ["position"] = Vector(node.localPosition),
                         ["rotation"] = new JArray(node.localRotation.x, node.localRotation.y, node.localRotation.z, node.localRotation.w),
                         ["scale"] = Vector(node.localScale),
@@ -349,7 +354,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static void Keys(JObject parameters, params string[] keys)
         {
-            if (parameters.Properties().Any(p => p.Value.Type != JTokenType.Null && !keys.Contains(p.Name)))
+            if (parameters.Properties().Any(p => !keys.Contains(p.Name)))
                 throw new Incomplete("unsupported_parameters");
         }
     }

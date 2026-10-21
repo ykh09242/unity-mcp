@@ -11,14 +11,16 @@ Supported initial operations:
   asset folder. Check contained paths, source GUID and streamed file/meta hashes,
   destination collision, parent identity and script mutation consent.
 - `gameobject_edit` / `manage_gameobject`: modify a loaded scene instance ID's
-  name, active state or local position/rotation/scale. Check parameters, scene,
-  object/component identity, dirty revisions and ancestor transforms.
+  name, active state or local position/rotation/scale in the active scene. Inactive
+  hierarchy targets require explicit activation, matching the execution handler.
+  Check parameters, scene,
+  object/component identity, dirty revisions, ancestor activation and transforms.
 - `prefab_contents` / `manage_prefabs`: apply an already prepared
   `preview_modify_contents` plan. Observe its source/dependency fingerprint and
   planned fields without loading prefab contents or consuming the plan. The
   existing prefab owner rechecks and consumes it during application.
 
-Unsupported fields/actions, directory moves, missing destination parents,
+Unsupported fields (including explicit nulls)/actions, directory moves, missing destination parents,
 name-based/future object references and repeated targets remain **incomplete**.
 The preview does not simulate earlier commands. A rejected or incomplete batch
 returns no applicable guard; split independent supported edits or use a domain
