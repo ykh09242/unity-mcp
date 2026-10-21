@@ -23,6 +23,8 @@ Executes multiple MCP commands in a single batch for dramatically better perform
 | `fail_fast` | `bool \| None` | — | Stop processing after the first failure |
 | `max_parallelism` | `int \| None` | — | Hint for the maximum number of parallel workers |
 | `validate_only` | `bool` | — | Validate action names without executing children; requires the peer preview capability |
+| `preview_scope` | `Literal['action_names', 'targets']` | — | With validate_only, inspect action names or supported concrete targets |
+| `preview` | `dict[str, Any] \| None` | — | Unmodified target-preview guard to recheck before supported mutations; no rollback or retry guarantee |
 
 ## Returns
 

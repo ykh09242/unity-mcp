@@ -209,7 +209,7 @@ namespace MCPForUnity.Editor.Tools
 
         // --- Action Implementations ---
 
-        private static ErrorResponse RequireScriptConsent(params string[] paths)
+        internal static ErrorResponse RequireScriptConsent(params string[] paths)
         {
             var consentError = ManageScript.RequireExplicitConsent();
             if (consentError == null)

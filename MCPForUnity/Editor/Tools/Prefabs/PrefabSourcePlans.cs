@@ -121,8 +121,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         internal static object Apply(JObject request)
         {
             StableEditor();
-            Keys(request, "action", "preview_id");
-            string token = Text(request, "preview_id");
+            Keys(request, "action", "preview_id", "previewId");
+            if (request["preview_id"] != null && request["previewId"] != null)
+                throw new ArgumentException("Provide one preview token field.");
+            string token = Text(request, request["preview_id"] != null ? "preview_id" : "previewId");
             if (!Previews.TryGetValue(token, out Plan plan))
                 throw new ArgumentException("Unknown or consumed prefab preview_id. Preview again.");
             Previews.Remove(token);
@@ -178,6 +180,22 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 if (contents != null)
                     PrefabUtility.UnloadPrefabContents(contents);
             }
+        }
+
+        internal static JObject InspectBatchPlan(string token)
+        {
+            StableEditor();
+            if (!Previews.TryGetValue(token, out Plan plan) || EditorApplication.timeSinceStartup >= plan.ExpiresAt)
+                throw new ArgumentException("Unknown, consumed or expired prefab preview.");
+            Verify(plan);
+            return new JObject
+            {
+                ["keys"] = new JArray("asset:" + plan.Path),
+                ["path"] = plan.Path,
+                ["source"] = plan.Hash,
+                ["fields"] = plan.Fields.DeepClone(),
+                ["token"] = token,
+            };
         }
 
         private static void Verify(Plan plan)
