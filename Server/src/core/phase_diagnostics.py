@@ -54,27 +54,51 @@ def sample():
 
 
 class BufferedSink:
-    """A bounded local logging queue. Disk and logging handlers run off the command thread."""
+    """Bounded optional records; counter locks never cover disk or external callbacks."""
 
     def __init__(self, emit=None):
         self.queue = queue.Queue(maxsize=256)
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.worker = None
-        self.emit = emit or self._log
+        self.emit = emit
         self.file = None
         self.retention = None
+        self.count_lock = threading.Lock()
+        self.counts = dict.fromkeys(
+            (
+                "offered",
+                "written",
+                "write_failed",
+                "drop_queue",
+                "drop_startup",
+                "drop_closed",
+                "drop_shutdown",
+                "checkpoint_write_failed",
+            ),
+            0,
+        )
+        self.session = uuid.uuid4().hex
+        self.started = time.monotonic()
+        self.checkpoint = 0
+        self.next_checkpoint = 0
 
-    def _log(self, row):
+    @staticmethod
+    def _encode(row):
+        return ("phase_timing " + json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8")
+
+    def _log(self, row, sequence=None):
         # Only this daemon owns the file lease and performs maintenance. Ordinary
         # logging handlers and command execution never acquire these file locks.
         path = _log_path
         if path is None:
-            return
+            return False
         if self.file is None:
             self.file = PhaseLogFile(path, _LOG_BYTES)
-        encoded = ("phase_timing " + json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8")
-        self.file.write(encoded)
+        if sequence is not None:
+            row = {**row, "capture_session": self.session, "capture_sequence": sequence}
+        self.file.write(self._encode(row))
+        return True
 
     def _maintain(self):
         if self.file is not None:
@@ -83,17 +107,67 @@ class BufferedSink:
                 if result is not None:
                     self.retention = result
             except OSError:
-                pass
+                self.file.maintenance.close()
 
     def retention_snapshot(self):
         """Last worker scan, possibly partial; reading it performs no file I/O."""
         return dict(self.retention) if self.retention is not None else None
 
-    def offer(self, row):
-        if self.stop.is_set():
+    def capture_snapshot(self):
+        """Counters since this sink was created, without waiting for the writer."""
+        with self.count_lock:
+            values = dict(self.counts)
+            dropped = sum(
+                values[name]
+                for name in (
+                    "drop_queue",
+                    "drop_startup",
+                    "drop_closed",
+                    "drop_shutdown",
+                )
+            )
+            pending = values["offered"] - values["written"] - values["write_failed"] - dropped
+            return {
+                "event": "phase_capture_coverage",
+                "schema_version": 1,
+                "session": self.session,
+                "checkpoint": self.checkpoint,
+                "elapsed_ms": (time.monotonic() - self.started) * 1000,
+                "sample_every": 64,
+                **values,
+                "dropped": dropped,
+                "pending": pending,
+                "closed": self.stop.is_set() and pending == 0,
+            }
+
+    def _count(self, name):
+        with self.count_lock:
+            self.counts[name] += 1
+
+    def _publish_coverage(self, final=False):
+        # Checkpoints are optional too. A later successful checkpoint exposes
+        # earlier checkpoint failures; an unavailable final checkpoint is unknown.
+        if self.file is None or (not final and time.monotonic() < self.next_checkpoint):
             return
+        self.next_checkpoint = time.monotonic() + 30
+        with self.count_lock:
+            self.checkpoint += 1
+        row = self.capture_snapshot()
+        row["retention"] = self.retention_snapshot()
+        try:
+            self.file.write(self._encode(row))
+        except Exception:
+            self._count("checkpoint_write_failed")
+
+    def offer(self, row):
+        with self.count_lock:
+            self.counts["offered"] += 1
+            if self.stop.is_set():
+                self.counts["drop_closed"] += 1
+                return
         if self.worker is None:
             if not self.lock.acquire(blocking=False):
+                self._count("drop_startup")
                 return
             try:
                 if self.worker is None:
@@ -102,14 +176,24 @@ class BufferedSink:
                         daemon=True,
                         name="unity-phase-diagnostics",
                     )
-                    worker.start()
+                    try:
+                        worker.start()
+                    except Exception:
+                        self._count("drop_startup")
+                        return
                     self.worker = worker
             finally:
                 self.lock.release()
-        try:
-            self.queue.put_nowait(row)
-        except queue.Full:
-            pass
+        # Share only a short counter/queue critical section with close. This
+        # prevents an offer from enqueueing after the worker drained on shutdown.
+        with self.count_lock:
+            if self.stop.is_set():
+                self.counts["drop_closed"] += 1
+                return
+            try:
+                self.queue.put_nowait(row)
+            except queue.Full:
+                self.counts["drop_queue"] += 1
 
     def _run(self):
         try:
@@ -118,16 +202,36 @@ class BufferedSink:
                     row = self.queue.get(timeout=0.2)
                 except queue.Empty:
                     self._maintain()
+                    self._publish_coverage()
                     continue
+                # Sequence settled write attempts, not offers: queue loss and
+                # concurrent producers must not move later writes into an older
+                # checkpoint's window.
+                with self.count_lock:
+                    sequence = self.counts["written"] + self.counts["write_failed"] + 1
                 try:
-                    self.emit(row)
+                    result = self.emit(row) if self.emit is not None else self._log(row, sequence)
+                    self._count("write_failed" if result is False else "written")
                 except Exception:
-                    pass
+                    self._count("write_failed")
                 finally:
                     del row
                     self.queue.task_done()
                 self._maintain()
+                self._publish_coverage()
         finally:
+            # Release queued row ownership and account for abandoned samples.
+            # Offers after stop are rejected under the same counter lock.
+            with self.count_lock:
+                while True:
+                    try:
+                        abandoned = self.queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    self.counts["drop_shutdown"] += 1
+                    self.queue.task_done()
+                    del abandoned
+            self._publish_coverage(final=True)
             if self.file is not None:
                 try:
                     self.file.close()
@@ -135,7 +239,8 @@ class BufferedSink:
                     pass
 
     def close(self):
-        self.stop.set()
+        with self.count_lock:
+            self.stop.set()
         # Optional logging never prolongs command/server shutdown.
         if self.worker is not None:
             self.worker.join(timeout=0.2)
