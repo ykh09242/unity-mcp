@@ -303,6 +303,15 @@ async def manage_ui(
     page_size: Annotated[int, "Number of results per page: 1-1000 (default 50). For list."]
     | None = None,
     page_number: Annotated[int, "Page number, 1-based (default 1). For list."] | None = None,
+    inventory_revision: Annotated[
+        str,
+        Field(
+            strict=True,
+            pattern=r"^mcp-ui-v1_[0-9a-f]{32}$",
+            description="list: reuse the returned inventory_revision with the same scope/filter to reject pages after asset changes, expiry or eviction. Omit for the latest cached inventory; oversized inventories remain complete but uncached.",
+        ),
+    ]
+    | None = None,
     # modify_visual_element
     element_name: Annotated[
         str,
@@ -367,6 +376,14 @@ async def manage_ui(
     ] = False,
 ) -> dict[str, Any]:
     action_lower = action.lower()
+    if inventory_revision is not None:
+        if action_lower != "list":
+            return {"success": False, "message": "inventory_revision requires list."}
+        if (
+            type(inventory_revision) is not str
+            or re.fullmatch(r"mcp-ui-v1_[0-9a-f]{32}", inventory_revision) is None
+        ):
+            return {"success": False, "message": "invalid_ui_inventory_revision"}
     if action_lower == "patch_source":
         if type(preview) is not bool:
             return {"success": False, "message": "preview must be a Boolean."}
@@ -607,6 +624,8 @@ async def manage_ui(
         params_dict["stylesheet"] = stylesheet
 
     # list params
+    if inventory_revision is not None:
+        params_dict["inventory_revision"] = inventory_revision
     if filter_type is not None:
         params_dict["filterType"] = filter_type
     if page_size is not None:

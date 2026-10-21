@@ -67,6 +67,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                if ((@params["inventory_revision"] != null || @params["inventoryRevision"] != null) && action != "list")
+                    return new ErrorResponse("inventory_revision requires list.");
                 if ((@params["warmup_updates"] != null || @params["warmupUpdates"] != null) && action != "render_ui")
                     return new ErrorResponse("warmup_updates requires render_ui.");
                 JToken strictStyleToken = @params["strict_style"];
@@ -378,6 +380,7 @@ namespace MCPForUnity.Editor.Tools
             else
             {
                 // Find existing or create default PanelSettings
+                AssetSearchSnapshots.Observe("ui_find_assets");
                 string[] guids = AssetDatabase.FindAssets("t:PanelSettings");
                 if (guids.Length > 0)
                 {
@@ -1780,6 +1783,7 @@ namespace MCPForUnity.Editor.Tools
                     tempGo.hideFlags = HideFlags.HideAndDontSave;
                     ui = new UIComponentAdapter(tempGo.AddComponent(renderComponentType));
 
+                    AssetSearchSnapshots.Observe("ui_find_assets");
                     string[] guids = AssetDatabase.FindAssets("t:PanelSettings");
                     PanelSettings ps = null;
                     if (guids.Length > 0)
@@ -2179,7 +2183,6 @@ namespace MCPForUnity.Editor.Tools
                 )
             )
                 return new ErrorResponse(pageError);
-            long startIndex = PaginationBounds.StartIndex(pageNumber, pageSize);
 
             scope = AssetPathUtility.GetContainedAssetPath(scope);
             if (scope == null)
@@ -2189,89 +2192,7 @@ namespace MCPForUnity.Editor.Tools
 
             if (!AssetDatabase.IsValidFolder(scope))
                 return new ErrorResponse($"UI asset scope is not an existing folder: {scope}");
-            string[] folderScope = new[] { scope };
-
-            // Find UXML and USS assets based on filter
-            var paged = new List<object>();
-            int total = 0;
-
-            void AddPage(string guid, string type)
-            {
-                string assetPath;
-                try
-                {
-                    assetPath = AssetPathUtility.GetAssetPathFromGuid(guid, allowPackages: true);
-                }
-                catch (ArgumentException)
-                {
-                    return;
-                }
-                catch (InvalidOperationException)
-                {
-                    return;
-                }
-                if (string.IsNullOrEmpty(assetPath))
-                    return;
-                if (total >= startIndex && paged.Count < pageSize)
-                    paged.Add(
-                        new Dictionary<string, object>
-                        {
-                            ["path"] = assetPath,
-                            ["type"] = type,
-                            ["name"] = Path.GetFileName(assetPath),
-                        }
-                    );
-                total++;
-            }
-
-            bool includeUxml =
-                string.IsNullOrEmpty(filterType)
-                || filterType.Equals("uxml", StringComparison.OrdinalIgnoreCase)
-                || filterType.Equals("VisualTreeAsset", StringComparison.OrdinalIgnoreCase);
-            bool includeUss =
-                string.IsNullOrEmpty(filterType)
-                || filterType.Equals("uss", StringComparison.OrdinalIgnoreCase)
-                || filterType.Equals("StyleSheet", StringComparison.OrdinalIgnoreCase);
-            bool includePanelSettings = string.IsNullOrEmpty(filterType) || filterType.Equals("PanelSettings", StringComparison.OrdinalIgnoreCase);
-
-            if (includeUxml)
-            {
-                string[] guids = AssetDatabase.FindAssets("t:VisualTreeAsset", folderScope);
-                foreach (string guid in guids)
-                {
-                    AddPage(guid, "uxml");
-                }
-            }
-
-            if (includeUss)
-            {
-                string[] guids = AssetDatabase.FindAssets("t:StyleSheet", folderScope);
-                foreach (string guid in guids)
-                {
-                    AddPage(guid, "uss");
-                }
-            }
-
-            if (includePanelSettings)
-            {
-                string[] guids = AssetDatabase.FindAssets("t:PanelSettings", folderScope);
-                foreach (string guid in guids)
-                {
-                    AddPage(guid, "PanelSettings");
-                }
-            }
-
-            return new SuccessResponse(
-                $"Found {total} UI asset(s). Returning page {pageNumber} ({paged.Count} items).",
-                new
-                {
-                    total,
-                    pageSize,
-                    pageNumber,
-                    maxPageSize = PaginationBounds.MaxPageSize,
-                    assets = paged,
-                }
-            );
+            return UIAssetInventory.Read(scope, filterType, pageSize, pageNumber, @params["inventory_revision"] ?? @params["inventoryRevision"]);
         }
 
         // ---- Detach UIDocument ----

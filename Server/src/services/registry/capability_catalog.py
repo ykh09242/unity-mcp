@@ -381,7 +381,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "ui",
         "UI Toolkit / UXML & USS Source",
         "create read update delete link_stylesheet list patch_source",
-        "path contents stylesheet filter_type page_size page_number source_selector source_changes preview expected_source_hash",
+        "path contents stylesheet filter_type page_size page_number inventory_revision source_selector source_changes preview expected_source_hash",
     ),
     _feature(
         "ui_document",
