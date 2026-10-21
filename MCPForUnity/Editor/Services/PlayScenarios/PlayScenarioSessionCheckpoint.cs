@@ -55,7 +55,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             bool changed = frozen?.Target != definition || identity == null;
             string next = changed ? (identity?.StartsWith("0:", StringComparison.Ordinal) == true ? "1:" : "0:") + Guid.NewGuid().ToString("N") : identity;
-            string inputs = changed ? new JObject { ["id"] = next, ["value"] = JToken.FromObject(definition) }.ToString(Formatting.None) : null;
+            string inputs = changed
+                ? new JObject { ["id"] = next, ["value"] = JToken.FromObject(definition, JsonSerializer.Create()) }.ToString(Formatting.None)
+                : null;
             JObject mutable = JObject.FromObject(state, serializer);
             mutable[Pointer] = next;
             string json = mutable.ToString(Formatting.None);

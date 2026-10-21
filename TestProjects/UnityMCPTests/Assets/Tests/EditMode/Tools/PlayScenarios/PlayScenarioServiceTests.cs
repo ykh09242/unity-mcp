@@ -274,6 +274,33 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         [Test]
+        public void FrozenCheckpointIgnoresGlobalJsonDefaultSettings()
+        {
+            string key = "MCPForUnity.Tests.CheckpointDefaults." + Guid.NewGuid().ToString("N");
+            var previous = JsonConvert.DefaultSettings;
+            try
+            {
+                JsonConvert.DefaultSettings = () => new JsonSerializerSettings { TypeNameHandling = TypeNameHandling.All };
+                PlayScenarioRun run = StartingRun();
+                var checkpoint = new PlayScenarioSessionCheckpoint(key, typeof(PlayScenarioRun), "scenario");
+                checkpoint.Write(run, run.Scenario);
+                JObject restored = checkpoint.Read(SessionState.GetString(key, ""));
+                Assert.AreEqual(run.Scenario.Name, (string)restored["scenario"]["name"]);
+                Assert.IsFalse(
+                    restored.Descendants().OfType<JProperty>().Any(property => property.Name == "$type"),
+                    "Recovery input must use the repository serializer, independent of user global settings."
+                );
+            }
+            finally
+            {
+                JsonConvert.DefaultSettings = previous;
+                SessionState.EraseString(key);
+                SessionState.EraseString(key + ".definition.0");
+                SessionState.EraseString(key + ".definition.1");
+            }
+        }
+
+        [Test]
         public void SplitSuiteCheckpointRestoresLegacyAndRejectsMissingFrozenIdentity()
         {
             string key = "MCPForUnity.Tests.Opt02." + Guid.NewGuid().ToString("N");
