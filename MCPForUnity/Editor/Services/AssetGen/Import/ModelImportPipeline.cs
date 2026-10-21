@@ -18,7 +18,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     public static class ModelImportPipeline
     {
         // Bounds managed validation work, not Unity's native importer. Stop at the first usable mesh.
-        internal const int MaxInspectionSteps = 10000;
+        internal const int MaxInspectionSteps = 1000000;
 
         // Inert asset types permitted out of an UNTRUSTED provider archive (Sketchfab et al.).
         // Anything else — scripts, assemblies, asmdefs — is skipped on extraction so it can never

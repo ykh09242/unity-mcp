@@ -216,6 +216,31 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
+        public void LargeModelFindsLateGeometryAndMeasuresItsCompleteBounds()
+        {
+            var model = new GameObject("owned-large-model");
+            var mesh = new Mesh();
+            try
+            {
+                for (int i = 0; i < 11000; i++)
+                    new GameObject("node").transform.SetParent(model.transform, false);
+                var last = model.transform.GetChild(10999);
+                last.localPosition = new Vector3(100, 0, 0);
+                mesh.vertices = new[] { Vector3.zero, Vector3.right, Vector3.up };
+                mesh.triangles = new[] { 0, 1, 2 };
+                last.gameObject.AddComponent<MeshFilter>().sharedMesh = mesh;
+                Assert.IsNull(ModelImportPipeline.InspectModel(model));
+                Assert.IsTrue(ModelHierarchyBounds.TryMeasure(model, Matrix4x4.identity, out Bounds bounds, out string error), error);
+                Assert.AreEqual(new Vector3(100.5f, 0.5f, 0), bounds.center);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(model);
+                UnityEngine.Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [Test]
         public void Inspection_HasBoundedTraversal_AndStopsAtFirstUsableMesh()
         {
             var model = new GameObject("owned-bounded-root");
