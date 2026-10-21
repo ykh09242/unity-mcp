@@ -243,6 +243,18 @@ namespace MCPForUnity.Tests.EditMode.Tools
         }
 
         [Test]
+        public void LargePrefabInstanceListsAllAddedOverridesWithBoundedPages()
+        {
+            for (int index = 0; index < 10001; index++)
+                new GameObject("Added" + index).transform.SetParent(instance.transform, false);
+            JObject result = Command("list_overrides");
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(10001, result["data"].Value<int>("total"));
+            Assert.AreEqual(100, ((JArray)result["data"]["entries"]).Count);
+            Assert.AreEqual(100, result["data"].Value<int>("nextOffset"));
+        }
+
+        [Test]
         public void InvalidSelection_FailsBeforeAnyPropertyChanges()
         {
             BoxCollider collider = OverrideCollider();

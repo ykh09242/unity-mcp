@@ -70,6 +70,58 @@ namespace MCPForUnityTests.Editor.Tools
         private static JObject Apply(string token) => Scene(new JObject { ["action"] = "apply_structure", ["preview_id"] = token });
 
         [Test]
+        public void LargePrefabSourceHashUsesBoundedMemoryAndDetectsLateBytes()
+        {
+            string path = folder + "/HashProbe.prefab";
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            Type plans = typeof(ManagePrefabs).Assembly.GetType("MCPForUnity.Editor.Tools.Prefabs.PrefabSourcePlans");
+            var method = plans.GetMethod("SourceHash", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            string Hash() => (string)method.Invoke(null, new object[] { path });
+            string original = Hash();
+            using (var stream = new System.IO.FileStream(path, System.IO.FileMode.Append, System.IO.FileAccess.Write))
+            {
+                byte[] padding = System.Text.Encoding.ASCII.GetBytes("#" + new string('x', 8190) + "\n");
+                for (int index = 0; index < 2176; index++)
+                    stream.Write(padding, 0, padding.Length);
+            }
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            string extended = Hash();
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.AreNotEqual(original, extended);
+            Assert.Less(allocated, 1024 * 1024, "Hashing must not allocate the whole 17 MiB source.");
+            using (var stream = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Write))
+            {
+                stream.Seek(-2, System.IO.SeekOrigin.End);
+                stream.WriteByte((byte)'y');
+            }
+            Assert.AreNotEqual(extended, Hash(), "The final bytes must participate in the revision.");
+        }
+
+        [Test]
+        public void LargePlainPrefabSourcePlanPreservesAllChildren()
+        {
+            for (int index = 0; index < 300; index++)
+                new GameObject("Node" + index).transform.SetParent(root.transform, false);
+            string path = folder + "/Large.prefab";
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            string token = Token(
+                Prefab(
+                    new JObject
+                    {
+                        ["action"] = "preview_modify_contents",
+                        ["prefabPath"] = path,
+                        ["position"] = new JArray(1, 2, 3),
+                    }
+                )
+            );
+            JObject applied = Prefab(new JObject { ["action"] = "apply_preview", ["preview_id"] = token });
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            GameObject saved = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Assert.AreEqual(300, saved.transform.childCount);
+            Assert.AreEqual(new Vector3(1, 2, 3), saved.transform.localPosition);
+        }
+
+        [Test]
         public void OrderedTemporaryParents_CreateReparentDelete_AreOneUndo()
         {
             var child = new GameObject("Existing");
