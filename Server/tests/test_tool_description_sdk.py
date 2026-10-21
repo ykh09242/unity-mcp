@@ -567,7 +567,8 @@ async def test_single_read_deadline_closes_without_later_operations(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_connection_entry_cannot_spend_the_cleanup_grace_on_reads(monkeypatch):
+@pytest.mark.parametrize("clock_origin", [None, 31.999999999999996])
+async def test_connection_entry_cannot_spend_the_cleanup_grace_on_reads(monkeypatch, clock_origin):
     import anyio
     from contextlib import contextmanager
     from types import SimpleNamespace
@@ -575,7 +576,8 @@ async def test_connection_entry_cannot_spend_the_cleanup_grace_on_reads(monkeypa
     import cli.utils.tool_description as inspection
 
     scopes = []
-    clock = anyio.current_time()
+    budgets = []
+    clock = anyio.current_time() if clock_origin is None else clock_origin
 
     @contextmanager
     def capture_scope(delay):
@@ -597,8 +599,7 @@ async def test_connection_entry_cannot_spend_the_cleanup_grace_on_reads(monkeypa
             # Verify the budget at the actual blocked boundary, independent of
             # runner scheduling. Advancing this scope causes the real cancellation.
             delay, scope = scopes[-1]
-            assert delay == 30.0
-            assert scopes[-2][0] == 30.3
+            budgets.append((delay, scopes[-2][0]))
             scope.deadline = anyio.current_time()
             await anyio.sleep_forever()
 
@@ -618,6 +619,8 @@ async def test_connection_entry_cannot_spend_the_cleanup_grace_on_reads(monkeypa
     )
     receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
     assert receipt.reason == "deadline" and connection.calls == 0 and connection.entered
+    assert len(budgets) == 1
+    assert budgets[0] == pytest.approx((30.0, 30.3))
 
 
 @pytest.mark.asyncio
