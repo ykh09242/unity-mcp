@@ -84,6 +84,7 @@ namespace MCPForUnity.Editor.Tools
                 var items = new JArray();
                 var revisions = new JArray();
                 var touched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var dependencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 bool valid = true,
                     complete = true;
                 for (int index = 0; index < commands.Count; index++)
@@ -98,9 +99,14 @@ namespace MCPForUnity.Editor.Tools
                         Observation observation = await ObserveAsync(command, background, cancellationToken);
                         observations.Add(observation);
                         JObject target = observation.State;
-                        foreach (string key in target["keys"].Values<string>())
-                            if (!touched.Add(key))
-                                throw new Incomplete("dependent_target");
+                        var writes = target["keys"].Values<string>().Concat(target["writes"]?.Values<string>() ?? Enumerable.Empty<string>());
+                        var reads = target["reads"]?.Values<string>() ?? Enumerable.Empty<string>();
+                        // Read/read overlap is independent (for example siblings). Any known
+                        // cross-command write/read overlap needs a domain dependency planner.
+                        if (writes.Any(key => touched.Contains(key) || dependencies.Contains(key)) || reads.Any(touched.Contains))
+                            throw new Incomplete("dependent_target");
+                        touched.UnionWith(writes);
+                        dependencies.UnionWith(reads);
                         revisions.Add(Hash(target));
                     }
                     catch (Incomplete exception)
@@ -510,6 +516,12 @@ namespace MCPForUnity.Editor.Tools
             return new JObject
             {
                 ["keys"] = new JArray("object:" + target.GetInstanceIDCompat()),
+                ["reads"] = new JArray(ancestors.Skip(1).Select(ancestor => "hierarchy:" + ancestor["id"])),
+                ["writes"] = new JArray(
+                    new[] { "position", "rotation", "scale", "setActive" }.Any(field => parameters[field] != null && parameters[field].Type != JTokenType.Null)
+                        ? new[] { "hierarchy:" + target.GetInstanceIDCompat() }
+                        : Array.Empty<string>()
+                ),
                 ["scene"] = SceneIdentity(target.scene),
                 ["scenePath"] = target.scene.path,
                 ["name"] = target.name,

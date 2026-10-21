@@ -22,7 +22,11 @@ Supported initial operations:
 
 Unsupported fields (including explicit nulls)/actions, directory moves, missing destination parents,
 name-based/future object references and repeated targets remain **incomplete**.
-The preview does not simulate earlier commands. A rejected or incomplete batch
+Known ancestor transform/activation writes also make a batch incomplete in
+either command order. Independent siblings may share read-only ancestors, and
+an ancestor name-only edit does not create a transform dependency. Shared asset
+source/destination paths remain conflicting targets. The preview does not
+simulate earlier commands. A rejected or incomplete batch
 returns no applicable guard; split independent supported edits or use a domain
 planner that models the dependency. Ordinary unguarded batches remain available
 with their existing limits and behavior.

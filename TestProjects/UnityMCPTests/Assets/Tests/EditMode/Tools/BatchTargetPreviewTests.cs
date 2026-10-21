@@ -496,6 +496,85 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse((await Apply(commands, guard)).Value<bool>("success"), "Consumed prefab plans cannot be replayed.");
         }
 
+        [TestCase(true)]
+        [TestCase(false)]
+        public void KnownAncestorWriteDependenciesCannotProduceGuardInEitherOrder(bool parentFirst)
+        {
+            var middle = new GameObject("Middle");
+            middle.transform.SetParent(root.transform);
+            var child = new GameObject("Child");
+            child.transform.SetParent(middle.transform);
+            var commands = parentFirst ? new JArray(Edit(root), Edit(child)) : new JArray(Edit(child), Edit(root));
+            JObject result = Preview(commands);
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.IsFalse(result.SelectToken("data.validation.complete").Value<bool>());
+            Assert.AreEqual("dependent_target", (string)result.SelectToken("data.validation.items[1].reason"));
+            Assert.AreEqual(JTokenType.Null, result["data"]["preview"].Type);
+            Assert.AreEqual(0, result["data"].Value<int>("attemptedCount"));
+            Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+            Assert.AreEqual(Vector3.zero, child.transform.localPosition);
+        }
+
+        [Test]
+        public void AncestorActivationWriteIsDetectedBeforeMutation()
+        {
+            var child = new GameObject("Child");
+            child.transform.SetParent(root.transform);
+            var parent = Edit();
+            ((JObject)parent["params"]).Remove("position");
+            parent["params"]["set_active"] = false;
+            JObject result = Preview(new JArray(parent, Edit(child)));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("dependent_target", (string)result.SelectToken("data.validation.items[1].reason"));
+            Assert.IsTrue(root.activeSelf);
+            Assert.IsTrue(child.activeInHierarchy);
+        }
+
+        [Test]
+        public async Task SiblingsSharingReadOnlyAncestorsRemainIndependent()
+        {
+            var left = new GameObject("Left");
+            var right = new GameObject("Right");
+            left.transform.SetParent(root.transform);
+            right.transform.SetParent(root.transform);
+            var commands = new JArray(Edit(left), Edit(right));
+            JObject result = await Apply(commands, Guard(Preview(commands)));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(2, result["data"].Value<int>("attemptedCount"));
+            Assert.AreEqual(new Vector3(1, 2, 3), left.transform.localPosition);
+            Assert.AreEqual(new Vector3(1, 2, 3), right.transform.localPosition);
+        }
+
+        [Test]
+        public async Task AncestorNameOnlyEditDoesNotInventTransformDependency()
+        {
+            var child = new GameObject("Child");
+            child.transform.SetParent(root.transform);
+            var parent = Edit();
+            ((JObject)parent["params"]).Remove("position");
+            parent["params"]["name"] = "RenamedParent";
+            var commands = new JArray(parent, Edit(child));
+            JObject result = await Apply(commands, Guard(Preview(commands)));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("RenamedParent", root.name);
+            Assert.AreEqual(new Vector3(1, 2, 3), child.transform.localPosition);
+        }
+
+        [Test]
+        public void SharedAssetDestinationCannotProduceGuard()
+        {
+            string first = Asset("First"),
+                second = Asset("Second");
+            string destination = folder + "/Shared.txt";
+            JObject result = Preview(new JArray(Move(first, destination), Move(second, destination)));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("dependent_target", (string)result.SelectToken("data.validation.items[1].reason"));
+            Assert.AreEqual(JTokenType.Null, result["data"]["preview"].Type);
+            Assert.IsTrue(File.Exists(first));
+            Assert.IsTrue(File.Exists(second));
+            Assert.IsFalse(File.Exists(destination));
+        }
+
         [Test]
         public async Task EarlierCallbackInvalidatesLaterTargetWithoutClaimingRollback()
         {
