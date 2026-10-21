@@ -760,11 +760,16 @@ class UnityInstanceMiddleware(Middleware):
             return await call_next(context)
         if uri.startswith("ui:"):
             raise ValueError("Unsupported Apps resource URI")
-        if uri in {
-            "mcpforunity://capabilities",
-            "mcpforunity://doctor",
-            "mcpforunity://tool-diagnostics",
-        } or uri.startswith("mcpforunity://tool-diagnostics/"):
+        if (
+            uri
+            in {
+                "mcpforunity://capabilities",
+                "mcpforunity://doctor",
+                "mcpforunity://tool-diagnostics",
+            }
+            or uri.split("?", 1)[0] == "mcpforunity://capabilities/scoped"
+            or uri.startswith("mcpforunity://tool-diagnostics/")
+        ):
             from services.capabilities import capability_read_scope
 
             with capability_read_scope() as deadline:

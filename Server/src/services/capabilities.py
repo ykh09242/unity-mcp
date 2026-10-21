@@ -190,6 +190,37 @@ async def _read_source(
 
 
 _OPTIONAL_FEATURES: Final = ("build", "render_pipeline", "cinemachine", "probuilder", "netcode")
+_FEATURE_SOURCES: Final = {
+    "input": "manage_input",
+    "ui_click": "manage_input",
+    "recording": "manage_recording",
+    "play_scenario_editor": "manage_play_scenario",
+    "play_scenario_player": "get_editor_state",
+    **dict.fromkeys(_OPTIONAL_FEATURES, "get_project_info"),
+}
+
+
+def _selection(features, sources):
+    if features is None and sources is None:
+        return frozenset(_SOURCES), frozenset(_FEATURE_SOURCES)
+    for values, allowed in ((features, _FEATURE_SOURCES), (sources, _SOURCES)):
+        if values is not None and (
+            not isinstance(values, tuple)
+            or not values
+            or any(not isinstance(value, str) or value not in allowed for value in values)
+        ):
+            raise ValueError("Capability selection must contain known feature or source names.")
+    selected_sources = set(sources or ())
+    selected_features = set(features or ())
+    selected_features.update(
+        name for name, source in _FEATURE_SOURCES.items() if source in selected_sources
+    )
+    selected_sources.update(_FEATURE_SOURCES[name] for name in selected_features)
+    # Always refresh current Editor evidence; metadata never proves readiness on its own.
+    selected_sources.add("get_editor_state")
+    return frozenset(selected_sources), frozenset(selected_features)
+
+
 _FEATURE_REASONS: Final = {
     "not_observed",
     "package_metadata_unknown",
@@ -406,8 +437,14 @@ class _CapabilityCapture:
     observations: dict[str, _Observation]
 
 
-async def _capture_project_capabilities(ctx: Context) -> _CapabilityCapture:
+async def _capture_project_capabilities(
+    ctx: Context,
+    *,
+    features: tuple[str, ...] | None = None,
+    sources: tuple[str, ...] | None = None,
+) -> _CapabilityCapture:
     """Read current evidence once; discard observations if connection ownership changes."""
+    selected_sources, selected_features = _selection(features, sources)
     http = (config.transport_mode or "stdio").lower() == "http"
     timeout = _query_timeout()
     deadline = _read_deadline.get()
@@ -427,7 +464,13 @@ async def _capture_project_capabilities(ctx: Context) -> _CapabilityCapture:
         pending_global=PluginHub.MAX_PENDING_COMMANDS if http else None,
     )
     observations = {
-        name: _Observation(evidence=CapabilityEvidence(reason="not_observed")) for name in _SOURCES
+        name: _Observation(
+            evidence=CapabilityEvidence(
+                reason="not_observed" if name in selected_sources else "not_requested",
+                next_action="retry_later" if name in selected_sources else "request_source",
+            )
+        )
+        for name in _SOURCES
     }
     connection = CapabilityConnection(
         transport="http" if http else "stdio",
@@ -449,6 +492,8 @@ async def _capture_project_capabilities(ctx: Context) -> _CapabilityCapture:
             if connection.status == "connected" and connection.admission_available is False:
                 observations = {
                     name: _Observation(evidence=CapabilityEvidence(reason="command_capacity"))
+                    if name in selected_sources
+                    else observations[name]
                     for name in _SOURCES
                 }
             if connection.status == "connected" and connection.admission_available is not False:
@@ -459,6 +504,8 @@ async def _capture_project_capabilities(ctx: Context) -> _CapabilityCapture:
                 with anyio.move_on_at(probe_deadline):
                     async with anyio.create_task_group() as tasks:
                         for name in _SOURCES:
+                            if name not in selected_sources:
+                                continue
                             tasks.start_soon(
                                 _read_source,
                                 name,
@@ -499,6 +546,8 @@ async def _capture_project_capabilities(ctx: Context) -> _CapabilityCapture:
     if not verified:
         observations = {
             name: _Observation(evidence=CapabilityEvidence(reason="connection_changed_or_deadline"))
+            if name in selected_sources
+            else observations[name]
             for name in _SOURCES
         }
         connection = connection.model_copy(
@@ -515,9 +564,24 @@ async def _capture_project_capabilities(ctx: Context) -> _CapabilityCapture:
                 "next_action": "retry_later",
             }
         )
-    return _CapabilityCapture(_compose(connection, limits, observations), observations)
+    result = _compose(connection, limits, observations)
+    for name, feature in tuple(result.features.items()):
+        if name not in selected_features:
+            result.features[name] = CapabilityFeature(
+                source=feature.source,
+                reason="not_requested",
+                next_action="request_feature",
+            )
+    return _CapabilityCapture(result, observations)
 
 
-async def query_project_capabilities(ctx: Context) -> ProjectCapabilities:
-    """Preserve the original capability view over one verified capture."""
-    return (await _capture_project_capabilities(ctx)).capabilities
+async def query_project_capabilities(
+    ctx: Context,
+    *,
+    features: tuple[str, ...] | None = None,
+    sources: tuple[str, ...] | None = None,
+) -> ProjectCapabilities:
+    """Full discovery by default; optional selections retain the same owner verification."""
+    return (
+        await _capture_project_capabilities(ctx, features=features, sources=sources)
+    ).capabilities
