@@ -18,7 +18,7 @@ class CLIConfig:
 
     host: str = "127.0.0.1"
     port: int = 8080
-    timeout: int = 30
+    timeout: int = 300
     format: str = "text"  # text, json, table
     unity_instance: Optional[str] = None
     verbose: bool = False
@@ -34,7 +34,7 @@ class CLIConfig:
                 f"Invalid UNITY_MCP_HTTP_PORT value: {port_raw!r}. {error.message}"
             ) from error
 
-        timeout_raw = os.environ.get("UNITY_MCP_TIMEOUT", "30")
+        timeout_raw = os.environ.get("UNITY_MCP_TIMEOUT", "300")
         try:
             timeout = TIMEOUT_TYPE.convert(timeout_raw, None, None)
         except click.BadParameter as error:

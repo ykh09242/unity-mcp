@@ -80,7 +80,7 @@ click.Group.resolve_command = _resolve_command_with_suggestions  # type: ignore[
 @click.option(
     "--timeout",
     "-t",
-    default=30,
+    default=300,
     type=TIMEOUT_TYPE,
     envvar="UNITY_MCP_TIMEOUT",
     help="Command timeout in seconds.",

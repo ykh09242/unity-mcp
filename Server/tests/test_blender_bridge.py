@@ -354,7 +354,7 @@ class TestBlenderTimeouts:
             ({"timeoutSeconds": 0}, 35),
             ({"timeout_seconds": 60, "timeoutSeconds": 300}, 90),
             ({"timeout_seconds": None, "timeoutSeconds": 5}, 210),
-            ({"timeoutSeconds": 99999}, 3630),
+            ({"timeoutSeconds": 99999}, 86430),
             ({"timeoutSeconds": "invalid"}, 210),
             ({"timeoutSeconds": float("nan")}, 210),
             ({"timeoutSeconds": float("inf")}, 210),
@@ -436,7 +436,7 @@ class TestBlenderTimeouts:
 
 
 class TestBlenderLegacyTimeouts:
-    @pytest.mark.parametrize("requested, expected", [(None, 210), (900, 930), (99999, 3630)])
+    @pytest.mark.parametrize("requested, expected", [(None, 210), (900, 930), (99999, 86430)])
     def test_blender_socket_budget_restores_timeout_and_does_not_change_other_commands(
         self,
         monkeypatch,

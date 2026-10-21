@@ -109,11 +109,42 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             try
             {
                 JObject command = JObject.Parse(payload);
-                if (command["type"]?.Type != JTokenType.String || !string.Equals((string)command["type"], "blender_bridge", StringComparison.Ordinal))
+                if (command["type"]?.Type != JTokenType.String)
                     return defaultTimeoutMs;
-                var parameters = new ToolParams(command["params"] as JObject ?? new JObject());
-                int seconds = Math.Max(5, Math.Min(3600, parameters.GetInt("timeout_seconds", 180) ?? 180));
-                return Math.Max(defaultTimeoutMs, seconds * 1000 + 30000);
+                var arguments = command["params"] as JObject ?? new JObject();
+                if (string.Equals((string)command["type"], "blender_bridge", StringComparison.Ordinal))
+                {
+                    var parameters = new ToolParams(arguments);
+                    int requestedSeconds = 180;
+                    try
+                    {
+                        requestedSeconds = parameters.GetInt("timeout_seconds", 180) ?? 180;
+                    }
+                    catch (ArgumentException)
+                    {
+                        // The handler still reports invalid input; budget resolution must not drop the connection.
+                    }
+                    int seconds = Math.Max(5, Math.Min(86400, requestedSeconds));
+                    return Math.Max(defaultTimeoutMs, seconds * 1000 + 30000);
+                }
+                JToken requested = arguments["timeout_seconds"];
+                if (requested == null || requested.Type == JTokenType.Null)
+                    requested = arguments["timeoutSeconds"];
+                if (
+                    requested == null
+                    || requested.Type == JTokenType.Boolean
+                    || !double.TryParse(
+                        requested.ToString(),
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double value
+                    )
+                    || double.IsNaN(value)
+                    || double.IsInfinity(value)
+                    || value <= 0
+                )
+                    return defaultTimeoutMs;
+                return Math.Max(defaultTimeoutMs, (int)Math.Ceiling(Math.Min(86400, value) * 1000));
             }
             catch (JsonException)
             {

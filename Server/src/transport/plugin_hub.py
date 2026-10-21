@@ -68,6 +68,7 @@ from transport.large_result_assembler import (
     LargeResultProtocolError,
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
+from transport.command_timeout import requested_command_timeout
 from services.api_key_service import ApiKeyService
 from services.operation_permissions import (
     OperationPermissionError,
@@ -357,7 +358,7 @@ class PluginHub(WebSocketEndpoint):
     encoding = None  # Application bounds must precede JSON decoding.
     KEEP_ALIVE_INTERVAL = 15
     SERVER_TIMEOUT = 30
-    COMMAND_TIMEOUT = 30
+    COMMAND_TIMEOUT = 300
     # Server-side ping interval (seconds) - how often to send pings to Unity
     PING_INTERVAL = 10
     # Max time (seconds) to wait for pong before considering connection dead
@@ -1457,26 +1458,10 @@ class PluginHub(WebSocketEndpoint):
             unity_timeout_s = fast_timeout
             server_wait_s = fast_timeout
         else:
-            # Common tools pass a requested timeout in seconds (e.g., timeout_seconds=900).
-            requested = None
-            try:
-                if isinstance(params, dict):
-                    requested = params.get("timeout_seconds", None)
-                    if requested is None:
-                        requested = params.get("timeoutSeconds", None)
-            except Exception:
-                requested = None
-
-            if requested is not None:
-                try:
-                    requested_s = float(requested)
-                    # Clamp to a sane upper bound to avoid accidental infinite hangs.
-                    requested_s = max(1.0, min(requested_s, 60.0 * 60.0))
-                    unity_timeout_s = max(unity_timeout_s, requested_s)
-                    # Give the server a small cushion beyond the Unity-side timeout to account for transport overhead.
-                    server_wait_s = max(server_wait_s, requested_s + 5.0)
-                except Exception:
-                    pass
+            requested_s = requested_command_timeout(params)
+            if requested_s is not None:
+                unity_timeout_s = max(unity_timeout_s, requested_s)
+                server_wait_s = max(server_wait_s, requested_s + SERVER_RESPONSE_GRACE)
 
         return unity_timeout_s, server_wait_s
 

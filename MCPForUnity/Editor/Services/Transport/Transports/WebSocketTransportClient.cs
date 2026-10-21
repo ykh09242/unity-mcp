@@ -38,7 +38,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static readonly TimeSpan ReconnectTailInterval = TimeSpan.FromSeconds(30);
 
         private static readonly TimeSpan DefaultKeepAliveInterval = TimeSpan.FromSeconds(15);
-        private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(300);
 
         private readonly IToolDiscoveryService _toolDiscoveryService;
         private readonly object _ownershipLock = new object();

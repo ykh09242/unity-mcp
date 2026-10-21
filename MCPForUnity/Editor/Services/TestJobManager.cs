@@ -62,8 +62,8 @@ namespace MCPForUnity.Editor.Services
         // Keep this small to avoid ballooning payloads during polling.
         private const int FailureCap = 25;
         private const long StuckThresholdMs = 60_000;
-        private const long DefaultInitializationTimeoutMs = 15_000; // 15 seconds default; override per-job via run_tests init_timeout param
-        private const long MaxInitializationTimeoutMs = 600_000; // 10 minutes hard cap
+        private const long DefaultInitializationTimeoutMs = 120_000; // Large-project startup; override per job via init_timeout.
+        private const long MaxInitializationTimeoutMs = 3_600_000; // Explicit initialization policy, separate from execution.
         private const int MaxJobsToKeep = 10;
         private const long MinPersistIntervalMs = 1000; // Throttle persistence to reduce overhead
 
@@ -679,8 +679,8 @@ namespace MCPForUnity.Editor.Services
 
         public static string StartJob(TestMode mode, TestFilterOptions filterOptions = null, long initTimeoutMs = 0, long runTimeoutMs = 0)
         {
-            if (runTimeoutMs < 0 || runTimeoutMs > 600000)
-                throw new ArgumentException("runTimeoutMs must be 1..600000 when supplied.");
+            if (runTimeoutMs < 0 || runTimeoutMs > 86400000)
+                throw new ArgumentException("runTimeoutMs must be 1..86400000 when supplied.");
             if (runTimeoutMs > 0 && !NativeTestRunControl.Available)
                 throw new NotSupportedException("unsupported_native_test_control");
             if (NativeAdmissionBlocked)
@@ -1172,7 +1172,7 @@ namespace MCPForUnity.Editor.Services
             {
                 causes.Add("test_runner_initialization_timeout");
                 actions.Add(
-                    "Inspect Editor.log and Test Runner startup. For PlayMode/domain reload delays, retry with a larger init_timeout (maximum 600000 ms)."
+                    "Inspect Editor.log and Test Runner startup. For PlayMode/domain reload delays, retry with a larger init_timeout (maximum 3600000 ms)."
                 );
             }
             if (suspected || initFailed)

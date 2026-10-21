@@ -41,7 +41,10 @@ async def test_sdk_cancel_preserves_pending_native_state_without_ordinary_prefli
 
 
 @pytest.mark.asyncio
-async def test_sdk_opt_in_deadline_forwards_once_without_changing_wait_contract(monkeypatch):
+@pytest.mark.parametrize("duration", [250, 3600000, 86400000])
+async def test_sdk_opt_in_deadline_forwards_once_without_changing_wait_contract(
+    monkeypatch, duration
+):
     module = importlib.import_module("services.tools.run_tests")
     monkeypatch.setattr(
         module, "get_unity_instance_from_context", AsyncMock(return_value="Game@owned")
@@ -52,9 +55,9 @@ async def test_sdk_opt_in_deadline_forwards_once_without_changing_wait_contract(
     app = FastMCP("deadline-native-job")
     app.tool(name="run_tests")(module.run_tests)
     async with Client(app) as client:
-        result = await client.call_tool("run_tests", {"run_timeout_ms": 250})
+        result = await client.call_tool("run_tests", {"run_timeout_ms": duration})
     assert json.loads(result.content[0].text)["data"]["status"] == "running"
-    assert send.call_args.args[3] == {"mode": "EditMode", "runTimeoutMs": 250}
+    assert send.call_args.args[3] == {"mode": "EditMode", "runTimeoutMs": duration}
     send.assert_awaited_once()
 
 
@@ -77,7 +80,7 @@ async def test_sdk_invalid_cancel_reply_does_not_echo_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("timeout", [0, -1, 600001, True, 1.5])
+@pytest.mark.parametrize("timeout", [0, -1, 86400001, True, 1.5])
 async def test_invalid_direct_deadline_has_no_preflight_or_native_side_effect(monkeypatch, timeout):
     module = importlib.import_module("services.tools.run_tests")
     monkeypatch.setattr(

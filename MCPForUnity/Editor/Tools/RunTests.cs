@@ -46,9 +46,9 @@ namespace MCPForUnity.Editor.Tools
                         @params["runTimeoutMs"].Type != JTokenType.Integer
                         || !long.TryParse(@params["runTimeoutMs"].ToString(), out runTimeoutMs)
                         || runTimeoutMs < 1
-                        || runTimeoutMs > 600000
+                        || runTimeoutMs > 86400000
                     )
-                        return Task.FromResult<object>(new ErrorResponse("runTimeoutMs must be 1..600000 milliseconds."));
+                        return Task.FromResult<object>(new ErrorResponse("runTimeoutMs must be 1..86400000 milliseconds."));
                     if (!NativeTestRunControl.Available)
                         return Task.FromResult<object>(new ErrorResponse("unsupported_native_test_control"));
                 }
