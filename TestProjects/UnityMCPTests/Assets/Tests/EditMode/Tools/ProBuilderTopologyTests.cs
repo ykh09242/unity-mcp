@@ -197,6 +197,31 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void ComplexEngineSupportedFaceRetainsEveryTriangleIndex()
+        {
+            var indices = new List<int>();
+            foreach (object face in Faces())
+                indices.AddRange((IList<int>)faceType.GetProperty("indexes").GetValue(face));
+            Array faces = Array.CreateInstance(faceType, 1);
+            faces.SetValue(Activator.CreateInstance(faceType, new object[] { indices.ToArray() }), 0);
+            MethodInfo create = meshType.GetMethod(
+                "Create",
+                BindingFlags.Static | BindingFlags.Public,
+                null,
+                new[] { typeof(IEnumerable<Vector3>), typeof(IEnumerable<>).MakeGenericType(faceType) },
+                null
+            );
+            Component replacement = (Component)create.Invoke(null, new object[] { new List<Vector3>(Positions()), faces });
+            CaptureMesh();
+            UnityEngine.Object.DestroyImmediate(mesh.gameObject);
+            mesh = replacement;
+            CaptureMesh();
+            JObject page = Page("faces", 1);
+            Assert.That(indices.Count, Is.GreaterThan(512));
+            Assert.That(((JArray)page["items"][0]["indices"]).Count, Is.EqualTo(indices.Count));
+        }
+
+        [Test]
         public void EngineSupportedLargeMeshRetainsAllVerticesInTopology()
         {
             var positions = new List<Vector3>(Positions());

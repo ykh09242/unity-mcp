@@ -21,8 +21,8 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         private const int MaxFaces = 65536;
         private const int MaxIndices = 1048576;
         private const int MaxEdges = 262144;
-        private const int MaxFaceIndices = 512;
-        private const int MaxResponseBytes = 256 * 1024;
+        private const int MaxFaceIndices = 196608;
+        private const int MaxResponseBytes = 4 * 1024 * 1024;
         private static readonly string Session = Guid.NewGuid().ToString("N");
         private static readonly HashSet<string> GuardedActions = new HashSet<string>(StringComparer.Ordinal)
         {
