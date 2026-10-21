@@ -259,11 +259,29 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 Observe(runner.SubmitTask);
                 Observe(runner.PollTask);
                 ObserveDownload(runner.DownloadTask);
+                ObservePreparation(runner.PreparationTask);
             }
             Runners.Clear();
         }
 
         private static void ObserveDownload(Task<HttpResult> task)
+        {
+            if (task != null)
+                _ = task.ContinueWith(
+                    t =>
+                    {
+                        if (t.Status == TaskStatus.RanToCompletion)
+                            t.Result?.Dispose();
+                        else if (t.IsFaulted)
+                            _ = t.Exception;
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default
+                );
+        }
+
+        private static void ObservePreparation(Task<PreparedArtifact> task)
         {
             if (task != null)
                 _ = task.ContinueWith(
@@ -544,6 +562,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             AwaitPoll,
             Download,
             AwaitDownload,
+            AwaitPreparation,
             Import,
         }
 
@@ -576,6 +595,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             public Task<string> SubmitTask;
             public Task<ProviderPollResult> PollTask;
             public Task<HttpResult> DownloadTask;
+            public Task<PreparedArtifact> PreparationTask;
             public bool Canceled;
             public bool ImportInProgress;
         }
@@ -920,6 +940,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             r.OverrideExt = pr.ResultExt;
                             if (pr.InlineData != null && pr.InlineData.Length > 0)
                             {
+                                if (pr.InlineData.LongLength > PreparedArtifact.BackgroundThreshold)
+                                {
+                                    StartPreparation(r, new HttpResult { Body = pr.InlineData });
+                                    break;
+                                }
                                 r.LocalPath = WriteFile(r, pr.InlineData);
                                 r.Job.State = AssetGenJobState.Importing;
                                 Persist(r.Job);
@@ -976,6 +1001,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         }
                         HttpResult res = r.DownloadTask.Result;
                         r.DownloadTask = null;
+                        if (res?.IsSuccess == true && (res.DownloadedFile?.Length ?? res.Body?.LongLength ?? 0) > PreparedArtifact.BackgroundThreshold)
+                        {
+                            StartPreparation(r, res);
+                            break;
+                        }
                         using (res)
                         {
                             if (res == null || !res.IsSuccess || (res.DownloadedFile?.Length ?? res.Body?.LongLength ?? 0) == 0)
@@ -992,6 +1022,26 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         Persist(r.Job);
                         r.Phase = RunnerPhase.Import;
                         // Saved and importing checkpoints still surround the pipeline; no Unity update is inserted between them.
+                        Advance(r);
+                        break;
+
+                    case RunnerPhase.AwaitPreparation:
+                        if (!r.PreparationTask.IsCompleted)
+                            break;
+                        if (Faulted(r.PreparationTask, out string preparationError))
+                        {
+                            Fail(r, preparationError);
+                            break;
+                        }
+                        using (PreparedArtifact prepared = r.PreparationTask.Result)
+                        {
+                            r.PreparationTask = null;
+                            r.Job.Format = prepared.Extension;
+                            r.LocalPath = WriteValidatedFile(r, null, prepared.Length, prepared.Hash, prepared.Extension, prepared);
+                        }
+                        r.Job.State = AssetGenJobState.Importing;
+                        Persist(r.Job);
+                        r.Phase = RunnerPhase.Import;
                         Advance(r);
                         break;
 
@@ -1114,6 +1164,23 @@ namespace MCPForUnity.Editor.Services.AssetGen
             }
         }
 
+        private static void StartPreparation(Runner r, HttpResult input)
+        {
+            try
+            {
+                Admit(r);
+                // Snapshot primitives on the main thread. Workers own input and never capture the runner.
+                string root = Path.GetDirectoryName(Application.dataPath);
+                r.PreparationTask = PreparedArtifact.CreateAsync(input, root, r.Job.Kind, r.Job.Provider, r.Ext, r.OverrideExt, r.Cts.Token);
+                r.Phase = RunnerPhase.AwaitPreparation;
+            }
+            catch
+            {
+                input.Dispose();
+                throw;
+            }
+        }
+
         private static string WriteFile(Runner r, byte[] bytes)
         {
             if (bytes == null)
@@ -1126,36 +1193,14 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (!input.CanSeek || length <= 0 || length > AssetDownloadTransport.MaxDownloadBytes || input.Length != length)
                 throw new IOException("Provider artifact exceeds the 8 GiB limit or has changed length.");
-            input.Position = 0;
-            var header = new byte[(int)Math.Min(16, length)];
-            int headerRead = 0;
-            while (headerRead < header.Length)
-            {
-                int read = input.Read(header, headerRead, header.Length - headerRead);
-                if (read == 0)
-                    throw new EndOfStreamException();
-                headerRead += read;
-            }
-            input.Position = 0;
-            string chosen = !string.IsNullOrEmpty(r.OverrideExt) ? r.OverrideExt : r.Ext;
-            string ext = string.IsNullOrEmpty(chosen) ? "bin" : chosen.TrimStart('.').ToLowerInvariant();
-            if (!IsAllowedResultExtension(r.Job.Kind, ext))
-                throw new Exception($"provider returned a disallowed file type '.{ext}'");
-            if (r.Job.Kind == "image")
-            {
-                string actual = ImageResultFormat.FromBytes(header);
-                if (actual == "webp")
-                    throw new Exception("Provider returned WebP, which this Unity image importer does not support. Choose a PNG/JPEG model.");
-                if (actual != null)
-                    ext = actual;
+            string ext = PreparedArtifact.DetectExtension(input, r.Job.Kind, r.Job.Provider, r.Ext, r.OverrideExt);
+            if (r.Job.Kind == "image" || r.Job.Provider == "tripo")
                 r.Job.Format = ext;
-            }
-            if (r.Job.Kind == "model" && string.Equals(r.Job.Provider, "tripo", StringComparison.OrdinalIgnoreCase))
-            {
-                ext = TripoAdapter.ValidateModelStream(input, r.OverrideExt);
-                input.Position = 0;
-                r.Job.Format = ext;
-            }
+            return WriteValidatedFile(r, input, length, hash, ext);
+        }
+
+        private static string WriteValidatedFile(Runner r, Stream input, long length, string hash, string ext, PreparedArtifact prepared = null)
+        {
             Admit(r);
             string root = AssetGenPaths.ResolveOutputFolder(r.OutputFolder, r.Subfolder);
             string baseName = SanitizeName(r.Name);
@@ -1182,10 +1227,17 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 folders.EnsureFolder(root);
                 Admit(r);
                 string abs = AssetGenPaths.ToAbsolute(path);
-                FileStream stream;
+                FileStream stream = null;
                 try
                 {
-                    stream = new FileStream(abs, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    if (prepared != null)
+                    {
+                        if (MetadataOccupied(path))
+                            throw new RecoveryAbort("saved_asset_identity_changed");
+                        prepared.Publish(abs);
+                    }
+                    else
+                        stream = new FileStream(abs, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 }
                 catch (IOException) when (File.Exists(abs) || Directory.Exists(abs))
                 {
@@ -1195,26 +1247,27 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 folders.Complete();
                 r.Job.AssetPath = path;
                 r.LocalPath = path;
-                using (stream)
-                {
-                    Admit(r);
-                    if (MetadataOccupied(path))
-                        throw new RecoveryAbort("saved_asset_identity_changed");
-                    var buffer = new byte[64 * 1024];
-                    long copied = 0;
-                    int read;
-                    while ((read = input.Read(buffer, 0, buffer.Length)) != 0)
+                if (stream != null)
+                    using (stream)
                     {
                         Admit(r);
-                        if (read > length - copied)
-                            throw new IOException("Provider artifact changed length during publication.");
-                        stream.Write(buffer, 0, read);
-                        copied += read;
+                        if (MetadataOccupied(path))
+                            throw new RecoveryAbort("saved_asset_identity_changed");
+                        var buffer = new byte[64 * 1024];
+                        long copied = 0;
+                        int read;
+                        while ((read = input.Read(buffer, 0, buffer.Length)) != 0)
+                        {
+                            Admit(r);
+                            if (read > length - copied)
+                                throw new IOException("Provider artifact changed length during publication.");
+                            stream.Write(buffer, 0, read);
+                            copied += read;
+                        }
+                        if (copied != length)
+                            throw new IOException("Provider artifact ended during publication.");
+                        stream.Flush();
                     }
-                    if (copied != length)
-                        throw new IOException("Provider artifact ended during publication.");
-                    stream.Flush();
-                }
                 Admit(r);
                 CaptureMetadata(cp);
                 cp.Phase = "saved";
@@ -1371,6 +1424,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             Observe(r.SubmitTask);
             Observe(r.PollTask);
             ObserveDownload(r.DownloadTask);
+            ObservePreparation(r.PreparationTask);
             try
             {
                 r.Cts?.Dispose();
