@@ -52,10 +52,12 @@ def test_sdk_report_distinguishes_reviewed_dependencies_from_enabled_features():
     inactive = runtime_sdk_report(server)
     assert all(item["state"] == "inactive" for item in inactive["features"].values())
     server._test_job_tasks._closed = False
-    server._execution_receipts.store = object()
+    server._execution_receipts.store = SimpleNamespace(available=True)
     active = runtime_sdk_report(server)
     assert all(item["state"] == "active" for item in active["features"].values())
     assert len(json.dumps(active)) < 4096
+    server._execution_receipts.store.available = False
+    assert runtime_sdk_report(server)["features"]["execution_receipts"]["state"] == "unavailable"
 
 
 def test_sdk_report_sanitizes_metadata_and_never_reports_unsupported_features_active():
@@ -94,3 +96,27 @@ async def test_runtime_doctor_is_available_without_selecting_or_contacting_unity
     assert report["sdk"]["supported"] is True
     assert report["features"]["wait_tasks"]["state"] == "disabled"
     inject.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "grants,uri,allowed",
+    [
+        (["read"], "mcpforunity://doctor/runtime", True),
+        ([], "mcpforunity://doctor/runtime", False),
+        (["edit"], "mcpforunity://doctor/runtime", False),
+        (["read"], "mcpforunity://doctor/runtime/unknown", False),
+    ],
+)
+def test_runtime_doctor_retains_exact_scoped_read_authority(grants, uri, allowed):
+    from services.operation_permissions import (
+        authorize_resource,
+        parse_permissions,
+        OperationPermissionError,
+    )
+
+    authority = parse_permissions({"unity_mcp_permissions": grants}, strict=False)
+    if allowed:
+        authorize_resource(authority, uri)
+    else:
+        with pytest.raises(OperationPermissionError):
+            authorize_resource(authority, uri)

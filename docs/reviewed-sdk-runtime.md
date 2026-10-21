@@ -23,7 +23,8 @@ The original `mcpforunity://doctor` connection receipt and CLI shape stay unchan
 Startup logs include the same bounded dependency and configuration information.
 
 `disabled` means not configured; `sdk_unsupported` means an override does not match
-the reviewed set; `unavailable` means a requested adapter could not be installed;
+the reviewed set; `unavailable` means a requested adapter could not be installed
+or its local receipt store cannot accept operations;
 `inactive` means installed/configured but outside its active store/lifespan;
 `active` means that local runtime is open. None of these states proves authority,
 Unity readiness, job existence or result availability for a particular operation.

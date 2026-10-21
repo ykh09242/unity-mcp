@@ -365,7 +365,7 @@ _NATIVE_COMMANDS: Final = _names(
 ) | frozenset(_CAPABILITIES)
 _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"}
 _RESOURCE_PATHS: Final = _names(
-    "capabilities doctor tool-diagnostics custom-tools editor/active-tool editor/state scene/cameras scene/gameobject-api project/layers menu-items editor/prefab-stage prefab-api project/info pipeline/renderer-features rendering/stats editor/selection project/tags tests tool-groups instances scene/volumes editor/windows"
+    "capabilities doctor doctor/runtime tool-diagnostics custom-tools editor/active-tool editor/state scene/cameras scene/gameobject-api project/layers menu-items editor/prefab-stage prefab-api project/info pipeline/renderer-features rendering/stats editor/selection project/tags tests tool-groups instances scene/volumes editor/windows"
 )
 _RESOURCE_PATTERNS: Final = (
     re.compile(r"tool-diagnostics/[^/?#]+"),

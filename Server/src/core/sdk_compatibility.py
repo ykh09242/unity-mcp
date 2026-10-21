@@ -58,7 +58,7 @@ def runtime_sdk_report(server, *, version_reader=None) -> dict:
         "features": {
             "execution_receipts": feature(
                 configured_receipts,
-                receipts is not None,
+                receipts is not None and (receipts.store is None or receipts.store.available),
                 receipts is not None and receipts.store is not None and not receipts.closed,
             ),
             "wait_tasks": feature(
