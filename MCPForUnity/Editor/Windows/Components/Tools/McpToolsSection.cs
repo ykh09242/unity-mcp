@@ -11,6 +11,7 @@ using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine.UIElements;
@@ -399,6 +400,33 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             }
 
             details.Add(tagsContainer);
+            string feature = FeatureReadiness.FeatureForTool(tool.Name);
+            if (feature != null)
+            {
+                var evidence = new Label("Readiness has not been checked. Enabling a tool does not establish package or target readiness.");
+                evidence.AddToClassList("tool-item-description");
+                var check = new Button(() =>
+                {
+                    var state = FeatureReadiness.Capture()[feature];
+                    string package = state["package_name"]?.Value<string>();
+                    evidence.text =
+                        $"Snapshot: {state["status"]}. Reason: {state["reason"]}. "
+                        + $"Blockers: {state["blocking_reasons"]}. Next: {state["next_action"]}. "
+                        + (
+                            package == null
+                                ? $"Observed: {state["observed"]}. "
+                                : $"Package: {package} {state["package_version"]}. Required: {state["required_version"]}. "
+                        )
+                        + "Target-specific readiness remains unverified. Check again after changes.";
+                })
+                {
+                    text = "Check readiness",
+                    name = "readiness-check-" + tool.Name,
+                };
+                check.AddToClassList("secondary-button");
+                details.Add(check);
+                details.Add(evidence);
+            }
 
             if (tool.RequiresExplicitConsent)
             {

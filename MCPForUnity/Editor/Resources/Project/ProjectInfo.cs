@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -37,6 +38,9 @@ namespace MCPForUnity.Editor.Resources.Project
                     renderPipeline = RenderPipelineUtility.GetActivePipeline().ToString(),
                     activeInputHandler = GetActiveInputHandler(),
                     mcpPackage = CaptureDoctorPackageMetadata(),
+                    featureReadiness = @params?["include_readiness"]?.Type == JTokenType.Boolean && @params["include_readiness"].Value<bool>()
+                        ? FeatureReadiness.Capture()
+                        : null,
                     packages = new
                     {
                         ugui = IsPackageInstalled("com.unity.ugui"),

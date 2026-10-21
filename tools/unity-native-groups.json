@@ -108,6 +108,16 @@
       "disruptive": false,
       "platform_exclusions": {},
       "requires_graphics": true
+    },
+    "feature-readiness": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.FeatureReadinessTests.PackageEvidenceNeverTreatsInstallationAsTargetReadiness",
+        "MCPForUnityTests.Editor.Services.FeatureReadinessTests.DisabledToolAndBusyEditorRemainIndependentOfPackageSupport",
+        "MCPForUnityTests.Editor.Services.FeatureReadinessTests.PackageCacheInvalidatesAndDoesNotCacheFailedObservation",
+        "MCPForUnityTests.Editor.Services.FeatureReadinessTests.ProjectInfoReadinessIsOptInAndPreservesCurrentProjectState"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
     }
   }
 }

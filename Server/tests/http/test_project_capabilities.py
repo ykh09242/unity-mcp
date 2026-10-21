@@ -618,3 +618,71 @@ async def test_doctor_projection_and_native_metadata_preserve_complete_capabilit
     assert sorted(message["name"] for message in commands) == sorted(
         list(native_observations()) * 4
     )
+
+
+@pytest.mark.asyncio
+async def test_optional_feature_evidence_preserves_blockers_and_uses_existing_five_probes(
+    command_hub,
+):
+    observations = native_observations()
+    observations["get_project_info"]["featureReadiness"] = {
+        "cinemachine": {
+            "supported": False,
+            "ready": False,
+            "status": "unsupported",
+            "reason": "unsupported_package_version",
+            "tool_enabled": False,
+            "package_name": "com.unity.cinemachine",
+            "package_version": "2.10.1",
+            "required_version": "CinemachineCamera API (3.x or compatible)",
+            "blocking_reasons": ["unsupported_package_version", "tool_disabled"],
+            "next_action": "inspect_package_compatibility",
+        },
+        "build": {
+            "supported": False,
+            "ready": False,
+            "status": "unsupported",
+            "reason": "missing_platform_module",
+            "next_action": "inspect_build_modules",
+            "observed": {"target": "Android", "backend": "IL2CPP", "module_supported": False},
+        },
+        "netcode": {"supported": "true", "ready": True, "status": "ready"},
+    }
+    await install_native_replies(command_hub, observations)
+    async with Client(capability_server(), mode="legacy") as client:
+        data = await read_capabilities(client)
+    cm = data["features"]["cinemachine"]
+    assert cm["supported"] is False and cm["ready"] is False
+    assert cm["reason"] == "unsupported_package_version"
+    assert cm["blocking_reasons"] == ["unsupported_package_version", "tool_disabled"]
+    assert cm["package_version"] == "2.10.1"
+    assert data["features"]["build"]["observed"]["backend"] == "IL2CPP"
+    assert data["features"]["netcode"]["supported"] is None
+    assert data["features"]["netcode"]["ready"] is None
+    assert data["features"]["probuilder"]["reason"] == "not_observed"
+    execute = [message for message in command_hub.sent if message["type"] == "execute"]
+    assert len(execute) == 5
+    project = next(message for message in execute if message["name"] == "get_project_info")
+    assert project["params"] == {"include_readiness": True}
+
+
+@pytest.mark.asyncio
+async def test_feature_discovery_does_not_hide_busy_editor_or_treat_package_as_ready(command_hub):
+    observations = native_observations()
+    observations["get_editor_state"]["compilation"]["is_compiling"] = True
+    observations["get_project_info"]["featureReadiness"] = {
+        "probuilder": {
+            "supported": True,
+            "ready": True,
+            "status": "ready",
+            "reason": "preflight_required",
+        },
+    }
+    await install_native_replies(command_hub, observations)
+    async with Client(capability_server(), mode="legacy") as client:
+        data = await read_capabilities(client)
+    feature = data["features"]["probuilder"]
+    assert feature["supported"] is True
+    assert feature["ready"] is False
+    assert feature["status"] == "blocked"
+    assert "editor_busy" in feature["blocking_reasons"]
