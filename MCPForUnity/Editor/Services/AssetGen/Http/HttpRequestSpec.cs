@@ -17,5 +17,6 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
 
         /// <summary>Non-null for untrusted artifact downloads; selects the provider's outbound policy.</summary>
         public string DownloadProvider;
+        internal AssetOperationProgress DownloadProgress;
     }
 }

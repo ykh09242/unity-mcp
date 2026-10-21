@@ -87,6 +87,18 @@
       ],
       "disruptive": false,
       "platform_exclusions": {}
+    },
+    "asset-progress": {
+      "methods": [
+        "MCPForUnityTests.Editor.AssetGen.AssetGenJobManagerTests.ProgressObservation_QueuedAndCancellationDoNotDispatchOrInventUnits",
+        "MCPForUnityTests.Editor.AssetGen.AssetGenJobManagerTests.ProgressObservation_ProviderWaitingNeverClaimsOverallPercentage",
+        "MCPForUnityTests.Editor.AssetGen.AssetOperationProgressTests.PhaseCountsStayMonotonicAndLargeTotalsAreNotTruncated",
+        "MCPForUnityTests.Editor.AssetGen.AssetOperationProgressTests.ClosedObservationIgnoresLateWorkersAndFreezesElapsedTime",
+        "MCPForUnityTests.Editor.AssetGen.AssetOperationProgressTests.ChunkReportingHasNoManagedAllocationsAndMeasuresOverhead",
+        "MCPForUnityTests.Editor.AssetGen.AssetOperationProgressTests.RealStagedDownloadExposesBytesBeforeCompletionAndKeepsResult"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
     }
   }
 }

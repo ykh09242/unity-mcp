@@ -57,6 +57,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
         public string RecoveryCode;
         public string ProviderTaskId;
         public string ProviderPhase;
+
+        // Session-local telemetry is not a durable execution checkpoint.
+        [JsonIgnore]
+        internal AssetOperationProgress ProgressEvidence;
     }
 
     /// <summary>
@@ -155,6 +159,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             interrupted.Add(job);
                             continue;
                         }
+                        job.ProgressEvidence = new AssetOperationProgress();
+                        job.ProgressEvidence.Begin(AssetOperationPhase.Reconnecting);
                         var runner = RunnerFromCheckpoint(job, cp);
                         Runners[id] = runner;
                         job.RecoveryState = "resuming";
@@ -251,6 +257,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             {
                 try
                 {
+                    runner.Job.ProgressEvidence?.Stop();
                     runner.Cts.Cancel();
                     runner.Cts.Dispose();
                 }
@@ -520,6 +527,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 return false;
             if (Runners.TryGetValue(jobId, out var r))
             {
+                r.Job.ProgressEvidence?.RequestCancellation();
                 r.Canceled = true;
                 r.Job.State = AssetGenJobState.Canceled;
                 r.Job.RecoveryState = "terminal";
@@ -544,6 +552,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             }
             if (Jobs.TryGetValue(jobId, out var job) && job.State == AssetGenJobState.Queued)
             {
+                job.ProgressEvidence?.RequestCancellation();
                 job.State = AssetGenJobState.Canceled;
                 Persist(job);
                 return true;
@@ -718,6 +727,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 throw new OperationCanceledException();
             Admit(runner);
             runner.Checkpoint.Phase = "submitting";
+            runner.Job.ProgressEvidence?.Begin(AssetOperationPhase.Submitting);
             runner.Job.ProviderPhase = "submit";
             PersistRequired(job, runner.Checkpoint);
             Admit(runner);
@@ -883,6 +893,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         Reconnect(r);
                         break;
                     case RunnerPhase.Submit:
+                        r.Job.ProgressEvidence?.Begin(AssetOperationPhase.Preparing);
                         r.Job.State = AssetGenJobState.Running;
                         Persist(r.Job);
                         if (r.Job.Provider == "sketchfab")
@@ -916,6 +927,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         break;
 
                     case RunnerPhase.Poll:
+                        r.Job.ProgressEvidence?.Begin(AssetOperationPhase.WaitingProvider);
                         if (Now() < r.NextPollAt)
                             break;
                         r.PollTask = r.PollFn(r.ProviderJobId, r.Cts.Token);
@@ -978,6 +990,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         break;
 
                     case RunnerPhase.Download:
+                        r.Job.ProgressEvidence?.Begin(AssetOperationPhase.Downloading);
                         AssetDownloadPolicy.RequireAllowedUrl(r.Job.Provider, r.DownloadUrl);
                         r.DownloadTask = r.Transport.SendAsync(
                             new HttpRequestSpec
@@ -985,6 +998,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                                 Method = "GET",
                                 Url = r.DownloadUrl,
                                 DownloadProvider = r.Job.Provider,
+                                DownloadProgress = r.Job.ProgressEvidence,
                             },
                             r.Cts.Token
                         );
@@ -1046,6 +1060,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         break;
 
                     case RunnerPhase.Import:
+                        r.Job.ProgressEvidence?.Begin(AssetOperationPhase.Importing);
                         ValidateSaved(r);
                         Admit(r);
                         r.Checkpoint.Phase = "importing";
@@ -1067,6 +1082,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             return;
                         if (imported != null && !ReferenceEquals(imported, r.Job))
                         {
+                            imported.ProgressEvidence = r.Job.ProgressEvidence;
                             r.Job = imported;
                             Jobs[r.Job.JobId] = imported;
                         }
@@ -1166,6 +1182,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static void StartPreparation(Runner r, HttpResult input)
         {
+            r.Job.ProgressEvidence?.Begin(AssetOperationPhase.Preparing);
             try
             {
                 Admit(r);
@@ -1414,6 +1431,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (!Runners.TryGetValue(r.Job.JobId, out var current) || !ReferenceEquals(current, r))
                 return;
+            r.Job.ProgressEvidence?.Stop();
             Runners.Remove(r.Job.JobId);
             try
             {
@@ -1442,11 +1460,14 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 Action = action,
                 State = AssetGenJobState.Queued,
                 Progress = 0f,
+                ProgressEvidence = new AssetOperationProgress(),
             };
         }
 
         private static void PersistRequired(AssetGenJob job, AssetGenJobCheckpoint checkpoint)
         {
+            if (IsTerminal(job.State) && !Runners.ContainsKey(job.JobId))
+                job.ProgressEvidence?.Stop();
             try
             {
                 if (checkpoint != null)
@@ -1476,6 +1497,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static void Persist(AssetGenJob job)
         {
+            if (IsTerminal(job.State) && !Runners.ContainsKey(job.JobId))
+                job.ProgressEvidence?.Stop();
             TrackJob(job);
             try
             {

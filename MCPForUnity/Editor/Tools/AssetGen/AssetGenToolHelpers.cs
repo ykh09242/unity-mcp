@@ -38,6 +38,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             recovery_code = job.RecoveryCode,
                             provider_task_id = job.ProviderTaskId,
                             provider_phase = job.ProviderPhase,
+                            progress_detail = job.ProgressEvidence?.Read(),
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
@@ -55,6 +56,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             recovery_code = job.RecoveryCode,
                             provider_task_id = job.ProviderTaskId,
                             provider_phase = job.ProviderPhase,
+                            progress_detail = job.ProgressEvidence?.Read(),
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
@@ -72,6 +74,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             recovery_code = job.RecoveryCode,
                             provider_task_id = job.ProviderTaskId,
                             provider_phase = job.ProviderPhase,
+                            progress_detail = job.ProgressEvidence?.Read(),
                             asset_path = job.AssetPath,
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
@@ -80,7 +83,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     );
                 default:
                     return new PendingResponse(
-                        $"{kindLabel} {job.State.ToString().ToLowerInvariant()} ({job.Progress:P0}).",
+                        $"{kindLabel} {job.State.ToString().ToLowerInvariant()}.",
                         pollIntervalSeconds: pollIntervalSeconds,
                         data: new
                         {
@@ -89,6 +92,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             recovery_code = job.RecoveryCode,
                             provider_task_id = job.ProviderTaskId,
                             provider_phase = job.ProviderPhase,
+                            progress_detail = job.ProgressEvidence?.Read(),
                             state = job.State.ToString().ToLowerInvariant(),
                             progress = job.Progress,
                         }
