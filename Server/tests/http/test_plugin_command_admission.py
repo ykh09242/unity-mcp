@@ -5,6 +5,7 @@ import json
 import sys
 import time
 from collections.abc import AsyncIterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -96,36 +97,58 @@ async def start_command(session: str, params: dict | None = None, *, user="alice
             await asyncio.gather(task, return_exceptions=True)
 
 
+@contextmanager
+def observe_command_futures():
+    loop = asyncio.get_running_loop()
+    create_future = loop.create_future
+    observed = SimpleNamespace(count=0)
+
+    def counted_create_future():
+        if sys._getframe(1).f_code is PluginHub._send_command.__func__.__code__:
+            observed.count += 1
+        return create_future()
+
+    loop.create_future = counted_create_future
+    try:
+        yield observed
+    finally:
+        loop.create_future = create_future
+
+
 async def reject_without_send(
     session: str, socket: AsyncMock, params: dict, *, user="alice"
 ) -> dict:
     before_pending = len(PluginHub._pending)
     before_sends = socket.send_json.await_count
-    loop = asyncio.get_running_loop()
-    create_future = loop.create_future
-    command_futures = 0
+    with observe_command_futures() as observed:
+        task = asyncio.create_task(_send_command(session, "run_tests", params, user=user))
+        try:
+            # Authentication and scheduler latency precede admission. Pending-Future and
+            # send counts below prove refusal; this separate guard only detects runaway work.
+            async with asyncio.timeout(10):
+                result = await task
+            assert result["success"] is False
+            assert len(PluginHub._pending) == before_pending
+            assert socket.send_json.await_count == before_sends
+            assert observed.count == 0, "Rejected command must not allocate its pending Future"
+            return result
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
-    def counted_create_future():
-        nonlocal command_futures
-        if sys._getframe(1).f_code is PluginHub.send_command.__func__.__code__:
-            command_futures += 1
-        return create_future()
 
-    loop.create_future = counted_create_future
-    task = asyncio.create_task(_send_command(session, "run_tests", params, user=user))
-    try:
-        done, _ = await asyncio.wait({task}, timeout=0.1)
-        assert task in done, "Overloaded commands must finish without waiting for Unity"
-        result = task.result()
-        assert result["success"] is False
-        assert len(PluginHub._pending) == before_pending
-        assert socket.send_json.await_count == before_sends
-        assert command_futures == 0, "Rejected command must not allocate its pending Future"
-        return result
-    finally:
-        loop.create_future = create_future
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+@pytest.mark.asyncio
+async def test_future_observer_counts_an_actually_admitted_command(admission_hub):
+    socket = await register_socket(admission_hub, "a", "alice")
+    with observe_command_futures() as observed:
+        task = await start_command("a")
+        try:
+            assert len(PluginHub._pending) == socket.send_json.await_count == 1
+            assert observed.count == 1, "Positive control must observe the real pending owner"
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert PluginHub._pending == {}
 
 
 @pytest.mark.asyncio
