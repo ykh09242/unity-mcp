@@ -19,7 +19,8 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("execute_code", AutoRegister = false, RequiresExplicitConsent = true, Group = "scripting_ext")]
     public static class ExecuteCode
     {
-        private const int MaxCodeLength = 50000;
+        private const int MaxCodeLength = 512 * 1024;
+        private const int MaxHistoryCodeCharacters = 8 * 1024 * 1024;
         private const int MaxHistoryEntries = 50;
         private const int MaxHistoryCodePreview = 500;
         internal const int WrapperLineOffset = 11;
@@ -32,6 +33,7 @@ namespace MCPForUnity.Editor.Tools
         private const string ActionReplay = "replay";
 
         private static readonly List<HistoryEntry> _history = new List<HistoryEntry>();
+        private static int _historyCodeCharacters;
         private static string[] _cachedAssemblyPaths;
         private static string[] _cachedCodeDomAssemblyPaths;
         private static int _assemblyGeneration;
@@ -198,6 +200,7 @@ namespace MCPForUnity.Editor.Tools
         {
             int count = _history.Count;
             _history.Clear();
+            _historyCodeCharacters = 0;
             return new SuccessResponse($"Cleared {count} history entries.");
         }
 
@@ -697,8 +700,12 @@ namespace MCPForUnity.Editor.Tools
                 }
             );
 
-            while (_history.Count > MaxHistoryEntries)
+            _historyCodeCharacters += code.Length;
+            while (_history.Count > MaxHistoryEntries || _historyCodeCharacters > MaxHistoryCodeCharacters)
+            {
+                _historyCodeCharacters -= _history[0].code.Length;
                 _history.RemoveAt(0);
+            }
         }
 
         private static object SerializeResult(object result)
