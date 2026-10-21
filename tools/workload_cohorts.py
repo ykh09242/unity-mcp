@@ -18,6 +18,8 @@ HARNESS = (
     "tools/experiments/service_optimizations/shared_read.py",
     "tools/experiments/service_optimizations/ServiceOptimizationProbes.cs",
     "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Helpers/WorkloadProbe.cs",
+    "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Helpers/WorkloadObservations.cs",
+    "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/BatchTargetPreviewTests.cs",
     "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/ManageSceneHierarchyPagingTests.cs",
     "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/ReferenceDiagnosticsTests.cs",
     "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/BuildReportPersistenceTests.cs",
@@ -56,6 +58,80 @@ def number(value, *, positive=False, signed=False):
     return value
 
 
+def validate_memory_point(point):
+    if not isinstance(point, dict) or not re.fullmatch(r"[0-9a-f]{32}", point.get("domain", "")):
+        raise ValueError("Missing memory observation domain")
+    number(point.get("post_idle_managed_bytes"))
+    owners = point.get("owner_counts")
+    if not isinstance(owners, dict) or not all(
+        isinstance(k, str) and type(v) is int and v >= 0 for k, v in owners.items()
+    ):
+        raise ValueError("Invalid owner counters")
+    for key in ("working_set_bytes", "process_handle_count"):
+        if point.get(key) is not None:
+            number(point[key])
+
+
+def validate_observations(row):
+    if (
+        row.get("observation_schema") != "editor-update-retention-v1"
+        or row.get("observer_released") is not True
+    ):
+        raise ValueError("Unknown or unreleased observation owner")
+    baseline = row.get("baseline")
+    validate_memory_point(baseline)
+    points = row.get("observations")
+    if not isinstance(points, list) or len(points) != len(row["samples"]):
+        raise ValueError("Missing repeated run/idle observations")
+    for i, point in enumerate(points):
+        validate_memory_point(point)
+        if (
+            type(point.get("run_index")) is not int
+            or point["run_index"] != i
+            or point["domain"] != baseline["domain"]
+        ):
+            raise ValueError("Observation order or domain differs")
+        if type(point.get("editor_update_count")) is not int or point["editor_update_count"] < 1:
+            raise ValueError("No real Editor update observed")
+        number(point.get("editor_update_gap_ms"), positive=True)
+        peak = number(point.get("sampled_peak_managed_bytes"))
+        after = number(point.get("after_work_managed_bytes"))
+        if peak < max(after, point["post_idle_managed_bytes"]):
+            raise ValueError("Sampled peak is below its observed points")
+        if set(point["owner_counts"]) != set(baseline["owner_counts"]):
+            raise ValueError("Owner counter coverage changed")
+    if row.get("main_thread_stall_ms") != max(p["editor_update_gap_ms"] for p in points):
+        raise ValueError("Update-gap summary does not match observed intervals")
+    if (
+        row.get("retained_managed_delta_bytes")
+        != points[-1]["post_idle_managed_bytes"] - baseline["post_idle_managed_bytes"]
+    ):
+        raise ValueError("Retained delta disagrees with observation series")
+
+
+def retention_summary(points, baseline=None):
+    retained = [point["post_idle_managed_bytes"] for point in points]
+    tail = retained[-3:]
+    band = max(1_048_576, statistics.median(tail) * 0.01)
+    owners = baseline["owner_counts"] if baseline else points[0]["owner_counts"]
+    return {
+        "post_idle_managed_bytes": retained,
+        "sampled_peak_managed_bytes": max(
+            (p.get("sampled_peak_managed_bytes", 0) for p in points), default=None
+        )
+        or None,
+        "process_handle_counts": [p.get("process_handle_count") for p in points],
+        "working_set_bytes": [p.get("working_set_bytes") for p in points],
+        "owner_counts": [p["owner_counts"] for p in points],
+        "owner_counts_unchanged": all(p["owner_counts"] == owners for p in points),
+        "plateau": "within_observed_band"
+        if len(tail) == 3 and max(tail) - min(tail) <= band
+        else "not_established",
+        "advisory_band_bytes": band,
+        "meaning": "Last three observed post-idle samples only; not proof of leak absence.",
+    }
+
+
 def validate_raw(row, manifest):
     if row.get("schema") != "unity-mcp-workload-raw-v1" or row.get("completed") is not True:
         raise ValueError("Workload did not complete")
@@ -84,6 +160,20 @@ def validate_raw(row, manifest):
             raise ValueError("Reload evidence is duplicated or invalid")
         if row.get("samples") != []:
             raise ValueError("Reload XML is correctness evidence, not latency")
+        if "reload_observations" in row:
+            points = row["reload_observations"]
+            if len(points) != expected:
+                raise ValueError("Missing repeated reload memory observations")
+            for pair in points:
+                if not isinstance(pair, list) or len(pair) != 2:
+                    raise ValueError("Incomplete reload observation pair")
+                for point in pair:
+                    validate_memory_point(point)
+                if [p.get("phase") for p in pair] != [
+                    "before_reload",
+                    "after_reload_cleanup",
+                ] or pair[0]["domain"] == pair[1]["domain"]:
+                    raise ValueError("Reload observation did not cross a real domain")
         return
     samples = row.get("samples", [])
     if sum(s.get("preparation") == "warm" for s in samples) < 3:
@@ -109,6 +199,11 @@ def validate_raw(row, manifest):
             number(row[key])
     if row.get("retained_managed_delta_bytes") is not None:
         number(row["retained_managed_delta_bytes"], signed=True)
+    if any(
+        key in row
+        for key in ("observation_schema", "observations", "baseline", "observer_released")
+    ):
+        validate_observations(row)
 
 
 def summarize(row):
@@ -137,6 +232,13 @@ def summarize(row):
         s["main_thread_work_ms"] for s in row["samples"] if s.get("main_thread_work_ms") is not None
     ]
     result["max_main_thread_work_ms"] = max(work, default=None)
+    result["retention"] = (
+        retention_summary(row["observations"], row["baseline"]) if "observations" in row else None
+    )
+    if row.get("reload_observations"):
+        result["reload_retention"] = retention_summary(
+            [pair[-1] for pair in row["reload_observations"]]
+        )
     return result
 
 
@@ -275,6 +377,7 @@ def capture(
             raise ValueError("Reload capture requires three runs and a native environment cohort")
         required = manifest["scenarios"]["repeated_reload"]["producer"]
         identities, hashes, projects = set(), [], set()
+        reload_observations = []
         expected_files = {f["path"]: f["sha256"] for f in frozen["files"]}
         for directory in reload_runs:
             directory = Path(directory)
@@ -298,6 +401,20 @@ def capture(
                 raise ValueError("Reload invocation identity differs")
             if check_results(directory / reload_results_name, "success", required):
                 raise ValueError("Actual reload verification failed")
+            observation_path = directory / "workload/reload-retention.json"
+            if observation_path.exists():
+                pair = json.loads(observation_path.read_text(encoding="utf-8"))
+                if not isinstance(pair, list) or any(
+                    p.get("inputs_sha256") != digest(directory / "inputs.json") for p in pair
+                ):
+                    raise ValueError("Reload observations are bound to different inputs")
+                reload_observations.append(pair)
+                evidence.append(
+                    {
+                        "name": directory.name + "/workload/reload-retention.json",
+                        "sha256": digest(observation_path),
+                    }
+                )
             identities.add(invocation["runId"])
             projects.add(invocation["project"])
             hashes.append(digest(directory / reload_results_name))
@@ -323,6 +440,8 @@ def capture(
             "evidence_sha256": hashes,
             "samples": [],
         }
+        if reload_observations:
+            reload["reload_observations"] = reload_observations
         validate_raw(reload, manifest)
         rows.append(reload)
     present = {(r["scenario"], r["variant"]) for r in rows}

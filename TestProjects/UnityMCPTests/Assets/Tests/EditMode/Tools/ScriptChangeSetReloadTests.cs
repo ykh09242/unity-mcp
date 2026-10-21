@@ -23,6 +23,7 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 ScriptChangeSetReloadScenario.Begin();
+                yield return WorkloadProbe.RecordReloadIdle("before_reload");
                 EditorUtility.RequestScriptReload();
                 yield return new WaitForDomainReload();
                 ScriptChangeSetReloadScenario.VerifyAndRecover();
@@ -31,6 +32,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 ScriptChangeSetReloadScenario.Cleanup();
             }
+            yield return WorkloadProbe.RecordReloadIdle("after_reload_cleanup");
         }
     }
 

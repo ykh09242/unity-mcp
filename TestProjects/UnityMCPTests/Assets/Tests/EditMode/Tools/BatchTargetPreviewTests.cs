@@ -320,6 +320,54 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [Test, Explicit("Controller-owned update/retention cohort using complete 128 MiB previews.")]
+        public async Task LargePreviewCohortObservesUpdatesAndRetainedOwners()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                Assert.Ignore("Cooperative file hashing currently has the Windows read-sharing guarantee.");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                string path = LargeAsset(128);
+                var commands = new JArray(Move(path, folder + "/Moved.txt"));
+                JToken expected = Guard(Preview(commands));
+                int pending = 0;
+                await WorkloadProbe.RunObservedAsync(
+                    "batch_preview",
+                    "strong_file",
+                    128 * 1024 * 1024,
+                    async () =>
+                    {
+                        pending++;
+                        try
+                        {
+                            var result = JObject.FromObject(
+                                await CommandRegistry.InvokeCommandAsync(
+                                    "batch_validate",
+                                    new JObject { ["commands"] = commands, ["previewScope"] = "targets" }
+                                )
+                            );
+                            Assert.IsTrue(JToken.DeepEquals(expected, Guard(result)));
+                            Assert.AreEqual(128L * 1024 * 1024, new FileInfo(path).Length);
+                            using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                            Assert.IsFalse(File.Exists(folder + "/Moved.txt"));
+                            // Include the strong source/meta descriptor; no output truncation.
+                            return Guard(result).ToString(Newtonsoft.Json.Formatting.None);
+                        }
+                        finally
+                        {
+                            pending--;
+                        }
+                    },
+                    () => new Dictionary<string, long> { ["pending_previews"] = pending, ["owned_files"] = Directory.GetFiles(folder).Length }
+                );
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
         [Test, Explicit("Controller-owned large-file A/B measurement; ordinary regressions use smaller files.")]
         public async Task LargeAssetPreviewMeasurementPreservesStrongRevision()
         {
