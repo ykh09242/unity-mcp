@@ -490,9 +490,12 @@ async def test_registered_tool_reports_capacity_through_public_sdk(admission_hub
         try:
             before = socket.send_json.await_count
             response = await asyncio.wait_for(
-                client.call_tool("run_tests", {"clear_stuck": True, "unity_instance": "a"}),
+                client.call_tool(
+                    "run_tests", {"clear_stuck": True, "unity_instance": "a"}, raise_on_error=False
+                ),
                 sdk_watchdog_seconds,
             )
+            assert response.is_error is True
             result = json.loads(response.content[0].text)
             assert result["success"] is False
             assert result["data"]["reason"] == "command_capacity"
