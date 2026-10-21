@@ -113,6 +113,69 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void LargeActionDocumentPreservesAllNativeIdentities()
+        {
+            var maps = new JArray();
+            for (int mapIndex = 0; mapIndex < 40; mapIndex++)
+            {
+                var actions = new JArray();
+                var bindings = new JArray();
+                for (int index = 0; index < 10; index++)
+                {
+                    string name = "Action" + index;
+                    actions.Add(
+                        new JObject
+                        {
+                            ["name"] = name,
+                            ["id"] = Guid.NewGuid().ToString("D"),
+                            ["type"] = "Button",
+                        }
+                    );
+                    for (int bindingIndex = 0; bindingIndex < 4; bindingIndex++)
+                        bindings.Add(
+                            new JObject
+                            {
+                                ["name"] = "",
+                                ["id"] = Guid.NewGuid().ToString("D"),
+                                ["action"] = name,
+                                ["path"] = "<Keyboard>/space",
+                                ["groups"] = "Group" + bindingIndex,
+                                ["isComposite"] = false,
+                                ["isPartOfComposite"] = false,
+                            }
+                        );
+                }
+                maps.Add(
+                    new JObject
+                    {
+                        ["name"] = "Map" + mapIndex,
+                        ["id"] = Guid.NewGuid().ToString("D"),
+                        ["actions"] = actions,
+                        ["bindings"] = bindings,
+                    }
+                );
+            }
+            var document = new JObject
+            {
+                ["name"] = "Controls",
+                ["maps"] = maps,
+                ["controlSchemes"] = new JArray(),
+            };
+            File.WriteAllText(AssetPathUtility.GetFullAssetPath(path), document.ToString());
+            Assert.Greater(new FileInfo(AssetPathUtility.GetFullAssetPath(path)).Length, 256 * 1024);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            JObject data = Succeed("read");
+            Assert.IsNotNull(data["revision"]);
+            Assert.AreEqual(40, ((JArray)NativeJson()["maps"]).Count);
+            JObject added = Edit("add_map", new JObject { ["name"] = "ExtraMap" });
+            Assert.IsNotNull(added["created_id"]);
+            JObject native = NativeJson();
+            Assert.AreEqual(41, ((JArray)native["maps"]).Count);
+            for (int index = 0; index < 40; index++)
+                Assert.AreEqual((string)maps[index]["id"], (string)native["maps"][index]["id"]);
+        }
+
+        [Test]
         public void Author_MapAndTwoBindings_ReimportPreservesNativeIds()
         {
             // Given an actual imported action asset and its first map/action/binding.
