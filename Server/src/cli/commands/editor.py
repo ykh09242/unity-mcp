@@ -554,11 +554,21 @@ def run_tests(
                 print_info("Poll with: unity-mcp editor poll-test " + job_id)
             return
 
-    if wait and result.get("success"):
-        job_id = result.get("data", {}).get("job_id")
-        if job_id:
-            poll_test.callback(job_id, wait, details, failed_only)
-            return
+    if wait and wait > 0 and result.get("success"):
+        data = result.get("data")
+        job_id = data.get("job_id") if isinstance(data, dict) else None
+        if not isinstance(job_id, str) or not job_id.strip():
+            raise UnityCommandError(
+                {
+                    "success": False,
+                    "code": "invalid_test_job_response",
+                    "error": "Test start did not return a job identity to observe.",
+                    "data": data,
+                    "hint": "Check existing test jobs before starting another run.",
+                }
+            )
+        poll_test.callback(job_id, wait, details, failed_only)
+        return
 
     click.echo(format_output(result, config.format))
 
@@ -626,38 +636,43 @@ def poll_test(
         params["cursor"] = cursor
 
     deadline = time.monotonic() + max(wait, 0)
+    exit_code = 0
     if wait > 0:
         result = run_command("get_test_job", params, config, timeout=min(config.timeout, wait))
-        if time.monotonic() >= deadline:
-            result = {
-                "success": False,
-                "error": "Timeout waiting for test job",
-                "data": {"job_id": job_id},
-            }
     else:
         result = run_command("get_test_job", params, config)
     while wait > 0 and result.get("success"):
-        data = result.get("data")
-        if not isinstance(data, dict):
-            break
-        status = data.get("status")
-        if not status:
-            break
-        if status in ("succeeded", "failed", "cancelled"):
-            break
         remaining = deadline - time.monotonic()
         if remaining <= 0:
+            result = {
+                "success": False,
+                "code": "test_wait_timeout",
+                "error": "Timeout waiting for test job",
+                "data": result.get("data"),
+                "hint": "Only the CLI wait expired; the Unity job was not cancelled. Poll its status before deciding what to do next.",
+            }
+            exit_code = 124
+            break
+        data = result.get("data")
+        status = data.get("status") if isinstance(data, dict) else None
+        if not isinstance(status, str) or not status:
+            result = {
+                "success": False,
+                "code": "invalid_test_job_response",
+                "error": "Test job observation did not include a status.",
+                "data": data,
+            }
+            break
+        if status in ("succeeded", "failed", "cancelled"):
+            exit_code = 0 if status == "succeeded" else 1
             break
         time.sleep(min(2.0, remaining))
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            break
-        response = run_command(
-            "get_test_job", params, config, timeout=min(config.timeout, remaining)
-        )
-        if time.monotonic() >= deadline:
-            break
-        result = response
+            continue
+        result = run_command("get_test_job", params, config, timeout=min(config.timeout, remaining))
+    if not result.get("success") and exit_code == 0:
+        exit_code = 1
     click.echo(format_output(result, config.format))
 
     if isinstance(result, dict) and result.get("success") and config.format != "json":
@@ -680,6 +695,9 @@ def poll_test(
             completed = progress.get("completed", 0)
             total = progress.get("total", 0)
             print_info(f"Tests running: {completed}/{total}")
+
+    if exit_code:
+        sys.exit(exit_code)
 
 
 @editor.command("refresh")
