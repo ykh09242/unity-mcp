@@ -319,7 +319,7 @@ namespace MCPForUnity.Editor.Tools
             return new JObject
             {
                 ["keys"] = new JArray("object:" + target.GetInstanceIDCompat()),
-                ["scene"] = target.scene.handle,
+                ["scene"] = SceneIdentity(target.scene),
                 ["scenePath"] = target.scene.path,
                 ["name"] = target.name,
                 ["active"] = target.activeSelf,
@@ -328,6 +328,15 @@ namespace MCPForUnity.Editor.Tools
                 ["transformDirty"] = EditorUtility.GetDirtyCount(target.transform),
                 ["components"] = new JArray(target.GetComponents<Component>().Select(c => c == null ? 0 : c.GetInstanceIDCompat())),
             };
+        }
+
+        private static JValue SceneIdentity(Scene scene)
+        {
+#if UNITY_6000_4_OR_NEWER
+            return new JValue(scene.handle.GetRawData());
+#else
+            return new JValue((int)scene.handle);
+#endif
         }
 
         private static JArray Vector(Vector3 value) => new JArray(value.x, value.y, value.z);
