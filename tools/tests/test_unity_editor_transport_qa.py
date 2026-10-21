@@ -48,19 +48,40 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         parent.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="held-process-", dir=parent)
         self.output = Path(self.temporary.name).resolve()
-        self.project = self.output / "project"
-        self.project.mkdir()
+        self.project = self.output / "snapshot/isolated/project"
+        self.project.mkdir(parents=True)
+        self.xml = None
+        self.source = self.output / "snapshot/input.cs"
+        self.source.write_text("class Input {}")
         self.editor = self.output / "fake-editor.exe"
         self.editor.write_bytes(b"")
-        (self.output / "preparation.json").write_text(
-            json.dumps({"projectAbsolute": str(self.project)})
+        (self.output / "source.json").write_text(json.dumps({"ref": "a" * 40}))
+        self.prep = {"projectAbsolute": str(self.project), "unityVersion": "6000.0.69f1"}
+        self.prep["inputs"] = qa.capture_inputs(self.output, self.prep, self.editor)
+        (self.output / "preparation.json").write_text(json.dumps(self.prep))
+        self.groups = self.output / "selection.json"
+        self.groups.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "groups": {
+                        "owned": {
+                            "methods": ["OwnedFixture.Criterion"],
+                            "disruptive": False,
+                            "platform_exclusions": {},
+                        }
+                    },
+                }
+            )
         )
         self.args = SimpleNamespace(
             output=str(self.output),
             editor=self.editor,
             isolation_verified=True,
             label="fake",
-            filter="OwnedFixture",
+            filter=None,
+            groups_manifest=self.groups,
+            group=["owned"],
             timeout=1,
             stdio_command_timeout_ms=None,
         )
@@ -69,17 +90,24 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def passed_xml(self):
-        (self.output / "fake-results.xml").write_text(
-            '<test-run result="Passed" total="1" passed="1" failed="0" skipped="0">'
+        self.xml = (
+            '<test-run result="Passed" total="1" passed="1" failed="0" skipped="0" inconclusive="0">'
             '<test-case fullname="OwnedFixture.Criterion" result="Passed"/></test-run>'
         )
+
+    def spawn(self, process):
+        if self.xml is not None:
+            (self.output / "fake-results.xml").write_text(self.xml)
+        return process
 
     def record(self):
         return json.loads((self.output / "fake-launch.json").read_text())
 
     def run_fake(self, process):
         with (
-            patch.object(qa.subprocess, "Popen", return_value=process) as popen,
+            patch.object(
+                qa.subprocess, "Popen", side_effect=lambda *a, **k: self.spawn(process)
+            ) as popen,
             redirect_stdout(io.StringIO()),
         ):
             result = qa.launch(self.args)
@@ -137,7 +165,7 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.assertEqual("RuntimeError", self.record()["exceptionType"])
 
     def test_invalid_xml_is_blocked_and_does_not_pass_from_exit_alone(self):
-        (self.output / "fake-results.xml").write_text("<partial")
+        self.xml = "<partial"
         process = OwnedFakeProcess([0])
         self.assertEqual(3, self.run_fake(process))
         self.assertEqual("BLOCKED", self.record()["status"])
@@ -154,7 +182,9 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
             },
         ):
             with (
-                patch.object(qa.subprocess, "Popen", return_value=process) as popen,
+                patch.object(
+                    qa.subprocess, "Popen", side_effect=lambda *a, **k: self.spawn(process)
+                ) as popen,
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(0, qa.launch(self.args))
@@ -165,12 +195,66 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
             self.assertEqual("do-not-forward", qa.os.environ["UNITY_MCP_ALLOW_BATCH"])
             self.assertEqual(1000, self.record()["stdioCommandTimeoutMs"])
 
+    def test_settings_capture_failure_does_not_launch_editor(self):
+        (self.project / "ProjectSettings").mkdir()
+        with (
+            patch.object(qa, "tree_files", side_effect=OSError("settings unavailable")),
+            patch.object(qa.subprocess, "Popen", return_value=OwnedFakeProcess([0])) as popen,
+        ):
+            with self.assertRaises(OSError):
+                qa.launch(self.args)
+        self.assertEqual(0, popen.call_count)
+
+    def test_partial_method_selection_cannot_pass(self):
+        self.passed_xml()
+        data = json.loads(self.groups.read_text())
+        data["groups"]["owned"]["methods"].append("OwnedFixture.Missing")
+        self.groups.write_text(json.dumps(data))
+        self.assertEqual(2, self.run_fake(OwnedFakeProcess([0])))
+        self.assertEqual("FAIL", self.record()["status"])
+
+    def test_stale_xml_is_rejected_before_starting_editor(self):
+        (self.output / "fake-results.xml").write_text("old evidence")
+        with patch.object(qa.subprocess, "Popen") as popen:
+            with self.assertRaises(ValueError):
+                qa.launch(self.args)
+        popen.assert_not_called()
+
+    def test_changed_source_is_rejected_before_starting_editor(self):
+        self.source.write_text("class Changed {}")
+        with patch.object(qa.subprocess, "Popen") as popen:
+            with self.assertRaises(ValueError):
+                qa.launch(self.args)
+        popen.assert_not_called()
+
+    def test_source_changed_during_run_cannot_be_pass(self):
+        self.passed_xml()
+        process = OwnedFakeProcess([0])
+        original = process.wait
+
+        def mutate(timeout):
+            self.source.write_text("class ChangedDuringRun {}")
+            return original(timeout)
+
+        process.wait = mutate
+        self.assertEqual(3, self.run_fake(process))
+        self.assertEqual("BLOCKED", self.record()["status"])
+
+    def test_partial_filter_is_rejected_before_starting_editor(self):
+        self.args.filter = "OwnedFixture"
+        with patch.object(qa.subprocess, "Popen") as popen:
+            with self.assertRaises(ValueError):
+                qa.launch(self.args)
+        popen.assert_not_called()
+
     def test_owned_integration_opt_in_changes_child_environment_only(self):
         self.passed_xml()
         process = OwnedFakeProcess([0])
         with patch.dict(qa.os.environ, {"UNITY_MCP_OWNED_TRANSPORT_TESTS": "disabled"}):
             with (
-                patch.object(qa.subprocess, "Popen", return_value=process) as popen,
+                patch.object(
+                    qa.subprocess, "Popen", side_effect=lambda *a, **k: self.spawn(process)
+                ) as popen,
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(0, qa.launch(self.args))

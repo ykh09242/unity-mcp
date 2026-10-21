@@ -125,7 +125,9 @@ async def test_captured_ordinary_get_test_job_oracle(
     command_hub.websocket.send_json = answer
     async with Client(server, mode="legacy") as client:
         await client.call_tool("select_fixture")
-        monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 2 if case == "inner_running" else 0.08)
+        # Only outer-deadline cases intentionally race an 80ms deadline. Ordinary
+        # result/inner-wait assertions must survive shared CI scheduling delays.
+        monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.08 if case.startswith("outer_") else 2)
         result = await client.call_tool_mcp("get_test_job", {"job_id": case, "wait_timeout": 1})
     native = [message for message in command_hub.sent if message["type"] == "execute"]
     assert len(native) == 1

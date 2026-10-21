@@ -302,16 +302,36 @@ def test_malformed_active_large_transfer_closes_only_its_socket(client, kind):
 def test_original_command_deadline_releases_partial_bytes_and_late_data_is_ignored(
     client, monkeypatch
 ):
-    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.2)
+    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 30)
+    timeout_at = asyncio.timeout_at
+    guards = []
+
+    def capture_deadline(deadline):
+        guard = timeout_at(deadline)
+        guards.append(guard)
+        return guard
+
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:
         sid, _, _ = register(wire, capabilities=FEATURES)
+        monkeypatch.setattr(asyncio, "timeout_at", capture_deadline)
         task, cid = start_command(client, wire, sid)
+        assert len(guards) == 1
+        original_guard = guards[0]
+        original_deadline = original_guard.when()
         _, payload, chunks = payload_and_frames(cid)
         begin(wire, cid, payload, chunks)
         wire.send_bytes(chunks[0])
         barrier(client, wire, sid)
         assert PluginHub._raw_results
-        # Await the actual command deadline, without delaying or polling manually.
+
+        async def expire_original_deadline():
+            # Transfer progress must not extend the captured absolute timeout.
+            assert original_guard.when() == original_deadline
+            # Expire the actual asyncio guard after the partial transfer exists;
+            # shared CI scheduling must not race the intended test precondition.
+            original_guard.reschedule(asyncio.get_running_loop().time())
+
+        client.portal.call(expire_original_deadline)
         result = task.result(timeout=2)
         assert result["data"]["reason"] == "outcome_unknown"
         assert PluginHub._raw_results == {}
