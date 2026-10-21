@@ -11,10 +11,12 @@ from typing import Annotated, Final
 from models.play_scenarios import JobId, PlayScenarioCommand
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-PAYLOAD_FILE_LIMIT: Final = 1024
-PAYLOAD_DIRECTORY_LIMIT: Final = 4096
-PAYLOAD_BYTES_LIMIT: Final = 16 * 1024**3
-PAYLOAD_MANIFEST_LIMIT: Final = 1048576
+PAYLOAD_FILE_LIMIT: Final = 16384
+PAYLOAD_DIRECTORY_LIMIT: Final = 32768
+PAYLOAD_BYTES_LIMIT: Final = 128 * 1024**3
+PAYLOAD_INVENTORY_LIMIT: Final = 32 * 1024**2
+# A manifest includes the inventory twice: structured entries and canonical identity JSON.
+PAYLOAD_MANIFEST_LIMIT: Final = 96 * 1024**2
 
 
 class PlayerPayloadError(RuntimeError):
@@ -74,7 +76,7 @@ class PlayerPayload(BaseModel):
     payload_inventory: Annotated[
         list[PayloadFile], Field(min_length=1, max_length=PAYLOAD_FILE_LIMIT)
     ]
-    payload_inventory_json: Annotated[str, Field(strict=True, max_length=PAYLOAD_MANIFEST_LIMIT)]
+    payload_inventory_json: Annotated[str, Field(strict=True, max_length=PAYLOAD_INVENTORY_LIMIT)]
     payload_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
 
     @field_validator("build_source_revision")
@@ -85,7 +87,7 @@ class PlayerPayload(BaseModel):
     @model_validator(mode="after")
     def canonical_inventory(self) -> "PlayerPayload":
         encoded = self.payload_inventory_json.encode("utf-8")
-        if len(encoded) > PAYLOAD_MANIFEST_LIMIT:
+        if len(encoded) > PAYLOAD_INVENTORY_LIMIT:
             raise PlayerPayloadError("Payload inventory JSON exceeds its byte bound")
         names = [entry.path for entry in self.payload_inventory]
         if names != sorted(

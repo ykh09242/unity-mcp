@@ -149,6 +149,42 @@ namespace MCPForUnityTests
             Assert.Throws<IOException>(() => PlayScenarioPlayerPayload.Verify(directory, manifest));
         }
 
+        [Test]
+        public void LargePayloadIncludesEveryFileAndRoundTripsItsManifest()
+        {
+            for (int index = 0; index < 1025; index++)
+                File.WriteAllText(Path.Combine(directory, "data-" + index.ToString("D5") + ".bin"), "x");
+            var manifest = Manifest();
+            PlayScenarioPlayerPayload.Attach(manifest, directory);
+            Assert.AreEqual(1025, ((JArray)manifest["payload_inventory"]).Count);
+            PlayScenarioPlayerPayload.Verify(directory, manifest);
+            Assert.DoesNotThrow(() => PlayScenarioPlayerBundle.Parse(manifest.ToString()));
+            File.WriteAllText(Path.Combine(directory, "data-01024.bin"), "y");
+            Assert.Throws<IOException>(() => PlayScenarioPlayerPayload.Verify(directory, manifest));
+        }
+
+        [Test]
+        public void LargeInventoryAndBuildBytesRoundTripWithoutReadingPayloadBodies()
+        {
+            var manifest = Manifest();
+            var inventory = new JArray();
+            for (int index = 0; index < 5000; index++)
+                inventory.Add(
+                    new JObject
+                    {
+                        ["path"] = "Data/" + new string('a', 200) + index.ToString("D5"),
+                        ["size_bytes"] = index == 0 ? 20L * 1024 * 1024 * 1024 : 0,
+                        ["sha256"] = new string('a', 64),
+                    }
+                );
+            string json = PlayScenarioPlayerBundle.CanonicalJson(inventory);
+            Assert.Greater(Encoding.UTF8.GetByteCount(json), 1024 * 1024);
+            manifest["payload_inventory"] = inventory;
+            manifest["payload_inventory_json"] = json;
+            manifest["payload_hash"] = PlayScenarioPlayerPayload.HashText(json);
+            Assert.DoesNotThrow(() => PlayScenarioPlayerBundle.Parse(manifest.ToString()));
+        }
+
         [TestCase("../outside")]
         [TestCase("Data/../outside")]
         [TestCase("scenario-bundle.json")]
@@ -184,9 +220,9 @@ namespace MCPForUnityTests
             PlayScenarioPlayerPayload.Attach(manifest, directory);
             manifest["payload_hash"] = new string('0', 64);
             Assert.Throws<ArgumentException>(() => PlayScenarioPlayerPayload.ValidateManifest(manifest));
-            for (int index = 0; index < 4096; index++)
+            for (int index = 0; index < 100; index++)
                 Directory.CreateDirectory(Path.Combine(directory, index.ToString()));
-            Assert.Throws<IOException>(() => PlayScenarioPlayerPayload.Inventory(directory));
+            Assert.Throws<IOException>(() => PlayScenarioPlayerPayload.Inventory(directory, 100));
         }
 
         [Test]

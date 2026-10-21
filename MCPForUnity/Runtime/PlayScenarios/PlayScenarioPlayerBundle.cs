@@ -15,7 +15,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
     /// <summary>The versioned, frozen definition shipped only by explicit scenario builds.</summary>
     public sealed class PlayScenarioPlayerBundle
     {
-        public const int Limit = 1024 * 1024;
+        // Includes both the inventory object and its canonical JSON identity, plus definitions.
+        public const int Limit = 96 * 1024 * 1024;
         public const string ResourceName = "MCPPlayScenarioBundle";
         public const string ManifestName = "scenario-bundle.json";
         public const string ExecutableName = "MCPScenarioPlayer.exe";

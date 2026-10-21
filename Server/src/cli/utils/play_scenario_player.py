@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 from threading import Thread
@@ -30,6 +31,8 @@ from pydantic import (
     model_validator,
 )
 from cli.utils.play_scenario_player_payload import (
+    PAYLOAD_FILE_LIMIT,
+    PAYLOAD_INVENTORY_LIMIT,
     PAYLOAD_MANIFEST_LIMIT,
     PayloadFile,
     PlayerPayload,
@@ -89,11 +92,11 @@ class PlayerBundle(BaseModel):
 
     build_id: JobId | None = None
     build_source_revision: Annotated[str, Field(strict=True, max_length=128)] | None = None
-    payload_inventory: Annotated[list[PayloadFile], Field(min_length=1, max_length=1024)] | None = (
-        None
-    )
+    payload_inventory: (
+        Annotated[list[PayloadFile], Field(min_length=1, max_length=PAYLOAD_FILE_LIMIT)] | None
+    ) = None
     payload_inventory_json: (
-        Annotated[str, Field(strict=True, max_length=PAYLOAD_MANIFEST_LIMIT)] | None
+        Annotated[str, Field(strict=True, max_length=PAYLOAD_INVENTORY_LIMIT)] | None
     ) = None
     payload_hash: Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")] | None = None
 
@@ -265,9 +268,13 @@ def _read_json(path: Path, limit: int) -> dict[str, JsonValue]:
     if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
         raise PlayerLaunchError("Player artifact is missing, linked or exceeds its byte bound")
     with path.open("rb") as stream:
-        payload = stream.read(limit + 1)
-    if len(payload) > limit:
-        raise PlayerLaunchError("Player artifact exceeds its byte bound")
+        size = os.fstat(stream.fileno()).st_size
+        if size > limit:
+            raise PlayerLaunchError("Player artifact exceeds its byte bound")
+        # Allocate for this opened file, not the maximum large-build allowance.
+        payload = stream.read(size + 1)
+    if len(payload) != size:
+        raise PlayerLaunchError("Player artifact changed while being read")
     value = json.loads(payload)
     if not isinstance(value, dict):
         raise PlayerLaunchError("Player artifact must be a JSON object")

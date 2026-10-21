@@ -13,11 +13,11 @@ namespace MCPForUnity.Runtime.PlayScenarios
     /// <summary>Build-time payload inventory. Runtime report hashes are launcher admission echoes.</summary>
     public static class PlayScenarioPlayerPayload
     {
-        public const int FileLimit = 1024;
-        public const int InventoryJsonLimit = 1024 * 1024;
+        public const int FileLimit = 16384;
+        public const int InventoryJsonLimit = 32 * 1024 * 1024;
         public const int PathLimit = 512;
-        public const long ByteLimit = 16L * 1024 * 1024 * 1024;
-        private const int DirectoryLimit = 4096;
+        public const long ByteLimit = 128L * 1024 * 1024 * 1024;
+        private const int DirectoryLimit = 32768;
 
         public static string HashText(string text)
         {
@@ -27,8 +27,12 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         private static string Hex(byte[] hash) => string.Concat(hash.Select(value => value.ToString("x2")));
 
-        public static JArray Inventory(string root)
+        public static JArray Inventory(string root) => Inventory(root, DirectoryLimit);
+
+        internal static JArray Inventory(string root, int directoryLimit)
         {
+            if (directoryLimit < 1 || directoryLimit > DirectoryLimit)
+                throw new ArgumentOutOfRangeException(nameof(directoryLimit));
             root = PlayScenarioPlayerFiles.CheckedAbsolute(root);
             if (!Directory.Exists(root))
                 throw new DirectoryNotFoundException("Player build root is unavailable.");
@@ -41,7 +45,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             while (pending.Count > 0)
             {
                 string directory = pending.Pop();
-                if (++directories > DirectoryLimit)
+                if (++directories > directoryLimit)
                     throw new IOException("Player payload exceeds its directory bound.");
                 foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
                 {
@@ -50,7 +54,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     ValidatePath(relative);
                     if ((File.GetAttributes(entry) & FileAttributes.Directory) != 0)
                     {
-                        if (++discoveredDirectories > DirectoryLimit)
+                        if (++discoveredDirectories > directoryLimit)
                             throw new IOException("Player payload exceeds its discovered directory bound.");
                         pending.Push(entry);
                         continue;

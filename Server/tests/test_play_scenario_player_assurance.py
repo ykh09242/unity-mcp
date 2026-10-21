@@ -55,6 +55,32 @@ def verified_bundle(bundle):
     return build, output, manifest
 
 
+def test_large_inventory_and_build_bytes_round_trip(verified_bundle):
+    from cli.utils.play_scenario_player import PlayerBundle, _read_json, MANIFEST_LIMIT
+
+    build, _output, manifest = verified_bundle
+    inventory = [
+        {
+            "path": f"Data/{'a' * 200}{index:05d}",
+            "size_bytes": 20 * 1024**3 if index == 0 else 0,
+            "sha256": "a" * 64,
+        }
+        for index in range(5000)
+    ]
+    encoded = json.dumps(inventory, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    assert len(encoded.encode()) > 1024**2
+    manifest.update(
+        payload_inventory=inventory,
+        payload_inventory_json=encoded,
+        payload_hash=sha256(encoded.encode()).hexdigest(),
+    )
+    path = build / "scenario-bundle.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    parsed = PlayerBundle.model_validate(_read_json(path, MANIFEST_LIMIT))
+    assert len(parsed.payload.payload_inventory) == 5000
+    assert parsed.payload.payload_inventory[0].size_bytes == 20 * 1024**3
+
+
 def test_verified_player_preserves_payload_and_process_proof(verified_bundle, child):
     build, output, manifest = verified_bundle
     outcome = run_player(
