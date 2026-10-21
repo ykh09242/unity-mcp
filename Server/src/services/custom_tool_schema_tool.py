@@ -102,5 +102,8 @@ class SchemaTool(Tool):
         context: Context = get_context()
         response = await self._handler(context, **parameters)
         if not self._structured:
-            return ToolResult(content=[TextContent(type="text", text=response.model_dump_json())])
+            return ToolResult(
+                content=[TextContent(type="text", text=response.model_dump_json())],
+                is_error=not response.success,
+            )
         return self.convert_result(response)

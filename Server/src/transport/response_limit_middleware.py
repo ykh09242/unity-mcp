@@ -15,6 +15,7 @@ from fastmcp.resources.base import ResourceResult
 from mcp_types import CallToolResult
 from pydantic import BaseModel, ConfigDict
 
+from models.tool_outcome import is_execution_failure
 from models.response_limits import (
     MAX_RESPONSE_BYTES,
     ResponseOwner,
@@ -207,6 +208,19 @@ class ResponseLimitMiddleware(Middleware):
             # SDK. Normalization removes subclasses from nested SDK content too.
             projection = BaseModel.model_dump(raw, by_alias=True, mode="json", exclude_none=True)
             result = ToolResult.from_mcp_result(self._WireCallToolResult.model_validate(projection))
+        if not result.is_error and is_execution_failure(result.structured_content, result.meta):
+            # Construct the trusted envelope without subclass copy/serialization hooks.
+            # The raw projection above is newly owned; application graphs stay shared.
+            admitted_raw = result._raw_mcp_result if raw is not None else None
+            result = ToolResult.model_construct(
+                content=result.content,
+                structured_content=result.structured_content,
+                meta=result.meta,
+                is_error=True,
+            )
+            if admitted_raw is not None:
+                admitted_raw.is_error = True
+                result._raw_mcp_result = admitted_raw
         return result
 
     async def on_read_resource(

@@ -44,6 +44,8 @@ def parse_tool_parameter_default(value: str | None, param_type: str | None) -> o
 
 class MCPResponse(BaseModel):
     success: bool
+    # Preserve native/application machine codes without adding null fields to old responses.
+    code: str | int | None = Field(default=None, exclude_if=lambda value: value is None)
     message: str | None = None
     error: str | None = None
     data: Any | None = None

@@ -560,9 +560,10 @@ async def test_legacy_sdk_keeps_the_ordinary_missing_target_result(flow_server):
         # When: the same incomplete load reaches the legacy protocol.
         async with Client(transport, mode="legacy", elicitation_handler=elicit) as client:
             result = await client.call_tool(
-                "manage_scene", {"action": "load", "unity_instance": "A@a"}
+                "manage_scene", {"action": "load", "unity_instance": "A@a"}, raise_on_error=False
             )
         # Then: no reverse prompt or native command is introduced by the optional feature.
+        assert result.is_error is True
         assert result.structured_content["success"] is False
         assert not asked
         assert not peer.commands

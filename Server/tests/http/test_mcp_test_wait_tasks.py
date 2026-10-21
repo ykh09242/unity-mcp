@@ -148,7 +148,7 @@ async def test_captured_ordinary_get_test_job_oracle(
     elif case == "tool_error":
         assert set(payload) == {"result"}
         assert payload["result"]["error"] == "Existing native job unavailable"
-        assert result.is_error is False
+        assert result.is_error is True
     else:
         assert set(payload) == {"result"}
         assert payload["result"]["data"]["status"] == (

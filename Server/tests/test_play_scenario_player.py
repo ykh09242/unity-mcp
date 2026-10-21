@@ -57,7 +57,9 @@ def child(monkeypatch, tmp_path):
         "if request['schema_version'] == 2:\n"
         " import os\n"
         " progress={'schema_version':1,'job_id':request['job_id'],'definition_hash':request['definition_hash'],'build_id':request['build_id'],'payload_hash':request['payload_hash'],'build_source_revision':request['build_source_revision'],'process_id':os.getpid(),'sequence':1,'main_loop_sequence':1,'heartbeat_unix_ms':int(time.time()*1000),'elapsed_ms':1,'phase':'running','iteration':1,'stage':'steps','step_index':0,'status':'running'}\n"
-        " (request_path.parent/'progress.json').write_text(json.dumps(progress))\n"
+        # Match the native writer: readers must never see a partially published heartbeat.
+        " (request_path.parent/'progress.tmp').write_text(json.dumps(progress))\n"
+        " (request_path.parent/'progress.tmp').replace(request_path.parent/'progress.json')\n"
         "print('owned output', flush=True)\n"
         "if mode == 'loud': sys.stdout.write('x'*2000000);sys.stdout.flush()\n"
         "if mode == 'crash': sys.exit(7)\n"

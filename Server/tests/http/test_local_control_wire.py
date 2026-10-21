@@ -104,7 +104,10 @@ async def test_native_clients_work_and_browser_requests_fail_on_real_server(
     # Modern clients discover and call the same authenticated tool surface.
     async with Client(StreamableHttpTransport(f"{url}/mcp", headers=headers)) as mcp:
         assert any(tool.name == "set_active_instance" for tool in await mcp.list_tools())
-        selection = await mcp.call_tool("set_active_instance", {"instance": "unused"})
+        selection = await mcp.call_tool(
+            "set_active_instance", {"instance": "unused"}, raise_on_error=False
+        )
+        assert selection.is_error is True
         assert selection.structured_content["success"] is False
         assert "sessionless" in selection.structured_content["error"]
 

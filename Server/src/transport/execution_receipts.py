@@ -25,6 +25,7 @@ from mcp_types import CallToolResult
 from pydantic import BaseModel
 
 from core.config import config
+from models.tool_outcome import is_execution_failure
 from models.response_limits import (
     MAX_RESPONSE_BYTES,
     MAX_RESPONSE_RETAINED_BYTES,
@@ -176,6 +177,7 @@ def _with_receipt(result: ToolResult, view: ReceiptView, *, replayed: bool = Fal
             result.meta,
             result.is_error,
         )
+    error = error or is_execution_failure(structured, meta)
     charge = response_size(
         {"content": content, "structuredContent": structured, "_meta": meta, "isError": error},
         max_bytes=MAX_RESPONSE_BYTES - 32768,
@@ -209,7 +211,7 @@ def _public_projection(result: ToolResult) -> CallToolResult:
     return CallToolResult(
         content=wire.content,
         structuredContent=wire.structured_content,
-        isError=wire.is_error,
+        isError=wire.is_error or is_execution_failure(wire.structured_content, wire.meta),
         _meta={
             key: value
             for key, value in (wire.meta or {}).items()
