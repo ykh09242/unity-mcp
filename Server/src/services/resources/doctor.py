@@ -2,6 +2,8 @@
 
 from fastmcp import Context
 
+from core.sdk_compatibility import runtime_sdk_report
+
 from models.doctor import DoctorResourceResponse
 from services.doctor import query_doctor
 from services.registry import mcp_for_unity_resource
@@ -15,3 +17,13 @@ from services.registry import mcp_for_unity_resource
 async def get_doctor(ctx: Context) -> DoctorResourceResponse:
     """Reuse the capability capture, preserving its five-probe budget and ownership checks."""
     return DoctorResourceResponse(data=await query_doctor(ctx))
+
+
+@mcp_for_unity_resource(
+    uri="mcpforunity://doctor/runtime",
+    name="runtime_doctor",
+    description="Read resolved/reviewed SDK versions and optional adapter state without contacting Unity or changing configuration.",
+)
+async def get_runtime_doctor(ctx: Context) -> dict:
+    """Keep the existing strict connection-doctor receipt unchanged."""
+    return runtime_sdk_report(ctx.fastmcp)

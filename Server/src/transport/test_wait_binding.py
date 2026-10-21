@@ -19,6 +19,7 @@ from mcp.shared.exceptions import MCPError
 from mcp_types import INTERNAL_ERROR, INVALID_PARAMS
 from pydantic import ValidationError
 
+from core.sdk_compatibility import is_reviewed_sdk
 from services.credential_lease import require_credential_lease
 
 from services.test_wait_journal import (
@@ -41,7 +42,7 @@ class _SdkResultKernel:
     """One explicitly gated pinned bridge; the SDK keeps its formatter/policy."""
 
     def __init__(self, server: FastMCP):
-        if version("mcp") != "2.3.0" or version("fastmcp") != "4.1.1":
+        if not is_reviewed_sdk(version):
             raise RuntimeError("Unreviewed Tasks SDK version")
         # Private pinned hooks are optional: import only after the version gate,
         # so a different supported base SDK cannot break default-disabled startup.
@@ -117,6 +118,7 @@ def install_test_job_tasks(
     server: FastMCP, root: Path, *, remote_hosted: bool
 ) -> TestJobTasks | None:
     """Explicit opt-in; unsupported SDK/private store leaves Tasks unadvertised."""
+    server._test_wait_tasks_requested = True
     journal = None
     try:
         sdk = _SdkResultKernel(server)

@@ -41,6 +41,7 @@ from services.custom_tool_service import (
     resolve_project_id_for_unity_instance,
 )
 from core.server_build import RUNNING_SERVER
+from core.sdk_compatibility import runtime_sdk_report
 from services.execution_receipt_context import owned_to_thread
 from core.config import config
 from core.custom_instructions import (
@@ -78,6 +79,7 @@ from functools import partial
 import sys
 
 import logging
+import json
 import math
 from contextlib import asynccontextmanager, nullcontext
 import os
@@ -1070,6 +1072,7 @@ def create_mcp_server(
     if test_wait_tasks_root is not None:
         install_test_job_tasks(mcp, test_wait_tasks_root, remote_hosted=config.http_remote_hosted)
 
+    logger.info("SDK runtime: %s", json.dumps(runtime_sdk_report(mcp), separators=(",", ":")))
     return mcp
 
 

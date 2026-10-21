@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "packages": {
+    "fastmcp": "4.1.1",
+    "mcp": "2.3.0",
+    "mcp-types": "2.3.0"
+  }
+}
