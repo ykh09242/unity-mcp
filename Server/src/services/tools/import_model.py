@@ -33,7 +33,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "- import: Download + import a model by uid. Returns { job_id } immediately; poll "
         "with the status action. Params: uid, target_size, name, output_folder, archive_model_path. "
         "archive_model_path selects an exact case-sensitive relative ZIP entry; omission prefers FBX/OBJ "
-        "then GLB/glTF with ordinal path ordering. At most 128 model candidates, 512 UTF-8 bytes per "
+        "then GLB/glTF with ordinal path ordering. At most 1024 model candidates, 512 UTF-8 bytes per "
         "path and 32 segments. Status archive_selection reports candidates, chosen paths and extraction "
         "state; failed selection/import retains evidence and never falls back to another model. "
         "target_size applies only when Auto-Normalize Imported Models is enabled; finite zero or negative values preserve imported scale. Successful normalization of a model without ModelImporter may return a prefab variant while retaining its source model.\n"

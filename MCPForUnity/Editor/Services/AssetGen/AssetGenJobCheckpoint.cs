@@ -13,7 +13,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
     {
         internal const int MaxActive = 64;
         internal const int MaxCheckpointBytes = 16 * 1024;
-        internal const int MaxRecordBytes = 256 * 1024;
+        internal const int MaxRecordBytes = 1024 * 1024;
         internal const int MaxIndexBytes = 16 * 1024;
         internal const int MaxDepth = 16;
         internal const long MaxFileBytes = Http.AssetDownloadTransport.MaxDownloadBytes;
@@ -369,9 +369,9 @@ namespace MCPForUnity.Editor.Services.AssetGen
             bool complete = input["candidates_complete"]?.Type == JTokenType.Boolean && (bool)input["candidates_complete"];
             if (input["candidates"] is JArray values)
             {
-                if (values.Count > 128)
+                if (values.Count > Import.ModelArchiveSelection.MaxCandidates)
                     complete = false;
-                foreach (var value in values.Take(128))
+                foreach (var value in values.Take(Import.ModelArchiveSelection.MaxCandidates))
                 {
                     if (value.Type == JTokenType.String && RelativeArchivePath((string)value))
                         candidates.Add((string)value);

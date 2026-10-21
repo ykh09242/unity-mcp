@@ -126,9 +126,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             }
         }
 
-        [TestCase(true)]
-        [TestCase(false)]
-        public void ArchiveSelector_PropagatesToImportAndStatus(bool valid)
+        [TestCase(true, 2)]
+        [TestCase(false, 2)]
+        [TestCase(true, 300)]
+        public void ArchiveSelector_PropagatesToImportAndStatus(bool valid, int candidateCount)
         {
             const string key = "MCPFORUNITY_SKETCHFAB_API_KEY";
             Environment.SetEnvironmentVariable(key, "owned-archive-key");
@@ -145,6 +146,10 @@ namespace MCPForUnityTests.Editor.AssetGen
                     ["candidates_complete"] = true,
                     ["extraction"] = "complete",
                 };
+                var candidates = (JArray)evidence["candidates"];
+                for (int i = candidates.Count; i < candidateCount; i++)
+                    candidates.Add("model" + i + ".obj");
+                evidence["candidate_count"] = candidateCount;
                 AssetGenJobManager.ImportOverrideForTests = (job, path) =>
                 {
                     observed = (string)JObject.FromObject(job)["ArchiveModelPath"];

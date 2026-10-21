@@ -75,6 +75,33 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
+        public void LargeArchiveMetadataStillReachesTheFinalAllowedFile()
+        {
+            string zip = Path.Combine(_work, "many.zip");
+            using (var file = File.Create(zip))
+            using (var archive = new ZipArchive(file, ZipArchiveMode.Create))
+            {
+                for (int i = 0; i < 5000; i++)
+                    archive.CreateEntry("unused_" + i + ".txt");
+                using var writer = new StreamWriter(archive.CreateEntry("last.obj").Open());
+                writer.Write("o complete");
+            }
+            string output = Path.Combine(_work, "large-output");
+            SafeZipExtractor.ExtractTo(zip, output, new System.Collections.Generic.HashSet<string> { ".obj" });
+            Assert.AreEqual("o complete", File.ReadAllText(Path.Combine(output, "last.obj")));
+            Assert.AreEqual(1, Directory.GetFiles(output).Length);
+        }
+
+        [Test]
+        public void LargerArchiveBudgetPreservesCompressionRatioProtection()
+        {
+            string zip = MakeZip("repeated.obj", new string(' ', 1024 * 1024));
+            string output = Path.Combine(_work, "compressible-output");
+            Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, output));
+            Assert.IsFalse(Directory.Exists(output));
+        }
+
+        [Test]
         public void Allowlist_SkipsDisallowedEntries()
         {
             // A hostile marketplace archive: a valid model plus an editor script + a managed dll.

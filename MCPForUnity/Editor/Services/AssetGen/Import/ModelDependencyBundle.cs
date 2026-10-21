@@ -14,14 +14,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 {
     internal sealed class BundleLimits
     {
-        internal int MaxFiles = 256;
-        internal int MaxReferences = 1024;
-        internal long MaxBytes = 512L * 1024 * 1024;
-        internal int MaxJsonBytes = 16 * 1024 * 1024;
-        internal int MaxMtlBytes = 4 * 1024 * 1024;
-        internal int MaxMetadataBytes = 32 * 1024 * 1024;
+        internal int MaxFiles = 8192;
+        internal int MaxReferences = 65536;
+        internal long MaxBytes = 16L * 1024 * 1024 * 1024;
+        internal int MaxJsonBytes = 64 * 1024 * 1024;
+        internal int MaxMtlBytes = 16 * 1024 * 1024;
+        internal int MaxMetadataBytes = 128 * 1024 * 1024;
         internal int MaxJsonDepth = 64;
-        internal int MaxLineBytes = 64 * 1024;
+        internal int MaxLineBytes = 256 * 1024;
         internal int MaxPathCharacters = 1024;
         internal int MaxSegments = 32;
         internal int MaxSegmentBytes = 255;
@@ -40,6 +40,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     {
         internal string SourceRoot;
         internal readonly List<BundleEntry> Entries = new();
+        internal readonly Dictionary<string, BundleEntry> EntriesByPath = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, string> PortablePaths = new(StringComparer.OrdinalIgnoreCase);
         internal readonly Dictionary<string, string> PortableDirectories = new(StringComparer.OrdinalIgnoreCase);
         internal BundleLimits Limits;
@@ -172,7 +173,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             {
                 if (!string.Equals(spelling, relative, StringComparison.Ordinal))
                     throw Error(plan, "unsafe_dependency_path", "Dependency paths must not alias by case or normalization.", relative);
-                return plan.Entries.Find(entry => entry.RelativePath == relative);
+                return plan.EntriesByPath[relative];
             }
             if (plan.Entries.Count >= plan.Limits.MaxFiles)
                 throw Error(plan, "dependency_limit_exceeded", "Dependency file count exceeds the local bundle limit.", relative);
@@ -193,6 +194,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             plan.Bytes += length;
             plan.PortablePaths.Add(relative, relative);
             plan.Entries.Add(entry);
+            plan.EntriesByPath.Add(relative, entry);
             plan.Evidence["planned_file_count"] = plan.Entries.Count;
             return entry;
         }
@@ -588,6 +590,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     result.BundleRoot = selected;
                     result.Evidence["root_path"] = selected;
                 }
+                byte[] buffer = null;
                 for (int ordinal = 0; ordinal < plan.Entries.Count; ordinal++)
                 {
                     int index = (ordinal + 1) % plan.Entries.Count; // main last
@@ -626,7 +629,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         result.Evidence["main_asset_path"] = destination;
                     }
                     using var hash = SHA256.Create();
-                    byte[] buffer = new byte[81920];
+                    buffer ??= new byte[81920];
                     long written = 0;
                     int count;
                     while ((count = input.Read(buffer, 0, buffer.Length)) != 0)

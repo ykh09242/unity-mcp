@@ -20,13 +20,18 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     /// </summary>
     public static class SafeZipExtractor
     {
+        internal const int MaxEntries = 16384;
+        internal const long MaxEntryBytes = 8L * 1024 * 1024 * 1024;
+        internal const long MaxTotalBytes = 8L * 1024 * 1024 * 1024;
+        internal const int MaxCompressionRatio = 200;
+
         public static void ExtractTo(
             string zipPath,
             string destDir,
             ISet<string> allowedExtensions = null,
             CancellationToken cancellationToken = default,
             Action<string> ensureDirectory = null
-        ) => ExtractTo(zipPath, destDir, allowedExtensions, cancellationToken, 4096, 512L * 1024 * 1024, 2L * 1024 * 1024 * 1024, 200, ensureDirectory);
+        ) => ExtractTo(zipPath, destDir, allowedExtensions, cancellationToken, MaxEntries, MaxEntryBytes, MaxTotalBytes, MaxCompressionRatio, ensureDirectory);
 
         internal static void ExtractToWithInspection(
             string zipPath,
@@ -34,7 +39,19 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             ISet<string> allowedExtensions,
             Action<ZipArchive> inspectArchive,
             Action<string> ensureDirectory
-        ) => ExtractTo(zipPath, destDir, allowedExtensions, default, 4096, 512L * 1024 * 1024, 2L * 1024 * 1024 * 1024, 200, ensureDirectory, inspectArchive);
+        ) =>
+            ExtractTo(
+                zipPath,
+                destDir,
+                allowedExtensions,
+                default,
+                MaxEntries,
+                MaxEntryBytes,
+                MaxTotalBytes,
+                MaxCompressionRatio,
+                ensureDirectory,
+                inspectArchive
+            );
 
         internal static void ExtractTo(
             string zipPath,

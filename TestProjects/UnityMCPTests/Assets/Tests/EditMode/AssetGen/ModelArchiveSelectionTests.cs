@@ -374,9 +374,19 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
+        public void LargeCandidateSetCanSelectTheFinalModelWithoutTruncation()
+        {
+            string[] names = Enumerable.Range(0, 300).Select(i => "model" + i.ToString("D4") + ".obj").ToArray();
+            var evidence = ModelArchiveSelection.Evidence("owned.zip", names[299]);
+            Assert.AreEqual(names[299], Select(names, names[299], evidence, ModelArchiveSelection.MaxCandidates));
+            Assert.AreEqual(300, (int)evidence["candidate_count"]);
+            Assert.IsTrue((bool)evidence["candidates_complete"]);
+        }
+
+        [Test]
         public void CandidateLimit_ProductionBoundaryRetainsZipWithoutExtraction()
         {
-            string source = Zip(Enumerable.Range(0, 129).Select(i => ("model" + i + ".obj", Text(Obj()))).ToArray());
+            string source = Zip(Enumerable.Range(0, ModelArchiveSelection.MaxCandidates + 1).Select(i => ("model" + i + ".obj", Text(Obj()))).ToArray());
             JObject result = Import(source);
             Assert.AreEqual("archive_selection_limit", (string)result["data"]["model_import_error_code"]);
             Assert.IsFalse((bool)result["data"]["archive_selection"]["candidates_complete"]);
