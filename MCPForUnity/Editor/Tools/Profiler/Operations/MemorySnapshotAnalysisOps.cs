@@ -18,8 +18,8 @@ namespace MCPForUnity.Editor.Tools.Profiler
     internal static class MemorySnapshotAnalysisOps
     {
         private const string SupportedPackage = "1.1.12";
-        private const long MaximumFileBytes = 512L * 1024 * 1024;
-        private const long MaximumReadBytes = 64L * 1024 * 1024;
+        private const long MaximumFileBytes = 8L * 1024 * 1024 * 1024;
+        private const long MaximumReadBytes = 128L * 1024 * 1024;
 
         private sealed class SnapshotProblem : Exception
         {
@@ -128,7 +128,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             if (!ProfilerPathUtility.TryResolve(p, "snapshot_b", true, false, out string pathB, out pathError))
                 return pathError;
             int objectLimit = MemoryAnalysisParams.Integer(parameters, "object_limit", 1, 256, 128);
-            int maximum = MemoryAnalysisParams.Integer(parameters, "max_objects", 1, 200000, 200000);
+            int maximum = MemoryAnalysisParams.Integer(parameters, "max_objects", 1, 1000000, 1000000);
             string prefix = "";
             if (parameters["name_prefix"] != null && parameters["name_prefix"].Type != JTokenType.Null)
             {
@@ -192,7 +192,7 @@ namespace MCPForUnity.Editor.Tools.Profiler
             }
             catch (MemorySnapshotComparison.LimitException)
             {
-                return new ErrorResponse("memory_work_limit", new { message = "Selected native type count exceeds 512.", columns = (JArray)null });
+                return new ErrorResponse("memory_work_limit", new { message = "Selected native type count exceeds 4096.", columns = (JArray)null });
             }
             catch (SnapshotProblem error)
             {
@@ -247,10 +247,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
                         long size = Convert.ToInt64(
                             backend.ReaderType.GetMethod("GetSizeForEntryRange").Invoke(reader, new object[] { kind, 0L, (long)count, true })
                         );
-                        if (size < 0 || size > 32L * 1024 * 1024 || checked(readBytes + size) > MaximumReadBytes)
+                        if (size < 0 || size > 64L * 1024 * 1024 || checked(readBytes + size) > MaximumReadBytes)
                             throw new SnapshotProblem(
                                 "memory_work_limit",
-                                $"Column {entry} count {count}, bytes {size}, prior read bytes {readBytes} exceeds the 32 MiB column/64 MiB input read budget.",
+                                $"Column {entry} count {count}, bytes {size}, prior read bytes {readBytes} exceeds the 64 MiB column/128 MiB input read budget.",
                                 columnContracts
                             );
                         if (expectedSize.HasValue && size != expectedSize.Value)
@@ -428,13 +428,13 @@ namespace MCPForUnity.Editor.Tools.Profiler
             return names;
         }
 
-        private static void Preflight(FileStream input, Type entryType)
+        private static void Preflight(Stream input, Type entryType)
         {
             // Guard every allocation performed by the pinned FileReader.Open before entering native code.
             if (input.Length < 32)
                 throw new SnapshotProblem("snapshot_format_unsupported", "Snapshot file size is outside the bounded container range.");
             if (input.Length > MaximumFileBytes)
-                throw new SnapshotProblem("memory_work_limit", "Snapshot exceeds the 512 MiB input budget.");
+                throw new SnapshotProblem("memory_work_limit", "Snapshot exceeds the 8 GiB input budget.");
             var file = new BinaryReader(input, Encoding.UTF8, true);
             long length = input.Length;
             void At(ulong position, long required)

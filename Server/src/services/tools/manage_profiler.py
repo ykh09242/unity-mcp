@@ -172,8 +172,8 @@ async def manage_profiler(
     ] = None,
     max_objects: Annotated[
         Optional[int],
-        Field(strict=True, ge=1, le=200000),
-        "Read work budget: aggregate at most 4096 (default1024), snapshot at most200000.",
+        Field(strict=True, ge=1, le=1000000),
+        "Read work budget: at most 1000000 objects; aggregate default250000, snapshot default1000000.",
     ] = None,
     include_references: Annotated[
         Optional[bool],

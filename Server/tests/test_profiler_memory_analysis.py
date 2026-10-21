@@ -67,6 +67,18 @@ def test_snapshot_analysis_uses_actual_paths_and_no_file_size_fallback(memory_to
     }
 
 
+@pytest.mark.parametrize("action", ["memory_aggregate", "memory_analyze_snapshots"])
+def test_large_memory_scope_reaches_unity(memory_tool, action):
+    module, sent = memory_tool
+    args = {"action": action, "max_objects": 1000000, "object_limit": 1}
+    if action == "memory_aggregate":
+        args["targets"] = [str(index + 1) for index in range(256)]
+    else:
+        args.update(snapshot_a="Memory/a.snap", snapshot_b="Memory/b.snap")
+    asyncio.run(module.manage_profiler(SimpleNamespace(), **args))
+    assert sent[-1][2] == args
+
+
 def test_reader_capability_does_not_inject_capture_parameters(memory_tool):
     module, sent = memory_tool
     asyncio.run(module.manage_profiler(SimpleNamespace(), action="memory_snapshot_reader_status"))
@@ -79,9 +91,9 @@ def test_reader_capability_does_not_inject_capture_parameters(memory_tool):
         ("targets", []),
         ("targets", [True]),
         ("targets", ["not-an-id"]),
-        ("targets", ["1"] * 33),
+        ("targets", ["1"] * 257),
         ("max_objects", 0),
-        ("max_objects", 4097),
+        ("max_objects", 1000001),
         ("max_objects", True),
         ("include_references", 1),
         ("include_objects", "false"),
@@ -102,7 +114,7 @@ def test_aggregate_invalid_scope_does_not_reach_unity(memory_tool, field, value)
         {},
         {"snapshot_a": "a.snap"},
         {"snapshot_a": False, "snapshot_b": "b.snap"},
-        {"snapshot_a": "a.snap", "snapshot_b": "b.snap", "max_objects": 200001},
+        {"snapshot_a": "a.snap", "snapshot_b": "b.snap", "max_objects": 1000001},
         {"snapshot_a": "a.snap", "snapshot_b": "b.snap", "name_prefix": "x" * 129},
     ],
 )
@@ -152,7 +164,7 @@ def test_memory_analysis_actual_sdk_schema_and_native_failure_shape():
                         assert result.structured_content=={"success":False,"code":"snapshot_reader_unavailable","data":{"required_package_version":"1.1.12"}}
                     before=len(sent)
                     for args in ({"action":"memory_aggregate","targets":["-71"],"include_references":0},
-                                 {"action":"memory_aggregate","targets":["-71"],"max_objects":4097},
+                                 {"action":"memory_aggregate","targets":["-71"],"max_objects":1000001},
                                  {"action":"memory_analyze_snapshots","snapshot_a":"a.snap","snapshot_b":"b.snap","name_prefix":"x"*129}):
                         try:
                             rejected=await client.call_tool("manage_profiler",args)

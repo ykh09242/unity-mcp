@@ -212,6 +212,30 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void LargeHierarchy_DefaultBudgetIncludesLateChildrenWithBoundedOutput()
+        {
+            var root = new GameObject(prefix + "Large");
+            owned.Add(root);
+            for (int i = 0; i < 4097; i++)
+                new GameObject("Child" + i).transform.SetParent(root.transform, false);
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "memory_aggregate",
+                    ["targets"] = new JArray(root.GetInstanceIDCompat()),
+                    ["include_references"] = false,
+                    ["include_objects"] = true,
+                    ["object_limit"] = 1,
+                }
+            );
+            Success(response);
+            Assert.AreEqual(8196, response["data"].Value<int>("unique_object_count"));
+            Assert.AreEqual(1, ((JArray)response["data"]["objects"]).Count);
+            Assert.IsTrue(response["data"].Value<bool>("objects_truncated"));
+            Assert.IsTrue(response["data"].Value<bool>("complete_within_declared_scope"));
+        }
+
+        [Test]
         public void WorkBudgetRefusal_DoesNotReturnAnUnderestimatedSuccessfulTotal()
         {
             var root = Root("Budget", null);
@@ -229,7 +253,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [TestCase("max_objects", "0")]
-        [TestCase("max_objects", "4097")]
+        [TestCase("max_objects", "1000001")]
         [TestCase("include_references", "1")]
         [TestCase("object_limit", "257")]
         [TestCase("targets", "[]")]
@@ -365,8 +389,10 @@ namespace MCPForUnityTests.Editor.Tools
             using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
         }
 
-        [Test]
-        public void PackedConstantHeaders_UseOnlyTheReaderUIntCount()
+        [TestCase(0L)]
+        [TestCase(3221225472L)]
+        [TestCase(9663676416L)]
+        public void PackedConstantHeaders_UseOnlyTheReaderUIntCount(long virtualLength)
         {
             string path = Path.Combine(folder, "packed-constants.snap");
             using (var writer = new BinaryWriter(File.Create(path)))
@@ -417,9 +443,66 @@ namespace MCPForUnityTests.Editor.Tools
             Type entryType = Type.GetType("Unity.MemoryProfiler.Editor.Format.QueriedSnapshot.EntryType, Unity.MemoryProfiler.Editor");
             Assert.IsNotNull(entryType);
             // This exercises only container preflight; synthetic data is never used as object-memory evidence.
-            using (var input = File.OpenRead(path))
-                Assert.DoesNotThrow(() => preflight.Invoke(null, new object[] { input, entryType }));
+            using (var input = new PaddedSnapshot(File.ReadAllBytes(path), virtualLength))
+            {
+                if (virtualLength > 8L * 1024 * 1024 * 1024)
+                {
+                    var error = Assert.Throws<TargetInvocationException>(() => preflight.Invoke(null, new object[] { input, entryType }));
+                    StringAssert.Contains("input budget", error.InnerException.Message);
+                }
+                else
+                    Assert.DoesNotThrow(() => preflight.Invoke(null, new object[] { input, entryType }));
+                Assert.Less(input.ReadBytes, 1024, "Preflight reads metadata, never the padded capture body.");
+            }
             using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+        }
+
+        private sealed class PaddedSnapshot : Stream
+        {
+            private readonly byte[] bytes;
+            public long ReadBytes;
+
+            public PaddedSnapshot(byte[] bytes, long length)
+            {
+                this.bytes = bytes;
+                Length = Math.Max(bytes.Length, length);
+            }
+
+            public override long Length { get; }
+            public override long Position { get; set; }
+            public override bool CanRead => true;
+            public override bool CanSeek => true;
+            public override bool CanWrite => false;
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                int amount = (int)Math.Min(count, Length - Position);
+                for (int i = 0; i < amount; i++)
+                {
+                    long at = Position + i;
+                    buffer[offset + i] =
+                        at < bytes.Length - 12 ? bytes[(int)at]
+                        : at >= Length - 12 ? bytes[(int)(bytes.Length - (Length - at))]
+                        : (byte)0;
+                }
+                Position += amount;
+                ReadBytes += amount;
+                return amount;
+            }
+
+            public override long Seek(long offset, SeekOrigin origin) =>
+                Position =
+                    (
+                        origin == SeekOrigin.Begin ? 0
+                        : origin == SeekOrigin.Current ? Position
+                        : Length
+                    ) + offset;
+
+            public override void Flush() { }
+
+            public override void SetLength(long value) => throw new NotSupportedException();
+
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         }
 
         private IEnumerator Capture(string path)
