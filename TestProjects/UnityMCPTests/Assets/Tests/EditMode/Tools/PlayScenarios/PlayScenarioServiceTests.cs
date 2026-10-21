@@ -18,6 +18,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         private static readonly Type Service = typeof(PlayScenarioService);
         private readonly Dictionary<FieldInfo, object> _previous = new Dictionary<FieldInfo, object>();
         private string _saved;
+        private string[] _savedDefinitions;
 
         [SetUp]
         public void SetUp()
@@ -30,6 +31,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             if (current?.Running == true || pendingCapture)
                 Assert.Ignore("An active scenario owns the editor.");
             _saved = SessionState.GetString(SessionKey, "");
+            _savedDefinitions = new[] { SessionState.GetString(SessionKey + ".definition.0", ""), SessionState.GetString(SessionKey + ".definition.1", "") };
             foreach (FieldInfo field in Service.GetFields(BindingFlags.Static | BindingFlags.NonPublic).Where(field => !field.IsLiteral && !field.IsInitOnly))
                 _previous[field] = field.GetValue(null);
         }
@@ -46,6 +48,8 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 SessionState.EraseString(SessionKey);
             else
                 SessionState.SetString(SessionKey, _saved);
+            for (int i = 0; i < 2; i++)
+                SessionState.SetString(SessionKey + ".definition." + i, _savedDefinitions[i]);
             _previous.Clear();
         }
 
@@ -220,6 +224,98 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             var runner = (PlayScenarioSuiteRunner)
                 typeof(PlayScenarioSuiteService).GetMethod("CreateRunner", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { state });
             return (Func<string, JObject>)typeof(PlayScenarioSuiteRunner).GetField("observe", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(runner);
+        }
+
+        [Test]
+        public void CheckpointSeparatesFrozenDefinitionAndRestoresFreshLogEvidence()
+        {
+            PlayScenarioRun run = StartingRun();
+            var engine = new PlayScenarioEngine(run, new UnityPlayScenarioHost());
+            var logs = new PlayScenarioLogBuffer();
+            Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, engine);
+            Service.GetField("_logs", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, logs);
+            Service.GetField("_finalized", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, false);
+            var synchronize = (Action<bool>)Service.GetMethod("Synchronize", BindingFlags.Static | BindingFlags.NonPublic).CreateDelegate(typeof(Action<bool>));
+            synchronize(true);
+            JObject saved = JObject.Parse(SessionState.GetString(SessionKey, ""));
+            Assert.IsNull(saved["scenario"], "Frozen inputs should not be projected into each mutable checkpoint.");
+            logs.Add(17, "Log", "2026-10-10T12:34:56.000Z", "new-log");
+            PlayScenarioService.Status(run.JobId); // Reading consumes pending logs without an engine transition.
+            Service.GetField("_checkpointAt", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, 0L);
+            synchronize(false);
+            Invoke("Restore");
+            var restored = (PlayScenarioEngine)Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            Assert.AreEqual(run.Scenario.Name, restored.State.Scenario.Name);
+            Assert.AreEqual("2026-10-10T12:34:56.000Z", restored.State.Logs.Last().Message);
+            restored.Cancel(run.StartedUnixMs + 1);
+        }
+
+        [Test]
+        public void UnchangedCheckpointDoesNotSerializeOnAnExpiredHeartbeat()
+        {
+            PlayScenarioRun run = StartingRun();
+            var engine = new PlayScenarioEngine(run, new UnityPlayScenarioHost());
+            Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, engine);
+            Service.GetField("_logs", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, null);
+            Service.GetField("_finalized", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, false);
+            var synchronize = (Action<bool>)Service.GetMethod("Synchronize", BindingFlags.Static | BindingFlags.NonPublic).CreateDelegate(typeof(Action<bool>));
+            synchronize(true);
+            Service.GetField("_checkpointAt", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, 0L);
+            using var recorder = Unity.Profiling.ProfilerRecorder.StartNew(
+                Unity.Profiling.ProfilerCategory.Memory,
+                "GC.Alloc",
+                8192,
+                Unity.Profiling.ProfilerRecorderOptions.StartImmediately | Unity.Profiling.ProfilerRecorderOptions.CollectOnlyOnCurrentThread
+            );
+            synchronize(false);
+            recorder.Stop();
+            Assert.IsTrue(recorder.Valid);
+            Assert.AreEqual(0, recorder.Count, "No changed engine, poll or log evidence requires no checkpoint projection.");
+        }
+
+        [Test]
+        public void SplitSuiteCheckpointRestoresLegacyAndRejectsMissingFrozenIdentity()
+        {
+            string key = "MCPForUnity.Tests.Opt02." + Guid.NewGuid().ToString("N");
+            try
+            {
+                var definition = StartingRun().Scenario;
+                var state = PlayScenarioSuiteRunner.Create(
+                    new PlayScenarioSuiteDefinition
+                    {
+                        Name = "checkpoint-suite",
+                        Scenarios = new List<string> { definition.Name },
+                    },
+                    new[] { definition },
+                    1,
+                    30,
+                    null,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                );
+                var checkpoint = new PlayScenarioSessionCheckpoint(key, typeof(PlayScenarioSuiteState), "definitions", 40 * 1024 * 1024);
+                string legacy = JsonConvert.SerializeObject(state);
+                Assert.IsTrue(JToken.DeepEquals(JObject.Parse(legacy), checkpoint.Read(legacy)));
+                checkpoint.Write(state, state.Definitions);
+                string saved = SessionState.GetString(key, "");
+                JObject compact = JObject.Parse(saved);
+                string pointer = (string)compact["_frozen_definition"];
+                Assert.IsNull(compact["definitions"]);
+                Assert.AreEqual(definition.Name, (string)checkpoint.Read(saved)["definitions"][0]["name"]);
+                SessionState.SetString(key + ".definition." + (pointer[0] == '0' ? '1' : '0'), "orphaned incomplete replacement");
+                Assert.AreEqual(
+                    definition.Name,
+                    (string)checkpoint.Read(saved)["definitions"][0]["name"],
+                    "The active pointer must ignore an unfinished other-slot write."
+                );
+                SessionState.EraseString(key + ".definition." + pointer[0]);
+                Assert.That(() => checkpoint.Read(saved), Throws.Exception, "Missing frozen inputs must not be substituted or replayed.");
+            }
+            finally
+            {
+                SessionState.EraseString(key);
+                SessionState.EraseString(key + ".definition.0");
+                SessionState.EraseString(key + ".definition.1");
+            }
         }
 
         private static int QueuedPlayRequests() =>

@@ -16,6 +16,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private string _firstUnexpected;
         private string _lastUnexpected;
         private bool _closed;
+        public long DrainedRevision { get; private set; }
 
         public PlayScenarioLogBuffer(PlayScenarioLogPolicy policy = null)
         {
@@ -62,6 +63,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 throw new ArgumentNullException(nameof(run));
             lock (_gate)
             {
+                if (_pending.Count != 0 || _dropped != 0 || _unexpected != 0)
+                    DrainedRevision++;
                 long dropped = (long)run.DroppedLogCount + _dropped;
                 while (_pending.Count > 0)
                 {

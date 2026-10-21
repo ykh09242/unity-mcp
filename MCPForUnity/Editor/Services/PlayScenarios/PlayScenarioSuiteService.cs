@@ -250,14 +250,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Persist();
         }
 
+        private static readonly PlayScenarioSessionCheckpoint Checkpoint = new(SessionKey, typeof(PlayScenarioSuiteState), "definitions", 40 * 1024 * 1024);
+
         private static void Persist()
         {
             if (_runner == null)
                 return;
-            string json = JObject.FromObject(_runner.State, PlayScenarioSuiteStore.Serializer()).ToString(Formatting.None);
-            if (Encoding.UTF8.GetByteCount(json) > 40 * 1024 * 1024)
-                throw new InvalidOperationException("Suite session snapshot exceeds its 40 MiB limit.");
-            SessionState.SetString(SessionKey, json);
+            Checkpoint.Write(_runner.State, _runner.State.Definitions);
         }
 
         private static void Restore()
@@ -269,13 +268,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 if (Encoding.UTF8.GetByteCount(saved) > 40 * 1024 * 1024)
                     throw new InvalidDataException("Suite session snapshot exceeds its limit.");
-                JObject value;
-                using (var reader = new JsonTextReader(new StringReader(saved)) { DateParseHandling = DateParseHandling.None, MaxDepth = 48 })
-                {
-                    value = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
-                    if (reader.Read())
-                        throw new InvalidDataException("Suite snapshot has trailing JSON content.");
-                }
+                JObject value = Checkpoint.Read(saved);
                 PlayScenarioDefinition.Fields(
                     value,
                     "report",
