@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Callable, Coroutine, Hashable
 from contextlib import asynccontextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
 from typing import Generic, TypeVar
 from weakref import WeakKeyDictionary, WeakValueDictionary, finalize
 
@@ -22,7 +23,7 @@ T = TypeVar("T")
 
 @dataclass(frozen=True, slots=True)
 class _CompletedRead(Generic[T]):
-    value: T
+    copy_value: Callable[[], T]
     received_at: float
 
 
@@ -43,16 +44,24 @@ def _release_snapshot(owner: ResponseOwner, copies: list[ResponseOwner]) -> None
 class _ReadFlight(Generic[T]):
     """Own one snapshot until its cache reference and active fetches are gone."""
 
-    def __init__(self, factory: Callable[[], Coroutine[None, None, T]]) -> None:
+    def __init__(
+        self,
+        factory: Callable[[], Coroutine[None, None, T]],
+        copy_preparer: Callable[[T], Callable[[], T] | None] | None,
+    ) -> None:
         self.owner = ResponseOwner()
         self.detached_copies: list[ResponseOwner] = []
         # A closed loop cannot run its expiry task. GC still releases aggregate
         # accounting without retaining that loop through the registry.
         self._cleanup = finalize(self, _release_snapshot, self.owner, self.detached_copies)
         self.references = 1
-        self.task = asyncio.create_task(self._fetch(factory))
+        self.task = asyncio.create_task(self._fetch(factory, copy_preparer))
 
-    async def _fetch(self, factory: Callable[[], Coroutine[None, None, T]]) -> _CompletedRead[T]:
+    async def _fetch(
+        self,
+        factory: Callable[[], Coroutine[None, None, T]],
+        copy_preparer: Callable[[T], Callable[[], T] | None] | None,
+    ) -> _CompletedRead[T]:
         token = response_owner.set(self.owner)
         received = False
         try:
@@ -71,8 +80,21 @@ class _ReadFlight(Generic[T]):
                     charge = response_size(value)
                     if charge is None or not shared_read_budget.reserve(self.owner, charge):
                         raise SharedReadCapacityError()
+                copy_value: Callable[[], T] = partial(deepcopy, value)
+                # One cache reference plus sixteen waiting readers is the measured
+                # break-even range. Single/sparse reads keep their existing path.
+                if copy_preparer is not None and self.references >= 17:
+                    temporary = self.owner.reserve_copy()
+                    if temporary is not None:
+                        try:
+                            prepared = copy_preparer(value)
+                            if prepared is not None:
+                                copy_value = prepared
+                            del value
+                        finally:
+                            temporary.release()
                 received = True
-                return _CompletedRead(value, asyncio.get_running_loop().time())
+                return _CompletedRead(copy_value, asyncio.get_running_loop().time())
         finally:
             response_owner.reset(token)
             # Completed flights may remain cached. Do not retain the owning
@@ -90,9 +112,14 @@ class _ReadFlight(Generic[T]):
 class SharedRead(Generic[T]):
     """Own one fetch and count the callers that may still need it."""
 
-    def __init__(self, freshness_s: float) -> None:
+    def __init__(
+        self,
+        freshness_s: float,
+        copy_preparer: Callable[[T], Callable[[], T] | None] | None = None,
+    ) -> None:
         self.callers = 0
         self._freshness_s = freshness_s
+        self._copy_preparer = copy_preparer
         self._flight: _ReadFlight[T] | None = None
         self.expiry_task: asyncio.Task[None] | None = None
 
@@ -123,7 +150,7 @@ class SharedRead(Generic[T]):
             if flight is not None:
                 flight.release()
             try:
-                flight = _ReadFlight(factory)
+                flight = _ReadFlight(factory, self._copy_preparer)
             except BaseException:
                 if receipt_pin is not None:
                     receipt_pin.close()
@@ -147,7 +174,7 @@ class SharedRead(Generic[T]):
                 raise SharedReadCapacityError()
             transferred = False
             try:
-                value = deepcopy(completed.value)
+                value = completed.copy_value()
                 if consumer is None:
                     # Direct internal callers have no MCP delivery owner; their
                     # active shared-read lifetime owns the detached allocation.
@@ -195,9 +222,15 @@ class SharedToolReads(Generic[T]):
     """Share reads only within active sessions; never retain finished jobs."""
 
     def __init__(
-        self, *, freshness_s: float = 0.0, max_entries: int = 128, retention_s: float = 0.0
+        self,
+        *,
+        freshness_s: float = 0.0,
+        max_entries: int = 128,
+        retention_s: float = 0.0,
+        copy_preparer: Callable[[T], Callable[[], T] | None] | None = None,
     ) -> None:
         self._freshness_s = freshness_s
+        self._copy_preparer = copy_preparer
         self._max_entries = max_entries
         self._retention_s = retention_s
         # Weak values avoid retaining a closed loop through a cached task.
@@ -255,7 +288,7 @@ class SharedToolReads(Generic[T]):
             self._loops[loop] = entries
         read = entries.get(key) if key is not None else None
         if read is None:
-            read = SharedRead[T](self._freshness_s)
+            read = SharedRead[T](self._freshness_s, self._copy_preparer)
             if key is not None and len(entries) < self._max_entries:
                 entries[key] = read
         read.callers += 1
