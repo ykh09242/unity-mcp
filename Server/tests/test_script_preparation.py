@@ -52,6 +52,32 @@ def wire(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_local_text_edits_accept_hundreds_before_native_preparation():
+    result = await tools._apply_edits_locally(
+        "class Foo {}", [{"op": "append", "text": "\n"}] * 100
+    )
+    assert result == "class Foo {}" + "\n" * 100
+
+
+@pytest.mark.asyncio
+async def test_hundreds_of_large_source_edits_keep_complete_preparation(wire):
+    reader, writer = wire
+    original = "/*" + "x" * 700000 + "*/class Foo {}\n"
+    candidate = original.replace("Foo", "Bar")
+    reader.return_value = prepared(original, candidate)
+    result = await tools.script_apply_edits(
+        AsyncMock(),
+        "Foo",
+        "Assets",
+        [{"op": "insert_method", "replacement": "void M() {}"}] * 100,
+        {"preview": True},
+    )
+    assert result["success"] is True, result
+    assert result["data"]["new_contents"] == candidate
+    writer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_structured_preview_is_read_only_complete_handoff(wire):
     reader, writer = wire
     response = await tools.script_apply_edits(
@@ -545,27 +571,27 @@ async def test_ordered_final_native_validation_refusal_never_commits(ordered_wir
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("count", [32, 33])
+@pytest.mark.parametrize("count", [256, 257])
 async def test_ordered_operation_bound_is_finite_before_io(ordered_wire, count):
     edits = [{"op": "prepend", "text": "// marker\n"}] * (count - 1) + [
         {"op": "replace_method", "methodName": "Existing", "replacement": "void Existing() {}"},
     ]
     result = await ordered_preview(ordered_wire, edits)
-    if count == 33:
+    if count == 257:
         assert result["success"] is False
         assert not ordered_wire.selected and not ordered_wire.calls
     else:
         assert result["success"] is True, result
-        assert result["data"]["steps_processed"] == 32
-        assert len(ordered_wire.calls) == 33
+        assert result["data"]["steps_processed"] == 256
+        assert len(ordered_wire.calls) == 257
     assert not ordered_wire.commits and not ordered_wire.legacy_writes
 
 
 @pytest.mark.asyncio
 async def test_ordered_aggregate_payload_bound_rejects_before_io(ordered_wire):
     edits = [
-        {"op": "prepend", "text": "x" * 32768},
-        {"op": "append", "text": "y" * 32768},
+        {"op": "prepend", "text": "x" * (1024 * 1024)},
+        {"op": "append", "text": "y" * (1024 * 1024)},
         {"op": "replace_method", "methodName": "Existing", "replacement": "void Existing() {}"},
     ]
     result = await ordered_preview(ordered_wire, edits)
@@ -693,6 +719,7 @@ async def test_ordered_invalid_current_range_refuses_without_commit(ordered_wire
 @pytest.mark.asyncio
 async def test_ordered_active_processing_allowance_cannot_renew(ordered_wire, monkeypatch):
     original_runner = tools._run_regex_work
+    monkeypatch.setattr(tools.bounded_regex, "TOTAL_TIMEOUT_SECONDS", 1.0)
 
     async def queued_processing(budget, work):
         # A deterministic queue interval is part of active preprocessing accounting.
@@ -753,7 +780,7 @@ async def test_incomplete_or_inconsistent_preparation_cannot_be_used(wire, field
 @pytest.mark.asyncio
 async def test_combined_source_candidate_limit_and_noop_count(wire):
     reader, _ = wire
-    reader.return_value = prepared("x" * (512 * 1024), "y" * (512 * 1024 + 1))
+    reader.return_value = prepared("x" * (4 * 1024 * 1024), "y" * (4 * 1024 * 1024 + 1))
     result = await tools.script_apply_edits(
         AsyncMock(),
         "Foo",
@@ -888,7 +915,7 @@ async def test_ordered_anchor_shadow_alias_cannot_hide_overlimit_native_payload(
                 "op": op,
                 "anchor": "}",
                 shadow: shadow_value,
-                "replacement": "/*" + "x" * 70000 + "*/",
+                "replacement": "/*" + "x" * (2 * 1024 * 1024) + "*/",
             },
             {"op": "regex_replace", "pattern": "absent", "replacement": ""},
         ],
@@ -907,7 +934,7 @@ async def test_ordered_anchor_empty_replacement_respects_native_base64_precedenc
 
     reader, writer = wire
     reader.return_value = {"success": False, "error": "Unknown action: preview_script_buffer"}
-    payload = "/*" + "x" * 39996 + "*/"
+    payload = "/*" + "x" * (1024 * 1024 + 100) + "*/"
     result = await tools.script_apply_edits(
         AsyncMock(),
         "Foo",
@@ -919,7 +946,7 @@ async def test_ordered_anchor_empty_replacement_respects_native_base64_precedenc
                 "replacement": "",
                 "replacementBase64": base64.b64encode(payload.encode()).decode("ascii"),
             },
-            {"op": "prepend", "text": "//" + "y" * 39998},
+            {"op": "prepend", "text": "//" + "y" * (1024 * 1024 + 100)},
         ],
         {"mixed_order": "request", "preview": True},
     )
@@ -929,7 +956,7 @@ async def test_ordered_anchor_empty_replacement_respects_native_base64_precedenc
         tools.get_unity_instance_from_context.assert_not_awaited()
     else:
         # Native anchor_replace selects the explicit empty replacement, so only
-        # the 40 KiB prepend is charged and the read-only old-peer probe is reached.
+        # the roughly 1 MiB prepend is charged and the read-only old-peer probe is reached.
         assert result == {"success": False, "error": "Unknown action: preview_script_buffer"}
         assert reader.await_count == 1
         assert reader.await_args.args[3]["action"] == "preview_script_buffer"

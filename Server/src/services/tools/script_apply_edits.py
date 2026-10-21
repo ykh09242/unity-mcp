@@ -428,8 +428,8 @@ def _normalize_edit_scalars(edit: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _apply_edits_locally(original_text: str, edits: list[dict[str, Any]]) -> str:
-    if len(edits or []) > 32:
-        raise ValueError("At most 32 edits are permitted per request")
+    if len(edits or []) > 256:
+        raise ValueError("At most 256 edits are permitted per request")
     text = original_text
     budget = bounded_regex.WorkBudget()
     for raw_edit in edits or []:
@@ -912,9 +912,9 @@ def _prepared_handoff(
         original_sha = hashlib.sha256(original_bytes).hexdigest()
         candidate_bytes = candidate.encode("utf-8")
         candidate_sha = hashlib.sha256(candidate_bytes).hexdigest()
-        if len(original_bytes) + len(candidate_bytes) > 1024 * 1024:
+        if len(original_bytes) + len(candidate_bytes) > 8 * 1024 * 1024:
             raise ValueError(
-                "Complete original/candidate exceeds the 1 MiB preparation payload limit"
+                "Complete original/candidate exceeds the 8 MiB preparation payload limit"
             )
         if (
             data.get("original_sha256") != original_sha
@@ -1187,10 +1187,10 @@ async def _ordered_script_edits(ctx: Context, request: _OrderedScriptRequest) ->
                         len(value.encode("utf-8"))
                         for value in (original["original_contents"], current, candidate)
                     )
-                    > 1024 * 1024
+                    > 8 * 1024 * 1024
                 ):
                     return _err(
-                        "payload_too_large", "Original/current/next exceeds the 1 MiB stage limit"
+                        "payload_too_large", "Original/current/next exceeds the 8 MiB stage limit"
                     )
                 current = candidate
             data = prepared["data"]
@@ -1378,8 +1378,8 @@ async def script_apply_edits(
         return _err("missing_field", "At least one edit is required")
     if not all(isinstance(edit, dict) for edit in edits):
         return _err("missing_field", "Each edit must be an object")
-    if len(edits) > 32:
-        return {"success": False, "message": "At most 32 edits are permitted per request"}
+    if len(edits) > 256:
+        return {"success": False, "message": "At most 256 edits are permitted per request"}
 
     # Normalize locator first so downstream calls target the correct script file.
     name, path = _normalize_script_locator(name, path)
@@ -1540,7 +1540,7 @@ async def script_apply_edits(
                     value = edit["replacementBase64"]
                     if not isinstance(value, str):
                         raise ValueError("replacementBase64 must be a string")
-                    if len(value) > ((64 * 1024 + 2) // 3) * 4:
+                    if len(value) > ((2048 * 1024 + 2) // 3) * 4:
                         return _err(
                             "payload_too_large",
                             "Encoded replacement exceeds the ordered payload limit",
@@ -1735,12 +1735,12 @@ async def script_apply_edits(
                     )
                 if not isinstance(value, str):
                     raise TypeError("Replacement payload must be a string")
-                if len(value) > 64 * 1024:
-                    return _err("payload_too_large", "Ordered replacement exceeds 64 KiB")
+                if len(value) > 2048 * 1024:
+                    return _err("payload_too_large", "Ordered replacement exceeds 2 MiB")
                 payload_bytes += len(value.encode("utf-8", errors="strict"))
-            if payload_bytes > 64 * 1024:
+            if payload_bytes > 2048 * 1024:
                 return _err(
-                    "payload_too_large", "Ordered aggregate replacement payload exceeds 64 KiB"
+                    "payload_too_large", "Ordered aggregate replacement payload exceeds 2 MiB"
                 )
         except (ValueError, TypeError, UnicodeError) as exc:
             return _err("invalid_edit", str(exc))

@@ -16,10 +16,10 @@ namespace MCPForUnity.Editor.Tools
     /// <summary>Bounded source replacements with durable, conditional compensation; never a filesystem-wide transaction.</summary>
     internal static class ScriptChangeSet
     {
-        private const int MaxFiles = 16,
-            MaxFileBytes = 256 * 1024,
-            MaxCombinedBytes = 4 * 1024 * 1024,
-            MaxManifestBytes = 64 * 1024,
+        private const int MaxFiles = 256,
+            MaxFileBytes = 2 * 1024 * 1024,
+            MaxCombinedBytes = 32 * 1024 * 1024,
+            MaxManifestBytes = 1024 * 1024,
             MaxRecords = 32;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
         private static readonly string Domain = Guid.NewGuid().ToString("N");
@@ -134,7 +134,7 @@ namespace MCPForUnity.Editor.Tools
         private static object Prepare(JObject parameters)
         {
             if (parameters["files"] is not JArray files || files.Count < 1 || files.Count > MaxFiles || parameters["change_set_id"] != null)
-                throw new Refusal("invalid_change_set", "Preparation requires 1–16 source entries and no change_set_id.");
+                throw new Refusal("invalid_change_set", "Preparation requires 1–256 source entries and no change_set_id.");
             string validation = parameters["validation"] == null ? "standard" : String(parameters, "validation");
             if (!new[] { "basic", "standard", "comprehensive", "strict" }.Contains(validation))
                 throw new Refusal("invalid_validation", "Unknown per-file validation level.");
@@ -166,7 +166,7 @@ namespace MCPForUnity.Editor.Tools
                 byte[] candidate = Bytes(contents, bom);
                 combined += original.Length + candidate.Length;
                 if (combined > MaxCombinedBytes)
-                    throw new Refusal("payload_too_large", "Combined original/candidate source bytes exceed 4 MiB.");
+                    throw new Refusal("payload_too_large", "Combined original/candidate source bytes exceed 32 MiB.");
                 ValidateBuffer(path, expected, contents, candidate, validation);
                 plan.Files.Add(
                     new Entry
@@ -447,7 +447,7 @@ namespace MCPForUnity.Editor.Tools
                 throw new Refusal("invalid_encoding", "Source buffers must be NUL-free UTF-8.");
             byte[] text = Utf8.GetBytes(contents);
             if (text.Length > MaxFileBytes - (bom ? 3 : 0))
-                throw new Refusal("payload_too_large", "Each source, including its preserved BOM, is limited to 256 KiB.");
+                throw new Refusal("payload_too_large", "Each source, including its preserved BOM, is limited to 2 MiB.");
             return bom
                 ? new byte[] { 0xef, 0xbb, 0xbf }
                     .Concat(text)
@@ -496,7 +496,7 @@ namespace MCPForUnity.Editor.Tools
         {
             byte[] bytes = Utf8.GetBytes(JsonConvert.SerializeObject(plan, Formatting.None));
             if (bytes.Length > MaxManifestBytes)
-                throw new Refusal("manifest_too_large", "The recovery manifest exceeds 64 KiB.");
+                throw new Refusal("manifest_too_large", "The recovery manifest exceeds 1 MiB.");
             string path = Artifact(plan, "manifest.json");
             string temporary = Artifact(plan, Guid.NewGuid().ToString("N") + ".tmp");
             try

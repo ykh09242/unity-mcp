@@ -119,6 +119,31 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void LargeChangeSetPreservesEverySourceThroughPreparationAndApply()
+        {
+            var files = new JArray();
+            for (int index = 0; index < 40; index++)
+            {
+                string name = "Bulk" + index;
+                Seed(name, false, "\n");
+                if (index == 0)
+                    File.AppendAllText(Path.Combine(folder, name + ".cs"), "/*" + new string('x', 700000) + "*/");
+                JObject entry = Entry(name);
+                if (index == 0)
+                    entry["contents"] = Candidate(name) + "/*" + new string('y', 700000) + "*/";
+                files.Add(entry);
+            }
+            JObject prepared = Command("prepare_change_set", files: files);
+            Assert.IsTrue(prepared.Value<bool>("success"), prepared.ToString());
+            string id = prepared["data"].Value<string>("change_set_id");
+            JObject applied = Command("apply_change_set", id);
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            Assert.AreEqual(40, ((JArray)applied["data"]["files"]).Count);
+            for (int index = 0; index < 40; index++)
+                Assert.AreEqual((string)files[index]["contents"], File.ReadAllText(Path.Combine(folder, "Bulk" + index + ".cs")));
+        }
+
+        [Test]
         public void PrepareApply_PreservesOrderedBytesBomUnicodeAndMetadata()
         {
             // Given: two sources with distinct BOM/newline policies and stable metadata.
