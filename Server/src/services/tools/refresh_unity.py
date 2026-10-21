@@ -330,12 +330,15 @@ async def refresh_unity(
 
         # If we timed out without confirming readiness, log and return failure
         if not ready_confirmed:
-            logger.warning("refresh_unity: Timed out after 60s waiting for editor to become ready")
+            logger.warning(
+                "refresh_unity: Timed out after %ss waiting for editor to become ready",
+                REFRESH_READY_TIMEOUT_SECONDS,
+            )
             return with_compilation(
                 MCPResponse(
                     success=False,
-                    message="Refresh triggered but timed out after 60s waiting for editor readiness.",
-                    data={"timeout": True, "wait_seconds": 60.0},
+                    message=f"Refresh triggered but timed out after {REFRESH_READY_TIMEOUT_SECONDS:g}s waiting for editor readiness.",
+                    data={"timeout": True, "wait_seconds": REFRESH_READY_TIMEOUT_SECONDS},
                 )
             )
 
