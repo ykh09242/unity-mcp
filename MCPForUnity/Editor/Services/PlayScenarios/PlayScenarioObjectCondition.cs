@@ -145,55 +145,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         internal static Matches ResolveId(Scene scene, string identifier, ref PlayScenarioQueryCounts counts, PlayScenarioHierarchyQuery query)
         {
             counts.TargetSearches++;
-            var matches = new Matches();
-            if (!scene.IsValid() || !scene.isLoaded)
-                return matches;
-            if (!PlayScenarioTarget.IsValidTargetId(identifier))
-                throw new ArgumentException("target_id must match [A-Za-z0-9][A-Za-z0-9_.:-]{0,127}.");
-            try
+            var matches = PlayScenarioTargetLookup.Resolve(scene, identifier, ref counts);
+            return new Matches
             {
-                int inspected = 0;
-                query.Begin(scene);
-                foreach (GameObject root in query.Roots)
-                {
-                    Inspect(ref inspected, ref counts);
-                    query.Push(root.transform, 0);
-                }
-                while (query.Count > 0)
-                {
-                    Transform current = query.Pop().Node;
-                    PlayScenarioTarget marker = current.GetComponent<PlayScenarioTarget>();
-                    if (marker != null && string.Equals(marker.TargetId, identifier, StringComparison.Ordinal))
-                    {
-                        matches.Count++;
-                        if (current.gameObject.activeInHierarchy)
-                            matches.ActiveCount++;
-                        if (matches.Target == null)
-                            matches.Target = current.gameObject;
-                        if (matches.Count > 1)
-                            throw new PlayScenarioException(
-                                new PlayScenarioFailure
-                                {
-                                    Code = "target_ambiguous",
-                                    Target = identifier,
-                                    Expected = "one unique ID in the active scene",
-                                    Actual = "at least two matching markers, including inactive objects",
-                                    Message = "Target ID is ambiguous in the active scene, including inactive objects.",
-                                }
-                            );
-                    }
-                    for (int index = 0; index < current.childCount; index++)
-                    {
-                        Inspect(ref inspected, ref counts);
-                        query.Push(current.GetChild(index), 0);
-                    }
-                }
-                return matches;
-            }
-            finally
-            {
-                query.Clear();
-            }
+                Target = matches.Target,
+                Count = matches.Count,
+                ActiveCount = matches.ActiveCount,
+            };
         }
 
         private static void Match(Transform parent, string[] segments, int index, ref Matches matches, ref int inspected, ref PlayScenarioQueryCounts counts)

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Runtime.PlayScenarios;
 using NUnit.Framework;
 using Unity.Profiling;
@@ -84,6 +85,38 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             query.Release();
             Assert.AreEqual(0, query.Roots.Capacity);
             Assert.AreEqual(0, query.Count);
+        }
+
+        [Test]
+        public void IdQueriesInspectMarkersAndObserveInactiveCopiesAndChanges()
+        {
+            Scene scene = EditorSceneManager.NewPreviewScene();
+            var scratch = new PlayScenarioHierarchyQuery();
+            try
+            {
+                for (int i = 0; i < 5000; i++)
+                    SceneManager.MoveGameObjectToScene(new GameObject("unmarked"), scene);
+                var go = new GameObject("marked");
+                SceneManager.MoveGameObjectToScene(go, scene);
+                go.AddComponent<PlayScenarioTarget>().TargetId = "owned-id";
+                PlayScenarioQueryCounts counts = default;
+                Assert.AreSame(go, PlayScenarioObjectCondition.ResolveId(scene, "owned-id", ref counts, scratch).Target);
+                Assert.Less(counts.HierarchyVisits, 10, "Unmarked hierarchy objects must not require managed per-object visits for ID lookup.");
+                go.SetActive(false);
+                var duplicate = UnityEngine.Object.Instantiate(go);
+                SceneManager.MoveGameObjectToScene(duplicate, scene);
+                Assert.Throws<PlayScenarioException>(() => PlayScenarioObjectCondition.ResolveId(scene, "owned-id"));
+                duplicate.GetComponent<PlayScenarioTarget>().TargetId = "changed-id";
+                Assert.AreEqual(1, PlayScenarioObjectCondition.ResolveId(scene, "owned-id").Count);
+                UnityEngine.Object.DestroyImmediate(go);
+                Assert.AreEqual(0, PlayScenarioObjectCondition.ResolveId(scene, "owned-id").Count);
+                Assert.AreSame(duplicate, PlayScenarioObjectCondition.ResolveId(scene, "changed-id").Target);
+            }
+            finally
+            {
+                scratch.Release();
+                EditorSceneManager.ClosePreviewScene(scene);
+            }
         }
 
         private static void QueryLargeScene(PlayScenarioHierarchyQuery query, Scene scene)

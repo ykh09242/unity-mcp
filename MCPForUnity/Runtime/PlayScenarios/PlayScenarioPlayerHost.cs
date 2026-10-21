@@ -163,7 +163,14 @@ namespace MCPForUnity.Runtime.PlayScenarios
             string[] parts = targetSegments;
             try
             {
-                if (active.IsValid() && active.isLoaded)
+                if (step.TargetId != null)
+                {
+                    var matches = PlayScenarioTargetLookup.Resolve(active, step.TargetId, ref counts);
+                    target = matches.Target;
+                    matched = matches.Count;
+                    activeCount = matches.ActiveCount;
+                }
+                else if (active.IsValid() && active.isLoaded)
                 {
                     targetQuery.Begin(active);
                     foreach (GameObject root in targetQuery.Roots)
