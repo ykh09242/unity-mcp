@@ -88,6 +88,89 @@ namespace MCPForUnityTests.Editor.Services
     public class CommandPhaseTimingTests
     {
         [Test]
+        public void ServerCorrelationRequiresBothNegotiationAndLocalOptIn()
+        {
+            var type = typeof(MCPForUnity.Editor.Services.Transport.Transports.WebSocketTransportClient).Assembly.GetType(
+                "MCPForUnity.Editor.Services.Transport.CommandPhaseTiming"
+            );
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+            var create = type.GetMethod("CreateForCommand", flags);
+            Assert.IsNotNull(create);
+            string token = new string('a', 32);
+            var payload = JObject.Parse("{\"diagnostics\":{\"correlation\":\"" + token + "\"}}");
+            Assert.IsNull(create.Invoke(null, new object[] { false, true, payload }));
+            object accepted = create.Invoke(null, new object[] { true, true, payload });
+            var correlation = type.GetField("_correlation", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.AreEqual(token, correlation.GetValue(accepted));
+            object legacy = create.Invoke(null, new object[] { true, false, payload });
+            if (legacy != null)
+                Assert.AreNotEqual(token, correlation.GetValue(legacy));
+            foreach (JToken invalid in new JToken[] { "secret/path", new string('a', 33), new string('A', 32), new JObject(), 1 })
+            {
+                payload["diagnostics"]["correlation"] = invalid;
+                object ignored = create.Invoke(null, new object[] { true, true, payload });
+                if (ignored != null)
+                    Assert.IsFalse(
+                        (bool)
+                            type.GetField("_serverCorrelation", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                                .GetValue(ignored)
+                    );
+            }
+        }
+
+        [Test]
+        public void ImportSpansKeepConcurrentOwnersSeparateAndDoNotRecordPaths()
+        {
+            var type = typeof(MCPForUnity.Editor.Services.Transport.Transports.WebSocketTransportClient).Assembly.GetType(
+                "MCPForUnity.Editor.Services.Transport.CommandPhaseTiming"
+            );
+            const System.Reflection.BindingFlags methods = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+            const System.Reflection.BindingFlags instance = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var rows = new List<JObject>();
+            long now = 0;
+            object Make(char id) =>
+                Activator.CreateInstance(
+                    type,
+                    instance,
+                    null,
+                    new object[]
+                    {
+                        (Func<long>)(() => now),
+                        1000L,
+                        (Action<JObject>)rows.Add,
+                        Enum.ToObject(type.GetNestedType("Transport", System.Reflection.BindingFlags.NonPublic), 1),
+                        new string(id, 32),
+                    },
+                    null
+                );
+            object first = Make('a'),
+                second = Make('b');
+            using ((IDisposable)type.GetMethod("EnterHandler", methods).Invoke(null, new[] { first }))
+            {
+                using ((IDisposable)type.GetMethod("MeasureImport", methods).Invoke(null, null))
+                    now += 7;
+                using ((IDisposable)type.GetMethod("EnterHandler", methods).Invoke(null, new[] { second }))
+                using ((IDisposable)type.GetMethod("MeasureImport", methods).Invoke(null, null))
+                    now += 13;
+                using ((IDisposable)type.GetMethod("MeasureImport", methods).Invoke(null, null))
+                    now += 5;
+            }
+            using ((IDisposable)type.GetMethod("MeasureImport", methods).Invoke(null, null))
+                now += 100;
+            foreach (object timing in new[] { first, second })
+            {
+                type.GetMethod("ExecutionDone", instance).Invoke(timing, null);
+                type.GetMethod("DeliveryDone", instance)
+                    .Invoke(timing, new[] { Enum.ToObject(type.GetNestedType("Delivery", System.Reflection.BindingFlags.NonPublic), 1) });
+            }
+            Assert.AreEqual(12d, rows[0].Value<double>("import_ms"));
+            Assert.AreEqual(13d, rows[1].Value<double>("import_ms"));
+            Assert.IsFalse(rows[0].Value<bool>("execution_settled_after_delivery"));
+            Assert.AreEqual(new string('a', 32), rows[0].Value<string>("correlation"));
+            Assert.AreEqual(new string('b', 32), rows[1].Value<string>("correlation"));
+        }
+
+        [Test]
         public void SamplesFirstAdmissionThenEverySixtyFour()
         {
             var sampled = new List<long>();

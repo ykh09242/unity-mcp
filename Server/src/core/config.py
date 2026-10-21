@@ -43,6 +43,13 @@ class ServerConfig:
     unity_port: int = 6400
     mcp_port: int = 6500
 
+    # Local payload-free phase diagnostics; never enables native logging remotely.
+    phase_diagnostics: bool = field(
+        default_factory=lambda: (
+            os.environ.get("UNITY_MCP_PHASE_DIAGNOSTICS", "").strip().lower() in {"1", "true"}
+        )
+    )
+
     # Transport settings
     transport_mode: str = "stdio"
 

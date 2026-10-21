@@ -74,6 +74,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private readonly OwnedConnectionOptions _ownedConnection;
         private bool _commandCancellationNegotiated;
         private bool _compressionNegotiated;
+        private bool _phaseTimingOffered;
+        private bool _phaseTimingNegotiated;
         private bool _commandProgressOffered;
         private bool _commandProgressNegotiated;
 
@@ -310,6 +312,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 _commandWork = null;
                 _statePublisher = null;
                 _largeResultNegotiated = false;
+                _phaseTimingOffered = false;
+                _phaseTimingNegotiated = false;
                 _commandProgressOffered = false;
                 _commandProgressNegotiated = false;
                 Interlocked.Exchange(ref _isReconnectingFlag, 0);
@@ -466,6 +470,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _largeResultNegotiated = false;
                     _commandCancellationNegotiated = false;
                     _compressionNegotiated = false;
+                    _phaseTimingOffered = false;
+                    _phaseTimingNegotiated = false;
                     _commandProgressOffered = false;
                     _commandProgressNegotiated = false;
                 }
@@ -840,6 +846,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 if (!IsCurrentConnectionToken(token))
                     return;
+                _phaseTimingOffered = HasCapability(payload, CommandPhaseTiming.Capability);
+                if (!_phaseTimingOffered)
+                    _phaseTimingNegotiated = false;
                 _commandProgressOffered = HasCommandProgressCapability(payload);
                 if (!_commandProgressOffered)
                     _commandProgressNegotiated = false;
@@ -884,6 +893,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _largeResultNegotiated = HasCapability(payload, LargeResultWriter.Capability);
                     _compressionNegotiated = _largeResultNegotiated && HasCapability(payload, LargeResultWriter.CompressionCapability);
                     _commandCancellationNegotiated = HasCapability(payload, ConnectionCommandWork.CancellationCapability);
+                    _phaseTimingNegotiated = _phaseTimingOffered && HasCapability(payload, CommandPhaseTiming.Capability);
                     _commandProgressNegotiated = _commandProgressOffered && HasCommandProgressCapability(payload);
                     _statePublisher?.Dispose();
                     _statePublisher = null;
@@ -1098,6 +1108,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             ConnectionCommandWork work;
             string sessionId;
             bool progressNegotiated;
+            bool phaseTimingNegotiated;
             lock (_ownershipLock)
             {
                 if (!IsCurrentConnectionToken(token))
@@ -1105,6 +1116,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 work = _commandWork;
                 sessionId = _sessionId;
                 progressNegotiated = _commandProgressNegotiated;
+                phaseTimingNegotiated = _phaseTimingNegotiated;
             }
             if (work == null)
                 return;
@@ -1117,7 +1129,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 Command = command,
                 TimeoutSeconds = timeoutSeconds,
                 Deadline = deadline,
-                Timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.WebSocket),
+                Timing = CommandPhaseTiming.CreateForCommand(McpLogRecord.IsEnabled, phaseTimingNegotiated, payload),
                 Owner = work,
                 SessionId = sessionId,
                 Progress = progressNegotiated && RequestsCommandProgress(payload, commandId) ? new CommandProgressBuffer() : null,
@@ -1493,7 +1505,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     ConnectionCommandWork.CancellationCapability,
                     ToolSettingsState.Capability,
                     LargeResultWriter.CompressionCapability,
-                    CommandProgressBuffer.Capability
+                    CommandProgressBuffer.Capability,
+                    CommandPhaseTiming.Capability
                 ),
             };
 

@@ -325,7 +325,10 @@ namespace MCPForUnity.Editor.Tools
                 var consentError = RequireScriptConsent(fullPath);
                 if (consentError != null)
                     return consentError;
-                AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                using (MCPForUnity.Editor.Services.Transport.CommandPhaseTiming.MeasureImport())
+                {
+                    AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                }
                 // AssetDatabase.Refresh(); // Usually ImportAsset handles refresh
                 return new SuccessResponse($"Asset '{fullPath}' reimported.", GetAssetData(fullPath));
             }
@@ -590,7 +593,10 @@ namespace MCPForUnity.Editor.Tools
                             AssetPathUtility.GetFullAssetPath(fullPath);
                             AssetDatabase.WriteImportSettingsIfDirty(fullPath);
                             AssetPathUtility.GetFullAssetPath(fullPath);
-                            AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate); // Reimport to apply changes
+                            using (MCPForUnity.Editor.Services.Transport.CommandPhaseTiming.MeasureImport())
+                            {
+                                AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                            } // Reimport to apply changes
                             modified = true; // Mark overall operation as modified
                         }
                     }
