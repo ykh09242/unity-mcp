@@ -63,3 +63,7 @@ Keep raw samples and source identities when repeating an experiment. Do not
 interpret tiny differences between identical controls as useful speedups. There
 is no evidence here for increasing concurrency adaptively, for another GPU backend,
 or for removing external-file/final-publication integrity checks.
+
+## Shared regression cohorts
+
+The [large-workload cohort guide](../../../docs/development/large-workload-cohorts.md) adds source-bound raw captures and environment-matched advisory comparisons around these probes. `shared_read.py` also writes `concurrent-readers.json`; the strengthened OPT12 probe verifies each output digest and writes `mixed-artifacts.json` alongside its legacy sample file. Follow the guide's explicit output/input identity settings when using the common capture adapter.

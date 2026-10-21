@@ -1,0 +1,85 @@
+{
+  "schema": "unity-mcp-workload-manifest-v1",
+  "scenarios": {
+    "hierarchy_references": {
+      "variants": {
+        "hierarchy": 10000,
+        "reference_bytes": 17825792
+      },
+      "unit": "objects or source bytes (variant-specific)",
+      "producer": [
+        "MCPForUnityTests.Editor.Tools.ManageSceneHierarchyPagingTests.LargeHierarchyCohortPreservesEveryChildInOrder",
+        "MCPForUnityTests.EditMode.Tools.ReferenceDiagnosticsTests.LargeReferenceCohortCompletesFullSourceHash"
+      ],
+      "correctness": "Every child in source order; complete 17 MiB source scan without clamping"
+    },
+    "report_pages": {
+      "variants": {
+        "indexed": 10000
+      },
+      "unit": "ordered detail rows",
+      "producer": [
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.LargeReportCohortReadsCompleteOrderedPages"
+      ],
+      "correctness": "64 retained summaries and all 100 pages of 100 ordered rows"
+    },
+    "concurrent_readers": {
+      "variants": {
+        "small-1-A": 1,
+        "small-1-B": 1,
+        "small-4-A": 4,
+        "small-4-B": 4,
+        "small-16-A": 16,
+        "small-16-B": 16,
+        "ascii-1-A": 1,
+        "ascii-1-B": 1,
+        "ascii-4-A": 4,
+        "ascii-4-B": 4,
+        "ascii-16-A": 16,
+        "ascii-16-B": 16,
+        "unicode-1-A": 1,
+        "unicode-1-B": 1,
+        "unicode-4-A": 4,
+        "unicode-4-B": 4,
+        "unicode-16-A": 16,
+        "unicode-16-B": 16
+      },
+      "unit": "completed readers",
+      "producer": [
+        "tools/experiments/service_optimizations/shared_read.py"
+      ],
+      "correctness": "One upstream invocation, exact ordered copies, mutation isolation, retained-byte owner returns to baseline"
+    },
+    "mixed_artifacts": {
+      "variants": {
+        "FIFO": 12,
+        "size_age": 12
+      },
+      "unit": "completed jobs",
+      "producer": [
+        "MCPForUnityTests.Editor.Performance.ServiceOptimizationProbes.Opt12MixedArtifactQueue"
+      ],
+      "correctness": "Same submission order; four 32 MiB and eight 512 KiB jobs; length and digest verified for every output; no remaining staging files"
+    },
+    "repeated_reload": {
+      "variants": {
+        "actual_domain": 3
+      },
+      "unit": "completed actual reloads",
+      "producer": [
+        "MCPForUnityTests.Editor.Tools.ScriptChangeSetReloadTests.ActualDomainReload_RetainsAndRecoversInterruptedApplication"
+      ],
+      "correctness": "Three separate owned warm-project runs; interrupted application recovered with original bytes and meta identities. Correctness-only evidence; XML test duration is not reload latency."
+    },
+    "editor_activity": {
+      "variants": {
+        "tick_cycles": 32000
+      },
+      "unit": "unchanged visible ticks",
+      "producer": [
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.SustainedActivityCohortPreservesIdleAndActiveCaptureCounts"
+      ],
+      "correctness": "32 visible/hidden/changed cycles, each with 1000 idle ticks; no idle captures or unintended actions"
+    }
+  }
+}

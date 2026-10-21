@@ -178,6 +178,20 @@
       ],
       "disruptive": false,
       "platform_exclusions": {}
+    },
+    "large-workloads": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.ManageSceneHierarchyPagingTests.LargeHierarchyCohortPreservesEveryChildInOrder",
+        "MCPForUnityTests.EditMode.Tools.ReferenceDiagnosticsTests.LargeReferenceCohortCompletesFullSourceHash",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.LargeReportCohortReadsCompleteOrderedPages",
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.SustainedActivityCohortPreservesIdleAndActiveCaptureCounts",
+        "MCPForUnityTests.Editor.Performance.ServiceOptimizationProbes.Opt12MixedArtifactQueue"
+      ],
+      "disruptive": true,
+      "platform_exclusions": {
+        "linux": "Actual native workload evidence is Windows only.",
+        "darwin": "Actual native workload evidence is Windows only."
+      }
     }
   }
 }

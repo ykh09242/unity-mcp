@@ -29,6 +29,50 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [Test, Explicit("Controller-owned large workload cohort only.")]
+        public void LargeHierarchyCohortPreservesEveryChildInOrder()
+        {
+            const int count = 10000;
+            _root = new GameObject("CohortParent");
+            for (int i = 0; i < count; i++)
+                new GameObject("Child" + i).transform.SetParent(_root.transform);
+            MCPForUnityTests.WorkloadProbe.Run(
+                "hierarchy_references",
+                "hierarchy",
+                count,
+                () =>
+                {
+                    var names = new System.Text.StringBuilder();
+                    for (int cursor = 0; cursor < count; cursor += 100)
+                    {
+                        var response = JObject.FromObject(
+                            ManageScene.HandleCommand(
+                                new JObject
+                                {
+                                    ["action"] = "get_hierarchy",
+                                    ["parent"] = _root.GetInstanceIDCompat(),
+                                    ["cursor"] = cursor,
+                                    ["pageSize"] = 100,
+                                    ["maxNodes"] = 100,
+                                }
+                            )
+                        );
+                        Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                        var data = response["data"];
+                        Assert.AreEqual(count, data.Value<int>("total"));
+                        var items = (JArray)data["items"];
+                        Assert.AreEqual(100, items.Count);
+                        for (int i = 0; i < items.Count; i++)
+                        {
+                            Assert.AreEqual(_root.transform.GetChild(cursor + i).gameObject.GetInstanceIDCompat(), items[i].Value<int>("instanceID"));
+                            names.Append(items[i].Value<string>("name")).Append('\n');
+                        }
+                    }
+                    return names.ToString();
+                }
+            );
+        }
+
         [Test]
         public void GetHierarchy_PaginatesRoots_AndSupportsChildrenPaging()
         {
