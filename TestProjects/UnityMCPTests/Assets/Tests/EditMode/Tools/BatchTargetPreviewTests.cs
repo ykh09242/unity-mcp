@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
@@ -14,6 +15,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -89,8 +91,8 @@ namespace MCPForUnityTests.Editor.Tools
         private static JObject Preview(JArray commands) =>
             JObject.FromObject(BatchExecute.ValidateCommand(new JObject { ["commands"] = commands, ["previewScope"] = "targets" }));
 
-        private static JObject Apply(JArray commands, JToken preview) =>
-            JObject.FromObject(BatchExecute.HandleCommand(new JObject { ["commands"] = commands, ["preview"] = preview.DeepClone() }).GetAwaiter().GetResult());
+        private static async Task<JObject> Apply(JArray commands, JToken preview) =>
+            JObject.FromObject(await BatchExecute.HandleCommand(new JObject { ["commands"] = commands, ["preview"] = preview.DeepClone() }));
 
         private static JToken Guard(JObject response)
         {
@@ -108,55 +110,323 @@ namespace MCPForUnityTests.Editor.Tools
             return path;
         }
 
+        private string LargeAsset(int mebibytes = 8)
+        {
+            string path = Asset("LargeSource");
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None))
+                stream.SetLength((long)mebibytes * 1024 * 1024);
+            return path;
+        }
+
         [Test]
-        public void PreviewDoesNotMutateAndCurrentObjectGuardApplies()
+        public async Task AssetPreviewYieldsAndHonorsCancellationBeforeIssuingGuard()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                Assert.Ignore("Cooperative file hashing requires the Windows read-sharing guarantee; other Editors retain synchronous hashing.");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                string path = LargeAsset();
+                var commands = new JArray(Move(path, folder + "/Moved.txt"));
+                using (var cancellation = new CancellationTokenSource())
+                {
+                    Task<object> pending = CommandRegistry.InvokeCommandAsync(
+                        "batch_validate",
+                        new JObject { ["commands"] = commands, ["previewScope"] = "targets" },
+                        cancellation.Token
+                    );
+                    Assert.IsFalse(pending.IsCompleted, "Large-file hashing must yield the Editor thread.");
+                    cancellation.Cancel();
+                    try
+                    {
+                        await pending;
+                        Assert.Fail("Cancellation must not issue a usable guard.");
+                    }
+                    catch (OperationCanceledException) { }
+                }
+                Assert.IsTrue(File.Exists(path));
+                Assert.IsFalse(File.Exists(folder + "/Moved.txt"));
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [Test]
+        public async Task AsyncPreviewRechecksPermissionsAfterFileWork()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                Assert.Ignore("Cooperative file hashing requires the Windows read-sharing guarantee; other Editors retain synchronous hashing.");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                string path = LargeAsset();
+                Task<object> pending = CommandRegistry.InvokeCommandAsync(
+                    "batch_validate",
+                    new JObject { ["commands"] = new JArray(Move(path, folder + "/Moved.txt")), ["previewScope"] = "targets" }
+                );
+                MCPServiceLocator.ToolDiscovery.SetToolEnabled("asset_edit", false);
+                JObject result = JObject.FromObject(await pending);
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.IsTrue(File.Exists(path));
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [Test]
+        public async Task GuardedApplyCancellationSettlesFileWorkWithoutMutatingEarlierTarget()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                Assert.Ignore("Cooperative file hashing requires the Windows read-sharing guarantee; other Editors retain synchronous hashing.");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                string path = LargeAsset();
+                var commands = new JArray(Edit(), Move(path, folder + "/Moved.txt"));
+                JToken guard = Guard(Preview(commands));
+                using (var cancellation = new CancellationTokenSource())
+                {
+                    Task<object> pending = BatchExecute.HandleCommand(new JObject { ["commands"] = commands, ["preview"] = guard }, cancellation.Token);
+                    Assert.IsFalse(pending.IsCompleted);
+                    cancellation.Cancel();
+                    try
+                    {
+                        await pending;
+                        Assert.Fail("Canceled verification must not dispatch children.");
+                    }
+                    catch (OperationCanceledException) { }
+                }
+                Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+                using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                Assert.IsFalse(File.Exists(folder + "/Moved.txt"));
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [Test]
+        public async Task EarlierObjectChangeDuringLaterFilePreviewInvalidatesWholeGuard()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                Assert.Ignore("Cooperative file hashing requires the Windows read-sharing guarantee; other Editors retain synchronous hashing.");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                string path = LargeAsset();
+                var commands = new JArray(Edit(), Move(path, folder + "/Moved.txt"));
+                Task<object> pending = CommandRegistry.InvokeCommandAsync(
+                    "batch_validate",
+                    new JObject { ["commands"] = commands, ["previewScope"] = "targets" }
+                );
+                root.name = "ChangedWhileHashing";
+                JObject result = JObject.FromObject(await pending);
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual("target_changed_during_preparation", (string)result.SelectToken("data.validation.items[0].reason"));
+                Assert.AreEqual(JTokenType.Null, result["data"]["preview"].Type);
+                Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [Test]
+        public async Task EarlierObjectChangeDuringLaterFileVerificationRefusesAllMutations()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                Assert.Ignore("Cooperative file hashing requires the Windows read-sharing guarantee; other Editors retain synchronous hashing.");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                string path = LargeAsset();
+                var commands = new JArray(Edit(), Move(path, folder + "/Moved.txt"));
+                JToken guard = Guard(Preview(commands));
+                Task<JObject> pending = Apply(commands, guard);
+                root.name = "ChangedWhileVerifying";
+                JObject result = await pending;
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(0, result["data"].Value<int>("attemptedCount"));
+                Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+                Assert.IsTrue(File.Exists(path));
+                Assert.IsFalse(File.Exists(folder + "/Moved.txt"));
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [Test]
+        public async Task EarlierFileCannotChangeUnnoticedWhileLaterFileIsVerified()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                Assert.Ignore("Cooperative file hashing requires the Windows read-sharing guarantee; other Editors retain synchronous hashing.");
+            AssetDatabase.DisallowAutoRefresh();
+            EditorApplication.CallbackFunction callback = null;
+            try
+            {
+                string earlier = Asset("Earlier"),
+                    later = LargeAsset();
+                var commands = new JArray(Edit(), Move(earlier, folder + "/EarlierMoved.txt"), Move(later, folder + "/LaterMoved.txt"));
+                JToken guard = Guard(Preview(commands));
+                bool attemptedWrite = false,
+                    changed = false;
+                callback = () =>
+                {
+                    if (attemptedWrite)
+                        return;
+                    // Wait for the actual later-file reader, without a scheduler-duration guess.
+                    try
+                    {
+                        using (File.Open(later, FileMode.Open, FileAccess.Write, FileShare.None)) { }
+                        return;
+                    }
+                    catch (IOException) { }
+                    attemptedWrite = true;
+                    try
+                    {
+                        File.AppendAllText(earlier, "changed during later hash");
+                        changed = true;
+                    }
+                    catch (IOException) { /* A held read lease may prevent the write. */ }
+                };
+                EditorApplication.update += callback;
+                var verify = typeof(BatchExecute)
+                    .Assembly.GetType("MCPForUnity.Editor.Tools.BatchTargetPreview")
+                    .GetMethod("VerifyAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                Task pending = (Task)verify.Invoke(null, new object[] { commands, guard, CancellationToken.None });
+                await pending;
+                object observation = pending.GetType().GetProperty("Result").GetValue(pending);
+                bool current = observation != null;
+                (observation as IDisposable)?.Dispose();
+                Assert.IsTrue(attemptedWrite, "The fixture must exercise the actual later-file read interval.");
+                Assert.AreEqual(!changed, current, "A byte change during another file read cannot retain a valid whole-batch observation.");
+                using (File.Open(earlier, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                using (File.Open(later, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+            }
+            finally
+            {
+                if (callback != null)
+                    EditorApplication.update -= callback;
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [Test, Explicit("Controller-owned large-file A/B measurement; ordinary regressions use smaller files.")]
+        public async Task LargeAssetPreviewMeasurementPreservesStrongRevision()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                Assert.Ignore("Cooperative file hashing requires the Windows read-sharing guarantee; other Editors retain synchronous hashing.");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                string path = LargeAsset(128);
+                var commands = new JArray(Move(path, folder + "/Moved.txt"));
+                JToken expected = Guard(Preview(commands));
+                // Counterbalanced warm A/B pairs use the same bytes, metadata and target identities.
+                for (int round = 0; round < 3; round++)
+                for (int position = 0; position < 2; position++)
+                {
+                    bool asynchronous = (round + position) % 2 == 0;
+                    int updates = 0;
+                    double maximumGap = 0;
+                    var timer = Stopwatch.StartNew();
+                    double previous = timer.Elapsed.TotalMilliseconds;
+                    void Observe()
+                    {
+                        double now = timer.Elapsed.TotalMilliseconds;
+                        maximumGap = Math.Max(maximumGap, now - previous);
+                        previous = now;
+                        updates++;
+                    }
+                    EditorApplication.update += Observe;
+                    try
+                    {
+                        Task<object> pending = asynchronous
+                            ? CommandRegistry.InvokeCommandAsync("batch_validate", new JObject { ["commands"] = commands, ["previewScope"] = "targets" })
+                            : Task.FromResult<object>(BatchExecute.ValidateCommand(new JObject { ["commands"] = commands, ["previewScope"] = "targets" }));
+                        double dispatchMs = timer.Elapsed.TotalMilliseconds;
+                        JObject response = JObject.FromObject(await pending);
+                        double totalMs = timer.Elapsed.TotalMilliseconds;
+                        maximumGap = Math.Max(maximumGap, totalMs - previous);
+                        Assert.IsTrue(JToken.DeepEquals(expected, Guard(response)), response.ToString());
+                        TestContext.WriteLine(
+                            $"BETA03 mode={(asynchronous ? "async" : "sync")} round={round} bytes={new FileInfo(path).Length} dispatch_ms={dispatchMs:F3} total_ms={totalMs:F3} updates={updates} max_gap_ms={maximumGap:F3}"
+                        );
+                    }
+                    finally
+                    {
+                        EditorApplication.update -= Observe;
+                    }
+                }
+                Assert.IsTrue(File.Exists(path));
+                Assert.IsFalse(File.Exists(folder + "/Moved.txt"));
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [Test]
+        public async Task PreviewDoesNotMutateAndCurrentObjectGuardApplies()
         {
             int dirty = EditorUtility.GetDirtyCount(root);
             var commands = new JArray(Edit());
             JToken guard = Guard(Preview(commands));
             Assert.AreEqual(Vector3.zero, root.transform.localPosition);
             Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(root));
-            JObject result = Apply(commands, guard);
+            JObject result = await Apply(commands, guard);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(new Vector3(1, 2, 3), root.transform.localPosition);
             Assert.IsFalse(result["data"].Value<bool>("rollbackPerformed"));
         }
 
         [Test]
-        public void StaleLaterObjectRefusesBeforeEarlierMutation()
+        public async Task StaleLaterObjectRefusesBeforeEarlierMutation()
         {
             var other = new GameObject("Other");
             var commands = new JArray(Edit(), Edit(other));
             JToken guard = Guard(Preview(commands));
             other.name = "Changed";
-            JObject result = Apply(commands, guard);
+            JObject result = await Apply(commands, guard);
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(0, result["data"].Value<int>("attemptedCount"));
             Assert.AreEqual(Vector3.zero, root.transform.localPosition);
         }
 
         [Test]
-        public void TamperedGuardAndChangedCommandsRefuse()
+        public async Task TamperedGuardAndChangedCommandsRefuse()
         {
             var commands = new JArray(Edit());
             var guard = (JObject)Guard(Preview(commands)).DeepClone();
             guard["signature"] = "tampered";
-            Assert.IsFalse(Apply(commands, guard).Value<bool>("success"));
+            Assert.IsFalse((await Apply(commands, guard)).Value<bool>("success"));
             guard = (JObject)Guard(Preview(commands)).DeepClone();
             commands[0]["params"]["position"] = new JArray(8, 9, 10);
-            Assert.IsFalse(Apply(commands, guard).Value<bool>("success"));
+            Assert.IsFalse((await Apply(commands, guard)).Value<bool>("success"));
             Assert.AreEqual(Vector3.zero, root.transform.localPosition);
         }
 
         [Test]
-        public void AssetMoveDetectsDestinationCollisionAndLateSourceBytes()
+        public async Task AssetMoveDetectsDestinationCollisionAndLateSourceBytes()
         {
             string source = Asset("Source"),
                 destination = folder + "/Destination.txt";
             var commands = new JArray(Move(source, destination));
             JToken guard = Guard(Preview(commands));
             File.AppendAllText(source, "changed without import");
-            Assert.IsFalse(Apply(commands, guard).Value<bool>("success"));
+            Assert.IsFalse((await Apply(commands, guard)).Value<bool>("success"));
+            using (File.Open(source, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+            using (File.Open(source + ".meta", FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
             Assert.IsTrue(File.Exists(source));
             Assert.IsFalse(File.Exists(destination));
             Asset("Destination");
@@ -166,7 +436,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void CurrentAssetMoveGuardAppliesWithoutPreviewRefresh()
+        public async Task CurrentAssetMoveGuardAppliesWithoutPreviewRefresh()
         {
             string source = Asset("Source"),
                 destination = folder + "/Destination.txt";
@@ -175,7 +445,7 @@ namespace MCPForUnityTests.Editor.Tools
             JToken guard = Guard(Preview(commands));
             Assert.IsTrue(File.Exists(source));
             Assert.IsFalse(File.Exists(destination));
-            JObject result = Apply(commands, guard);
+            JObject result = await Apply(commands, guard);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(destination));
         }
@@ -195,7 +465,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void PreparedPrefabPlanIsObservedWithoutConsumptionAndRechecked()
+        public async Task PreparedPrefabPlanIsObservedWithoutConsumptionAndRechecked()
         {
             string path = folder + "/Root.prefab";
             PrefabUtility.SaveAsPrefabAsset(root, path);
@@ -220,10 +490,10 @@ namespace MCPForUnityTests.Editor.Tools
             byte[] before = File.ReadAllBytes(path);
             JToken guard = Guard(Preview(commands));
             CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
-            JObject result = Apply(commands, guard);
+            JObject result = await Apply(commands, guard);
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(new Vector3(4, 5, 6), AssetDatabase.LoadAssetAtPath<GameObject>(path).transform.localPosition);
-            Assert.IsFalse(Apply(commands, guard).Value<bool>("success"), "Consumed prefab plans cannot be replayed.");
+            Assert.IsFalse((await Apply(commands, guard)).Value<bool>("success"), "Consumed prefab plans cannot be replayed.");
         }
 
         [Test]
@@ -246,7 +516,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void ReplacedHandlerInvalidatesGuardWithoutDispatch()
+        public async Task ReplacedHandlerInvalidatesGuardWithoutDispatch()
         {
             var commands = new JArray(Edit());
             JToken guard = Guard(Preview(commands));
@@ -258,7 +528,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Type handlerType = previous.GetType();
                 var callback = new Func<JObject, object>(_ => throw new InvalidOperationException("Replacement must not execute"));
                 handlers["gameobject_edit"] = Activator.CreateInstance(handlerType, new object[] { "gameobject_edit", callback, null });
-                Assert.IsFalse(Apply(commands, guard).Value<bool>("success"));
+                Assert.IsFalse((await Apply(commands, guard)).Value<bool>("success"));
                 Assert.AreEqual(Vector3.zero, root.transform.localPosition);
             }
             finally
@@ -329,13 +599,13 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void ExplicitActivationOfInactiveTargetRemainsSupported()
+        public async Task ExplicitActivationOfInactiveTargetRemainsSupported()
         {
             root.SetActive(false);
             var edit = Edit();
             edit["params"]["set_active"] = true;
             var commands = new JArray(edit);
-            JObject result = Apply(commands, Guard(Preview(commands)));
+            JObject result = await Apply(commands, Guard(Preview(commands)));
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsTrue(root.activeSelf);
             Assert.AreEqual(new Vector3(1, 2, 3), root.transform.localPosition);
@@ -407,12 +677,12 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void DisabledChildAfterPreviewRefusesWholeGuardedBatch()
+        public async Task DisabledChildAfterPreviewRefusesWholeGuardedBatch()
         {
             var commands = new JArray(Edit());
             JToken guard = Guard(Preview(commands));
             MCPServiceLocator.ToolDiscovery.SetToolEnabled("gameobject_edit", false);
-            Assert.IsFalse(Apply(commands, guard).Value<bool>("success"));
+            Assert.IsFalse((await Apply(commands, guard)).Value<bool>("success"));
             Assert.AreEqual(Vector3.zero, root.transform.localPosition);
         }
     }

@@ -281,7 +281,9 @@ namespace MCPForUnity.Editor.Tools
                 _handlers[commandName] = handlerInfo;
                 if (type == typeof(BatchExecute) && commandName == "batch_execute")
                 {
-                    _handlers["batch_validate"] = new HandlerInfo("batch_validate", BatchExecute.ValidateCommand, null) { AliasOwner = handlerInfo };
+                    var validate = HandlerInfo.Cooperative("batch_validate", BatchExecute.ValidateCommandAsync);
+                    validate.AliasOwner = handlerInfo;
+                    _handlers["batch_validate"] = validate;
                     var apply = HandlerInfo.Progressive("batch_apply_preview", BatchExecute.ApplyPreviewCommand);
                     apply.AliasOwner = handlerInfo;
                     _handlers["batch_apply_preview"] = apply;

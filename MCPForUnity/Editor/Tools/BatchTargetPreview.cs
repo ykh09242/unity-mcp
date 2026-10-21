@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools.GameObjects;
@@ -70,91 +72,118 @@ namespace MCPForUnity.Editor.Tools
             return difference == 0;
         }
 
-        internal static object Prepare(JArray commands)
+        internal static object Prepare(JArray commands) => PrepareCore(commands, false, CancellationToken.None).GetAwaiter().GetResult();
+
+        internal static Task<object> PrepareAsync(JArray commands, CancellationToken cancellationToken) => PrepareCore(commands, true, cancellationToken);
+
+        private static async Task<object> PrepareCore(JArray commands, bool background, CancellationToken cancellationToken)
         {
-            var items = new JArray();
-            var revisions = new JArray();
-            var touched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            bool valid = true,
-                complete = true;
-            for (int index = 0; index < commands.Count; index++)
+            var observations = new List<Observation>();
+            try
             {
-                var command = (JObject)commands[index];
-                string name = command.Value<string>("tool"),
-                    status = "valid",
-                    reason = "ok";
-                try
+                var items = new JArray();
+                var revisions = new JArray();
+                var touched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                bool valid = true,
+                    complete = true;
+                for (int index = 0; index < commands.Count; index++)
                 {
-                    JObject target = Describe(command);
-                    foreach (string key in target["keys"].Values<string>())
-                        if (!touched.Add(key))
-                            throw new Incomplete("dependent_target");
-                    revisions.Add(Hash(target));
-                }
-                catch (Incomplete exception)
-                {
-                    status = "incomplete";
-                    reason = exception.Message;
-                    complete = false;
-                }
-                catch (Exception exception)
-                    when (exception is ArgumentException
-                        || exception is InvalidOperationException
-                        || exception is IOException
-                        || exception is UnauthorizedAccessException
-                    )
-                {
-                    status = "rejected";
-                    reason = "invalid_parameters_or_target";
-                }
-                valid &= status == "valid";
-                items.Add(
-                    new JObject
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var command = (JObject)commands[index];
+                    string name = command.Value<string>("tool"),
+                        status = "valid",
+                        reason = "ok";
+                    try
                     {
-                        ["index"] = index,
-                        ["tool"] = name.Length <= 128 ? name : name.Substring(0, 128),
-                        ["toolTruncated"] = name.Length > 128,
-                        ["status"] = status,
-                        ["reason"] = reason,
+                        Observation observation = await ObserveAsync(command, background, cancellationToken);
+                        observations.Add(observation);
+                        JObject target = observation.State;
+                        foreach (string key in target["keys"].Values<string>())
+                            if (!touched.Add(key))
+                                throw new Incomplete("dependent_target");
+                        revisions.Add(Hash(target));
                     }
-                );
-            }
-            JObject preview = null;
-            if (valid)
-            {
-                preview = new JObject
+                    catch (Incomplete exception)
+                    {
+                        status = "incomplete";
+                        reason = exception.Message;
+                        complete = false;
+                    }
+                    catch (Exception exception)
+                        when (exception is ArgumentException
+                            || exception is InvalidOperationException
+                            || exception is IOException
+                            || exception is UnauthorizedAccessException
+                        )
+                    {
+                        status = "rejected";
+                        reason = "invalid_parameters_or_target";
+                    }
+                    valid &= status == "valid";
+                    items.Add(
+                        new JObject
+                        {
+                            ["index"] = index,
+                            ["tool"] = name.Length <= 128 ? name : name.Substring(0, 128),
+                            ["toolTruncated"] = name.Length > 128,
+                            ["status"] = status,
+                            ["reason"] = reason,
+                        }
+                    );
+                }
+                // Later file work yields the Editor. Recheck earlier scalar observations together
+                // before publishing a guard; no Unity object crosses the worker boundary.
+                if (background && valid)
+                    for (int index = 0; index < commands.Count; index++)
+                        if (!observations[index].IsCurrent((JObject)commands[index]))
+                        {
+                            items[index]["status"] = "incomplete";
+                            items[index]["reason"] = "target_changed_during_preparation";
+                            valid = complete = false;
+                        }
+                cancellationToken.ThrowIfCancellationRequested();
+                JObject preview = null;
+                if (valid)
                 {
-                    ["contractVersion"] = 1,
-                    ["commandsHash"] = Hash(commands),
-                    ["revisions"] = revisions,
+                    preview = new JObject
+                    {
+                        ["contractVersion"] = 1,
+                        ["commandsHash"] = Hash(commands),
+                        ["revisions"] = revisions,
+                    };
+                    preview["signature"] = Sign(preview);
+                }
+                var data = new JObject
+                {
+                    ["validation"] = new JObject
+                    {
+                        ["contractVersion"] = 1,
+                        ["validateOnly"] = true,
+                        ["scope"] = "targets",
+                        ["complete"] = complete,
+                        ["valid"] = valid,
+                        ["items"] = items,
+                    },
+                    ["preview"] = preview,
+                    ["requestedCount"] = commands.Count,
+                    ["attemptedCount"] = 0,
+                    ["notRunCount"] = commands.Count,
+                    ["executionStatus"] = "not_started",
+                    ["rollbackPerformed"] = false,
+                    ["atomicity"] = "recheck_before_each_supported_mutation",
                 };
-                preview["signature"] = Sign(preview);
+                return valid
+                    ? new SuccessResponse("Supported targets inspected without mutation or refresh.", data)
+                    : new ErrorResponse("Target preview is rejected or incomplete; no plan can be applied.", data);
             }
-            var data = new JObject
+            finally
             {
-                ["validation"] = new JObject
-                {
-                    ["contractVersion"] = 1,
-                    ["validateOnly"] = true,
-                    ["scope"] = "targets",
-                    ["complete"] = complete,
-                    ["valid"] = valid,
-                    ["items"] = items,
-                },
-                ["preview"] = preview,
-                ["requestedCount"] = commands.Count,
-                ["attemptedCount"] = 0,
-                ["notRunCount"] = commands.Count,
-                ["executionStatus"] = "not_started",
-                ["rollbackPerformed"] = false,
-                ["atomicity"] = "recheck_before_each_supported_mutation",
-            };
-            return valid
-                ? new SuccessResponse("Supported targets inspected without mutation or refresh.", data)
-                : new ErrorResponse("Target preview is rejected or incomplete; no plan can be applied.", data);
+                foreach (Observation observation in observations)
+                    observation.Dispose();
+            }
         }
 
-        internal static bool Verify(JArray commands, JObject preview)
+        internal static async Task<Verification> VerifyAsync(JArray commands, JObject preview, CancellationToken cancellationToken)
         {
             if (
                 preview?["contractVersion"]?.Type != JTokenType.Integer
@@ -163,36 +192,198 @@ namespace MCPForUnity.Editor.Tools
                 || preview["revisions"] is not JArray revisions
                 || revisions.Count != commands.Count
             )
-                return false;
+                return null;
             var unsigned = (JObject)preview.DeepClone();
             unsigned.Remove("signature");
             if (!SignatureMatches(Sign(unsigned), preview.Value<string>("signature")) || preview.Value<string>("commandsHash") != Hash(commands))
-                return false;
-            for (int index = 0; index < commands.Count; index++)
-                if (!Matches((JObject)commands[index], preview, index))
-                    return false;
-            return true;
-        }
-
-        internal static bool Matches(JObject command, JObject preview, int index)
-        {
+                return null;
+            var observations = new List<Observation>(commands.Count);
+            bool transferred = false;
             try
             {
-                return preview["revisions"][index]?.Type == JTokenType.String && Hash(Describe(command)) == preview["revisions"][index].Value<string>();
+                for (int index = 0; index < commands.Count; index++)
+                {
+                    Observation observation = await ObserveAsync((JObject)commands[index], true, cancellationToken);
+                    observations.Add(observation);
+                    if (revisions[index]?.Type != JTokenType.String || Hash(observation.State) != revisions[index].Value<string>())
+                        return null;
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                for (int index = 0; index < commands.Count; index++)
+                    if (!observations[index].IsCurrent((JObject)commands[index]))
+                        return null;
+                var verification = new Verification(observations);
+                transferred = true;
+                return verification;
             }
-            catch (Exception exception)
-                when (exception is Incomplete
-                    || exception is ArgumentException
-                    || exception is InvalidOperationException
-                    || exception is IOException
-                    || exception is UnauthorizedAccessException
-                )
+            catch (Exception exception) when (IsObservationFailure(exception))
             {
-                return false;
+                return null;
+            }
+            finally
+            {
+                if (!transferred)
+                    foreach (Observation observation in observations)
+                        observation.Dispose();
             }
         }
 
-        private static JObject Describe(JObject command)
+        internal static async Task<Observation> MatchAsync(JObject command, JObject preview, int index, CancellationToken cancellationToken)
+        {
+            Observation observation = null;
+            try
+            {
+                observation = await ObserveAsync(command, true, cancellationToken);
+                if (preview["revisions"][index]?.Type == JTokenType.String && Hash(observation.State) == preview["revisions"][index].Value<string>())
+                {
+                    Observation matched = observation;
+                    observation = null;
+                    return matched;
+                }
+                return null;
+            }
+            catch (Exception exception) when (IsObservationFailure(exception))
+            {
+                return null;
+            }
+            finally
+            {
+                observation?.Dispose();
+            }
+        }
+
+        private static bool IsObservationFailure(Exception exception) =>
+            exception is Incomplete
+            || exception is ArgumentException
+            || exception is InvalidOperationException
+            || exception is IOException
+            || exception is UnauthorizedAccessException;
+
+        internal sealed class Verification : IDisposable
+        {
+            private readonly List<Observation> observations;
+
+            internal Verification(List<Observation> observations) => this.observations = observations;
+
+            internal bool IsCurrent(JArray commands)
+            {
+                if (commands.Count != observations.Count)
+                    return false;
+                for (int index = 0; index < commands.Count; index++)
+                    if (!observations[index].IsCurrent((JObject)commands[index]))
+                        return false;
+                return true;
+            }
+
+            public void Dispose()
+            {
+                foreach (Observation observation in observations)
+                    observation.Dispose();
+                observations.Clear();
+            }
+        }
+
+        internal sealed class Observation : IDisposable
+        {
+            internal JObject State;
+            internal Dictionary<string, string> FileHashes;
+            internal readonly List<FileStream> Readers = new List<FileStream>(2);
+
+            public void Dispose()
+            {
+                foreach (FileStream reader in Readers)
+                    reader.Dispose();
+                Readers.Clear();
+            }
+
+            internal bool IsCurrent(JObject command)
+            {
+                try
+                {
+                    return JToken.DeepEquals(State, Describe(command, ReadHash));
+                }
+                catch (Exception exception) when (IsObservationFailure(exception))
+                {
+                    return false;
+                }
+            }
+
+            private string ReadHash(string path) =>
+                FileHashes != null && FileHashes.TryGetValue(path, out string hash) ? hash : throw new Incomplete("target_changed_during_preparation");
+        }
+
+        private static async Task<Observation> ObserveAsync(JObject command, bool background, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!background)
+                return new Observation { State = Describe(command) };
+            var paths = new List<string>(2);
+            JObject before = Describe(
+                command,
+                path =>
+                {
+                    paths.Add(path);
+                    return string.Empty;
+                }
+            );
+            if (paths.Count == 0)
+                return new Observation { State = before };
+            string assetsRoot = Application.dataPath;
+            var observed = new Observation { State = before };
+            try
+            {
+                Dictionary<string, string> ReadFiles()
+                {
+                    var result = new Dictionary<string, string>(StringComparer.Ordinal);
+                    var buffer = new byte[128 * 1024];
+                    foreach (string path in paths)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        string checkedPath = SafePathUtility.ResolveWithinRoot(assetsRoot, path);
+                        // Preserve read leases through the Editor continuation and whole-batch
+                        // observation. Closing here would allow an Editor callback to replace bytes
+                        // after their hash but before the compare-before-dispatch check.
+                        var stream = File.OpenRead(checkedPath);
+                        observed.Readers.Add(stream);
+                        using (var sha = SHA256.Create())
+                        {
+                            int count;
+                            while ((count = stream.Read(buffer, 0, buffer.Length)) != 0)
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                sha.TransformBlock(buffer, 0, count, buffer, 0);
+                            }
+                            cancellationToken.ThrowIfCancellationRequested();
+                            sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                            result.Add(path, Convert.ToBase64String(sha.Hash));
+                        }
+                    }
+                    return result;
+                }
+#if UNITY_EDITOR_WIN
+                observed.FileHashes = await Task.Run(ReadFiles, cancellationToken);
+#else
+                // File sharing outside Windows can be advisory. Keep the existing no-yield
+                // observation semantics until native sharing guarantees are verified there.
+                observed.FileHashes = await Task.FromResult(ReadFiles());
+#endif
+                cancellationToken.ThrowIfCancellationRequested();
+                // Only AssetMove describes files; retain the original full-byte revision contract.
+                before["source"] = observed.FileHashes[paths[0]];
+                before["meta"] = observed.FileHashes[paths[1]];
+                if (!observed.IsCurrent(command))
+                    throw new Incomplete("target_changed_during_preparation");
+                return observed;
+            }
+            catch
+            {
+                // Task settlement precedes disposal, including cancellation and partial reads.
+                observed.Dispose();
+                throw;
+            }
+        }
+
+        private static JObject Describe(JObject command, Func<string, string> fileHash = null)
         {
             if (
                 EditorApplication.isPlayingOrWillChangePlaymode
@@ -216,7 +407,7 @@ namespace MCPForUnity.Editor.Tools
                 case "manage_asset":
                     if (action != "move" && action != "rename")
                         throw new Incomplete("unsupported_target_preview");
-                    state = AssetMove(parameters);
+                    state = AssetMove(parameters, fileHash ?? FileHash);
                     break;
                 case "gameobject_edit":
                 case "manage_gameobject":
@@ -238,7 +429,7 @@ namespace MCPForUnity.Editor.Tools
             return state;
         }
 
-        private static JObject AssetMove(JObject parameters)
+        private static JObject AssetMove(JObject parameters, Func<string, string> fileHash)
         {
             Keys(parameters, "action", "path", "destination");
             string source = AssetPathUtility.GetContainedAssetPath(Text(parameters, "path"));
@@ -266,8 +457,8 @@ namespace MCPForUnity.Editor.Tools
                 ["keys"] = new JArray("asset:" + source, "asset:" + destination),
                 ["guid"] = AssetDatabase.AssetPathToGUID(source),
                 ["parentGuid"] = AssetDatabase.AssetPathToGUID(parent),
-                ["source"] = FileHash(fullSource),
-                ["meta"] = FileHash(AssetPathUtility.GetFullAssetPath(source + ".meta")),
+                ["source"] = fileHash(fullSource),
+                ["meta"] = fileHash(AssetPathUtility.GetFullAssetPath(source + ".meta")),
             };
         }
 

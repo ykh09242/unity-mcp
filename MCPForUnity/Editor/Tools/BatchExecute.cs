@@ -211,6 +211,18 @@ namespace MCPForUnity.Editor.Tools
         }
 
         // Internal registry alias only: no new tool metadata, default or public duplicate.
+        public static async Task<object> ValidateCommandAsync(JObject @params, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (@params?["previewScope"]?.Type != JTokenType.String || @params.Value<string>("previewScope") != "targets")
+                return ValidateCommand(@params);
+            object rejected = ReadEnvelope(@params, true, out var commands, out _, out _, out _);
+            if (rejected != null)
+                return rejected;
+            CommandRegistry.Initialize();
+            return await BatchTargetPreview.PrepareAsync(commands, cancellationToken);
+        }
+
         public static object ValidateCommand(JObject @params)
         {
             object rejected = ReadEnvelope(@params, true, out var commands, out _, out _, out _);
@@ -292,7 +304,9 @@ namespace MCPForUnity.Editor.Tools
             if (rejected != null)
                 return rejected;
             JObject preview = @params["preview"] as JObject;
-            if (@params["preview"] != null && (preview == null || !BatchTargetPreview.Verify(commandsToken, preview)))
+            using var verification = preview == null ? null : await BatchTargetPreview.VerifyAsync(commandsToken, preview, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (@params["preview"] != null && (verification == null || !verification.IsCurrent(commandsToken)))
                 return InvalidBatch(
                     "The target preview is stale, invalid or unavailable. Preview again before applying.",
                     commandsToken,
@@ -337,7 +351,12 @@ namespace MCPForUnity.Editor.Tools
                     var commandObj = (JObject)token;
                     string toolName = commandObj.Value<string>("tool");
 
-                    if (preview != null && !BatchTargetPreview.Matches(commandObj, preview, index))
+                    using var targetObservation = preview == null ? null : await BatchTargetPreview.MatchAsync(commandObj, preview, index, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (
+                        preview != null
+                        && (targetObservation == null || !targetObservation.IsCurrent(commandObj) || (index == 0 && !verification.IsCurrent(commandsToken)))
+                    )
                     {
                         for (int remaining = index; remaining < commandsToken.Count; remaining++)
                             SetOutcome(outcomes, remaining, "not_run", "stale_preview");
@@ -388,6 +407,11 @@ namespace MCPForUnity.Editor.Tools
                     {
                         var rawParams = commandObj["params"] as JObject ?? new JObject();
                         var commandParams = NormalizeParameterKeys(rawParams);
+                        // The caller owns leases through every await, including the first child's
+                        // rehash. Release just before dispatch so Windows moves can proceed;
+                        // there is no Editor yield between release and handler invocation.
+                        targetObservation?.Dispose();
+                        verification?.Dispose();
                         var result = await CommandRegistry.InvokeCommandAsync(toolName, commandParams, cancellationToken).ConfigureAwait(true);
                         cancellationToken.ThrowIfCancellationRequested();
                         bool callSucceeded = DetermineCallSucceeded(result);
