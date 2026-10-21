@@ -63,3 +63,10 @@ may enumerate earlier filenames without opening them. Corrupt interrupted archiv
 are preserved under a unique `interrupted-*.corrupt.json` name before a fresh
 archive is published. History keeps an explicit corrupt-observation indication;
 these preserved files are not automatically deleted.
+
+An exact persisted job-status lookup opens only the summary at the deterministic
+report identity for that job, then validates its embedded job ID, integrity and
+expiry. It does not scan unrelated completed reports. An unspecified/latest
+status query retains the existing inventory selection. Returned summaries remain
+detached values; unavailable, corrupt or expired evidence still cannot become a
+successful status observation.
