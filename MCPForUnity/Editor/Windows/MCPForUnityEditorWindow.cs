@@ -8,6 +8,7 @@ using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Setup;
+using MCPForUnity.Editor.Windows.Components.Activity;
 using MCPForUnity.Editor.Windows.Components.Advanced;
 using MCPForUnity.Editor.Windows.Components.AssetGen;
 using MCPForUnity.Editor.Windows.Components.Branding;
@@ -34,6 +35,9 @@ namespace MCPForUnity.Editor.Windows
         private McpToolsSection toolsSection;
         private McpResourcesSection resourcesSection;
         private McpAssetGenSection assetGenSection;
+        private McpActivitySection activitySection;
+        private ToolbarToggle activityTabToggle;
+        private VisualElement activityPanel;
 
         // UI Elements
         private Label versionLabel;
@@ -75,6 +79,7 @@ namespace MCPForUnity.Editor.Windows
             Tools,
             Resources,
             AssetGen,
+            Activity,
         }
 
         internal static void CloseAllWindows()
@@ -244,6 +249,8 @@ namespace MCPForUnity.Editor.Windows
                 McpLog.Error("Failed to find assetgen-container in UXML");
                 return;
             }
+
+            activityPanel = rootVisualElement.Q<VisualElement>("activity-panel");
 
             // Initialize version label
             UpdateVersionLabel();
@@ -589,6 +596,8 @@ namespace MCPForUnity.Editor.Windows
             updateCheckQueued = false;
             updateCheckPending = false;
             OpenWindows.Remove(this);
+            activitySection?.Dispose();
+            activitySection = null;
             guiCreated = false;
             toolsLoaded = false;
             resourcesLoaded = false;
@@ -653,6 +662,8 @@ namespace MCPForUnity.Editor.Windows
             resourcesTabToggle = rootVisualElement.Q<ToolbarToggle>("resources-tab");
             assetGenTabToggle = rootVisualElement.Q<ToolbarToggle>("assetgen-tab");
 
+            activityTabToggle = rootVisualElement.Q<ToolbarToggle>("activity-tab");
+            RegisterTab(activityTabToggle, ActivePanel.Activity);
             RegisterTab(clientsTabToggle, ActivePanel.Clients);
             RegisterTab(depsTabToggle, ActivePanel.Deps);
             RegisterTab(advancedTabToggle, ActivePanel.Advanced);
@@ -686,6 +697,10 @@ namespace MCPForUnity.Editor.Windows
         private void SwitchPanel(ActivePanel panel)
         {
             activePanel = panel;
+            activityPanel?.EnableInClassList("hidden", panel != ActivePanel.Activity);
+            if (panel == ActivePanel.Activity && activitySection == null)
+                activitySection = new McpActivitySection(rootVisualElement.Q<VisualElement>("activity-container"));
+            activitySection?.SetVisible(panel == ActivePanel.Activity);
             clientsPanel?.EnableInClassList("hidden", panel != ActivePanel.Clients);
             depsPanel?.EnableInClassList("hidden", panel != ActivePanel.Deps);
             advancedPanel?.EnableInClassList("hidden", panel != ActivePanel.Advanced);
@@ -716,6 +731,7 @@ namespace MCPForUnity.Editor.Windows
             }
 
             // Update toggle states
+            activityTabToggle?.SetValueWithoutNotify(panel == ActivePanel.Activity);
             clientsTabToggle?.SetValueWithoutNotify(panel == ActivePanel.Clients);
             depsTabToggle?.SetValueWithoutNotify(panel == ActivePanel.Deps);
             advancedTabToggle?.SetValueWithoutNotify(panel == ActivePanel.Advanced);

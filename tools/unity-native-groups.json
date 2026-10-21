@@ -154,6 +154,20 @@
         "linux": "Actual build evidence is Windows only.",
         "darwin": "Actual build evidence is Windows only."
       }
+    },
+    "editor-activity": {
+      "methods": [
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.MainTemplateExposesDedicatedActivityPanel",
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.DeadlineAndCancellationKeepNativeOwnershipVisible",
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.ScenarioFinalizationAndReloadInterruptionAreNotSuccessfulCancellation",
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.BatchCancellationKeepsRunningChildActiveAndDoesNotReadReports",
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.HiddenIdleAndDisposedViewsDoNotCaptureOrRunActions",
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.RealActivityLayoutKeyboardAndBothEditorThemes",
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.UnownedTestCancellationIsUnavailableAndStaleActionsDoNotThrow"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {},
+      "requires_graphics": true
     }
   }
 }

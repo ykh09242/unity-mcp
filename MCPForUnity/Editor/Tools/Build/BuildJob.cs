@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using MCPForUnity.Editor.Services;
 using UnityEditor;
 using UnityEditor.Build.Reporting;
 
@@ -18,7 +19,19 @@ namespace MCPForUnity.Editor.Tools.Build
     public class BuildJob
     {
         public string JobId { get; }
-        public BuildJobState State { get; set; } = BuildJobState.Pending;
+        private BuildJobState state = BuildJobState.Pending;
+        public BuildJobState State
+        {
+            get => state;
+            set
+            {
+                if (state != value)
+                {
+                    state = value;
+                    OperationActivity.Invalidate();
+                }
+            }
+        }
         public BuildTarget Target { get; set; }
         public string OutputPath { get; set; }
         public DateTime StartedAt { get; set; }
@@ -81,7 +94,19 @@ namespace MCPForUnity.Editor.Tools.Build
     public class BatchJob
     {
         public string JobId { get; }
-        public BuildJobState State { get; set; } = BuildJobState.Pending;
+        private BuildJobState state = BuildJobState.Pending;
+        public BuildJobState State
+        {
+            get => state;
+            set
+            {
+                if (state != value)
+                {
+                    state = value;
+                    OperationActivity.Invalidate();
+                }
+            }
+        }
         public List<BuildJob> Children { get; } = new();
         public int CurrentIndex { get; set; } = -1;
         public string ReportId { get; internal set; }
@@ -148,12 +173,14 @@ namespace MCPForUnity.Editor.Tools.Build
         {
             _buildJobs[job.JobId] = job;
             BuildReportStore.Observe(job);
+            OperationActivity.Invalidate();
         }
 
         public static void AddBatchJob(BatchJob job)
         {
             _batchJobs[job.JobId] = job;
             BuildReportStore.Observe(job);
+            OperationActivity.Invalidate();
         }
 
         public static BuildJob GetBuildJob(string jobId)
@@ -191,6 +218,61 @@ namespace MCPForUnity.Editor.Tools.Build
             if (job.ReportId == null && job.ReportPersistenceError == null)
                 BuildReportStore.Complete(job);
             PruneOldJobs();
+            OperationActivity.Invalidate();
+        }
+
+        internal static void AppendActivity(List<OperationActivityRow> rows)
+        {
+            foreach (var job in _buildJobs.Values)
+            {
+                bool active = job.State == BuildJobState.Pending || job.State == BuildJobState.Building;
+                rows.Add(
+                    new OperationActivityRow
+                    {
+                        Owner = "build",
+                        Id = job.JobId,
+                        Operation = "Build · " + job.Target,
+                        State = job.State.ToString().ToLowerInvariant(),
+                        Phase = job.State == BuildJobState.Pending ? "preparing / queued" : "native build",
+                        Active = active,
+                        Started = job.StartedAt == default ? 0 : new DateTimeOffset(job.StartedAt).ToUnixTimeMilliseconds(),
+                        Finished = job.CompletedAt.HasValue ? new DateTimeOffset(job.CompletedAt.Value).ToUnixTimeMilliseconds() : (long?)null,
+                        Detail = active ? "Native BuildPlayer blocks the Editor until it finishes." : "Completed build observation",
+                        Cancellation = "Single native builds cannot be cancelled from this view",
+                        EvidenceId = job.ReportId,
+                    }
+                );
+            }
+            foreach (var batch in _batchJobs.Values)
+            {
+                int completed = 0;
+                bool childRunning = false;
+                foreach (var child in batch.Children)
+                {
+                    childRunning |= child.State == BuildJobState.Building;
+                    if (child.State != BuildJobState.Pending && child.State != BuildJobState.Building)
+                        completed++;
+                }
+                bool cancelledWithChild = batch.State == BuildJobState.Cancelled && childRunning;
+                rows.Add(
+                    new OperationActivityRow
+                    {
+                        Owner = "batch",
+                        Id = batch.JobId,
+                        Operation = "Build batch",
+                        State = cancelledWithChild ? "cancelling" : batch.State.ToString().ToLowerInvariant(),
+                        Phase = childRunning ? "child build" : "between builds",
+                        Detail = completed + " / " + batch.Children.Count + " child builds finished",
+                        Active = childRunning || batch.State == BuildJobState.Pending || batch.State == BuildJobState.Building,
+                        CanCancel = batch.State == BuildJobState.Building,
+                        Cancellation =
+                            cancelledWithChild ? "Remaining builds cancelled; active child still running"
+                            : batch.State == BuildJobState.Cancelled ? "Batch cancellation confirmed"
+                            : "Cancellation stops remaining child builds",
+                        EvidenceId = batch.ReportId,
+                    }
+                );
+            }
         }
 
         private const int MaxRetainedJobs = 50;

@@ -124,3 +124,11 @@
 .section-stack {
     min-width: 0;
 }
+
+.activity-section { min-width: 0; padding-top: 12px; }
+.activity-note { white-space: normal; margin-top: 3px; margin-bottom: 4px; min-width: 0; }
+.activity-card { padding: 12px; margin-top: 8px; margin-bottom: 6px; background-color: var(--mcp-surface); border-left-width: 3px; border-left-color: var(--mcp-border); }
+.activity-title { -unity-font-style: bold; }
+.activity-actions { flex-direction: row; flex-wrap: wrap; margin-top: 8px; }
+.activity-actions Button { margin-right: 8px; margin-bottom: 4px; min-height: 28px; }
+#activity-retention { margin-top: 12px; color: var(--mcp-muted); }
