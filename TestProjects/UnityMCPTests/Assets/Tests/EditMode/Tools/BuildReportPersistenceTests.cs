@@ -883,7 +883,7 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test, Explicit("Controller-owned large workload cohort only.")]
-        public void LargeReportCohortReadsCompleteOrderedPages()
+        public async System.Threading.Tasks.Task LargeReportCohortReadsCompleteOrderedPages()
         {
             var job = Complete(BuildJobState.Succeeded);
             var record = Prepared(job);
@@ -894,7 +894,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     .Invoke(null, new object[] { record, Enumerable.Empty<JObject>(), PackedRows(10000) });
             for (int i = 0; i < 63; i++)
                 Complete(BuildJobState.Succeeded);
-            MCPForUnityTests.WorkloadProbe.Run(
+            await MCPForUnityTests.WorkloadProbe.RunObserved(
                 "report_pages",
                 "indexed",
                 10000,
@@ -917,7 +917,14 @@ namespace MCPForUnityTests.EditMode.Tools
                         }
                     }
                     return rows.ToString();
-                }
+                },
+                () =>
+                    new Dictionary<string, long>
+                    {
+                        ["owned_files"] = Directory.GetFiles(ownedRoot, "*", SearchOption.AllDirectories).Length,
+                        ["build_jobs"] = Jobs.Count,
+                        ["batch_jobs"] = Batches.Count,
+                    }
             );
         }
 

@@ -80,6 +80,16 @@
         "MCPForUnityTests.EditMode.Windows.OperationActivityTests.SustainedActivityCohortPreservesIdleAndActiveCaptureCounts"
       ],
       "correctness": "32 visible/hidden/changed cycles, each with 1000 idle ticks; no idle captures or unintended actions"
+    },
+    "batch_preview": {
+      "variants": {
+        "strong_file": 134217728
+      },
+      "unit": "complete source bytes",
+      "producer": [
+        "MCPForUnityTests.Editor.Tools.BatchTargetPreviewTests.LargePreviewCohortObservesUpdatesAndRetainedOwners"
+      ],
+      "correctness": "Complete strong source/meta guard equals synchronous preview; no mutation, exclusive file access restored, all pending preview owners released."
     }
   }
 }

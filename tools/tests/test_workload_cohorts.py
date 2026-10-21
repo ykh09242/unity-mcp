@@ -120,7 +120,7 @@ def test_regression_is_advisory_but_output_drift_is_not_a_speedup():
 
 def test_manifest_has_all_scenarios_and_real_named_producers():
     manifest = load_manifest()
-    assert len(manifest["scenarios"]) == 6
+    assert len(manifest["scenarios"]) == 7
     for scenario in manifest["scenarios"].values():
         assert scenario["variants"] and scenario["producer"] and scenario["correctness"]
     json.dumps(manifest, allow_nan=False)
@@ -282,3 +282,100 @@ def test_capture_real_reload_bundles_and_binary_git_diff(tmp_path, monkeypatch):
         cohorts.capture([artifact], **kwargs)
     with pytest.raises(ValueError, match="Unsupported"):
         cohorts.capture([artifact], reload_results_name="../results.xml", **kwargs)
+
+
+def observed_raw():
+    value = raw()
+    value.update(
+        observation_schema="editor-update-retention-v1",
+        observer_released=True,
+        baseline={
+            "domain": "d" * 32,
+            "post_idle_managed_bytes": 1200,
+            "owner_counts": {"files": 64},
+            "working_set_bytes": 2048,
+            "process_handle_count": 100,
+        },
+        observations=[
+            {
+                "domain": "d" * 32,
+                "run_index": i,
+                "post_idle_managed_bytes": 1000,
+                "after_work_managed_bytes": 1300,
+                "sampled_peak_managed_bytes": 1400,
+                "editor_update_count": 2,
+                "editor_update_gap_ms": 100,
+                "owner_counts": {"files": 64},
+                "working_set_bytes": 2048,
+                "process_handle_count": 100,
+            }
+            for i in range(6)
+        ],
+        main_thread_stall_ms=100,
+    )
+    return value
+
+
+@pytest.mark.parametrize(
+    "corruption", ["updates", "owner", "peak", "gap", "round", "domain", "observer"]
+)
+def test_observed_cohort_rejects_incomplete_or_incoherent_measurements(corruption):
+    value = observed_raw()
+    row = value["observations"][0]
+    if corruption == "updates":
+        row["editor_update_count"] = 0
+    if corruption == "owner":
+        row["owner_counts"]["files"] = -1
+    if corruption == "peak":
+        row["sampled_peak_managed_bytes"] = 900
+    if corruption == "gap":
+        value["main_thread_stall_ms"] = 1
+    if corruption == "round":
+        value["observations"].pop()
+    if corruption == "domain":
+        row["domain"] = "e" * 32
+    if corruption == "observer":
+        value["observer_released"] = False
+    with pytest.raises(ValueError):
+        validate_raw(value, load_manifest())
+
+
+def test_summary_retains_actual_update_gaps_and_post_idle_series():
+    value = observed_raw()
+    validate_raw(value, load_manifest())
+    summary = summarize(value)
+    assert summary["main_thread_stall_ms"] == 100
+    assert summary["max_main_thread_work_ms"] == 60
+    assert summary["retention"]["post_idle_managed_bytes"] == [1000] * 6
+    assert summary["retention"]["sampled_peak_managed_bytes"] == 1400
+    assert summary["retention"]["owner_counts_unchanged"] is True
+    assert summary["retention"]["plateau"] == "within_observed_band"
+
+
+@pytest.mark.parametrize("damage", [None, "missing_pair", "same_domain", "missing_heap"])
+def test_reload_memory_requires_complete_distinct_domain_pairs(damage):
+    value = raw()
+    pair = [observed_raw()["baseline"].copy(), observed_raw()["baseline"].copy()]
+    pair[0].update(phase="before_reload", domain="a" * 32)
+    pair[1].update(phase="after_reload_cleanup", domain="b" * 32)
+    value.update(
+        scenario="repeated_reload",
+        variant="actual_domain",
+        expected_units=3,
+        verified_reloads=3,
+        evidence_sha256=["a" * 64, "b" * 64, "c" * 64],
+        samples=[],
+        reload_observations=[deepcopy(pair) for _ in range(3)],
+    )
+    if damage == "missing_pair":
+        value["reload_observations"].pop()
+    if damage == "same_domain":
+        value["reload_observations"][0][1]["domain"] = "a" * 32
+    if damage == "missing_heap":
+        value["reload_observations"][0][1].pop("post_idle_managed_bytes")
+    if damage:
+        with pytest.raises(ValueError):
+            validate_raw(value, load_manifest())
+    else:
+        validate_raw(value, load_manifest())
+        assert summarize(value)["reload_retention"]["post_idle_managed_bytes"] == [1200] * 3

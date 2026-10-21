@@ -200,15 +200,16 @@ namespace MCPForUnityTests.EditMode.Windows
         }
 
         [Test, Explicit("Controller-owned large workload cohort only.")]
-        public void SustainedActivityCohortPreservesIdleAndActiveCaptureCounts()
+        public async System.Threading.Tasks.Task SustainedActivityCohortPreservesIdleAndActiveCaptureCounts()
         {
-            MCPForUnityTests.WorkloadProbe.Run(
+            VisualElement lastRoot = null;
+            await MCPForUnityTests.WorkloadProbe.RunObserved(
                 "editor_activity",
                 "tick_cycles",
                 32000,
                 () =>
                 {
-                    var root = new VisualElement();
+                    var root = lastRoot = new VisualElement();
                     long revision = 0;
                     int captures = 0;
                     using var section = new McpActivitySection(
@@ -238,8 +239,42 @@ namespace MCPForUnityTests.EditMode.Windows
                         Assert.AreEqual(before + 1, captures, "Hidden transitions must not capture.");
                     }
                     return captures.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                }
+                },
+                () => new Dictionary<string, long> { ["owned_view_children"] = lastRoot?.childCount ?? 0 }
             );
+        }
+
+        [Test]
+        public async System.Threading.Tasks.Task FailedObservedWorkReleasesUpdateSubscription()
+        {
+            string previous = Environment.GetEnvironmentVariable("UNITY_MCP_WORKLOAD_OUTPUT");
+            string output = Path.Combine(Path.GetDirectoryName(Application.dataPath), ".work", "failed-observation-" + Guid.NewGuid().ToString("N"));
+            int before = WorkloadProbe.ActiveObservers;
+            Environment.SetEnvironmentVariable("UNITY_MCP_WORKLOAD_OUTPUT", output);
+            try
+            {
+                try
+                {
+                    await WorkloadProbe.RunObservedAsync(
+                        "failed",
+                        "fixture",
+                        1,
+                        () => System.Threading.Tasks.Task.FromException<string>(new InvalidOperationException("owned-failure")),
+                        () => new Dictionary<string, long>()
+                    );
+                    Assert.Fail("Failed work cannot publish a successful measurement.");
+                }
+                catch (InvalidOperationException error)
+                {
+                    Assert.AreEqual("owned-failure", error.Message);
+                }
+                Assert.AreEqual(before, WorkloadProbe.ActiveObservers);
+                Assert.IsFalse(Directory.Exists(output));
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("UNITY_MCP_WORKLOAD_OUTPUT", previous);
+            }
         }
 
         private static List<OperationActivityRow> SampleRows() =>

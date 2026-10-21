@@ -12,7 +12,7 @@ using UnityEngine;
 namespace MCPForUnityTests
 {
     // Explicit isolated-project probes only. No runtime instrumentation or workload limits.
-    internal static class WorkloadProbe
+    internal static partial class WorkloadProbe
     {
         internal static void Run(string scenario, string variant, int units, Func<string> verifiedOutput)
         {
