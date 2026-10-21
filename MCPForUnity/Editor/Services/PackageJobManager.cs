@@ -32,6 +32,7 @@ namespace MCPForUnity.Editor.Services
         public string ResultVersion { get; set; }
         public string ResultName { get; set; }
         public JObject Resolve { get; set; }
+        public string RecoveryReason { get; set; }
     }
 
     internal static class PackageRecoveryIdentity
@@ -110,7 +111,6 @@ namespace MCPForUnity.Editor.Services
     {
         private const string SessionKeyJobs = "MCPForUnity.PackageJobsV1";
         private const int MaxJobsToKeep = 10;
-        private const long DomainReloadTimeoutMs = 600_000;
 
         private static readonly object LockObj = new();
         private static readonly Dictionary<string, PackageJob> Jobs = new();
@@ -144,6 +144,9 @@ namespace MCPForUnity.Editor.Services
             public string error { get; set; }
             public string result_version { get; set; }
             public string result_name { get; set; }
+
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+            public string recovery_reason { get; set; }
 
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
             public JToken resolve { get; set; }
@@ -199,14 +202,15 @@ namespace MCPForUnity.Editor.Services
                             Error = pj.error,
                             ResultVersion = pj.result_version,
                             ResultName = pj.result_name,
+                            RecoveryReason = pj.recovery_reason,
                             Resolve = pj.operation == "resolve" ? NormalizeResolve(pj.resolve as JObject) : null,
                         };
 
                         if (job.Operation == "resolve" && job.Status == PackageJobStatus.Succeeded)
                             job.Status = PackageJobStatus.Unknown;
 
-                        // Domain reload recovery for running jobs
-                        if (job.Status == PackageJobStatus.Running)
+                        // Lost observations remain reconcilable; native failures do not.
+                        if (CanReconcile(job))
                         {
                             TryRecoverJobWithSnapshot(job, now, ref recoveryPackages);
                         }
@@ -227,8 +231,23 @@ namespace MCPForUnity.Editor.Services
             TryRecoverJobWithSnapshot(job, nowMs, ref recoveryPackages);
         }
 
+        internal static bool CanReconcile(PackageJob job) =>
+            job != null && (job.Status == PackageJobStatus.Running || job.Status == PackageJobStatus.Unknown && job.Operation is "add" or "embed" or "remove");
+
+        private static void MarkRecoveryUnknown(PackageJob job, long nowMs, string reason)
+        {
+            if (job.Status != PackageJobStatus.Unknown || job.RecoveryReason != reason)
+                job.LastUpdateUnixMs = nowMs;
+            job.Status = PackageJobStatus.Unknown;
+            job.FinishedUnixMs = null;
+            job.Error = null;
+            job.RecoveryReason = reason;
+        }
+
         private static void TryRecoverJobWithSnapshot(PackageJob job, long nowMs, ref PackageInfo[] recoveryPackages)
         {
+            if (!CanReconcile(job))
+                return;
             if (job.Operation == "resolve")
             {
                 job.Status = PackageJobStatus.Unknown;
@@ -254,16 +273,12 @@ namespace MCPForUnity.Editor.Services
                         job.LastUpdateUnixMs = nowMs;
                         job.ResultVersion = info.version;
                         job.ResultName = info.name;
+                        job.RecoveryReason = "desired_state_observed";
+                        job.Error = null;
                         McpLog.Info($"[PackageJobManager] Recovered {job.Operation} job {job.JobId}: {info.name}@{info.version} installed.");
                     }
-                    else if (nowMs - job.StartedUnixMs > DomainReloadTimeoutMs)
-                    {
-                        job.Status = PackageJobStatus.Failed;
-                        job.FinishedUnixMs = nowMs;
-                        job.LastUpdateUnixMs = nowMs;
-                        job.Error = $"Package {job.Operation} timed out after domain reload.";
-                        McpLog.Warn($"[PackageJobManager] Timed out {job.Operation} job {job.JobId} for '{job.Package}'.");
-                    }
+                    else
+                        MarkRecoveryUnknown(job, nowMs, "request_lost_after_reload");
                 }
                 else if (job.Operation == "remove")
                 {
@@ -272,20 +287,17 @@ namespace MCPForUnity.Editor.Services
                         job.Status = PackageJobStatus.Succeeded;
                         job.FinishedUnixMs = nowMs;
                         job.LastUpdateUnixMs = nowMs;
+                        job.RecoveryReason = "desired_state_observed";
+                        job.Error = null;
                         McpLog.Info($"[PackageJobManager] Recovered remove job {job.JobId}: '{packageName}' is no longer installed.");
                     }
-                    else if (nowMs - job.StartedUnixMs > DomainReloadTimeoutMs)
-                    {
-                        job.Status = PackageJobStatus.Failed;
-                        job.FinishedUnixMs = nowMs;
-                        job.LastUpdateUnixMs = nowMs;
-                        job.Error = "Package removal timed out after domain reload.";
-                        McpLog.Warn($"[PackageJobManager] Timed out remove job {job.JobId} for '{job.Package}'.");
-                    }
+                    else
+                        MarkRecoveryUnknown(job, nowMs, "request_lost_after_reload");
                 }
             }
             catch (Exception ex)
             {
+                MarkRecoveryUnknown(job, nowMs, "registration_unavailable");
                 McpLog.Warn($"[PackageJobManager] Recovery check failed for job {job.JobId}: {ex.Message}");
             }
         }
@@ -357,6 +369,7 @@ namespace MCPForUnity.Editor.Services
                             error = j.Error,
                             result_version = j.ResultVersion,
                             result_name = j.ResultName,
+                            recovery_reason = j.RecoveryReason,
                             resolve = j.Resolve,
                         })
                         .ToList();
@@ -514,6 +527,7 @@ namespace MCPForUnity.Editor.Services
                 job.FinishedUnixMs = now;
                 job.LastUpdateUnixMs = now;
                 job.Error = error;
+                job.RecoveryReason = null;
                 job.ResultVersion = version;
                 job.ResultName = name;
             }
@@ -558,11 +572,19 @@ namespace MCPForUnity.Editor.Services
                 result_version = job.ResultVersion,
                 result_name = job.ResultName,
             };
-            if (job.Operation != "resolve")
+            if (job.Operation != "resolve" && job.RecoveryReason == null)
                 return result;
-            var resolve = JObject.FromObject(result);
-            resolve["resolve"] = job.Resolve?.DeepClone() ?? ResolveEvidence("unknown", "trigger_state_unknown");
-            return resolve;
+            var observation = JObject.FromObject(result);
+            if (job.Operation == "resolve")
+                observation["resolve"] = job.Resolve?.DeepClone() ?? ResolveEvidence("unknown", "trigger_state_unknown");
+            else
+                observation["recovery"] = new JObject
+                {
+                    ["reason"] = job.RecoveryReason,
+                    ["native_completion"] = "unobserved",
+                    ["retry_safe"] = false,
+                };
+            return observation;
         }
     }
 }

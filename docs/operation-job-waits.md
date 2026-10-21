@@ -15,6 +15,16 @@ remains nonterminal. Package resolve completion may be unobservable; `unknown`
 returns promptly and never becomes guessed success. Query-only package list/search
 jobs and scenario suites are outside this initial adapter.
 
+If a domain reload loses an add, embed, or remove request, its status becomes
+`unknown` until registered package metadata establishes the requested state.
+Elapsed time does not turn missing evidence into a native failure. Later status
+queries can reconcile this state without starting another package operation.
+The optional `recovery` evidence distinguishes `request_lost_after_reload`,
+`registration_unavailable`, and `desired_state_observed`; native completion is
+still unobserved and `retry_safe` remains false. A failure reported by the original
+native request is retained. Recovery metadata uses the same bounded session
+history as other package jobs.
+
 `wait_status=expired` retains the last observed job state. Expiry, cancellation,
 client disconnection and a lost status reply never start, retry, resume or cancel
 native work. Polling sends only the owner's `status` action and performs no

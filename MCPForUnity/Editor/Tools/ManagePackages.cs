@@ -243,8 +243,8 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"No job found with ID '{jobId}'.");
             }
 
-            // If job is still running, check in-memory request or attempt recovery
-            if (job.Status == PackageJobStatus.Running)
+            // Unknown mutations may acquire new registration evidence without replaying a request.
+            if (PackageJobManager.CanReconcile(job))
             {
                 if (PendingRequests.TryGetValue(job.JobId, out var req))
                 {
@@ -259,8 +259,10 @@ namespace MCPForUnity.Editor.Tools
                 {
                     // No in-memory request (lost after domain reload) — re-run recovery
                     long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    var previousStatus = job.Status;
+                    string previousReason = job.RecoveryReason;
                     PackageJobManager.TryRecoverJob(job, nowMs);
-                    if (job.Status != PackageJobStatus.Running)
+                    if (job.Status != previousStatus || job.RecoveryReason != previousReason)
                         PackageJobManager.PersistToSessionState();
                 }
             }
@@ -273,7 +275,10 @@ namespace MCPForUnity.Editor.Tools
                 PackageJobStatus.Failed when job.Operation == "resolve" =>
                     $"Job {job.JobId}: Resolve invocation did not acknowledge; native completion remains unknown.",
                 PackageJobStatus.Failed => $"Job {job.JobId} failed ({job.Operation} '{job.Package}'): {job.Error}",
-                PackageJobStatus.Unknown => $"Job {job.JobId}: resolve completion is unknown. This does not establish idleness or safe retry.",
+                PackageJobStatus.Unknown when job.Operation == "resolve" =>
+                    $"Job {job.JobId}: resolve completion is unknown. This does not establish idleness or safe retry.",
+                PackageJobStatus.Unknown =>
+                    $"Job {job.JobId}: package completion is unknown after losing the native request. Query status for new registration evidence; this does not establish idleness or safe retry.",
                 _ => $"Job {job.JobId}: {job.Status}",
             };
 
