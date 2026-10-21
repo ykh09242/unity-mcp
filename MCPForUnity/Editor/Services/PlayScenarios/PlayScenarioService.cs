@@ -182,6 +182,27 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             return state == null ? new ErrorResponse("play_scenario_job_not_found") : new SuccessResponse("Scenario job status.", Snapshot(state));
         }
 
+        internal static object CoordinationStatus(string jobId)
+        {
+            PlayScenarioRun state = Find(jobId);
+            if (state == null)
+                return new ErrorResponse("play_scenario_job_not_found");
+            if (ReferenceEquals(state, _engine?.State) && (_engine.Running || !_finalized))
+            {
+                _logs?.DrainTo(state);
+                return new SuccessResponse(
+                    "Scenario job status.",
+                    new JObject
+                    {
+                        ["job_id"] = state.JobId,
+                        ["status"] = "running",
+                        ["runner_resources_released"] = false,
+                    }
+                );
+            }
+            return new SuccessResponse("Scenario job status.", Snapshot(state));
+        }
+
         internal static object EditorStatus(string jobId)
         {
             PlayScenarioRun state = Find(jobId);

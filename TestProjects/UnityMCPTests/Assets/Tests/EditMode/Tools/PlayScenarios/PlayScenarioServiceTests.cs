@@ -160,6 +160,68 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That((bool)finished["runner_resources_released"], Is.True);
         }
 
+        [Test]
+        public void SuiteCoordinationDoesNotProjectAnActiveReport()
+        {
+            PlayScenarioRun run = StartingRun();
+            run.Logs.Add(new PlayScenarioLog { Type = "Log", Message = new string('x', 100000) });
+            var engine = new PlayScenarioEngine(run, new UnityPlayScenarioHost());
+            var logs = new PlayScenarioLogBuffer();
+            Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, engine);
+            Service.GetField("_logs", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, logs);
+            Service.GetField("_finalized", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, false);
+            logs.Add(run.StartedUnixMs, "Log", "fresh observation", "");
+            Func<string, JObject> observe = SuiteObserver(run);
+
+            JObject pending = observe(run.JobId);
+
+            Assert.That((string)pending["status"], Is.EqualTo("running"));
+            Assert.That(pending["scenario"], Is.Null, "Coordination must not project frozen inputs.");
+            Assert.That(pending["steps"], Is.Null, "Coordination must not project accumulated steps.");
+            Assert.That(pending["logs"], Is.Null, "Coordination must not project accumulated logs.");
+            Assert.That(pending.ToString(Formatting.None).Length, Is.LessThan(256));
+            Assert.That(run.Logs.Last().Message, Is.EqualTo("fresh observation"), "Observation still drains fresh logs.");
+            var full = (JObject)((SuccessResponse)PlayScenarioService.Status(run.JobId)).Data;
+            Assert.That(full["scenario"], Is.Not.Null, "Public status retains its complete contract.");
+            Assert.That(full["logs"].Count(), Is.EqualTo(2));
+        }
+
+        [Test]
+        public void SuiteCoordinationFetchesDetachedTerminalEvidenceOnlyAfterFinalization()
+        {
+            PlayScenarioRun run = StartingRun();
+            var engine = new PlayScenarioEngine(run, new UnityPlayScenarioHost());
+            engine.Cancel(run.StartedUnixMs + 1);
+            Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, engine);
+            Service.GetField("_logs", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, null);
+            Service.GetField("_finalized", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, false);
+            Func<string, JObject> observe = SuiteObserver(run);
+            JObject pending = observe(run.JobId);
+            Assert.That((string)pending["status"], Is.EqualTo("running"));
+            Assert.That((bool)pending["runner_resources_released"], Is.False);
+            Assert.That(pending["steps"], Is.Null, "Pending finalization must remain a small observation.");
+
+            Service.GetField("_finalized", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, true);
+            JObject terminal = observe(run.JobId);
+            JObject expected = (JObject)((SuccessResponse)PlayScenarioService.Status(run.JobId)).Data;
+            Assert.That(JToken.DeepEquals(terminal, expected), Is.True);
+            terminal["status"] = "consumer mutation";
+            Assert.That(run.Status, Is.EqualTo("cancelled"));
+        }
+
+        private static Func<string, JObject> SuiteObserver(PlayScenarioRun run)
+        {
+            var suite = new PlayScenarioSuiteDefinition
+            {
+                Name = "observation-suite",
+                Scenarios = new List<string> { run.Scenario.Name },
+            };
+            var state = PlayScenarioSuiteRunner.Create(suite, new[] { run.Scenario }, 1, 30, null, run.StartedUnixMs);
+            var runner = (PlayScenarioSuiteRunner)
+                typeof(PlayScenarioSuiteService).GetMethod("CreateRunner", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { state });
+            return (Func<string, JObject>)typeof(PlayScenarioSuiteRunner).GetField("observe", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(runner);
+        }
+
         private static int QueuedPlayRequests() =>
             EditorApplication
                 .delayCall?.GetInvocationList()

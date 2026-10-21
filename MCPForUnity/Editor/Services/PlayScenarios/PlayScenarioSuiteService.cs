@@ -162,7 +162,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             new PlayScenarioSuiteRunner(
                 state,
                 (definition, repeats, timeout, id, revision) => Data(PlayScenarioService.Start(definition, repeats, timeout, id, revision)),
-                id => Data(PlayScenarioService.Status(id)),
+                id => Data(PlayScenarioService.CoordinationStatus(id)),
                 id => Data(PlayScenarioService.Cancel(id)),
                 Persist,
                 () => PlayScenarioService.IsBusy
