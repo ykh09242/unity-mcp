@@ -245,11 +245,11 @@ async def manage_asset(
     scan_root: Annotated[str, "Reference actions: candidate/dependency folder (Assets by default)."]
     | None = None,
     max_assets: Annotated[
-        int | str, "Reference actions: at most 1-4096 candidate/visited assets; default 1024."
+        int | str, "Reference actions: at most 1-250000 candidate/visited assets; default 1024."
     ]
     | None = None,
     max_work: Annotated[
-        int | str, "Reference actions: at most 1-100000 node/edge work units; default 10000."
+        int | str, "Reference actions: at most 1-4000000 node/edge work units; default 10000."
     ]
     | None = None,
     reference_revision: Annotated[
@@ -294,7 +294,7 @@ async def manage_asset(
                     "Assets" if scan_root is None else scan_root, "scan_root", root=True
                 ),
                 recursive=recursive,
-                maxAssets=page_integer(max_assets, 1024, 1, 4096, "max_assets"),
+                maxAssets=page_integer(max_assets, 1024, 1, 250000, "max_assets"),
             )
             if action_l in {"preview_move", "move"}:
                 params["destination"] = reference_path(destination, "destination")

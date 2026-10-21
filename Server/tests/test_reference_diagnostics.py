@@ -19,6 +19,28 @@ class ReferenceWire:
     scene_context: AsyncMock
 
 
+@pytest.mark.parametrize("scene", [False, True])
+def test_large_project_reference_budgets_reach_native_without_refresh(wire, scene):
+    async def call():
+        if scene:
+            return await scenes.manage_scene(
+                None, action="validate_references", max_objects=250000, max_work=4000000
+            )
+        return await assets.manage_asset(
+            None,
+            action="get_dependencies",
+            path="Assets/large.bytes",
+            max_assets=250000,
+            max_work=4000000,
+        )
+
+    assert anyio.run(call)["success"] is True
+    params = wire.send.await_args.args[3]
+    assert params["maxObjects" if scene else "maxAssets"] == 250000
+    assert params["maxWork"] == 4000000
+    assert params["pageSize"] == 50
+
+
 @pytest.fixture
 def wire(monkeypatch):
     # Given: public wrappers with only the Editor transport replaced.
@@ -69,7 +91,7 @@ def test_asset_reference_actions_forward_explicit_budgets_without_refresh(wire, 
 @pytest.mark.parametrize(
     "extra",
     [
-        {"max_assets": 4097},
+        {"max_assets": 250001},
         {"max_work": True},
         {"max_work": "2.5"},
         {"page_size": 101},
@@ -133,7 +155,7 @@ def test_missing_reference_scope_and_paging_are_forwarded_without_refresh(wire, 
     [
         {"reference_scope": "all"},
         {"reference_scope": "prefab"},
-        {"max_objects": 4097},
+        {"max_objects": 250001},
         {"max_work": False},
         {"page_size": 101},
         {"auto_repair": True},

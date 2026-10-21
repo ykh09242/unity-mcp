@@ -37,8 +37,8 @@ namespace MCPForUnity.Editor.Tools
                 string path = assetScope ? ReferenceDiagnosticUtility.Path(parameters, "path") : null;
                 if (!assetScope && parameters["path"] != null)
                     throw new ArgumentException("Loaded scene scopes do not accept an asset path.");
-                int maxObjects = ReferenceDiagnosticUtility.Integer(parameters, "maxObjects", 1024, 4096);
-                int maxWork = ReferenceDiagnosticUtility.Integer(parameters, "maxWork", 100000, 1000000);
+                int maxObjects = ReferenceDiagnosticUtility.Integer(parameters, "maxObjects", 1024, 250000);
+                int maxWork = ReferenceDiagnosticUtility.Integer(parameters, "maxWork", 100000, 4000000);
                 int size = ReferenceDiagnosticUtility.Integer(parameters, "pageSize", 50, 100);
                 int page = ReferenceDiagnosticUtility.Integer(parameters, "pageNumber", 1, int.MaxValue);
                 string expected = ReferenceDiagnosticUtility.ExpectedRevision(parameters);
@@ -175,6 +175,7 @@ namespace MCPForUnity.Editor.Tools
             internal void Hierarchy(GameObject[] roots, string scenePath)
             {
                 var stack = new Stack<Transform>();
+                var components = new List<Component>();
                 for (int i = roots.Length - 1; i >= 0; i--)
                 {
                     if (!Step())
@@ -186,8 +187,9 @@ namespace MCPForUnity.Editor.Tools
                     Transform transform = stack.Pop();
                     if (!Owner(transform.gameObject, transform.gameObject, scenePath, -1))
                         return;
-                    var components = transform.GetComponents<Component>();
-                    for (int i = 0; i < components.Length; i++)
+                    components.Clear();
+                    transform.GetComponents(components);
+                    for (int i = 0; i < components.Count; i++)
                     {
                         if (!Step())
                             return;

@@ -127,8 +127,8 @@ namespace MCPForUnity.Editor.Tools
             string destination = operation == "preview_move" ? ReferenceDiagnosticUtility.Path(parameters, "destination") : null;
             if (destination == null && parameters["destination"] != null)
                 throw new ArgumentException("Only move/preview_move accepts destination.");
-            int maxAssets = ReferenceDiagnosticUtility.Integer(parameters, "maxAssets", 1024, 4096);
-            var budget = new Budget { Maximum = ReferenceDiagnosticUtility.Integer(parameters, "maxWork", 10000, 100000) };
+            int maxAssets = ReferenceDiagnosticUtility.Integer(parameters, "maxAssets", 1024, 250000);
+            var budget = new Budget { Maximum = ReferenceDiagnosticUtility.Integer(parameters, "maxWork", 10000, 4000000) };
             int size = ReferenceDiagnosticUtility.Integer(parameters, "pageSize", 50, 100);
             int page = ReferenceDiagnosticUtility.Integer(parameters, "pageNumber", 1, int.MaxValue);
             bool recursive = ReferenceDiagnosticUtility.Boolean(parameters, "recursive");
@@ -153,8 +153,8 @@ namespace MCPForUnity.Editor.Tools
                     observation.Add(value);
                 string sourceRevision = AssetDatabase.GetAssetDependencyHash(source).ToString();
                 observation.Add(sourceRevision);
-                observation.Add(FileHash(source, 16 * 1024 * 1024));
-                observation.Add(FileHash(source + ".meta", 256 * 1024));
+                observation.Add(FileHash(source, 8L * 1024 * 1024 * 1024));
+                observation.Add(FileHash(source + ".meta", 16L * 1024 * 1024));
                 if (destination != null)
                 {
                     observation.Add(AssetDatabase.AssetPathToGUID(destination, AssetPathToGUIDOptions.OnlyExistingAssets));
@@ -364,12 +364,12 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static string FileHash(string path, int maximum)
+        private static string FileHash(string path, long maximum)
         {
             using (var stream = File.OpenRead(AssetPathUtility.GetFullAssetPath(path)))
             {
                 if (stream.Length > maximum)
-                    throw new ArgumentException("Source/revision file exceeds its 16 MiB asset or 256 KiB metadata hash budget.");
+                    throw new ArgumentException("Source/revision file exceeds its 8 GiB asset or 16 MiB metadata hash budget.");
                 using (var hash = SHA256.Create())
                     return BitConverter.ToString(hash.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
             }

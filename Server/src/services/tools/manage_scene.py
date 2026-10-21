@@ -19,8 +19,8 @@ from services.tools.reference_diagnostics import reference_page, reference_path
     description=(
         "Performs CRUD operations on Unity scenes. "
         "Read-only validate_references pages broken serialized PPtrs in active_scene/loaded_scenes "
-        "or an explicit prefab/scriptable_object asset; page_size<=100, max_objects<=4096, "
-        "max_work<=1000000. Ordinary nulls are excluded; unavailable GUID/fileID evidence is explicit. "
+        "or an explicit prefab/scriptable_object asset; page_size<=100, max_objects<=250000, "
+        "max_work<=4000000. Ordinary nulls are excluded; unavailable GUID/fileID evidence is explicit. "
         "Read-only actions: get_hierarchy, get_active, get_build_settings, get_loaded_scenes, scene_view_frame. "
         "Modifying actions: create (with optional template), load (with optional additive flag), save, "
         "close_scene, set_active_scene, move_to_scene, validate (with optional auto_repair). "
@@ -113,12 +113,12 @@ async def manage_scene(
     ]
     | None = None,
     max_objects: Annotated[
-        int | str, "validate_references: maximum 1-4096 owners/objects, default 1024."
+        int | str, "validate_references: maximum 1-250000 owners/objects, default 1024."
     ]
     | None = None,
     max_work: Annotated[
         int | str,
-        "validate_references: maximum 1-1000000 traversal/property steps, default 100000.",
+        "validate_references: maximum 1-4000000 traversal/property steps, default 100000.",
     ]
     | None = None,
     page_number: Annotated[int | str, "validate_references: 1-based page, maximum page_size 100."]
@@ -163,7 +163,7 @@ async def manage_scene(
             params.update(
                 action=action,
                 referenceScope=scope,
-                maxObjects=page_integer(max_objects, 1024, 1, 4096, "max_objects"),
+                maxObjects=page_integer(max_objects, 1024, 1, 250000, "max_objects"),
             )
             if scope in {"prefab", "scriptable_object"}:
                 params["path"] = reference_path(path, "path")
