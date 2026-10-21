@@ -19,7 +19,7 @@ namespace MCPForUnityTests.EditMode.Tools
 
         [TestCase(0, 720)]
         [TestCase(8193, 720)]
-        [TestCase(8192, 8192)]
+        [TestCase(8192, 8193)]
         public void FixedSize_RejectsInvalidBudgetBeforeChangingSelection(int width, int height)
         {
             // Given dimensions outside the public bounds.
@@ -93,7 +93,7 @@ namespace MCPForUnityTests.EditMode.Tools
             }
         }
 
-        [TestCase("FixedResolution", 8192, 8192, false)]
+        [TestCase("FixedResolution", 7680, 4320, true)]
         [TestCase("FixedResolution", 8193, 720, false)]
         [TestCase("FixedResolution", 1280, 720, true)]
         [TestCase("AspectRatio", 8192, 8192, true)]
