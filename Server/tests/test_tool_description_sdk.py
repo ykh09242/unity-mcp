@@ -569,25 +569,55 @@ async def test_single_read_deadline_closes_without_later_operations(monkeypatch)
 @pytest.mark.asyncio
 async def test_connection_entry_cannot_spend_the_cleanup_grace_on_reads(monkeypatch):
     import anyio
-    import time
+    from contextlib import contextmanager
+    from types import SimpleNamespace
     from cli.utils.config import CLIConfig
     import cli.utils.tool_description as inspection
 
+    scopes = []
+    clock = anyio.current_time()
+
+    @contextmanager
+    def capture_scope(delay):
+        with anyio.fail_after(delay) as scope:
+            scopes.append((delay, scope))
+            try:
+                yield scope
+            finally:
+                scopes.pop()
+
+    async def local_auth(function, *args, **_kwargs):
+        return function(*args)
+
     class EnterBlocked(ScriptedConnection):
+        entered = False
+
         async def __aenter__(self):
+            self.entered = True
+            # Verify the budget at the actual blocked boundary, independent of
+            # runner scheduling. Advancing this scope causes the real cancellation.
+            delay, scope = scopes[-1]
+            assert delay == 30.0
+            assert scopes[-2][0] == 30.3
+            scope.deadline = anyio.current_time()
             await anyio.sleep_forever()
 
     connection = EnterBlocked()
-    monkeypatch.setattr(inspection, "_READ_TIMEOUT_SECONDS", 0.03)
+    monkeypatch.setattr(inspection, "_READ_TIMEOUT_SECONDS", 30.0)
     monkeypatch.setattr(inspection, "_CLEANUP_GRACE_SECONDS", 0.3)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
     monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
-    started = time.monotonic()
-    receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
-    assert receipt.reason == "deadline" and connection.calls == 0
-    assert time.monotonic() - started < 0.2, (
-        "entry must expire at the read deadline, before cleanup grace"
+    monkeypatch.setattr(
+        inspection,
+        "anyio",
+        SimpleNamespace(
+            current_time=lambda: clock,
+            fail_after=capture_scope,
+            to_thread=SimpleNamespace(run_sync=local_auth),
+        ),
     )
+    receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
+    assert receipt.reason == "deadline" and connection.calls == 0 and connection.entered
 
 
 @pytest.mark.asyncio
