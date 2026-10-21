@@ -14,7 +14,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     /// <summary>Exact current-scene conditions. Native references exist only during one observation.</summary>
     internal static class PlayScenarioObjectCondition
     {
-        internal const int MaximumInspectedObjects = 100000;
+        internal const int MaximumInspectedObjects = PlayScenarioHierarchyQuery.MaximumInspectedObjects;
 
         internal struct Matches
         {

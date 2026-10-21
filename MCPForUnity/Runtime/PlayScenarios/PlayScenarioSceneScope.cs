@@ -9,7 +9,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
     /// <summary>Exact bounded scene lookup and one-step identity binding; no persisted native handles.</summary>
     public sealed class PlayScenarioSceneScope
     {
-        public const int SceneLimit = 32;
+        public const int SceneLimit = 256;
         private Scene bound;
         private bool hasBound;
         private string path;
@@ -31,7 +31,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public static Scene Find(string scenePath, bool loadedOnly = true)
         {
             if (SceneManager.sceneCount > SceneLimit)
-                throw new InvalidOperationException("Scene inspection exceeds the 32-scene limit.");
+                throw new InvalidOperationException("Scene inspection exceeds the 256-scene limit.");
             Scene match = default;
             for (int index = 0; index < SceneManager.sceneCount; index++)
             {

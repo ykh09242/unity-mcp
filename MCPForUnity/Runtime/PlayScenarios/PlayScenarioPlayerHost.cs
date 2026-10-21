@@ -82,7 +82,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         private static int CountLoadedSceneObjects()
         {
-            const int limit = 100000;
+            const int limit = PlayScenarioHierarchyQuery.MaximumInspectedObjects;
             int count = 0;
             var roots = new List<GameObject>();
             var pending = new Stack<Transform>();
@@ -92,7 +92,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 if (!scene.IsValid() || !scene.isLoaded)
                     continue;
                 if (scene.rootCount > limit - count)
-                    throw new InvalidOperationException("Loaded-scene object sampling exceeds the 100000-entry inspection limit.");
+                    throw new InvalidOperationException("Loaded-scene object sampling exceeds the 250000-entry inspection limit.");
                 roots.Clear();
                 scene.GetRootGameObjects(roots);
                 foreach (GameObject root in roots)
@@ -104,7 +104,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     if (current == null)
                         continue;
                     if (++count > limit || current.childCount > limit - count - pending.Count)
-                        throw new InvalidOperationException("Loaded-scene object sampling exceeds the 100000-entry inspection limit.");
+                        throw new InvalidOperationException("Loaded-scene object sampling exceeds the 250000-entry inspection limit.");
                     for (int child = 0; child < current.childCount; child++)
                         pending.Push(current.GetChild(child));
                 }
@@ -248,7 +248,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private void Inspect(ref int inspected)
         {
             counts.HierarchyVisits++;
-            if (++inspected > 100000)
+            if (++inspected > PlayScenarioHierarchyQuery.MaximumInspectedObjects)
                 throw new InvalidOperationException("Target inspection exceeds the bounded hierarchy budget.");
         }
 

@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Runtime.PlayScenarios;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -15,12 +16,74 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
 {
     public sealed class PlayScenarioSceneTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
+        private string fixtureFolder;
+
+        [OneTimeSetUp]
+        public void PrepareRunner() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunner() => sceneFixture.RestoreRunnerBootstrap();
+
+        [SetUp]
+        public void PrepareOwnedBase()
+        {
+            string nonce = Guid.NewGuid().ToString("N");
+            fixtureFolder = "Assets/ScenarioScopeBase-" + nonce;
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(fixtureFolder));
+            Scene owned = sceneFixture.Create("ScenarioScopeBase_", nonce);
+            Assert.That(EditorSceneManager.SaveScene(owned, fixtureFolder + "/" + owned.name + ".unity"), Is.True);
+        }
+
+        [TearDown]
+        public void ReleaseOwnedBase()
+        {
+            try
+            {
+                sceneFixture.Close();
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(fixtureFolder))
+                    AssetDatabase.DeleteAsset(fixtureFolder);
+            }
+        }
+
         private const BindingFlags Flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
 
         private static JObject Definition() =>
             JObject.Parse(
                 @"{'name':'scene-proof','setup_steps':[{'name':'Anchor','action':'load_scene','scene':'Assets/A.unity'}],'steps':[{'name':'Add','action':'load_scene','scene':'Assets/B.unity','load_mode':'additive'},{'name':'Loaded','action':'wait_scene','scene':'Assets/B.unity','scene_state':'loaded'},{'name':'Target','action':'wait_object','scene':'Assets/B.unity','target_id':'shared'},{'name':'Active','action':'set_active_scene','scene':'Assets/B.unity'},{'name':'Unload','action':'unload_scene','scene':'Assets/A.unity'}]}"
             );
+
+        [Test]
+        public void ExplicitScopeFindsLateSceneInSubstantialLoadedSet()
+        {
+            Scene previous = SceneManager.GetActiveScene();
+            var scenes = new System.Collections.Generic.List<Scene>();
+            string folder = "Assets/ScenarioScope-" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
+            try
+            {
+                for (int index = 0; index < 33; index++)
+                {
+                    Scene created = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                    scenes.Add(created);
+                    Assert.That(EditorSceneManager.SaveScene(created, folder + "/scene-" + index + ".unity"), Is.True);
+                }
+                Scene last = scenes[scenes.Count - 1];
+                string path = folder + "/last.unity";
+                Assert.That(EditorSceneManager.SaveScene(last, path), Is.True);
+                Assert.That(PlayScenarioSceneScope.Find(path), Is.EqualTo(last));
+            }
+            finally
+            {
+                SceneManager.SetActiveScene(previous);
+                for (int index = scenes.Count - 1; index >= 0; index--)
+                    EditorSceneManager.CloseScene(scenes[index], true);
+                AssetDatabase.DeleteAsset(folder);
+            }
+        }
 
         [Test]
         public void DefinitionRoundTripPreservesFieldsAndWholeRunFeatureMode()

@@ -14,6 +14,33 @@ namespace MCPForUnityTests
     public sealed class PlayScenarioPlayerTests
     {
         [Test]
+        public void LargeLoadedSceneKeepsLateTargetsAndCompleteMetrics()
+        {
+            Scene previous = SceneManager.GetActiveScene();
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            SceneManager.SetActiveScene(scene);
+            var host = new PlayScenarioPlayerHost(Array.Empty<string>());
+            try
+            {
+                for (int index = 0; index < 100001; index++)
+                    new GameObject(index == 100000 ? "late-large-target" : "filler");
+                var matches = PlayScenarioObjectCondition.Resolve(scene, new[] { "late-large-target" });
+                Assert.That(matches.Count, Is.EqualTo(1));
+                var result = host.Evaluate(new PlayScenarioStep { Action = "wait_object", Target = "late-large-target" }, true);
+                Assert.That(result.Ready, Is.True, result.Detail);
+                Assert.That(host.CaptureQueryCounts().HierarchyVisits, Is.EqualTo(100001));
+                var metrics = host.CaptureMetrics(1, 0);
+                Assert.That(metrics.ObjectCount, Is.GreaterThanOrEqualTo(100001));
+            }
+            finally
+            {
+                host.Release();
+                SceneManager.SetActiveScene(previous);
+                EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+
+        [Test]
         public void LargePlayerSceneInventoryKeepsEveryRequiredScene()
         {
             var steps = new JArray();

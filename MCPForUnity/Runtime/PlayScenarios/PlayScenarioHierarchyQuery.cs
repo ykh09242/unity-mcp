@@ -8,6 +8,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
     /// <summary>Host-owned scratch storage, cleared after every query.</summary>
     internal sealed class PlayScenarioHierarchyQuery
     {
+        internal const int MaximumInspectedObjects = 250000;
         internal readonly List<GameObject> Roots = new();
         private readonly Stack<(Transform Node, int Segment)> pending = new();
         private bool trimPending;
@@ -16,7 +17,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         internal void Begin(Scene scene)
         {
             Clear();
-            if (scene.rootCount > 100000)
+            if (scene.rootCount > MaximumInspectedObjects)
                 throw new InvalidOperationException("Target inspection exceeds the bounded hierarchy budget.");
             if (Roots.Capacity <= scene.rootCount)
                 Roots.Capacity = scene.rootCount + 1;
