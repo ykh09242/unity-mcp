@@ -11,7 +11,7 @@ from typing import Optional, Any, assert_never
 from pydantic import ValidationError
 from models.editor_readiness import PlayReadinessJob
 
-from cli.utils.config import get_config
+from cli.utils.config import CLIConfig, get_config
 from cli.utils.output import format_output, print_error, print_success, print_info
 from cli.utils.connection import (
     run_command,
@@ -475,6 +475,38 @@ def execute_menu(menu_path: str):
         print_success(f"Executed: {menu_path}")
 
 
+def _run_test_job_command(
+    command: str, params: dict[str, Any], config: CLIConfig, *, timeout: float | None = None
+) -> dict[str, Any]:
+    """Keep test command failures machine-readable without replaying requests."""
+    try:
+        result = (
+            run_command(command, params, config)
+            if timeout is None
+            else run_command(command, params, config, timeout=timeout)
+        )
+    except UnityConnectionError as error:
+        raise UnityCommandError(
+            {
+                "success": False,
+                "code": "test_job_transport_error",
+                "error": str(error),
+                "data": {"job_id": params["job_id"]} if "job_id" in params else None,
+                "hint": "The job outcome is unknown; check existing test jobs before starting another run.",
+            }
+        ) from error
+    if not isinstance(result, dict) or type(result.get("success")) is not bool:
+        raise UnityCommandError(
+            {
+                "success": False,
+                "code": "invalid_test_job_response",
+                "error": "Test command did not return a valid response envelope.",
+                "data": result,
+            }
+        )
+    return result
+
+
 @editor.command("tests")
 @click.option(
     "--mode",
@@ -529,7 +561,7 @@ def run_tests(
     config = get_config()
 
     if clear_stuck:
-        result = run_command("run_tests", {"clear_stuck": True}, config)
+        result = _run_test_job_command("run_tests", {"clear_stuck": True}, config)
         click.echo(format_output(result, config.format))
         return
 
@@ -541,7 +573,7 @@ def run_tests(
     if failed_only:
         params["includeFailedTests"] = True
 
-    result = run_command("run_tests", params, config)
+    result = _run_test_job_command("run_tests", params, config)
 
     # For async mode, just show job ID
     if async_mode and result.get("success"):
@@ -638,9 +670,11 @@ def poll_test(
     deadline = time.monotonic() + max(wait, 0)
     exit_code = 0
     if wait > 0:
-        result = run_command("get_test_job", params, config, timeout=min(config.timeout, wait))
+        result = _run_test_job_command(
+            "get_test_job", params, config, timeout=min(config.timeout, wait)
+        )
     else:
-        result = run_command("get_test_job", params, config)
+        result = _run_test_job_command("get_test_job", params, config)
     while wait > 0 and result.get("success"):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -655,7 +689,7 @@ def poll_test(
             break
         data = result.get("data")
         status = data.get("status") if isinstance(data, dict) else None
-        if not isinstance(status, str) or not status:
+        if not isinstance(status, str) or not status.strip():
             result = {
                 "success": False,
                 "code": "invalid_test_job_response",
@@ -670,7 +704,9 @@ def poll_test(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             continue
-        result = run_command("get_test_job", params, config, timeout=min(config.timeout, remaining))
+        result = _run_test_job_command(
+            "get_test_job", params, config, timeout=min(config.timeout, remaining)
+        )
     if not result.get("success") and exit_code == 0:
         exit_code = 1
     click.echo(format_output(result, config.format))

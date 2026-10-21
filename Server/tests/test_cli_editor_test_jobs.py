@@ -259,3 +259,53 @@ def test_wait_start_without_job_identity_fails_once(editor_module, monkeypatch):
     assert result.exit_code == 1
     assert json.loads(result.output)["code"] == "invalid_test_job_response"
     assert calls == ["run_tests"]
+
+
+@pytest.mark.parametrize("command", [["tests"], ["poll-test", "job-1"]])
+def test_wait_transport_error_is_one_json_document(editor_module, monkeypatch, command):
+    # Given a failed HTTP read through the real CLI command boundary.
+    from cli.utils import connection
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        connection,
+        "send_command",
+        AsyncMock(side_effect=connection.UnityConnectionError("connection timed out")),
+    )
+    # When the real CLI starts or observes a job.
+    result = CliRunner().invoke(editor_module.editor, command + ["--wait", "5"])
+    # Then callers receive a parseable failure and cannot mistake it for success.
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["success"] is False
+    assert payload["code"] == "test_job_transport_error"
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize("command", [["tests"], ["poll-test", "job-1"]])
+@pytest.mark.parametrize("response", [None, [], "invalid", {"data": {}}, {"success": "true"}])
+def test_wait_malformed_response_is_explicit_failure(editor_module, monkeypatch, command, response):
+    # Given malformed input through real run_command (only the network read is replaced).
+    from cli.utils import connection
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(connection, "send_command", AsyncMock(return_value=response))
+    # When a waiting command receives that input.
+    result = CliRunner().invoke(editor_module.editor, command + ["--wait", "5"])
+    # Then it returns a machine-readable invalid-observation failure.
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "invalid_test_job_response"
+
+
+def test_wait_whitespace_status_is_invalid_without_sleep(editor_module, monkeypatch):
+    # Given an observation without a meaningful status.
+    monkeypatch.setattr(
+        editor_module, "run_command", lambda *a, **kw: {"success": True, "data": {"status": " "}}
+    )
+    clock = Mock(monotonic=lambda: 0, sleep=Mock(side_effect=AssertionError("must not wait")))
+    monkeypatch.setattr(editor_module, "time", clock)
+    # When polling for completion.
+    result = CliRunner().invoke(editor_module.editor, ["poll-test", "job-1", "--wait", "5"])
+    # Then malformed observation fails immediately instead of consuming the wait budget.
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "invalid_test_job_response"
