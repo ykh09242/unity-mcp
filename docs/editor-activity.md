@@ -20,3 +20,5 @@ native failure; native test deadline and control observations remain separate.
 Each owner keeps its original retention/reload behavior. Build rows are domain
 local, while retained reports remain readable through `report_history`. A missing
 row is not evidence that work stopped. The view does not keep its own job history.
+
+Test cancellation is enabled only while the job holds a supported native control owner. A refused or expired request is shown as an observation in the evidence window; it is not reported as confirmed cancellation.

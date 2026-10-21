@@ -162,7 +162,8 @@
         "MCPForUnityTests.EditMode.Windows.OperationActivityTests.ScenarioFinalizationAndReloadInterruptionAreNotSuccessfulCancellation",
         "MCPForUnityTests.EditMode.Windows.OperationActivityTests.BatchCancellationKeepsRunningChildActiveAndDoesNotReadReports",
         "MCPForUnityTests.EditMode.Windows.OperationActivityTests.HiddenIdleAndDisposedViewsDoNotCaptureOrRunActions",
-        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.RealActivityLayoutKeyboardAndBothEditorThemes"
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.RealActivityLayoutKeyboardAndBothEditorThemes",
+        "MCPForUnityTests.EditMode.Windows.OperationActivityTests.UnownedTestCancellationIsUnavailableAndStaleActionsDoNotThrow"
       ],
       "disruptive": false,
       "platform_exclusions": {},

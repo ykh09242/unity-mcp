@@ -48,6 +48,7 @@ namespace MCPForUnity.Editor.Services
             var control = job.NativeControl;
             bool requested = control?["reason"]?.Type == JTokenType.String;
             bool released = (bool?)control?["released"] == true;
+            bool canRequest = job.Control?.CanRequest == true;
             bool active = job.Status == TestJobStatus.Running || (control != null && !released);
             return new OperationActivityRow
             {
@@ -68,8 +69,9 @@ namespace MCPForUnity.Editor.Services
                     job.Status == TestJobStatus.Cancelled && released ? "Cancellation confirmed; native owner released"
                     : requested ? "Cancellation requested · native " + ((string)control["termination"] ?? "unknown")
                     : active && job.Status != TestJobStatus.Running ? "Native termination not confirmed"
+                    : active && !canRequest ? "Cancellation unavailable: no supported native control owner"
                     : "No cancellation request observed",
-                CanCancel = active && !requested,
+                CanCancel = active && !requested && canRequest,
                 EvidenceId = job.JobId,
             };
         }
@@ -102,22 +104,34 @@ namespace MCPForUnity.Editor.Services
             };
         }
 
-        internal static void Cancel(OperationActivityRow row)
+        internal static object Cancel(OperationActivityRow row)
         {
-            // Resolve the immutable owner/id again; a stale view cannot start or replay work.
-            switch (row.Owner)
+            try
             {
-                case "test":
-                    TestJobManager.CancelJob(row.Id);
-                    break;
-                case "scenario":
-                    PlayScenarioService.Cancel(row.Id);
-                    break;
-                case "batch":
-                    ManageBuild.HandleCommand(new JObject { ["action"] = "cancel", ["job_id"] = row.Id });
-                    break;
+                // Resolve the owner/id again after confirmation; never start or replay work.
+                switch (row.Owner)
+                {
+                    case "test":
+                        return TestJobManager.CancelJob(row.Id);
+                    case "scenario":
+                        return PlayScenarioService.Cancel(row.Id);
+                    case "batch":
+                        return ManageBuild.HandleCommand(new JObject { ["action"] = "cancel", ["job_id"] = row.Id });
+                    default:
+                        return new { observation = "This owner does not expose cancellation." };
+                }
             }
-            Invalidate();
+            catch (Exception)
+            {
+                return new
+                {
+                    observation = "Cancellation could not be requested. The job may have expired or native control is unavailable; inspect its current status.",
+                };
+            }
+            finally
+            {
+                Invalidate();
+            }
         }
 
         internal static object Evidence(OperationActivityRow row)

@@ -128,7 +128,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
                     "Keep running"
                 )
             )
-                OperationActivity.Cancel(row);
+                OperationEvidenceWindow.ShowResult("Cancellation request", OperationActivity.Cancel(row));
         }
 
         public void Dispose()
@@ -216,8 +216,13 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             {
                 result = new { observation = "Evidence is unavailable; inspect the existing job owner." };
             }
+            ShowResult("Operation evidence", result);
+        }
+
+        internal static void ShowResult(string title, object result)
+        {
             var window = CreateInstance<OperationEvidenceWindow>();
-            window.titleContent = new GUIContent("Operation evidence");
+            window.titleContent = new GUIContent(title);
             window.text = JsonConvert.SerializeObject(result ?? new { observation = "Job no longer retained." }, Formatting.Indented);
             window.minSize = new Vector2(360, 260);
             window.Show();

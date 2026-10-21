@@ -25,6 +25,7 @@ namespace MCPForUnity.Editor.Services
         private Action<Action> defer = action => action();
         internal Func<bool> Persist;
         internal JObject State { get; private set; }
+        internal bool CanRequest => !disposed && !Released && (binding != null || FactoryOverride != null);
         internal bool Released => (bool?)State["released"] == true;
         internal bool Requested => State["reason"]?.Type == JTokenType.String;
         internal bool CancelAccepted => (string)State["request_state"] == "accepted";

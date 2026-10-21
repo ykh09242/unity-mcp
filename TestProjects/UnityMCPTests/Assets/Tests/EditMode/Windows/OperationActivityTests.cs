@@ -63,6 +63,37 @@ namespace MCPForUnityTests.EditMode.Windows
         }
 
         [Test]
+        public void UnownedTestCancellationIsUnavailableAndStaleActionsDoNotThrow()
+        {
+            var row = OperationActivity.TestRow(new TestJob { JobId = "missing-activity-test", Status = TestJobStatus.Running });
+            Assert.IsFalse(row.CanCancel, "Ordinary runs without captured native ownership cannot be cancelled.");
+            StringAssert.Contains("unavailable", row.Cancellation.ToLowerInvariant());
+            Assert.DoesNotThrow(() => OperationActivity.Cancel(row), "A row may expire while the user confirms cancellation.");
+            Assert.IsNotNull(OperationActivity.Cancel(row));
+            var oldFactory = NativeTestRunControl.FactoryOverride;
+            using var control = new NativeTestRunControl("owned", 0, () => 0, () => null, _ => false);
+            try
+            {
+                NativeTestRunControl.FactoryOverride = (_, __) => control;
+                StringAssert.Contains("expired", JObject.FromObject(OperationActivity.Cancel(row))["observation"].Value<string>());
+                var owned = new TestJob
+                {
+                    JobId = "owned",
+                    Status = TestJobStatus.Running,
+                    Control = control,
+                    NativeControl = control.State,
+                };
+                Assert.IsTrue(OperationActivity.TestRow(owned).CanCancel);
+                control.Dispose();
+                Assert.IsFalse(OperationActivity.TestRow(owned).CanCancel);
+            }
+            finally
+            {
+                NativeTestRunControl.FactoryOverride = oldFactory;
+            }
+        }
+
+        [Test]
         public void ScenarioFinalizationAndReloadInterruptionAreNotSuccessfulCancellation()
         {
             var run = new PlayScenarioRun
