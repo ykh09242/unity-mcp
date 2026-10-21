@@ -14,7 +14,11 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
         private readonly VisualElement root,
             list;
         private readonly Label empty;
-        private readonly Dictionary<string, RowView> views = new();
+        private readonly Dictionary<(string owner, string id), RowView> views = new();
+        private readonly HashSet<(string owner, string id)> retained = new();
+        private readonly List<(string owner, string id)> removed = new();
+        private readonly List<RowView> ordered = new();
+        private bool emptyShown = true;
         private readonly Func<List<OperationActivityRow>> capture;
         private readonly Func<long> revision;
         private readonly Action<OperationActivityRow> cancel,
@@ -83,36 +87,53 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             if (!visible || disposed)
                 return;
             long current = revision();
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (current != observed)
             {
                 var rows = capture();
                 CaptureCount++;
-                var retained = new HashSet<string>();
-                foreach (var row in rows)
+                try
                 {
-                    retained.Add(row.Key);
-                    if (!views.TryGetValue(row.Key, out var view))
+                    foreach (var row in rows)
                     {
-                        view = new RowView(cancel, evidence);
-                        views.Add(row.Key, view);
-                        list.Add(view.Root);
+                        var key = (row.Owner, row.Id);
+                        if (!retained.Add(key))
+                            continue;
+                        if (!views.TryGetValue(key, out var view))
+                        {
+                            view = new RowView(row.Key, cancel, evidence);
+                            views.Add(key, view);
+                            list.Add(view.Root);
+                        }
+                        view.Update(row, now);
+                        ordered.Add(view);
                     }
-                    view.Update(row);
-                    view.Root.BringToFront();
+                    foreach (var pair in views)
+                        if (!retained.Contains(pair.Key))
+                        {
+                            pair.Value.Root.RemoveFromHierarchy();
+                            removed.Add(pair.Key);
+                        }
+                    foreach (var key in removed)
+                        views.Remove(key);
+                    for (int i = 0; i < ordered.Count; i++)
+                        if (list[i] != ordered[i].Root)
+                            ordered[i].Root.PlaceBehind(list[i]);
+                    bool showEmpty = ordered.Count == 0;
+                    if (showEmpty != emptyShown)
+                    {
+                        empty.style.display = showEmpty ? DisplayStyle.Flex : DisplayStyle.None;
+                        emptyShown = showEmpty;
+                    }
+                    observed = current;
                 }
-                var removed = new List<string>();
-                foreach (var pair in views)
-                    if (!retained.Contains(pair.Key))
-                    {
-                        pair.Value.Root.RemoveFromHierarchy();
-                        removed.Add(pair.Key);
-                    }
-                foreach (string key in removed)
-                    views.Remove(key);
-                empty.style.display = rows.Count == 0 ? DisplayStyle.Flex : DisplayStyle.None;
-                observed = current;
+                finally
+                {
+                    retained.Clear();
+                    removed.Clear();
+                    ordered.Clear();
+                }
             }
-            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             foreach (var view in views.Values)
                 if (view.Active)
                     view.UpdateElapsed(now);
@@ -139,6 +160,9 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             visible = false;
             tick.Pause();
             views.Clear();
+            retained.Clear();
+            removed.Clear();
+            ordered.Clear();
             root.Clear();
         }
 
@@ -152,12 +176,14 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
                 elapsed = new();
             private readonly Button cancel,
                 evidence;
-            private OperationActivityRow row;
+            private readonly OperationActivityRow row = new();
+            private bool initialized;
             internal bool Active => row.Active;
             private long lastSecond = long.MinValue;
 
-            internal RowView(Action<OperationActivityRow> onCancel, Action<OperationActivityRow> onEvidence)
+            internal RowView(string key, Action<OperationActivityRow> onCancel, Action<OperationActivityRow> onEvidence)
             {
+                Root.name = "activity-" + key;
                 Root.AddToClassList("activity-card");
                 foreach (var label in new[] { title, state, detail, cancellation, elapsed })
                 {
@@ -175,19 +201,38 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
                 actions.Add(cancel);
             }
 
-            internal void Update(OperationActivityRow value)
+            internal void Update(OperationActivityRow value, long now)
             {
-                row = value;
-                Root.name = "activity-" + value.Key;
-                title.text = value.Operation + " · " + value.Id;
-                state.text = "State: " + value.State + " · Phase: " + value.Phase;
-                detail.text = value.Detail;
-                cancellation.text = value.Cancellation;
-                cancel.SetEnabled(value.CanCancel);
-                cancel.tooltip = value.CanCancel ? "Ask the existing operation owner to cancel this job" : value.Cancellation;
-                evidence.SetEnabled(value.EvidenceId != null);
-                lastSecond = long.MinValue;
-                UpdateElapsed(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                if (!initialized || row.Operation != value.Operation || row.Id != value.Id)
+                    title.text = value.Operation + " · " + value.Id;
+                if (!initialized || row.State != value.State || row.Phase != value.Phase)
+                    state.text = "State: " + value.State + " · Phase: " + value.Phase;
+                if (!initialized || row.Detail != value.Detail)
+                    detail.text = value.Detail;
+                if (!initialized || row.Cancellation != value.Cancellation)
+                    cancellation.text = value.Cancellation;
+                if (!initialized || row.CanCancel != value.CanCancel)
+                    cancel.SetEnabled(value.CanCancel);
+                if (!initialized || row.CanCancel != value.CanCancel || row.Cancellation != value.Cancellation)
+                    cancel.tooltip = value.CanCancel ? "Ask the existing operation owner to cancel this job" : value.Cancellation;
+                if (!initialized || (row.EvidenceId != null) != (value.EvidenceId != null))
+                    evidence.SetEnabled(value.EvidenceId != null);
+                bool elapsedChanged = !initialized || row.Started != value.Started || row.Finished != value.Finished || row.Active != value.Active;
+                row.Owner = value.Owner;
+                row.Id = value.Id;
+                row.Operation = value.Operation;
+                row.State = value.State;
+                row.Phase = value.Phase;
+                row.Detail = value.Detail;
+                row.Cancellation = value.Cancellation;
+                row.EvidenceId = value.EvidenceId;
+                row.CanCancel = value.CanCancel;
+                row.Active = value.Active;
+                row.Started = value.Started;
+                row.Finished = value.Finished;
+                initialized = true;
+                if (elapsedChanged)
+                    UpdateElapsed(now);
             }
 
             internal void UpdateElapsed(long now)
