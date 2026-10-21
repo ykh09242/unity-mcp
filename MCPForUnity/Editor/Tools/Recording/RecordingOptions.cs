@@ -7,10 +7,10 @@ namespace MCPForUnity.Editor.Tools.Recording
 {
     internal sealed class RecordingOptions
     {
-        internal const int MaxDimension = 1920;
-        internal const int MaxFps = 30;
-        internal const double MaxDurationSeconds = 60;
-        internal const long MaxPixelFrames = 2000000000L;
+        internal const int MaxDimension = 4096;
+        internal const int MaxFps = 60;
+        internal const double MaxDurationSeconds = 3600;
+        internal const long MaxPixelFrames = 20000000000000L;
         internal const string DefaultFolder = "Captures/Recordings";
 
         internal readonly string Source;

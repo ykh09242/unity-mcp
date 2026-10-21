@@ -13,7 +13,7 @@ from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
 
-MAX_PIXEL_FRAMES: Final = 2_000_000_000
+MAX_PIXEL_FRAMES: Final = 20_000_000_000_000
 
 
 @mcp_for_unity_tool(
@@ -27,7 +27,7 @@ MAX_PIXEL_FRAMES: Final = 2_000_000_000
         "inside project Captures/Recordings, with no overwrite or inline base64. Interrupted/failed jobs "
         "discard partial video. aspect_mode defaults to stretch; fit preserves the full source with "
         "black padding and crop fills the output with a centered crop. "
-        "Both encoded pixels and source plus encoded pixels have a 2 billion total pixel-frame budget."
+        "Both encoded pixels and source plus encoded pixels have a 20 trillion total pixel-frame budget."
     ),
     annotations=ToolAnnotations(title="Manage Recording", readOnlyHint=False, destructiveHint=True),
 )
@@ -37,13 +37,13 @@ async def manage_recording(
     job_id: Annotated[str | None, "Required for status/stop; returned by start."] = None,
     capture_source: Annotated[Literal["game_view", "scene_view"], "View to capture."] = "game_view",
     duration_seconds: Annotated[
-        float, Field(ge=0.1, le=60, allow_inf_nan=False), "Maximum wall-clock recording duration."
+        float, Field(ge=0.1, le=3600, allow_inf_nan=False), "Maximum wall-clock recording duration."
     ] = 10,
     fps: Annotated[
-        int, Field(ge=1, le=30), "Maximum sampling rate; missing frames are not synthesized."
+        int, Field(ge=1, le=60), "Maximum sampling rate; missing frames are not synthesized."
     ] = 15,
-    width: Annotated[int, Field(ge=16, le=1920), "Even output width."] = 1280,
-    height: Annotated[int, Field(ge=16, le=1920), "Even output height."] = 720,
+    width: Annotated[int, Field(ge=16, le=4096), "Even output width."] = 1280,
+    height: Annotated[int, Field(ge=16, le=4096), "Even output height."] = 720,
     output_folder: Annotated[
         str | None,
         "Project-relative directory within Captures/Recordings, or an absolute path inside it.",
