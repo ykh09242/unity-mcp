@@ -16,7 +16,7 @@ using UnityEngine;
 namespace MCPForUnity.Editor.Tools.Build
 {
     /// <summary>Bounded versioned build snapshots, independent of the heavy native report and domain-static jobs.</summary>
-    internal static class BuildReportStore
+    internal static partial class BuildReportStore
     {
         internal const int MaxRecords = 64;
         internal const int MaxFileBytes = 512 * 1024;
@@ -127,7 +127,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 return;
             try
             {
-                job.ReportId = PersistSnapshot(CreateRecord(job, nativeReport));
+                job.ReportId = PersistNativeSnapshot(CreateRecord(job, nativeReport), nativeReport);
                 job.ReportPersistenceError = null;
                 DeleteMarker(job.JobId);
             }
@@ -225,7 +225,8 @@ namespace MCPForUnity.Editor.Tools.Build
                 summary["duration_seconds"] = native.totalTime.TotalSeconds;
                 try
                 {
-                    BuildReportCapture.AddDetails(record, report);
+                    if ((native.options & UnityEditor.BuildOptions.DetailedBuildReport) == 0)
+                        BuildReportCapture.AddDetails(record, report);
                 }
                 catch
                 {
@@ -239,40 +240,15 @@ namespace MCPForUnity.Editor.Tools.Build
             return record;
         }
 
-        private static string PersistSnapshot(JObject record)
-        {
-            Validate(record);
-            string id = (string)record["report_id"];
-            byte[] bytes;
-            while (true)
-            {
-                var envelope = new JObject { ["revision"] = Hash(record.ToString(Formatting.None)), ["record"] = record };
-                bytes = Utf8.GetBytes(envelope.ToString(Formatting.None));
-                if (bytes.Length <= MaxFileBytes)
-                    break;
-                // Geometric trimming bounds serialization work and retains the authoritative summary.
-                string section = ((JArray)record["packed_assets"]).Count > 0 ? "packed_assets" : "steps";
-                var rows = (JArray)record[section];
-                if (rows.Count == 0)
-                    throw new InvalidOperationException("Report summary exceeds its byte budget.");
-                int retained = rows.Count / 2;
-                while (rows.Count > retained)
-                    rows.RemoveAt(rows.Count - 1);
-                record[section + "_complete"] = false;
-                record["details_note"] = "Detail rows truncated to the bounded artifact byte budget; summary retained.";
-            }
-            Directory.CreateDirectory(Root);
-            Prune(id);
-            Atomic(Location(id + ".json"), bytes);
-            return id;
-        }
+        private static string PersistSnapshot(JObject record) =>
+            WriteSnapshot(record, ((JArray)record["steps"]).Cast<JObject>(), ((JArray)record["packed_assets"]).Cast<JObject>());
 
         private static void Atomic(string destination, byte[] bytes)
         {
             string temporary = Location("write-" + Guid.NewGuid().ToString("N") + ".tmp");
             try
             {
-                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                using (var stream = new FileStream(StreamPath(temporary), FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
                     stream.Write(bytes, 0, bytes.Length);
                     stream.Flush(true);
@@ -318,13 +294,20 @@ namespace MCPForUnity.Editor.Tools.Build
                 {
                     JObject record = Load(Path.GetFileNameWithoutExtension(path), allowExpired: true);
                     if (Expired(record) && (string)record["report_id"] != keep)
+                    {
                         File.Delete(path);
+                        DeleteDetails((string)record["report_id"]);
+                    }
                 }
                 catch (ReportFailure) { /* Corrupt artifacts remain explicit until bounded oldest-record eviction. */ }
             }
             records = Files();
             if (records.Length >= MaxRecords && !records.Any(path => Path.GetFileNameWithoutExtension(path) == keep))
-                File.Delete(records.OrderBy(path => File.GetLastWriteTimeUtc(path)).ThenBy(path => path, StringComparer.Ordinal).First());
+            {
+                string evicted = records.OrderBy(path => File.GetLastWriteTimeUtc(path)).ThenBy(path => path, StringComparer.Ordinal).First();
+                File.Delete(evicted);
+                DeleteDetails(Path.GetFileNameWithoutExtension(evicted));
+            }
         }
 
         private static void Marker(string jobId, string kind, BuildJobState state, string platform)
@@ -355,34 +338,49 @@ namespace MCPForUnity.Editor.Tools.Build
                 File.Delete(path);
         }
 
-        private static JObject Read(string path)
+        // Resolve/check containment before this conversion. Unity Mono's FileStream
+        // still applies MAX_PATH while its directory/move APIs accept longer paths.
+        private static string StreamPath(string path)
         {
-            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            if (Path.DirectorySeparatorChar != '\\' || path.StartsWith(@"\\?\", StringComparison.Ordinal))
+                return path;
+            return path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path.Substring(2) : @"\\?\" + path;
+        }
+
+        private static byte[] ReadBytes(string path)
+        {
+            using (var stream = new FileStream(StreamPath(path), FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                if (stream.Length > MaxFileBytes)
+                long length = stream.Length;
+                if (length > MaxFileBytes)
                     throw new ReportFailure("build_report_corrupt");
-                byte[] bytes = new byte[MaxFileBytes + 1];
-                int count = 0,
-                    read;
-                while (count < bytes.Length && (read = stream.Read(bytes, count, bytes.Length - count)) > 0)
-                    count += read;
-                if (count > MaxFileBytes)
-                    throw new ReportFailure("build_report_corrupt");
-                using (
-                    var reader = new JsonTextReader(new StringReader(Utf8.GetString(bytes, 0, count)))
-                    {
-                        MaxDepth = 16,
-                        DateParseHandling = DateParseHandling.None,
-                    }
-                )
+                var bytes = new byte[(int)length];
+                int count = 0;
+                while (count < bytes.Length)
                 {
-                    JObject value = JObject.Load(reader);
-                    if (reader.Read())
+                    int read = stream.Read(bytes, count, bytes.Length - count);
+                    if (read == 0)
                         throw new ReportFailure("build_report_corrupt");
-                    return value;
+                    count += read;
                 }
+                if (stream.ReadByte() != -1)
+                    throw new ReportFailure("build_report_corrupt");
+                return bytes;
             }
         }
+
+        private static JObject Parse(string text)
+        {
+            using (var reader = new JsonTextReader(new StringReader(text)) { MaxDepth = 16, DateParseHandling = DateParseHandling.None })
+            {
+                JObject value = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+                if (reader.Read())
+                    throw new ReportFailure("build_report_corrupt");
+                return value;
+            }
+        }
+
+        private static JObject Read(string path) => Parse(Utf8.GetString(ReadBytes(path)));
 
         private static bool Expired(JObject record) =>
             DateTime.ParseExact((string)record["expires_at"], "O", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) <= UtcNow();
@@ -397,9 +395,13 @@ namespace MCPForUnity.Editor.Tools.Build
             try
             {
                 var envelope = Read(path);
-                var record = envelope["record"] as JObject;
+                bool indexed = (int?)envelope["storage_version"] == 2;
+                string payload = indexed ? (string)envelope["payload"] : null;
+                var record = indexed ? Parse(payload) : envelope["record"] as JObject;
                 Validate(record);
-                string revision = Hash(record.ToString(Formatting.None));
+                if (indexed != ((int?)record["schema_version"] == 2))
+                    throw new ReportFailure("build_report_corrupt");
+                string revision = Hash(indexed ? payload : record.ToString(Formatting.None));
                 if ((string)record["report_id"] != id || (string)envelope["revision"] != revision)
                     throw new ReportFailure("build_report_corrupt");
                 if (!allowExpired && Expired(record))
@@ -421,7 +423,7 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static void Validate(JObject record)
         {
-            if (record == null || (int?)record["schema_version"] != 1 || !IdPattern.IsMatch((string)record["report_id"] ?? ""))
+            if (record == null || !new int?[] { 1, 2 }.Contains((int?)record["schema_version"]) || !IdPattern.IsMatch((string)record["report_id"] ?? ""))
                 throw new ReportFailure("build_report_corrupt");
             var allowed = new HashSet<string>(
                 new[]
@@ -438,6 +440,7 @@ namespace MCPForUnity.Editor.Tools.Build
                     "packed_assets_complete",
                     "children_complete",
                     "details_note",
+                    "detail_index",
                 },
                 StringComparer.Ordinal
             );
@@ -459,6 +462,7 @@ namespace MCPForUnity.Editor.Tools.Build
             foreach (string flag in new[] { "steps_complete", "packed_assets_complete", "children_complete" })
                 if (record[flag]?.Type != JTokenType.Boolean)
                     throw new ReportFailure("build_report_corrupt");
+            ValidateIndex(record);
             var summaryFields = new HashSet<string>(
                 new[]
                 {
@@ -565,6 +569,9 @@ namespace MCPForUnity.Editor.Tools.Build
                     ["max_reports"] = MaxRecords,
                     ["max_artifact_bytes"] = MaxFileBytes,
                     ["ttl_days"] = 30,
+                    ["max_detail_bytes_per_report"] = MaxDetailBytes,
+                    ["max_shards_per_section"] = MaxDetailShards,
+                    ["rows_per_shard"] = RowsPerShard,
                 };
                 data["limitations"] =
                     "Bounded retained observations, not live native reports. Missing artifacts may have expired or been evicted. Native report/steps/packed arrays are indivisible; captured details can be partial. DetailedBuildReport availability is explicit. Messages/absolute paths are omitted. Local Library cleanup removes artifacts. BuildPlayer remains synchronous on the Editor main thread; no automatic settings changes or resumed builds.";
@@ -627,18 +634,23 @@ namespace MCPForUnity.Editor.Tools.Build
                 ["children"] = record["children"].DeepClone(),
                 ["children_complete"] = record["children_complete"],
             };
+            data["details_integrity"] =
+                record["detail_index"] == null ? "verified_legacy_record"
+                : section == "summary" ? "not_checked"
+                : "requested_page_verified";
             if (record["details_note"] != null)
                 data["details_note"] = record["details_note"];
             if (section != "summary")
             {
-                var rows = (JArray)record[section];
+                int count = record["detail_index"] == null ? ((JArray)record[section]).Count : record["detail_index"][section].Value<int>("row_count");
                 data["section"] = section;
-                data["entries"] = Paged(rows.Cast<JObject>(), size, page);
-                data["total_entries"] = rows.Count;
+                data["entries"] = new JArray(ReadDetailRows(record, section, PaginationBounds.StartIndex(page, size), size));
+                Load((string)record["report_id"], (string)record["report_revision"]);
+                data["total_entries"] = count;
                 data["details_complete"] = record[section + "_complete"];
                 data["page_size"] = size;
                 data["page_number"] = page;
-                data["has_more"] = PaginationBounds.StartIndex(page, size) + size < rows.Count;
+                data["has_more"] = PaginationBounds.StartIndex(page, size) + size < count;
             }
             return data;
         }
@@ -657,6 +669,7 @@ namespace MCPForUnity.Editor.Tools.Build
                     summary["report_revision"] = record["report_revision"];
                     summary["created_at"] = record["created_at"];
                     summary["status"] = Expired(record) ? "expired" : "available";
+                    summary["details_integrity"] = record["detail_index"] == null ? "verified_legacy_record" : "not_checked";
                     reports.Add(summary);
                 }
                 catch (ReportFailure)
@@ -765,6 +778,15 @@ namespace MCPForUnity.Editor.Tools.Build
             data["same_platform"] = JToken.DeepEquals(baseline["summary"]["platform"], candidate["summary"]["platform"]);
             if (section == "summary")
                 return data;
+            int baselineTotal =
+                baseline["detail_index"] == null ? ((JArray)baseline[section]).Count : baseline["detail_index"][section].Value<int>("row_count");
+            int candidateTotal =
+                candidate["detail_index"] == null ? ((JArray)candidate[section]).Count : candidate["detail_index"][section].Value<int>("row_count");
+            PrepareComparison(baseline, section);
+            PrepareComparison(candidate, section);
+            data["baseline_total_entries"] = baselineTotal;
+            data["candidate_total_entries"] = candidateTotal;
+            data["comparison_scope"] = "Existing bounded comparison window; complete retained evidence is available through report pages.";
             var left = Inventory((JArray)baseline[section], section);
             var right = Inventory((JArray)candidate[section], section);
             var changes = new List<JObject>();
@@ -815,6 +837,8 @@ namespace MCPForUnity.Editor.Tools.Build
             if (section == "packed_assets")
                 data["packed_size_delta_bytes"] =
                     right.Values.Sum(row => row.Value<decimal>("packed_size_bytes")) - left.Values.Sum(row => row.Value<decimal>("packed_size_bytes"));
+            Load((string)baseline["report_id"], (string)baseline["report_revision"]);
+            Load((string)candidate["report_id"], (string)candidate["report_revision"]);
             data["entries"] = Paged(changes, size, page);
             data["total_changes"] = changes.Count;
             data["page_size"] = size;

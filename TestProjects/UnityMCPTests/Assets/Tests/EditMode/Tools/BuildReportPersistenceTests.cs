@@ -281,7 +281,7 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
-        public void RetentionAndArtifactByteLimitsKeepSummaryAndExposeTruncatedDetails()
+        public void RetentionAndShardsKeepSummaryAndAllBoundedDetailRows()
         {
             // Given: more completed observations than retention, and a large bounded detail inventory.
             var first = Complete(BuildJobState.Succeeded);
@@ -313,12 +313,155 @@ namespace MCPForUnityTests.EditMode.Tools
             // When: detail bytes exceed the artifact budget even though row counts fit their limits.
             string id = Persist(record);
             var details = Success(Send("report", "report_id", id, "report_section", "packed_assets", "page_number", int.MaxValue));
-            // Then: the terminal summary remains available and truncated detail is explicit, not silently complete.
+            // Then: the terminal summary stays compact while every captured row remains pageable.
             Assert.LessOrEqual(new FileInfo(Path.Combine(ownedRoot, id + ".json")).Length, 512 * 1024);
             Assert.AreEqual("succeeded", (string)details["summary"]["result"]);
-            Assert.IsFalse((bool)details["details_complete"]);
+            Assert.IsTrue((bool)details["details_complete"]);
+            Assert.AreEqual(2048, details.Value<int>("total_entries"));
             Assert.AreEqual(0, details["entries"].Count(), "A far-out page must be empty without integer overflow.");
             Assert.AreEqual("invalid_build_report_request", (string)Send("report", "report_id", id, "page_size", 0)["code"]);
+        }
+
+        private static System.Collections.Generic.IEnumerable<JObject> PackedRows(int count)
+        {
+            for (int i = 0; i < count; i++)
+                yield return new JObject { ["source_asset_path"] = "Assets/Owned/Entry" + i + ".asset", ["packed_size_bytes"] = i + 1 };
+        }
+
+        [Test]
+        public void LargeDetailLatePageReadsOnlyItsShardsAndKeepsCorruptionVisible()
+        {
+            var job = Complete(BuildJobState.Succeeded);
+            var record = Prepared(job);
+            record["packed_assets_complete"] = true;
+            string id = (string)
+                Store
+                    .GetMethod("WriteSnapshot", BindingFlags.NonPublic | BindingFlags.Static)
+                    .Invoke(null, new object[] { record, Enumerable.Empty<JObject>(), PackedRows(100000) });
+            string summaryPath = Path.Combine(ownedRoot, id + ".json");
+            Assert.Less(new FileInfo(summaryPath).Length, 16384);
+            var envelope = JObject.Parse(File.ReadAllText(summaryPath));
+            var indexed = JObject.Parse(envelope.Value<string>("payload"));
+            string generation = indexed["detail_index"].Value<string>("generation");
+            string first = Path.Combine(ownedRoot, id + ".details", generation, "packed_assets-000000.json");
+            Store
+                .GetMethod("Atomic", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { first, System.Text.Encoding.UTF8.GetBytes("corrupt earlier shard") });
+            var later = Success(Send("report", "report_id", id, "report_section", "packed_assets", "page_size", 100, "page_number", 901));
+            Assert.AreEqual(100000, later.Value<int>("total_entries"));
+            Assert.AreEqual(100, later["entries"].Count());
+            Assert.AreEqual("Assets/Owned/Entry90000.asset", later["entries"][0].Value<string>("source_asset_path"));
+            Assert.IsTrue(later.Value<bool>("details_complete"));
+            Assert.AreEqual("requested_page_verified", later.Value<string>("details_integrity"));
+            Assert.AreEqual("build_report_corrupt", Send("report", "report_id", id, "report_section", "packed_assets").Value<string>("code"));
+            var history = Success(Send("report_history"));
+            Assert.AreEqual("not_checked", history["reports"][0].Value<string>("details_integrity"));
+            Assert.IsFalse(Directory.EnumerateFiles(ownedRoot, "write-*.tmp").Any());
+        }
+
+        private double MeasureHistory()
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            Assert.AreEqual(64, Success(Send("report_history", "page_size", 100)).Value<int>("total_reports"));
+            clock.Stop();
+            return clock.Elapsed.TotalMilliseconds;
+        }
+
+        private long MeasureOneLoadAllocations(string id)
+        {
+            using var recorder = Unity.Profiling.ProfilerRecorder.StartNew(
+                Unity.Profiling.ProfilerCategory.Memory,
+                "GC.Alloc",
+                131072,
+                Unity.Profiling.ProfilerRecorderOptions.StartImmediately | Unity.Profiling.ProfilerRecorderOptions.CollectOnlyOnCurrentThread
+            );
+            Assert.IsTrue(recorder.Valid);
+            Store.GetMethod("Load", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { id, null, false });
+            recorder.Stop();
+            Assert.Less(recorder.Count, recorder.Capacity, "Allocation measurement must not silently truncate.");
+            long bytes = 0;
+            for (int i = 0; i < recorder.Count; i++)
+                bytes += recorder.GetSample(i).Value;
+            return bytes;
+        }
+
+        [Test]
+        public void SixtyFourReportHistoryBenchmarkKeepsLegacyCompatibilityAndReducesAllocation()
+        {
+            Directory.CreateDirectory(ownedRoot);
+            var sourceRecords = new List<JObject>();
+            for (int i = 0; i < 64; i++)
+            {
+                var job = new BuildJob("benchmark-" + i, BuildTarget.StandaloneWindows64, "Builds/Owned/Game.exe")
+                {
+                    State = BuildJobState.Succeeded,
+                    CompletedAt = DateTime.UtcNow,
+                };
+                var record = Prepared(job);
+                record["packed_assets"] = new JArray(PackedRows(1024));
+                record["packed_assets_complete"] = true;
+                sourceRecords.Add(record);
+                string text = record.ToString(Newtonsoft.Json.Formatting.None);
+                string revision = (string)Store.GetMethod("Hash", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { text });
+                // Real previous storage format, not a mocked history implementation.
+                var envelope = new JObject { ["revision"] = revision, ["record"] = record };
+                File.WriteAllText(Path.Combine(ownedRoot, record.Value<string>("report_id") + ".json"), envelope.ToString(Newtonsoft.Json.Formatting.None));
+            }
+            var legacyCold = MeasureHistory();
+            var legacyWarm = MeasureHistory();
+            long legacyAllocation = MeasureOneLoadAllocations(sourceRecords[0].Value<string>("report_id"));
+            // Compare equivalent retained inventories; fixture preparation is not a migration benchmark.
+            // Delete only the exact legacy files just authored, then persist the same records.
+            foreach (JObject record in sourceRecords)
+                File.Delete(Path.Combine(ownedRoot, record.Value<string>("report_id") + ".json"));
+            foreach (JObject record in sourceRecords)
+                Persist(record);
+            var indexedCold = MeasureHistory();
+            var indexedWarm = MeasureHistory();
+            long indexedAllocation = MeasureOneLoadAllocations(sourceRecords[0].Value<string>("report_id"));
+            TestContext.WriteLine(
+                $"NEXT13_HISTORY legacy_cold_ms={legacyCold:F3} legacy_warm_ms={legacyWarm:F3} indexed_cold_ms={indexedCold:F3} indexed_warm_ms={indexedWarm:F3} legacy_one_record_alloc_bytes={legacyAllocation} indexed_one_record_alloc_bytes={indexedAllocation}"
+            );
+            Assert.Greater(legacyAllocation, 0);
+            Assert.Less(indexedAllocation, legacyAllocation / 10);
+            Assert.IsTrue(Directory.GetFiles(ownedRoot, "br-*.json").All(path => new FileInfo(path).Length < 16384));
+        }
+
+        [Test]
+        public void ReplacementDoesNotDeleteGenerationWithUnknownFilesOrMismatchedOwner()
+        {
+            var source = Prepared(Complete(BuildJobState.Succeeded));
+            string id = Persist(source);
+            string directory = Directory.GetDirectories(Path.Combine(ownedRoot, id + ".details")).Single();
+            string unknown = Path.Combine(directory, "user-notes.txt");
+            Store
+                .GetMethod("Atomic", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { unknown, System.Text.Encoding.UTF8.GetBytes("preserve") });
+            Persist(source);
+            Assert.IsTrue(File.Exists(unknown));
+            File.Delete(unknown);
+            Store
+                .GetMethod("Atomic", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { Path.Combine(directory, "owner.json"), System.Text.Encoding.UTF8.GetBytes("{}") });
+            Persist(source);
+            Assert.IsTrue(Directory.Exists(directory));
+            Assert.IsTrue(Send("report", "report_id", id).Value<bool>("success"));
+        }
+
+        [Test]
+        public void OptionalStorageFailureCannotChangeSuccessfulBuildOutcome()
+        {
+            File.WriteAllText(ownedRoot, "Owned file deliberately blocks report directory creation");
+            try
+            {
+                var job = Complete(BuildJobState.Succeeded);
+                Assert.AreEqual(BuildJobState.Succeeded, job.State);
+                Assert.AreEqual("build_report_persistence_unavailable", job.ReportPersistenceError);
+            }
+            finally
+            {
+                File.Delete(ownedRoot);
+            }
         }
 
         [Test]

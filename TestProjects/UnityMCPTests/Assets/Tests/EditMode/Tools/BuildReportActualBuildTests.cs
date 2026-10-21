@@ -91,6 +91,24 @@ namespace MCPForUnityTests.EditMode.Tools
                 var material = new Material(shader);
                 AssetDatabase.CreateAsset(material, assetRoot + "/Included.mat");
                 cube.GetComponent<MeshRenderer>().sharedMaterial = material;
+                bool largeInventory = Environment.GetEnvironmentVariable("MCP_BUILD_REPORT_LARGE_FIXTURE") == "1";
+                if (largeInventory)
+                {
+                    // Explicit controller cohort: exercise an inventory beyond the old 2048-row capture cap.
+                    string resources = assetRoot + "/Resources";
+                    Directory.CreateDirectory(resources);
+                    AssetDatabase.StartAssetEditing();
+                    try
+                    {
+                        for (int i = 0; i < 2560; i++)
+                            File.WriteAllText(resources + "/Evidence" + i.ToString("D4") + ".txt", "Owned report evidence " + i);
+                    }
+                    finally
+                    {
+                        AssetDatabase.StopAssetEditing();
+                    }
+                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                }
                 string scenePath = assetRoot + "/" + scene.name + ".unity";
                 Assert.IsTrue(EditorSceneManager.SaveScene(scene, scenePath));
                 var options = BuildRunner.CreateBuildOptions(
@@ -102,10 +120,11 @@ namespace MCPForUnityTests.EditMode.Tools
                 );
                 job = new BuildJob(BuildJobStore.CreateJobId(), options.target, options.locationPathName);
                 BuildJobStore.AddBuildJob(job);
+                BuildReport capturedNative = null;
                 // Existing real runner, with the genuine native BuildReport returned by BuildPlayer.
                 typeof(BuildRunner)
                     .GetMethod("RunBuildCore", BindingFlags.NonPublic | BindingFlags.Static)
-                    .Invoke(null, new object[] { job, new Func<BuildReport>(() => BuildPipeline.BuildPlayer(options)), null });
+                    .Invoke(null, new object[] { job, new Func<BuildReport>(() => capturedNative = BuildPipeline.BuildPlayer(options)), null });
                 Assert.AreEqual(BuildJobState.Succeeded, job.State, job.ErrorMessage);
                 string id = (string)JObject.FromObject(job.ToStatusResponse())["report_id"];
                 Assert.IsNotEmpty(id, JObject.FromObject(job.ToStatusResponse()).ToString());
@@ -114,6 +133,18 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.Greater((ulong)summary["summary"]["total_size_bytes"], 0);
                 Assert.Greater(Read(id, "steps")["entries"].Count(), 0, "The actual native report must provide build steps.");
                 Assert.Greater(Read(id, "packed_assets").Value<int>("total_entries"), 0, "DetailedBuildReport must expose a retained packed-asset inventory.");
+                if (largeInventory)
+                {
+                    var bounded = new JObject();
+                    BuildReportCapture.AddDetails(bounded, capturedNative);
+                    int retained = Read(id, "packed_assets").Value<int>("total_entries");
+                    Assert.AreEqual(BuildReportStore.MaxPackedAssets, ((JArray)bounded["packed_assets"]).Count);
+                    Assert.IsFalse(bounded.Value<bool>("packed_assets_complete"));
+                    Assert.GreaterOrEqual(retained, 2560);
+                    Assert.IsTrue(Read(id, "packed_assets").Value<bool>("details_complete"));
+                    TestContext.WriteLine($"NEXT13_NATIVE_LARGE old_bounded_rows={((JArray)bounded["packed_assets"]).Count} indexed_rows={retained}");
+                }
+                capturedNative = null;
                 var state = new JObject
                 {
                     ["report_id"] = id,

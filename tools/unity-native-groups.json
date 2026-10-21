@@ -118,6 +118,42 @@
       ],
       "disruptive": false,
       "platform_exclusions": {}
+    },
+    "build-report-pages": {
+      "methods": [
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.CompletedSuccessAndFailureRemainRetrievableAfterStaticJobLossWithoutAbsolutePaths",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.ReloadedActiveJobsAreInterruptedObservationsNotCompletedReports",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.BatchTerminalSummaryAndChildrenSurviveStaticJobLoss",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.DetailsPageAndComparisonReportAddedRemovedAndSizeChangesRatherThanFileLength",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.RetentionAndShardsKeepSummaryAndAllBoundedDetailRows",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.LargeDetailLatePageReadsOnlyItsShardsAndKeepsCorruptionVisible",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.SixtyFourReportHistoryBenchmarkKeepsLegacyCompatibilityAndReducesAllocation",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.ReplacementDoesNotDeleteGenerationWithUnknownFilesOrMismatchedOwner",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.OptionalStorageFailureCannotChangeSuccessfulBuildOutcome",
+        "MCPForUnityTests.EditMode.Tools.BuildReportPersistenceTests.CorruptionExpiryAndUnsafeIdsAreExplicitWithoutLeakingFilesystemPaths"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
+    "build-report-capture": {
+      "methods": [
+        "MCPForUnityTests.EditMode.Tools.BuildReportActualBuildTests.Phase1BuildOneOwnedSceneAndPersistNativeReport"
+      ],
+      "disruptive": true,
+      "platform_exclusions": {
+        "linux": "Actual build evidence is Windows only.",
+        "darwin": "Actual build evidence is Windows only."
+      }
+    },
+    "build-report-reload": {
+      "methods": [
+        "MCPForUnityTests.EditMode.Tools.BuildReportActualBuildTests.Phase2ReadReportAfterActualDomainReload"
+      ],
+      "disruptive": true,
+      "platform_exclusions": {
+        "linux": "Actual build evidence is Windows only.",
+        "darwin": "Actual build evidence is Windows only."
+      }
     }
   }
 }
