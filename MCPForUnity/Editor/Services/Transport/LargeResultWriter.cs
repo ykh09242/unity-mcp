@@ -17,7 +17,7 @@ namespace MCPForUnity.Editor.Services.Transport
         public const string CompressionCapability = "large_result_gzip_v1";
         public const int CompressionThresholdBytes = 1024 * 1024;
         public const int ThresholdBytes = 256 * 1024;
-        public const int MaxResultBytes = 32 * 1024 * 1024;
+        public const int MaxResultBytes = 64 * 1024 * 1024;
         public const int MaxFrameBytes = 64 * 1024;
         public const int HeaderBytes = 44;
         public const int ChunkPayloadBytes = MaxFrameBytes - HeaderBytes;

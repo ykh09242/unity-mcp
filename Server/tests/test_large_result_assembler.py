@@ -351,7 +351,7 @@ def test_malformed_frame_is_rejected(mutation):
 def test_partial_transfer_timeout_releases_reserved_bytes():
     budget, assembler = started()
     assembler.feed(OWNER, frames(b"x" * THRESHOLD_BYTES)[0])
-    budget.now += 30
+    budget.now += 300
     assert assembler.expire() == ((OWNER, COMMAND_ID),)
     assert budget.reservations == {}
     assert assembler.retained_bytes == 0

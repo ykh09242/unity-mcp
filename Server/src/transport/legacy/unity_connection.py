@@ -57,8 +57,8 @@ logger = logging.getLogger("mcp-for-unity-server")
 # Module-level lock to guard global connection initialization
 _connection_lock = threading.Lock()
 
-# Maximum allowed framed payload size (64 MiB)
-FRAMED_MAX = 64 * 1024 * 1024
+# Maximum allowed framed payload size (128 MiB, including envelope overhead)
+FRAMED_MAX = 128 * 1024 * 1024
 
 
 class _UnityProtocolError(ValueError):

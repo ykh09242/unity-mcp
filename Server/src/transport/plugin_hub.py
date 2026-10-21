@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import os
-import sys
 import time
 import uuid
 import weakref
@@ -397,20 +396,21 @@ class PluginHub(WebSocketEndpoint):
     MAX_PENDING_COMMANDS = 256
     MAX_PENDING_PER_USER = 32
     MAX_PENDING_PER_SESSION = 16
-    MAX_PENDING_PAYLOAD_BYTES = 32 * 1024 * 1024
-    MAX_PENDING_PAYLOAD_BYTES_PER_USER = 8 * 1024 * 1024
-    MAX_PENDING_PAYLOAD_BYTES_PER_SESSION = 4 * 1024 * 1024
-    MAX_COMMAND_PAYLOAD_BYTES = 4 * 1024 * 1024
-    MAX_COMMAND_PAYLOAD_NODES = 65_536
+    MAX_PENDING_PAYLOAD_BYTES = 1024 * 1024 * 1024
+    MAX_PENDING_PAYLOAD_BYTES_PER_USER = 512 * 1024 * 1024
+    MAX_PENDING_PAYLOAD_BYTES_PER_SESSION = 256 * 1024 * 1024
+    MAX_COMMAND_PAYLOAD_BYTES = 32 * 1024 * 1024
+    MAX_COMMAND_PAYLOAD_NODES = 1_000_000
+    MAX_COMMAND_RETAINED_BYTES = 256 * 1024 * 1024
     MAX_COMMAND_PAYLOAD_DEPTH = 64
     MAX_RAW_MESSAGE_BYTES = MAX_RESPONSE_BYTES
     MAX_RESULT_BYTES = MAX_RESPONSE_BYTES
     MAX_RESULT_DEPTH = MAX_RESPONSE_DEPTH
     MAX_RESULT_NODES = MAX_RESPONSE_NODES
     MAX_RESULT_RETAINED_BYTES = MAX_RESPONSE_RETAINED_BYTES
-    MAX_RETAINED_RESULT_BYTES_PER_SESSION = 256 * 1024 * 1024
-    MAX_RETAINED_RESULT_BYTES_PER_USER = 512 * 1024 * 1024
-    MAX_RETAINED_RESULT_BYTES = 1024 * 1024 * 1024
+    MAX_RETAINED_RESULT_BYTES_PER_SESSION = 1024 * 1024 * 1024
+    MAX_RETAINED_RESULT_BYTES_PER_USER = 1536 * 1024 * 1024
+    MAX_RETAINED_RESULT_BYTES = 2048 * 1024 * 1024
     REGISTRATION_TIMEOUT = 10.0
     _admitted: ClassVar[dict[int, tuple[WebSocket, str | None]]] = {}
     _shutdown_requested: ClassVar[bool] = False
@@ -712,35 +712,14 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     def _command_payload_size(cls, command_type: str, params: dict[str, Any]) -> int | None:
-        """Conservatively charge JSON inputs without allocating a serialized copy.
-
-        Count retained Python objects, model/dump copies and worst-case JSON
-        string escapes. Stop traversing at the budget, node or depth ceiling;
-        even a cyclic or very wide input cannot cause unbounded work here.
-        """
-        size = 1024  # Per-command future/task/message overhead.
-        nodes = 0
-
-        def visit(value: Any, depth: int) -> bool:
-            nonlocal size, nodes
-            nodes += 1
-            if depth > cls.MAX_COMMAND_PAYLOAD_DEPTH or nodes > cls.MAX_COMMAND_PAYLOAD_NODES:
-                return False
-            size += 128 + 2 * sys.getsizeof(value)
-            if isinstance(value, str):
-                # Supplementary code points can escape as two six-byte surrogates.
-                size += 12 * len(value)
-            if size > cls.MAX_COMMAND_PAYLOAD_BYTES:
-                return False
-            if isinstance(value, dict):
-                return all(
-                    visit(key, depth + 1) and visit(item, depth + 1) for key, item in value.items()
-                )
-            if isinstance(value, (list, tuple)):
-                return all(visit(item, depth + 1) for item in value)
-            return value is None or isinstance(value, (str, bool, int, float))
-
-        return size if visit(command_type, 0) and visit(params, 0) else None
+        """Bound wire bytes separately from the copies retained by an admitted command."""
+        return response_size(
+            {"type": command_type, "params": params},
+            max_bytes=cls.MAX_COMMAND_PAYLOAD_BYTES,
+            max_nodes=cls.MAX_COMMAND_PAYLOAD_NODES,
+            max_depth=cls.MAX_COMMAND_PAYLOAD_DEPTH,
+            max_retained=cls.MAX_COMMAND_RETAINED_BYTES,
+        )
 
     @staticmethod
     def _command_capacity_response() -> dict[str, Any]:

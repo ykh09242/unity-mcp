@@ -11,8 +11,8 @@ namespace MCPForUnity.Editor.Services.Transport
     /// <summary>One receive loop owns the reusable buffers until that connection settles.</summary>
     internal sealed class WebSocketMessageReader : IDisposable
     {
-        // The server admits at most 4 MiB of command parameters. Leave envelope headroom.
-        internal const int MaxMessageBytes = 8 * 1024 * 1024;
+        // The server admits at most 32 MiB of command parameters. Leave envelope headroom.
+        internal const int MaxMessageBytes = 64 * 1024 * 1024;
         private const int RetainedCapacity = 64 * 1024;
         private byte[] buffer = ArrayPool<byte>.Shared.Rent(8192);
         private MemoryStream stream = new(8192);

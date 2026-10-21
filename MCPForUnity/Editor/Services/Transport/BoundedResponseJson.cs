@@ -18,7 +18,7 @@ namespace MCPForUnity.Editor.Services.Transport
     internal static class BoundedResponseJson
     {
         internal const int MaxDepth = 64;
-        internal const int MaxNodes = 100000;
+        internal const int MaxNodes = 1000000;
 
         internal static JToken Freeze(object payload, JsonSerializer serializer = null, Budget budget = null)
         {

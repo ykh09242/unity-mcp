@@ -14,11 +14,33 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class ComponentSerializationBudgetTests
     {
+        [Test]
+        public void SubstantialComponentArrayPreservesEveryValue()
+        {
+            var go = new GameObject("LargeComponentBudget");
+            try
+            {
+                var component = go.AddComponent<SerializationBudgetComponent>();
+                var sequence = new BudgetSequence(120000);
+                component.values = sequence;
+                var result = (Dictionary<string, object>)GameObjectSerializer.GetComponentData(component);
+                Assert.IsFalse(result.ContainsKey("serializationError"));
+                var values = (List<object>)((Dictionary<string, object>)result["properties"])["values"];
+                Assert.AreEqual(120000, values.Count);
+                Assert.AreEqual(119999, Convert.ToInt32(values[119999]));
+                Assert.IsTrue(sequence.Disposed);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void HandledSerializerErrorsCannotTurnAnExceededBudgetIntoSuccess(bool plain)
         {
-            var sequence = new BudgetSequence(100005);
+            var sequence = new BudgetSequence(BoundedResponseJson.MaxNodes + 5);
             var payload = new HandledOverflowValue { Values = sequence };
             var budget = new BoundedResponseJson.Budget();
             Assert.Throws<ResponseLimitException>(() =>
@@ -39,7 +61,7 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 var component = go.AddComponent<HandledOverflowComponent>();
-                component.last = new HandledOverflowValue { Values = new BudgetSequence(100005) };
+                component.last = new HandledOverflowValue { Values = new BudgetSequence(BoundedResponseJson.MaxNodes + 5) };
                 var data = JObject.FromObject(GameObjectSerializer.GetComponentData(component));
                 Assert.AreEqual("component_serialization_limit", (string)data["serializationError"]);
                 Assert.IsNull(data["properties"], "An oversized value must never expose a partial-success payload.");
@@ -57,11 +79,11 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 var component = go.AddComponent<SerializationBudgetComponent>();
-                var sequence = new BudgetSequence(200000);
+                var sequence = new BudgetSequence(BoundedResponseJson.MaxNodes * 2);
                 component.values = sequence;
                 var data = JObject.FromObject(GameObjectSerializer.GetComponentData(component));
                 Assert.AreEqual("component_serialization_limit", (string)data["serializationError"]);
-                Assert.LessOrEqual(sequence.Reads, 100001);
+                Assert.LessOrEqual(sequence.Reads, BoundedResponseJson.MaxNodes + 1);
                 Assert.IsTrue(sequence.Disposed);
                 component.values = new[] { 1, 2, 3 };
                 var small = (Dictionary<string, object>)GameObjectSerializer.GetComponentData(component);
@@ -81,13 +103,13 @@ namespace MCPForUnityTests.Editor.Tools
             var go = new GameObject("ComponentPageBudget");
             try
             {
-                var first = new BudgetSequence(60000);
-                var second = new BudgetSequence(60000);
+                var first = new BudgetSequence(BoundedResponseJson.MaxNodes * 3 / 5);
+                var second = new BudgetSequence(BoundedResponseJson.MaxNodes * 3 / 5);
                 go.AddComponent<SerializationBudgetComponent>().values = first;
                 go.AddComponent<SerializationBudgetComponent>().values = second;
                 var result = JObject.FromObject(GameObjectComponentsResource.HandleCommand(new JObject { ["instanceID"] = go.GetInstanceIDCompat() }));
                 Assert.IsTrue((bool)result["success"]);
-                Assert.LessOrEqual(first.Reads + second.Reads, 100001);
+                Assert.LessOrEqual(first.Reads + second.Reads, BoundedResponseJson.MaxNodes + 1);
                 Assert.IsTrue(first.Disposed && second.Disposed);
                 var components = (JArray)result["data"]["components"];
                 Assert.AreEqual("component_serialization_limit", (string)components[2]["serializationError"]);

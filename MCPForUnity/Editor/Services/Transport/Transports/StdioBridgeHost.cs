@@ -77,7 +77,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static int mainThreadId;
         private static int currentUnityPort = 6400;
         private static bool isAutoConnectMode = false;
-        private const ulong MaxFrameBytes = 64UL * 1024 * 1024;
+        private const ulong MaxFrameBytes = 128UL * 1024 * 1024;
 
         // Command/frame I/O timeout for the stdio bridge TCP hop. Previously a
         // hardcoded 30s const, which cut off long-running tool calls mid-execution

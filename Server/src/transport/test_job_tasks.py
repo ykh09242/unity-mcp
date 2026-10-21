@@ -60,7 +60,7 @@ _DELIVERY_OWNER = "unity_mcp_wait_task_delivery"
 class WaitDeliveryAdmission:
     """One bounded journal decode/SDK serialization/delivery at a time.
 
-    Reads may contain a full ordinary 32 MiB result. Reserving the whole existing
+    Reads may contain a full ordinary 64 MiB result. Reserving the whole existing
     response graph budget for each reader avoids many small probes amplifying it.
     The slot belongs to actual ASGI exit, including slow send and teardown.
     """
