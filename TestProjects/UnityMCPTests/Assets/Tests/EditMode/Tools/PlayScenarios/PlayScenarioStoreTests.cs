@@ -67,11 +67,13 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
         [Test]
         public void DefinitionCountAndByteLimitsPreserveExistingFiles()
         {
-            for (int i = 0; i < 100; i++)
-                store.Save(Definition("scenario-" + i));
+            store.Save(Definition("scenario-0"));
+            for (int i = 1; i < 1000; i++)
+                File.WriteAllText(Path.Combine(Definitions, "scenario-" + i + ".json"), JsonConvert.SerializeObject(Definition("scenario-" + i)));
             Assert.Throws<InvalidOperationException>(() => store.Save(Definition("overflow")));
             store.Save(Definition("scenario-0"));
-            Assert.AreEqual(100, store.List().Count);
+            Assert.AreEqual(1000, store.List().Count);
+            Assert.That(store.Get("scenario-999").Name, Is.EqualTo("scenario-999"));
             File.WriteAllText(Path.Combine(Definitions, "scenario-0.json"), new string(' ', PlayScenarioDefinition.MaximumDefinitionBytes + 1));
             Assert.Throws<InvalidDataException>(() => store.Get("scenario-0"));
             var huge = Definition("scenario-1");

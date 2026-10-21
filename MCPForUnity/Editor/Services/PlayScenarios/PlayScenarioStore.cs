@@ -14,6 +14,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     /// <summary>Bounded project-local JSON storage. Never reads or retains Unity objects.</summary>
     public sealed class PlayScenarioStore
     {
+        private const int MaximumDefinitions = 1000;
         private const string Definitions = "ProjectSettings/MCPForUnity/PlayScenarios";
         private const string Reports = "Library/MCPForUnity/PlayScenarioRuns";
         private const int DefinitionLimit = PlayScenarioDefinition.MaximumDefinitionBytes;
@@ -57,9 +58,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             lock (gate)
             {
                 string path = DefinitionPath(validated.Name);
-                string[] files = Files(Definitions, 100);
-                if (!File.Exists(path) && files.Length >= 100)
-                    throw new InvalidOperationException("At most 100 scenarios may be saved.");
+                string[] files = Files(Definitions, MaximumDefinitions);
+                if (!File.Exists(path) && files.Length >= MaximumDefinitions)
+                    throw new InvalidOperationException("At most 1000 scenarios may be saved.");
                 AtomicWrite(path, bytes);
             }
         }
@@ -80,7 +81,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             lock (gate)
             {
                 var names = new List<string>();
-                foreach (string file in Files(Definitions, 100))
+                foreach (string file in Files(Definitions, MaximumDefinitions))
                 {
                     string name = Path.GetFileNameWithoutExtension(file);
                     PlayScenarioDefinition.ValidateName(name);

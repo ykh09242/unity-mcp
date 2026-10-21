@@ -28,6 +28,41 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }"
             );
 
+        [Test]
+        public void LargeParameterMatrixMaterializesItsLastCaseAndBinding()
+        {
+            JObject value = Template();
+            var steps = new JArray(value["steps"][0].DeepClone());
+            var parameters = new JObject();
+            var bindings = new JArray();
+            var datasets = new JArray();
+            for (int index = 0; index < 64; index++)
+            {
+                string key = "p" + index;
+                parameters[key] = new JObject { ["type"] = "integer", ["default"] = 0 };
+                steps.Add(
+                    new JObject
+                    {
+                        ["name"] = key,
+                        ["action"] = "wait_state",
+                        ["state_id"] = key,
+                        ["state_equals"] = 0,
+                    }
+                );
+                bindings.Add(new JObject { ["path"] = "/steps/" + (index + 1) + "/state_equals", ["parameter"] = key });
+                var values = new JObject();
+                for (int parameter = 0; parameter < 64; parameter++)
+                    values["p" + parameter] = index + parameter;
+                datasets.Add(new JObject { ["name"] = "case-" + index, ["values"] = values });
+            }
+            value["steps"] = steps;
+            value["parameters"] = parameters;
+            value["parameter_bindings"] = bindings;
+            value["datasets"] = datasets;
+            var result = Materialize(PlayScenarioDefinition.Parse(value), "case-63");
+            Assert.That((int)result.Steps[64].StateEquals, Is.EqualTo(126));
+        }
+
         private static PlayScenarioDefinition Materialize(PlayScenarioDefinition definition, string dataset)
         {
             Type helper = typeof(PlayScenarioDefinition).Assembly.GetType("MCPForUnity.Editor.Services.PlayScenarios.PlayScenarioParameters");

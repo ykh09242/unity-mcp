@@ -314,7 +314,7 @@ class PlayScenarioPerformanceOptions(BaseModel):
     """Opt into duration and selected real-frame budgets; unsupported counters fail explicitly."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-    max_duration_ms: Annotated[int, Field(strict=True, ge=0, le=120000)] | None = None
+    max_duration_ms: Annotated[int, Field(strict=True, ge=0, le=3600000)] | None = None
     max_frame_time_p95_ms: (
         Annotated[float, Field(strict=True, ge=0, le=120000, allow_inf_nan=False)] | None
     ) = None
@@ -853,16 +853,16 @@ class PlayScenario(BaseModel):
 
     parameters: (
         Annotated[
-            dict[ScenarioName, ScenarioParameter], Field(strict=True, min_length=1, max_length=16)
+            dict[ScenarioName, ScenarioParameter], Field(strict=True, min_length=1, max_length=64)
         ]
         | None
     ) = Field(default=None, exclude_if=lambda value: value is None)
     parameter_bindings: (
-        Annotated[list[ScenarioParameterBinding], Field(strict=True, min_length=1, max_length=32)]
+        Annotated[list[ScenarioParameterBinding], Field(strict=True, min_length=1, max_length=256)]
         | None
     ) = Field(default=None, exclude_if=lambda value: value is None)
     datasets: (
-        Annotated[list[ScenarioDataset], Field(strict=True, min_length=1, max_length=16)] | None
+        Annotated[list[ScenarioDataset], Field(strict=True, min_length=1, max_length=64)] | None
     ) = Field(default=None, exclude_if=lambda value: value is None)
 
     def materialize(self, dataset: str | None = None) -> "PlayScenario":

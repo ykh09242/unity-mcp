@@ -13,6 +13,26 @@ namespace MCPForUnityTests
 {
     public sealed class PlayScenarioPlayerTests
     {
+        [Test]
+        public void LargePlayerSceneInventoryKeepsEveryRequiredScene()
+        {
+            var steps = new JArray();
+            for (int index = 0; index < 128; index++)
+                steps.Add(
+                    new JObject
+                    {
+                        ["name"] = "scene-" + index,
+                        ["action"] = "load_scene",
+                        ["scene"] = "Assets/scene-" + index + ".unity",
+                    }
+                );
+            var definition = PlayScenarioDefinition.Parse(new JObject { ["name"] = "large-player", ["steps"] = steps });
+            var manifest = PlayScenarioPlayerBundle.Create(definition, "fixture", "fixture");
+            var parsed = PlayScenarioPlayerBundle.Parse(manifest.ToString());
+            Assert.That(parsed.ScenePaths.Length, Is.EqualTo(128));
+            Assert.That(parsed.ScenePaths, Does.Contain("Assets/scene-127.unity"));
+        }
+
         private static PlayScenarioDefinition Definition() =>
             PlayScenarioDefinition.Parse(
                 new JObject

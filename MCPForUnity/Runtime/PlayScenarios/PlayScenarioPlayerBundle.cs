@@ -132,7 +132,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             string[] scenes = Scenes(definition);
             if (
                 !(value["scene_paths"] is JArray paths)
-                || paths.Count > 64
+                || paths.Count > 256
                 || !paths.SequenceEqual(scenes.Select(path => (JToken)new JValue(path)), JToken.EqualityComparer)
             )
                 throw new ArgumentException("Player bundle scene inventory does not match its definition.");

@@ -25,7 +25,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             var result = new PlayScenarioPerformanceOptions
             {
                 SampleLimit = PlayScenarioDefinition.Integer(value, "sample_limit", 1, 4096, 4096),
-                MaxDurationMs = value.Property("max_duration_ms") == null ? (int?)null : PlayScenarioDefinition.Integer(value, "max_duration_ms", 0, 120000, 0),
+                MaxDurationMs =
+                    value.Property("max_duration_ms") == null ? (int?)null : PlayScenarioDefinition.Integer(value, "max_duration_ms", 0, 3600000, 0),
                 MaxGcAllocatedBytesPerFrame =
                     value.Property("max_gc_allocated_bytes_per_frame") == null
                         ? (int?)null

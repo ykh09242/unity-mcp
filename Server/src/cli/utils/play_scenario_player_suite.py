@@ -61,7 +61,7 @@ class PlayerSuiteBundle(PlayerPayload):
     children: Annotated[list[FrozenChild], Field(min_length=1, max_length=MAX_SUITE_SCENARIOS)]
     scene_paths: Annotated[
         list[Annotated[str, Field(strict=True, max_length=4096)]],
-        Field(min_length=1, max_length=64),
+        Field(min_length=1, max_length=256),
     ]
     executable: Annotated[str, Field(strict=True, max_length=128)]
     build_target: BuildTarget = "windows64"

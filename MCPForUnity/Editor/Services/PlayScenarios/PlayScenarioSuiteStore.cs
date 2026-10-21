@@ -13,6 +13,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     /// <summary>Bounded saved suite definitions and reports in checked project-local paths.</summary>
     public sealed class PlayScenarioSuiteStore
     {
+        private const int MaximumDefinitions = 256;
         private const string Definitions = "ProjectSettings/MCPForUnity/PlayScenarioSuites";
         internal const string Reports = "Library/MCPForUnity/PlayScenarioSuiteRuns";
         internal const int ReportLimit = PlayScenarioDefinition.MaximumReportBytes;
@@ -38,9 +39,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             lock (Gate)
             {
                 string path = DefinitionPath(validated.Name);
-                string[] saved = Files(Definitions, 100);
-                if (!File.Exists(path) && saved.Length >= 100)
-                    throw new InvalidOperationException("At most 100 suites may be saved.");
+                string[] saved = Files(Definitions, MaximumDefinitions);
+                if (!File.Exists(path) && saved.Length >= MaximumDefinitions)
+                    throw new InvalidOperationException("At most 256 suites may be saved.");
                 Write(path, bytes);
             }
         }
@@ -60,7 +61,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             lock (Gate)
             {
-                var names = Files(Definitions, 100).Select(Path.GetFileNameWithoutExtension).ToList();
+                var names = Files(Definitions, MaximumDefinitions).Select(Path.GetFileNameWithoutExtension).ToList();
                 foreach (string name in names)
                     PlayScenarioDefinition.ValidateName(name);
                 names.Sort(StringComparer.Ordinal);

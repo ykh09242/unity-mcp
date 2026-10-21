@@ -85,7 +85,7 @@ class PlayerBundle(BaseModel):
     scripting_backend: Backend = "mono"
     scene_paths: Annotated[
         list[Annotated[str, Field(strict=True, max_length=4096)]],
-        Field(min_length=1, max_length=64),
+        Field(min_length=1, max_length=256),
     ]
     definition: PlayScenario
     definition_json: Annotated[str, Field(strict=True, max_length=DEFINITION_BYTES)]

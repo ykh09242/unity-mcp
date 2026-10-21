@@ -69,8 +69,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 );
                 scenes.UnionWith(PlayScenarioPlayerBundle.Scenes(definition));
             }
-            if (scenes.Count > 64)
-                throw new ArgumentException("Player suite scene union exceeds 64 scenes.");
+            if (scenes.Count > 256)
+                throw new ArgumentException("Player suite scene union exceeds 256 scenes.");
             var manifest = new JObject
             {
                 ["schema_version"] = 3,
@@ -154,7 +154,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             }
             if (
                 !(value["scene_paths"] is JArray paths)
-                || scenes.Count > 64
+                || scenes.Count > 256
                 || !paths.SequenceEqual(scenes.Select(scene => (JToken)new JValue(scene)), JToken.EqualityComparer)
             )
                 throw new ArgumentException("Player suite scene inventory does not match the exact frozen union.");

@@ -73,7 +73,7 @@ class ScenarioDataset(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: Name
-    values: Annotated[dict[Name, Scalar], Field(strict=True, max_length=16)]
+    values: Annotated[dict[Name, Scalar], Field(strict=True, max_length=64)]
 
 
 def _destination(source: dict[str, JsonValue], path: str) -> tuple[dict[str, JsonValue], str]:
