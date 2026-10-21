@@ -125,6 +125,93 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual("owned-error", restored.Error);
         }
 
+        [TestCase("add")]
+        [TestCase("embed")]
+        [TestCase("remove")]
+        public void LostRequestRemainsUnknownBeyondFormerTimeoutAndCanReconcile(string operation)
+        {
+            const long now = 10_000_000;
+            var job = new PackageJob
+            {
+                JobId = "recovery-fixture",
+                Status = PackageJobStatus.Running,
+                Operation = operation,
+                Package = "com.fixture.tool@1.0.0",
+                StartedUnixMs = now - 7_200_000,
+            };
+            var info = PackageInfoFixture();
+            var observed = operation == "remove" ? new[] { info } : System.Array.Empty<UnityEditor.PackageManager.PackageInfo>();
+            RecoverWithSnapshot(job, now, observed);
+            Assert.AreEqual(PackageJobStatus.Unknown, job.Status);
+            Assert.IsNull(job.FinishedUnixMs, "Losing observation is not native completion.");
+            Assert.IsNull(job.Error, "An observer cannot invent a native error.");
+            var unknown = JObject.FromObject(PackageJobManager.ToSerializable(job));
+            Assert.AreEqual("request_lost_after_reload", (string)unknown["recovery"]?["reason"]);
+            Assert.AreEqual(false, (bool?)unknown["recovery"]?["retry_safe"]);
+            RecoverWithSnapshot(job, now + 1, operation == "remove" ? System.Array.Empty<UnityEditor.PackageManager.PackageInfo>() : new[] { info });
+            Assert.AreEqual(PackageJobStatus.Succeeded, job.Status);
+            Assert.AreEqual("desired_state_observed", (string)JObject.FromObject(PackageJobManager.ToSerializable(job))["recovery"]?["reason"]);
+        }
+
+        [Test]
+        public void GenuineNativeFailureCannotBeReconciledIntoSuccess()
+        {
+            var job = new PackageJob
+            {
+                JobId = "native-failure",
+                Status = PackageJobStatus.Failed,
+                Operation = "add",
+                Package = "com.fixture.tool@1.0.0",
+                Error = "owned-error",
+            };
+            RecoverWithSnapshot(job, 10_000_000, new[] { PackageInfoFixture() });
+            Assert.AreEqual(PackageJobStatus.Failed, job.Status);
+            Assert.AreEqual("owned-error", job.Error);
+        }
+
+        [Test]
+        public void UnknownMutationStatusReconcilesThroughPublicStatusAndSessionRestore()
+        {
+            // Observe the already-installed package; never invoke a package operation.
+            var info = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PackageJobManager).Assembly);
+            Assert.NotNull(info);
+            string id = PackageJobManager.StartJob("add", info.name + "@" + info.version);
+            var job = PackageJobManager.GetJob(id);
+            job.Status = PackageJobStatus.Unknown;
+            var status = JObject.FromObject(MCPForUnity.Editor.Tools.ManagePackages.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = id }));
+            Assert.AreEqual("succeeded", (string)status["data"]?["status"]);
+            job.Status = PackageJobStatus.Unknown;
+            PackageJobManager.PersistToSessionState();
+            Jobs.Clear();
+            typeof(PackageJobManager).GetMethod("TryRestoreFromSessionState", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+            Assert.AreEqual(PackageJobStatus.Succeeded, PackageJobManager.GetJob(id).Status);
+        }
+
+        private static UnityEditor.PackageManager.PackageInfo PackageInfoFixture()
+        {
+            var type = typeof(UnityEditor.PackageManager.PackageInfo);
+            var value = (UnityEditor.PackageManager.PackageInfo)
+                type.GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, null, System.Type.EmptyTypes, null).Invoke(null);
+            foreach (
+                var pair in new Dictionary<string, object>
+                {
+                    ["m_Name"] = "com.fixture.tool",
+                    ["m_Version"] = "1.0.0",
+                    ["m_Source"] = UnityEditor.PackageManager.PackageSource.Embedded,
+                    ["m_PackageId"] = "com.fixture.tool@1.0.0",
+                }
+            )
+                type.GetField(pair.Key, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(value, pair.Value);
+            return value;
+        }
+
+        private static void RecoverWithSnapshot(PackageJob job, long now, UnityEditor.PackageManager.PackageInfo[] snapshot)
+        {
+            typeof(PackageJobManager)
+                .GetMethod("TryRecoverJobWithSnapshot", BindingFlags.Static | BindingFlags.NonPublic)
+                .Invoke(null, new object[] { job, now, snapshot });
+        }
+
         [Test]
         public void UnknownTerminalStatusIsExplicitAndNotReinterpretedAsRunning()
         {
