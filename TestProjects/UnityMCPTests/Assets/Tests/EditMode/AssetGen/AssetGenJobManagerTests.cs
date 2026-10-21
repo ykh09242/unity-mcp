@@ -141,6 +141,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     ["requested_path"] = "main/model.obj",
                     ["selected_path"] = "main/model.obj",
                     ["candidates"] = new JArray("main/model.obj", "preview.obj"),
+                    ["candidate_count"] = 2,
                     ["candidates_complete"] = true,
                     ["extraction"] = "complete",
                 };
@@ -182,7 +183,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 Assert.IsTrue(JToken.DeepEquals(evidence, saved["ArchiveSelection"]));
                 var request = new JObject { ["action"] = "status", ["job_id"] = result.JobId };
                 JObject marketplace = JObject.FromObject(ImportModel.HandleCommand(request).GetAwaiter().GetResult());
-                Assert.IsTrue(JToken.DeepEquals(evidence, marketplace["data"]["archive_selection"]));
+                Assert.IsTrue(JToken.DeepEquals(evidence, marketplace["data"]["archive_selection"]), marketplace.ToString());
                 JObject generation = JObject.FromObject(GenerateModel.HandleCommand(request));
                 Assert.IsTrue(JToken.DeepEquals(evidence, generation["data"]["archive_selection"]));
                 Assert.AreEqual(2, _fake.RecordedRequests.Count);
@@ -342,9 +343,9 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             _fake.Handler = spec =>
             {
-                if (spec.Method == "POST" && spec.Url.EndsWith("/openapi/task"))
+                if (spec.Method == "POST" && spec.Url.EndsWith("/v3/generation/text-to-model"))
                     return Json("{\"code\":0,\"data\":{\"task_id\":\"task_abc\"}}");
-                if (spec.Url.Contains("/openapi/task/"))
+                if (spec.Url.Contains("/v3/tasks/"))
                     return Json(
                         "{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100,\"output\":{\"pbr_model\":\"https://tripo-data.rg1.data.tripo3d.com/model.glb\"}}}"
                     );
@@ -352,7 +353,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 {
                     Status = 200,
                     IsSuccess = true,
-                    Body = new byte[] { 1, 2, 3, 4 },
+                    Body = ModelImportPipelineTests.ContainerOnlyGlb(),
                 }; // download
             };
 
@@ -523,7 +524,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             _fake.Handler = spec =>
             {
-                if (spec.Method == "POST" && spec.Url.EndsWith("/openapi/task"))
+                if (spec.Method == "POST" && spec.Url.EndsWith("/v3/generation/text-to-model"))
                     return Json("{\"code\":0,\"data\":{\"task_id\":\"task_abc\"}}");
                 return Json("{\"code\":0,\"data\":{\"status\":\"failed\",\"error\":\"out of credits\"}}");
             };
@@ -611,7 +612,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         {
             _fake.Handler = spec =>
             {
-                if (spec.Method == "POST" && spec.Url.EndsWith("/openapi/task"))
+                if (spec.Method == "POST" && spec.Url.EndsWith("/v3/generation/text-to-model"))
                     return Json("{\"code\":0,\"data\":{\"task_id\":\"task_abc\"}}");
                 // Poll succeeds but hands back an unsafe URL as the model.
                 return Json("{\"code\":0,\"data\":{\"status\":\"success\",\"progress\":100,\"output\":{\"pbr_model\":\"" + url + "\"}}}");
@@ -701,6 +702,20 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsFalse(transport.Pending.Task.IsCompleted);
         }
 
+        [Test]
+        public void SubstantialGenerationRemainsActiveBeyondTenMinutes()
+        {
+            var transport = new PendingTransport { PendingAt = 3 };
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            PumpUntilPending(job, transport);
+            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + 601;
+            Assert.IsFalse(AssetGenJobManager.TryAdvanceForTests(job.JobId));
+            Assert.AreEqual(AssetGenJobState.Running, job.State);
+            Assert.IsFalse(transport.PendingToken.IsCancellationRequested);
+            Assert.IsNull(job.Error);
+        }
+
         [TestCase(1)]
         [TestCase(2)]
         [TestCase(3)]
@@ -710,7 +725,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             AssetGenJobManager.TransportOverrideForTests = transport;
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
             PumpUntilPending(job, transport);
-            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + 601; // Expire the original recorded deadline.
+            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + AssetGenJobManager.TimeoutSeconds + 1; // Expire the original recorded deadline.
             Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(job.JobId));
             Assert.AreEqual(AssetGenJobState.Failed, job.State);
             StringAssert.Contains("Timed out", job.Error);
@@ -726,7 +741,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             AssetGenJobManager.TransportOverrideForTests = transport;
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
             PumpUntilPending(job, transport);
-            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + 601;
+            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + AssetGenJobManager.TimeoutSeconds + 1;
             Assert.DoesNotThrow(() => AssetGenJobManager.TryAdvanceForTests(job.JobId));
             Assert.AreEqual(AssetGenJobState.Failed, job.State);
             Assert.AreEqual(1, transport.CancellationCalls);
@@ -748,7 +763,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             };
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
             PumpUntilPending(job, transport);
-            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + 601;
+            AssetGenJobManager.ClockForTests = () => EditorApplication.timeSinceStartup + AssetGenJobManager.TimeoutSeconds + 1;
             AssetGenJobManager.TryAdvanceForTests(job.JobId);
             transport.Pending.SetResult(PendingTransport.ResultFor(pendingAt));
             for (int i = 0; i < 10; i++)
@@ -791,6 +806,66 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(1f, job.Progress);
             Assert.IsNotNull(job.AssetPath);
             Assert.AreEqual(0, transport.CancellationCalls);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void StagedDownloadIsReleasedAfterPublicationOrInvalidContainer(bool valid)
+        {
+            var transport = new PendingTransport { PendingAt = 3 };
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            PumpUntilPending(job, transport);
+            using var source = new MemoryStream(valid ? ModelImportPipelineTests.ContainerOnlyGlb() : new byte[] { 1, 2, 3 });
+            var artifact = DownloadedArtifact
+                .ReadAsync(source, source.Length, AssetDownloadTransport.MaxDownloadBytes, ProjectRoot(), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            string path = artifact.Path;
+            using var result = new HttpResult
+            {
+                Status = 200,
+                IsSuccess = true,
+                DownloadedFile = artifact,
+            };
+            transport.Pending.SetResult(result);
+            Pump(job.JobId);
+            Assert.AreEqual(valid ? AssetGenJobState.Done : AssetGenJobState.Failed, job.State);
+            Assert.IsFalse(File.Exists(path));
+            if (valid)
+                CollectionAssert.AreEqual(ModelImportPipelineTests.ContainerOnlyGlb(), File.ReadAllBytes(Path.Combine(ProjectRoot(), job.AssetPath)));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LateStagedDownloadIsReleasedAfterCancellationOrReload(bool reload)
+        {
+            var transport = new PendingTransport { PendingAt = 3, IgnoreCancel = true };
+            AssetGenJobManager.TransportOverrideForTests = transport;
+            AssetGenJob job = AssetGenJobManager.StartModelGeneration(Req());
+            PumpUntilPending(job, transport);
+            using var source = new MemoryStream(ModelImportPipelineTests.ContainerOnlyGlb());
+            var artifact = DownloadedArtifact
+                .ReadAsync(source, source.Length, AssetDownloadTransport.MaxDownloadBytes, ProjectRoot(), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            string path = artifact.Path;
+            using var result = new HttpResult
+            {
+                Status = 200,
+                IsSuccess = true,
+                DownloadedFile = artifact,
+            };
+            if (reload)
+                AssetGenJobManager.ResetForTests();
+            else
+            {
+                Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
+                AssetGenJobManager.TryAdvanceForTests(job.JobId);
+            }
+            transport.Pending.SetResult(result);
+            Assert.IsFalse(File.Exists(path));
+            Assert.IsNull(job.AssetPath);
         }
 
         [Test]

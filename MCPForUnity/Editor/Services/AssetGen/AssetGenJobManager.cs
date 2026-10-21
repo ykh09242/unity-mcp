@@ -79,7 +79,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         internal static IHttpTransport TransportOverrideForTests;
         internal static Func<AssetGenJob, string, AssetGenJob> ImportOverrideForTests;
         internal static double PollIntervalSeconds = 3.0;
-        internal static double TimeoutSeconds = 600.0;
+        internal static double TimeoutSeconds = AssetGenJobCheckpoint.MaxDurationSeconds;
         internal static bool SkipModelVerificationForTests;
         internal static Func<double> ClockForTests = null;
         internal static Action<string> BeforeCheckpointWriteForTests = null;
@@ -258,9 +258,26 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 // Observe faults without letting a stale continuation publish metadata or files.
                 Observe(runner.SubmitTask);
                 Observe(runner.PollTask);
-                Observe(runner.DownloadTask);
+                ObserveDownload(runner.DownloadTask);
             }
             Runners.Clear();
+        }
+
+        private static void ObserveDownload(Task<HttpResult> task)
+        {
+            if (task != null)
+                _ = task.ContinueWith(
+                    t =>
+                    {
+                        if (t.Status == TaskStatus.RanToCompletion)
+                            t.Result?.Dispose();
+                        else if (t.IsFaulted)
+                            _ = t.Exception;
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default
+                );
         }
 
         private static void Observe(Task task)
@@ -586,7 +603,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 Kind = job.Kind,
                 Provider = job.Provider,
                 StartedAt = runner.StartedAt,
-                Deadline = runner.StartedAt + Math.Min(600, Math.Max(0, TimeoutSeconds)),
+                Deadline = runner.StartedAt + Math.Min(AssetGenJobCheckpoint.MaxDurationSeconds, Math.Max(0, TimeoutSeconds)),
                 OutputFolder = runner.OutputFolder,
                 Name = SanitizeName(runner.Name),
                 Extension = runner.Ext,
@@ -959,12 +976,18 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         }
                         HttpResult res = r.DownloadTask.Result;
                         r.DownloadTask = null;
-                        if (res == null || !res.IsSuccess || res.Body == null || res.Body.Length == 0)
+                        using (res)
                         {
-                            Fail(r, $"Download failed (HTTP {res?.Status}).");
-                            break;
+                            if (res == null || !res.IsSuccess || (res.DownloadedFile?.Length ?? res.Body?.LongLength ?? 0) == 0)
+                            {
+                                Fail(r, $"Download failed (HTTP {res?.Status}).");
+                                break;
+                            }
+                            r.LocalPath =
+                                res.DownloadedFile != null
+                                    ? WriteFile(r, res.DownloadedFile.Rewind(), res.DownloadedFile.Length, res.DownloadedFile.Sha256)
+                                    : WriteFile(r, res.Body);
                         }
-                        r.LocalPath = WriteFile(r, res.Body);
                         r.Job.State = AssetGenJobState.Importing;
                         Persist(r.Job);
                         r.Phase = RunnerPhase.Import;
@@ -1093,15 +1116,34 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static string WriteFile(Runner r, byte[] bytes)
         {
-            if (bytes == null || bytes.Length > AssetDownloadTransport.MaxDownloadBytes)
-                throw new IOException("Provider artifact exceeds the 512 MiB limit.");
+            if (bytes == null)
+                throw new IOException("Provider artifact is missing.");
+            using var input = new MemoryStream(bytes, false);
+            return WriteFile(r, input, bytes.LongLength, HashBytes(bytes));
+        }
+
+        private static string WriteFile(Runner r, Stream input, long length, string hash)
+        {
+            if (!input.CanSeek || length <= 0 || length > AssetDownloadTransport.MaxDownloadBytes || input.Length != length)
+                throw new IOException("Provider artifact exceeds the 8 GiB limit or has changed length.");
+            input.Position = 0;
+            var header = new byte[(int)Math.Min(16, length)];
+            int headerRead = 0;
+            while (headerRead < header.Length)
+            {
+                int read = input.Read(header, headerRead, header.Length - headerRead);
+                if (read == 0)
+                    throw new EndOfStreamException();
+                headerRead += read;
+            }
+            input.Position = 0;
             string chosen = !string.IsNullOrEmpty(r.OverrideExt) ? r.OverrideExt : r.Ext;
             string ext = string.IsNullOrEmpty(chosen) ? "bin" : chosen.TrimStart('.').ToLowerInvariant();
             if (!IsAllowedResultExtension(r.Job.Kind, ext))
                 throw new Exception($"provider returned a disallowed file type '.{ext}'");
             if (r.Job.Kind == "image")
             {
-                string actual = ImageResultFormat.FromBytes(bytes);
+                string actual = ImageResultFormat.FromBytes(header);
                 if (actual == "webp")
                     throw new Exception("Provider returned WebP, which this Unity image importer does not support. Choose a PNG/JPEG model.");
                 if (actual != null)
@@ -1110,13 +1152,13 @@ namespace MCPForUnity.Editor.Services.AssetGen
             }
             if (r.Job.Kind == "model" && string.Equals(r.Job.Provider, "tripo", StringComparison.OrdinalIgnoreCase))
             {
-                ext = TripoAdapter.ValidateModelBytes(bytes, r.OverrideExt);
+                ext = TripoAdapter.ValidateModelStream(input, r.OverrideExt);
+                input.Position = 0;
                 r.Job.Format = ext;
             }
             Admit(r);
             string root = AssetGenPaths.ResolveOutputFolder(r.OutputFolder, r.Subfolder);
             string baseName = SanitizeName(r.Name);
-            string hash = HashBytes(bytes);
             for (int n = 0; n < 64; n++)
             {
                 string path = root.TrimEnd('/') + "/" + baseName + (n == 0 ? "" : "_" + n) + "." + ext;
@@ -1125,7 +1167,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 AssetGenJobCheckpoint cp = r.Checkpoint;
                 cp.Phase = "writing";
                 cp.SavedPath = path;
-                cp.SavedLength = bytes.LongLength;
+                cp.SavedLength = length;
                 cp.SavedHash = hash;
                 cp.Extension = ext;
                 cp.MetadataPresent = false;
@@ -1158,7 +1200,19 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     Admit(r);
                     if (MetadataOccupied(path))
                         throw new RecoveryAbort("saved_asset_identity_changed");
-                    stream.Write(bytes, 0, bytes.Length);
+                    var buffer = new byte[64 * 1024];
+                    long copied = 0;
+                    int read;
+                    while ((read = input.Read(buffer, 0, buffer.Length)) != 0)
+                    {
+                        Admit(r);
+                        if (read > length - copied)
+                            throw new IOException("Provider artifact changed length during publication.");
+                        stream.Write(buffer, 0, read);
+                        copied += read;
+                    }
+                    if (copied != length)
+                        throw new IOException("Provider artifact ended during publication.");
                     stream.Flush();
                 }
                 Admit(r);
@@ -1316,7 +1370,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             catch { }
             Observe(r.SubmitTask);
             Observe(r.PollTask);
-            Observe(r.DownloadTask);
+            ObserveDownload(r.DownloadTask);
             try
             {
                 r.Cts?.Dispose();
@@ -1476,7 +1530,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             TransportOverrideForTests = null;
             ImportOverrideForTests = null;
             PollIntervalSeconds = 3.0;
-            TimeoutSeconds = 600.0;
+            TimeoutSeconds = AssetGenJobCheckpoint.MaxDurationSeconds;
             SkipModelVerificationForTests = false;
             ClockForTests = null;
             BeforeCheckpointWriteForTests = null;

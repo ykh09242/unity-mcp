@@ -18,7 +18,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             if (spec == null)
                 throw new ArgumentNullException(nameof(spec));
             if (spec.DownloadProvider != null)
-                return new AssetDownloadTransport().DownloadAsync(spec.DownloadProvider, spec.Url, ct);
+                return new AssetDownloadTransport(projectRoot: System.IO.Path.GetDirectoryName(UnityEngine.Application.dataPath)).DownloadAsync(
+                    spec.DownloadProvider,
+                    spec.Url,
+                    ct
+                );
 
             if (ct.IsCancellationRequested)
                 return Task.FromCanceled<HttpResult>(ct);

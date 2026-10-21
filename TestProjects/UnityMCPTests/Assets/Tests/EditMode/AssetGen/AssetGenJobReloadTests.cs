@@ -795,7 +795,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             StringAssert.DoesNotContain("GEN06_SECRET", record);
             SimulateReload();
             Pump(job.JobId, 4);
-            Assert.AreEqual("receipt_not_resumable", AssetGenJobManager.GetJob(job.JobId).RecoveryCode);
+            Assert.AreEqual("generation_failed", AssetGenJobManager.GetJob(job.JobId).RecoveryCode);
             Assert.AreEqual(1, http.RecordedRequests.Count);
         }
 
@@ -981,7 +981,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             if (defect == "deep")
                 json = json.Insert(json.Length - 1, ",\"extra\":" + new string('[', 20) + "0" + new string(']', 20));
             if (defect == "large_record")
-                json = json.Insert(json.Length - 1, ",\"extra\":\"" + new string('x', 256 * 1024) + "\"");
+                json = json.Insert(json.Length - 1, ",\"extra\":\"" + new string('x', AssetGenJobCheckpoint.MaxRecordBytes) + "\"");
             if (defect == "duplicate_property")
                 json = json.Insert(json.Length - 1, ",\"JobId\":\"" + cp.JobId + "\"");
             string terminal = Guid.NewGuid().ToString("N");
@@ -1105,7 +1105,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 beforeReload = SessionState.GetString(Prefix + job.JobId, "");
             }
             if (interruption == "deadline")
-                now = 701;
+                now = 100 + AssetGenJobManager.TimeoutSeconds + 1;
             if (interruption == "checkpoint")
                 AssetGenJobManager.BeforeCheckpointWriteForTests = phase =>
                 {

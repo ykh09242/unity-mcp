@@ -16,7 +16,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
         internal const int MaxRecordBytes = 256 * 1024;
         internal const int MaxIndexBytes = 16 * 1024;
         internal const int MaxDepth = 16;
-        internal const long MaxFileBytes = 512L * 1024 * 1024;
+        internal const long MaxFileBytes = Http.AssetDownloadTransport.MaxDownloadBytes;
+        internal const double MaxDurationSeconds = 2 * 60 * 60;
 
         [JsonProperty("schema_version")]
         public int Version = 1;
@@ -129,7 +130,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 || StartedAt < 0
                 || StartedAt > now
                 || Deadline < StartedAt
-                || Deadline - StartedAt > 600.001
+                || Deadline - StartedAt > MaxDurationSeconds + 0.001
                 || !AssetPath(OutputFolder, true)
                 || string.IsNullOrEmpty(Name)
                 || Name.Length > 48

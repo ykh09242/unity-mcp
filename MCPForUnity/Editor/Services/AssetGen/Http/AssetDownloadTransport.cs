@@ -2,8 +2,10 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Security;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Services.AssetGen.Http
 {
@@ -14,12 +16,19 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
     internal sealed class AssetDownloadTransport
     {
         internal const int MaxRedirects = 5;
-        internal const int MaxDownloadBytes = 512 * 1024 * 1024;
+        internal const long MaxDownloadBytes = 8L * 1024 * 1024 * 1024;
+        internal static readonly TimeSpan DownloadTimeout = TimeSpan.FromHours(1);
+        private readonly string _projectRoot;
         private readonly Func<string, Task<IPAddress[]>> _resolve;
         private readonly Func<Uri, IPAddress, CancellationToken, Task<HttpResult>> _send;
 
-        internal AssetDownloadTransport(Func<string, Task<IPAddress[]>> resolve = null, Func<Uri, IPAddress, CancellationToken, Task<HttpResult>> send = null)
+        internal AssetDownloadTransport(
+            Func<string, Task<IPAddress[]>> resolve = null,
+            Func<Uri, IPAddress, CancellationToken, Task<HttpResult>> send = null,
+            string projectRoot = null
+        )
         {
+            _projectRoot = projectRoot;
             _resolve = resolve ?? Dns.GetHostAddressesAsync;
             _send = send ?? SendPinnedAsync;
         }
@@ -27,7 +36,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         internal async Task<HttpResult> DownloadAsync(string provider, string url, CancellationToken ct)
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromMinutes(2));
+            timeout.CancelAfter(DownloadTimeout);
             CancellationToken token = timeout.Token;
             Uri uri = AssetDownloadPolicy.RequireAllowedUrl(provider, url);
             for (int redirects = 0; ; redirects++)
@@ -55,13 +64,26 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 }
                 if (result == null)
                     throw new IOException("Provider download returned no response.");
-                if (!IsRedirect(result.Status))
-                    return result;
-                if (redirects >= MaxRedirects)
-                    throw new InvalidOperationException("Provider download exceeded the redirect limit.");
-                if (string.IsNullOrWhiteSpace(result.RedirectLocation) || !Uri.TryCreate(uri, result.RedirectLocation, out Uri target))
-                    throw new InvalidOperationException("Provider download returned an invalid redirect.");
-                uri = AssetDownloadPolicy.RequireAllowedUrl(provider, target.AbsoluteUri);
+                bool transferred = false;
+                try
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (!IsRedirect(result.Status))
+                    {
+                        transferred = true;
+                        return result;
+                    }
+                    if (redirects >= MaxRedirects)
+                        throw new InvalidOperationException("Provider download exceeded the redirect limit.");
+                    if (string.IsNullOrWhiteSpace(result.RedirectLocation) || !Uri.TryCreate(uri, result.RedirectLocation, out Uri target))
+                        throw new InvalidOperationException("Provider download returned an invalid redirect.");
+                    uri = AssetDownloadPolicy.RequireAllowedUrl(provider, target.AbsoluteUri);
+                }
+                finally
+                {
+                    if (!transferred)
+                        result.Dispose();
+                }
             }
         }
 
@@ -104,7 +126,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             return request;
         }
 
-        private static async Task<HttpResult> SendPinnedAsync(Uri uri, IPAddress address, CancellationToken ct)
+        private async Task<HttpResult> SendPinnedAsync(Uri uri, IPAddress address, CancellationToken ct)
         {
             HttpWebRequest request = CreatePinnedRequest(uri, address);
             using (ct.Register(request.Abort))
@@ -132,7 +154,9 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                         if (!result.IsSuccess)
                             return result;
                         using Stream body = response.GetResponseStream();
-                        result.Body = await ReadLimitedAsync(body, response.ContentLength, MaxDownloadBytes, ct).ConfigureAwait(false);
+                        result.DownloadedFile = await DownloadedArtifact
+                            .ReadAsync(body, response.ContentLength, MaxDownloadBytes, _projectRoot, ct)
+                            .ConfigureAwait(false);
                         return result;
                     }
                 }
@@ -146,21 +170,82 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 }
             }
         }
+    }
 
-        internal static async Task<byte[]> ReadLimitedAsync(Stream body, long contentLength, int maxBytes, CancellationToken ct)
+    // Own the file handle, not just its name: cancellation/reload releases it and deletes the
+    // staging file. No Unity APIs run here; the main-thread transport captures the project root.
+    internal sealed class DownloadedArtifact : IDisposable
+    {
+        private FileStream stream;
+        internal string Path { get; }
+        internal long Length { get; }
+        internal string Sha256 { get; }
+
+        private DownloadedArtifact(FileStream stream, string path, string hash)
         {
-            if (contentLength > maxBytes)
-                throw new IOException("Provider download exceeds the byte limit.");
-            using var output = new MemoryStream();
-            var buffer = new byte[81920];
-            int read;
-            while ((read = await body.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) != 0)
+            this.stream = stream;
+            Path = path;
+            Length = stream.Length;
+            Sha256 = hash;
+        }
+
+        internal Stream Rewind()
+        {
+            FileStream current = stream ?? throw new ObjectDisposedException(nameof(DownloadedArtifact));
+            current.Position = 0;
+            return current;
+        }
+
+        public void Dispose() => Interlocked.Exchange(ref stream, null)?.Dispose();
+
+        internal static async Task<DownloadedArtifact> ReadAsync(Stream body, long contentLength, long maxBytes, string projectRoot, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (body == null || maxBytes <= 0 || contentLength > maxBytes || contentLength < -1)
+                throw new IOException("Provider download exceeds the byte limit or has an invalid body length.");
+            if (string.IsNullOrWhiteSpace(projectRoot) || !System.IO.Path.IsPathRooted(projectRoot))
+                throw new InvalidOperationException("A project root is required for artifact staging.");
+            string directory = SafePathUtility.ResolveWithinRoot(projectRoot, "Temp/McpAssetDownloads");
+            Directory.CreateDirectory(directory);
+            string path = SafePathUtility.ResolveWithinRoot(projectRoot, System.IO.Path.Combine(directory, Guid.NewGuid().ToString("N") + ".part"));
+            FileStream output = null;
+            try
             {
-                if (read > maxBytes - output.Length)
-                    throw new IOException("Provider download exceeds the byte limit.");
-                output.Write(buffer, 0, read);
+                output = new FileStream(
+                    path,
+                    FileMode.CreateNew,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    64 * 1024,
+                    FileOptions.Asynchronous | FileOptions.DeleteOnClose
+                );
+                SafePathUtility.ResolveWithinRoot(projectRoot, path);
+                using var sha = SHA256.Create();
+                var buffer = new byte[64 * 1024];
+                long length = 0;
+                int read;
+                while ((read = await body.ReadAsync(buffer, 0, buffer.Length, ct).ConfigureAwait(false)) != 0)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (read > maxBytes - length || (contentLength >= 0 && read > contentLength - length))
+                        throw new IOException("Provider download exceeds its declared length or byte limit.");
+                    await output.WriteAsync(buffer, 0, read, ct).ConfigureAwait(false);
+                    sha.TransformBlock(buffer, 0, read, null, 0);
+                    length += read;
+                }
+                if (contentLength >= 0 && length != contentLength)
+                    throw new IOException("Provider download ended before its declared length.");
+                await output.FlushAsync(ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                var artifact = new DownloadedArtifact(output, path, BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant());
+                output = null;
+                return artifact;
             }
-            return output.ToArray();
+            finally
+            {
+                output?.Dispose();
+            }
         }
     }
 }
