@@ -163,6 +163,10 @@
       "description": "Get status of async test job"
     },
     {
+      "name": "wait_for_operation",
+      "description": "Observe an existing build, package or scenario job without starting or cancelling it"
+    },
+    {
       "name": "get_tests",
       "description": "List Unity tests with mode and name filtering and explicit pagination"
     },

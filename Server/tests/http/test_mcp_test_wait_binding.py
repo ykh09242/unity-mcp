@@ -15,7 +15,9 @@ from tests.test_http_command_outcome import command_hub  # pylint: disable=unuse
 
 
 @asynccontextmanager
-async def bound_http(tmp_path, monkeypatch, *, root=None, token=None, hosted=False):
+async def bound_http(
+    tmp_path, monkeypatch, *, root=None, token=None, hosted=False, operation_wait=False
+):
     from main import UnityMCP
     from core.config import config
     from core.local_auth import LOCAL_AUTH_HEADER
@@ -31,6 +33,10 @@ async def bound_http(tmp_path, monkeypatch, *, root=None, token=None, hosted=Fal
     server.add_middleware(UnityInstanceMiddleware())
     server.add_middleware(ResponseLimitMiddleware())
     server.tool(get_test_job)
+    if operation_wait:
+        from services.tools.wait_for_operation import wait_for_operation
+
+        server.tool(wait_for_operation)
     runtime = install_test_job_tasks(server, root or tmp_path / "waits", remote_hosted=hosted)
     assert runtime is not None
     app = server.http_app(path="/mcp", stateless_http=True, json_response=True)

@@ -689,6 +689,7 @@ class UnityConnection:
         params: dict[str, Any] | None = None,
         max_attempts: int | None = None,
         deadline: float | None = None,
+        _expected_generation: str | None = None,
         _catalog_guard=None,
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
@@ -775,6 +776,14 @@ class UnityConnection:
                     # Discard stale sockets left over from a previous domain reload
                     # so we reconnect instead of writing to a dead connection.
                     self._ensure_live_connection()
+                    if _expected_generation is not None and (
+                        not self.sock or self.session_generation != _expected_generation
+                    ):
+                        return MCPResponse(
+                            success=False,
+                            error="observation_generation_changed",
+                            data={"reason": "observation_generation_changed"},
+                        ).model_dump()
                     # Ensure connected (handshake occurs within connect())
                     t_conn_start = time.time()
                     if not self.sock and not self.connect(
@@ -1647,6 +1656,7 @@ def _send_command_with_retry(
     retry_on_reload: bool = True,
     _connection: UnityConnection | None = None,
     _deadline: float | None = None,
+    _expected_generation: str | None = None,
     _catalog_guard=None,
     _progress: ProgressSink | None = None,
 ) -> tuple[dict[str, Any] | MCPResponse, UnityConnection]:
@@ -1691,7 +1701,7 @@ def _send_command_with_retry(
 
     # If retry_on_reload=False, disable connection-level retries too (issue #577)
     # Commands that trigger compilation/reload shouldn't retry on disconnect
-    if _catalog_guard is not None:
+    if _catalog_guard is not None or _expected_generation is not None:
         retry_on_reload = False
     send_max_attempts = None if retry_on_reload else 0
 
@@ -1700,6 +1710,11 @@ def _send_command_with_retry(
         params,
         max_attempts=send_max_attempts,
         deadline=deadline,
+        **(
+            {"_expected_generation": _expected_generation}
+            if _expected_generation is not None
+            else {}
+        ),
         **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
         **({"_progress": _progress} if _progress is not None else {}),
     )
@@ -1834,6 +1849,7 @@ async def async_send_command_with_retry(
     retry_ms: int | None = None,
     retry_on_reload: bool = True,
     _deadline: float | None = None,
+    _expected_generation: str | None = None,
     _catalog_guard=None,
     _catalog_capture=None,
     _progress: ProgressSink | None = None,
@@ -1848,6 +1864,7 @@ async def async_send_command_with_retry(
         retry_ms=retry_ms,
         retry_on_reload=retry_on_reload,
         _deadline=_deadline,
+        _expected_generation=_expected_generation,
         _catalog_guard=_catalog_guard,
         _catalog_capture=_catalog_capture,
         **({"_progress": _progress} if _progress is not None else {}),
@@ -1866,6 +1883,7 @@ async def _async_send_command_response(
     retry_ms: int | None = None,
     retry_on_reload: bool = True,
     _deadline: float | None = None,
+    _expected_generation: str | None = None,
     _catalog_guard=None,
     _catalog_capture=None,
     _progress: ProgressSink | None = None,
@@ -1954,6 +1972,11 @@ async def _async_send_command_response(
                     retry_on_reload=retry_on_reload,
                     _connection=conn,
                     _deadline=deadline,
+                    **(
+                        {"_expected_generation": _expected_generation}
+                        if _expected_generation is not None
+                        else {}
+                    ),
                     **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
                     **({"_progress": _progress} if _progress is not None else {}),
                 )
