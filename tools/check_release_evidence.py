@@ -243,6 +243,21 @@ def components(repo: Path, package_commit: str) -> Components:
                 skill_files(repo, revision, folder) == expected,
                 "mcpSkillRevision differs from committed package skill mirrors",
             )
+    if git(
+        repo, "ls-tree", "--name-only", package_commit, "--", "release-source-inputs.json"
+    ).strip():
+        source_inputs = load_json(committed(repo, package_commit, "release-source-inputs.json"))
+        require(
+            source_inputs
+            == {
+                "schema_version": 1,
+                "repository": BASE,
+                "server_commit": server,
+                "skill_commit": skill,
+                "server_source": server_url,
+            },
+            "Generated release source inputs differ from package pins",
+        )
     return Components(package_commit, server, skill, unity_version, server_version, server_url)
 
 

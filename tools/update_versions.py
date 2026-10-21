@@ -295,7 +295,43 @@ def main() -> int:
         help="Metadata to update (default: unity; all preserves legacy synchronization)",
     )
 
+    parser.add_argument(
+        "--server-commit", help="Reviewed local full server commit; pair with --skill-commit"
+    )
+    parser.add_argument(
+        "--skill-commit", help="Reviewed local full skill commit; pair with --server-commit"
+    )
+    parser.add_argument(
+        "--recover-pins",
+        action="store_true",
+        help="Roll back an interrupted source pin transaction",
+    )
     args = parser.parse_args()
+    if args.server_commit or args.skill_commit or args.recover_pins:
+        if args.version or args.component != "unity":
+            parser.error("Source pins and version-number updates must be separate operations")
+        if args.recover_pins and (args.server_commit or args.skill_commit or args.dry_run):
+            parser.error("--recover-pins cannot be combined with pin selection or --dry-run")
+        if not args.recover_pins and not (args.server_commit and args.skill_commit):
+            parser.error("Both --server-commit and --skill-commit are required")
+        if __package__:
+            from tools import update_source_pins as pins
+        else:
+            import update_source_pins as pins
+        try:
+            if args.recover_pins:
+                print(json.dumps({"recovered_files": pins.recover(REPO_ROOT)}))
+            else:
+                plan = pins.prepare(REPO_ROOT, args.server_commit, args.skill_commit)
+                result = plan.describe()
+                result["dry_run"] = args.dry_run
+                if not args.dry_run:
+                    result["applied_files"] = pins.apply(plan)
+                print(json.dumps(result, indent=2))
+            return 0
+        except (OSError, ValueError, TypeError) as error:
+            print("Source pin update refused: " + str(error), file=sys.stderr)
+            return 1
     if args.component == "server" and not args.version:
         parser.error("--component server requires --version; it cannot inherit the Unity version")
 
