@@ -17,13 +17,13 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_texture", AutoRegister = false, Group = "vfx")]
     public static class ManageTexture
     {
-        // Allow 4K assets and typical 2K eight-octave / 4K two-octave noise.
-        private const int MaxTextureDimension = 4096;
-        private const int MaxTexturePixels = 4096 * 4096;
-        private const int MaxNoiseWork = 32 * 1024 * 1024;
+        // Allow 8K assets, including eight-octave noise.
+        private const int MaxTextureDimension = 8192;
+        private const int MaxTexturePixels = 8192 * 8192;
+        private const int MaxNoiseWork = 512 * 1024 * 1024;
 
-        // An incompressible 4K RGBA PNG needs about 64 MiB before format overhead.
-        private const int MaxEncodedImageBytes = 96 * 1024 * 1024;
+        // An incompressible 8K RGBA image needs about 256 MiB before format overhead.
+        private const int MaxEncodedImageBytes = 512 * 1024 * 1024;
         private static readonly List<string> ValidActions = new List<string>
         {
             "create",

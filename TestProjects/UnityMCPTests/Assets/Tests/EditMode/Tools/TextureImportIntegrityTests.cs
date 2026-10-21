@@ -89,6 +89,31 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void EightKTextureEdgeIsWrittenAndReimportedWithoutClamping()
+        {
+            JObject response = Send(
+                "create",
+                new JObject
+                {
+                    ["width"] = 8192,
+                    ["height"] = 1,
+                    ["fillColor"] = new JArray(12, 34, 56, 255),
+                    ["importSettings"] = new JObject
+                    {
+                        ["maxTextureSize"] = 8192,
+                        ["isReadable"] = true,
+                        ["textureCompression"] = "Uncompressed",
+                    },
+                }
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(_path);
+            Assert.AreEqual(8192, texture.width);
+            Assert.AreEqual(1, texture.height);
+            Assert.AreEqual(new Color32(12, 34, 56, 255), (Color32)texture.GetPixel(8191, 0));
+        }
+
+        [Test]
         public void PreparedTextureContentsApplyCachedPixelsAfterPayloadChanges()
         {
             if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
@@ -136,11 +161,11 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(count, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length);
         }
 
-        [TestCase("create", 4097, 1, 1)]
-        [TestCase("create_sprite", 1, 4097, 1)]
-        [TestCase("apply_pattern", 4097, 4097, 1)]
+        [TestCase("create", 8193, 1, 1)]
+        [TestCase("create_sprite", 1, 8193, 1)]
+        [TestCase("apply_pattern", 8193, 8193, 1)]
         [TestCase("apply_gradient", int.MaxValue, int.MaxValue, 1)]
-        [TestCase("apply_noise", 4096, 4096, 3)]
+        [TestCase("apply_noise", 8192, 8192, 9)]
         [TestCase("apply_noise", 1, 1, int.MaxValue)]
         public void OverBudgetGenerationDoesNotReplaceExistingTexture(string action, int width, int height, int octaves)
         {
@@ -186,10 +211,10 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             byte[] before = File.ReadAllBytes(Absolute(_path));
             byte[] image = (byte[])before.Clone();
-            // Change PNG IHDR width to 4097 and repair its CRC so size is the rejection reason.
+            // Change PNG IHDR width to 8193 and repair its CRC so size is the rejection reason.
             image[16] = 0;
             image[17] = 0;
-            image[18] = 16;
+            image[18] = 32;
             image[19] = 1;
             uint crc = 0xffffffff;
             for (int i = 12; i < 29; i++)

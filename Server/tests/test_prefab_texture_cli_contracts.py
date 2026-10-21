@@ -110,7 +110,7 @@ def test_native_failure_exits_and_preserves_json_even_with_warning_dimensions(
         (["prefab", "open", PREFAB], "Opened prefab:"),
         (["prefab", "info", PREFAB, "--compact"], "Children: 0"),
         (["prefab", "hierarchy", PREFAB, "--show-prefab-info"], "Root [root]"),
-        (["texture", "create", TEXTURE, "--width", "1025", "--height", "1"], "Warning:"),
+        (["texture", "create", TEXTURE, "--width", "8193", "--height", "1"], "Warning:"),
         (["texture", "modify", TEXTURE, "--no-readable"], "Modified texture:"),
     ],
 )
