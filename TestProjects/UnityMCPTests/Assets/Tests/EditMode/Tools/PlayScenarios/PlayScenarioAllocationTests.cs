@@ -36,6 +36,67 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         [Test]
+        public void LargeHierarchyQueryBurstsReuseStorageAndReleaseReferences()
+        {
+            Scene scene = EditorSceneManager.NewPreviewScene();
+            var query = new PlayScenarioHierarchyQuery();
+            try
+            {
+                for (int i = 0; i < 5000; i++)
+                    SceneManager.MoveGameObjectToScene(new GameObject("root"), scene);
+                QueryLargeScene(query, scene);
+                using var recorder = ProfilerRecorder.StartNew(
+                    ProfilerCategory.Memory,
+                    "GC.Alloc",
+                    8192,
+                    ProfilerRecorderOptions.StartImmediately | ProfilerRecorderOptions.CollectOnlyOnCurrentThread
+                );
+                for (int i = 0; i < 20; i++)
+                    QueryLargeScene(query, scene);
+                recorder.Stop();
+                Assert.IsTrue(recorder.Valid);
+                Assert.AreEqual(0, query.Roots.Count, "Every query releases live root references.");
+                Assert.AreEqual(0, query.Count, "Every query releases live traversal references.");
+                Assert.AreEqual(0, recorder.Count, "Large active bursts must not repeatedly grow and trim backing arrays.");
+            }
+            finally
+            {
+                query.Clear();
+                if (scene.IsValid())
+                    EditorSceneManager.ClosePreviewScene(scene);
+            }
+        }
+
+        [Test]
+        public void LargeHierarchyStorageSurvivesBurstsButTrimsAfterIdleAndRelease()
+        {
+            long now = 0;
+            var query = new PlayScenarioHierarchyQuery(() => now);
+            query.Roots.Capacity = 10000;
+            query.Clear();
+            now = System.Diagnostics.Stopwatch.Frequency * 29L;
+            query.Maintain();
+            Assert.AreEqual(10000, query.Roots.Capacity);
+            now = System.Diagnostics.Stopwatch.Frequency * 30L;
+            query.Maintain();
+            Assert.AreEqual(4096, query.Roots.Capacity);
+            query.Roots.Capacity = 10000;
+            query.Release();
+            Assert.AreEqual(0, query.Roots.Capacity);
+            Assert.AreEqual(0, query.Count);
+        }
+
+        private static void QueryLargeScene(PlayScenarioHierarchyQuery query, Scene scene)
+        {
+            query.Begin(scene);
+            for (int i = 0; i < query.Roots.Count; i++)
+                query.Push(query.Roots[i].transform, 0);
+            while (query.Count != 0)
+                query.Pop();
+            query.Clear();
+        }
+
+        [Test]
         public void WarmHierarchyQueriesAllocateNoRootArraysAndObserveFreshObjects()
         {
             Scene previous = SceneManager.GetActiveScene();
