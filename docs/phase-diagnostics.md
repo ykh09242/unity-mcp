@@ -4,12 +4,12 @@ Set `UNITY_MCP_PHASE_DIAGNOSTICS=1` for the server process and enable the Editor
 
 Each invocation owns its context and closes it on return, failure or cancellation. Readiness probes cannot claim the requested command's token. A shared read that outlives its originating observer cannot reopen that observer. Diagnostic records contain fixed phase names, scalar durations, outcomes and a random correlation, never arguments, code, exceptions, identities, paths or credentials. No external telemetry or metric label is added.
 
-Python records admission, preflight, send, response wait and return processing. Its bounded 256-record background logging queue drops optional records under pressure; a blocked disk cannot make commands wait. Pending records may be lost at shutdown. Unity retains the existing buffered logs and actual execution/delivery owners, adds the server correlation, and measures `manage_asset` imports/reimports as a subset of handler time. Other imports remain within handler time; an absent import duration means unmeasured, not zero.
+Python records admission, preflight, send, response wait and return processing. Its bounded 256-record background logging queue drops optional records under pressure; diagnostic writes use a separate process-specific file without sharing ordinary logging handler locks or shutdown hooks. A blocked diagnostic write cannot make commands wait. Pending records may be lost at shutdown. Unity retains the existing buffered logs and actual execution/delivery owners, adds the server correlation, and measures `manage_asset` imports/reimports as a subset of handler time. Other imports remain within handler time; an absent import duration means unmeasured, not zero.
 
-Aggregate explicitly selected local server and Editor log files:
+Server diagnostics are stored in `phase-timing-<pid>.log` in the normal server log directory (`UNITY_MCP_LOG_DIR` can override it), with two 512 KiB rotated backups per process. No file is created while disabled. Aggregate explicitly selected diagnostic and Editor log files:
 
 ```sh
-python tools/phase_timing_report.py server.log editor.jsonl
+python tools/phase_timing_report.py phase-timing-1234.log editor.jsonl
 ```
 
 The report joins matching tokens and emits counts and p50/p95/max per measured phase without exporting tokens or input paths. It reports unmatched, duplicate/ambiguous, ignored and overflow records. `--max-traces` changes the default 10,000 retained diagnostic pairs; this limit never applies to Unity jobs or payloads. Input lines are read incrementally and oversized lines are skipped.

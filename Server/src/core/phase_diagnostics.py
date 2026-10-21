@@ -6,7 +6,8 @@ import asyncio
 import atexit
 import itertools
 import json
-import logging
+import os
+from pathlib import Path
 import math
 import queue
 import threading
@@ -29,6 +30,16 @@ RECORD_FIELDS = {
 clock = time.monotonic
 _admissions = itertools.count(1)
 _owner = ContextVar("phase_diagnostic_owner", default=None)
+_log_path = None
+_LOG_BYTES = 512 * 1024
+
+
+def configure_file(log_dir):
+    """Select an existing local log directory at startup; create files only on the worker."""
+    global _log_path
+    _log_path = (
+        Path(log_dir) / f"phase-timing-{os.getpid()}.log" if config.phase_diagnostics else None
+    )
 
 
 def new_token():
@@ -51,9 +62,19 @@ class BufferedSink:
 
     @staticmethod
     def _log(row):
-        logging.getLogger("mcp-for-unity-server").info(
-            "phase_timing %s", json.dumps(row, separators=(",", ":"))
-        )
+        # Only this daemon writes the process-specific file. Do not use Python
+        # logging: handler locks can stall ordinary commands or logging.shutdown.
+        path = _log_path
+        if path is None:
+            return
+        encoded = ("phase_timing " + json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8")
+        if path.exists() and path.stat().st_size + len(encoded) > _LOG_BYTES:
+            previous = path.with_suffix(".log.1")
+            if previous.exists():
+                previous.replace(path.with_suffix(".log.2"))
+            path.replace(previous)
+        with path.open("ab") as output:
+            output.write(encoded)
 
     def offer(self, row):
         if self.stop.is_set():

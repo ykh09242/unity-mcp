@@ -148,3 +148,78 @@ def test_nested_unsampled_scope_cannot_borrow_parent_token(monkeypatch):
         with diag.invocation("command"):
             assert diag.request("command", True) is None
         assert diag.current() is parent
+
+
+def test_blocked_diagnostic_write_does_not_block_real_command_logging(monkeypatch, tmp_path):
+    import logging
+    import threading
+    from pathlib import Path
+    from core.logging_decorator import log_execution
+
+    entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+    path = tmp_path / "phase-timing-test.log"
+    monkeypatch.setattr(diag, "_log_path", path, raising=False)
+    original_open = Path.open
+
+    def blocked_open(target, *args, **kwargs):
+        if target == path:
+            entered.set()
+            release.wait(5)
+        return original_open(target, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", blocked_open)
+
+    class OrdinaryHandler(logging.Handler):
+        def emit(self, record):
+            if record.getMessage().startswith("phase_timing "):
+                entered.set()
+                release.wait(5)
+
+    logger = logging.getLogger("mcp-for-unity-server")
+    handler = OrdinaryHandler()
+    monkeypatch.setattr(logger, "handlers", [handler])
+    monkeypatch.setattr(logger, "propagate", False)
+    monkeypatch.setattr(logger, "level", logging.INFO)
+    logger._cache.clear()
+
+    @log_execution("command", "Tool")
+    def command():
+        completed.set()
+
+    sink = diag.BufferedSink()
+    worker = threading.Thread(target=command)
+    try:
+        sink.offer({"event": "server_phase_timing"})
+        assert entered.wait(2)
+        worker.start()
+        assert completed.wait(1), "Diagnostic I/O blocked ordinary command logging"
+    finally:
+        release.set()
+        if worker.ident is not None:
+            worker.join(2)
+        sink.close()
+        logger._cache.clear()
+    assert not worker.is_alive()
+
+
+def test_diagnostic_file_is_opt_in_and_rotates_only_its_own_files(monkeypatch, tmp_path):
+    import json
+    import os
+
+    monkeypatch.setattr(diag, "_log_path", None)
+    monkeypatch.setattr(config, "phase_diagnostics", False)
+    diag.configure_file(tmp_path)
+    diag.BufferedSink._log({"event": "ignored"})
+    assert list(tmp_path.iterdir()) == []
+    monkeypatch.setattr(config, "phase_diagnostics", True)
+    diag.configure_file(tmp_path)
+    monkeypatch.setattr(diag, "_LOG_BYTES", 1)
+    ordinary = tmp_path / "unity_mcp_server.log"
+    ordinary.write_text("ordinary")
+    for index in range(4):
+        diag.BufferedSink._log({"event": "server_phase_timing", "total_ms": index})
+    path = tmp_path / f"phase-timing-{os.getpid()}.log"
+    assert json.loads(path.read_text().split(" ", 1)[1])["total_ms"] == 3
+    assert json.loads(path.with_suffix(".log.1").read_text().split(" ", 1)[1])["total_ms"] == 2
+    assert json.loads(path.with_suffix(".log.2").read_text().split(" ", 1)[1])["total_ms"] == 1
+    assert ordinary.read_text() == "ordinary"
