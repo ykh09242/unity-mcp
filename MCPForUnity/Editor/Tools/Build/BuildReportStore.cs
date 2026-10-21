@@ -28,6 +28,7 @@ namespace MCPForUnity.Editor.Tools.Build
 
         // Private observation seams used only by owned fixtures; no caller-supplied artifact paths or clocks.
         private static string StorageRootOverride = null;
+        private static Action<string> ReadFileForTests = null;
         private static string sessionId = Guid.NewGuid().ToString("N");
         private static Func<DateTime> UtcNow = () => DateTime.UtcNow;
 
@@ -348,6 +349,7 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static byte[] ReadBytes(string path)
         {
+            ReadFileForTests?.Invoke(path);
             using (var stream = new FileStream(StreamPath(path), FileMode.Open, FileAccess.Read, FileShare.Read))
             {
                 long length = stream.Length;
@@ -731,18 +733,28 @@ namespace MCPForUnity.Editor.Tools.Build
         {
             try
             {
-                var records = new List<JObject>();
-                foreach (string path in Files())
+                JObject latest;
+                if (jobId != null)
                 {
-                    try
-                    {
-                        var record = Load(Path.GetFileNameWithoutExtension(path));
-                        if (jobId == null || (string)record["summary"]["job_id"] == jobId)
-                            records.Add(record);
-                    }
-                    catch (ReportFailure) { /* Unavailable historical evidence is handled by explicit report reads. */ }
+                    // A persisted job has a deterministic artifact identity. Keep all integrity
+                    // and expiry checks, but do not load unrelated summaries to locate it.
+                    latest = Load(Identity(jobId));
+                    if ((string)latest["summary"]["job_id"] != jobId)
+                        return null;
                 }
-                JObject latest = records.OrderByDescending(record => (string)record["created_at"], StringComparer.Ordinal).FirstOrDefault();
+                else
+                {
+                    var records = new List<JObject>();
+                    foreach (string path in Files())
+                    {
+                        try
+                        {
+                            records.Add(Load(Path.GetFileNameWithoutExtension(path)));
+                        }
+                        catch (ReportFailure) { /* Unavailable historical evidence is handled by explicit report reads. */ }
+                    }
+                    latest = records.OrderByDescending(record => (string)record["created_at"], StringComparer.Ordinal).FirstOrDefault();
+                }
                 if (latest == null)
                     return null;
                 var summary = (JObject)latest["summary"].DeepClone();

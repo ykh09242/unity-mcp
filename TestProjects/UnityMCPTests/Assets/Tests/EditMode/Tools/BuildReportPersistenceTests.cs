@@ -21,6 +21,7 @@ namespace MCPForUnityTests.EditMode.Tools
         private object previousStorage;
         private object previousSession;
         private object previousClock;
+        private object previousReadObserver;
         private Type Store => typeof(BuildJobStore).Assembly.GetType("MCPForUnity.Editor.Tools.Build.BuildReportStore");
         private static Dictionary<string, BuildJob> Jobs =>
             (Dictionary<string, BuildJob>)typeof(BuildJobStore).GetField("_buildJobs", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
@@ -50,6 +51,7 @@ namespace MCPForUnityTests.EditMode.Tools
             previousStorage = Field("StorageRootOverride")?.GetValue(null);
             previousSession = Field("sessionId")?.GetValue(null);
             previousClock = Field("UtcNow")?.GetValue(null);
+            previousReadObserver = Field("ReadFileForTests")?.GetValue(null);
             Field("StorageRootOverride")?.SetValue(null, ownedRoot);
         }
 
@@ -59,6 +61,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Field("StorageRootOverride")?.SetValue(null, previousStorage);
             Field("sessionId")?.SetValue(null, previousSession);
             Field("UtcNow")?.SetValue(null, previousClock);
+            Field("ReadFileForTests")?.SetValue(null, previousReadObserver);
             Jobs.Clear();
             Batches.Clear();
             foreach (var pair in previousJobs)
@@ -118,6 +121,126 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             var history = Success(Send("report_history"));
             return (string)history["reports"].Single(row => (string)row["job_id"] == job.JobId)["report_id"];
+        }
+
+        private Func<string, JObject> StatusLookup() =>
+            (Func<string, JObject>)
+                Delegate.CreateDelegate(typeof(Func<string, JObject>), Store.GetMethod("FindStatus", BindingFlags.NonPublic | BindingFlags.Static));
+
+        [TestCase(1)]
+        [TestCase(16)]
+        [TestCase(64)]
+        public void ExactPersistedStatusReadsOneSummaryWithEquivalentOutput(int reportCount)
+        {
+            var jobs = new List<BuildJob>();
+            for (int index = 0; index < reportCount; index++)
+                jobs.Add(Complete(BuildJobState.Succeeded, index + 1));
+            ForgetStaticJobs();
+            string selected = jobs[0].JobId;
+            Func<string, JObject> direct = StatusLookup();
+            var files =
+                (Func<bool, string[]>)
+                    Delegate.CreateDelegate(typeof(Func<bool, string[]>), Store.GetMethod("Files", BindingFlags.NonPublic | BindingFlags.Static));
+            var load =
+                (Func<string, string, bool, JObject>)
+                    Delegate.CreateDelegate(typeof(Func<string, string, bool, JObject>), Store.GetMethod("Load", BindingFlags.NonPublic | BindingFlags.Static));
+            JObject LegacyScan()
+            {
+                // Previous production algorithm, same typed storage calls and same owned files.
+                var records = new List<JObject>();
+                foreach (string path in files(false))
+                {
+                    JObject record = load(Path.GetFileNameWithoutExtension(path), null, false);
+                    if ((string)record["summary"]["job_id"] == selected)
+                        records.Add(record);
+                }
+                JObject latest = records.OrderByDescending(record => (string)record["created_at"], StringComparer.Ordinal).FirstOrDefault();
+                if (latest == null)
+                    return null;
+                var summary = (JObject)latest["summary"].DeepClone();
+                summary["report_id"] = latest["report_id"];
+                summary["report_revision"] = latest["report_revision"];
+                summary["persisted"] = true;
+                return summary;
+            }
+            JObject expected = LegacyScan();
+            Assert.IsTrue(JToken.DeepEquals(expected, direct(selected)));
+            long calibration = GC.GetAllocatedBytesForCurrentThread();
+            GC.KeepAlive(new byte[4096]);
+            bool allocationCounterAvailable = GC.GetAllocatedBytesForCurrentThread() > calibration;
+            int reads = 0,
+                maximumExactReads = 0;
+            Field("ReadFileForTests").SetValue(null, (Action<string>)(_ => reads++));
+            for (int round = 0; round < 3; round++)
+            for (int position = 0; position < 2; position++)
+            {
+                bool legacy = (round + position) % 2 == 0;
+                reads = 0;
+                long allocated = GC.GetAllocatedBytesForCurrentThread();
+                long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                JObject actual = legacy ? LegacyScan() : direct(selected);
+                double milliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+                Assert.IsTrue(JToken.DeepEquals(expected, actual), actual?.ToString());
+                if (legacy)
+                    Assert.AreEqual(reportCount, reads);
+                else
+                    maximumExactReads = Math.Max(maximumExactReads, reads);
+                TestContext.WriteLine(
+                    $"BETA05 mode={(legacy ? "scan" : "exact")} reports={reportCount} round={round} reads={reads} allocated_bytes={(allocationCounterAvailable ? allocated.ToString() : "unavailable")} elapsed_ms={milliseconds:F3}"
+                );
+            }
+            Assert.AreEqual(1, maximumExactReads, "Exact persisted status must open only its deterministic summary.");
+            JObject detached = direct(selected);
+            detached["job_id"] = "caller-edited";
+            Assert.AreEqual(selected, (string)direct(selected)["job_id"]);
+        }
+
+        [Test]
+        public void ExactStatusPreservesMissingCorruptExpiredAndLatestSemantics()
+        {
+            DateTime now = DateTime.UtcNow;
+            Field("UtcNow").SetValue(null, (Func<DateTime>)(() => now));
+            BuildJob earlier = Complete(BuildJobState.Succeeded);
+            now = now.AddMinutes(1);
+            BuildJob later = Complete(BuildJobState.Failed);
+            string laterId = Id(later);
+            ForgetStaticJobs();
+            Func<string, JObject> status = StatusLookup();
+            Assert.AreEqual(later.JobId, (string)status(null)["job_id"]);
+            Assert.IsNull(status("build-" + Guid.NewGuid().ToString("N")));
+            string path = Path.Combine(ownedRoot, laterId + ".json");
+            File.Delete(path);
+            WriteFixtureFile(path, "{corrupt");
+            Assert.IsNull(status(later.JobId));
+            Assert.AreEqual(earlier.JobId, (string)status(null)["job_id"]);
+            now = now.AddDays(31);
+            Assert.IsNull(status(earlier.JobId));
+            Assert.IsNull(status(null));
+        }
+
+        [Test]
+        public void ExactStatusVerifiesJobIdentityInsideTheMatchingArtifact()
+        {
+            BuildJob requested = Complete(BuildJobState.Succeeded),
+                other = Complete(BuildJobState.Succeeded);
+            string id = Id(requested),
+                otherId = Id(other);
+            string originalPath = Path.Combine(ownedRoot, otherId + ".json");
+            var read =
+                (Func<string, JObject>)
+                    Delegate.CreateDelegate(typeof(Func<string, JObject>), Store.GetMethod("Read", BindingFlags.NonPublic | BindingFlags.Static));
+            JObject envelope = read(originalPath);
+            JObject record = JObject.Parse((string)envelope["payload"]);
+            record["report_id"] = id;
+            string payload = record.ToString(Newtonsoft.Json.Formatting.None);
+            envelope["payload"] = payload;
+            envelope["revision"] = (string)Store.GetMethod("Hash", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { payload });
+            string path = Path.Combine(ownedRoot, id + ".json");
+            File.Delete(path);
+            WriteFixtureFile(path, envelope.ToString(Newtonsoft.Json.Formatting.None));
+            ForgetStaticJobs();
+            Assert.IsNull(StatusLookup()(requested.JobId));
         }
 
         [Test]
