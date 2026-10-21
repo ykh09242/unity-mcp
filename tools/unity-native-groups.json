@@ -99,6 +99,14 @@
       ],
       "disruptive": false,
       "platform_exclusions": {}
+    },
+    "validation-capabilities": {
+      "methods": [
+        "MCPForUnityTests.Editor.Windows.ValidationCapabilityTests.ActualSettingsTemplateShowsAvailableEngineWithoutCompilationClaims",
+        "MCPForUnityTests.Editor.Windows.ValidationCapabilityTests.EveryLevelExplainsAvailableEngineAndCoverage"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
     }
   }
 }

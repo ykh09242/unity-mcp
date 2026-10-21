@@ -3894,6 +3894,18 @@ namespace MCPForUnity.Editor.Tools
             return context;
         }
 
+        internal static bool RoslynValidationAvailable
+        {
+            get
+            {
+#if USE_ROSLYN
+                return true;
+#else
+                return false;
+#endif
+            }
+        }
+
         private static object ValidationMetadata(string requested, ValidationLevel level, ScriptValidationContext context)
         {
             string effective =
@@ -3910,11 +3922,7 @@ namespace MCPForUnity.Editor.Tools
                 engine = context.Syntax || context.Semantics ? "roslyn" : "heuristic",
                 capabilities = new
                 {
-#if USE_ROSLYN
-                    roslynAvailable = true,
-#else
-                    roslynAvailable = false,
-#endif
+                    roslynAvailable = RoslynValidationAvailable,
                     structural = context.Structural,
                     syntax = context.Syntax,
                     unityHeuristics = context.UnityRules,
