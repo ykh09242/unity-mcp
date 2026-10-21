@@ -7,6 +7,8 @@ from typing import Annotated, Callable, Literal
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from models.capability_results import BUNDLE_RESULT, validate_bundle_result
+from services.registry.action_contracts import action_input_error
 from services.registry.capability_catalog import Capability
 from services.registry.tool_registry import mcp_for_unity_tool
 
@@ -51,9 +53,15 @@ def register_capability(capability: Capability, implementation: Callable) -> Cal
         action = bound.arguments["action"]
         if action not in capability.actions:
             raise ValueError(f"Action is outside {capability.name}")
+        error = action_input_error(capability.name, bound.arguments)
+        if error is not None:
+            return {"success": False, "code": "invalid_action_parameters", "message": error}
         token = _command_route.set((capability.source, capability.name))
         try:
-            return await implementation(**bound.arguments)
+            result = await implementation(**bound.arguments)
+            if capability.name == "asset_bundles":
+                validate_bundle_result(result)
+            return result
         finally:
             _command_route.reset(token)
 
@@ -67,6 +75,11 @@ def register_capability(capability: Capability, implementation: Callable) -> Cal
         name=capability.name,
         description=capability.description,
         group=capability.group,
+        **(
+            {"output_schema": {"type": "object", **BUNDLE_RESULT.json_schema()}}
+            if capability.name == "asset_bundles"
+            else {}
+        ),
         annotations=ToolAnnotations(
             title=capability.title,
             readOnlyHint=capability.effects.read_only,

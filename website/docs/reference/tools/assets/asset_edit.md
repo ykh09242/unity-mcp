@@ -12,7 +12,7 @@ description: "Create, import, modify, duplicate, move or delete assets and folde
 
 ## Description
 
-Create, import, modify, duplicate, move or delete assets and folders.
+Create, import, modify, duplicate, move or delete assets and folders. Action inputs: import: requires path. create: requires path, asset_type. modify: requires path, properties. delete: requires path. duplicate: requires path. move: requires path, destination. rename: requires path, destination. create_folder: requires path.
 
 ## Parameters
 
