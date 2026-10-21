@@ -52,6 +52,34 @@ def test_hundred_iteration_ledger_retains_the_last_completion():
     assert validate_iteration_results(report, 100, terminal=True)[-1].iteration == 100
 
 
+@pytest.mark.parametrize("repeats", [11, 100])
+def test_substantial_iteration_report_exports_junit_and_html(repeats):
+    from xml.etree import ElementTree
+    from cli.utils.play_scenario_reports import junit_xml
+    from cli.utils.play_scenario_html import render_html
+
+    report = _report([_row(index) for index in range(1, repeats + 1)])
+    report.update(
+        status="succeeded",
+        repeat_count=repeats,
+        finished_unix_ms=2000,
+        scenario={"name": "substantial-export"},
+        resource_checks=[
+            {"iteration": index, "error": f"resource-{index}"} for index in range(1, repeats + 1)
+        ],
+    )
+    suite = {
+        "status": "succeeded",
+        "scenarios": [{"name": "substantial-export", "status": "succeeded", "report": report}],
+    }
+    root = ElementTree.fromstring(junit_xml(suite))
+    count = root.find(".//testcase/properties/property[@name='iteration.passed']")
+    assert count.attrib["value"] == str(repeats)
+    assert root.attrib["failures"] == "0" and root.attrib["errors"] == "0"
+    assert f"resource-{repeats}" in render_html(report)
+    assert f"resource-{repeats}" in render_html(suite)
+
+
 def test_native_failure_preserves_passed_and_skipped_slots():
     report = _report([_row(1), _row(2, "failed"), _row(3, "skipped")])
     counts = iteration_counts(report, 3)

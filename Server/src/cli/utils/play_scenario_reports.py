@@ -23,7 +23,9 @@ class ReportEvidence(BaseModel):
     status: str | None = None
     repeat_count: Annotated[int, Field(strict=True, ge=1, le=MAX_REPEATS)] | None = None
     iteration_results_version: Annotated[int, Field(strict=True, ge=1, le=1)] | None = None
-    iteration_results: list[dict[str, JsonValue]] | None = Field(default=None, max_length=10)
+    iteration_results: list[dict[str, JsonValue]] | None = Field(
+        default=None, max_length=MAX_REPEATS
+    )
     started_unix_ms: int | None = None
     finished_unix_ms: int | None = None
     error: str | None = None
@@ -37,7 +39,9 @@ class ReportEvidence(BaseModel):
     query_counts: dict[str, JsonValue] = Field(default_factory=dict)
     timeline: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=128)
     dropped_timeline_count: int = 0
-    resource_checks: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=10)
+    resource_checks: list[dict[str, JsonValue]] = Field(
+        default_factory=list, max_length=MAX_REPEATS
+    )
     steps: list[dict[str, JsonValue]] = Field(default_factory=list, max_length=MAX_STEP_RESULTS)
 
 
