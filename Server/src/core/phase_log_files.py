@@ -46,7 +46,7 @@ def _open_existing(path, info):
 
 def _lock(stream):
     if os.name == "nt":
-        import msvcrt
+        import msvcrt  # pylint: disable=import-error  # Windows-only standard library.
 
         # Lock beyond the small immutable owner header so other processes can
         # inspect ownership without trying to read a mandatory locked byte.
