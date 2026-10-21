@@ -67,5 +67,11 @@ def register_capability(capability: Capability, implementation: Callable) -> Cal
         name=capability.name,
         description=capability.description,
         group=capability.group,
-        annotations=ToolAnnotations(title=capability.title, destructiveHint=True),
+        annotations=ToolAnnotations(
+            title=capability.title,
+            readOnlyHint=capability.effects.read_only,
+            destructiveHint=capability.effects.destructive,
+            idempotentHint=capability.effects.idempotent,
+            openWorldHint=capability.effects.open_world,
+        ),
     )(invoke)

@@ -12,7 +12,7 @@ description: "Inspect scene references within explicit work and result budgets."
 
 ## Description
 
-Inspect scene references within explicit work and result budgets.
+Inspect scene references within explicit work and result budgets. Read-only inspection; results can change with Unity state.
 
 ## Parameters
 

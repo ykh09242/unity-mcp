@@ -4,6 +4,31 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class CapabilityEffects:
+    """Discovery hints only; never consulted for admission or automatic retries."""
+
+    read_only: bool = False
+    destructive: bool = True
+    idempotent: bool = False
+    open_world: bool = True
+    description_suffix: str = ""
+
+
+# Unknown/new capabilities remain conservative until every action is reviewed.
+MUTATING_EFFECTS = CapabilityEffects()
+READ_ONLY_EFFECTS = CapabilityEffects(
+    read_only=True,
+    destructive=False,
+    open_world=False,
+    description_suffix="Read-only inspection; results can change with Unity state.",
+)
+CONTACT_OBSERVER_EFFECTS = CapabilityEffects(
+    open_world=False,
+    description_suffix="May start or stop passive contact observation without advancing simulation.",
+)
+
+
+@dataclass(frozen=True)
 class Capability:
     name: str
     source: str
@@ -11,6 +36,7 @@ class Capability:
     title: str
     actions: tuple[str, ...]
     parameters: tuple[str, ...]
+    effects: CapabilityEffects = MUTATING_EFFECTS
 
     @property
     def native_actions(self) -> tuple[str, ...]:
@@ -20,11 +46,15 @@ class Capability:
 
     @property
     def description(self) -> str:
-        return CAPABILITY_DESCRIPTIONS[self.name]
+        return " ".join(
+            filter(None, (CAPABILITY_DESCRIPTIONS[self.name], self.effects.description_suffix))
+        )
 
 
-def _feature(name, source, group, title, actions, parameters):
-    return Capability(name, source, group, title, tuple(actions.split()), tuple(parameters.split()))
+def _feature(name, source, group, title, actions, parameters, *, effects=MUTATING_EFFECTS):
+    return Capability(
+        name, source, group, title, tuple(actions.split()), tuple(parameters.split()), effects
+    )
 
 
 CAPABILITIES: tuple[Capability, ...] = (
@@ -59,6 +89,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Physics Queries",
         "raycast raycast_all linecast shapecast overlap",
         "dimension origin direction max_distance layer_mask query_trigger_interaction shape position size start end point1 point2 height capsule_direction angle",
+        effects=READ_ONLY_EFFECTS,
     ),
     _feature(
         "apply_physics_force",
@@ -83,6 +114,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Physics Diagnostics",
         "validate diagnose_pair",
         "dimension target search_method page_size cursor collider_type component_index other_target other_collider_type other_component_index other_search_method contact_limit observe_contacts",
+        effects=CONTACT_OBSERVER_EFFECTS,
     ),
     _feature(
         "simulate_physics",
@@ -227,6 +259,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Inspect Prefabs",
         "get_info get_hierarchy",
         "prefab_path page_size cursor max_depth",
+        effects=READ_ONLY_EFFECTS,
     ),
     _feature(
         "prefab_create",
@@ -286,6 +319,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Scene Reference Diagnostics",
         "validate_references",
         "path reference_scope max_objects max_work page_size page_number reference_revision reference_snapshot reference_cursor",
+        effects=READ_ONLY_EFFECTS,
     ),
     _feature(
         "asset_inspect",
@@ -310,6 +344,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Asset References & Change Previews",
         "get_dependencies get_reverse_references preview_move preview_delete",
         "path destination scan_root max_assets max_work recursive page_size page_number reference_revision",
+        effects=READ_ONLY_EFFECTS,
     ),
     _feature(
         "asset_labels",
@@ -326,6 +361,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Asset Bundle Inspection",
         "list_asset_bundles get_bundle_assets get_bundle_dependencies",
         "bundle_name recursive page_size page_number",
+        effects=READ_ONLY_EFFECTS,
     ),
     _feature(
         "ui_source",
@@ -350,6 +386,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "UI Toolkit / Inspect & Diagnose",
         "ping get_visual_tree diagnose",
         "target component_type max_depth max_nodes max_evaluations max_characters max_pairs max_findings",
+        effects=READ_ONLY_EFFECTS,
     ),
     _feature(
         "ui_element",

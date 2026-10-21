@@ -12,7 +12,7 @@ description: "Run ray, shape and overlap queries in 2D or 3D."
 
 ## Description
 
-Run ray, shape and overlap queries in 2D or 3D.
+Run ray, shape and overlap queries in 2D or 3D. Read-only inspection; results can change with Unity state.
 
 ## Parameters
 

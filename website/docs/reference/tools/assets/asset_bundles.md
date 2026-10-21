@@ -12,7 +12,7 @@ description: "Inspect asset bundles, their contents and dependencies."
 
 ## Description
 
-Inspect asset bundles, their contents and dependencies.
+Inspect asset bundles, their contents and dependencies. Read-only inspection; results can change with Unity state.
 
 ## Parameters
 

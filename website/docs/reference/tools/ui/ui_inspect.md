@@ -12,7 +12,7 @@ description: "Inspect the visual tree or diagnose UI Toolkit layout and text."
 
 ## Description
 
-Inspect the visual tree or diagnose UI Toolkit layout and text.
+Inspect the visual tree or diagnose UI Toolkit layout and text. Read-only inspection; results can change with Unity state.
 
 ## Parameters
 
