@@ -38,6 +38,13 @@ namespace MCPForUnity.Editor.Helpers
             if (texture == null)
                 return;
 
+            if (texture.format == TextureFormat.RGBA32)
+            {
+                var data = texture.GetPixelData<Color32>(0);
+                for (int i = 0; i < data.Length; i++)
+                    data[i] = color;
+                return;
+            }
             Color32[] pixels = new Color32[texture.width * texture.height];
             for (int i = 0; i < pixels.Length; i++)
             {
@@ -102,7 +109,20 @@ namespace MCPForUnity.Editor.Helpers
             ApplyPreparedPixelDataToRegion(texture, pixels, offsetX, offsetY, regionWidth, regionHeight);
         }
 
-        internal static Color32[] PreparePixelData(JToken pixelsToken, int regionWidth, int regionHeight)
+        internal sealed class PreparedPixelData
+        {
+            private readonly Color32[] colors;
+            private readonly byte[] bytes;
+
+            internal PreparedPixelData(Color32[] value) => colors = value;
+
+            internal PreparedPixelData(byte[] value) => bytes = value;
+
+            internal Color32 this[int index] =>
+                colors != null ? colors[index] : new Color32(bytes[index * 4], bytes[index * 4 + 1], bytes[index * 4 + 2], bytes[index * 4 + 3]);
+        }
+
+        internal static PreparedPixelData PreparePixelData(JToken pixelsToken, int regionWidth, int regionHeight)
         {
             if (regionWidth <= 0 || regionHeight <= 0)
                 throw new ArgumentException("Pixel region width and height must be positive.");
@@ -117,7 +137,7 @@ namespace MCPForUnity.Editor.Helpers
                 var colors = new Color32[pixelArray.Count];
                 for (int i = 0; i < colors.Length; i++)
                     colors[i] = ParseRequiredColor32(pixelArray[i] as JArray);
-                return colors;
+                return new PreparedPixelData(colors);
             }
             if (pixelsToken?.Type == JTokenType.String)
             {
@@ -134,18 +154,19 @@ namespace MCPForUnity.Editor.Helpers
                 // Compare pixels after divisibility to avoid overflowing count * 4.
                 if (rawData.Length % 4 != 0 || rawData.Length / 4 != expectedCount)
                     throw new ArgumentException($"Base64 data size mismatch: expected {expectedCount} RGBA32 pixels, got {rawData.Length} bytes.");
-                var colors = new Color32[rawData.Length / 4];
-                for (int i = 0; i < colors.Length; i++)
-                {
-                    int byteIndex = i * 4;
-                    colors[i] = new Color32(rawData[byteIndex], rawData[byteIndex + 1], rawData[byteIndex + 2], rawData[byteIndex + 3]);
-                }
-                return colors;
+                return new PreparedPixelData(rawData);
             }
             throw new ArgumentException("Pixels must be an array of colors or a base64 RGBA32 string.");
         }
 
-        internal static void ApplyPreparedPixelDataToRegion(Texture2D texture, Color32[] pixels, int offsetX, int offsetY, int regionWidth, int regionHeight)
+        internal static void ApplyPreparedPixelDataToRegion(
+            Texture2D texture,
+            PreparedPixelData pixels,
+            int offsetX,
+            int offsetY,
+            int regionWidth,
+            int regionHeight
+        )
         {
             int startX = Math.Max(0, offsetX);
             int startY = Math.Max(0, offsetY);
@@ -155,9 +176,15 @@ namespace MCPForUnity.Editor.Helpers
                 return;
             int clippedWidth = endX - startX;
             int clippedHeight = endY - startY;
-            if (clippedWidth == regionWidth && clippedHeight == regionHeight)
+            if (texture.format == TextureFormat.RGBA32)
             {
-                texture.SetPixels32(startX, startY, clippedWidth, clippedHeight, pixels);
+                var data = texture.GetPixelData<Color32>(0);
+                for (int py = startY; py < endY; py++)
+                for (int px = startX; px < endX; px++)
+                {
+                    int index = (int)(((long)py - offsetY) * regionWidth + ((long)px - offsetX));
+                    data[py * texture.width + px] = pixels[index];
+                }
                 return;
             }
             var colors = new Color32[clippedWidth * clippedHeight];

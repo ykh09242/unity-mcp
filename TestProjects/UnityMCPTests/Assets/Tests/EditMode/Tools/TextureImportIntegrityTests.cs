@@ -131,8 +131,8 @@ namespace MCPForUnityTests.EditMode.Tools
             var prepare = typeof(TextureOps).GetMethod("PreparePixelData", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.IsNotNull(prepare);
             int count = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length;
-            var colors = (Color32[])prepare.Invoke(null, new object[] { JToken.Parse(json), 2, 1 });
-            CollectionAssert.AreEqual(new[] { new Color32(1, 2, 3, 4), new Color32(5, 6, 7, 8) }, colors);
+            var colors = (TextureOps.PreparedPixelData)prepare.Invoke(null, new object[] { JToken.Parse(json), 2, 1 });
+            CollectionAssert.AreEqual(new[] { new Color32(1, 2, 3, 4), new Color32(5, 6, 7, 8) }, new[] { colors[0], colors[1] });
             Assert.AreEqual(count, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length);
         }
 
