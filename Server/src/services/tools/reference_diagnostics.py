@@ -34,6 +34,8 @@ def reference_page(
     reference_revision: str | None,
     *,
     scene: bool = False,
+    reference_snapshot: bool | None = None,
+    reference_cursor: str | None = None,
 ) -> dict[str, Any]:
     """Parse finite work/page budgets and an optional observation recheck."""
     params = {
@@ -48,4 +50,20 @@ def reference_page(
         ):
             raise ValueError("reference_revision must be an observed diagnostic revision.")
         params["referenceRevision"] = reference_revision
+    if reference_snapshot is not None:
+        if not scene or type(reference_snapshot) is not bool:
+            raise ValueError("reference_snapshot must be a boolean for scene diagnostics.")
+        params["referenceSnapshot"] = reference_snapshot
+    if reference_cursor is not None:
+        if (
+            not scene
+            or type(reference_cursor) is not str
+            or re.fullmatch(r"mcp-ref-snapshot-v1_[0-9a-f]{32}", reference_cursor) is None
+            or reference_revision is not None
+            or reference_snapshot is True
+        ):
+            raise ValueError(
+                "reference_cursor requires a captured cursor without a live revision or new snapshot."
+            )
+        params["referenceCursor"] = reference_cursor
     return params

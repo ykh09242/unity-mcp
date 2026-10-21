@@ -366,6 +366,45 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void CapturedReferencePagesRemainStableAfterOwnersChange()
+        {
+            var target = Make("SnapshotDeleted");
+            var owner = Make("SnapshotOwner");
+            owner.references = Enumerable.Repeat<Object>(target, 205).ToList();
+            EditorUtility.SetDirty(owner);
+            AssetDatabase.SaveAssets();
+            string path = AssetDatabase.GetAssetPath(owner);
+            Assert.IsTrue(AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(target)));
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            var request = new JObject
+            {
+                ["action"] = "validate_references",
+                ["referenceScope"] = "scriptable_object",
+                ["path"] = path,
+                ["pageSize"] = 100,
+                ["referenceSnapshot"] = true,
+            };
+            JToken first = Success(JObject.FromObject(ManageScene.HandleCommand(request)));
+            string cursor = (string)first["referenceCursor"];
+            Assert.IsNotEmpty(cursor);
+            owner = AssetDatabase.LoadAssetAtPath<ReferenceDiagnosticFixture>(path);
+            owner.references.Clear();
+            EditorUtility.SetDirty(owner);
+            AssetDatabase.SaveAssets();
+            request.Remove("referenceSnapshot");
+            request["referenceCursor"] = cursor;
+            request["pageNumber"] = 3;
+            JToken third = Success(JObject.FromObject(ManageScene.HandleCommand(request)));
+            Assert.AreEqual(5, third["issues"].Count());
+            Assert.AreEqual(205, (int)third["observedIssues"]);
+            Assert.AreEqual("captured", (string)third["freshness"]);
+            Assert.AreEqual((string)first["referenceRevision"], (string)third["referenceRevision"]);
+            Assert.AreEqual(0, (int)Success(Diagnose("scriptable_object", path))["observedIssues"], "Live diagnostics must still see current data.");
+            request["path"] = root + "/different.asset";
+            Assert.IsFalse(JObject.FromObject(ManageScene.HandleCommand(request)).Value<bool>("success"), "A cursor cannot change scope.");
+        }
+
+        [Test]
         public void InactiveAdditiveSceneAndPrefabReferencesHaveOwningComponentLocations()
         {
             // Given: an inactive object in an owned additive scene and a prefab using a deleted material.
