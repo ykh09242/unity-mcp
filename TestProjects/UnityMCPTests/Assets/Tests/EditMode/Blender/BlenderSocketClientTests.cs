@@ -20,6 +20,16 @@ namespace MCPForUnityTests.Editor.Blender
         private static byte[] Bytes(string s) => Encoding.UTF8.GetBytes(s);
 
         [Test]
+        public void LargeResponseAndDayLongReadBudgetRemainAvailable()
+        {
+            string expected = new string('x', 17 * 1024 * 1024);
+            byte[] payload = Bytes(new JObject { ["status"] = "success", ["result"] = expected }.ToString());
+            using var stream = new TestStream(payload, maxChunk: 65536, failOnEnd: true);
+            Assert.That((string)BlenderSocketClient.ReadResponse(stream, "execute_code", 86400), Is.EqualTo(expected));
+            Assert.That(stream.FirstTimeout, Is.GreaterThan(3600 * 1000));
+        }
+
+        [Test]
         public void TryParseResponse_IsFalse_ForAPartialPrefix()
         {
             byte[] buf = Bytes("{\"status\": \"success\", \"result\": {\"name\": \"Sce");
