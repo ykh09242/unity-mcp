@@ -1453,6 +1453,7 @@ class PluginHub(WebSocketEndpoint):
         *,
         _budget: _CommandBudget | None = None,
         _expected_read: _ConnectionReadIdentity | None = None,
+        _expected_generation: str | None = None,
         _catalog_guard=None,
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
@@ -1462,6 +1463,11 @@ class PluginHub(WebSocketEndpoint):
             params,
             _budget=_budget,
             _expected_read=_expected_read,
+            **(
+                {"_expected_generation": _expected_generation}
+                if _expected_generation is not None
+                else {}
+            ),
             _catalog_guard=_catalog_guard,
             **({"_progress": _progress} if _progress is not None else {}),
         )
@@ -1477,6 +1483,7 @@ class PluginHub(WebSocketEndpoint):
         *,
         _budget: _CommandBudget | None = None,
         _expected_read: _ConnectionReadIdentity | None = None,
+        _expected_generation: str | None = None,
         _catalog_guard=None,
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
@@ -1500,6 +1507,11 @@ class PluginHub(WebSocketEndpoint):
                         params,
                         budget,
                         _expected_read=_expected_read,
+                        **(
+                            {"_expected_generation": _expected_generation}
+                            if _expected_generation is not None
+                            else {}
+                        ),
                         _catalog_guard=_catalog_guard,
                         **({"_progress": _progress} if _progress is not None else {}),
                     )
@@ -1537,6 +1549,7 @@ class PluginHub(WebSocketEndpoint):
         budget: _CommandBudget,
         *,
         _expected_read: _ConnectionReadIdentity | None = None,
+        _expected_generation: str | None = None,
         _catalog_guard=None,
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
@@ -1583,6 +1596,11 @@ class PluginHub(WebSocketEndpoint):
                 if _expected_read is not None:
                     return cls._unavailable_retry_response("read_invalidated")
                 raise CommandNotDispatchedError(f"Plugin session {session_id} not connected")
+            if (
+                _expected_generation is not None
+                and getattr(websocket.state, "plugin_generation", None) != _expected_generation
+            ):
+                return cls._unavailable_retry_response("observation_generation_changed")
             if _expected_read is not None and not cls._matches_read_identity(
                 websocket, user_id, _expected_read
             ):

@@ -350,15 +350,18 @@ class TestJobTasks(ServerExtension):
         # this same SDK request context directly. Never retain either in workers.
         ctx = request_context._srctx if request_context is not None else None
         args = params.arguments or {}
+        operation_wait = params.name == "wait_for_operation"
+        wait_timeout = args.get("wait_timeout", 30 if operation_wait else None)
         eligible = (
             not self._closed
             and ctx is not None
             and ctx.request is not None
             and ctx.protocol_version in _MODERN
             and self.client_settings(ctx) is not None
-            and params.name == "get_test_job"
-            and type(args.get("wait_timeout")) is int
-            and 0 < args["wait_timeout"] <= 60
+            and params.name in {"get_test_job", "wait_for_operation"}
+            and type(wait_timeout) is int
+            and 0 < wait_timeout <= 60
+            and (not operation_wait or set(args) <= {"kind", "job_id", "wait_timeout"})
             and not any(args.get(key) for key in ("include_details", "include_failed_tests"))
             and args.get("page_size") is None
             and args.get("cursor") is None

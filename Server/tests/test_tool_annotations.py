@@ -46,6 +46,7 @@ READ_ONLY = {
     "get_compile_job",
     "get_sha",
     "get_test_job",
+    "wait_for_operation",
     "get_tests",
     # Scoped NGO configuration diagnostics; no asset refresh, network start or settings writes.
     "manage_netcode",

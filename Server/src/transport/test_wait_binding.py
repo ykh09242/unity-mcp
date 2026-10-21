@@ -29,6 +29,11 @@ from services.test_wait_journal import (
     WaitOperation,
 )
 from services.tools.test_job_wait import test_job_wait_deadline
+from services.tools.wait_for_operation import (
+    ObservationTarget,
+    capture_target,
+    operation_wait_target,
+)
 from transport.local_auth_middleware import AUTHENTICATED_LOCAL_STATE
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from transport.plugin_hub import capture_http_request_budget, detached_http_request_budget
@@ -94,18 +99,24 @@ class _SdkResultKernel:
                     ("unity_instance", operation.instance),
                     ("unity_session_id", operation.session_id),
                     ("user_id", operation.user_id),
+                    ("operation_wait_generation", operation.generation),
                 ):
                     await context.set_state(key, value, serializable=False)
                 try:
                     # Public SDK execution performs real schema validation,
                     # FunctionTool conversion and configured error masking.
+                    arguments = {"job_id": operation.job_id, "wait_timeout": operation.wait_timeout}
+                    if operation.tool_name == "wait_for_operation":
+                        arguments["kind"] = operation.job_kind
                     return await self.server.call_tool(
-                        "get_test_job",
-                        {"job_id": operation.job_id, "wait_timeout": operation.wait_timeout},
+                        operation.tool_name,
+                        arguments,
                         run_middleware=False,
                     )
                 except (DisabledError, NotFoundError):
-                    return ToolResult(content="Unknown tool: 'get_test_job'", is_error=True)
+                    return ToolResult(
+                        content=f"Unknown tool: {operation.tool_name!r}", is_error=True
+                    )
                 except FastMCPError as error:
                     # This is the SDK handler's bridge AFTER public call_tool
                     # applied masking. Do not recreate its exception policy.
@@ -151,7 +162,8 @@ def install_test_job_tasks(
         if snapshot is None:
             return None
         loop = asyncio.get_running_loop()
-        inner = loop.time() + params.arguments["wait_timeout"]
+        wait_timeout = params.arguments.get("wait_timeout", 30)
+        inner = loop.time() + wait_timeout
         instance = await context.get_state("unity_instance")
         session_id = await context.get_state("unity_session_id")
         user_id = await context.get_state("user_id") if remote_hosted else None
@@ -162,6 +174,9 @@ def install_test_job_tasks(
             or not session_id
         ):
             return None
+        target = await capture_target(context) if params.name == "wait_for_operation" else None
+        if params.name == "wait_for_operation" and target is None:
+            return None
         wall, now = time.time(), loop.time()
         try:
             operation = WaitOperation(
@@ -171,7 +186,10 @@ def install_test_job_tasks(
                 instance=instance,
                 session_id=session_id,
                 job_id=params.arguments["job_id"],
-                wait_timeout=params.arguments["wait_timeout"],
+                wait_timeout=wait_timeout,
+                tool_name=params.name,
+                job_kind=params.arguments.get("kind") if target is not None else None,
+                generation=target.generation if target is not None else None,
                 wait=DeadlineCheckpoint.capture(max(0, inner - now), now=wall),
                 outer=DeadlineCheckpoint.capture(max(0, snapshot.expires_at - now), now=wall),
                 evidence=asdict(snapshot.evidence),
@@ -185,9 +203,18 @@ def install_test_job_tasks(
 
     async def fallback(captured, call_next):
         token = test_job_wait_deadline.set(captured.wait_deadline)
+        operation = captured.operation
+        target_token = operation_wait_target.set(
+            ObservationTarget(
+                operation.instance, operation.session_id, operation.generation, operation.user_id
+            )
+            if operation.tool_name == "wait_for_operation"
+            else None
+        )
         try:
             return await call_next()
         finally:
+            operation_wait_target.reset(target_token)
             test_job_wait_deadline.reset(token)
 
     async def execute(captured):
@@ -197,7 +224,9 @@ def install_test_job_tasks(
             with detached_http_request_budget(captured.budget_snapshot, guard) as budget:
                 if asyncio.get_running_loop().time() >= captured.outer_deadline:
                     result = ToolResult(
-                        structured_content=budget.budget.timeout_response("get_test_job"),
+                        structured_content=budget.budget.timeout_response(
+                            captured.operation.tool_name
+                        ),
                         is_error=True,
                     )
                 else:
@@ -208,7 +237,9 @@ def install_test_job_tasks(
                         if not guard.expired():
                             raise
                         result = ToolResult(
-                            structured_content=budget.budget.timeout_response("get_test_job"),
+                            structured_content=budget.budget.timeout_response(
+                                captured.operation.tool_name
+                            ),
                             is_error=True,
                         )
                 return sdk.serialize(result)

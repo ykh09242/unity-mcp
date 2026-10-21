@@ -19,7 +19,7 @@ from itertools import islice
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from models.response_limits import (
     MAX_RESPONSE_BYTES,
@@ -84,9 +84,21 @@ class WaitOperation(BaseModel):
     session_id: str = Field(min_length=1, max_length=1024)
     job_id: str = Field(min_length=1, max_length=1024)
     wait_timeout: int = Field(default=1, ge=1, le=60)
+    tool_name: Literal["get_test_job", "wait_for_operation"] = "get_test_job"
+    job_kind: Literal["build", "package", "scenario"] | None = None
+    generation: str | None = Field(default=None, min_length=1, max_length=1024)
     evidence: WaitCommandEvidence | None = None
     wait: DeadlineCheckpoint
     outer: DeadlineCheckpoint
+
+    @model_validator(mode="after")
+    def validate_adapter(self):
+        if self.tool_name == "wait_for_operation":
+            if self.job_kind is None or self.generation is None:
+                raise ValueError("Operation waits require their captured adapter and generation")
+        elif self.job_kind is not None or self.generation is not None:
+            raise ValueError("Test waits do not use an operation adapter")
+        return self
 
 
 TaskStatus = Literal["working", "completed", "failed", "cancelled"]

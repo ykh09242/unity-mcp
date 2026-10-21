@@ -23,7 +23,7 @@
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/1aa89bea85ec49940eb3c560ee7c8c04386b848c.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/b67d70e98806d587eb67644a057c7e2223e62320.zip#subdirectory=Server",
         "mcp-for-unity"
       ],
       "env": {}
@@ -161,6 +161,10 @@
     {
       "name": "get_test_job",
       "description": "Get status of async test job"
+    },
+    {
+      "name": "wait_for_operation",
+      "description": "Observe an existing build, package or scenario job without starting or cancelling it"
     },
     {
       "name": "get_tests",

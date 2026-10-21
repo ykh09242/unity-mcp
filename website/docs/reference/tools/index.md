@@ -41,7 +41,7 @@ Camera setup, Cinemachine and view capture
 - **[`manage_cameras`](./camera/manage_cameras.md)** — Create or list cameras, select targets and configure lenses or priority.
 - **[`manage_cinemachine`](./camera/manage_cinemachine.md)** — Configure Cinemachine brains, tracking, extensions and camera blends.
 
-## `core` &nbsp; (41 tools)
+## `core` &nbsp; (42 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`asset_inspect`](./core/asset_inspect.md)** — Search assets or inspect their metadata and components.
@@ -84,6 +84,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`script_change_set`](./core/script_change_set.md)** — Prepare, apply, inspect or recover 1–256 existing C# source replacements as one bounded change set.
 - **[`set_active_instance`](./core/set_active_instance.md)** — Set the active Unity instance for this client/session.
 - **[`validate_script`](./core/validate_script.md)** — Validate a C# script and report diagnostics, the effective validation engine, and context limitations.
+- **[`wait_for_operation`](./core/wait_for_operation.md)** — Observe an existing build, package mutation/resolve, or single scenario job.
 
 ## `docs` &nbsp; (2 tools)
 Unity API reflection and documentation lookup
