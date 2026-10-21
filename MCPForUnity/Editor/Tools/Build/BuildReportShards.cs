@@ -51,13 +51,21 @@ namespace MCPForUnity.Editor.Tools.Build
             if (Directory.Exists(directory))
                 throw new IOException("Report generation already exists.");
             Directory.CreateDirectory(directory);
+            PublishingGenerations.Add(directory);
             bool published = false;
             long bytes = 0;
             try
             {
                 Atomic(
                     SafePathUtility.ResolveWithinRoot(directory, "owner.json"),
-                    Utf8.GetBytes(new JObject { ["report_id"] = id, ["generation"] = generation }.ToString(Formatting.None))
+                    Utf8.GetBytes(
+                        new JObject
+                        {
+                            ["report_id"] = id,
+                            ["generation"] = generation,
+                            ["session"] = sessionId,
+                        }.ToString(Formatting.None)
+                    )
                 );
                 WriteSection(record, "steps", steps, ref bytes);
                 WriteSection(record, "packed_assets", packed, ref bytes);
@@ -84,6 +92,7 @@ namespace MCPForUnity.Editor.Tools.Build
             }
             finally
             {
+                PublishingGenerations.Remove(directory);
                 if (!published)
                 {
                     try
@@ -274,30 +283,59 @@ namespace MCPForUnity.Editor.Tools.Build
             record[section] = rows;
         }
 
-        private static void DeleteGeneration(string id, string generation)
+        private static void DeleteGeneration(string id, string generation) => DeleteGenerationFiles(id, generation, int.MaxValue);
+
+        private static int DeleteGenerationFiles(string id, string generation, int maximum)
         {
             string directory = DetailsDirectory(id, generation);
-            if (!Directory.Exists(directory))
-                return;
+            if (maximum == 0 || PublishingGenerations.Contains(directory) || !Directory.Exists(directory))
+                return 0;
             string owner = SafePathUtility.ResolveWithinRoot(directory, "owner.json");
             var marker = Read(owner);
-            if (marker.Count != 2 || (string)marker["report_id"] != id || (string)marker["generation"] != generation)
-                return;
+            if (!OwnsGeneration(marker, id, generation))
+                return 0;
             var entries = Directory.EnumerateFileSystemEntries(directory).Take(MaxDetailShards * 2 + 4).ToArray();
             if (
                 entries.Length > MaxDetailShards * 2 + 3
                 || entries.Any(path => Path.GetFileName(path) != "owner.json" && !ShardNamePattern.IsMatch(Path.GetFileName(path)))
             )
-                return;
+                return 0;
             // Inspect every candidate before deleting any; unknown entries/links stay untouched.
             var checkedFiles = entries.Select(path => SafePathUtility.ResolveWithinRoot(directory, Path.GetFileName(path))).ToArray();
             if (checkedFiles.Any(path => !File.Exists(path)))
-                return;
-            foreach (string path in checkedFiles.Where(path => Path.GetFileName(path) != "owner.json"))
-                File.Delete(path);
-            File.Delete(owner);
-            if (!Directory.EnumerateFileSystemEntries(directory).Any())
-                Directory.Delete(directory);
+                return 0;
+            int deleted = 0;
+            foreach (string path in checkedFiles.Where(path => Path.GetFileName(path) != "owner.json").Take(maximum))
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch
+                {
+                    return deleted;
+                }
+                deleted++;
+            }
+            if (deleted < maximum)
+            {
+                try
+                {
+                    File.Delete(owner);
+                }
+                catch
+                {
+                    return deleted;
+                }
+                deleted++;
+                try
+                {
+                    if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                        Directory.Delete(directory);
+                }
+                catch { /* The counted file deletions remain valid even if the empty directory stays. */ }
+            }
+            return deleted;
         }
 
         private static void DeleteDetails(string id, string keep = null)

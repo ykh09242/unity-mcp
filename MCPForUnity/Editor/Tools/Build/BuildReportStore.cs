@@ -245,7 +245,7 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static void Atomic(string destination, byte[] bytes)
         {
-            string temporary = Location("write-" + Guid.NewGuid().ToString("N") + ".tmp");
+            string temporary = Location("write-v2-" + sessionId + "-" + Guid.NewGuid().ToString("N") + ".tmp");
             try
             {
                 using (var stream = new FileStream(StreamPath(temporary), FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -270,11 +270,8 @@ namespace MCPForUnity.Editor.Tools.Build
             if (!Directory.Exists(Root))
                 return Array.Empty<string>();
             var files = new List<string>();
-            int inspected = 0;
-            foreach (string file in Directory.EnumerateFiles(Root))
+            foreach (string file in Directory.EnumerateFiles(Root, active ? "br-*.active.json" : "br-*.json"))
             {
-                if (++inspected > 256)
-                    throw new InvalidOperationException("Artifact directory entry budget exceeded.");
                 string name = Path.GetFileName(file);
                 string suffix = active ? ".active.json" : ".json";
                 if (name.EndsWith(suffix, StringComparison.Ordinal) && IdPattern.IsMatch(name.Substring(0, name.Length - suffix.Length)))
@@ -287,6 +284,7 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static void Prune(string keep)
         {
+            RecoverArtifacts();
             string[] records = Files();
             foreach (string path in records)
             {
@@ -315,6 +313,7 @@ namespace MCPForUnity.Editor.Tools.Build
             if (!Regex.IsMatch(jobId ?? "", "\\A[A-Za-z0-9_-]{1,128}\\z"))
                 throw new InvalidOperationException("Invalid observation identity.");
             Directory.CreateDirectory(Root);
+            RecoverArtifacts();
             string id = Identity(jobId);
             string path = Location(id + ".active.json");
             if (Files(true).Length >= MaxRecords && !File.Exists(path))
@@ -685,31 +684,36 @@ namespace MCPForUnity.Editor.Tools.Build
             string expected = Revision(request, "history_revision");
             if (expected != null && expected != revision)
                 throw new ReportFailure("build_report_revision_conflict");
+            var observations = new Dictionary<string, JObject>(StringComparer.Ordinal);
             var active = new JArray();
+            if (Directory.Exists(Root) && Directory.EnumerateFiles(Root, "interrupted-*.corrupt.json").Any())
+                active.Add(new JObject { ["state"] = "corrupt_observation", ["resumed"] = false });
+            try
+            {
+                foreach (var marker in ReadInterrupted())
+                    observations[(string)marker["job_id"]] = MarkerObservation(marker, true);
+            }
+            catch
+            {
+                active.Add(new JObject { ["state"] = "corrupt_observation", ["resumed"] = false });
+            }
             foreach (string path in Files(true))
             {
                 try
                 {
                     var marker = Read(path);
-                    string job = (string)marker["job_id"];
-                    if (!Regex.IsMatch(job ?? "", "\\A[A-Za-z0-9_-]{1,128}\\z"))
+                    ValidateMarker(marker);
+                    if (Path.GetFileName(path) != Identity((string)marker["job_id"]) + ".active.json")
                         throw new ReportFailure("build_report_corrupt");
-                    active.Add(
-                        new JObject
-                        {
-                            ["job_id"] = job,
-                            ["kind"] = (string)marker["kind"] == "batch" ? "batch" : "build",
-                            ["state"] =
-                                (string)marker["session"] == sessionId ? ((string)marker["state"] == "building" ? "building" : "pending") : "interrupted",
-                            ["resumed"] = false,
-                        }
-                    );
+                    observations[(string)marker["job_id"]] = MarkerObservation(marker, (string)marker["session"] != sessionId);
                 }
                 catch
                 {
                     active.Add(new JObject { ["state"] = "corrupt_observation", ["resumed"] = false });
                 }
             }
+            foreach (var observation in observations.Values)
+                active.Add(observation);
             return new JObject
             {
                 ["reports"] = Paged(reports, size, page),
