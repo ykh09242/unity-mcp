@@ -57,6 +57,49 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void SlowQueuedCommandsLeaveUnstartedWorkForTheNextPump()
+        {
+            const string name = "__opt06_dispatch_slow";
+            using var handlers = new ProgressHandlerScope();
+            using var cts = new CancellationTokenSource();
+            int calls = 0;
+            handlers.Set(
+                name,
+                new HandlerInfo(
+                    name,
+                    _ =>
+                    {
+                        calls++;
+                        Thread.Sleep(12);
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            var flag = Dispatcher.GetField("_processingFlag", StaticPrivate);
+            var pump = Dispatcher.GetMethod("ProcessQueue", StaticPrivate);
+            try
+            {
+                flag.SetValue(null, 1);
+                for (int i = 0; i < 6; i++)
+                    Dispatch("{\"type\":\"" + name + "\"}", cts.Token);
+                flag.SetValue(null, 0);
+                pump.Invoke(null, null);
+                Assert.Greater(calls, 0);
+                Assert.Less(calls, 6, "A single pump must not drain every slow command.");
+                for (int i = 0; i < 6; i++)
+                    pump.Invoke(null, null);
+                Assert.AreEqual(6, calls, "Yielding must not lose or permanently mark unstarted commands as executing.");
+            }
+            finally
+            {
+                flag.SetValue(null, 0);
+                cts.Cancel();
+                pump.Invoke(null, null);
+            }
+        }
+
+        [Test]
         public void ExecuteCommandJsonAsync_AlreadyCanceled_CompletesWithoutEditorPump()
         {
             using var cts = new CancellationTokenSource();

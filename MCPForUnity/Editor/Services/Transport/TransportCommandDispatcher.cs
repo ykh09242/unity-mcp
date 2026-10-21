@@ -387,6 +387,8 @@ namespace MCPForUnity.Editor.Services.Transport
 
             try
             {
+                long sliceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                long sliceTicks = Math.Max(1, System.Diagnostics.Stopwatch.Frequency / 250);
                 while (true)
                 {
                     Action callback;
@@ -398,6 +400,8 @@ namespace MCPForUnity.Editor.Services.Transport
                         MainThreadCallbacks.RemoveFirst();
                     }
                     callback();
+                    if (System.Diagnostics.Stopwatch.GetTimestamp() - sliceStarted >= sliceTicks)
+                        break;
                 }
                 List<(string id, PendingCommand pending)> ready = null;
 
@@ -409,7 +413,6 @@ namespace MCPForUnity.Editor.Services.Transport
                     {
                         if (kvp.Value.IsExecuting)
                             continue;
-                        kvp.Value.IsExecuting = true;
                         ready ??= new List<(string, PendingCommand)>(Pending.Count);
                         ready.Add((kvp.Key, kvp.Value));
                     }
@@ -418,7 +421,17 @@ namespace MCPForUnity.Editor.Services.Transport
                 }
                 foreach (var (id, pending) in ready)
                 {
+                    lock (PendingLock)
+                    {
+                        if (!Pending.TryGetValue(id, out var current) || !ReferenceEquals(current, pending) || pending.IsExecuting)
+                            continue;
+                        pending.IsExecuting = true;
+                    }
                     ProcessCommand(id, pending);
+                    // Always admit at least one ready command, even when callbacks used the slice.
+                    // Leave unstarted commands cancellable and eligible for the next update.
+                    if (System.Diagnostics.Stopwatch.GetTimestamp() - sliceStarted >= sliceTicks)
+                        break;
                 }
             }
             finally
