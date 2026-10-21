@@ -254,10 +254,26 @@ async def test_each_retained_payload_budget_rejects_before_send(
 async def test_all_completion_paths_release_admission(admission_hub, monkeypatch, cleanup):
     socket = await register_socket(admission_hub, "a", "alice")
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
-    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.02 if cleanup == "timeout" else 30)
+    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 30)
+    deadlines = []
+    if cleanup == "timeout":
+
+        def capture_deadline(when):
+            scope = asyncio.timeout_at(when)
+            deadlines.append(scope)
+            return scope
+
+        # Keep the real timeout/cancellation path, but expire it only after dispatch.
+        # A tiny wall-clock deadline can expire during authorization on a loaded CI host.
+        local_asyncio = SimpleNamespace(**vars(asyncio))
+        local_asyncio.timeout_at = capture_deadline
+        monkeypatch.setattr(hub_module, "asyncio", local_asyncio)
     task = await start_command("a")
     try:
-        if cleanup == "result":
+        if cleanup == "timeout":
+            assert len(deadlines) == 1
+            deadlines[0].reschedule(asyncio.get_running_loop().time())
+        elif cleanup == "result":
             await hub.on_receive(
                 socket,
                 {
@@ -272,7 +288,7 @@ async def test_all_completion_paths_release_admission(admission_hub, monkeypatch
             await PluginHub._evict_connection("a", "test-stale")
         elif cleanup == "shutdown":
             await PluginHub.shutdown()
-        result = await asyncio.wait_for(task, 0.3)
+        result = await asyncio.wait_for(task, 3)
         assert result["success"] is (cleanup == "result")
         if cleanup != "result":
             assert result["data"]["reason"] == "outcome_unknown"
