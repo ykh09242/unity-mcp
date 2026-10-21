@@ -106,7 +106,8 @@
         "MCPForUnityTests.Editor.Windows.ValidationCapabilityTests.EveryLevelExplainsAvailableEngineAndCoverage"
       ],
       "disruptive": false,
-      "platform_exclusions": {}
+      "platform_exclusions": {},
+      "requires_graphics": true
     }
   }
 }

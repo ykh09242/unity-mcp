@@ -122,6 +122,27 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.assertEqual(0, process.terminated)
         self.assertEqual(0, process.killed)
 
+    def test_graphics_group_launch_omits_null_device_and_records_requirement(self):
+        self.args.groups_manifest = qa.ROOT / "tools/unity-native-groups.json"
+        self.args.group = ["validation-capabilities"]
+        selection = qa.load_selection(self.args.groups_manifest, self.args.group, "win32")
+        cases = "".join(
+            f'<test-case fullname="{method}" result="Passed"/>' for method in selection["required"]
+        )
+        self.xml = (
+            f'<test-run result="Passed" total="{len(selection["required"])}" '
+            f'passed="{len(selection["required"])}" failed="0" skipped="0" inconclusive="0">{cases}</test-run>'
+        )
+        self.assertEqual(0, self.run_fake(OwnedFakeProcess([0])))
+        record = self.record()
+        self.assertNotIn("-nographics", record["command"])
+        self.assertTrue(record["selection"]["requiresGraphics"])
+
+    def test_ordinary_group_retains_headless_launch(self):
+        self.passed_xml()
+        self.assertEqual(0, self.run_fake(OwnedFakeProcess([0])))
+        self.assertIn("-nographics", self.record()["command"])
+
     def test_nonzero_exit_cannot_pass_even_with_passed_xml(self):
         self.passed_xml()
         process = OwnedFakeProcess([2])
