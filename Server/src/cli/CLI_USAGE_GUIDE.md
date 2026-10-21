@@ -1261,6 +1261,14 @@ unity-mcp [GLOBAL_OPTIONS] command subcommand [ARGS] [OPTIONS]
    unity-mcp asset info "Assets/Prefabs/Player.prefab"
    ```
 
+## Test completion exit codes
+
+`editor tests --wait N` and `editor poll-test JOB --wait N` with a positive wait return exit code **0** only when the job succeeds within that wait. Failed or cancelled jobs, invalid observations and command failures return **1**. An expired CLI wait returns **124**, with `code: "test_wait_timeout"` and the last observed job data. A response arriving at or after the deadline does not make the wait successful, even when its observed job status is terminal.
+
+A wait timeout does not cancel or restart the Unity job. Poll its existing identity before deciding on another action. `--run-timeout-ms` remains a separate opt-in native job deadline. No workload or duration limits were reduced.
+
+For a single status query whose exit code describes whether the query succeeded, use `editor poll-test JOB --wait 0`. Paged detail reads also remain immediate status queries. `editor tests --async` returns after the start acknowledgement, even when combined with `--wait`. JSON output is one document in every case; terminal job observations retain their native envelope while the process exit code reports completion failure.
+
 ## Completed test results and exports
 
 `editor tests` and `editor poll-test JOB` keep their existing defaults. For bounded completed details, use `editor poll-test JOB --details --page-size 100`, then pass the returned `result_page.next_cursor` with `--cursor`. `--failed-only` includes non-Passed results, including skipped tests. Paged reads return immediately and do not wait for a running job. Legacy `--details` without paging still requests a whole result and can reach transport limits.

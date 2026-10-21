@@ -83,7 +83,9 @@ for label, reply, expected in cases:
             editor.time = SimpleNamespace(monotonic=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay))
             requests.clear()
             result = CliRunner().invoke(cli, ["--instance", "Selected@owned", "--format", output_format, *command, "--details", "--failed-only"])
-            expected_exit = 0 if reply["success"] else 1
+            waiting = int(command[-1]) > 0
+            unsuccessful_completion = waiting and reply.get("data", {}).get("status") in ("failed", "cancelled")
+            expected_exit = 1 if not reply["success"] or unsuccessful_completion else 0
             passed = result.exit_code == expected_exit and len(requests) == (2 if command[1] == "tests" else 1)
             if output_format == "json":
                 passed = passed and json.loads(result.stdout) == reply
