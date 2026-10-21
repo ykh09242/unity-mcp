@@ -63,6 +63,7 @@ namespace MCPForUnity.Editor.Services.Transport
             public CancellationToken CancellationToken { get; }
             public CancellationTokenRegistration CancellationRegistration { get; }
             public bool IsExecuting { get; set; }
+            public LinkedListNode<string> QueueNode { get; set; }
             public CommandOutcome Outcome { get; set; }
             public string LogTool { get; set; }
             public string LogType { get; set; }
@@ -131,6 +132,7 @@ namespace MCPForUnity.Editor.Services.Transport
         }
 
         private static readonly Dictionary<string, PendingCommand> Pending = new();
+        private static readonly LinkedList<string> ReadyCommands = new();
         private static readonly object PendingLock = new();
         private static readonly LinkedList<Action> MainThreadCallbacks = new();
         private static bool updateHooked;
@@ -220,6 +222,7 @@ namespace MCPForUnity.Editor.Services.Transport
             lock (PendingLock)
             {
                 Pending[id] = pending;
+                pending.QueueNode = ReadyCommands.AddLast(id);
             }
 
             // Register can invoke cancellation before the pending entry is inserted.
@@ -403,28 +406,19 @@ namespace MCPForUnity.Editor.Services.Transport
                     if (System.Diagnostics.Stopwatch.GetTimestamp() - sliceStarted >= sliceTicks)
                         break;
                 }
-                List<(string id, PendingCommand pending)> ready = null;
-
-                lock (PendingLock)
+                while (true)
                 {
-                    if (Pending.Count == 0)
-                        return;
-                    foreach (var kvp in Pending)
-                    {
-                        if (kvp.Value.IsExecuting)
-                            continue;
-                        ready ??= new List<(string, PendingCommand)>(Pending.Count);
-                        ready.Add((kvp.Key, kvp.Value));
-                    }
-                    if (ready == null)
-                        return;
-                }
-                foreach (var (id, pending) in ready)
-                {
+                    string id;
+                    PendingCommand pending;
                     lock (PendingLock)
                     {
-                        if (!Pending.TryGetValue(id, out var current) || !ReferenceEquals(current, pending) || pending.IsExecuting)
-                            continue;
+                        if (ReadyCommands.First == null)
+                            return;
+                        // Admission order survives yields and dictionary slot reuse.
+                        id = ReadyCommands.First.Value;
+                        pending = Pending[id];
+                        ReadyCommands.RemoveFirst();
+                        pending.QueueNode = null;
                         pending.IsExecuting = true;
                     }
                     ProcessCommand(id, pending);
@@ -644,6 +638,11 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 if (Pending.Remove(id, out pending))
                 {
+                    if (pending.QueueNode != null)
+                    {
+                        ReadyCommands.Remove(pending.QueueNode);
+                        pending.QueueNode = null;
+                    }
                     if (!pending.IsExecuting)
                     {
                         pending.ExecutionSource.TrySetResult(true);
