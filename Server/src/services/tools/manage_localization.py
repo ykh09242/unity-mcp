@@ -14,7 +14,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
 
 AssetPath = Annotated[StrictStr, Field(min_length=8, max_length=512)]
-PathList = Annotated[list[AssetPath], Field(min_length=1, max_length=16)]
+PathList = Annotated[list[AssetPath], Field(min_length=1, max_length=256)]
 
 
 def _asset_path(value: str) -> bool:
@@ -31,7 +31,7 @@ def _asset_path(value: str) -> bool:
     description=(
         "Inspect optional Unity Localization locale/table identities, shared keys, missing translations, "
         "static Smart String selectors and asset GUID references. No runtime formatting, loading or locale activation. "
-        "inspect requires 1..16 explicit table_paths; argument_names is the caller's available root-selector inventory, "
+        "inspect requires 1..256 explicit table_paths; argument_names is the caller's available root-selector inventory, "
         "not proof of custom formatter or runtime variable behavior. list_locales/list_tables use optional exact paths "
         "or bounded Assets discovery. set_string_entry corrects an existing shared key ID in one table and preserves "
         "is_smart when omitted. set_fallbacks replaces only explicit locale fallback metadata, refusing cycles. "
@@ -57,7 +57,7 @@ async def manage_localization(
         "Explicit read or correction action.",
     ],
     paths: Annotated[PathList | None, "Optional exact asset paths for discovery."] = None,
-    table_paths: Annotated[PathList | None, "Explicit tables to inspect, at most 16."] = None,
+    table_paths: Annotated[PathList | None, "Explicit tables to inspect, at most 256."] = None,
     table_path: Annotated[AssetPath | None, "Exact table asset for correction."] = None,
     locale_path: Annotated[AssetPath | None, "Exact Locale asset for fallback correction."] = None,
     key_id: Annotated[
@@ -65,7 +65,7 @@ async def manage_localization(
     ] = None,
     value: Annotated[
         StrictStr | None,
-        Field(max_length=8192),
+        Field(max_length=65536),
         "New string value, including an explicit empty value.",
     ] = None,
     is_smart: Annotated[StrictBool | None, "Explicit Smart String flag; omit to preserve."] = None,
@@ -79,7 +79,7 @@ async def manage_localization(
     ] = None,
     fallback_locale_paths: Annotated[
         list[AssetPath] | None,
-        Field(max_length=8),
+        Field(max_length=32),
         "Ordered fallbacks; explicit empty list clears fallback metadata only.",
     ] = None,
     expected_revision: Annotated[
@@ -87,7 +87,7 @@ async def manage_localization(
         Field(pattern="^[0-9a-f]{64}$"),
         "Exact current asset revision from inspection.",
     ] = None,
-    offset: Annotated[int | None, Field(strict=True, ge=0, le=4096), "Page offset."] = None,
+    offset: Annotated[int | None, Field(strict=True, ge=0, le=100000), "Page offset."] = None,
     limit: Annotated[
         int | None, Field(strict=True, ge=1, le=100), "Discovery page size, default 50."
     ] = None,
