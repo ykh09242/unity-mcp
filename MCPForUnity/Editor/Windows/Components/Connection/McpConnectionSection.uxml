@@ -1,8 +1,17 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
     <ui:Style src="../Common.uss" />
     <ui:VisualElement name="connection-section" class="section">
-        <ui:Label text="Server" class="section-title" />
+        <ui:Label text="Editor connection" class="section-title" />
         <ui:VisualElement class="section-content">
+            <ui:VisualElement class="setting-row connection-summary">
+                <ui:VisualElement class="status-container">
+                    <ui:Label text="Session" class="summary-caption" />
+                    <ui:VisualElement name="status-indicator" class="status-dot" />
+                    <ui:Label name="connection-status" text="Disconnected" class="status-text" />
+                </ui:VisualElement>
+                <ui:Button name="connection-toggle" text="Connect" class="action-button primary-button" />
+            </ui:VisualElement>
+            <ui:Label text="Connect this Editor to the selected server." class="help-text section-intro" />
             <ui:VisualElement class="setting-row">
                 <ui:Label text="Transport:" class="setting-label" />
                 <uie:EnumField name="transport-dropdown" class="setting-dropdown-inline" />
@@ -31,19 +40,12 @@
                 <ui:Label text="Local Server:" class="setting-label" />
                 <ui:Button name="start-http-server-button" text="Start Server" class="action-button start-server-button" />
             </ui:VisualElement>
-            <ui:Toggle name="keep-local-server-alive" label="Keep alive on editor exit" tooltip="Keep the shared server running when this project closes. If disabled, exit stops only this project's managed server when no Unity sessions remain." />
+            <ui:Toggle name="keep-local-server-alive" tooltip="Keep the shared server running when this project closes. If disabled, exit stops only this project's managed server when no Unity sessions remain." text="Keep local server running when this Editor closes" class="field-toggle" />
             <ui:VisualElement class="setting-row" name="unity-socket-port-row">
                 <ui:Label text="Unity Socket Port:" class="setting-label" />
                 <ui:TextField name="unity-port" class="port-field" />
             </ui:VisualElement>
-            <ui:VisualElement class="setting-row">
-                <ui:VisualElement class="status-container">
-                    <ui:VisualElement name="status-indicator" class="status-dot" />
-                    <ui:Label name="connection-status" text="Disconnected" class="status-text" />
-                </ui:VisualElement>
-                <ui:Button name="connection-toggle" text="Start" class="action-button" />
-            </ui:VisualElement>
-            <ui:Foldout name="manual-command-foldout" text="Manual Server Launch" value="false" class="manual-config-foldout">
+            <ui:Foldout name="manual-command-foldout" text="Launch the server manually" value="false" class="manual-config-foldout">
                 <ui:VisualElement name="http-server-command-section" class="manual-config-content">
                     <ui:Label text="Server Command" class="config-label" />
                     <ui:VisualElement class="config-json-row">

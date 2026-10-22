@@ -3,10 +3,13 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.Serialization;
 using MCPForUnity.Editor.Clients;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Windows.Components.ClientConfig;
 using NUnit.Framework;
+using UnityEditor;
+using UnityEngine;
 using UnityEngine.UIElements;
 
 namespace MCPForUnityTests.Editor.Windows
@@ -14,6 +17,51 @@ namespace MCPForUnityTests.Editor.Windows
     [Parallelizable(ParallelScope.None)]
     public class ClientConfigSectionTests
     {
+        private sealed class FoldoutWindow : EditorWindow { }
+
+        [Test]
+        public void NestedConfigurationFoldoutsPreserveSelectedClientPreference()
+        {
+            bool had = EditorPrefs.HasKey(EditorPrefKeys.ClientDetailsFoldoutOpen);
+            bool saved = EditorPrefs.GetBool(EditorPrefKeys.ClientDetailsFoldoutOpen);
+            var window = ScriptableObject.CreateInstance<FoldoutWindow>();
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.ClientDetailsFoldoutOpen, true);
+                window.ShowUtility();
+                var root = window.rootVisualElement;
+                AssetDatabase
+                    .LoadAssetAtPath<VisualTreeAsset>("Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/ClientConfig/McpClientConfigSection.uxml")
+                    .CloneTree(root);
+                var section = (McpClientConfigSection)FormatterServices.GetUninitializedObject(typeof(McpClientConfigSection));
+                Set(section, "<Root>k__BackingField", root);
+                Set(section, "configurators", new List<IMcpClientConfigurator>());
+                Invoke(section, "CacheUIElements");
+                Invoke(section, "InitializeUI");
+                var details = root.Q<Foldout>("client-details-foldout");
+                foreach (string name in new[] { "client-review-foldout", "manual-config-foldout" })
+                {
+                    var nested = root.Q<Foldout>(name);
+                    nested.value = true;
+                    nested.value = false;
+                    Assert.IsTrue(details.value);
+                    Assert.IsTrue(EditorPrefs.GetBool(EditorPrefKeys.ClientDetailsFoldoutOpen), name);
+                }
+                details.value = false;
+                Assert.IsFalse(EditorPrefs.GetBool(EditorPrefKeys.ClientDetailsFoldoutOpen));
+                details.value = true;
+                Assert.IsTrue(EditorPrefs.GetBool(EditorPrefKeys.ClientDetailsFoldoutOpen));
+            }
+            finally
+            {
+                window.Close();
+                if (had)
+                    EditorPrefs.SetBool(EditorPrefKeys.ClientDetailsFoldoutOpen, saved);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.ClientDetailsFoldoutOpen);
+            }
+        }
+
         [TestCase("path")]
         [TestCase("snippet")]
         [TestCase("steps")]

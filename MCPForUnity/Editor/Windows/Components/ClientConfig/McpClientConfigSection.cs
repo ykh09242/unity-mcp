@@ -165,7 +165,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 clientDetailsFoldout.value = EditorPrefs.GetBool(EditorPrefKeys.ClientDetailsFoldoutOpen, true);
                 clientDetailsFoldout.RegisterValueChangedCallback(evt =>
                 {
-                    EditorPrefs.SetBool(EditorPrefKeys.ClientDetailsFoldoutOpen, evt.newValue);
+                    if (evt.target == clientDetailsFoldout)
+                        EditorPrefs.SetBool(EditorPrefKeys.ClientDetailsFoldoutOpen, evt.newValue);
                 });
             }
 

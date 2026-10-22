@@ -12,6 +12,7 @@ using MCPForUnity.Editor.Windows.Components.Connection;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.UIElements;
+using UnityEngine;
 using UnityEngine.TestTools;
 using UnityEngine.UIElements;
 
@@ -382,14 +383,21 @@ namespace MCPForUnityTests.Editor.Windows
             pending.GetAwaiter().GetResult();
         }
 
+        private sealed class InputWindow : EditorWindow { }
+
         private static void ChangePort(TextField field, string value)
         {
-            string previous = field.value;
-            field.SetValueWithoutNotify(value);
-            using (var evt = ChangeEvent<string>.GetPooled(previous, value))
+            var window = ScriptableObject.CreateInstance<InputWindow>();
+            try
             {
-                evt.target = field;
-                field.SendEvent(evt);
+                window.ShowUtility();
+                window.rootVisualElement.Add(field);
+                field.value = value;
+            }
+            finally
+            {
+                field.RemoveFromHierarchy();
+                window.Close();
             }
         }
 
