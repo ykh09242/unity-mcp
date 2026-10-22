@@ -100,6 +100,9 @@ namespace MCPForUnityTests.Editor.Windows
                 }
 
                 Invoke(window, "SetupTabs");
+                typeof(MCPForUnityEditorWindow).GetField("guiCreated", InstanceFlags).SetValue(window, true);
+                window.ShowUtility();
+                Assert.IsNotNull(window.rootVisualElement.panel);
                 var selected = window.rootVisualElement.Q<ToolbarToggle>(expectedName + "-tab");
                 Assert.IsTrue(selected.value);
                 selected.value = false;

@@ -38,6 +38,7 @@ namespace MCPForUnity.Editor.Windows
         private McpAssetGenSection assetGenSection;
         private McpActivitySection activitySection;
         private McpReferenceGraphSection graphSection;
+        private McpWindowNavigation navigation;
         private ToolbarToggle graphTabToggle;
         private VisualElement graphPanel;
         private ToolbarToggle activityTabToggle;
@@ -602,6 +603,8 @@ namespace MCPForUnity.Editor.Windows
             updateCheckQueued = false;
             updateCheckPending = false;
             OpenWindows.Remove(this);
+            navigation?.Dispose();
+            navigation = null;
             graphSection?.Dispose();
             graphSection = null;
             activitySection?.Dispose();
@@ -681,6 +684,9 @@ namespace MCPForUnity.Editor.Windows
             RegisterTab(resourcesTabToggle, ActivePanel.Resources);
             RegisterTab(assetGenTabToggle, ActivePanel.AssetGen);
 
+            navigation?.Dispose();
+            navigation = new McpWindowNavigation(rootVisualElement, id => rootVisualElement.Q<ToolbarToggle>(id + "-tab").value = true);
+
             var savedPanel = EditorPrefs.GetString(EditorPrefKeys.EditorWindowActivePanel, ActivePanel.Clients.ToString());
             // Migrate old "Validation" saved value to "Deps"
             if (savedPanel == "Validation")
@@ -754,6 +760,8 @@ namespace MCPForUnity.Editor.Windows
             resourcesTabToggle?.SetValueWithoutNotify(panel == ActivePanel.Resources);
             assetGenTabToggle?.SetValueWithoutNotify(panel == ActivePanel.AssetGen);
 
+            string pageId = panel == ActivePanel.ReferenceGraph ? "graph" : panel.ToString().ToLowerInvariant();
+            navigation?.Select(pageId);
             EditorPrefs.SetString(EditorPrefKeys.EditorWindowActivePanel, panel.ToString());
         }
 

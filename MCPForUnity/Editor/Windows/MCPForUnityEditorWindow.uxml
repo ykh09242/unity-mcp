@@ -12,39 +12,54 @@
         <ui:VisualElement name="update-notification" class="update-notification">
             <ui:Label name="update-notification-text" class="update-notification-text" />
         </ui:VisualElement>
-        <ui:VisualElement name="tab-toolbar" class="tab-toolbar">
-            <uie:ToolbarToggle name="clients-tab" text="Connect" value="true" class="navigation-tab" />
-            <uie:ToolbarToggle name="tools-tab" text="Tools" class="navigation-tab" />
-            <uie:ToolbarToggle name="resources-tab" text="Resources" class="navigation-tab" />
-            <uie:ToolbarToggle name="assetgen-tab" text="Generation" class="navigation-tab" />
-            <uie:ToolbarToggle name="graph-tab" text="References" class="navigation-tab" />
-            <uie:ToolbarToggle name="activity-tab" text="Activity" class="navigation-tab" />
-            <uie:ToolbarToggle name="deps-tab" text="Dependencies" class="navigation-tab" />
-            <uie:ToolbarToggle name="advanced-tab" text="Advanced" class="navigation-tab" />
+        <ui:VisualElement name="compact-page-navigation" class="compact-page-navigation">
+            <ui:DropdownField name="page-selector" label="Page" class="page-selector" />
         </ui:VisualElement>
-        <ui:ScrollView name="graph-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-reference-graph-scroll">
-            <ui:VisualElement name="graph-container" class="section-stack" />
-        </ui:ScrollView>
-        <ui:ScrollView name="activity-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-activity-scroll">
-            <ui:VisualElement name="activity-container" class="section-stack" />
-        </ui:ScrollView>
-        <ui:ScrollView name="clients-panel" class="panel-scroll" mode="Vertical" view-data-key="mcp-connection-scroll">
-            <ui:VisualElement name="clients-container" class="section-stack" />
-        </ui:ScrollView>
-        <ui:ScrollView name="deps-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-packages-scroll">
-            <ui:VisualElement name="deps-container" class="section-stack" />
-        </ui:ScrollView>
-        <ui:ScrollView name="advanced-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-settings-scroll">
-            <ui:VisualElement name="advanced-container" class="section-stack" />
-        </ui:ScrollView>
-        <ui:ScrollView name="tools-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-tools-scroll">
-            <ui:VisualElement name="tools-container" class="section-stack" />
-        </ui:ScrollView>
-        <ui:ScrollView name="resources-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-resources-scroll">
-            <ui:VisualElement name="resources-container" class="section-stack" />
-        </ui:ScrollView>
-        <ui:ScrollView name="assetgen-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-generation-scroll">
-            <ui:VisualElement name="assetgen-container" class="section-stack" />
-        </ui:ScrollView>
+        <ui:VisualElement name="window-body" class="window-body">
+            <ui:ScrollView name="navigation-scroll" class="navigation-scroll" mode="Vertical">
+            <ui:VisualElement name="tab-toolbar" class="tab-toolbar">
+                <ui:Label text="WORKSPACE" class="navigation-group" />
+                <uie:ToolbarToggle name="clients-tab" text="Connect" value="true" class="navigation-tab" />
+                <uie:ToolbarToggle name="tools-tab" text="Tools" class="navigation-tab" />
+                <uie:ToolbarToggle name="resources-tab" text="Resources" class="navigation-tab" />
+                <uie:ToolbarToggle name="assetgen-tab" text="Generation" class="navigation-tab" />
+                <uie:ToolbarToggle name="graph-tab" text="References" class="navigation-tab" />
+                <uie:ToolbarToggle name="activity-tab" text="Activity" class="navigation-tab" />
+                <ui:Label text="SETUP" class="navigation-group navigation-group-spaced" />
+                <uie:ToolbarToggle name="deps-tab" text="Dependencies" class="navigation-tab" />
+                <uie:ToolbarToggle name="advanced-tab" text="Advanced" class="navigation-tab" />
+            </ui:VisualElement>
+            </ui:ScrollView>
+            <ui:VisualElement name="page-content" class="page-content">
+                <ui:VisualElement name="page-header" class="page-header">
+                    <ui:Label name="page-title" text="Connect" class="page-title" />
+                    <ui:Label name="page-description" text="Connect this Editor to your AI client and review its configuration." class="page-description" />
+                </ui:VisualElement>
+                <ui:ScrollView name="graph-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-reference-graph-scroll">
+                    <ui:VisualElement name="graph-container" class="section-stack" />
+                </ui:ScrollView>
+                <ui:ScrollView name="activity-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-activity-scroll">
+                    <ui:VisualElement name="activity-container" class="section-stack" />
+                </ui:ScrollView>
+                <ui:ScrollView name="clients-panel" class="panel-scroll" mode="Vertical" view-data-key="mcp-connection-scroll">
+                    <ui:VisualElement name="clients-container" class="section-stack" />
+                </ui:ScrollView>
+                <ui:ScrollView name="deps-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-packages-scroll">
+                    <ui:VisualElement name="deps-container" class="section-stack" />
+                </ui:ScrollView>
+                <ui:ScrollView name="advanced-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-settings-scroll">
+                    <ui:VisualElement name="advanced-container" class="section-stack" />
+                </ui:ScrollView>
+                <ui:ScrollView name="tools-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-tools-scroll">
+                    <ui:VisualElement name="tools-container" class="section-stack" />
+                </ui:ScrollView>
+                <ui:ScrollView name="resources-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-resources-scroll">
+                    <ui:VisualElement name="resources-container" class="section-stack" />
+                </ui:ScrollView>
+                <ui:ScrollView name="assetgen-panel" class="panel-scroll hidden" mode="Vertical" view-data-key="mcp-generation-scroll">
+                    <ui:VisualElement name="assetgen-container" class="section-stack" />
+                </ui:ScrollView>
+            </ui:VisualElement>
+        </ui:VisualElement>
     </ui:VisualElement>
 </ui:UXML>
