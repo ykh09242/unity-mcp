@@ -1,0 +1,1058 @@
+{
+  "baseline_commit": "97a5ef078b8bad80bc20e93bbe603b5ccfa2fb2a",
+  "native_environment": {
+    "os": "Windows",
+    "unity": "6000.0.69f1",
+    "addressables": "2.7.6",
+    "warm_library_reused": true
+  },
+  "allocation_counter_available": false,
+  "measurements": {
+    "baseline": [
+      {
+        "scenario": "csharp",
+        "round": 0,
+        "milliseconds": 1257.4023,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 28717056,
+        "gc_collections": 11,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 559.173,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 1,
+        "milliseconds": 681.6499,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 8028160,
+        "gc_collections": 5,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.3894,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 2,
+        "milliseconds": 679.0161,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 8097792,
+        "gc_collections": 5,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.1555,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 3,
+        "milliseconds": 710.8553,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 4681728,
+        "gc_collections": 5,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 6.6779,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 0,
+        "milliseconds": 652.6249,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2129920,
+        "gc_collections": 5,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 3.9945000000000004,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 1,
+        "milliseconds": 666.522,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3665920,
+        "gc_collections": 5,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.6023000000000005,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 2,
+        "milliseconds": 670.057,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3883008,
+        "gc_collections": 5,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.2266,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 3,
+        "milliseconds": 672.7789,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 1548288,
+        "gc_collections": 5,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 5.526000000000001,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 0,
+        "milliseconds": 672.3726,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 126230528,
+        "gc_collections": 1,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 0,
+        "milliseconds": 920.8313,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 148557824,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 1,
+        "milliseconds": 695.147,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 136388608,
+        "gc_collections": 1,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 1,
+        "milliseconds": 943.0177,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 142495744,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 2,
+        "milliseconds": 677.7464,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 120037376,
+        "gc_collections": 1,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 2,
+        "milliseconds": 949.6161000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 121978880,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 3,
+        "milliseconds": 688.6406000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 128937984,
+        "gc_collections": 1,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 3,
+        "milliseconds": 962.6342000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 133742592,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 0,
+        "milliseconds": 356.9005,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60289024,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 0,
+        "milliseconds": 22.2832,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2084864,
+        "gc_collections": 0,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 1,
+        "milliseconds": 350.4356,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60268544,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 1,
+        "milliseconds": 21.8475,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2076672,
+        "gc_collections": 0,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 2,
+        "milliseconds": 350.6163,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60268544,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 2,
+        "milliseconds": 22.0496,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2076672,
+        "gc_collections": 0,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 3,
+        "milliseconds": 352.9658,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60268544,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 3,
+        "milliseconds": 21.808600000000002,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2076672,
+        "gc_collections": 0,
+        "native_inventory_size": 12244
+      }
+    ],
+    "control-repeat": [
+      {
+        "scenario": "csharp",
+        "round": 0,
+        "milliseconds": 1238.5624,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 12820480,
+        "gc_collections": 12,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 541.3203,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 1,
+        "milliseconds": 677.2487,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 7614464,
+        "gc_collections": 5,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.3842,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 2,
+        "milliseconds": 663.755,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 7696384,
+        "gc_collections": 5,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.5685,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 3,
+        "milliseconds": 673.6597,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 7524352,
+        "gc_collections": 5,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.8032,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 0,
+        "milliseconds": 643.7164,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2318336,
+        "gc_collections": 5,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.2931,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 1,
+        "milliseconds": 633.9337,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3829760,
+        "gc_collections": 5,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.215,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 2,
+        "milliseconds": 638.7008000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3895296,
+        "gc_collections": 5,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.160200000000001,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 3,
+        "milliseconds": 659.4721000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 1298432,
+        "gc_collections": 5,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 5.2344,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 0,
+        "milliseconds": 667.6941,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 126201856,
+        "gc_collections": 1,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 0,
+        "milliseconds": 920.2477,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 148553728,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 1,
+        "milliseconds": 673.8458,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 136392704,
+        "gc_collections": 1,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 1,
+        "milliseconds": 930.5166,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 142495744,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 2,
+        "milliseconds": 699.9659,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 120029184,
+        "gc_collections": 1,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 2,
+        "milliseconds": 1029.4152000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 121991168,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 3,
+        "milliseconds": 673.6973,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 128937984,
+        "gc_collections": 1,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 3,
+        "milliseconds": 934.3277,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 133742592,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 0,
+        "milliseconds": 337.7554,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60272640,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 0,
+        "milliseconds": 22.215600000000002,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2080768,
+        "gc_collections": 0,
+        "native_inventory_size": 12244,
+        "continuation_equivalent": false
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 1,
+        "milliseconds": 337.4922,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60243968,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 1,
+        "milliseconds": 22.9246,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2076672,
+        "gc_collections": 0,
+        "native_inventory_size": 12244,
+        "continuation_equivalent": false
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 2,
+        "milliseconds": 338.5025,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60231680,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 2,
+        "milliseconds": 21.9402,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2072576,
+        "gc_collections": 0,
+        "native_inventory_size": 12244,
+        "continuation_equivalent": false
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 3,
+        "milliseconds": 341.46430000000004,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60219392,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 3,
+        "milliseconds": 21.506,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2072576,
+        "gc_collections": 0,
+        "native_inventory_size": 12244,
+        "continuation_equivalent": false
+      }
+    ],
+    "candidate": [
+      {
+        "scenario": "csharp",
+        "round": 0,
+        "milliseconds": 594.4536,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2875392,
+        "gc_collections": 4,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 3.967,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 1,
+        "milliseconds": 611.0207,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3051520,
+        "gc_collections": 4,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.3394,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 2,
+        "milliseconds": 593.433,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3051520,
+        "gc_collections": 4,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.2835,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 3,
+        "milliseconds": 597.6890000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3051520,
+        "gc_collections": 4,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.4591,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 0,
+        "milliseconds": 587.1788,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 9027584,
+        "gc_collections": 3,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.388,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 1,
+        "milliseconds": 591.8409,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2801664,
+        "gc_collections": 4,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.149500000000001,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 2,
+        "milliseconds": 603.609,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2801664,
+        "gc_collections": 4,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 1.1786,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 3,
+        "milliseconds": 596.9259000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2801664,
+        "gc_collections": 4,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 1.1544,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 0,
+        "milliseconds": 167.63060000000002,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 25976832,
+        "gc_collections": 0,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 0,
+        "milliseconds": 942.5028000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 148238336,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 1,
+        "milliseconds": 173.5096,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 25980928,
+        "gc_collections": 0,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 1,
+        "milliseconds": 974.8815000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 142532608,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 2,
+        "milliseconds": 170.8016,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 25976832,
+        "gc_collections": 0,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 2,
+        "milliseconds": 968.2655000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 121810944,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 3,
+        "milliseconds": 174.9807,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 25976832,
+        "gc_collections": 0,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 3,
+        "milliseconds": 966.2006,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 133877760,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 0,
+        "milliseconds": 337.67990000000003,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60432384,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 0,
+        "milliseconds": 22.264300000000002,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 1200128,
+        "gc_collections": 0,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 1,
+        "milliseconds": 339.1667,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60403712,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 1,
+        "milliseconds": 21.7631,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 1191936,
+        "gc_collections": 0,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 2,
+        "milliseconds": 333.25010000000003,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60403712,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 2,
+        "milliseconds": 23.8486,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 1187840,
+        "gc_collections": 0,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 3,
+        "milliseconds": 334.20120000000003,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 60403712,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 3,
+        "milliseconds": 22.594900000000003,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 1191936,
+        "gc_collections": 0,
+        "native_inventory_size": 12244
+      }
+    ],
+    "candidate-repeat": [
+      {
+        "scenario": "csharp",
+        "round": 0,
+        "milliseconds": 1211.6354000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 13787136,
+        "gc_collections": 10,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 555.1696000000001,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 1,
+        "milliseconds": 619.9456,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3469312,
+        "gc_collections": 4,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.0026,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 2,
+        "milliseconds": 618.9474,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3289088,
+        "gc_collections": 4,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.2371,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "csharp",
+        "round": 3,
+        "milliseconds": 641.0642,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3448832,
+        "gc_collections": 4,
+        "bytes": 8388736,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.705900000000001,
+        "sha256": "7e93ab1f22cc0b0628ec2c8c3c2a84eb3afd86c38bc845004142f1ad67289c32"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 0,
+        "milliseconds": 622.1159,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2281472,
+        "gc_collections": 4,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 3.8848000000000003,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 1,
+        "milliseconds": 653.5247,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 1679360,
+        "gc_collections": 4,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.9912,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 2,
+        "milliseconds": 622.9058,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3026944,
+        "gc_collections": 4,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.1549000000000005,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "unity_yaml",
+        "round": 3,
+        "milliseconds": 639.4112,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 3018752,
+        "gc_collections": 4,
+        "bytes": 8388854,
+        "pages": 129,
+        "maximum_page_milliseconds": 4.1184,
+        "sha256": "57d640d399b7009a61f47d78b305e31edcaf837559efd58cfc7e4a5e90073da5"
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 0,
+        "milliseconds": 171.8418,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 25985024,
+        "gc_collections": 0,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 0,
+        "milliseconds": 952.7048000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 148873216,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 1,
+        "milliseconds": 179.52870000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 25985024,
+        "gc_collections": 0,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 1,
+        "milliseconds": 956.5661,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 143552512,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 2,
+        "milliseconds": 176.9686,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 25976832,
+        "gc_collections": 0,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 2,
+        "milliseconds": 947.8992000000001,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 122413056,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "journal_save_65000",
+        "round": 3,
+        "milliseconds": 175.63250000000002,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 25980928,
+        "gc_collections": 0,
+        "characters": 6412857,
+        "rows": 65000
+      },
+      {
+        "scenario": "journal_restore_65000",
+        "round": 3,
+        "milliseconds": 961.7613,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 134725632,
+        "gc_collections": 1
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 0,
+        "milliseconds": 357.2789,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 61845504,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 0,
+        "milliseconds": 22.6603,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2097152,
+        "gc_collections": 0,
+        "native_inventory_size": 12244,
+        "continuation_equivalent": false
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 1,
+        "milliseconds": 355.5358,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 61845504,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 1,
+        "milliseconds": 21.619300000000003,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2084864,
+        "gc_collections": 0,
+        "native_inventory_size": 12244,
+        "continuation_equivalent": false
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 2,
+        "milliseconds": 359.87890000000004,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 61829120,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 2,
+        "milliseconds": 22.768,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2080768,
+        "gc_collections": 0,
+        "native_inventory_size": 12244,
+        "continuation_equivalent": false
+      },
+      {
+        "scenario": "cached_census_plus_50000_history",
+        "round": 3,
+        "milliseconds": 350.2431,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 61804544,
+        "gc_collections": 0,
+        "replayed_rows": 50000,
+        "history_pages": 50,
+        "native_inventory_size": 12244
+      },
+      {
+        "scenario": "candidate_fresh_find_sort",
+        "round": 3,
+        "milliseconds": 22.1734,
+        "allocated_bytes": null,
+        "managed_heap_change_bytes": 2080768,
+        "gc_collections": 0,
+        "native_inventory_size": 12244,
+        "continuation_equivalent": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "scenario": "csharp",
+      "before_median_ms": 680.3330000000001,
+      "after_median_ms": 614.98405,
+      "samples_per_variant": 8
+    },
+    {
+      "scenario": "unity_yaml",
+      "before_median_ms": 656.0485000000001,
+      "after_median_ms": 612.8624500000001,
+      "samples_per_variant": 8
+    },
+    {
+      "scenario": "journal_save_65000",
+      "before_median_ms": 675.7961,
+      "after_median_ms": 174.24515000000002,
+      "samples_per_variant": 8
+    },
+    {
+      "scenario": "journal_restore_65000",
+      "before_median_ms": 938.6727000000001,
+      "after_median_ms": 959.1637000000001,
+      "samples_per_variant": 8
+    },
+    {
+      "scenario": "cached_census_plus_50000_history",
+      "before_median_ms": 345.94995000000006,
+      "after_median_ms": 344.7049,
+      "samples_per_variant": 8
+    },
+    {
+      "scenario": "candidate_fresh_find_sort",
+      "before_median_ms": 21.9949,
+      "after_median_ms": 22.4296,
+      "samples_per_variant": 8
+    }
+  ]
+}

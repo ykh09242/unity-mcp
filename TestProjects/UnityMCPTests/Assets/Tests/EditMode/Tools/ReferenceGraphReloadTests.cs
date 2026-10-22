@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -23,7 +25,15 @@ namespace MCPForUnityTests.EditMode.Tools
                 AssetDatabase.CreateFolder("Assets", Path.GetFileName(root));
                 SessionState.SetString(Key + ".root", root);
                 SessionState.SetString(Key + ".domain", Domain);
-                SessionState.SetString(Key + ".before", ReferenceGraphCollectorTests.Call("status").ToString());
+                ReferenceGraphCollectorTests.Call("status");
+                Type journal = typeof(MCPForUnity.Editor.Tools.ManageReferenceGraph).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphJournal");
+                const BindingFlags hidden = BindingFlags.Static | BindingFlags.NonPublic;
+                journal.GetMethod("Reset", hidden).Invoke(null, null);
+                string[] history = Enumerable.Range(0, 65000).Select(i => "Assets/__OwnedReloadHistory/" + i + ".asset").ToArray();
+                journal.GetMethod("Record", hidden).Invoke(null, new object[] { Array.Empty<string>(), history, Array.Empty<string>(), Array.Empty<string>() });
+                JObject checkpoint = ReferenceGraphCollectorTests.Call("status");
+                Assert.AreEqual(65000, checkpoint.Value<long>("revision"));
+                SessionState.SetString(Key + ".before", checkpoint.ToString());
                 string capture = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
                 SessionState.SetString(Key + ".capture", capture);
                 ReferenceGraphRuntimeTests.Call("runtime_start", capture);
@@ -41,6 +51,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 JObject after = ReferenceGraphCollectorTests.Call("status");
                 Assert.AreEqual(before["instance_id"], after["instance_id"]);
                 Assert.AreEqual(before["epoch"], after["epoch"]);
+                Assert.GreaterOrEqual(after.Value<long>("revision"), 65001);
+                JObject firstPage = ReferenceGraphCollectorTests.Call("changes", "epoch", before.Value<string>("epoch"), "after", 0);
+                Assert.IsFalse(firstPage.Value<bool>("requires_census"));
+                Assert.AreEqual("Assets/__OwnedReloadHistory/0.asset", firstPage["changes"][0].Value<string>("path"));
                 Assert.IsTrue(
                     JToken.DeepEquals(before["compilation_context"], after["compilation_context"]),
                     "Reload rebuilds the same current compiler context."
