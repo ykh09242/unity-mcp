@@ -446,29 +446,32 @@ class GraphStore:
     def set_source(
         self, provider: str, config: dict, *, expected_version: int, enabled: bool = True
     ) -> int:
+        with self._connect(write=True) as connection:
+            return self._set_source(connection, provider, config, expected_version, enabled)
+
+    def _set_source(self, connection, provider, config, expected_version, enabled) -> int:
         if not provider.startswith("external:") or provider == "external:":
             raise ValueError("Only named external sources can be configured")
         payload = _json(config)
-        with self._connect(write=True) as connection:
-            old = connection.execute(
-                "SELECT version FROM sources WHERE provider=?", (provider,)
-            ).fetchone()
-            if (old[0] if old else 0) != expected_version:
-                raise RevisionConflict("Source configuration changed")
-            version = expected_version + 1
-            connection.execute(
-                "INSERT INTO sources VALUES (?,?,?,?) ON CONFLICT(provider) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,config=excluded.config",
-                (provider, version, int(enabled), payload),
-            )
-            # A changed grant may narrow paths. Do not expose the previous grant's
-            # cached data, even as stale evidence, while reconciliation runs.
-            connection.execute("DELETE FROM edges WHERE provider=?", (provider,))
-            connection.execute(
-                "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider=? AND state<>'deleted'",
-                (provider,),
-            )
-            self._bump(connection)
-            return version
+        old = connection.execute(
+            "SELECT version FROM sources WHERE provider=?", (provider,)
+        ).fetchone()
+        if (old[0] if old else 0) != expected_version:
+            raise RevisionConflict("Source configuration changed")
+        version = expected_version + 1
+        connection.execute(
+            "INSERT INTO sources VALUES (?,?,?,?) ON CONFLICT(provider) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,config=excluded.config",
+            (provider, version, int(enabled), payload),
+        )
+        # A changed grant may narrow paths. Do not expose the previous grant's
+        # cached data, even as stale evidence, while reconciliation runs.
+        connection.execute("DELETE FROM edges WHERE provider=?", (provider,))
+        connection.execute(
+            "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider=? AND state<>'deleted'",
+            (provider,),
+        )
+        self._bump(connection)
+        return version
 
     def sources(self) -> list[dict]:
         with self._connect() as connection:

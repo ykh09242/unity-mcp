@@ -86,10 +86,11 @@ class Reconciler:
     async def reconcile(self, *, force_external: bool = False) -> bool:
         await self.check()
         self.stopped.clear()
-        if not await drained_thread(self.workspace.acquire, self.worker):
-            return False
-        heartbeat = asyncio.create_task(self._heartbeat(asyncio.current_task()))
+        heartbeat = None
         try:
+            if not await drained_thread(self.workspace.acquire, self.worker):
+                return False
+            heartbeat = asyncio.create_task(self._heartbeat(asyncio.current_task()))
             self.progress = await drained_thread(self.workspace.progress)
             status = await self.collect("status")
             await self._phase("checking", editor=status, error=None)
@@ -108,7 +109,13 @@ class Reconciler:
                 and status["revision"] == self.progress.get("after")
                 and not self.progress.get("external_errors")
                 and not any(
-                    status.get(key) for key in ("compiling", "importing", "compilation_failed")
+                    status.get(key)
+                    for key in (
+                        "compiling",
+                        "importing",
+                        "compilation_failed",
+                        "addressables_event_error",
+                    )
                 )
             )
             await self._phase(
@@ -124,8 +131,9 @@ class Reconciler:
                 pass
             raise
         finally:
-            heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
+            if heartbeat is not None:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
             await drained_thread(self.workspace.release, self.worker)
 
     async def _census(self, status: dict, *, force: bool) -> None:
@@ -228,12 +236,11 @@ class Reconciler:
                     offset = page["next_offset"]
                     if offset is None:
                         generation = await drained_thread(
-                            self.store.observe,
-                            owner,
-                            "unity",
-                            fingerprint,
-                            path=asset["path"],
-                            kind=asset["kind"],
+                            self.workspace.observe,
+                            self.worker,
+                            Observation(
+                                owner, "unity", fingerprint, path=asset["path"], kind=asset["kind"]
+                            ),
                         )
                         result = Analysis(
                             [Edge("asset:" + target, "unity_dependency") for target in targets],
@@ -361,7 +368,7 @@ class Reconciler:
             )
             for row in documents
         ]
-        generations = self.store.observe_batch(observations)
+        generations = self.workspace.observe_many(self.worker, observations)
         publications = []
         for row, generation in zip(documents, generations):
             self._check_thread()
@@ -426,17 +433,26 @@ class Reconciler:
             old = previous.get(path)
             owner = provider + ":" + _hash(path)
             fingerprint = old["fingerprint"] if old else ""
-            if force or old is None or old["stamp"] != stamp or old["analysis_key"] != analysis_key:
+            if (
+                force
+                or old is None
+                or old["state"] != "ready"
+                or old["stamp"] != stamp
+                or old["analysis_key"] != analysis_key
+            ):
                 document = adapter.read(path)
-                generation = self.store.observe(
-                    owner,
-                    provider,
-                    document.fingerprint,
-                    path=path,
-                    kind="external",
-                    force=True,
-                    source_version=source["version"],
-                    rules_revision=rules,
+                generation = self.workspace.observe(
+                    self.worker,
+                    Observation(
+                        owner,
+                        provider,
+                        document.fingerprint,
+                        path=path,
+                        kind="external",
+                        force=True,
+                        source_version=source["version"],
+                        rules_revision=rules,
+                    ),
                 )
                 result = analyze_document(path, document.text, catalog, adapter.mappings)
                 if _json(adapter.stamp(path)) != stamp:

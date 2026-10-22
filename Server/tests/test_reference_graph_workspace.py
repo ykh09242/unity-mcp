@@ -5,7 +5,13 @@ import time
 import pytest
 
 from services.reference_graph.analysis import Analysis
-from services.reference_graph.store import Edge, GraphScope, GraphStore, RevisionConflict
+from services.reference_graph.store import (
+    Edge,
+    GraphScope,
+    GraphStore,
+    Observation,
+    RevisionConflict,
+)
 from services.reference_graph.workspace import GraphWorkspace
 
 
@@ -96,3 +102,50 @@ def test_reconciliation_preserves_durable_dependency_invalidation(workspace):
         assert workspace.publish("worker", name, "code", generation, analysis)
     workspace.invalidate_dependents("worker", {"wrapper"})
     assert {item["owner"] for item in workspace.store.pending()} == {"caller", "wrapper"}
+
+
+@pytest.mark.parametrize("provider", ["unity", "code", "external:settings"])
+def test_observation_admission_is_fenced_before_any_durable_change(workspace, provider):
+    if provider.startswith("external:"):
+        workspace.store.set_source(provider, {}, expected_version=0)
+    observation = Observation("owner", provider, "hash", source_version=1, force=True)
+    generation = workspace.observe("worker", observation)
+    workspace.publish(
+        "worker", "owner", provider, generation, Analysis([Edge("target", "reference")])
+    )
+    workspace.release("worker")
+    assert workspace.acquire("next")
+    before = workspace.store.status()
+    with pytest.raises(RevisionConflict):
+        workspace.observe("worker", observation)
+    assert workspace.store.status() == before
+    assert not workspace.store.query("owner")["edges"][0]["stale"]
+
+
+def test_source_grant_cleanup_and_retirement_are_atomic(workspace):
+    workspace.set_source("external:settings", {}, expected_version=0)
+    assert workspace.acquire("worker")
+    generation = workspace.observe(
+        "worker", Observation("owner", "external:settings", "hash", source_version=1)
+    )
+    workspace.publish(
+        "worker",
+        "owner",
+        "external:settings",
+        generation,
+        Analysis([], [{"key": "old-root-value"}]),
+    )
+    workspace.record_external(
+        "worker", "external:settings", "owner", "a.json", "hash", "stamp", "key", "scan"
+    )
+    with pytest.raises(RevisionConflict):
+        workspace.set_source("external:settings", {}, expected_version=0)
+    assert workspace.diagnostics("owner")["issues"]
+    workspace.set_source("external:settings", {}, expected_version=1)
+    assert workspace.diagnostics("owner")["issues"] == []
+    assert workspace.store.status()["queue_idle"]
+    with pytest.raises(RevisionConflict):
+        workspace.record_external(
+            "worker", "external:settings", "owner", "a.json", "hash", "stamp", "key", "scan"
+        )
+    assert not workspace.external_inputs("external:settings")

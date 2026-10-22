@@ -9,7 +9,7 @@ import threading
 import pytest
 
 from services.reference_graph.reconcile import Reconciler, drained_thread
-from services.reference_graph.store import GraphScope, GraphStore
+from services.reference_graph.store import GraphScope, GraphStore, RevisionConflict
 from services.reference_graph.workspace import GraphWorkspace
 
 
@@ -262,3 +262,90 @@ async def test_cancel_waits_for_owned_thread_before_returning():
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.asyncio
+async def test_replaced_worker_cannot_readmit_completed_analysis(setup):
+    store, workspace, editor, engine = setup
+    owner = editor.add(1, "Assets/A.cs", 'class C { void M() { Resources.Load("missing"); } }')
+    assert await engine.reconcile()
+    documents = workspace.documents()
+    rules = store.rules_state()
+    index = engine._build_index(documents, workspace.catalog(), rules)
+    before = store.status()
+    assert workspace.acquire("replacement")
+    with pytest.raises(RevisionConflict):
+        engine._analyze_batch(documents, index, rules["revision"])
+    assert store.status() == before
+    workspace.release("replacement")
+    assert await engine.reconcile()
+    assert workspace.diagnostics(owner)["coverage"][0]["state"] == "ready"
+    assert store.status()["queue_idle"]
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_lease_acquisition_does_not_orphan_worker(setup, monkeypatch):
+    _, workspace, _, engine = setup
+    entered, release = threading.Event(), threading.Event()
+    original = workspace.acquire
+
+    def held_acquire(owner):
+        result = original(owner)
+        entered.set()
+        release.wait(5)
+        return result
+
+    monkeypatch.setattr(workspace, "acquire", held_acquire)
+    task = asyncio.create_task(engine.reconcile())
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        task.cancel()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert original("next")
+    workspace.release("next")
+
+
+@pytest.mark.asyncio
+async def test_interrupted_forced_external_analysis_resumes_without_file_change(
+    setup, tmp_path, monkeypatch
+):
+    import services.reference_graph.reconcile as module
+
+    store, workspace, _, engine = setup
+    root = tmp_path / "settings"
+    root.mkdir()
+    (root / "a.json").write_text('{"path":"missing"}')
+    workspace.set_source(
+        "external:settings", {"root": str(root), "include": ["*.json"]}, expected_version=0
+    )
+    assert await engine.reconcile()
+    original = module.analyze_document
+
+    def interrupted(*_):
+        raise ValueError("interrupted after admission")
+
+    monkeypatch.setattr(module, "analyze_document", interrupted)
+    assert not await engine.reconcile(force_external=True)
+    assert not store.status()["queue_idle"]
+    monkeypatch.setattr(module, "analyze_document", original)
+    assert await engine.reconcile()
+    assert store.status()["queue_idle"]
+
+
+@pytest.mark.asyncio
+async def test_addressables_observer_error_never_claims_current(setup):
+    _, workspace, editor, _ = setup
+    editor.add(1, "Assets/A.asset")
+
+    async def collect(action, **params):
+        data = await editor(action, **params)
+        if action == "status":
+            data["addressables_event_error"] = "observer unavailable"
+        return data
+
+    assert not await Reconciler(workspace, collect, allowed).reconcile()
+    assert workspace.counts()["assets"] == 1
+    assert workspace.progress()["phase"] == "changes_pending"

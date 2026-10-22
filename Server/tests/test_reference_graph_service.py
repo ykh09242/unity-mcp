@@ -3,6 +3,7 @@
 import asyncio
 from contextvars import ContextVar
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -258,11 +259,30 @@ async def test_cached_external_results_recheck_file_access_and_operator_revocati
             "scan",
         )
         workspace.release("test")
+        workspace.acquire("test")
+        workspace.set_progress(
+            "test", {"initialized": True, "epoch": "epoch", "after": 0, "phase": "idle"}
+        )
+        workspace.release("test")
         response = await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})
         assert len(response["data"]["edges"]) == 1
-        path.write_text('{"key":"changed"}')
+        assert response["data"]["graph_status"]["current"]
+        validate = service._validate_external
+        validations = 0
+
+        def change_before_final_validation(*args):
+            nonlocal validations
+            validations += 1
+            if validations == 2:
+                path.write_text('{"key":"changed"}')
+            return validate(*args)
+
+        monkeypatch.setattr(service, "_validate_external", change_before_final_validation)
         response = await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})
         assert response["data"]["edges"][0]["stale"]
+        assert not response["data"]["graph_status"]["current"]
+        assert not response["data"]["graph_status"]["queue_idle"]
+        monkeypatch.setattr(service, "_validate_external", validate)
         monkeypatch.delenv("UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS")
         with pytest.raises(PermissionError):
             await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})
@@ -284,3 +304,83 @@ async def test_simultaneous_resolve_installs_one_scope_and_new_editor_gets_new_s
     restarted, _ = await service.resolve(ctx, "status")
     assert restarted.workspace.store.scope != entries[0][0].workspace.store.scope
     await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_changed_source_grant_cannot_return_prior_root_diagnostics(
+    setup, tmp_path, monkeypatch
+):
+    service, _, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    roots = [tmp_path / "first", tmp_path / "second"]
+    for root in roots:
+        root.mkdir()
+        (root / "a.json").write_text('{"resource":"missing-value"}')
+    source = {
+        "root": str(roots[0]),
+        "include": ["*.json"],
+        "mappings": [{"field": "/resource", "scheme": "resources"}],
+    }
+    await service.execute(
+        ctx, "set_source", {"id": "settings", "config": source, "expected_version": 0}
+    )
+    entry, _ = await service.resolve(ctx, "status")
+    assert await entry.engine.reconcile()
+    owner = next(iter(entry.workspace.external_inputs("external:settings").values()))["owner"]
+    assert (await service.execute(ctx, "diagnostics", {"node": owner}))["data"]["issues"]
+    source["root"] = str(roots[1])
+    await service.execute(
+        ctx, "set_source", {"id": "settings", "config": source, "expected_version": 1}
+    )
+    result = (await service.execute(ctx, "diagnostics", {"node": owner}))["data"]
+    assert result["issues"] == result["coverage"] == []
+    assert not entry.workspace.external_inputs("external:settings")
+    assert await entry.engine.reconcile()
+    assert entry.workspace.store.status()["queue_idle"]
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_replaced_credential_request_cannot_resurrect_an_untracked_watcher(
+    setup, monkeypatch
+):
+    service, _, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    authority = Authority()
+    first = CredentialLease(authority, object(), "alice", LEGACY_GRANTS)
+    second = CredentialLease(authority, object(), "alice", LEGACY_GRANTS)
+    entered, release = threading.Event(), threading.Event()
+    with bind_credential_lease(first):
+        entry, _ = await service.resolve(ctx, "declarations")
+        original = entry.workspace.store.declarations
+
+        def held_read(**kwargs):
+            entered.set()
+            release.wait(5)
+            return original(**kwargs)
+
+        monkeypatch.setattr(entry.workspace.store, "declarations", held_read)
+        pending = asyncio.create_task(service.execute(ctx, "declarations", {}))
+    tasks = []
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        with bind_credential_lease(second):
+            await service.execute(ctx, "status", {})
+        replacement = next(iter(service.entries.values()))
+        tasks.append(replacement.task)
+        release.set()
+        with pytest.raises(RevisionConflict):
+            await pending
+        assert service.entries[entry.workspace.store.scope.key] is replacement
+        assert entry.task is None
+        await service.aclose()
+        assert all(task.done() for task in tasks)
+        assert authority.owners == 0
+    finally:
+        release.set()
+        await asyncio.gather(pending, return_exceptions=True)
+        tasks.extend(item.task for item in service.entries.values() if item.task)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await service.aclose()

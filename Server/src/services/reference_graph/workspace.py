@@ -9,7 +9,7 @@ import time
 
 from services.reference_graph.analysis import Analysis
 from services.reference_graph.external import _pattern
-from services.reference_graph.store import GraphStore, RevisionConflict, _json
+from services.reference_graph.store import GraphStore, Observation, RevisionConflict, _json
 
 
 class GraphWorkspace:
@@ -147,6 +147,43 @@ class GraphWorkspace:
     def rebuild(self) -> None:
         policy = self.policy()
         self.set_policy({"exclude": policy["exclude"]}, expected_version=policy["version"])
+
+    def set_source(
+        self, provider: str, config: dict, *, expected_version: int, enabled: bool = True
+    ) -> int:
+        with self.store._connect(write=True) as connection:
+            version = self.store._set_source(
+                connection, provider, config, expected_version, enabled
+            )
+            # Grant CAS, evidence retirement and worker fencing are one commit.
+            # Old relative paths and diagnostics must never be reinterpreted under
+            # a replacement root, even when both roots contain the same filename.
+            connection.execute("DELETE FROM graph_worker")
+            connection.execute(
+                "UPDATE nodes SET present=0 WHERE id IN (SELECT owner FROM observations WHERE provider=?)",
+                (provider,),
+            )
+            connection.execute(
+                "UPDATE observations SET state='deleted' WHERE provider=?", (provider,)
+            )
+            for table in ("graph_analysis", "graph_issues", "graph_external"):
+                connection.execute("DELETE FROM " + table + " WHERE provider=?", (provider,))
+            progress = self._state(connection, "progress", {})
+            progress["phase"] = "changes_pending"
+            self._set(connection, "progress", progress)
+            return version
+
+    def observe(self, worker: str, observation: Observation) -> int:
+        return self.observe_many(worker, [observation])[0]
+
+    def observe_many(self, worker: str, observations: Iterable[Observation]) -> list[int]:
+        with self._write(worker) as connection:
+            generations = []
+            for observation in observations:
+                generations.append(self.store._observe(connection, observation))
+                if observation.provider == "code":
+                    self._set(connection, "analysis_dirty", True)
+            return generations
 
     def record_page(
         self, worker: str, assets: Iterable[dict], progress: dict, seen: str, *, force: bool = True
@@ -469,7 +506,8 @@ class GraphWorkspace:
             return {
                 row["path"]: dict(row)
                 for row in connection.execute(
-                    "SELECT * FROM graph_external WHERE provider=?", (provider,)
+                    "SELECT e.*,o.state FROM graph_external e LEFT JOIN observations o USING(owner,provider) WHERE e.provider=?",
+                    (provider,),
                 )
             }
 

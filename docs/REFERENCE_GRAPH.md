@@ -37,8 +37,8 @@ so renames preserve their identity. Deleted targets remain visible as missing.
 for nonzero offsets. It reports unresolved keys, dynamic expressions, ambiguity,
 binary serialization, and the coverage of each evidence provider. Every response
 includes `graph_status` with progress, errors, queue state, and freshness. Importing,
-compilation failure, journal gaps, unfinished work, or unavailable external inputs
-must be resolved before treating a scan as current.
+compilation failure, Addressables event-observer errors, journal gaps, unfinished
+work, or unavailable external inputs must be resolved before treating a scan as current.
 
 Observed Unity dependencies, possible static matches, and manually declared edges
 remain distinct. C# analysis follows supported Resources/Addressables calls,
@@ -79,7 +79,8 @@ not guessed. Inaccessible files cannot reveal cached external references.
 
 Read `sources` before editing an existing source and supply its `version` as
 `expected_version`. Disable it with `enabled:false` and that version. Revocation or
-a changed grant removes old generated edges immediately. Configuration files are
+a changed grant atomically removes old generated edges, diagnostics and file caches.
+Workers from the previous grant cannot republish them. Configuration files are
 never modified, executed, or copied into the Unity project.
 
 For a remotely hosted MCP server, paths refer to **the server filesystem**. Its

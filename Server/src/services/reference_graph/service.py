@@ -112,6 +112,7 @@ class ReferenceGraphService:
         self.root = root
         self.send = send
         self.entries: dict[str, Entry] = {}
+        self.tasks: set[asyncio.Task] = set()
         self.closed = False
         self.lock = asyncio.Lock()
 
@@ -194,53 +195,62 @@ class ReferenceGraphService:
     def start(self, entry: Entry, *, force: bool = False, wake: bool = True) -> None:
         if self.closed:
             raise RuntimeError("Reference graph service is stopping")
+        if self.entries.get(entry.workspace.store.scope.key) is not entry:
+            raise RevisionConflict("Reference graph request ownership changed; retry the request")
         entry.force |= force
         if wake:
             entry.wake.set()
         if entry.task is None or entry.task.done():
             # Do not retain an HTTP request, SDK session or execution receipt.
             entry.task = asyncio.create_task(self._watch(entry), context=contextvars.Context())
-            entry.task.add_done_callback(
-                lambda task: task.exception() if not task.cancelled() else None
-            )
+            self.tasks.add(entry.task)
+            entry.task.add_done_callback(lambda task: self._finished(entry, task))
 
-    async def _watch(self, entry: Entry) -> None:
-        try:
-            async with entry.lease.owner_lifetime() if entry.lease else nullcontext():
-                while not self.closed:
-                    await entry.check()
-                    entry.wake.clear()
-                    force, entry.force = entry.force, False
-                    try:
-                        await entry.engine.reconcile(force_external=force)
-                        entry.error = None
-                    except ScopeChanged:
-                        return
-                    except RevisionConflict as error:
-                        entry.error = str(error)
-                    except (OSError, ValueError, RuntimeError) as error:
-                        entry.error = type(error).__name__ + ": " + str(error)
-                    await entry.check()
-                    try:
-                        await asyncio.wait_for(entry.wake.wait(), self.POLL_SECONDS)
-                    except TimeoutError:
-                        pass
-        finally:
-            # An expired credential cannot be kept alive by an abandoned watcher.
+    def _finished(self, entry: Entry, task: asyncio.Task) -> None:
+        self.tasks.discard(task)
+        if not task.cancelled():
+            task.exception()
+        if entry.task is task:
+            entry.task = None
             if self.entries.get(entry.workspace.store.scope.key) is entry:
                 self.entries.pop(entry.workspace.store.scope.key, None)
+
+    async def _watch(self, entry: Entry) -> None:
+        async with entry.lease.owner_lifetime() if entry.lease else nullcontext():
+            while not self.closed:
+                await entry.check()
+                entry.wake.clear()
+                force, entry.force = entry.force, False
+                try:
+                    await entry.engine.reconcile(force_external=force)
+                    entry.error = None
+                except ScopeChanged:
+                    return
+                except RevisionConflict as error:
+                    entry.error = str(error)
+                except (OSError, ValueError, RuntimeError) as error:
+                    entry.error = type(error).__name__ + ": " + str(error)
+                await entry.check()
+                try:
+                    await asyncio.wait_for(entry.wake.wait(), self.POLL_SECONDS)
+                except TimeoutError:
+                    pass
 
     @staticmethod
     async def _stop(entry: Entry) -> None:
         if entry.task is not None:
-            entry.task.cancel()
-            await asyncio.gather(entry.task, return_exceptions=True)
+            task = entry.task
             entry.task = None
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     async def aclose(self) -> None:
         async with self.lock:
             self.closed = True
-            await asyncio.gather(*(self._stop(entry) for entry in list(self.entries.values())))
+            tasks = list(self.tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             self.entries.clear()
 
     @staticmethod
@@ -276,7 +286,7 @@ class ReferenceGraphService:
 
     def _validate_external(
         self, workspace: GraphWorkspace, result: dict, owner: str | None = None
-    ) -> None:
+    ) -> bool:
         sources = {row["provider"]: row for row in workspace.store.sources()}
         pairs = {
             (edge["provider"], edge["owner"])
@@ -307,6 +317,7 @@ class ReferenceGraphService:
                 item["state"] = "pending"
         if workspace.store.status()["revision"] != result["revision"]:
             raise RevisionConflict("Graph changed before delivery; restart the page")
+        return bool(stale)
 
     async def execute(self, ctx, action: str, options: dict) -> dict:
         fields = {
@@ -339,6 +350,7 @@ class ReferenceGraphService:
             raise ValueError("A declaration owner id is required")
         entry, editor = await self.resolve(ctx, action)
         workspace, store = entry.workspace, entry.workspace.store
+        external_changed = False
         if action in {"declare", "remove_declaration", "set_source", "set_rule", "set_policy"}:
             if type(options.get("expected_version")) is not int or options["expected_version"] < 0:
                 raise ValueError("Read current state and supply its nonnegative expected_version")
@@ -354,14 +366,16 @@ class ReferenceGraphService:
                 options["node"],
                 **{key: value for key, value in options.items() if key != "node"},
             )
-            await drained_thread(self._validate_external, workspace, data)
+            external_changed = await drained_thread(self._validate_external, workspace, data)
         elif action == "diagnostics":
             data = await drained_thread(
                 workspace.diagnostics,
                 options["node"],
                 **{key: value for key, value in options.items() if key != "node"},
             )
-            await drained_thread(self._validate_external, workspace, data, options["node"])
+            external_changed = await drained_thread(
+                self._validate_external, workspace, data, options["node"]
+            )
         elif action == "declarations":
             data = {"declarations": await drained_thread(store.declarations, include_deleted=True)}
         elif action == "declare":
@@ -395,7 +409,7 @@ class ReferenceGraphService:
                 await drained_thread(self._grant, store.scope, configuration)
             data = {
                 "version": await drained_thread(
-                    store.set_source,
+                    workspace.set_source,
                     "external:" + options["id"],
                     configuration,
                     expected_version=options["expected_version"],
@@ -419,7 +433,6 @@ class ReferenceGraphService:
         elif action == "policy":
             data = await drained_thread(workspace.policy)
         elif action == "set_policy":
-            await self._stop(entry)
             data = {
                 "version": await drained_thread(
                     workspace.set_policy,
@@ -428,35 +441,16 @@ class ReferenceGraphService:
                 )
             }
         elif action == "rebuild":
-            await self._stop(entry)
             await drained_thread(workspace.rebuild)
             data = {"scheduled": True}
         elif action == "watch":
             if type(options.get("enabled")) is not bool:
                 raise ValueError("enabled must be boolean")
-            if not options["enabled"]:
-                await self._stop(entry)
             data = {"watching": options["enabled"]}
         else:
             data = {}
         if action == "sync" and type(options.get("force", False)) is not bool:
             raise ValueError("force must be boolean")
-        if not (action == "watch" and not options["enabled"]):
-            self.entries[store.scope.key] = entry
-            self.start(
-                entry,
-                force=options.get("force", False),
-                wake=action
-                not in {
-                    "status",
-                    "query",
-                    "diagnostics",
-                    "declarations",
-                    "sources",
-                    "rules",
-                    "policy",
-                },
-            )
         await entry.check()
         status = await drained_thread(store.status)
         progress = await drained_thread(workspace.progress)
@@ -466,12 +460,50 @@ class ReferenceGraphService:
             and progress.get("after") == editor.get("revision")
             and progress.get("phase") == "idle"
             and status["queue_idle"]
-            and not any(editor.get(key) for key in ("compiling", "importing", "compilation_failed"))
+            and not any(
+                editor.get(key)
+                for key in (
+                    "compiling",
+                    "importing",
+                    "compilation_failed",
+                    "addressables_event_error",
+                )
+            )
         )
         counts = await drained_thread(workspace.counts)
         if action in {"query", "diagnostics"}:
-            await drained_thread(self._validate_external, workspace, data, options.get("node"))
+            external_changed |= await drained_thread(
+                self._validate_external, workspace, data, options.get("node")
+            )
         await entry.check()
+        async with self.lock:
+            if self.closed:
+                raise RuntimeError("Reference graph service is stopping")
+            if self.entries.get(store.scope.key) is not entry:
+                raise RevisionConflict(
+                    "Reference graph request ownership changed; retry the request"
+                )
+            if action == "watch" and not options["enabled"]:
+                await self._stop(entry)
+            else:
+                self.start(
+                    entry,
+                    force=external_changed or options.get("force", False),
+                    wake=external_changed
+                    or action
+                    not in {
+                        "status",
+                        "query",
+                        "diagnostics",
+                        "declarations",
+                        "sources",
+                        "rules",
+                        "policy",
+                    },
+                )
+        if external_changed:
+            current = False
+            status["queue_idle"] = False
         return {
             "success": True,
             "data": {
@@ -481,6 +513,7 @@ class ReferenceGraphService:
                     **status,
                     **counts,
                     "current": bool(current),
+                    "external_inputs_changed": external_changed,
                     "coverage": "partial_static",
                     "progress": progress,
                     "worker_error": entry.error,
