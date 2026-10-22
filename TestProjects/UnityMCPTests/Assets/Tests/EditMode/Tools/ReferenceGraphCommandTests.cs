@@ -57,5 +57,23 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(Call(new JObject { ["action"] = "changes", ["after"] = "0" }).Value<bool>("success"), Is.False);
             Assert.That(Call(new JObject { ["action"] = "status", ["expected_instance_id"] = JValue.CreateNull() }).Value<bool>("success"), Is.False);
         }
+
+        [Test]
+        public void CompilationPagesRequireIdentityRevisionAndTypedPathArray()
+        {
+            JObject status = Call(new JObject { ["action"] = "status" })["data"] as JObject;
+            var request = new JObject
+            {
+                ["action"] = "compilation",
+                ["paths"] = new JArray(),
+                ["revision"] = status["compilation_context"]["revision"],
+            };
+            Assert.AreEqual("reference_scope_changed", Call(request).Value<string>("error"));
+            request["expected_instance_id"] = status["instance_id"];
+            request["expected_project_id"] = status["project_id"];
+            Assert.IsTrue(Call(request).Value<bool>("success"));
+            request["paths"] = new JArray(42);
+            Assert.IsFalse(Call(request).Value<bool>("success"));
+        }
     }
 }

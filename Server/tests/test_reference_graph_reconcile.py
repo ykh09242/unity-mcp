@@ -12,6 +12,7 @@ import weakref
 import pytest
 
 from services.reference_graph.reconcile import Reconciler, drained_thread
+from services.reference_graph.analysis import ANALYSIS_VERSION
 from services.reference_graph.store import GraphScope, GraphStore, RevisionConflict, _hash
 from services.reference_graph.workspace import GraphWorkspace
 
@@ -307,6 +308,134 @@ def setup(tmp_path):
     workspace = GraphWorkspace(store)
     editor = Editor()
     return store, workspace, editor, Reconciler(workspace, editor, allowed)
+
+
+@pytest.mark.asyncio
+async def test_compiler_context_change_reparses_same_bytes_without_import_or_repeated_idle_reads(
+    setup,
+):
+    store, workspace, editor, _ = setup
+    one = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    two = editor.add(
+        2, "Assets/Resources/Two.prefab", keys=[{"scheme": "resources", "value": "Two"}]
+    )
+    caller = editor.add(
+        3,
+        "Assets/Caller.cs",
+        """class Use { void Run() {
+#if CLIENT
+UnityEngine.Resources.Load("One");
+#else
+UnityEngine.Resources.Load("Two");
+#endif
+} }""",
+    )
+    build = {
+        "state": "available",
+        "assembly": "Game",
+        "references": [],
+        "defines": ["CLIENT"],
+        "revision": "a",
+    }
+
+    async def collect(action, **params):
+        if action == "compilation":
+            return {
+                "revision": build["revision"],
+                "bindings": [
+                    {"path": path, "signature": build["revision"]} for path in params["paths"]
+                ],
+            }
+        page = await editor(action, **params)
+        if action == "status":
+            page["compilation_context"] = {
+                key: value for key, value in build.items() if key in {"state", "revision"}
+            }
+        if action == "source":
+            page["fingerprint"] += build["revision"]
+            if params["offset"] == 0:
+                page["compilation_context"] = {**build, "binding_revision": build["revision"]}
+        return page
+
+    engine = Reconciler(workspace, collect, allowed)
+    assert await engine.reconcile()
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {one}
+    build.update(defines=[], revision="b")
+    assert await engine.reconcile()
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {two}
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert not any(action == "source" for action, _ in editor.calls)
+
+
+@pytest.mark.asyncio
+async def test_new_script_membership_only_rechecks_metadata_of_unchanged_compiler_inputs(setup):
+    _, workspace, editor, _ = setup
+    editor.add(1, "Assets/Existing.cs", "class Existing { }")
+    revision = "first"
+
+    async def collect(action, **params):
+        if action == "compilation":
+            return {
+                "revision": revision,
+                "bindings": [
+                    {"path": path, "signature": "same-assembly"} for path in params["paths"]
+                ],
+            }
+        page = await editor(action, **params)
+        if action == "status":
+            page["compilation_context"] = {"state": "available", "revision": revision}
+        if action == "source":
+            page["fingerprint"] += revision
+            if params["offset"] == 0:
+                page["compilation_context"] = {
+                    "state": "available",
+                    "revision": revision,
+                    "binding_revision": "same-assembly",
+                    "assembly": "Game",
+                    "defines": [],
+                    "references": [],
+                }
+        return page
+
+    engine = Reconciler(workspace, collect, allowed)
+    assert await engine.reconcile()
+    revision = "second"
+    added = editor.add(2, "Assets/Added.cs", "class Added { }")
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert {params["guid"] for action, params in editor.calls if action == "source"} == {added[6:]}
+
+
+@pytest.mark.asyncio
+async def test_context_change_inside_source_continuation_cannot_publish(setup):
+    _, workspace, editor, _ = setup
+    owner = editor.add(
+        1, "Assets/Caller.cs", 'class Use { void Run() { UnityEngine.Resources.Load("One"); } }'
+    )
+    build = {
+        "state": "available",
+        "assembly": "Game",
+        "references": [],
+        "defines": [],
+        "revision": "a",
+    }
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "status":
+            page["compilation_context"] = {"state": "available", "revision": "a"}
+        if action == "source":
+            page["compilation_context"] = build.copy()
+            page["fingerprint"] += "a" if params["offset"] == 0 else "b"
+        return page
+
+    engine = Reconciler(workspace, collect, allowed)
+    with pytest.raises(RevisionConflict, match="Source changed"):
+        await engine.reconcile()
+    assert not workspace.documents([owner])
 
 
 @pytest.mark.asyncio
@@ -742,7 +871,7 @@ async def test_analysis_upgrade_reparses_old_facts_once_without_native_import(se
     editor.calls.clear()
     assert await engine.reconcile()
     assert any(action == "source" for action, _ in editor.calls)
-    assert workspace.documents()[0]["data"]["version"] == 4
+    assert workspace.documents()[0]["data"]["version"] == ANALYSIS_VERSION
     assert store.query(caller)["edges"]
     editor.calls.clear()
     assert await engine.reconcile()

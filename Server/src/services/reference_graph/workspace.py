@@ -31,7 +31,7 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2, 3, 4):
+            if version is not None and version[0] not in (1, 2, 3, 4, 5):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -70,6 +70,14 @@ class GraphWorkspace:
                     "CREATE TABLE IF NOT EXISTS graph_staging(worker TEXT NOT NULL,owner TEXT NOT NULL,generation INTEGER NOT NULL,identity TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,ordinal INTEGER NOT NULL,PRIMARY KEY(worker,owner,kind,identity))"
                 )
                 connection.execute("UPDATE graph_workspace SET version=4")
+            if version is None or version[0] < 5:
+                connection.execute(
+                    "ALTER TABLE graph_documents ADD COLUMN compilation_signature TEXT"
+                )
+                connection.execute(
+                    "UPDATE graph_documents SET compilation_signature=json_extract(payload,'$.build.binding_revision') WHERE format='csharp'"
+                )
+                connection.execute("UPDATE graph_workspace SET version=5")
 
     @staticmethod
     def _addressables(connection, asset: dict) -> None:
@@ -134,6 +142,49 @@ class GraphWorkspace:
             )
             connection.execute("DELETE FROM graph_staging WHERE worker<>?", (owner,))
             return True
+
+    def ensure_compilation_context(
+        self, worker: str, context: dict | None, *, checked: bool = False
+    ) -> None:
+        with self._write(worker) as connection:
+            if self._state(connection, "compilation_context") == context:
+                return
+            if not checked:
+                connection.execute(
+                    "UPDATE graph_assets SET dirty=1 WHERE json_extract(payload,'$.source_format')='csharp'"
+                )
+                connection.execute(
+                    "DELETE FROM graph_asset_failures WHERE guid IN (SELECT guid FROM graph_assets WHERE json_extract(payload,'$.source_format')='csharp')"
+                )
+                self._invalidate(
+                    connection,
+                    (
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT owner FROM graph_documents WHERE format='csharp'"
+                        )
+                    ),
+                )
+            self._set(connection, "compilation_context", context)
+            self.store._bump(connection)
+
+    def compilation_candidates(self, after: str = "") -> list[dict]:
+        with self.store._connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT a.guid,a.path,d.compilation_signature AS signature FROM graph_assets a LEFT JOIN graph_documents d ON d.owner='asset:'||a.guid WHERE a.guid>? AND a.dirty=0 AND json_extract(a.payload,'$.source_format')='csharp' ORDER BY a.guid LIMIT 256",
+                    (after,),
+                )
+            ]
+
+    def dirty_compilation(self, worker: str, guids: list[str]) -> None:
+        with self._write(worker) as connection:
+            for guid in guids:
+                connection.execute("UPDATE graph_assets SET dirty=1 WHERE guid=?", (guid,))
+                connection.execute("DELETE FROM graph_asset_failures WHERE guid=?", (guid,))
+            self._invalidate(connection, ("asset:" + guid for guid in guids))
+            self.store._bump(connection)
 
     def renew(self, owner: str) -> bool:
         with self.store._connect(write=True) as connection:
@@ -497,8 +548,16 @@ class GraphWorkspace:
                 return False
             self._invalidate(connection, [owner])
             connection.execute(
-                "INSERT INTO graph_documents VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET format=excluded.format,fingerprint=excluded.fingerprint,payload=excluded.payload",
-                (owner, format_, fingerprint, encoded),
+                "INSERT INTO graph_documents(owner,format,fingerprint,payload,compilation_signature) VALUES (?,?,?,?,?) ON CONFLICT(owner) DO UPDATE SET format=excluded.format,fingerprint=excluded.fingerprint,payload=excluded.payload,compilation_signature=excluded.compilation_signature",
+                (
+                    owner,
+                    format_,
+                    fingerprint,
+                    encoded,
+                    payload.get("build", {}).get("binding_revision")
+                    if format_ == "csharp"
+                    else None,
+                ),
             )
             connection.execute("INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", (owner,))
             self._set(connection, "analysis_dirty", True)

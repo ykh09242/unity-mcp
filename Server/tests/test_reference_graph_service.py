@@ -32,6 +32,31 @@ from services.tools.manage_reference_graph import manage_reference_graph
 REQUEST_MARKER = ContextVar("graph_test_request_marker", default=None)
 
 
+@pytest.mark.asyncio
+async def test_build_context_change_cannot_claim_native_current_before_reconciliation(
+    setup, monkeypatch
+):
+    service, sender, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    build = {"state": "available", "revision": "first"}
+
+    async def send(instance, params):
+        result = await sender(instance, params)
+        if params["action"] == "status":
+            result["compilation_context"] = build.copy()
+        return result
+
+    service.send = send
+    entry, _ = await service.resolve(ctx, "status")
+    assert await entry.engine.reconcile()
+    assert (await service.execute(ctx, "status", {}))["data"]["graph_status"]["native_current"]
+    build["revision"] = "second"
+    assert not (await service.execute(ctx, "status", {}))["data"]["graph_status"]["native_current"]
+    assert await entry.engine.reconcile()
+    assert (await service.execute(ctx, "status", {}))["data"]["graph_status"]["native_current"]
+    await service.aclose()
+
+
 async def external_fixture(service, sender, ctx, root, monkeypatch, files=1):
     monkeypatch.setattr(service, "start", lambda *_, **__: None)
     guid = "1" * 32
