@@ -12,7 +12,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_play_scenario_player_evidence as checker
-from player_e2e_artifacts import contained, inventory, verify_bundle, write_json
+from player_e2e_artifacts import contained, inventory, portable, verify_bundle, write_json
 from player_e2e_process import Invocation, execute
 from player_e2e_reports import check_progress, check_report, check_startup_progress_failure
 from run_play_scenario_player_e2e import initialize
@@ -297,12 +297,9 @@ def test_discovery_directory_cap_precedes_unbounded_scan(tmp_path):
         inventory(tmp_path)
 
 
-def test_protected_exact_subtree_is_rejected_before_read(tmp_path):
-    protected = tmp_path / "Assets/Resources/GameData"
-    protected.mkdir(parents=True)
-    with pytest.raises(ValueError, match="Protected"):
-        inventory(tmp_path)
-    # A plain synthetic directory with that basename is not the protected chain.
+def test_ordinary_folder_names_are_allowed(tmp_path):
+    # Pure lexical validation: no project resource data is created or inspected.
+    portable("Assets/Resources/GameData/test.txt")
     ordinary = tmp_path / "ordinary"
     (ordinary / "GameData").mkdir(parents=True)
     (ordinary / "GameData/test.txt").write_bytes(b"fixture")

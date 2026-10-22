@@ -536,7 +536,7 @@ remain separate; a skipped licensed job is not a passed game scenario.
 - Step names: 1-128 characters; step timeout: integer 1-120 seconds, default 30; poll interval:
   integer 100-2,000 ms, default 250. `stable_for_ms`: 0-60,000, strictly below the step timeout.
 - Completion quiet window: 0-10,000 ms; cleanup timeout: 1-300 seconds, default 30.
-- Scene paths must be canonical `Assets/... .unity` paths outside GameData. Object paths are exact
+- Scene paths must be canonical `Assets/... .unity` paths. Object paths are exact
   active-scene root-relative hierarchy paths, up to 4,096 characters and 128 segments. No traversal,
   empty segments, instance IDs or fuzzy selectors.
 - Object count: 0-10,000; component/property path: at most 256 characters; scalar string: at most 1,024.

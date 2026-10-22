@@ -37,8 +37,6 @@ def portable(relative: str) -> None:
             raise ValueError("Payload path is not portable to Windows")
         if part.lower().startswith(".env"):
             raise ValueError("Environment payload files are forbidden")
-    if "/assets/resources/gamedata/" in ("/" + relative.lower() + "/"):
-        raise ValueError("Protected GameData payload paths are forbidden")
 
 
 def read_json(path: Path, limit: int = JSON_LIMIT) -> dict:

@@ -128,7 +128,7 @@ def test_cli_export_preserves_existing_destination_without_dispatch(tmp_path, mo
     assert output.read_bytes() == b"original"
 
 
-@pytest.mark.parametrize("path", ["con", ".env.export", "Assets/Resources/GameData/result.json"])
+@pytest.mark.parametrize("path", ["con", ".env.export"])
 def test_cli_export_rejects_protected_paths_before_dispatch(tmp_path, monkeypatch, path):
     editor = importlib.import_module("cli.commands.editor")
     monkeypatch.setattr(editor, "get_config", lambda: CLIConfig(format="json"))

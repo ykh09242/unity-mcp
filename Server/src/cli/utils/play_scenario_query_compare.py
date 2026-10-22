@@ -392,12 +392,6 @@ def read_report(source: Path, label: str) -> dict[str, JsonValue]:
         _reject_remote_namespace(source)
         path = Path(os.path.abspath(source))
         _reject_remote_namespace(path)
-        parts = [part.casefold() for part in path.parts]
-        if any(
-            parts[index : index + 3] == ["assets", "resources", "gamedata"]
-            for index in range(len(parts) - 2)
-        ):
-            raise ValueError("Protected data path")
         for ancestor in (*reversed(path.parents), path):
             attributes = ancestor.lstat()
             if stat.S_ISLNK(attributes.st_mode) or (

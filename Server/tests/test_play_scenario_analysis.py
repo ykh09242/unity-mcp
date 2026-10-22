@@ -282,7 +282,6 @@ def test_png_crc_error_is_structured_cli_failure(command_group, tmp_path):
         "//server/share/capture.png",
         "NUL",
         ".env.png",
-        "Assets/Resources/GameData/capture.png",
         "capture.png:stream",
     ],
 )

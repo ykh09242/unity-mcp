@@ -85,13 +85,6 @@ class ScanCursor:
                         yield None, None
                         continue
                     path = Path(entry.path)
-                    lowered = [part.casefold() for part in path.parts]
-                    if any(
-                        lowered[index : index + 3] == ["assets", "resources", "gamedata"]
-                        for index in range(len(lowered) - 2)
-                    ):
-                        yield None, None
-                        continue
                     try:
                         info = entry.stat(follow_symlinks=False)
                         if self._linked(info):

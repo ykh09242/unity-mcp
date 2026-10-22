@@ -124,7 +124,7 @@ ancestors are skipped. The authored scope is:
 
 Excluded paths include `.work/`, legacy `.omo/`, `.tmp/`, virtual environments, caches, Unity `Library/`, `Temp/`
 and `Packages/`, vendor/external/third-party code, generated files, build output,
-`.env*`, and every `Assets/Resources/GameData/` subtree. The authored
+and `.env*`. The authored
 `MCPForUnity/Editor/Tools/Build/` directory is source, not build output. Unity assets and
 metadata, lock files, generated tool-reference pages and other test projects are outside
 the formatting scope. Exclusion checks run before file contents are read.

@@ -246,12 +246,18 @@ def test_scene_wait_state_requires_exact_non_null_enum(state):
         PlayScenario.model_validate(value)
 
 
-@pytest.mark.parametrize("scene", [None, True, "Assets/../B.unity", "Assets/GameData/B.unity"])
+@pytest.mark.parametrize("scene", [None, True, "Assets/../B.unity"])
 def test_object_scene_uses_same_strict_path_policy(scene):
     value = definition()
     value["steps"][2]["scene"] = scene
     with pytest.raises(ValidationError):
         PlayScenario.model_validate(value)
+
+
+def test_object_scene_accepts_generic_folder_names():
+    value = definition()
+    value["steps"][2]["scene"] = "Assets/GameData/B.unity"
+    assert PlayScenario.model_validate(value).steps[2].scene == "Assets/GameData/B.unity"
 
 
 @pytest.mark.asyncio

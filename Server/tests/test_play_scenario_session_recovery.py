@@ -337,10 +337,12 @@ def test_output_ancestor_of_source_is_rejected_before_write(tmp_path):
         recover_player_session(source, tmp_path)
 
 
-def test_protected_source_path_is_rejected_before_any_read(tmp_path):
-    protected = tmp_path / "Assets" / "Resources" / "GameData"
-    with pytest.raises(PlayerLaunchError, match="protected"):
-        recover_player_session(protected, tmp_path / "output")
+def test_recovery_accepts_ordinary_folder_names(tmp_path):
+    from cli.utils.play_scenario_session_recovery import _safe_path
+
+    path = tmp_path / "GameData"
+    path.mkdir()
+    assert _safe_path(path) == path
 
 
 def test_recovery_reads_source_files_only_and_does_not_follow_native_artifact(

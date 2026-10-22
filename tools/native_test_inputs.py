@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 
-_EXCLUDED = {"library", "temp", "logs", "obj", ".git", "gamedata", "__pycache__"}
+_EXCLUDED = {"library", "temp", "logs", "obj", ".git", "__pycache__"}
 
 
 def checked_path(path):

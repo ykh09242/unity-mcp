@@ -135,7 +135,6 @@ def test_payload_failures_prevent_child_admission(verified_bundle, child, change
         "a:x",
         "a\u007fb",
         ".env-secret",
-        "Assets/Resources/GameData/x",
     ],
 )
 def test_inventory_rejects_path_aliases_before_reads(value):
@@ -145,6 +144,7 @@ def test_inventory_rejects_path_aliases_before_reads(value):
 
 def test_ordinary_gamedata_directory_is_allowed():
     assert PayloadFile(path="StreamingAssets/GameData/value.bin", size_bytes=0, sha256="0" * 64)
+    assert PayloadFile(path="Assets/Resources/GameData/value.bin", size_bytes=0, sha256="0" * 64)
 
 
 def test_compare_is_explicit_batches_and_eviction_is_bounded(verified_bundle, child):

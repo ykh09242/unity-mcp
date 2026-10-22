@@ -227,8 +227,6 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             if (full.StartsWith(@"\\", StringComparison.Ordinal))
                 throw new InvalidDataException("Import a local session file.");
             string portable = full.Replace('\\', '/').ToLowerInvariant();
-            if (("/" + portable + "/").Contains("/assets/resources/gamedata/"))
-                throw new InvalidDataException("Protected GameData paths cannot be imported.");
             if (portable.Split('/').Any(part => part.StartsWith(".env", StringComparison.Ordinal)))
                 throw new InvalidDataException("Environment paths cannot be imported.");
             SafePathUtility.ResolveWithinRoot(root, full);

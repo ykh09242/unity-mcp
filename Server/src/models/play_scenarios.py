@@ -526,11 +526,10 @@ class ScenarioStep(BaseModel):
                     len(segments) < 2
                     or segments[0] != "Assets"
                     or not value.endswith(".unity")
-                    or any(segment.casefold() == "gamedata" for segment in segments)
                     or any(char in segment for segment in segments for char in ':*?"<>|')
                     or any(segment.endswith((".", " ")) for segment in segments)
                 ):
-                    raise ValueError("Scene must be an Assets/... .unity path outside GameData")
+                    raise ValueError("Scene must be a canonical Assets/... .unity path")
                 return value
             case unreachable:
                 assert_never(unreachable)

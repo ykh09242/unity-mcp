@@ -259,8 +259,6 @@ def copy_source(source: Path, destination: Path) -> None:
             or name.startswith(".env")
             or Path(name).suffix.lower() in {".key", ".pem", ".pfx", ".p12"}
         }
-        if Path(directory).name == "Resources" and "Assets" in Path(directory).parts:
-            ignored.add("GameData")
         for name in set(names) - ignored:
             if (Path(directory) / name).is_symlink():
                 raise PreparationError(f"Symbolic link is not allowed in CI source: {name}")
@@ -501,7 +499,6 @@ def tmp_resource_path(value: str) -> PurePosixPath:
             re.fullmatch(r"(?i)(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?", part)
             for part in path.parts
         )
-        or "/resources/gamedata/" in "/" + value.casefold() + "/"
     ):
         raise PreparationError(f"Unsafe TMP resource pathname: {value!r}")
     return path

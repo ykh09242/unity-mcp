@@ -13,7 +13,7 @@ class AnalysisError(ValueError):
 
 
 def safe_local_path(source: Path) -> Path:
-    """Reject remote/device namespaces, protected data, and linked existing ancestors."""
+    """Reject remote/device namespaces, sensitive filenames and linked ancestors."""
     spelling = os.fspath(source).replace("\\", "/")
     if spelling.startswith(("//", "/??/")):
         raise AnalysisError("Remote or device paths are unsupported")
@@ -29,11 +29,6 @@ def safe_local_path(source: Path) -> Path:
         ":" in part for part in path.parts if part != path.anchor
     ):
         raise AnalysisError("Sensitive or alternate-stream paths are unsupported")
-    if any(
-        parts[index : index + 3] == ["assets", "resources", "gamedata"]
-        for index in range(len(parts) - 2)
-    ):
-        raise AnalysisError("Protected data path")
     for ancestor in (*reversed(path.parents), path):
         try:
             info = ancestor.lstat()

@@ -883,7 +883,7 @@ def test_optional_dependency_cache_warm_path_checks_package_metadata(dependency_
     assert not (request.repo / ".unity-ci/warm").exists()
 
 
-@pytest.mark.parametrize("excluded", [".env.local", "GameData"])
+@pytest.mark.parametrize("excluded", [".env.local", "signing.key"])
 def test_optional_dependency_cache_rejects_excluded_input_before_hashing(
     dependency_cache, excluded
 ):
@@ -891,7 +891,7 @@ def test_optional_dependency_cache_rejects_excluded_input_before_hashing(
     helper, request, _ = dependency_cache
     helper.prepare(request, request.repo / ".unity-ci/cold")
     target = helper.destination(request) / "Registry" / excluded
-    target.mkdir() if excluded == "GameData" else target.write_bytes(b"excluded fixture")
+    target.write_bytes(b"excluded fixture")
     # When it is inventoried for warm preparation.
     with pytest.raises(packages.PreparationError, match="Excluded input"):
         helper.prepare(request, request.repo / ".unity-ci/warm")
@@ -1139,7 +1139,6 @@ def test_optional_essential_selectors_rejected_before_copying(
         "C:\\escape",
         "\\\\server\\escape",
         "Assets/TextMesh Pro/../escape",
-        "Assets/TextMesh Pro/Resources/GameData/escape",
         "Assets/TextMesh Pro/CON.asset",
         "Assets/TextMesh Pro/Fonts/unsafe. ",
     ],

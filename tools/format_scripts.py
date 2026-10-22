@@ -105,8 +105,6 @@ def is_authored_path(relative: str) -> bool:
     parts = tuple(part.casefold() for part in path.parts)
     if any(part.startswith(".env") for part in parts):
         return False
-    if "/assets/resources/gamedata/" in "/" + relative.casefold() + "/":
-        return False
     for part in parts:
         # The package contains an authored Editor/Tools/Build source directory.
         if part in EXCLUDED_PARTS and not (part == "build" and parts[0] == "mcpforunity"):
@@ -154,7 +152,6 @@ def discover_files(root: Path, all_files: bool, requested: Sequence[str]) -> tup
     exclusions = (
         ":(glob,exclude)**/.env*",
         ":(exclude).env*",
-        ":(glob,exclude)**/Assets/Resources/GameData/**",
     )
     candidates = git_paths(
         root,

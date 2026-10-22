@@ -98,6 +98,15 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
             Assert.AreEqual(120, PlayScenarioDefinition.Parse(valid).Steps[0].TimeoutSeconds);
         }
 
+        [TestCase("Assets/Resources/GameData/Menu.unity")]
+        [TestCase("Assets/gAmEdAtA/Menu.unity")]
+        public void SceneFolderNamesAreNotApplicationPolicy(string scene)
+        {
+            var value = Valid();
+            value["steps"][0]["scene"] = scene;
+            Assert.AreEqual(scene, PlayScenarioDefinition.Parse(value).Steps[0].Scene);
+        }
+
         [Test]
         public void RejectsNoncanonicalAndForbiddenPaths()
         {
@@ -109,8 +118,6 @@ namespace MCPForUnityTests.Editor.Tools.PlayScenarios
                     "Assets//Menu.unity",
                     "Assets/./Menu.unity",
                     "Assets/Menu.UNITY",
-                    "Assets/Resources/GameData/Menu.unity",
-                    "Assets/gAmEdAtA/Menu.unity",
                     "Assets/C:/Menu.unity",
                     "Assets\\Menu.unity",
                     "Assets/A. /Menu.unity",

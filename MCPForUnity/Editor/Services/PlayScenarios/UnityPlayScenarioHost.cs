@@ -199,12 +199,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         internal static string RequireSceneAsset(string scenePath)
         {
-            if (
-                scenePath == null
-                || !scenePath.StartsWith("Assets/", StringComparison.Ordinal)
-                || !scenePath.EndsWith(".unity", StringComparison.Ordinal)
-                || scenePath.Split('/').Any(part => part.Equals("GameData", StringComparison.OrdinalIgnoreCase))
-            )
+            if (scenePath == null || !scenePath.StartsWith("Assets/", StringComparison.Ordinal) || !scenePath.EndsWith(".unity", StringComparison.Ordinal))
                 throw new ArgumentException("Scene must be a permitted Assets/*.unity path.");
             string containedPath = AssetPathUtility.GetContainedAssetPath(scenePath);
             if (containedPath != scenePath)

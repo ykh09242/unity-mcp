@@ -59,7 +59,6 @@ def create_sample(
             or not path.resolve().is_relative_to(repository / "MCPForUnity")
             or path.name.startswith(".env")
             or path.suffix.lower() in {".key", ".pem", ".pfx", ".p12"}
-            or "Assets/Resources/GameData" in path.as_posix()
         ):
             raise ValueError("The tracked package contains an unsupported source path.")
         sources.append(path)

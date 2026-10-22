@@ -256,12 +256,6 @@ class _Journal(Generic[Model]):
 def _safe_path(path: Path) -> Path:
     """Reject protected data paths and linked/reparse ancestors before any read or write."""
     absolute = Path(os.path.abspath(path))
-    parts = [part.casefold() for part in absolute.parts]
-    if any(
-        parts[index : index + 3] == ["assets", "resources", "gamedata"]
-        for index in range(len(parts) - 2)
-    ):
-        raise PlayerLaunchError("Recovery cannot access protected GameData paths")
     for ancestor in (absolute, *absolute.parents):
         try:
             attributes = ancestor.lstat()
