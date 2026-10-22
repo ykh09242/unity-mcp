@@ -645,9 +645,9 @@ def _argument_type(tokens: list[Token], parameters: dict[str, str]) -> str:
             (name for name, bits in candidates if number < 1 << bits), "invalid_numeric_literal"
         )
         if sign == "-":
-            if base == 10 and not suffix and number == 1 << 31:
+            if not suffix and number == 1 << 31:
                 return "int"
-            if base == 10 and suffix in ("", "l") and number == 1 << 63:
+            if suffix in ("", "l") and number == 1 << 63:
                 return "long"
             return (
                 "long"

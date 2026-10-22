@@ -155,6 +155,31 @@ def test_new_global_type_shadow_invalidates_an_imported_constant_binding():
     assert keys(index) == {"one"}
 
 
+@pytest.mark.parametrize(
+    ("literal", "expected"),
+    [
+        ("-2147483648", "one"),
+        ("-0x80000000", "one"),
+        ("-0b" + "1" + "0" * 31, "one"),
+        ("-0x80000000U", "two"),
+        ("-0x8000000000000000", "two"),
+        ("-0x8000000000000000L", "two"),
+        ("-0b" + "1" + "0" * 63, "two"),
+        ("-0b" + "1" + "0" * 63 + "L", "two"),
+    ],
+)
+def test_signed_minimum_literals_keep_type_for_each_radix(literal, expected):
+    loader = facts(
+        "loader",
+        """class Loader {
+static void Load(int value) { UnityEngine.Resources.Load("one"); }
+static void Load(long value) { UnityEngine.Resources.Load("two"); }
+}""",
+    )
+    caller = facts("caller", f"class Use {{ void Run() {{ Loader.Load({literal}); }} }}")
+    assert keys(AnalysisIndex([loader, caller], catalog())) == {expected}
+
+
 def test_compilation_metadata_is_shared_per_index_and_released_after_last_owner():
     import json
 
