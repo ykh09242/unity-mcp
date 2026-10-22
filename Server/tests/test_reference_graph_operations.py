@@ -152,6 +152,40 @@ async def test_cleanup_preserves_active_jobs_and_authored_history(setup):
 
 
 @pytest.mark.asyncio
+async def test_retry_preserves_failure_eligibility_and_recovery_invalidation(setup):
+    service, ctx = setup
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        workspace = entry.workspace
+        assert workspace.acquire("worker")
+        asset = {
+            "guid": "a" * 32,
+            "path": "Assets/Fixture.prefab",
+            "kind": "asset",
+            "source_format": "none",
+            "keys": [],
+        }
+        workspace.record_page("worker", [asset], {}, "scan")
+        workspace.fail_asset("worker", asset, ValueError("temporary collection failure"))
+        assert workspace.dirty_assets() == []
+
+        await service.execute(ctx, "retry", {})
+        assert [item["guid"] for item in workspace.dirty_assets()] == [asset["guid"]]
+        assert workspace.counts()["failed_assets"] == 1
+        with workspace.store._connect(write=True) as db:
+            assert db.execute("SELECT attempts FROM graph_asset_failures").fetchone()[0] == 1
+            db.execute("DELETE FROM graph_changed_inputs")
+        workspace.clean_asset("worker", asset["guid"])
+        assert workspace.counts()["failed_assets"] == 0
+        with workspace.store._connect() as db:
+            assert db.execute(
+                "SELECT 1 FROM graph_changed_inputs WHERE owner=?", ("asset:" + asset["guid"],)
+            ).fetchone()
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_editor_fence_before_database_creation(setup):
     service, ctx = setup
     ctx.reference_graph_expected_scope = ("other", "project")

@@ -216,4 +216,6 @@ def cleanup(workspace, *, before, limit=100):
 
 def retry(workspace):
     with workspace.store._connect(write=True) as db:
-        db.execute("DELETE FROM graph_asset_failures")
+        # Failed assets are no longer dirty. Keep their retry eligibility and
+        # recovery marker so clean_asset also invalidates dependent analysis.
+        db.execute("UPDATE graph_asset_failures SET retry_at=0")

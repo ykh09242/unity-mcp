@@ -264,7 +264,10 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             pending?.Cancel();
             viewIdentity = null;
             identity.text = "Connection changed · refresh to verify this account";
+            identity.tooltip = null;
             status.text = "Refresh required";
+            summary.EnableInClassList("graph-attention", false);
+            summary.EnableInClassList("graph-current", false);
             summaryDetail.text = "The previous view was cleared to keep accounts and Editors separate.";
             readyCount.text = pendingCount.text = issueCount.text = diskCount.text = "—";
             updated.text = "Updates on request";

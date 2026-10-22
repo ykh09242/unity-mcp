@@ -118,6 +118,8 @@ namespace MCPForUnityTests.EditMode.Windows
             await section.Run("import_config", new JObject());
             Assert.AreEqual(1, sends, "A stale form must never write into a newly selected account.");
             StringAssert.DoesNotContain("isolated-test-account", root.Q<Label>("graph-identity").text);
+            Assert.IsTrue(string.IsNullOrEmpty(root.Q<Label>("graph-identity").tooltip));
+            Assert.IsFalse(root.Q(className: "graph-summary").ClassListContains("graph-attention"));
         }
 
         [UnityTest, Explicit("Controller-owned rendered operations panel evidence.")]
