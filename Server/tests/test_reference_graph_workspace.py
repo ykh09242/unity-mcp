@@ -47,7 +47,33 @@ def test_version_one_upgrade_preserves_evidence_and_progress(workspace):
     assert restored.progress()["after"] == 7
     assert restored.counts()["failed_assets"] == 0
     with restored.store._connect() as connection:
-        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 2
+        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 3
+
+
+def test_version_two_upgrade_retains_addressables_failures(workspace):
+    asset = {**row(), "addressables": "unavailable", "addressables_error": "IOException"}
+    workspace.record_page("worker", [asset], {}, "scan")
+    with workspace.store._connect(write=True) as connection:
+        connection.execute("DROP TABLE graph_addressables")
+        connection.execute("UPDATE graph_workspace SET version=2")
+    restored = GraphWorkspace(workspace.store)
+    assert restored.provider_status()["addressables"]["errors"] == 1
+    assert restored.diagnostics("asset:" + asset["guid"])["coverage"][0]["state"] == "failed"
+    restored.remove_path("worker", asset["path"])
+    assert restored.provider_status()["addressables"]["errors"] == 0
+
+
+def test_source_guard_observes_concurrent_revocation_without_a_pinned_snapshot(workspace):
+    source = "external:fixture"
+    workspace.store.set_source(source, {}, expected_version=0)
+    with workspace.source_guard(source, 1) as require_source:
+        require_source()
+        # A distinct writer must be visible on the next guard check, even while
+        # the scan's connection remains open. This is not a cached grant.
+        other = GraphStore(workspace.store.path, workspace.store.scope)
+        other.set_source(source, {}, expected_version=1, enabled=False)
+        with pytest.raises(RevisionConflict, match="grant changed"):
+            require_source()
 
 
 def test_retired_worker_cannot_record_failure_or_replace_diagnostics(workspace):

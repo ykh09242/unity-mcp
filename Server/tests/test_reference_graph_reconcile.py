@@ -1,6 +1,7 @@
 """Exercise durable reconciliation against the native paging protocol."""
 
 import asyncio
+from contextlib import contextmanager
 import base64
 import hashlib
 import json
@@ -11,6 +12,149 @@ import pytest
 from services.reference_graph.reconcile import Reconciler, drained_thread
 from services.reference_graph.store import GraphScope, GraphStore, RevisionConflict, _hash
 from services.reference_graph.workspace import GraphWorkspace
+
+
+@pytest.mark.asyncio
+async def test_idle_external_scan_batches_bookkeeping_and_reuses_catalog(
+    setup, tmp_path, monkeypatch
+):
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    root = tmp_path / "settings"
+    root.mkdir()
+    for index in range(16):
+        (root / f"{index}.json").write_text('{"prefab":"One"}', encoding="utf-8")
+    workspace.set_source(
+        "external:fixture",
+        {
+            "root": str(root),
+            "include": ["*.json"],
+            "mappings": [{"field": "/prefab", "scheme": "resources"}],
+        },
+        expected_version=0,
+    )
+    assert await engine.reconcile()
+    before = store.query(target, direction="incoming")
+    writes = 0
+    connect = store._connect
+
+    @contextmanager
+    def counted(**kwargs):
+        nonlocal writes
+        writes += int(kwargs.get("write", False))
+        with connect(**kwargs) as connection:
+            yield connection
+
+    assert workspace.acquire(engine.worker)
+    monkeypatch.setattr(store, "_connect", counted)
+    monkeypatch.setattr(workspace, "catalog", lambda: pytest.fail("Unchanged catalog was reloaded"))
+    try:
+        await engine._external(force=False)
+        assert writes <= 5
+        assert store.query(target, direction="incoming") == before
+    finally:
+        workspace.release(engine.worker)
+
+
+@pytest.mark.asyncio
+async def test_addressables_collection_failure_is_durable_and_not_missing_key(setup):
+    store, workspace, editor, engine = setup
+    target = editor.add(1, "Assets/A.prefab")
+    editor.assets[target[6:]].update(
+        addressables="unavailable",
+        addressables_error="MissingMethodException",
+        addressables_version="2.7",
+    )
+    caller = editor.add(
+        2,
+        "Assets/Caller.cs",
+        'using UnityEngine.AddressableAssets; class C { void M() { Addressables.LoadAssetAsync<object>("enemy"); } }',
+    )
+    assert not await engine.reconcile()
+    coverage = workspace.diagnostics(target)["coverage"]
+    assert any(
+        row["provider"] == "addressables" and row["state"] == "unsupported" for row in coverage
+    )
+    assert workspace.provider_status()["addressables"]["errors"] == 1
+    assert workspace.diagnostics(caller)["issues"][0]["reason"] == "provider_unavailable"
+    restored = GraphWorkspace(store)
+    assert restored.provider_status()["addressables"]["errors"] == 1
+    editor.assets[target[6:]].update(
+        addressables="available",
+        addressables_error=None,
+        keys=[{"scheme": "addressables", "value": "enemy"}],
+    )
+    editor.event("Assets/A.prefab")
+    assert await engine.reconcile()
+    assert workspace.provider_status()["addressables"]["errors"] == 0
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {target}
+
+
+@pytest.mark.asyncio
+async def test_external_catalog_cache_is_invalidated_when_policy_empties_inventory(setup, tmp_path):
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    root = tmp_path / "settings"
+    root.mkdir()
+    (root / "a.json").write_text('{"prefab":"One"}', encoding="utf-8")
+    workspace.set_source(
+        "external:fixture",
+        {
+            "root": str(root),
+            "include": ["*.json"],
+            "mappings": [{"field": "/prefab", "scheme": "resources"}],
+        },
+        expected_version=0,
+    )
+    assert await engine.reconcile()
+    assert store.query(target, direction="incoming")["edges"]
+    workspace.set_policy({"exclude": ["Assets/**"]}, expected_version=0)
+    assert await engine.reconcile()
+    assert not workspace.catalog()
+    assert not store.query(target, direction="incoming")["edges"]
+
+
+@pytest.mark.asyncio
+async def test_external_owner_survives_interrupted_enumeration_and_is_removed_after_deletion(
+    setup, tmp_path, monkeypatch
+):
+    from services.reference_graph.external import ExternalSource
+
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    root = tmp_path / "settings"
+    root.mkdir()
+    path = root / "a.json"
+    path.write_text('{"prefab":"One"}', encoding="utf-8")
+    workspace.set_source(
+        "external:fixture",
+        {
+            "root": str(root),
+            "include": ["*.json"],
+            "mappings": [{"field": "/prefab", "scheme": "resources"}],
+        },
+        expected_version=0,
+    )
+    files = ExternalSource.files
+
+    def interrupted(_):
+        yield "a.json"
+        raise OSError("interrupted enumeration")
+
+    monkeypatch.setattr(ExternalSource, "files", interrupted)
+    assert not await engine.reconcile()
+    assert store.query(target, direction="incoming")["edges"]
+    monkeypatch.setattr(ExternalSource, "files", files)
+    path.unlink()
+    assert await engine.reconcile()
+    assert not store.query(target, direction="incoming")["edges"]
+    assert store.status()["queue_idle"]
 
 
 async def allowed():
@@ -551,7 +695,7 @@ async def test_analysis_upgrade_reparses_old_facts_once_without_native_import(se
     editor.calls.clear()
     assert await engine.reconcile()
     assert any(action == "source" for action, _ in editor.calls)
-    assert workspace.documents()[0]["data"]["version"] == 2
+    assert workspace.documents()[0]["data"]["version"] == 3
     assert store.query(caller)["edges"]
     editor.calls.clear()
     assert await engine.reconcile()

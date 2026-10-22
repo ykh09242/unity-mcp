@@ -19,6 +19,8 @@ from services.registry import mcp_for_unity_tool
         "instance and authenticated user. No extra database installation. sync starts/resumes background "
         "work; poll status for progress. query uses node='asset:<guid>', direction='incoming' or "
         "'outgoing', limit and returned cursor. diagnostics uses node, offset, limit and revision. "
+        "For a verified first page, query/diagnostics accept consistency='checked' to synchronize "
+        "and rehash external inputs; ordinary cached pages expose provider verification timestamps. "
         "Code, Addressables and wrapper analysis is conservative: possible/unresolved evidence never "
         "proves an asset safe to delete. Sources require explicit read-only root and include patterns; "
         "remote paths belong to the server and require its operator's grant. Authored changes use id "

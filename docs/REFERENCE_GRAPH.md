@@ -40,6 +40,23 @@ includes `graph_status` with progress, errors, queue state, and freshness. Impor
 compilation failure, Addressables event-observer errors, journal gaps, unfinished
 work, or unavailable external inputs must be resolved before treating a scan as current.
 
+`graph_status.native_current` reports the native journal/analysis state. When external
+sources are enabled, ordinary cached responses keep `current:false`: validating the
+returned files cannot prove that another file has not gained an incoming reference.
+`graph_status.providers` includes each source's scan generation, state and
+`last_verified_at`. Addressables collection errors appear in provider counts and
+per-asset diagnostics, separately from not-installed/not-configured states. An older
+collector may leave the assembly-version list empty; this means not reported.
+
+For an explicitly checked first page, add `"consistency":"checked"` to query or
+diagnostics options. The request synchronizes this scope and rehashes external
+files, then validates the delivered evidence and permissions. A pending/failed scan
+returns a retryable conflict. A successful `checked_snapshot` is evidence verified
+during that scan, not an atomic snapshot of all files or a safe-delete guarantee.
+Use normal revision-bound cursors/offsets for subsequent pages. A checked query can
+take as long as the underlying project scan; background `sync` remains preferable
+for routine progress and large jobs that should outlive an MCP request.
+
 Observed Unity dependencies, possible static matches, and manually declared edges
 remain distinct. C# analysis follows supported Resources/Addressables calls,
 literal and constant composition, and wrapper argument forwarding across files.

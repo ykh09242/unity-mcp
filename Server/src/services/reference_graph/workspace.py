@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from contextlib import contextmanager
 import json
+import stat
 import time
 
 from services.reference_graph.analysis import Analysis
@@ -22,7 +23,7 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2):
+            if version is not None and version[0] not in (1, 2, 3):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -46,6 +47,32 @@ class GraphWorkspace:
                     "CREATE TABLE graph_asset_failures(guid TEXT PRIMARY KEY,attempts INTEGER NOT NULL,retry_at REAL NOT NULL)"
                 )
                 connection.execute("UPDATE graph_workspace SET version=2")
+            if version is None or version[0] < 3:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS graph_addressables(owner TEXT PRIMARY KEY,state TEXT NOT NULL,version TEXT,error TEXT)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS graph_addressables_state ON graph_addressables(state,version)"
+                )
+                for row in connection.execute("SELECT payload FROM graph_assets"):
+                    self._addressables(connection, json.loads(row[0]))
+                connection.execute("UPDATE graph_workspace SET version=3")
+
+    @staticmethod
+    def _addressables(connection, asset: dict) -> None:
+        state = asset.get("addressables", "not_reported")
+        error = asset.get("addressables_error")
+        if error or state == "unavailable":
+            state = (
+                "unsupported"
+                if error
+                in {"MissingMethodException", "MissingFieldException", "MissingMemberException"}
+                else "failed"
+            )
+        connection.execute(
+            "INSERT OR REPLACE INTO graph_addressables VALUES (?,?,?,?)",
+            ("asset:" + asset["guid"], state, asset.get("addressables_version"), error),
+        )
 
     @staticmethod
     def _state(connection, key: str, fallback=None):
@@ -153,6 +180,7 @@ class GraphWorkspace:
                 "graph_changed_inputs",
                 "graph_external",
                 "graph_asset_failures",
+                "graph_addressables",
             ):
                 connection.execute("DELETE FROM " + table)
             connection.execute("DELETE FROM edges WHERE provider<>'manual'")
@@ -161,6 +189,10 @@ class GraphWorkspace:
             )
             self._set(connection, "progress", {"phase": "not_initialized"})
             self._set(connection, "analysis_dirty", True)
+            self._set(
+                connection, "catalog_revision", self._state(connection, "catalog_revision", 0) + 1
+            )
+            connection.execute("DELETE FROM graph_state WHERE key LIKE 'external_scan:%'")
             self.store._bump(connection)
             return expected_version + 1
 
@@ -188,6 +220,9 @@ class GraphWorkspace:
             )
             for table in ("graph_analysis", "graph_issues", "graph_external"):
                 connection.execute("DELETE FROM " + table + " WHERE provider=?", (provider,))
+            connection.execute(
+                "DELETE FROM graph_state WHERE key=?", ("external_scan:" + provider,)
+            )
             progress = self._state(connection, "progress", {})
             progress["phase"] = "changes_pending"
             self._set(connection, "progress", progress)
@@ -204,6 +239,29 @@ class GraphWorkspace:
                 if observation.provider == "code":
                     self._set(connection, "analysis_dirty", True)
             return generations
+
+    def observe_external(
+        self, worker: str, observation: Observation, *, stamp: str, analysis_key: str, seen: str
+    ) -> int:
+        with self._write(worker) as connection:
+            generation = self.store._observe(connection, observation)
+            # Track an admitted owner before any later publication. A crash,
+            # parse failure or grant retirement must not orphan its evidence.
+            self._record_external(
+                connection,
+                [
+                    (
+                        observation.provider,
+                        observation.owner,
+                        observation.path,
+                        observation.fingerprint,
+                        stamp,
+                        analysis_key,
+                        seen,
+                    )
+                ],
+            )
+            return generation
 
     def record_page(
         self, worker: str, assets: Iterable[dict], progress: dict, seen: str, *, force: bool = True
@@ -225,6 +283,7 @@ class GraphWorkspace:
                 dirty = force or old is None or json.loads(old[0])["path"] != asset["path"]
                 if old is None or old[0] != payload:
                     catalog_changed = True
+                    self._addressables(connection, asset)
                 connection.execute(
                     "INSERT INTO graph_assets VALUES (?,?,?,?,?) ON CONFLICT(guid) DO UPDATE SET path=excluded.path,payload=excluded.payload,seen=excluded.seen,dirty=MAX(graph_assets.dirty,excluded.dirty)",
                     (guid, asset["path"], payload, seen, int(dirty)),
@@ -256,6 +315,7 @@ class GraphWorkspace:
             self._set(connection, "progress", progress)
 
     def _delete(self, connection, owner: str) -> None:
+        connection.execute("DELETE FROM graph_addressables WHERE owner=?", (owner,))
         if owner.startswith("asset:"):
             connection.execute("DELETE FROM graph_asset_failures WHERE guid=?", (owner[6:],))
         connection.execute(
@@ -572,6 +632,12 @@ class GraphWorkspace:
                         "SELECT a.provider,a.coverage,o.state,o.error FROM graph_analysis a JOIN sources s USING(provider) LEFT JOIN observations o ON o.owner=a.owner AND o.provider=a.provider WHERE a.owner=? AND s.enabled=1 ORDER BY a.provider",
                         (owner,),
                     )
+                ]
+                + [
+                    {"provider": "addressables", "coverage": "catalog_keys", **dict(row)}
+                    for row in connection.execute(
+                        "SELECT state,version,error FROM graph_addressables WHERE owner=?", (owner,)
+                    )
                 ],
                 "issues": [{"provider": row[0], **json.loads(row[1])} for row in rows[:limit]],
                 "next_offset": offset + limit if len(rows) > limit else None,
@@ -610,12 +676,103 @@ class GraphWorkspace:
             if row is None or not row[0] or row[1] != version:
                 raise RevisionConflict("External source grant changed")
 
+    @contextmanager
+    def source_guard(self, provider: str, version: int):
+        """Reuse a scoped handle, not a transaction or an authorization result."""
+        with self.store._connect() as connection:
+            connection.commit()
+            connection.isolation_level = None
+            identity = self.store.path.lstat()
+
+            def require() -> None:
+                current = self.store.path.lstat()
+                if (
+                    (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino)
+                    or not stat.S_ISREG(current.st_mode)
+                    or current.st_nlink > 1
+                ):
+                    raise RevisionConflict("Reference database changed during source scan")
+                cursor = connection.execute(
+                    "SELECT enabled,version FROM sources WHERE provider=?", (provider,)
+                )
+                try:
+                    rows = cursor.fetchall()
+                finally:
+                    cursor.close()
+                if not rows or not rows[0][0] or rows[0][1] != version:
+                    raise RevisionConflict("External source grant changed")
+
+            yield require
+
     def external_input(self, provider: str, owner: str) -> dict | None:
         with self.store._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM graph_external WHERE provider=? AND owner=?", (provider, owner)
             ).fetchone()
             return dict(row) if row else None
+
+    def external_validation(self, pairs: Iterable[tuple[str, str]]) -> dict:
+        """One request-local metadata snapshot, never a cached permission grant."""
+        with self.store._connect() as connection:
+            return {
+                (row["provider"], row["owner"]): dict(row)
+                for row in connection.execute(
+                    "SELECT e.*,s.enabled,s.version,s.config FROM json_each(?) r JOIN graph_external e ON e.provider=json_extract(r.value,'$[0]') AND e.owner=json_extract(r.value,'$[1]') JOIN sources s USING(provider)",
+                    (_json(list(pairs)),),
+                )
+            }
+
+    def catalog_snapshot(self, known_revision: int | None = None) -> tuple[int, list[dict] | None]:
+        with self.store._connect() as connection:
+            revision = self._state(connection, "catalog_revision", 0)
+            rows = (
+                None
+                if revision == known_revision
+                else [
+                    json.loads(row[0])
+                    for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid")
+                ]
+            )
+            return revision, rows
+
+    def provider_status(self) -> dict:
+        with self.store._connect() as connection:
+            states, versions = {}, set()
+            for state, version, count in connection.execute(
+                "SELECT state,version,count(*) FROM graph_addressables GROUP BY state,version"
+            ):
+                states[state] = states.get(state, 0) + count
+                if version is not None:
+                    versions.add(version)
+            result = {
+                "addressables": {
+                    "states": states,
+                    "versions": sorted(versions),
+                    "version_kind": "assembly",
+                    "errors": states.get("failed", 0) + states.get("unsupported", 0),
+                }
+            }
+            for provider, version in connection.execute(
+                "SELECT provider,version FROM sources WHERE enabled=1 AND provider LIKE 'external:%'"
+            ):
+                state = self._state(connection, "external_scan:" + provider, {})
+                if state.get("source_version") != version:
+                    state = {}
+                result[provider] = {
+                    "state": "not_verified",
+                    "last_verified_at": None,
+                    **state,
+                    "current": False,
+                }
+            return result
+
+    def external_scan(self, worker: str, source: dict, values: dict) -> None:
+        with self._write(worker) as connection:
+            self._set(
+                connection,
+                "external_scan:" + source["provider"],
+                {**values, "source_version": source["version"]},
+            )
 
     def record_external(
         self,
@@ -628,11 +785,20 @@ class GraphWorkspace:
         analysis_key: str,
         seen: str,
     ) -> None:
+        self.record_external_many(
+            worker, [(provider, owner, path, fingerprint, stamp, analysis_key, seen)]
+        )
+
+    def record_external_many(self, worker: str, rows: Iterable[tuple]) -> None:
         with self._write(worker) as connection:
-            connection.execute(
-                "INSERT INTO graph_external VALUES (?,?,?,?,?,?,?) ON CONFLICT(provider,owner) DO UPDATE SET path=excluded.path,fingerprint=excluded.fingerprint,stamp=excluded.stamp,analysis_key=excluded.analysis_key,seen=excluded.seen",
-                (provider, owner, path, fingerprint, stamp, analysis_key, seen),
-            )
+            self._record_external(connection, rows)
+
+    @staticmethod
+    def _record_external(connection, rows: Iterable[tuple]) -> None:
+        connection.executemany(
+            "INSERT INTO graph_external VALUES (?,?,?,?,?,?,?) ON CONFLICT(provider,owner) DO UPDATE SET path=excluded.path,fingerprint=excluded.fingerprint,stamp=excluded.stamp,analysis_key=excluded.analysis_key,seen=excluded.seen",
+            rows,
+        )
 
     def finish_external(self, worker: str, provider: str, seen: str) -> None:
         with self._write(worker) as connection:
