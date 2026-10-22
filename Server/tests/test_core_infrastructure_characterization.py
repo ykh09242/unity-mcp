@@ -93,6 +93,27 @@ def mock_telemetry_config(temp_telemetry_data):
 
 
 @pytest.fixture
+def make_collector():
+    """Own direct collectors; pure recording tests must not send in a worker."""
+    collectors = []
+
+    def create(*, start_worker=False):
+        if start_worker:
+            collector = TelemetryCollector()
+        else:
+            with patch("core.telemetry.threading.Thread"):
+                collector = TelemetryCollector()
+        collectors.append(collector)
+        return collector
+
+    yield create
+    for collector in collectors:
+        collector.shutdown()
+        if isinstance(collector._worker, threading.Thread):
+            assert not collector._worker.is_alive(), "Test-owned telemetry worker survived teardown"
+
+
+@pytest.fixture
 def reset_telemetry():
     """Reset global telemetry instance between tests, properly shutting down worker."""
     import core.telemetry
@@ -1001,7 +1022,9 @@ class TestTelemetryCollection:
 
     """Tests for TelemetryCollector basic functionality."""
 
-    def test_telemetry_collector_initialization(self, mock_telemetry_config, temp_telemetry_data):
+    def test_telemetry_collector_initialization(
+        self, mock_telemetry_config, temp_telemetry_data, make_collector
+    ):
         """Verify TelemetryCollector initializes with config."""
         # Explicitly reference fixture to suppress unused parameter warning
         _ = mock_telemetry_config
@@ -1016,14 +1039,14 @@ class TestTelemetryCollection:
             mock_config.milestones_file = data_path / "milestones.json"
             mock_config_cls.return_value = mock_config
 
-            collector = TelemetryCollector()
+            collector = make_collector()
 
             assert collector.config is not None
             assert collector._customer_uuid is not None
             assert isinstance(collector._milestones, dict)
 
     def test_telemetry_collector_has_worker_thread(
-        self, mock_telemetry_config, temp_telemetry_data
+        self, mock_telemetry_config, temp_telemetry_data, make_collector
     ):
         """Verify TelemetryCollector starts background worker thread."""
         # Explicitly reference fixture to suppress unused parameter warning
@@ -1038,13 +1061,16 @@ class TestTelemetryCollection:
             mock_config.milestones_file = data_path / "milestones.json"
             mock_config_cls.return_value = mock_config
 
-            collector = TelemetryCollector()
+            collector = make_collector(start_worker=True)
 
             assert collector._worker is not None
             assert isinstance(collector._worker, threading.Thread)
             assert collector._worker.daemon is True
+            assert collector._worker.is_alive()
 
-    def test_telemetry_collector_records_event(self, mock_telemetry_config, temp_telemetry_data):
+    def test_telemetry_collector_records_event(
+        self, mock_telemetry_config, temp_telemetry_data, make_collector
+    ):
         """Verify TelemetryCollector.record queues events."""
         # Explicitly reference fixture to suppress unused parameter warning
         _ = mock_telemetry_config
@@ -1059,20 +1085,14 @@ class TestTelemetryCollection:
             mock_config.enabled = True
             mock_config_cls.return_value = mock_config
 
-            # Mock the worker thread to prevent it from consuming queued events
-            with patch("core.telemetry.threading.Thread") as mock_thread_cls:
-                mock_thread = MagicMock()
-                mock_thread_cls.return_value = mock_thread
+            collector = make_collector()
+            collector.record(RecordType.USAGE, {"tool": "test"})
 
-                collector = TelemetryCollector()
-
-                collector.record(RecordType.USAGE, {"tool": "test"})
-
-                # Event should be queued (won't be consumed since worker thread is mocked)
-                assert not collector._queue.empty()
+            # Recording assertions do not race a background consumer.
+            assert not collector._queue.empty()
 
     def test_telemetry_collector_queue_full_drops_events(
-        self, mock_telemetry_config, caplog_fixture, temp_telemetry_data
+        self, mock_telemetry_config, caplog_fixture, temp_telemetry_data, make_collector
     ):
         """Verify TelemetryCollector drops events when queue is full."""
         caplog_fixture.clear()
@@ -1088,7 +1108,7 @@ class TestTelemetryCollection:
             mock_config.enabled = True
             mock_config_cls.return_value = mock_config
 
-            collector = TelemetryCollector()
+            collector = make_collector()
             # Queue has maxsize=1000
 
             # Fill queue beyond capacity
@@ -1227,7 +1247,9 @@ class TestTelemetryMilestones:
 
     """Tests for milestone tracking in telemetry."""
 
-    def test_record_milestone_first_occurrence(self, mock_telemetry_config, temp_telemetry_data):
+    def test_record_milestone_first_occurrence(
+        self, mock_telemetry_config, temp_telemetry_data, make_collector
+    ):
         """Verify record_milestone returns True on first occurrence."""
         data_path = Path(temp_telemetry_data)
         (data_path / "customer_uuid.txt").write_text("test-uuid")
@@ -1240,7 +1262,7 @@ class TestTelemetryMilestones:
             mock_config.enabled = True
             mock_config_cls.return_value = mock_config
 
-            collector = TelemetryCollector()
+            collector = make_collector()
 
             result = collector.record_milestone(MilestoneType.FIRST_STARTUP)
 
@@ -1248,7 +1270,9 @@ class TestTelemetryMilestones:
             # Should be recorded
             assert MilestoneType.FIRST_STARTUP.value in collector._milestones
 
-    def test_record_milestone_duplicate_ignored(self, mock_telemetry_config, temp_telemetry_data):
+    def test_record_milestone_duplicate_ignored(
+        self, mock_telemetry_config, temp_telemetry_data, make_collector
+    ):
         """Verify record_milestone returns False on duplicate."""
         data_path = Path(temp_telemetry_data)
         (data_path / "customer_uuid.txt").write_text("test-uuid")
@@ -1261,7 +1285,7 @@ class TestTelemetryMilestones:
             mock_config.enabled = True
             mock_config_cls.return_value = mock_config
 
-            collector = TelemetryCollector()
+            collector = make_collector()
 
             # First call
             result1 = collector.record_milestone(MilestoneType.FIRST_STARTUP)
@@ -1272,7 +1296,7 @@ class TestTelemetryMilestones:
             assert result2 is False
 
     def test_record_milestone_sends_telemetry_event(
-        self, mock_telemetry_config, temp_telemetry_data
+        self, mock_telemetry_config, temp_telemetry_data, make_collector
     ):
         """Verify record_milestone sends telemetry event."""
         data_path = Path(temp_telemetry_data)
@@ -1286,7 +1310,7 @@ class TestTelemetryMilestones:
             mock_config.enabled = True
             mock_config_cls.return_value = mock_config
 
-            collector = TelemetryCollector()
+            collector = make_collector()
 
             with patch.object(collector, "record") as mock_record:
                 collector.record_milestone(MilestoneType.FIRST_TOOL_USAGE, {"extra": "data"})
@@ -1300,7 +1324,9 @@ class TestTelemetryMilestones:
                 assert call_kwargs["data"]["milestone"] == "first_tool_usage"
                 assert call_kwargs["data"]["extra"] == "data"
 
-    def test_record_milestone_persists_to_disk(self, mock_telemetry_config, temp_telemetry_data):
+    def test_record_milestone_persists_to_disk(
+        self, mock_telemetry_config, temp_telemetry_data, make_collector
+    ):
         """Verify record_milestone saves milestones to disk."""
         data_path = Path(temp_telemetry_data)
         (data_path / "customer_uuid.txt").write_text("test-uuid")
@@ -1313,7 +1339,7 @@ class TestTelemetryMilestones:
             mock_config.enabled = True
             mock_config_cls.return_value = mock_config
 
-            collector = TelemetryCollector()
+            collector = make_collector()
 
             with patch.object(collector, "_save_milestones") as mock_save:
                 collector.record_milestone(MilestoneType.FIRST_STARTUP)
@@ -1324,7 +1350,9 @@ class TestTelemetryMilestones:
 class TestTelemetryDisabled:
     """Tests for telemetry when disabled."""
 
-    def test_telemetry_disabled_skips_collection(self, mock_telemetry_config, temp_telemetry_data):
+    def test_telemetry_disabled_skips_collection(
+        self, mock_telemetry_config, temp_telemetry_data, make_collector
+    ):
         """Verify disabled telemetry doesn't queue events."""
         data_path = Path(temp_telemetry_data)
         (data_path / "customer_uuid.txt").write_text("test-uuid")
@@ -1337,7 +1365,7 @@ class TestTelemetryDisabled:
             mock_config.milestones_file = data_path / "milestones.json"
             mock_config_class.return_value = mock_config
 
-            collector = TelemetryCollector()
+            collector = make_collector()
             collector.record(RecordType.USAGE, {"data": "test"})
 
             # Queue should be empty (early return)
