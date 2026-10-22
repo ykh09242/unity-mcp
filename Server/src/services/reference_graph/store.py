@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+import time
 
 
 class RevisionConflict(ValueError):
@@ -56,6 +57,8 @@ class Observation:
     path: str = ""
     kind: str = "asset"
     force: bool = False
+    source_version: int | None = None
+    rules_revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +157,7 @@ class GraphStore:
                     raise ValueError("Reference graph identity does not match")
             else:
                 statements = (
-                    "CREATE TABLE graph_meta(scope TEXT NOT NULL, revision INTEGER NOT NULL)",
+                    "CREATE TABLE graph_meta(scope TEXT NOT NULL, revision INTEGER NOT NULL, rules_revision INTEGER NOT NULL)",
                     "CREATE TABLE sources(provider TEXT PRIMARY KEY, version INTEGER NOT NULL, enabled INTEGER NOT NULL, config TEXT NOT NULL)",
                     "CREATE TABLE nodes(id TEXT PRIMARY KEY, path TEXT NOT NULL, kind TEXT NOT NULL, present INTEGER NOT NULL)",
                     "CREATE TABLE observations(owner TEXT NOT NULL, provider TEXT NOT NULL, fingerprint TEXT NOT NULL, generation INTEGER NOT NULL, state TEXT NOT NULL, error TEXT, PRIMARY KEY(owner,provider))",
@@ -167,17 +170,36 @@ class GraphStore:
                 )
                 for statement in statements:
                     connection.execute(statement)
-                connection.execute("INSERT INTO graph_meta VALUES (?,0)", (self.scope.key,))
+                connection.execute("INSERT INTO graph_meta VALUES (?,0,0)", (self.scope.key,))
                 connection.executemany(
                     "INSERT INTO sources VALUES (?,1,1,'{}')",
                     [(p,) for p in ("unity", "code", "manual")],
                 )
                 connection.execute(f"PRAGMA application_id={self.APPLICATION_ID}")
                 connection.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
-        # Changing journal mode requires an independent, transaction-free handle.
-        connection = sqlite3.connect(self.path, timeout=30)
+        self._ensure_wal()
+
+    def _ensure_wal(self) -> None:
+        # A journal-mode change can report SQLITE_BUSY immediately despite a busy
+        # timeout when another opener begins a transaction after schema creation.
+        # Existing WAL stores need no mode transition. Retry only this initial
+        # transition with no active transaction/lock held by this connection.
+        connection = sqlite3.connect(self.path, timeout=0)
+        deadline = time.monotonic() + 30
         try:
-            connection.execute("PRAGMA journal_mode=WAL")
+            while True:
+                try:
+                    if connection.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                        connection.execute("PRAGMA journal_mode=WAL")
+                    return
+                except sqlite3.OperationalError as error:
+                    code = getattr(error, "sqlite_errorcode", 0) & 0xFF
+                    if (
+                        code not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                        or time.monotonic() >= deadline
+                    ):
+                        raise
+                    time.sleep(0.01)
         finally:
             connection.close()
 
@@ -194,8 +216,16 @@ class GraphStore:
         path: str = "",
         kind: str = "asset",
         force: bool = False,
+        source_version: int | None = None,
+        rules_revision: int = 0,
     ) -> int:
-        return self.observe_batch([Observation(owner, provider, fingerprint, path, kind, force)])[0]
+        return self.observe_batch(
+            [
+                Observation(
+                    owner, provider, fingerprint, path, kind, force, source_version, rules_revision
+                )
+            ]
+        )[0]
 
     def observe_batch(self, observations: Iterable[Observation]) -> list[int]:
         with self._connect(write=True) as connection:
@@ -211,10 +241,18 @@ class GraphStore:
         if not owner or provider == "manual" or not fingerprint:
             raise ValueError("Generated observations require owner, provider and fingerprint")
         source = connection.execute(
-            "SELECT enabled FROM sources WHERE provider=?", (provider,)
+            "SELECT enabled,version FROM sources WHERE provider=?", (provider,)
         ).fetchone()
         if source is None or not source[0]:
             raise ValueError("The source is not enabled")
+        if provider.startswith("external:") and source[1] != observation.source_version:
+            raise RevisionConflict("The external source grant changed before observation")
+        if (
+            provider != "unity"
+            and connection.execute("SELECT rules_revision FROM graph_meta").fetchone()[0]
+            != observation.rules_revision
+        ):
+            raise RevisionConflict("Analysis rules changed before observation")
         old = connection.execute(
             "SELECT * FROM observations WHERE owner=? AND provider=?", (owner, provider)
         ).fetchone()
@@ -315,7 +353,10 @@ class GraphStore:
                 (owner,),
             )
             connection.execute("DELETE FROM edges WHERE owner=? AND provider<>'manual'", (owner,))
-            connection.execute("UPDATE nodes SET present=0 WHERE id=?", (owner,))
+            connection.execute(
+                "INSERT INTO nodes VALUES (?,'','unknown',0) ON CONFLICT(id) DO UPDATE SET present=0",
+                (owner,),
+            )
             self._bump(connection)
 
     def pending(self, limit: int = 100) -> list[dict]:
@@ -325,7 +366,7 @@ class GraphStore:
             return [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT o.*,n.path,n.kind FROM observations o JOIN sources s USING(provider) LEFT JOIN nodes n ON n.id=o.owner WHERE o.state='pending' AND s.enabled=1 ORDER BY o.provider,o.owner LIMIT ?",
+                    "SELECT o.*,n.path,n.kind,s.version AS source_version,m.rules_revision FROM observations o JOIN sources s USING(provider) LEFT JOIN nodes n ON n.id=o.owner CROSS JOIN graph_meta m WHERE o.state='pending' AND s.enabled=1 ORDER BY o.provider,o.owner LIMIT ?",
                     (limit,),
                 )
             ]
@@ -500,15 +541,21 @@ class GraphStore:
             connection.execute(
                 "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider<>'manual' AND state<>'deleted'"
             )
+            connection.execute("UPDATE graph_meta SET rules_revision=rules_revision+1")
             self._bump(connection)
             return version
 
     def rules(self) -> list[dict]:
+        return self.rules_state()["rules"]
+
+    def rules_state(self) -> dict:
         with self._connect() as connection:
-            return [
+            revision = connection.execute("SELECT rules_revision FROM graph_meta").fetchone()[0]
+            rules = [
                 {"id": row["id"], "version": row["version"], "config": json.loads(row["payload"])}
                 for row in connection.execute("SELECT * FROM rules ORDER BY id")
             ]
+            return {"revision": revision, "rules": rules}
 
     def rebuild(self) -> None:
         with self._connect(write=True) as connection:

@@ -6,6 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import sys
+import threading
+import time
 
 import pytest
 
@@ -25,8 +27,37 @@ def graph(tmp_path):
     return GraphStore(tmp_path / "graph.sqlite", SCOPE)
 
 
+def test_initial_wal_transition_retries_real_writer_lock(graph, monkeypatch):
+    retry_started = threading.Event()
+    sleep = time.sleep
+
+    def record_retry(seconds):
+        retry_started.set()
+        sleep(seconds)
+
+    monkeypatch.setattr("services.reference_graph.store.time.sleep", record_retry)
+    with closing(sqlite3.connect(graph.path)) as writer:
+        assert writer.execute("PRAGMA journal_mode=DELETE").fetchone()[0] == "delete"
+        writer.execute("BEGIN IMMEDIATE")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(graph._ensure_wal)
+            try:
+                assert retry_started.wait(timeout=5)
+                assert not future.done()
+            finally:
+                writer.rollback()
+            future.result(timeout=5)
+    with closing(sqlite3.connect(graph.path)) as reopened:
+        assert reopened.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
 def publish(graph, owner, fingerprint, targets, provider="unity"):
-    generation = graph.observe(owner, provider, fingerprint, path=f"Assets/{owner}.asset")
+    source_version = next(
+        source["version"] for source in graph.sources() if source["provider"] == provider
+    )
+    generation = graph.observe(
+        owner, provider, fingerprint, path=f"Assets/{owner}.asset", source_version=source_version
+    )
     assert graph.publish(owner, provider, generation, [Edge(t, "serialized") for t in targets])
     return generation
 
@@ -69,6 +100,31 @@ def test_deletion_keeps_incoming_edges_and_rejects_predelete_publication(graph):
     assert len(incoming) == 1
     assert incoming[0]["owner"] == "b"
     assert incoming[0]["target_exists"] is False
+
+
+def test_deletion_marks_previously_unobserved_target_as_missing(graph):
+    publish(graph, "a", "v1", ["unseen"])
+    graph.delete("unseen")
+    assert graph.query("unseen", direction="incoming")["edges"][0]["target_exists"] is False
+
+
+def test_old_external_enumeration_cannot_register_new_owner_under_new_grant(graph):
+    graph.set_source("external:settings", {"root": "before"}, expected_version=0)
+    graph.set_source("external:settings", {"root": "after"}, expected_version=1)
+    with pytest.raises(RevisionConflict):
+        graph.observe("new-owner", "external:settings", "old-evidence", source_version=1)
+    assert graph.pending() == []
+    graph.observe("new-owner", "external:settings", "new-evidence", source_version=2)
+    assert graph.pending()[0]["source_version"] == 2
+
+
+def test_changed_rules_reject_previously_unseen_code_analyzed_under_old_rules(graph):
+    graph.put_rule("wrapper", {"function": "Assets.Load"}, expected_version=0)
+    with pytest.raises(RevisionConflict):
+        graph.observe("new-script", "code", "same-bytes", rules_revision=0)
+    rules = graph.rules_state()
+    graph.observe("new-script", "code", "same-bytes", rules_revision=rules["revision"])
+    assert graph.pending()[0]["rules_revision"] == rules["revision"]
 
 
 def test_publication_failure_rolls_back_all_previous_edges(graph):
@@ -153,7 +209,7 @@ def test_source_revocation_hides_cached_edges_and_rejects_old_worker(graph):
 def test_source_configuration_change_invalidates_existing_worker(graph):
     graph.set_source("external:settings", {"prefix": "before"}, expected_version=0)
     publish(graph, "config", "initial", ["previous-root-asset"], provider="external:settings")
-    old = graph.observe("config", "external:settings", "unchanged")
+    old = graph.observe("config", "external:settings", "unchanged", source_version=1)
     graph.set_source("external:settings", {"prefix": "after"}, expected_version=1)
     assert not graph.publish("config", "external:settings", old, [Edge("before", "config")])
     assert graph.pending()[0]["generation"] > old

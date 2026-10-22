@@ -50,6 +50,11 @@ Changing an external source configuration invalidates its workers and removes it
 previous cached edges immediately. Disabling it also excludes its work from reads
 and pending reconciliation. Re-enabling cannot reveal data collected under a
 previous, broader grant; new evidence must be published under the new version.
+Observers must carry the source version read before enumerating external files and
+the rule revision read before analyzing code/configuration. Admission checks those
+versions in the write transaction, including for previously unseen owners. A stale
+enumerator cannot adopt a newer grant or rule version implicitly. Workers also carry
+the resulting observation generation through publication.
 File admission and current OS permissions must still be checked by the reader.
 
 Manual declarations are labeled `declared`, independently of caller-provided
