@@ -1,6 +1,7 @@
 """Mutation outcomes are distinct from authoritative imported graph evidence."""
 
 import asyncio
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -466,3 +467,187 @@ async def test_release_is_not_blocked_by_another_requests_long_wait(service_grap
         if not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_sqlite_prepare_failure_preserves_write(service_graph, monkeypatch):
+    service, _, ctx, _ = service_graph
+    writes = []
+
+    async def unavailable(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    async def invoke():
+        writes.append(1)
+        return {"success": True, "data": {"native": "kept"}}
+
+    monkeypatch.setattr(service, "execute", unavailable)
+    response = await tracked_mutation(
+        ctx, ctx.instance, "manage_asset", {"action": "modify", "path": PATH}, invoke
+    )
+    assert writes == [1]
+    assert response["success"] is True
+    assert response["data"]["reference_graph"]["state"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_finish_failure_preserves_native_response(service_graph, monkeypatch):
+    _, _, ctx, entry = service_graph
+    writes = []
+
+    def unavailable(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    async def invoke():
+        writes.append(1)
+        monkeypatch.setattr(entry.workspace.mutations(), "finish", unavailable)
+        return {"success": True, "data": {"native": "kept"}}
+
+    try:
+        response = await tracked_mutation(
+            ctx, ctx.instance, "manage_asset", {"action": "modify", "path": PATH}, invoke
+        )
+    finally:
+        assert writes == [1]
+    assert response["success"] is True
+    assert response["data"]["native"] == "kept"
+    assert response["data"]["reference_graph"]["state"] == "unconfirmed"
+
+
+class DuplicateNative(Native):
+    copied_guid = "b" * 32
+    copied_path = "Assets/Receipt 1.asset"
+
+    def __init__(self):
+        super().__init__()
+        self.copied = False
+
+    def copy(self):
+        self.copied = True
+        self.revision += 1
+        self.events.append(
+            {
+                "path": self.copied_path,
+                "revision": self.revision,
+                "deleted": False,
+                "file_stamp": "copied",
+            }
+        )
+
+    async def __call__(self, instance, params):
+        if params["action"] == "copy_destination":
+            return {"instance_id": instance, "project_id": "project", "path": self.copied_path}
+        result = await super().__call__(instance, params)
+        copied = {
+            "guid": self.copied_guid,
+            "path": self.copied_path,
+            "kind": "asset",
+            "source_format": "none",
+            "present": True,
+        }
+        if params["action"] == "inventory" and self.copied:
+            result["assets"].append(copied)
+        elif params["action"] == "asset" and params["path"] == self.copied_path:
+            result.update(copied)
+        elif params["action"] == "dependencies":
+            result["targets"] = ["c" * 32]
+            if params["guid"] == self.copied_guid:
+                result.update(copied, file_stamp="copied")
+        elif params["action"] == "probe":
+            result["targets"] = [
+                {
+                    **probe("copied", present=self.copied),
+                    "path": path,
+                    "guid": self.copied_guid if self.copied else "",
+                }
+                if path == self.copied_path
+                else {**probe(), "path": path}
+                for path in params["paths"]
+            ]
+        return result
+
+
+@pytest.mark.asyncio
+async def test_duplicate_without_destination_includes_created_asset(tmp_path, monkeypatch):
+    from services.tools import manage_asset
+
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    native = DuplicateNative()
+    service = ReferenceGraphService(tmp_path, send=native)
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    ctx = Context(service)
+    writes = []
+
+    async def send(*args, **kwargs):
+        assert kwargs["retry_on_reload"] is False
+        writes.append(1)
+        native.copy()
+        return {"success": True, "data": {"path": native.copied_path, "guid": native.copied_guid}}
+
+    monkeypatch.setattr(manage_asset, "send_with_unity_instance", send)
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
+        response = await manage_asset._send_asset(
+            ctx, ctx.instance, {"action": "duplicate", "path": PATH}
+        )
+        assert writes == [1]
+        receipt_id = response["data"]["reference_graph"]["id"]
+        assert await entry.engine.reconcile()
+        result = await call(service, ctx, "await_mutation", id=receipt_id)
+        assert result["receipt"]["state"] == "synchronized"
+        delta = await call(service, ctx, "mutation_diff", id=receipt_id)
+        assert any(
+            change["after"] and change["after"]["owner"] == "asset:" + native.copied_guid
+            for change in delta["changes"]
+        ), delta
+    finally:
+        await service.aclose()
+
+
+def test_create_folder_is_a_tracked_asset_mutation():
+    assert target_paths(
+        "manage_asset", {"action": "create_folder", "path": "Assets/NewFolder"}
+    ) == ["Assets/NewFolder"]
+
+
+@pytest.mark.asyncio
+async def test_actual_structured_edit_action_creates_receipt(service_graph, monkeypatch):
+    from services.tools import refresh_unity
+
+    _, _, ctx, _ = service_graph
+    writes = []
+
+    async def send(*args, **kwargs):
+        writes.append(1)
+        return {"success": True}
+
+    monkeypatch.setattr(refresh_unity.unity_transport, "send_with_unity_instance", send)
+    response = await refresh_unity.send_mutation(
+        ctx,
+        ctx.instance,
+        "manage_script",
+        {"action": "edit", "path": "Assets", "name": "Receipt", "edits": []},
+    )
+    assert writes == [1]
+    assert response.get("data", {}).get("reference_graph"), response
+
+
+@pytest.mark.asyncio
+async def test_changeset_lookup_failure_reports_missing_tracking(service_graph, monkeypatch):
+    from services.tools import script_change_set
+
+    _, _, ctx, _ = service_graph
+    calls = []
+
+    async def send(sender, instance, command, params, **kwargs):
+        calls.append(params["action"])
+        if params["action"] == "get_change_set":
+            return {"success": False, "message": "Temporary read unavailable"}
+        return {"success": True, "data": {"phase": "applied"}}
+
+    monkeypatch.setattr(script_change_set, "send_with_unity_instance", send)
+    response = await script_change_set.script_change_set(ctx, "apply", change_set_id="a" * 32)
+    assert calls == ["get_change_set", "apply_change_set"]
+    assert response["success"] is True
+    assert response["data"].get("reference_graph", {}).get("state") == "unavailable", response

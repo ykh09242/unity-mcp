@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from contextvars import ContextVar
 
 from core.config import config
@@ -31,6 +32,7 @@ def target_paths(command, params):
     if command == "manage_script" and action in {
         "create",
         "update",
+        "edit",
         "delete",
         "apply_text_edits",
         "apply_edits",
@@ -41,6 +43,7 @@ def target_paths(command, params):
             return [path.rstrip("/") + "/" + name.removesuffix(".cs") + ".cs"]
     if command == "manage_asset" and action in {
         "create",
+        "create_folder",
         "modify",
         "move",
         "rename",
@@ -106,8 +109,60 @@ def outcome(response):
     return "failed" if response.get("success") is False else "unknown"
 
 
-async def tracked_mutation(ctx, instance, command, params, invoke, *, paths=None):
+def attach_diagnostic(response, diagnostic):
+    payload = response.model_dump() if hasattr(response, "model_dump") else response
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        data = payload.get("data")
+        if data is None or isinstance(data, dict):
+            payload["data"] = {**(data or {}), "reference_graph": diagnostic}
+        else:
+            payload["reference_graph"] = diagnostic
+        return payload
+    return response
+
+
+async def prepare_duplicate(ctx, instance, params):
+    """Choose the native unique destination before capturing its absent state."""
     service = active_service(ctx, instance)
+    if service is None or params.get("action") != "duplicate" or params.get("destination"):
+        return params, None
+    try:
+        entry, _ = await service.resolve(ctx, "begin_mutation")
+        if entry.instance != instance or not await drained_thread(
+            entry.workspace.admitted, params["path"]
+        ):
+            raise RevisionConflict("Duplicate preparation scope changed")
+        observed = await entry.collect("copy_destination", path=params["path"])
+        await entry.check()
+        destination = observed.get("path")
+        if not isinstance(destination, str) or not await drained_thread(
+            entry.workspace.admitted, destination
+        ):
+            raise RevisionConflict("Duplicate destination is outside the collection policy")
+        return {**params, "destination": destination}, None
+    except CredentialLeaseError:
+        raise
+    except (
+        OperationPermissionError,
+        ValueError,
+        OSError,
+        RuntimeError,
+        sqlite3.Error,
+        KeyError,
+        TypeError,
+    ) as error:
+        return params, type(error).__name__
+
+
+async def tracked_mutation(
+    ctx, instance, command, params, invoke, *, paths=None, preparation_error=None
+):
+    service = active_service(ctx, instance)
+    if service is not None and preparation_error:
+        return attach_diagnostic(
+            await invoke(), {"state": "unavailable", "reason": preparation_error}
+        )
     targets = paths if paths is not None else target_paths(command, params)
     if service is None or not targets:
         return await invoke()
@@ -125,7 +180,7 @@ async def tracked_mutation(ctx, instance, command, params, invoke, *, paths=None
             )
     except CredentialLeaseError:
         raise
-    except (OperationPermissionError, ValueError, OSError, RuntimeError) as error:
+    except (OperationPermissionError, ValueError, OSError, RuntimeError, sqlite3.Error) as error:
         # Derived diagnostics must not turn an otherwise-authorized write into
         # a retry that could duplicate side effects. Do not echo native paths.
         diagnostic = {"state": "unavailable", "reason": type(error).__name__}
@@ -169,7 +224,13 @@ async def tracked_mutation(ctx, instance, command, params, invoke, *, paths=None
             diagnostic = await finish("unknown" if uncertain[0] else outcome(response))
         except CredentialLeaseError:
             raise
-        except (OperationPermissionError, ValueError, OSError, RuntimeError) as error:
+        except (
+            OperationPermissionError,
+            ValueError,
+            OSError,
+            RuntimeError,
+            sqlite3.Error,
+        ) as error:
             diagnostic = {
                 "id": receipt["id"],
                 "scope": scope,
@@ -177,14 +238,5 @@ async def tracked_mutation(ctx, instance, command, params, invoke, *, paths=None
                 "reason": type(error).__name__,
             }
     if diagnostic is not None:
-        payload = response.model_dump() if hasattr(response, "model_dump") else response
-        if isinstance(payload, dict):
-            # Preserve the original native outcome and attach derived tracking.
-            payload = dict(payload)
-            data = payload.get("data")
-            if data is None or isinstance(data, dict):
-                payload["data"] = {**(data or {}), "reference_graph": diagnostic}
-            else:
-                payload["reference_graph"] = diagnostic
-            return payload
+        return attach_diagnostic(response, diagnostic)
     return response

@@ -31,8 +31,13 @@ logger = logging.getLogger("mcp-for-unity-server")
 
 
 async def _send_asset(ctx, instance, params, **kwargs):
-    from services.reference_graph.mutation_tracking import target_paths, tracked_mutation
+    from services.reference_graph.mutation_tracking import (
+        prepare_duplicate,
+        target_paths,
+        tracked_mutation,
+    )
 
+    params, preparation_error = await prepare_duplicate(ctx, instance, params)
     if target_paths("manage_asset", params):
         kwargs["retry_on_reload"] = False
     return await tracked_mutation(
@@ -47,6 +52,7 @@ async def _send_asset(ctx, instance, params, **kwargs):
             params,
             **kwargs,
         ),
+        preparation_error=preparation_error,
     )
 
 

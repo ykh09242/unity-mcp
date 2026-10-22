@@ -11,6 +11,12 @@ An already active graph tracks supported script mutations, asset mutations, and
 script change-set apply/recovery for its authenticated user and selected Editor.
 Inactive graphs perform no additional native or database calls. Preview/read
 operations do not create receipts. Existing developer installation is sufficient.
+Structured script edits and folder creation use the same boundary. When an asset
+copy has no explicit destination, the native collector first chooses its unique
+path without writing. The receipt captures that destination before the copy is
+dispatched with the explicit path. A concurrent creation at that path causes the
+existing native collision refusal; it never overwrites or silently chooses an
+untracked destination. Failed change-set target lookup reports unavailable tracking.
 
 The server captures incident evidence before dispatch, invokes the native write
 once, and appends `data.reference_graph` to a compatible response. The reference

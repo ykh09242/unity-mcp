@@ -55,6 +55,9 @@ namespace MCPForUnity.Editor.Tools
                     case "probe":
                         fields = new[] { "paths" };
                         break;
+                    case "copy_destination":
+                        fields = new[] { "path" };
+                        break;
                     default:
                         throw new ArgumentException("Unknown reference collection action.");
                 }

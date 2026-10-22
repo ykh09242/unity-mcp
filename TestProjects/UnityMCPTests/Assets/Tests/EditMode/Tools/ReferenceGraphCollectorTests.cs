@@ -100,6 +100,43 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void CopyDestinationPreparationIsReadOnlyAndExplicitCopyDoesNotOverwrite()
+        {
+            string source = CreateText("copy.txt", "original");
+            JObject before = Call("status");
+            JObject prepared = Call("copy_destination", "path", source);
+            string destination = prepared.Value<string>("path");
+            Assert.AreNotEqual(source, destination);
+            Assert.IsFalse(File.Exists(destination));
+            Assert.AreEqual(before["revision"], prepared["revision"]);
+            var copied = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "duplicate",
+                        ["path"] = source,
+                        ["destination"] = destination,
+                    }
+                )
+            );
+            Assert.IsTrue(copied.Value<bool>("success"), copied.ToString());
+            Assert.AreEqual(destination, copied["data"].Value<string>("path"));
+            File.WriteAllText(destination, "concurrent");
+            var collision = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "duplicate",
+                        ["path"] = source,
+                        ["destination"] = destination,
+                    }
+                )
+            );
+            Assert.IsFalse(collision.Value<bool>("success"));
+            Assert.AreEqual("concurrent", File.ReadAllText(destination));
+        }
+
+        [Test]
         public void IndependentConsumersSeeTheSameImportMoveAndDeleteHistory()
         {
             JObject start = Call("status");

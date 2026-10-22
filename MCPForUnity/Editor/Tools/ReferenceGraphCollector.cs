@@ -111,6 +111,19 @@ namespace MCPForUnity.Editor.Tools
                     return CompilationBindings(request);
                 case "probe":
                     return Probe(request);
+                case "copy_destination":
+                    string source = request.Value<string>("path");
+                    if (!Admitted(source) || !source.StartsWith("Assets/", StringComparison.Ordinal))
+                        throw new ArgumentException("Copy preparation requires an admitted asset path.");
+                    AssetPathUtility.GetFullAssetPath(source);
+                    string destination = AssetDatabase.GenerateUniqueAssetPath(source);
+                    AssetPathUtility.GetFullAssetPath(destination);
+                    return new JObject
+                    {
+                        ["path"] = destination,
+                        ["epoch"] = ReferenceGraphJournal.Epoch,
+                        ["revision"] = ReferenceGraphJournal.Revision,
+                    };
                 default:
                     throw new ArgumentException("Unknown reference collection action.");
             }
