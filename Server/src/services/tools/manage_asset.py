@@ -246,7 +246,8 @@ async def manage_asset(
     scan_root: Annotated[str, "Reference actions: candidate/dependency folder (Assets by default)."]
     | None = None,
     max_assets: Annotated[
-        int | str, "Reference actions: at most 1-250000 candidate/visited assets; default 1024."
+        int | str,
+        "Reference actions: 1-250000; default 1024. Reverse scans count distinct eligible files, excluding folders/duplicates; forward scans count visited assets including the source.",
     ]
     | None = None,
     max_work: Annotated[

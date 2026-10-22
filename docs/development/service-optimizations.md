@@ -103,3 +103,29 @@ download digests, queue aging and independent mutable response consumers. Groupe
 native runs reuse the isolated project and Library. Windows native execution does
 not establish Linux/macOS Player behavior. Compile/CI evidence and native evidence
 are reported separately in the delivery PR.
+
+## Reverse-reference inventory limits
+
+`max_assets` accepts 1-250,000 (default 1,024). Reverse scans count distinct
+eligible candidate files, excluding folders and duplicate paths; forward scans
+count visited assets including the source. Responses report `maximumMaxAssets`,
+`maxAssetsAppliesTo` and the reverse `inventoryGuidCount`. A refused reverse
+inventory explains the requested and supported limits instead of silently
+truncating its candidates. Increase the explicit budget or narrow `scan_root`.
+
+Unity `FindAssets` returns a complete recursive GUID array in one indivisible
+native call. The former 65,536-GUID check ran after this allocation and disagreed
+with the advertised file budget. Partitioning a parent plus its children repeats
+recursive work; it is not a streaming native enumeration. Cancellation is checked
+during candidate conversion and node/edge processing. Native calls themselves
+remain indivisible. A captured observation provides complete result continuation
+without repeating inventory; it does not bypass scan budgets. Packages and
+built-in references retain the documented exclusion semantics.
+
+A Windows Unity 6000.0.69f1 explicit native fixture completed 65,537 candidate
+files and the exact 100-reference union across 15 pages. Native enumeration took
+467 ms; the complete admitted scan plus page requests took 57.15 s. Initial fixture
+creation/import took 720.92 s and is excluded from query timing. This demonstrates
+capacity and complete output, not a claim that a full large scan is inexpensive
+or that its Unity API traversal is asynchronous. Captured-cursor behavior is
+verified separately by the reference snapshot and small native inventory tests.
