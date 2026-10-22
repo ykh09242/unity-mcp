@@ -423,6 +423,66 @@ async def test_failed_wrapper_keeps_previous_dependents_stale_until_repaired(set
 
 
 @pytest.mark.asyncio
+async def test_same_byte_wrapper_repair_rechecks_new_callers_added_during_failure(setup):
+    store, _, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    wrapper = editor.add(
+        2,
+        "Assets/Loader.cs",
+        'using UnityEngine; class Loader { public static Object Get() => Resources.Load("One"); }',
+    )
+    assert await engine.reconcile()
+    original = editor.sources[wrapper[6:]]
+    editor.sources[wrapper[6:]] = b"\xffinvalid"
+    editor.event("Assets/Loader.cs")
+    assert not await engine.reconcile()
+    caller = editor.add(3, "Assets/Caller.cs", "class Caller { void Go() { Loader.Get(); } }")
+    editor.event("Assets/Caller.cs")
+    assert not await engine.reconcile()
+    editor.sources[wrapper[6:]] = original
+    editor.event("Assets/Loader.cs")
+    assert await engine.reconcile()
+    assert store.query(caller)["edges"][0]["target"] == target
+
+
+@pytest.mark.asyncio
+async def test_native_collection_error_envelope_is_isolated_from_later_assets(setup, monkeypatch):
+    import services.reference_graph.service as module
+
+    store, workspace, editor, _ = setup
+    bad = editor.add(1, "Assets/Bad.cs", "class Bad {}")
+    target = editor.add(
+        2, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    good = editor.add(
+        3,
+        "Assets/Good.cs",
+        'using UnityEngine; class Good { void Go() { Resources.Load("One"); } }',
+    )
+
+    async def transport(_, instance, command, params, **options):
+        if params["action"] == "source" and params["guid"] == bad[6:]:
+            return {"success": False, "error": "reference_collection_unavailable"}
+        action = params["action"]
+        return {
+            "success": True,
+            "data": await editor(action, **{k: v for k, v in params.items() if k != "action"}),
+        }
+
+    monkeypatch.setattr(module, "send_with_unity_instance", transport)
+
+    async def collect(action, **params):
+        return await module.native_send("editor", {"action": action, **params})
+
+    engine = Reconciler(workspace, collect, allowed)
+    assert not await engine.reconcile()
+    assert workspace.counts()["failed_assets"] == 1
+    assert store.query(good)["edges"][0]["target"] == target
+
+
+@pytest.mark.asyncio
 async def test_malformed_csv_isolated_from_good_file_and_recovers_on_repair(setup, tmp_path):
     store, workspace, editor, engine = setup
     target = editor.add(

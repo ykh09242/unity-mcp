@@ -329,6 +329,11 @@ class GraphWorkspace:
             if connection.execute(
                 "DELETE FROM graph_asset_failures WHERE guid=?", (guid,)
             ).rowcount:
+                # Callers created while this input was unavailable have no old
+                # dependency edge. Resolve them against the recovered symbols.
+                connection.execute(
+                    "INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", ("asset:" + guid,)
+                )
                 self._set(connection, "analysis_dirty", True)
 
     @staticmethod

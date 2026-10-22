@@ -42,6 +42,10 @@ class ScopeChanged(RevisionConflict):
     """A watcher cannot follow a replacement Editor into another graph."""
 
 
+class ReferenceCollectionError(OSError):
+    """The native collector could not read the requested evidence."""
+
+
 def state_root() -> Path:
     override = os.environ.get("UNITY_MCP_REFERENCE_GRAPH_DIR")
     if override:
@@ -87,6 +91,8 @@ async def native_send(instance: str, params: dict) -> dict:
         )
         if reason == "reference_scope_changed":
             raise ScopeChanged("The selected Editor instance or project changed")
+        if reason == "reference_collection_unavailable":
+            raise ReferenceCollectionError(str(result.get("message", reason)))
         raise RuntimeError(str(reason))
     return result["data"]
 
