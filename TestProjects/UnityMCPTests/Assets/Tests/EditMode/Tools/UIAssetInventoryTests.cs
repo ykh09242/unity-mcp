@@ -237,7 +237,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual("stale_ui_inventory", (string)List()["error"]);
         }
 
-        private (double ms, long allocated) Measure(Action work)
+        private (double ms, long allocationEvents) Measure(Action work)
         {
             using var recorder = Unity.Profiling.ProfilerRecorder.StartNew(
                 Unity.Profiling.ProfilerCategory.Memory,
@@ -250,10 +250,8 @@ namespace MCPForUnityTests.EditMode.Tools
             clock.Stop();
             recorder.Stop();
             Assert.Less(recorder.Count, recorder.Capacity);
-            long bytes = 0;
-            for (int i = 0; i < recorder.Count; i++)
-                bytes += recorder.GetSample(i).Value;
-            return (clock.Elapsed.TotalMilliseconds, recorder.Valid && bytes > 0 ? bytes : -1);
+            Assert.IsTrue(recorder.Valid, "Allocation event instrumentation is unavailable.");
+            return (clock.Elapsed.TotalMilliseconds, recorder.Count);
         }
 
         [Test]
@@ -264,23 +262,25 @@ namespace MCPForUnityTests.EditMode.Tools
             finds = resolves = 0;
             var expected = paths.Where(path => path.EndsWith(".uxml", StringComparison.Ordinal)).ToArray();
             var cold = Measure(() => Assert.AreEqual(expected.Length, Data(List(10, filter: "uxml")).Value<int>("total")));
-            TestContext.WriteLine($"BETA07_COLD rows={expected.Length} ms={cold.ms:F3} alloc={cold.allocated} find_calls={finds} guid_calls={resolves}");
+            TestContext.WriteLine(
+                $"BETA07_COLD rows={expected.Length} ms={cold.ms:F3} alloc_events={cold.allocationEvents} find_calls={finds} guid_calls={resolves}"
+            );
             for (int repetition = 0; repetition < 3; repetition++)
             {
                 finds = resolves = 0;
                 double milliseconds = 0;
-                long allocated = 0;
+                long allocationEvents = 0;
                 var seen = new List<string>();
                 for (int page = 1; page <= 5; page++)
                 {
                     var measured = Measure(() => seen.AddRange(Data(List(10, page, filter: "uxml"))["assets"].Select(row => (string)row["path"])));
                     milliseconds += measured.ms;
-                    allocated = allocated >= 0 && measured.allocated >= 0 ? allocated + measured.allocated : -1;
+                    allocationEvents = allocationEvents >= 0 && measured.allocationEvents >= 0 ? allocationEvents + measured.allocationEvents : -1;
                 }
                 CollectionAssert.AreEquivalent(expected, seen);
                 Assert.AreEqual(expected.Length, seen.Count);
                 TestContext.WriteLine(
-                    $"BETA07_PAGES repetition={repetition} rows={expected.Length} pages=5 ms={milliseconds:F3} alloc={allocated} find_calls={finds} guid_calls={resolves}"
+                    $"BETA07_PAGES repetition={repetition} rows={expected.Length} pages=5 ms={milliseconds:F3} alloc_events={allocationEvents} find_calls={finds} guid_calls={resolves}"
                 );
             }
         }

@@ -698,7 +698,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(Directory.EnumerateFiles(ownedRoot, "write-*.tmp").Any());
         }
 
-        private (double milliseconds, long allocated) MeasureReportWork(Action work)
+        private (double milliseconds, long allocationEvents) MeasureReportWork(Action work)
         {
             using var recorder = Unity.Profiling.ProfilerRecorder.StartNew(
                 Unity.Profiling.ProfilerCategory.Memory,
@@ -711,10 +711,9 @@ namespace MCPForUnityTests.EditMode.Tools
             clock.Stop();
             recorder.Stop();
             Assert.Less(recorder.Count, recorder.Capacity, "Allocation samples must not be truncated.");
-            long bytes = 0;
-            for (int i = 0; i < recorder.Count; i++)
-                bytes += recorder.GetSample(i).Value;
-            return (clock.Elapsed.TotalMilliseconds, recorder.Valid && bytes > 0 ? bytes : -1);
+            // GC.Alloc Value is a marker duration on supported Editors. Count events.
+            Assert.IsTrue(recorder.Valid, "Allocation event instrumentation is unavailable.");
+            return (clock.Elapsed.TotalMilliseconds, recorder.Count);
         }
 
         [Test]
@@ -744,7 +743,7 @@ namespace MCPForUnityTests.EditMode.Tools
             Current();
             for (int repetition = 0; repetition < 3; repetition++)
             {
-                (double milliseconds, long allocated) before,
+                (double milliseconds, long allocationEvents) before,
                     after;
                 if (repetition % 2 == 0)
                 {
@@ -757,7 +756,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     before = MeasureReportWork(Legacy);
                 }
                 TestContext.WriteLine(
-                    $"BETA06_ROWS repetition={repetition} rows=256 legacy_ms={before.milliseconds:F3} current_ms={after.milliseconds:F3} legacy_alloc={before.allocated} current_alloc={after.allocated}"
+                    $"BETA06_ROWS repetition={repetition} rows=256 legacy_ms={before.milliseconds:F3} current_ms={after.milliseconds:F3} legacy_alloc_events={before.allocationEvents} current_alloc_events={after.allocationEvents}"
                 );
             }
             Assert.AreSame(owner.Property("rows"), rows.Parent);
@@ -786,7 +785,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 Success(Send("report", "report_id", id, "report_section", "packed_assets", "page_size", 100, "page_number", page));
             reads.Clear();
             double milliseconds = 0;
-            long allocated = 0;
+            long allocationEvents = 0;
             foreach (int page in pages)
             {
                 var measured = MeasureReportWork(() =>
@@ -800,13 +799,13 @@ namespace MCPForUnityTests.EditMode.Tools
                     entries[0]["source_asset_path"] = "Assets/CallerEdited.asset";
                 });
                 milliseconds += measured.milliseconds;
-                allocated = allocated >= 0 && measured.allocated >= 0 ? allocated + measured.allocated : -1;
+                allocationEvents = allocationEvents >= 0 && measured.allocationEvents >= 0 ? allocationEvents + measured.allocationEvents : -1;
             }
             int shards = pages.Sum(page => ((page * 100 - 1) / 256) - (((page - 1) * 100) / 256) + 1);
             Assert.AreEqual(shards, reads.Count(name => name.StartsWith("packed_assets-", StringComparison.Ordinal) && name != "packed_assets-index.json"));
             Assert.AreEqual(pages.Length, reads.Count(name => name == "packed_assets-index.json"));
             TestContext.WriteLine(
-                $"BETA06_PAGES mode={mode} pages={pages.Length} rows=10000 ms={milliseconds:F3} alloc={allocated} reads={reads.Count} cache_bytes=0"
+                $"BETA06_PAGES mode={mode} pages={pages.Length} rows=10000 ms={milliseconds:F3} alloc_events={allocationEvents} reads={reads.Count} cache_bytes=0"
             );
         }
 
@@ -936,7 +935,7 @@ namespace MCPForUnityTests.EditMode.Tools
             return clock.Elapsed.TotalMilliseconds;
         }
 
-        private long MeasureOneLoadAllocations(string id)
+        private long MeasureOneLoadAllocationEvents(string id)
         {
             using var recorder = Unity.Profiling.ProfilerRecorder.StartNew(
                 Unity.Profiling.ProfilerCategory.Memory,
@@ -948,14 +947,11 @@ namespace MCPForUnityTests.EditMode.Tools
             Store.GetMethod("Load", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { id, null, false });
             recorder.Stop();
             Assert.Less(recorder.Count, recorder.Capacity, "Allocation measurement must not silently truncate.");
-            long bytes = 0;
-            for (int i = 0; i < recorder.Count; i++)
-                bytes += recorder.GetSample(i).Value;
-            return bytes;
+            return recorder.Count;
         }
 
         [Test]
-        public void SixtyFourReportHistoryBenchmarkKeepsLegacyCompatibilityAndReducesAllocation()
+        public void SixtyFourReportHistoryBenchmarkKeepsLegacyCompatibilityAndReducesAllocationEvents()
         {
             Directory.CreateDirectory(ownedRoot);
             var sourceRecords = new List<JObject>();
@@ -978,7 +974,7 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             var legacyCold = MeasureHistory();
             var legacyWarm = MeasureHistory();
-            long legacyAllocation = MeasureOneLoadAllocations(sourceRecords[0].Value<string>("report_id"));
+            long legacyAllocation = MeasureOneLoadAllocationEvents(sourceRecords[0].Value<string>("report_id"));
             // Compare equivalent retained inventories; fixture preparation is not a migration benchmark.
             // Delete only the exact legacy files just authored, then persist the same records.
             foreach (JObject record in sourceRecords)
@@ -987,9 +983,9 @@ namespace MCPForUnityTests.EditMode.Tools
                 Persist(record);
             var indexedCold = MeasureHistory();
             var indexedWarm = MeasureHistory();
-            long indexedAllocation = MeasureOneLoadAllocations(sourceRecords[0].Value<string>("report_id"));
+            long indexedAllocation = MeasureOneLoadAllocationEvents(sourceRecords[0].Value<string>("report_id"));
             TestContext.WriteLine(
-                $"NEXT13_HISTORY legacy_cold_ms={legacyCold:F3} legacy_warm_ms={legacyWarm:F3} indexed_cold_ms={indexedCold:F3} indexed_warm_ms={indexedWarm:F3} legacy_one_record_alloc_bytes={legacyAllocation} indexed_one_record_alloc_bytes={indexedAllocation}"
+                $"NEXT13_HISTORY legacy_cold_ms={legacyCold:F3} legacy_warm_ms={legacyWarm:F3} indexed_cold_ms={indexedCold:F3} indexed_warm_ms={indexedWarm:F3} legacy_one_record_alloc_events={legacyAllocation} indexed_one_record_alloc_events={indexedAllocation}"
             );
             Assert.Greater(legacyAllocation, 0);
             Assert.Less(indexedAllocation, legacyAllocation / 10);

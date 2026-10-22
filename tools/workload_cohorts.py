@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "tools/large_workload_cohorts.json"
 HARNESS = (
     "tools/workload_cohorts.py",
+    "tools/process_observation.py",
+    "tools/process_observation.ps1",
     "tools/experiments/service_optimizations/shared_read.py",
     "tools/experiments/service_optimizations/ServiceOptimizationProbes.cs",
     "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Helpers/WorkloadProbe.cs",
@@ -132,6 +134,119 @@ def retention_summary(points, baseline=None):
     }
 
 
+def validate_measurement_coverage(row):
+    """New observations retain unsupported counters as null, with their scope."""
+    for key, scope in (
+        ("allocation_observation", "current_thread"),
+        ("worker_allocation_observation", "worker_threads"),
+    ):
+        if key not in row:
+            continue
+        item = row[key]
+        if (
+            not isinstance(item, dict)
+            or item.get("scope") != scope
+            or item.get("metric") not in {"unity_gc_alloc_bytes", "managed_allocated_bytes"}
+        ):
+            raise ValueError("Unknown allocation metric or scope")
+        status = item.get("status")
+        if status == "complete":
+            number(item.get("bytes"))
+            if item.get("unit") != "Bytes" or number(item.get("positive_control_bytes")) < 65536:
+                raise ValueError(
+                    "Allocation bytes require a validated byte unit and positive control"
+                )
+            if item.get("method") == "profiler_recorder":
+                samples, capacity = item.get("samples"), item.get("capacity")
+                if (
+                    type(samples) is not int
+                    or type(capacity) is not int
+                    or not 0 < samples < capacity
+                ):
+                    raise ValueError("Complete recorder requires nonempty bounded integer coverage")
+            if item.get("method") == "raw_frame_gc_alloc_size_metadata":
+                if item.get("terminal_seen") is not True:
+                    raise ValueError("Incomplete raw allocation subtree")
+            elif item.get("method") not in {"profiler_recorder", "gc_current_thread_counter"}:
+                raise ValueError("Unknown allocation measurement method")
+        elif status in {
+            "invalid",
+            "full",
+            "empty",
+            "not_measured",
+            "unsupported",
+            "unit_mismatch",
+            "positive_control_failed",
+            "missing_frame",
+        }:
+            if item.get("bytes") is not None:
+                raise ValueError("Unknown allocation must not become zero")
+            if status in {
+                "not_measured",
+                "unsupported",
+                "unit_mismatch",
+                "positive_control_failed",
+                "missing_frame",
+            } and not item.get("reason"):
+                raise ValueError("Unknown allocation needs a reason")
+        else:
+            raise ValueError("Unknown allocation coverage status")
+        if "capacity" in item:
+            capacity = number(item.get("capacity"), positive=True)
+            samples = number(item.get("samples"))
+            if status == "full" and samples < capacity:
+                raise ValueError("Full recorder has incomplete count")
+            if status == "complete" and samples >= capacity:
+                raise ValueError("Full recorder cannot establish complete allocation")
+        if key == "allocation_observation" and row.get("allocation_bytes") != item.get("bytes"):
+            raise ValueError("Allocation summary differs from coverage")
+
+    if "python_observation" not in row:
+        return
+    item = row["python_observation"]
+    env = row["environment"]
+    if (
+        not isinstance(item, dict)
+        or item.get("schema") != "python-traced-and-callback-v1"
+        or env["editor"] != "not_applicable"
+        or not env["backend"].startswith("CPython ")
+    ):
+        raise ValueError("Unknown Python observation environment/schema")
+    if (
+        row.get("allocation_bytes") is not None
+        or row.get("retained_managed_delta_bytes") is not None
+        or row.get("main_thread_stall_ms") is not None
+    ):
+        raise ValueError("Python observations are not Unity allocation/heap/frame metrics")
+    trace = item.get("tracemalloc")
+    if (
+        not isinstance(trace, dict)
+        or trace.get("metric") != "python_traced_peak_bytes"
+        or trace.get("scope") != "python_allocations"
+        or trace.get("phase") != "separate_pass"
+    ):
+        raise ValueError("Unknown Python tracing scope")
+    peak = number(trace.get("peak_bytes"), positive=True)
+    if peak != row.get("traced_peak_bytes"):
+        raise ValueError("Python traced peak summary differs")
+    callbacks = item.get("callbacks")
+    if not isinstance(callbacks, list) or len(callbacks) < 3:
+        raise ValueError("Missing repeated callback observations")
+    for index, point in enumerate(callbacks):
+        if (
+            not isinstance(point, dict)
+            or type(point.get("pass_index")) is not int
+            or point["pass_index"] != index
+            or point.get("observer_released") is not True
+        ):
+            raise ValueError("Callback observer identity/lifetime differs")
+        if type(point.get("callback_count")) is not int or point["callback_count"] < 2:
+            raise ValueError("No complete callback interval observed")
+        number(point.get("maximum_gap_ms"), positive=True)
+    if row.get("event_loop_callback_gap_ms") != max(point["maximum_gap_ms"] for point in callbacks):
+        raise ValueError("Callback gap summary differs from actual intervals")
+
+
 def validate_raw(row, manifest):
     if row.get("schema") != "unity-mcp-workload-raw-v1" or row.get("completed") is not True:
         raise ValueError("Workload did not complete")
@@ -199,6 +314,7 @@ def validate_raw(row, manifest):
             number(row[key])
     if row.get("retained_managed_delta_bytes") is not None:
         number(row["retained_managed_delta_bytes"], signed=True)
+    validate_measurement_coverage(row)
     if any(
         key in row
         for key in ("observation_schema", "observations", "baseline", "observer_released")
@@ -232,6 +348,14 @@ def summarize(row):
         s["main_thread_work_ms"] for s in row["samples"] if s.get("main_thread_work_ms") is not None
     ]
     result["max_main_thread_work_ms"] = max(work, default=None)
+    for key in (
+        "allocation_observation",
+        "worker_allocation_observation",
+        "python_observation",
+        "event_loop_callback_gap_ms",
+    ):
+        if key in row:
+            result[key] = row[key]
     result["retention"] = (
         retention_summary(row["observations"], row["baseline"]) if "observations" in row else None
     )
@@ -316,6 +440,7 @@ def capture(
     inputs=None,
     nunit=None,
     reload_runs=(),
+    process_run=None,
     reload_results_name="results.xml",
     allow_partial=False,
 ):
@@ -330,6 +455,9 @@ def capture(
         evidence.append({"name": Path(path).name, "sha256": digest(path)})
     native = [r for r in rows if r.get("scenario") != "concurrent_readers"]
     input_hash = None
+    process_observation = None
+    if process_run is not None and not native:
+        raise ValueError("An OS observation must bind to a native cohort")
     if native:
         if inputs is None or not nunit:
             raise ValueError("Native capture requires verified source inputs and NUnit evidence")
@@ -365,6 +493,12 @@ def capture(
         if errors:
             raise ValueError("Native required inventory failed: " + str(errors))
         evidence.append({"name": Path(nunit).name, "sha256": digest(nunit)})
+        if process_run is not None:
+            from tools.process_observation import read_owned_process_run
+
+            process_observation = read_owned_process_run(
+                process_run, inputs_sha256=input_hash, nunit_sha256=digest(nunit)
+            )
     for row in rows:
         if row.get("scenario") == "concurrent_readers" and (
             row.get("server_sha256") != server_fingerprint()
@@ -467,6 +601,7 @@ def capture(
         "manifest_sha256": digest(MANIFEST),
         "harness_sha256": harness,
         "native_inputs_sha256": input_hash,
+        "process_observation": process_observation,
         "native_source_provenance": provenance,
         "evidence": evidence,
         "partial": present != expected,
@@ -482,6 +617,7 @@ def main():
     record.add_argument("files", type=Path, nargs="+")
     record.add_argument("--inputs", type=Path)
     record.add_argument("--nunit", type=Path)
+    record.add_argument("--process-run", type=Path)
     record.add_argument("--allow-partial", action="store_true")
     record.add_argument("--reload-run", action="append", type=Path, default=[])
     record.add_argument(
@@ -500,6 +636,7 @@ def main():
             args.files,
             inputs=args.inputs,
             nunit=args.nunit,
+            process_run=args.process_run,
             reload_runs=args.reload_run,
             reload_results_name=args.reload_results_name,
             allow_partial=args.allow_partial,

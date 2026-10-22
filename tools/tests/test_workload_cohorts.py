@@ -379,3 +379,138 @@ def test_reload_memory_requires_complete_distinct_domain_pairs(damage):
     else:
         validate_raw(value, load_manifest())
         assert summarize(value)["reload_retention"]["post_idle_managed_bytes"] == [1200] * 3
+
+
+@pytest.mark.parametrize("status", ["invalid", "full", "empty", "not_measured"])
+def test_measurement_metadata_rejects_unknown_allocation_as_zero(status):
+    value = raw()
+    value["allocation_bytes"] = 0
+    value["allocation_observation"] = {
+        "metric": "unity_gc_alloc_bytes",
+        "scope": "current_thread",
+        "status": status,
+        "samples": 16,
+        "capacity": 16,
+        "bytes": 0,
+        "reason": "owned-control",
+    }
+    with pytest.raises(ValueError):
+        validate_raw(value, load_manifest())
+
+
+def test_measurement_metadata_keeps_full_recorder_unknown_and_scope_visible():
+    value = raw()
+    value["allocation_bytes"] = None
+    value["allocation_observation"] = {
+        "metric": "unity_gc_alloc_bytes",
+        "scope": "current_thread",
+        "status": "full",
+        "samples": 16,
+        "capacity": 16,
+        "bytes": None,
+    }
+    value["worker_allocation_observation"] = {
+        "metric": "managed_allocated_bytes",
+        "scope": "worker_threads",
+        "status": "not_measured",
+        "bytes": None,
+        "reason": "main-thread-only",
+    }
+    validate_raw(value, load_manifest())
+    result = summarize(value)
+    assert result["allocation_observation"]["status"] == "full"
+    assert result["worker_allocation_observation"]["bytes"] is None
+
+
+def python_observed():
+    value = raw()
+    value.update(
+        scenario="concurrent_readers",
+        variant="ascii-16-B",
+        expected_units=16,
+        allocation_bytes=None,
+        retained_managed_delta_bytes=None,
+        traced_peak_bytes=4096,
+        event_loop_callback_gap_ms=7,
+    )
+    value["environment"].update(editor="not_applicable", backend="CPython 3.14")
+    for sample in value["samples"]:
+        sample.update(completed_units=16, main_thread_work_ms=None)
+    value["python_observation"] = {
+        "schema": "python-traced-and-callback-v1",
+        "tracemalloc": {
+            "metric": "python_traced_peak_bytes",
+            "scope": "python_allocations",
+            "phase": "separate_pass",
+            "peak_bytes": 4096,
+        },
+        "callbacks": [
+            {
+                "pass_index": i,
+                "callback_count": 2,
+                "maximum_gap_ms": i + 1,
+                "observer_released": True,
+            }
+            for i in range(7)
+        ],
+    }
+    return value
+
+
+@pytest.mark.parametrize(
+    "fault", ["unknown_peak", "wrong_scope", "live_observer", "wrong_gap", "as_unity_heap"]
+)
+def test_measurement_metadata_rejects_mislabeled_python_observations(fault):
+    value = python_observed()
+    if fault == "unknown_peak":
+        value["python_observation"]["tracemalloc"]["peak_bytes"] = None
+    elif fault == "wrong_scope":
+        value["python_observation"]["tracemalloc"]["scope"] = "whole_process_rss"
+    elif fault == "live_observer":
+        value["python_observation"]["callbacks"][0]["observer_released"] = False
+    elif fault == "wrong_gap":
+        value["event_loop_callback_gap_ms"] = 0
+    elif fault == "as_unity_heap":
+        value["retained_managed_delta_bytes"] = 4096
+    with pytest.raises(ValueError):
+        validate_raw(value, load_manifest())
+
+
+def test_measurement_metadata_separates_python_callbacks_and_traced_peak():
+    value = python_observed()
+    validate_raw(value, load_manifest())
+    result = summarize(value)
+    assert result["event_loop_callback_gap_ms"] == 7
+    assert result["traced_peak_bytes"] == 4096
+    assert result["retained_managed_delta_bytes"] is None
+    assert result["main_thread_stall_ms"] is None
+
+
+@pytest.mark.parametrize(
+    "fault", ["empty", "missing_capacity", "missing_samples", "fractional_samples"]
+)
+def test_complete_recorder_cannot_hide_empty_or_missing_coverage(fault):
+    value = raw()
+    value["allocation_bytes"] = 0
+    item = {
+        "metric": "unity_gc_alloc_bytes",
+        "scope": "current_thread",
+        "status": "complete",
+        "method": "profiler_recorder",
+        "unit": "Bytes",
+        "positive_control_bytes": 65536,
+        "bytes": 0,
+        "samples": 1,
+        "capacity": 16,
+    }
+    if fault == "empty":
+        item["samples"] = 0
+    if fault == "missing_capacity":
+        item.pop("capacity")
+    if fault == "missing_samples":
+        item.pop("samples")
+    if fault == "fractional_samples":
+        item["samples"] = 0.5
+    value["allocation_observation"] = item
+    with pytest.raises(ValueError):
+        validate_raw(value, load_manifest())
