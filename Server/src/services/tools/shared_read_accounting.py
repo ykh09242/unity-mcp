@@ -5,16 +5,18 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable, Mapping
 
-from models.response_limits import ResponseOwner
+from models.response_limits import ResponseOwner, response_size
 
 # Avoid adding a traversal and ownership group to small response deliveries.
 _MIN_SHARED_CHARGE = 256 * 1024
 
 
-def detached_copy_charge(value: object, source_charge: int) -> int | None:
+def detached_copy_charge(
+    value: object, source_charge: int, *, validated_charge: int | None = None
+) -> int | None:
     """Keep encoding workspace, but do not charge shared immutable objects twice.
 
-    response_size has already validated this graph and charged 128 bytes per
+    response_size validates the final graph and charges 128 bytes per
     visited node plus twice its object size, string encoding workspace and wire
     bytes. Exact builtins share immutable scalars under both supported copiers.
     The original full charge stays pinned for those objects and traversal work.
@@ -22,6 +24,11 @@ def detached_copy_charge(value: object, source_charge: int) -> int | None:
     encoding workspace, wire bytes and its own reservation overhead.
     """
     if source_charge < _MIN_SHARED_CHARGE:
+        return None
+    # A transport factory can transform a result after its original admission.
+    # Equal object storage alone does not cover changed JSON escaping/wire size.
+    final_charge = response_size(value) if validated_charge is None else validated_charge
+    if final_charge is None or final_charge > source_charge:
         return None
     seen: set[int] = set()
     discount = 0
@@ -71,7 +78,7 @@ class SharedReadAccounting:
         self.copy_bytes: int | None = None
         self._reserve: Callable[[ResponseOwner], bool] | None = None
 
-    def enable(self, value: object) -> None:
+    def enable(self, value: object, *, validated_charge: int | None = None) -> None:
         if len(self.source.entries) != 1 or len(self.source.copy_reservations) != 1:
             return
         ledger, key = self.source.entries[0]
@@ -79,7 +86,7 @@ class SharedReadAccounting:
         charge = reservation.get("bytes") if isinstance(reservation, Mapping) else reservation
         if type(charge) is not int:
             return
-        copy_bytes = detached_copy_charge(value, charge)
+        copy_bytes = detached_copy_charge(value, charge, validated_charge=validated_charge)
         if copy_bytes is None:
             return
         self.copy_bytes = copy_bytes
@@ -89,9 +96,13 @@ class SharedReadAccounting:
     def _reserve_copy(self, owner: ResponseOwner) -> bool:
         if self.source.released or self._reserve is None:
             return False
-        owner.requested_copy_bytes = self.copy_bytes
-        if not self._reserve(owner):
-            return False
+        previous = owner.requested_copy_bytes
+        try:
+            owner.requested_copy_bytes = self.copy_bytes
+            if not self._reserve(owner):
+                return False
+        finally:
+            owner.requested_copy_bytes = previous
         # Replace the underlying callback too: descendants must pin this same
         # storage even when the flight/cache and their parent delivery are gone.
         owner.copy_reservations[-1] = self._reserve_copy

@@ -77,14 +77,15 @@ class _ReadFlight(Generic[T]):
                 value = await factory()
                 if lease is not None:
                     await lease.check()
+                validated_charge = None
                 if not self.owner.entries:
                     # HTTP results already carry Hub reservations; stdio and small
                     # transport errors need their own aggregate retained-copy budget.
-                    charge = response_size(value)
+                    charge = validated_charge = response_size(value)
                     if charge is None or not shared_read_budget.reserve(self.owner, charge):
                         raise SharedReadCapacityError()
                 if copy_preparer is None or copy_preparer is prepare_json_copy:
-                    self.accounting.enable(value)
+                    self.accounting.enable(value, validated_charge=validated_charge)
                 copy_value: Callable[[], T] = partial(deepcopy, value)
                 # One cache reference plus sixteen waiting readers is the measured
                 # break-even range. Single/sparse reads keep their existing path.

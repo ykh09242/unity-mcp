@@ -166,3 +166,48 @@ def test_transformed_value_cannot_discount_a_smaller_source_reservation():
     # A factory may add fields after its transport receives the original value.
     # Its smaller reservation is not evidence that the larger graph was sized.
     assert detached_copy_charge(large_response(), 256 * 1024) is None
+
+
+@pytest.mark.parametrize("ordinary_charge", [1024, 16 * 1024 * 1024])
+@pytest.mark.parametrize("refuse", [False, True])
+def test_mixed_copy_callbacks_keep_each_reservation_and_roll_back(ordinary_charge, refuse):
+    from services.tools.shared_read_accounting import SharedReadAccounting
+
+    value = large_response()
+    budget = SharedReadBudget()
+    source, combined = ResponseOwner(), ResponseOwner()
+    assert budget.reserve(source, response_size(value))
+    accounting = SharedReadAccounting(source)
+    accounting.enable(value)
+    first = source.reserve_copy()
+    assert first is not None and combined.adopt(first)
+    assert budget.reserve(combined, ordinary_charge)
+    before = budget.retained_bytes
+    if refuse:
+        budget.max_bytes = before + accounting.copy_bytes + ordinary_charge - 1
+    descendant = combined.reserve_copy()
+    try:
+        if refuse:
+            assert descendant is None
+            assert budget.retained_bytes == before
+            assert accounting.references == 2
+        else:
+            assert descendant is not None
+            assert descendant.requested_copy_bytes is None
+            assert budget.retained_bytes == before + accounting.copy_bytes + ordinary_charge
+    finally:
+        if descendant is not None:
+            descendant.release()
+        combined.release()
+        accounting.release()
+    assert budget.retained_bytes == 0
+
+
+def test_same_storage_transformation_with_more_wire_bytes_keeps_full_admission():
+    from services.tools.shared_read_accounting import detached_copy_charge
+
+    value = {"data": "a" * (256 * 1024)}
+    charge = response_size(value)
+    value["data"] = "\x00" * (256 * 1024)
+    assert response_size(value) > charge
+    assert detached_copy_charge(value, charge) is None
