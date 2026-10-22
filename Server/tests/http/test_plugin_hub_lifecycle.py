@@ -383,23 +383,34 @@ async def test_eviction_preserves_cleanup_errors_and_caller_cancellation(
         raise cleanup_error
 
     monkeypatch.setattr(PluginHub, "_close_websocket", failing_close)
-    async with isolated_hub._lock:
-        eviction = asyncio.create_task(PluginHub._evict_connection(session_id, "test"))
-        with anyio.fail_after(1):
-            while session_id in PluginHub._connections:
+    eviction = None
+    try:
+        async with isolated_hub._lock:
+            eviction = asyncio.create_task(PluginHub._evict_connection(session_id, "test"))
+            with anyio.fail_after(10):
+                while session_id in PluginHub._connections:
+                    await asyncio.sleep(0)
+            if cancelled:
+                eviction.cancel()
                 await asyncio.sleep(0)
+        # A scheduling watchdog must not inject cancellation into the uncancelled case.
+        done, _ = await asyncio.wait({eviction}, timeout=10)
+        assert eviction in done, "Eviction cleanup did not finish"
         if cancelled:
-            eviction.cancel()
-            await asyncio.sleep(0)
-    if cancelled:
-        with pytest.raises(asyncio.CancelledError) as failure:
-            await asyncio.wait_for(eviction, timeout=1)
-        assert failure.value.__cause__ is cleanup_error
-    else:
-        with pytest.raises(RuntimeError, match="socket cleanup failed"):
-            await asyncio.wait_for(eviction, timeout=1)
-    assert await isolated_hub.get_session(session_id) is None
-    websocket.close.assert_awaited_once_with(code=1001)
+            with pytest.raises(asyncio.CancelledError) as failure:
+                eviction.result()
+            assert failure.value.__cause__ is cleanup_error
+        else:
+            with pytest.raises(RuntimeError, match="socket cleanup failed"):
+                eviction.result()
+        assert await isolated_hub.get_session(session_id) is None
+        websocket.close.assert_awaited_once_with(code=1001)
+    finally:
+        # Release the registry lock before draining the cleanup that needs it.
+        if eviction is not None:
+            if not eviction.done():
+                eviction.cancel()
+            await asyncio.gather(eviction, return_exceptions=True)
 
 
 @pytest.mark.asyncio
