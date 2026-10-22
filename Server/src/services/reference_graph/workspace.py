@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
+from dataclasses import asdict
 import json
 import stat
 import time
 
 from services.reference_graph.analysis import Analysis
 from services.reference_graph.external import _pattern
-from services.reference_graph.store import GraphStore, Observation, RevisionConflict, _json
+from services.reference_graph.store import (
+    Edge,
+    GraphStore,
+    Observation,
+    RevisionConflict,
+    _hash,
+    _json,
+)
 
 
 class GraphWorkspace:
@@ -23,7 +31,7 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2, 3):
+            if version is not None and version[0] not in (1, 2, 3, 4):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -57,6 +65,11 @@ class GraphWorkspace:
                 for row in connection.execute("SELECT payload FROM graph_assets"):
                     self._addressables(connection, json.loads(row[0]))
                 connection.execute("UPDATE graph_workspace SET version=3")
+            if version is None or version[0] < 4:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS graph_staging(worker TEXT NOT NULL,owner TEXT NOT NULL,generation INTEGER NOT NULL,identity TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,ordinal INTEGER NOT NULL,PRIMARY KEY(worker,owner,kind,identity))"
+                )
+                connection.execute("UPDATE graph_workspace SET version=4")
 
     @staticmethod
     def _addressables(connection, asset: dict) -> None:
@@ -119,6 +132,7 @@ class GraphWorkspace:
                 "INSERT INTO graph_worker VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires=excluded.expires",
                 (owner, now + self.LEASE_SECONDS),
             )
+            connection.execute("DELETE FROM graph_staging WHERE worker<>?", (owner,))
             return True
 
     def renew(self, owner: str) -> bool:
@@ -133,6 +147,7 @@ class GraphWorkspace:
 
     def release(self, owner: str) -> None:
         with self.store._connect(write=True) as connection:
+            connection.execute("DELETE FROM graph_staging WHERE worker=?", (owner,))
             connection.execute("DELETE FROM graph_worker WHERE owner=?", (owner,))
 
     @contextmanager
@@ -490,7 +505,16 @@ class GraphWorkspace:
             self.store._bump(connection)
             return True
 
-    def documents(self) -> list[dict]:
+    def document_manifest(self) -> dict[str, dict]:
+        with self.store._connect() as connection:
+            return {
+                row["owner"]: dict(row)
+                for row in connection.execute(
+                    "SELECT d.owner,d.format,d.fingerprint,o.state FROM graph_documents d LEFT JOIN observations o ON o.owner=d.owner AND o.provider='code' ORDER BY d.owner"
+                )
+            }
+
+    def documents(self, owners: Iterable[str] | None = None) -> list[dict]:
         with self.store._connect() as connection:
             return [
                 {
@@ -501,7 +525,14 @@ class GraphWorkspace:
                     "state": row[4],
                 }
                 for row in connection.execute(
-                    "SELECT d.*,o.state FROM graph_documents d LEFT JOIN observations o ON o.owner=d.owner AND o.provider='code' ORDER BY d.owner"
+                    "SELECT d.*,o.state FROM graph_documents d LEFT JOIN observations o ON o.owner=d.owner AND o.provider='code'"
+                    + (
+                        " WHERE d.owner IN (SELECT value FROM json_each(?))"
+                        if owners is not None
+                        else ""
+                    )
+                    + " ORDER BY d.owner",
+                    (_json(list(owners)),) if owners is not None else (),
                 )
             ]
 
@@ -562,6 +593,102 @@ class GraphWorkspace:
     def publish_many(self, worker: str, publications: Iterable[tuple]) -> list[bool]:
         with self._write(worker) as connection:
             return [self._publish(connection, *publication) for publication in publications]
+
+    def publish_code_events(
+        self,
+        worker: str,
+        owner: str,
+        generation: int,
+        events: Iterable[Edge | dict],
+        dependencies: Callable[[], set[str]],
+        *,
+        check: Callable[[], None] = lambda: None,
+    ) -> None:
+        """Stage bounded batches outside visible evidence, then promote atomically."""
+
+        def require_current(connection):
+            check()
+            if not self.store._current(connection, owner, "code", generation):
+                raise RevisionConflict("Code inputs changed during streamed analysis")
+
+        def stage(rows):
+            with self._write(worker) as connection:
+                require_current(connection)
+                connection.executemany(
+                    "INSERT OR IGNORE INTO graph_staging VALUES (?,?,?,?,?,?,?)", rows
+                )
+
+        complete = False
+        try:
+            with self._write(worker) as connection:
+                require_current(connection)
+                connection.execute(
+                    "DELETE FROM graph_staging WHERE worker=? AND owner=?", (worker, owner)
+                )
+            batch = []
+            for ordinal, event in enumerate(events):
+                check()
+                is_edge = isinstance(event, Edge)
+                payload = _json(asdict(event) if is_edge else event)
+                identity = _hash((owner, "code", payload)) if is_edge else _hash(payload)
+                batch.append(
+                    (
+                        worker,
+                        owner,
+                        generation,
+                        identity,
+                        "edge" if is_edge else "issue",
+                        payload,
+                        ordinal,
+                    )
+                )
+                if len(batch) == 256:
+                    stage(batch)
+                    batch.clear()
+            if batch:
+                stage(batch)
+            resolved_dependencies = dependencies()
+            with self._write(worker) as connection:
+                require_current(connection)
+                connection.execute("DELETE FROM edges WHERE owner=? AND provider='code'", (owner,))
+                connection.execute(
+                    "INSERT INTO edges SELECT identity,owner,'code',json_extract(payload,'$.target'),json_extract(payload,'$.kind'),payload FROM graph_staging WHERE worker=? AND owner=? AND generation=? AND kind='edge'",
+                    (worker, owner, generation),
+                )
+                connection.execute(
+                    "DELETE FROM graph_issues WHERE owner=? AND provider='code'", (owner,)
+                )
+                connection.execute(
+                    "INSERT INTO graph_issues SELECT owner,'code',ordinal,payload FROM graph_staging WHERE worker=? AND owner=? AND generation=? AND kind='issue'",
+                    (worker, owner, generation),
+                )
+                connection.execute("DELETE FROM graph_dependencies WHERE owner=?", (owner,))
+                connection.executemany(
+                    "INSERT OR IGNORE INTO graph_dependencies VALUES (?,?)",
+                    ((owner, dependency) for dependency in resolved_dependencies),
+                )
+                connection.execute(
+                    "INSERT OR REPLACE INTO graph_analysis VALUES (?,'code','partial_static',?)",
+                    (owner, generation),
+                )
+                connection.execute(
+                    "UPDATE observations SET state='ready',error=NULL WHERE owner=? AND provider='code'",
+                    (owner,),
+                )
+                connection.execute(
+                    "DELETE FROM graph_staging WHERE worker=? AND owner=?", (worker, owner)
+                )
+                self.store._bump(connection)
+                check()
+            complete = True
+        finally:
+            # Only this unique worker's private staging is removed. A retired
+            # worker cannot touch its successor's work or visible publications.
+            if not complete:
+                with self.store._connect(write=True) as connection:
+                    connection.execute(
+                        "DELETE FROM graph_staging WHERE worker=? AND owner=?", (worker, owner)
+                    )
 
     def _publish(
         self, connection, owner: str, provider: str, generation: int, analysis: Analysis

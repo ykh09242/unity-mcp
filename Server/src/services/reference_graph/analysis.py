@@ -8,8 +8,8 @@ composition through wrappers without rereading their source at every call site.
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
-from collections.abc import Iterable
+from collections import OrderedDict, defaultdict, deque
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 import re
 
@@ -20,7 +20,7 @@ from services.reference_graph.store import Edge
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 3
+ANALYSIS_VERSION = 4
 # Registry version follows the fact/analysis version. Values describe the string
 # key overload; object/location/AssetReference expressions stay unresolved unless
 # a later semantic provider can prove their identity.
@@ -614,8 +614,16 @@ def validate_rule(rule: dict) -> None:
 
 
 class AnalysisIndex:
-    def __init__(self, facts: Iterable[Facts], catalog: Catalog, rules: Iterable[dict] = ()):
-        self.facts = {item.owner: item for item in facts}
+    def __init__(
+        self,
+        facts: Iterable[Facts],
+        catalog: Catalog,
+        rules: Iterable[dict] = (),
+        *,
+        check: Callable[[], None] = lambda: None,
+    ):
+        self.check = check
+        self.facts: dict[str, Facts] = {}
         self.catalog = catalog
         self.rules = {}
         for rule in rules:
@@ -627,67 +635,209 @@ class AnalysisIndex:
         self.methods: dict[str, list[tuple[str, Method]]] = defaultdict(list)
         self.method_ids = {}
         self.types = defaultdict(set)
-        for item in self.facts.values():
-            for name in item.types:
-                self.types[name].add(item.owner)
         self.dependencies: dict[str, set[str]] = defaultdict(set)
-        for item in self.facts.values():
-            for name, expr in item.constants.items():
-                self.constants[name].append((item.owner, expr))
-            for method in item.methods:
-                self.methods[method.name].append((item.owner, method))
-                self.method_ids[method.identity] = (item, method)
-        self.constant_cache: dict[tuple[str, str], Expr] = {}
-        self.summaries: dict[str, tuple[tuple[Effect, ...], tuple[str, ...]]] = {}
-        self._build_summaries()
-        for item in self.facts.values():
+        self.reverse: dict[str, set[str]] = defaultdict(set)
+        self.lookups: dict[str, set[str]] = defaultdict(set)
+        self.symbol_users: dict[str, set[str]] = defaultdict(set)
+        self.constant_cache: dict[str, dict[tuple, Expr]] = defaultdict(dict)
+        self.resolutions: dict[str, tuple] = {}
+        self.unknown_summaries: dict[str, tuple | None] = {}
+        for item in facts:
+            self.check()
+            self._add(item)
+        self._prepare(set(self.facts))
+
+    @staticmethod
+    def _symbols(item: Facts) -> set[str]:
+        return {*item.types, *item.constants, *(method.name for method in item.methods)}
+
+    def _add(self, item: Facts) -> None:
+        self.facts[item.owner] = item
+        for name in item.types:
+            self.types[name].add(item.owner)
+        for name, expr in item.constants.items():
+            self.constants[name].append((item.owner, expr))
+        for method in item.methods:
+            self.methods[method.name].append((item.owner, method))
+            self.method_ids[method.identity] = (item, method)
+
+    def _remove(self, owner: str) -> None:
+        item = self.facts.pop(owner, None)
+        if item is None:
+            return
+        for name in item.types:
+            self.types[name].discard(owner)
+            if not self.types[name]:
+                del self.types[name]
+        for mapping, names in (
+            (self.constants, item.constants),
+            (self.methods, {m.name for m in item.methods}),
+        ):
+            for name in names:
+                mapping[name] = [row for row in mapping[name] if row[0] != owner]
+                if not mapping[name]:
+                    del mapping[name]
+        for method in item.methods:
+            self.method_ids.pop(method.identity, None)
+            self.unknown_summaries.pop(method.identity, None)
+
+    def _depend(self, owner: str, dependencies: Iterable[str]) -> None:
+        for dependency in dependencies:
+            self.dependencies[owner].add(dependency)
+            self.reverse[dependency].add(owner)
+
+    def _prepare(self, owners: set[str]) -> None:
+        # Clear before rebinding any owner: constant resolution can populate a
+        # different owner's dependencies while walking a cross-file expression.
+        for owner in owners:
+            self.check()
+            for dependency in self.dependencies.pop(owner, ()):
+                self.reverse[dependency].discard(owner)
+                if not self.reverse[dependency]:
+                    del self.reverse[dependency]
+            for name in self.lookups.pop(owner, ()):
+                self.symbol_users[name].discard(owner)
+                if not self.symbol_users[name]:
+                    del self.symbol_users[name]
+            self.constant_cache.pop(owner, None)
+            self.resolutions.pop(owner, None)
+        for owner in sorted(owners & self.facts.keys()):
+            self.check()
+            item = self.facts[owner]
+            resolved = []
             for call in item.calls:
-                if not call.method:
-                    self._resolve_call(item, call)
-                    for expr in call.arguments:
-                        self._expand(item, expr, {})
+                self.check()
+                resolved.append(self._resolve_call(item, call))
+                for expression in call.arguments:
+                    self._expand(item, expression, {})
+            self.resolutions[owner] = tuple(resolved)
+        self._prepare_unknown(owners)
+
+    def _prepare_unknown(self, owners: set[str]) -> None:
+        # Cache only tiny unknown-input outcomes. A large/concrete/recursive
+        # branch stays lazy; no transitive expression or result list is expanded.
+        identities = {
+            method.identity
+            for owner in owners & self.facts.keys()
+            for method in self.facts[owner].methods
+        }
+        waiting, reverse = {}, defaultdict(set)
+        for identity in identities:
+            self.check()
+            item, method = self.method_ids[identity]
+            children = {self.resolutions[item.owner][i][1] for i in method.calls} & identities
+            waiting[identity] = children
+            self.unknown_summaries.pop(identity, None)
+            for child in children:
+                reverse[child].add(identity)
+        ready = deque(identity for identity, children in waiting.items() if not children)
+        while ready:
+            self.check()
+            identity = ready.popleft()
+            item, method = self.method_ids[identity]
+            arguments = dict.fromkeys(method.parameters, UNKNOWN)
+            values, reusable = set(), True
+            for index in method.calls:
+                direct, child, issue = self.resolutions[item.owner][index]
+                if issue:
+                    values.add(issue)
+                values.update(
+                    Effect(e.scheme, e.mode, self._bound(item, e.expression, arguments), "")
+                    for e in direct
+                )
+                if child:
+                    bound = [
+                        self._bound(item, expr, arguments) for expr in item.calls[index].arguments
+                    ]
+                    summary = self.unknown_summaries.get(child)
+                    if summary is None or any(value != UNKNOWN for value in bound):
+                        reusable = False
+                        break
+                    values.update(summary)
+                if len(values) > 4:
+                    reusable = False
+                    break
+            self.unknown_summaries[identity] = tuple(sorted(values, key=repr)) if reusable else None
+            for parent in reverse[identity]:
+                waiting[parent].discard(identity)
+                if not waiting[parent]:
+                    ready.append(parent)
+        for identity in identities - self.unknown_summaries.keys():
+            self.unknown_summaries[identity] = None
+
+    def update(self, facts: Iterable[Facts], *, removed: Iterable[str] = ()) -> set[str]:
+        changes = {item.owner: item for item in facts}
+        changed = set(changes) | set(removed)
+        symbols = set()
+        for owner in changed:
+            self.check()
+            for item in (self.facts.get(owner), changes.get(owner)):
+                if item is not None:
+                    symbols.update(self._symbols(item))
+        # Missing and ambiguous lookups matter too: a newly added declaration
+        # can change a caller that had no previously resolved dependency edge.
+        affected = self.affected(
+            changed | {owner for name in symbols for owner in self.symbol_users.get(name, ())}
+        )
+        for owner in changed:
+            self._remove(owner)
+        for item in changes.values():
+            self._add(item)
+        self._prepare(affected)
+        return affected
 
     def _names(self, item: Facts, name: str, scope: str, import_scope: str = "") -> list[str]:
         imports = item.imports.get(import_scope, {"aliases": item.aliases, "usings": item.usings})
         first, _, rest = name.partition(".")
         if first in imports["aliases"]:
-            return [imports["aliases"][first] + ("." + rest if rest else "")]
+            names = [imports["aliases"][first] + ("." + rest if rest else "")]
+            return self._lookup_names(item.owner, names)
         names = []
         while scope:
             names.append(scope + "." + name)
             scope = scope.rpartition(".")[0]
-        return list(
-            dict.fromkeys(
-                [
-                    *names,
-                    name,
-                    *(
-                        using + "." + name
-                        for using in imports["usings"]
-                        if not using.startswith("static")
-                    ),
-                ]
-            )
+        return self._lookup_names(
+            item.owner,
+            list(
+                dict.fromkeys(
+                    [
+                        *names,
+                        name,
+                        *(
+                            using + "." + name
+                            for using in imports["usings"]
+                            if not using.startswith("static")
+                        ),
+                    ]
+                )
+            ),
         )
+
+    def _lookup_names(self, owner: str, names: list[str]) -> list[str]:
+        for name in names:
+            self.lookups[owner].add(name)
+            self.symbol_users[name].add(owner)
+        return names
 
     def _constant(
         self, item: Facts, scope: str, name: str, active: set[str], import_scope: str = ""
     ) -> Expr:
-        key = (item.owner, scope + "|" + name + "|" + import_scope)
-        if key in self.constant_cache:
-            return self.constant_cache[key]
+        self.check()
+        key = (scope, name, import_scope)
+        if key in self.constant_cache[item.owner]:
+            return self.constant_cache[item.owner][key]
         matches = [
             (full, row)
             for full in self._names(item, name, scope, import_scope)
             for row in self.constants.get(full, ())
         ]
-        self.dependencies[item.owner].update(row[0] for _, row in matches)
+        self._depend(item.owner, (row[0] for _, row in matches))
         if len(matches) != 1 or matches[0][0] in active:
             return UNKNOWN
         full, (owner, expr) = matches[0]
-        self.dependencies[item.owner].add(owner)
+        self._depend(item.owner, (owner,))
         result = self._expand(self.facts[owner], expr, {}, active | {full})
-        self.constant_cache[key] = result
+        self.constant_cache[item.owner][key] = result
         return result
 
     def _expand(
@@ -695,6 +845,7 @@ class AnalysisIndex:
     ) -> Expr:
         output = []
         for kind, value in expr:
+            self.check()
             if kind == "symbol":
                 scope, name, *imports = value.split("|", 2)
                 try:
@@ -745,11 +896,11 @@ class AnalysisIndex:
             if len(method.parameters) == len(call.arguments)
         ]
         if matches:
-            self.dependencies[item.owner].update(owner for owner, _ in matches)
+            self._depend(item.owner, (owner for owner, _ in matches))
             if len(matches) != 1:
                 return [], None, "ambiguous_call"
             owner, method = matches[0]
-            self.dependencies[item.owner].add(owner)
+            self._depend(item.owner, (owner,))
             return [], method.identity, None
         qualifier, _, method = call.name.rpartition(".")
         if method not in _LOADER_METHODS:
@@ -757,8 +908,8 @@ class AnalysisIndex:
         qualified = self._names(item, qualifier, call.scope, call.import_scope)
         # A project type with the same visible qualifier takes precedence.
         if any(name in self.types for name in qualified):
-            self.dependencies[item.owner].update(
-                owner for name in qualified for owner in self.types.get(name, ())
+            self._depend(
+                item.owner, (owner for name in qualified for owner in self.types.get(name, ()))
             )
             return [], None, "unresolved_loader"
         signatures = {LOADERS[name] for name in names if name in LOADERS}
@@ -778,125 +929,154 @@ class AnalysisIndex:
             None,
         )
 
-    def _build_summaries(self) -> None:
-        waiting, reverse, resolutions = {}, defaultdict(set), {}
-        for identity, (item, method) in self.method_ids.items():
-            children = set()
-            for index in method.calls:
-                resolved = self._resolve_call(item, item.calls[index])
-                resolutions[identity, index] = resolved
-                if resolved[1]:
-                    children.add(resolved[1])
-                    reverse[resolved[1]].add(identity)
-            waiting[identity] = children
-        ready = deque(identity for identity, children in waiting.items() if not children)
-        while ready:
-            identity = ready.popleft()
-            item, method = self.method_ids[identity]
-            effects, issues = set(), set()
-            for index in method.calls:
-                call = item.calls[index]
-                direct, child, issue = resolutions[identity, index]
-                if issue:
-                    issues.add(issue)
-                if child:
-                    child_effects, child_issues = self.summaries[child]
-                    issues.update(child_issues)
-                    parameters = self.method_ids[child][1].parameters
-                    arguments = {
-                        name: self._expand(item, expr, {})
-                        for name, expr in zip(parameters, call.arguments)
-                    }
-                    direct = [
-                        Effect(
-                            e.scheme,
-                            e.mode,
-                            self._expand(item, e.expression, arguments),
-                            "wrapper:" + call.name,
-                        )
-                        for e in child_effects
-                    ]
-                effects.update(
-                    Effect(e.scheme, e.mode, self._expand(item, e.expression, {}), e.evidence)
-                    for e in direct
-                )
-            self.summaries[identity] = (tuple(sorted(effects, key=repr)), tuple(sorted(issues)))
-            for parent in reverse[identity]:
-                waiting[parent].discard(identity)
-                if not waiting[parent]:
-                    ready.append(parent)
-        for identity in waiting.keys() - self.summaries.keys():
-            self.summaries[identity] = ((), ("recursive_wrapper",))
-
     def affected(self, changed: set[str]) -> set[str]:
-        reverse = defaultdict(set)
-        for owner, dependencies in self.dependencies.items():
-            for dependency in dependencies:
-                reverse[dependency].add(owner)
         result, pending = set(changed), list(changed)
         while pending:
-            for owner in reverse[pending.pop()] - result:
+            self.check()
+            for owner in self.reverse.get(pending.pop(), set()) - result:
                 result.add(owner)
                 pending.append(owner)
         return result
 
-    def analyze(self, owner: str) -> Analysis:
-        item = self.facts[owner]
-        result = Analysis()
-        for call in item.calls:
-            effects, child, issue = self._resolve_call(item, call)
-            issues = [issue] if issue else []
-            if child:
-                effects, child_issues = self.summaries[child]
-                issues.extend(child_issues)
-                arguments = {
-                    name: self._expand(item, expr, {})
-                    for name, expr in zip(self.method_ids[child][1].parameters, call.arguments)
-                }
-                effects = [
-                    Effect(
-                        e.scheme,
-                        e.mode,
-                        self._expand(item, e.expression, arguments),
-                        "wrapper:" + call.name,
-                    )
-                    for e in effects
-                ]
-            for effect in effects:
-                expr = self._expand(item, effect.expression, {})
-                if any(kind != "literal" for kind, _ in expr):
-                    issues.append("dynamic_key")
-                    continue
-                key = "".join(value for _, value in expr)
-                targets, reason = self.catalog.resolve(effect.scheme, key, effect.mode)
-                if reason:
-                    result.unresolved.append(
-                        {"line": call.line, "call": call.name, "reason": reason, "key": key}
-                    )
-                for target in sorted(targets):
-                    result.edges.append(
-                        Edge(
-                            target,
-                            effect.scheme + "_load",
-                            key,
-                            call.line,
-                            "possible",
-                            effect.evidence,
+    def _bound(self, item: Facts, expression: Expr, arguments: dict[str, Expr]) -> Expr:
+        expression = self._expand(item, expression, arguments)
+        if any(kind != "literal" for kind, _ in expression):
+            return UNKNOWN
+        return (("literal", "".join(value for _, value in expression)),)
+
+    def _effects(self, owner: str, call_index: int) -> Iterator[Effect | str]:
+        # Shared local call plans are traversed only with a concrete binding (or
+        # one canonical unknown). Frames, not Python recursion, support deep code.
+        frames = [("", self.facts[owner], iter((call_index,)), {}, None)]
+        active = set()
+        seen = OrderedDict()
+        unknown_seen = set()
+        while frames:
+            self.check()
+            identity, item, calls, arguments, evidence = frames[-1]
+            index = next(calls, None)
+            if index is None:
+                frames.pop()
+                active.discard(identity)
+                continue
+            call = item.calls[index]
+            direct, child, issue = self.resolutions[item.owner][index]
+            if issue:
+                yield issue
+            for effect in direct:
+                yield Effect(
+                    effect.scheme,
+                    effect.mode,
+                    self._bound(item, effect.expression, arguments),
+                    evidence or effect.evidence,
+                )
+            if not child:
+                continue
+            if child in active:
+                yield "recursive_wrapper"
+                continue
+            child_item, method = self.method_ids[child]
+            values = tuple(self._bound(item, expr, arguments) for expr in call.arguments)
+            state = (child, values)
+            symbolic = all(value == UNKNOWN for value in values)
+            summary = self.unknown_summaries.get(child) if symbolic else None
+            if summary is not None:
+                for value in summary:
+                    if isinstance(value, str):
+                        yield value
+                    else:
+                        yield Effect(
+                            value.scheme,
+                            value.mode,
+                            value.expression,
+                            evidence or "wrapper:" + call.name,
                         )
-                    )
-            result.unresolved.extend(
-                {"line": call.line, "call": call.name, "reason": reason}
-                for reason in sorted(set(issues))
+                continue
+            if symbolic and child in unknown_seen:
+                continue
+            if not symbolic and state in seen:
+                seen.move_to_end(state)
+                continue
+            if symbolic:
+                # At most one unknown state per method, bounded by program size.
+                unknown_seen.add(child)
+            else:
+                seen[state] = None
+            # This is an evictable memo, not a depth/work/result limit. Eviction
+            # permits recomputation; the publication sink deduplicates evidence.
+            if len(seen) > 4096:
+                seen.popitem(last=False)
+            active.add(child)
+            frames.append(
+                (
+                    child,
+                    child_item,
+                    iter(method.calls),
+                    dict(zip(method.parameters, values)),
+                    evidence or "wrapper:" + call.name,
+                )
             )
+
+    def events(self, owner: str) -> Iterator[Edge | dict]:
+        """Stream concrete evidence without retaining a wrapper's entire fanout."""
+        self.check()
+        for call_index in range(len(self.facts[owner].calls)):
+            yield from self._call_events(owner, call_index)
+
+    def _call_events(self, owner: str, call_index: int) -> Iterator[Edge | dict]:
+        call = self.facts[owner].calls[call_index]
+        issues = set()
+        for effect in self._effects(owner, call_index):
+            if isinstance(effect, str):
+                issues.add(effect)
+                continue
+            expr = effect.expression
+            if any(kind != "literal" for kind, _ in expr):
+                issues.add("dynamic_key")
+                continue
+            key = "".join(value for _, value in expr)
+            targets, reason = self.catalog.resolve(effect.scheme, key, effect.mode)
+            if reason:
+                yield {"line": call.line, "call": call.name, "reason": reason, "key": key}
+            for target in sorted(targets):
+                self.check()
+                yield Edge(
+                    target, effect.scheme + "_load", key, call.line, "possible", effect.evidence
+                )
+        for reason in sorted(issues):
+            yield {"line": call.line, "call": call.name, "reason": reason}
+
+    def transitive_dependencies(self, owner: str) -> set[str]:
         # Transitive dependencies ensure a changed constant inside a wrapper also
         # invalidates callers, even when the wrapper's own source is unchanged.
+        result = set()
         pending = list(self.dependencies[owner])
         while pending:
+            self.check()
             dependency = pending.pop()
-            if dependency in result.dependencies:
+            if dependency in result:
                 continue
-            result.dependencies.add(dependency)
-            pending.extend(self.dependencies[dependency] - result.dependencies)
+            result.add(dependency)
+            pending.extend(self.dependencies[dependency] - result)
+        return result
+
+    def analyze(self, owner: str) -> Analysis:
+        # Convenience API for bounded component callers. The reconciler consumes
+        # events into a disk-backed staging sink for potentially large owners.
+        result = Analysis()
+        for call_index in range(len(self.facts[owner].calls)):
+            edges, issues = set(), set()
+            for event in self._call_events(owner, call_index):
+                if isinstance(event, Edge):
+                    if event not in edges:
+                        edges.add(event)
+                        result.edges.append(event)
+                else:
+                    key = tuple(sorted(event.items()))
+                    if key not in issues:
+                        issues.add(key)
+                        result.unresolved.append(event)
+        result.dependencies = self.transitive_dependencies(owner)
         return result
 
 
