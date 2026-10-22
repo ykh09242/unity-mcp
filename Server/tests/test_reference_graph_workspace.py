@@ -33,6 +33,17 @@ def row(guid="a" * 32, path="Assets/Resources/Fixture.prefab"):
     }
 
 
+def test_document_state_hydrates_from_observation_after_schema5(workspace):
+    generation = workspace.observe("worker", Observation("owner", "code", "hash"))
+    with workspace.store._connect(write=True) as connection:
+        connection.execute(
+            "INSERT INTO graph_documents VALUES (?,?,?,?,?)",
+            ("owner", "csharp", "hash", "{}", "assembly-signature"),
+        )
+    workspace.publish("worker", "owner", "code", generation, Analysis())
+    assert workspace.documents()[0]["state"] == "ready"
+
+
 def test_streamed_analysis_is_atomic_batched_and_cleans_cancelled_staging(workspace):
     generation = workspace.observe("worker", Observation("owner", "code", "old"))
     workspace.publish("worker", "owner", "code", generation, Analysis([Edge("old", "load")]))

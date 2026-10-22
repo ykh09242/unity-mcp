@@ -581,7 +581,7 @@ class GraphWorkspace:
                     "format": row[1],
                     "fingerprint": row[2],
                     "data": json.loads(row[3]),
-                    "state": row[4],
+                    "state": row["state"],
                 }
                 for row in connection.execute(
                     "SELECT d.*,o.state FROM graph_documents d LEFT JOIN observations o ON o.owner=d.owner AND o.provider='code'"

@@ -94,6 +94,26 @@ void Run() { Load("one"); }
     assert not any(issue["reason"] == "ambiguous_call" for issue in result.unresolved)
 
 
+@pytest.mark.parametrize(
+    "literal",
+    ["2147483648", "4_294_967_295", "0x80000000", "4294967296L", "18446744073709551615UL"],
+)
+def test_large_integer_literals_never_bind_an_inapplicable_int_overload(literal):
+    loader = facts(
+        "loader",
+        """class Loader {
+static void Load(int value) { UnityEngine.Resources.Load("one"); }
+static void Load(long value) { UnityEngine.Resources.Load("two"); }
+}""",
+    )
+    caller = facts("caller", f"class Use {{ void Run() {{ Loader.Load({literal}); }} }}")
+    result = AnalysisIndex([loader, caller], catalog()).analyze("caller")
+    assert "one" not in {edge.key for edge in result.edges}
+    assert result.edges or any(
+        issue["reason"] == "unsupported_call_binding" for issue in result.unresolved
+    )
+
+
 def test_same_type_name_in_unreferenced_assembly_cannot_shadow_visible_symbol():
     good = facts(
         "good", 'public class Keys { public const string Value="one"; }', context("Visible")
@@ -116,6 +136,23 @@ def test_same_type_name_in_unreferenced_assembly_cannot_shadow_visible_symbol():
     )
     assert "caller" in index.update([updated])
     assert keys(index) == {"two"}
+
+
+def test_new_global_type_shadow_invalidates_an_imported_constant_binding():
+    imported = facts("keys", 'namespace N { class Keys { public const string Value="one"; } }')
+    caller = facts(
+        "caller", "using N; class Use { void Run() { UnityEngine.Resources.Load(Keys.Value); } }"
+    )
+    shadow = facts("shadow", 'class Keys { public static readonly string Value="two"; }')
+    index = AnalysisIndex([imported, caller], catalog())
+    assert keys(index) == {"one"}
+    assert "caller" in index.update([shadow])
+    assert index.analyze("caller") == AnalysisIndex([imported, caller, shadow], catalog()).analyze(
+        "caller"
+    )
+    assert not keys(index)
+    assert "caller" in index.update([], removed=["shadow"])
+    assert keys(index) == {"one"}
 
 
 def test_compilation_metadata_is_shared_per_index_and_released_after_last_owner():

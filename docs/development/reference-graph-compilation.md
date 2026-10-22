@@ -46,7 +46,9 @@ edges, rules and external grants are unaffected by derived-context invalidation.
 - Scoped aliases, relative namespace aliases, explicit `global::`, nearer project
   types and `using static`. Namespace occurrences retain independent imports.
 - Named/default wrapper arguments, declaration-scope constant defaults, and
-  unambiguous primitive `string`, `int`, `bool` and `char` overloads. Known native
+  unambiguous primitive `string`, integral, `bool` and `char` overloads. Integral
+  literal inference checks C# ranges, suffixes and decimal/hex/binary forms;
+  unsupported implicit conversions retain a binding diagnostic. Known native
   loader key argument names can be supplied out of order.
 
 Unknown arguments, invalid bindings and multiple viable overloads remain explicit

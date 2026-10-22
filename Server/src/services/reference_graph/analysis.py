@@ -614,8 +614,49 @@ def _argument_type(tokens: list[Token], parameters: dict[str, str]) -> str:
             return "bool"
         if token.text in parameters:
             return parameters[token.text]
-    if re.fullmatch(r"[0-9]+", "".join(token.text for token in tokens)):
-        return "int"
+    literal = re.fullmatch(
+        r"([+-]?)(0[xX][0-9a-fA-F_]+|0[bB][01_]+|[0-9][0-9_]*)([uU][lL]?|[lL][uU]?)?",
+        "".join(token.text for token in tokens),
+    )
+    if literal:
+        sign, digits, suffix = literal.groups()
+        suffix = (suffix or "").lower()
+        digits = digits.replace("_", "")
+        base = (
+            16 if digits.lower().startswith("0x") else 2 if digits.lower().startswith("0b") else 10
+        )
+        digits = digits[2:] if base != 10 else digits
+        # A C# integral literal has at most 64 significant binary digits.
+        # Avoid parsing an arbitrarily long invalid token into a Python bigint.
+        digits = digits.lstrip("0") or "0"
+        if len(digits) > {16: 16, 2: 64, 10: 20}[base]:
+            return "invalid_numeric_literal"
+        number = int(digits, base)
+        candidates = (
+            (("ulong", 64),)
+            if "u" in suffix and "l" in suffix
+            else (("uint", 32), ("ulong", 64))
+            if suffix == "u"
+            else (("long", 63), ("ulong", 64))
+            if suffix == "l"
+            else (("int", 31), ("uint", 32), ("long", 63), ("ulong", 64))
+        )
+        result = next(
+            (name for name, bits in candidates if number < 1 << bits), "invalid_numeric_literal"
+        )
+        if sign == "-":
+            if base == 10 and not suffix and number == 1 << 31:
+                return "int"
+            if base == 10 and suffix in ("", "l") and number == 1 << 63:
+                return "long"
+            return (
+                "long"
+                if result == "uint"
+                else "invalid_numeric_literal"
+                if result == "ulong"
+                else result
+            )
+        return result
     return ""
 
 
@@ -936,6 +977,10 @@ class AnalysisIndex:
             return self._lookup_names(
                 item.owner, [target.removeprefix("global::") + ("." + rest if rest else "")]
             )
+        # A new global type/namespace can shadow a previously imported name.
+        # Track this candidate even before it exists so incremental and cold
+        # binding agree after the new source is imported.
+        self._lookup_names(item.owner, [first])
         if self._declared(item, first) or self._declared(item, name):
             return self._lookup_names(item.owner, [name, first])[:1]
         return self._lookup_names(
@@ -1050,6 +1095,9 @@ class AnalysisIndex:
             canonical = {
                 "System.String": "string",
                 "System.Int32": "int",
+                "System.Int64": "long",
+                "System.UInt32": "uint",
+                "System.UInt64": "ulong",
                 "System.Boolean": "bool",
                 "System.Char": "char",
             }
