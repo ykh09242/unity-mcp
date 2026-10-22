@@ -67,6 +67,8 @@ class Reconciler:
         self.stopped = threading.Event()
         self.worker = uuid.uuid4().hex
         self.progress = {}
+        self._gate = asyncio.Lock()
+        self._catalog_cache: tuple[int, Catalog] | None = None
 
     async def _phase(self, phase: str, **values) -> None:
         self.progress.update(phase=phase, **values)
@@ -86,6 +88,12 @@ class Reconciler:
             parent.cancel()
 
     async def reconcile(self, *, force_external: bool = False) -> bool:
+        # A checked query joins this scope's watcher without running a second
+        # reconciliation using the same durable worker identity.
+        async with self._gate:
+            return await self._reconcile(force_external=force_external)
+
+    async def _reconcile(self, *, force_external: bool) -> bool:
         await self.check()
         self.stopped.clear()
         heartbeat = None
@@ -109,10 +117,12 @@ class Reconciler:
             await self._analysis()
             await self._external(force=force_external)
             status = await self.collect("status")
+            providers = await drained_thread(self.workspace.provider_status)
             caught_up = (
                 status["epoch"] == self.progress.get("epoch")
                 and status["revision"] == self.progress.get("after")
                 and not self.progress.get("external_errors")
+                and not providers["addressables"]["errors"]
                 and (await drained_thread(self.store.status))["queue_idle"]
                 and not any(
                     status.get(key)
@@ -412,14 +422,30 @@ class Reconciler:
             if source["provider"].startswith("external:") and source["enabled"]
         ]
         if not sources:
+            self._catalog_cache = None
             return
         await self._phase("external", external_errors={})
-        catalog = await drained_thread(Catalog, await drained_thread(self.workspace.catalog))
+        catalog_revision, assets = await drained_thread(
+            self.workspace.catalog_snapshot,
+            self._catalog_cache[0] if self._catalog_cache else None,
+        )
+        if assets is not None:
+            self._catalog_cache = (catalog_revision, await drained_thread(Catalog, assets))
+        catalog = self._catalog_cache[1]
         rules = (await drained_thread(self.store.rules_state))["revision"]
-        catalog_revision = await drained_thread(self.workspace.state, "catalog_revision", 0)
+        previous = await drained_thread(self.workspace.provider_status)
         for source in sources:
             await self.check()
+            scan = {
+                "generation": uuid.uuid4().hex,
+                "state": "scanning",
+                "started_at": time.time(),
+                "last_verified_at": previous.get(source["provider"], {}).get("last_verified_at"),
+                "catalog_revision": catalog_revision,
+                "rules_revision": rules,
+            }
             try:
+                await drained_thread(self.workspace.external_scan, self.worker, source, scan)
                 failures = await drained_thread(
                     self._external_source,
                     source,
@@ -429,6 +455,14 @@ class Reconciler:
                     force,
                     _cancel_event=self.stopped,
                 )
+                scan.update(
+                    state="failed" if failures else "verified_at_scan",
+                    failed_files=failures,
+                    completed_at=time.time(),
+                )
+                if not failures:
+                    scan["last_verified_at"] = scan["completed_at"]
+                await drained_thread(self.workspace.external_scan, self.worker, source, scan)
                 if failures:
                     self.progress["external_errors"][source["provider"]] = {
                         "failed_files": failures
@@ -437,6 +471,12 @@ class Reconciler:
             except RevisionConflict:
                 raise
             except (OSError, ValueError, csv.Error, RecursionError) as error:
+                scan.update(
+                    state="failed",
+                    error=type(error).__name__ + ": " + str(error),
+                    completed_at=time.time(),
+                )
+                await drained_thread(self.workspace.external_scan, self.worker, source, scan)
                 self.progress["external_errors"][source["provider"]] = (
                     type(error).__name__ + ": " + str(error)
                 )
@@ -445,14 +485,29 @@ class Reconciler:
     def _external_source(
         self, source: dict, catalog: Catalog, rules: int, catalog_revision: int, force: bool
     ) -> int:
-        self._check_source(source)
+        with self.workspace.source_guard(source["provider"], source["version"]) as require_source:
+            return self._scan_external_source(
+                source, catalog, rules, catalog_revision, force, require_source
+            )
+
+    def _scan_external_source(
+        self,
+        source: dict,
+        catalog: Catalog,
+        rules: int,
+        catalog_revision: int,
+        force: bool,
+        require_source: Callable[[], None],
+    ) -> int:
+        self._check_source(source, require_source)
         adapter = ExternalSource(source["config"])
         provider, seen = source["provider"], uuid.uuid4().hex
         previous = self.workspace.external_inputs(provider)
         analysis_key = _hash((ANALYSIS_VERSION, source["version"], rules, catalog_revision))
         failures = 0
+        pending = []
         for path in adapter.files():
-            self._check_source(source)
+            self._check_source(source, require_source)
             old = previous.get(path)
             owner = provider + ":" + _hash(path)
             fingerprint = old["fingerprint"] if old else "unavailable"
@@ -484,13 +539,13 @@ class Reconciler:
                     result = analyze_document(path, document.text, catalog, adapter.mappings)
                     if _json(adapter.stamp(path)) != stamp:
                         raise RevisionConflict("External input changed during analysis")
-                    self._check_source(source)
+                    self._check_source(source, require_source)
                     if not self.workspace.publish(self.worker, owner, provider, generation, result):
                         raise RevisionConflict("External source grant changed during analysis")
             except RevisionConflict:
                 raise
             except (OSError, ValueError, csv.Error, RecursionError) as error:
-                self._check_source(source)
+                self._check_source(source, require_source)
                 generation = self.workspace.observe(
                     self.worker,
                     Observation(
@@ -506,16 +561,20 @@ class Reconciler:
                 )
                 self.workspace.fail_external(self.worker, owner, provider, generation, error)
                 failures += 1
-            self.workspace.record_external(
-                self.worker, provider, owner, path, fingerprint, stamp, analysis_key, seen
-            )
-        self._check_source(source)
+            pending.append((provider, owner, path, fingerprint, stamp, analysis_key, seen))
+            if len(pending) == 256:
+                self._check_source(source, require_source)
+                self.workspace.record_external_many(self.worker, pending)
+                pending.clear()
+        self._check_source(source, require_source)
+        if pending:
+            self.workspace.record_external_many(self.worker, pending)
         self.workspace.finish_external(self.worker, provider, seen)
         return failures
 
-    def _check_source(self, source: dict) -> None:
+    def _check_source(self, source: dict, require_source: Callable[[], None]) -> None:
         self._check_thread()
-        self.workspace.require_source(source["provider"], source["version"])
+        require_source()
         self.authorize_source(source["config"])
 
     def _check_thread(self) -> None:

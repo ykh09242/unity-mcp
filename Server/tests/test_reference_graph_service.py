@@ -2,6 +2,7 @@
 
 import asyncio
 from contextvars import ContextVar
+from contextlib import contextmanager
 import json
 import threading
 from types import SimpleNamespace
@@ -29,6 +30,174 @@ from services.reference_graph.store import Edge, GraphScope, RevisionConflict, _
 from services.tools.manage_reference_graph import manage_reference_graph
 
 REQUEST_MARKER = ContextVar("graph_test_request_marker", default=None)
+
+
+async def external_fixture(service, sender, ctx, root, monkeypatch, files=1):
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    guid = "1" * 32
+
+    async def send(instance, params):
+        result = await sender(instance, params)
+        if params["action"] == "inventory":
+            result["assets"] = [
+                {
+                    "guid": guid,
+                    "path": "Assets/Resources/One.prefab",
+                    "kind": "asset",
+                    "source_format": "none",
+                    "keys": [{"scheme": "resources", "value": "One"}],
+                }
+            ]
+        elif params["action"] == "dependencies":
+            result.update(
+                present=True, fingerprint="fixture", snapshot="deps", targets=[], next_offset=None
+            )
+        return result
+
+    service.send = send
+    root.mkdir()
+    for index in range(files):
+        (root / f"{index}.json").write_text('{"prefab":"One"}', encoding="utf-8")
+    entry, _ = await service.resolve(ctx, "status")
+    entry.workspace.set_source(
+        "external:fixture",
+        {
+            "root": str(root),
+            "include": ["*.json"],
+            "mappings": [{"field": "/prefab", "scheme": "resources"}],
+        },
+        expected_version=0,
+    )
+    assert await entry.engine.reconcile()
+    return entry, "asset:" + guid
+
+
+@pytest.mark.asyncio
+async def test_empty_external_result_requires_explicit_checked_snapshot(
+    setup, tmp_path, monkeypatch
+):
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, target = await external_fixture(service, sender, ctx, root, monkeypatch, files=0)
+    path = root / "new.json"
+    path.write_text('{"prefab":"One"}', encoding="utf-8")
+    response = (await service.execute(ctx, "query", {"node": target, "direction": "incoming"}))[
+        "data"
+    ]
+    assert response["edges"] == []
+    assert not response["graph_status"]["current"]
+    assert response["graph_status"]["native_current"]
+    assert response["graph_status"]["providers"]["external:fixture"]["last_verified_at"]
+    checked = (
+        await service.execute(
+            ctx,
+            "query",
+            {
+                "node": target,
+                "direction": "incoming",
+                "consistency": "checked",
+            },
+        )
+    )["data"]
+    assert len(checked["edges"]) == 1
+    assert checked["graph_status"]["current"]
+    assert checked["graph_status"]["providers"]["external:fixture"]["current"]
+    assert checked["graph_status"]["consistency"] == "checked_snapshot"
+    path.write_text('{"prefab":"Two"}', encoding="utf-8")
+    assert not (await service.execute(ctx, "status", {}))["data"]["graph_status"]["current"]
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_external_validation_batches_metadata_without_skipping_each_file(
+    setup, tmp_path, monkeypatch
+):
+    service, sender, ctx = setup
+    entry, target = await external_fixture(
+        service, sender, ctx, tmp_path / "settings", monkeypatch, files=16
+    )
+    store = entry.workspace.store
+    result = store.query(target, direction="incoming")
+    counts = {"reads": 0, "stamps": 0, "grants": 0}
+    connect, stamp, grant = store._connect, ExternalSource.stamp, service._grant
+
+    @contextmanager
+    def counted(**kwargs):
+        counts["reads"] += 1
+        with connect(**kwargs) as connection:
+            yield connection
+
+    def counted_stamp(*args):
+        counts["stamps"] += 1
+        return stamp(*args)
+
+    def counted_grant(*args):
+        counts["grants"] += 1
+        return grant(*args)
+
+    monkeypatch.setattr(store, "_connect", counted)
+    monkeypatch.setattr(ExternalSource, "stamp", counted_stamp)
+    monkeypatch.setattr(service, "_grant", counted_grant)
+    assert not service._validate_external(entry.workspace, result)
+    assert counts == {"reads": 2, "stamps": 16, "grants": 1}
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_checked_query_refuses_partial_scan_and_empty_source_revocation(
+    setup, tmp_path, monkeypatch
+):
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, target = await external_fixture(service, sender, ctx, root, monkeypatch, files=0)
+    options = {"node": target, "direction": "incoming", "consistency": "checked"}
+    path = root / "bad.json"
+    path.write_text('{"prefab":', encoding="utf-8")
+    with pytest.raises(RevisionConflict, match="not synchronized"):
+        await service.execute(ctx, "query", options)
+    assert entry.workspace.provider_status()["external:fixture"]["state"] == "failed"
+    path.unlink()
+
+    def revoked(_):
+        raise PermissionError("Operator revoked the external source")
+
+    monkeypatch.setattr(entry.engine, "authorize_source", revoked)
+    with pytest.raises(RevisionConflict, match="not synchronized"):
+        await service.execute(ctx, "query", options)
+    assert entry.workspace.provider_status()["external:fixture"]["state"] == "failed"
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_batch_validation_checks_operator_revocation_after_last_file(
+    setup, tmp_path, monkeypatch
+):
+    service, sender, ctx = setup
+    entry, target = await external_fixture(
+        service, sender, ctx, tmp_path / "settings", monkeypatch, files=3
+    )
+    stamp = ExternalSource.stamp
+    revoked = False
+    count = 0
+
+    def operator(*_):
+        if revoked:
+            raise PermissionError("revoked during file validation")
+
+    def revoke_after_stamp(*args):
+        nonlocal revoked, count
+        value = stamp(*args)
+        count += 1
+        revoked = count == 3
+        return value
+
+    monkeypatch.setattr(ReferenceGraphService, "_operator_grant", staticmethod(operator))
+    monkeypatch.setattr(ExternalSource, "stamp", revoke_after_stamp)
+    with pytest.raises(PermissionError, match="revoked during"):
+        service._validate_external(
+            entry.workspace, entry.workspace.store.query(target, direction="incoming")
+        )
+    await service.aclose()
 
 
 class Context:
@@ -301,7 +470,8 @@ async def test_cached_external_results_recheck_file_access_and_operator_revocati
         workspace.release("test")
         response = await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})
         assert len(response["data"]["edges"]) == 1
-        assert response["data"]["graph_status"]["current"]
+        assert response["data"]["graph_status"]["native_current"]
+        assert not response["data"]["graph_status"]["current"]
         validate = service._validate_external
         validations = 0
 

@@ -260,9 +260,9 @@ class ReferenceGraphService:
             self.entries.clear()
 
     @staticmethod
-    def _grant(scope: GraphScope, configuration: dict) -> None:
+    def _grant(scope: GraphScope, configuration: dict) -> ExternalSource:
         ReferenceGraphService._operator_grant(scope, configuration)
-        ExternalSource(configuration)
+        return ExternalSource(configuration)
 
     @staticmethod
     def _operator_grant(scope: GraphScope, configuration: dict) -> None:
@@ -293,7 +293,6 @@ class ReferenceGraphService:
     def _validate_external(
         self, workspace: GraphWorkspace, result: dict, owner: str | None = None
     ) -> bool:
-        sources = {row["provider"]: row for row in workspace.store.sources()}
         pairs = {
             (edge["provider"], edge["owner"])
             for edge in result.get("edges", [])
@@ -305,16 +304,26 @@ class ReferenceGraphService:
             if item["provider"].startswith("external:")
         )
         stale = set()
+        metadata = workspace.external_validation(pairs)
+        adapters = {}
         for provider, identity in pairs:
-            source = sources.get(provider)
-            cached = workspace.external_input(provider, identity)
-            if not source or not source["enabled"] or cached is None:
+            cached = metadata.get((provider, identity))
+            if cached is None or not cached["enabled"]:
                 raise RevisionConflict("External evidence changed; synchronize again")
-            self._grant(workspace.store.scope, source["config"])
-            adapter = ExternalSource(source["config"])
+            if provider not in adapters:
+                configuration = json.loads(cached["config"])
+                adapters[provider] = (
+                    self._grant(workspace.store.scope, configuration),
+                    configuration,
+                )
+            adapter = adapters[provider][0]
             stamp = _json(adapter.stamp(cached["path"]))
             if stamp != cached["stamp"]:
                 stale.add((provider, identity))
+        # Permission objects are request-local. Recheck operator revocation
+        # after file access as well as at the next delivery fence.
+        for _, configuration in adapters.values():
+            self._operator_grant(workspace.store.scope, configuration)
         for edge in result.get("edges", []):
             if (edge["provider"], edge["owner"]) in stale:
                 edge["stale"] = True
@@ -329,8 +338,8 @@ class ReferenceGraphService:
         fields = {
             "status": set(),
             "sync": {"force"},
-            "query": {"node", "direction", "limit", "cursor"},
-            "diagnostics": {"node", "offset", "limit", "revision"},
+            "query": {"node", "direction", "limit", "cursor", "consistency"},
+            "diagnostics": {"node", "offset", "limit", "revision", "consistency"},
             "declarations": set(),
             "declare": {"id", "owner", "edge", "expected_version"},
             "remove_declaration": {"id", "expected_version"},
@@ -366,18 +375,41 @@ class ReferenceGraphService:
             not isinstance(options.get("node"), str) or not options["node"]
         ):
             raise ValueError("A node id is required, for example asset:<Unity GUID>")
+        consistency = options.get("consistency", "cached")
+        if consistency not in {"cached", "checked"}:
+            raise ValueError("consistency must be cached or checked")
+        checked_providers = None
+        if consistency == "checked":
+            if options.get("cursor") or options.get("offset", 0):
+                raise ValueError(
+                    "Use checked consistency on the first page, then its revision-bound continuation"
+                )
+            if not await entry.engine.reconcile(force_external=True):
+                raise RevisionConflict(
+                    "Reference inputs are not synchronized; inspect status and retry"
+                )
+            editor = await entry.collect("status")
+            checked_providers = await drained_thread(workspace.provider_status)
         if action == "query":
             data = await drained_thread(
                 store.query,
                 options["node"],
-                **{key: value for key, value in options.items() if key != "node"},
+                **{
+                    key: value
+                    for key, value in options.items()
+                    if key not in {"node", "consistency"}
+                },
             )
             external_changed = await drained_thread(self._validate_external, workspace, data)
         elif action == "diagnostics":
             data = await drained_thread(
                 workspace.diagnostics,
                 options["node"],
-                **{key: value for key, value in options.items() if key != "node"},
+                **{
+                    key: value
+                    for key, value in options.items()
+                    if key not in {"node", "consistency"}
+                },
             )
             external_changed = await drained_thread(
                 self._validate_external, workspace, data, options["node"]
@@ -460,12 +492,14 @@ class ReferenceGraphService:
         await entry.check()
         status = await drained_thread(store.status)
         progress = await drained_thread(workspace.progress)
-        current = (
+        providers = await drained_thread(workspace.provider_status)
+        native_current = (
             progress.get("initialized", False)
             and progress.get("epoch") == editor.get("epoch")
             and progress.get("after") == editor.get("revision")
             and progress.get("phase") == "idle"
             and status["queue_idle"]
+            and not providers["addressables"]["errors"]
             and not any(
                 editor.get(key)
                 for key in (
@@ -481,6 +515,24 @@ class ReferenceGraphService:
             external_changed |= await drained_thread(
                 self._validate_external, workspace, data, options.get("node")
             )
+        if checked_providers is not None:
+            providers = await drained_thread(workspace.provider_status)
+        external_providers = {
+            key: value for key, value in providers.items() if key.startswith("external:")
+        }
+        if checked_providers is not None and providers != checked_providers:
+            raise RevisionConflict(
+                "Provider verification changed before delivery; retry the checked query"
+            )
+        for provider in external_providers.values():
+            provider["current"] = (
+                consistency == "checked"
+                and provider["state"] == "verified_at_scan"
+                and not external_changed
+            )
+        current = native_current and all(
+            provider["current"] for provider in external_providers.values()
+        )
         await entry.check()
         async with self.lock:
             if self.closed:
@@ -519,6 +571,9 @@ class ReferenceGraphService:
                     **status,
                     **counts,
                     "current": bool(current),
+                    "native_current": bool(native_current),
+                    "providers": providers,
+                    "consistency": "checked_snapshot" if consistency == "checked" else "cached",
                     "external_inputs_changed": external_changed,
                     "coverage": "partial_static",
                     "progress": progress,

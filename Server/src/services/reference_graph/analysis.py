@@ -20,7 +20,7 @@ from services.reference_graph.store import Edge
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 2
+ANALYSIS_VERSION = 3
 # Registry version follows the fact/analysis version. Values describe the string
 # key overload; object/location/AssetReference expressions stay unresolved unless
 # a later semantic provider can prove their identity.
@@ -547,7 +547,11 @@ class Catalog:
     def __init__(self, assets: Iterable[dict]):
         self.keys: dict[tuple[str, str], set[str]] = defaultdict(set)
         self.guids: set[str] = set()
+        self.addressables_unavailable = False
         for asset in assets:
+            self.addressables_unavailable |= bool(asset.get("addressables_error")) or asset.get(
+                "addressables"
+            ) in {"unavailable", "unsupported", "failed"}
             guid = asset["guid"].lower()
             target = "asset:" + guid
             self.guids.add(guid)
@@ -572,6 +576,8 @@ class Catalog:
         if scheme == "addressables":
             targets.update(self.keys.get(("addressables_label", key), ()))
         if not targets:
+            if scheme in {"addressables", "addressables_label"} and self.addressables_unavailable:
+                return set(), "provider_unavailable"
             return set(), "key_not_found"
         if len(targets) > 1 and mode == "single":
             return set(), "ambiguous_key"
