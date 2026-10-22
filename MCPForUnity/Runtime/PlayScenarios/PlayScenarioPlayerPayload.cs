@@ -186,13 +186,6 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     || part.StartsWith(".env", StringComparison.OrdinalIgnoreCase)
                     || Regex.IsMatch(part, @"\A(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|\z)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
                 )
-                || Enumerable
-                    .Range(0, Math.Max(0, segments.Length - 2))
-                    .Any(index =>
-                        segments[index].Equals("Assets", StringComparison.OrdinalIgnoreCase)
-                        && segments[index + 1].Equals("Resources", StringComparison.OrdinalIgnoreCase)
-                        && segments[index + 2].Equals("GameData", StringComparison.OrdinalIgnoreCase)
-                    )
             )
                 throw new ArgumentException("Player payload path must be a bounded exact permitted Windows relative path.");
         }

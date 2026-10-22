@@ -87,7 +87,7 @@ def snapshot_source(args, output):
             result = {
                 name
                 for name in names
-                if name in {"Library", "Temp", "Logs", "obj", ".git", "GameData", "__pycache__"}
+                if name in {"Library", "Temp", "Logs", "obj", ".git", "__pycache__"}
                 or name.startswith(".env")
                 or Path(name).suffix.lower() in {".key", ".pem", ".pfx", ".p12"}
             }
@@ -119,7 +119,7 @@ def snapshot_source(args, output):
                     or not (member.isfile() or member.isdir())
                 ):
                     raise ValueError("Unsafe source snapshot member")
-                if "GameData" in relative.parts or member.name.startswith(".env"):
+                if any(part.startswith(".env") for part in relative.parts):
                     raise ValueError("Forbidden source path in snapshot")
             archive.extractall(snapshot, filter="data")
         source["archiveSha256"] = hashlib.sha256(content).hexdigest()

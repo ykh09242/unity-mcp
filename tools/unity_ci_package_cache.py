@@ -163,11 +163,7 @@ def inventory(directory: Path) -> dict[str, InputRecord]:
             relative = path.relative_to(directory)
             if relative.as_posix() == "receipt.json":
                 continue
-            if (
-                name.startswith(".env")
-                or name.casefold() == "gamedata"
-                or path.suffix.lower() in {".key", ".pem", ".pfx", ".p12"}
-            ):
+            if name.startswith(".env") or path.suffix.lower() in {".key", ".pem", ".pfx", ".p12"}:
                 raise packages.PreparationError("Excluded input in optional dependency cache")
             if _linked(path):
                 raise packages.PreparationError(f"Linked optional dependency input: {relative}")

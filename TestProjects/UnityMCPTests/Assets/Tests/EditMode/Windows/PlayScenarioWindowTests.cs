@@ -768,7 +768,7 @@ namespace MCPForUnityTests.Editor.Windows
                 window.DiscardChanges();
                 Assert.AreEqual("Click Start", window.Draft.Steps[1].Name);
                 Assert.IsFalse(window.hasUnsavedChanges);
-                Field<TextField>("stepScene0").value = "Assets/Resources/GameData/private.unity";
+                Field<TextField>("stepScene0").value = "Assets/../private.unity";
                 Assert.Throws<ArgumentException>(() => window.SaveChanges());
                 Assert.IsTrue(window.hasUnsavedChanges);
                 Assert.AreEqual("Assets/ScenarioMenu.unity", store.Get("created-flow").Steps[0].Scene);

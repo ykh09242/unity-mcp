@@ -14,6 +14,14 @@ from pydantic import TypeAdapter, ValidationError
 from services.tools.manage_play_scenario import manage_play_scenario
 
 
+@pytest.mark.parametrize(
+    "scene", ["Assets/Resources/GameData/Menu.unity", "Assets/GameData/Menu.unity"]
+)
+def test_scene_folder_names_are_not_application_policy(scene):
+    step = ScenarioStep(name="load", action="load_scene", scene=scene)
+    assert step.scene == scene
+
+
 def test_large_scenario_and_suite_admission_preserves_full_definitions():
     from models.play_scenarios import PlayScenarioSuite
 
@@ -176,7 +184,6 @@ async def test_invalid_request_has_no_selection_or_side_effect(route, arguments)
         {"action": "click_ui", "target": "/".join(["x"] * 129), "scene": None},
         {"scene": "Assets/../Menu.unity"},
         {"scene": "Packages/Menu.unity"},
-        {"scene": "Assets/Resources/GameData/Menu.unity"},
         {"scene": "Assets\\Menu.unity"},
         {"target": "Player"},
         {"scene": "Assets/Menu.prefab"},

@@ -616,8 +616,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             foreach (string part in scene.Split('/'))
             {
                 if (
-                    part.Equals("GameData", StringComparison.OrdinalIgnoreCase)
-                    || part.IndexOfAny(new[] { ':', '*', '?', '"', '<', '>', '|' }) >= 0
+                    part.IndexOfAny(new[] { ':', '*', '?', '"', '<', '>', '|' }) >= 0
                     || part.EndsWith(".", StringComparison.Ordinal)
                     || part.EndsWith(" ", StringComparison.Ordinal)
                 )

@@ -55,11 +55,6 @@ class PayloadFile(BaseModel):
                 for segment in segments
             )
             or any(segment.casefold().startswith(".env") for segment in segments)
-            or any(
-                [part.casefold() for part in segments[index : index + 3]]
-                == ["assets", "resources", "gamedata"]
-                for index in range(len(segments) - 2)
-            )
         ):
             raise PlayerPayloadError(
                 "Payload inventory path is outside its canonical permitted scope"

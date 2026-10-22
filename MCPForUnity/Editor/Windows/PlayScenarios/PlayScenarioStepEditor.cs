@@ -380,7 +380,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 objectType = typeof(SceneAsset),
                 allowSceneObjects = false,
             };
-            if (!string.IsNullOrEmpty(step.Scene) && step.Scene.IndexOf("/GameData/", StringComparison.OrdinalIgnoreCase) < 0)
+            if (!string.IsNullOrEmpty(step.Scene))
                 scene.SetValueWithoutNotify(AssetDatabase.LoadAssetAtPath<SceneAsset>(step.Scene));
             var path = new TextField("Scene path")
             {

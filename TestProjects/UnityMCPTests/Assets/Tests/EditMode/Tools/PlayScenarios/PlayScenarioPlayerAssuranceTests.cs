@@ -202,7 +202,6 @@ namespace MCPForUnityTests
         [TestCase("CON.txt")]
         [TestCase("Data/alias.")]
         [TestCase("Data/alias ")]
-        [TestCase("Assets/Resources/GameData/never-read.json")]
         [TestCase(".env.local")]
         [TestCase("Data/invalid\u007f")]
         public void ManifestRejectsInvalidOrSelfReferencingInventory(string path)
@@ -221,6 +220,25 @@ namespace MCPForUnityTests
             manifest["payload_inventory_json"] = json;
             manifest["payload_hash"] = PlayScenarioPlayerPayload.HashText(json);
             Assert.Throws<ArgumentException>(() => PlayScenarioPlayerPayload.ValidateManifest(manifest));
+        }
+
+        [Test]
+        public void ManifestAcceptsOrdinaryFolderNamesWithoutReadingFiles()
+        {
+            var manifest = Manifest();
+            var inventory = new JArray(
+                new JObject
+                {
+                    ["path"] = "Assets/Resources/GameData/never-read.json",
+                    ["size_bytes"] = 1,
+                    ["sha256"] = new string('a', 64),
+                }
+            );
+            string json = PlayScenarioPlayerBundle.CanonicalJson(inventory);
+            manifest["payload_inventory"] = inventory;
+            manifest["payload_inventory_json"] = json;
+            manifest["payload_hash"] = PlayScenarioPlayerPayload.HashText(json);
+            Assert.DoesNotThrow(() => PlayScenarioPlayerPayload.ValidateManifest(manifest));
         }
 
         [Test]
