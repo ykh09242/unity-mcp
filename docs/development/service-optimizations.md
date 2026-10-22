@@ -198,3 +198,39 @@ slower. Shared reads currently promise independent mutable results; FastMCP and
 per-caller response ownership still operate on those values. Shared encoded bytes
 cannot replace that interface without a new explicit contract and complete
 ownership/middleware validation. Production behavior is therefore unchanged.
+
+## Hierarchy page allocation
+
+Root pages fill a caller-owned root list directly instead of materializing both
+an array and a filtered list. Each page reuses a component scratch list, clearing
+Unity references after every row; returned component names remain independently
+mutable scalar lists. Row dictionaries are sized for their known fields. There is
+no persistent hierarchy cache, pooled Unity graph or reduced page/object limit.
+
+Windows Unity 6000.0.69f1 compared the same complete outputs in two serialized
+warm-Library launches, six timed rounds per launch. Ordered row hashes match after
+normalizing launch-specific instance IDs. A separate native-only recorder pass
+runs per page, excluding response serialization and correctness checks.
+
+| Workload | Native work across all pages, before to after | Allocation bytes | Separate serialization, before to after |
+| --- | --- | --- | --- |
+| 10,000 roots / 100 pages | 297 to 221 ms | Unknown: recorder unit is TimeNanoseconds | 879 to 859 ms |
+| 1,000-deep path / 1,000 children / 10 pages | 676 to 693 ms | Unknown: full recorder in both arms | 157 to 131 ms |
+| 1,000 objects with 16 added components / 10 pages | 18.49 to 17.07 ms | Unknown: recorder unit is TimeNanoseconds | 104 to 100 ms |
+
+Timing values are complete-page-sum medians. A 64 KiB positive control
+confirmed that GC.Alloc recorder Value uses TimeNanoseconds on this Editor; the
+earlier byte totals and percentage reductions were invalid and are withdrawn.
+Raw-frame size-metadata controls did not receive frames in this owned batch
+setup. Allocation traffic therefore remains unknown, not zero. Adoption is based
+on the measured 25.7% reduction in complete root native work, not a byte claim. Deep-path traversal remains unchanged and did not improve;
+its native median increased about 2.5%. No allocation savings are inferred from
+its full recorder. Serialization has no algorithm change and is reported separately
+rather than attributed to the native optimization. Root per-page native medians
+were 2.49 and 1.82 ms. A full synthetic batch is not one real client request.
+
+The native fixture verifies every row and component order, independent returned
+component lists, and fresh results after rename, sibling reorder and deletion.
+It owns additive scenes, restores a checked pristine batch startup when needed,
+and removes its temporary baseline asset. The first attempts stopped during scene
+preparation and are not counted as benchmark results.

@@ -2325,7 +2325,9 @@ namespace MCPForUnity.Editor.Tools
                         McpLog.Info("[ManageScene] get_hierarchy: listing root objects (paged summary)", always: false);
                     }
                     catch { }
-                    nodes = activeScene.GetRootGameObjects().Where(go => go != null).ToList();
+                    nodes = new List<GameObject>(activeScene.rootCount + 1);
+                    activeScene.GetRootGameObjects(nodes);
+                    nodes.RemoveAll(go => go == null);
                     scope = "roots";
                 }
                 else
@@ -2349,12 +2351,13 @@ namespace MCPForUnity.Editor.Tools
                 int end = resolvedCursor + Mathf.Min(effectiveTake, total - resolvedCursor);
 
                 var items = new List<object>(Mathf.Max(0, end - resolvedCursor));
+                var componentScratch = new List<Component>(8);
                 for (int i = resolvedCursor; i < end; i++)
                 {
                     var go = parentTransform != null ? parentTransform.GetChild(i).gameObject : nodes[i];
                     if (go == null)
                         continue;
-                    items.Add(BuildGameObjectSummary(go, includeTransform, resolvedMaxChildrenPerNode));
+                    items.Add(BuildGameObjectSummary(go, includeTransform, resolvedMaxChildrenPerNode, componentScratch));
                 }
 
                 bool truncated = end < total;
@@ -2457,7 +2460,7 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static object BuildGameObjectSummary(GameObject go, bool includeTransform, int maxChildrenPerNode)
+        private static object BuildGameObjectSummary(GameObject go, bool includeTransform, int maxChildrenPerNode, List<Component> componentScratch)
         {
             if (go == null)
                 return null;
@@ -2470,28 +2473,27 @@ namespace MCPForUnity.Editor.Tools
             catch { }
             bool childrenTruncated = childCount > 0; // We do not inline children in summary mode.
 
-            // Get component type names (lightweight - no full serialization)
-            var componentTypes = new List<string>();
+            // Reuse only page-scoped scratch; returned names remain detached scalar data.
+            List<string> componentTypes = null;
             try
             {
-                var components = go.GetComponents<Component>();
-                if (components != null)
-                {
-                    foreach (var c in components)
-                    {
-                        if (c != null)
-                        {
-                            componentTypes.Add(c.GetType().Name);
-                        }
-                    }
-                }
+                go.GetComponents(componentScratch);
+                componentTypes = new List<string>(componentScratch.Count);
+                foreach (var component in componentScratch)
+                    if (component != null)
+                        componentTypes.Add(component.GetType().Name);
             }
             catch (Exception ex)
             {
                 McpLog.Debug($"[ManageScene] Failed to enumerate components for '{go.name}': {ex.Message}");
             }
+            finally
+            {
+                componentScratch.Clear();
+            }
+            componentTypes ??= new List<string>();
 
-            var d = new Dictionary<string, object>
+            var d = new Dictionary<string, object>(14)
             {
                 { "name", go.name },
                 { "instanceID", go.GetInstanceIDCompat() },
