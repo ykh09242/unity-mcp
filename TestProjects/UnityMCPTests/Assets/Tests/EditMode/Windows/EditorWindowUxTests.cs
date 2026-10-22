@@ -148,7 +148,12 @@ namespace MCPForUnityTests.EditMode.Windows
         }
 
         [UnityTest, Explicit("Controller-owned, secret-free rendered Editor window audit.")]
-        public IEnumerator CaptureAllPagesAtNarrowAndWideWidths()
+        public IEnumerator CaptureAllPagesAtNarrowAndWideWidths() => CaptureThemes(false);
+
+        [UnityTest, Explicit("Controller-owned, secret-free expanded settings layout audit.")]
+        public IEnumerator CaptureSettingsAtNarrowAndWideWidths() => CaptureThemes(true);
+
+        private IEnumerator CaptureThemes(bool settings)
         {
             var skinIndex = typeof(EditorGUIUtility).GetProperty("skinIndex", BindingFlags.Static | BindingFlags.NonPublic);
             Assert.IsNotNull(skinIndex);
@@ -162,7 +167,7 @@ namespace MCPForUnityTests.EditMode.Windows
                     for (int i = 0; i < 12; i++)
                         yield return null;
                     Assert.AreEqual(skin == 1, EditorGUIUtility.isProSkin);
-                    yield return CaptureThemePages(skin == 1 ? "dark" : "light");
+                    yield return CaptureThemePages(skin == 1 ? "dark" : "light", settings);
                 }
             }
             finally
@@ -172,7 +177,39 @@ namespace MCPForUnityTests.EditMode.Windows
             }
         }
 
-        private static IEnumerator CaptureThemePages(string theme)
+        private static void PopulateSettings(VisualElement root)
+        {
+            var protocol = typeof(MCPForUnity.Editor.Windows.Components.Connection.McpConnectionSection).GetNestedType(
+                "TransportProtocol",
+                BindingFlags.NonPublic
+            );
+            root.Q<EnumField>("transport-dropdown").Init((Enum)Enum.Parse(protocol, "HTTPLocal"));
+            root.Q<TextField>("http-url").SetValueWithoutNotify("http://localhost:8080/mcp");
+            root.Q("api-key-row").style.display = DisplayStyle.None;
+            root.Q("unity-socket-port-row").style.display = DisplayStyle.None;
+            root.Q<Label>("connection-status").text = "Disconnected";
+            var clients = root.Q<DropdownField>("client-dropdown");
+            clients.choices = new System.Collections.Generic.List<string> { "Example AI client" };
+            clients.SetValueWithoutNotify("Example AI client");
+            root.Q<Foldout>("client-review-foldout").SetValueWithoutNotify(true);
+            root.Q<Foldout>("manual-config-foldout").SetValueWithoutNotify(true);
+            root.Q<Foldout>("client-bulk-setup").SetValueWithoutNotify(true);
+            root.Q<TextField>("configuration-preview")
+                .SetValueWithoutNotify(
+                    string.Join("\n", Enumerable.Repeat("Example redacted Unity MCP entry: existing unrelated settings are preserved.", 40))
+                );
+            root.Q<Label>("configuration-change-status").text = "Preview ready. Review the change before applying it.";
+            root.Q<Button>("apply-configuration").SetEnabled(true);
+            root.Q<TextField>("config-path").SetValueWithoutNotify("/example/workspaces/large-project/client/configuration/example-client-settings.json");
+            root.Q<TextField>("config-json")
+                .SetValueWithoutNotify("{\n  \"mcpServers\": {\n    \"unityMCP\": { \"url\": \"http://localhost:8080/mcp\" }\n  }\n}");
+            root.Q<Label>("installation-steps").text = "1. Review the configuration.\n2. Reconnect your AI client.";
+            root.Q<Foldout>("settings-development").SetValueWithoutNotify(true);
+            root.Q<TextField>("git-url-override").SetValueWithoutNotify("/example/workspaces/large-project/tools/unity-mcp/Server");
+            root.Q<Label>("deploy-status-label").text = "Example failed deployment: choose a valid package folder and try again.";
+        }
+
+        private static IEnumerator CaptureThemePages(string theme, bool settings)
         {
             Assert.IsTrue(Guid.TryParseExact(Environment.GetEnvironmentVariable("UNITY_MCP_NATIVE_QA_NONCE"), "N", out _));
             Assert.AreNotEqual(UnityEngine.Rendering.GraphicsDeviceType.Null, SystemInfo.graphicsDeviceType);
@@ -201,6 +238,8 @@ namespace MCPForUnityTests.EditMode.Windows
                     AssetDatabase
                         .LoadAssetAtPath<VisualTreeAsset>(BasePath + "Components/" + pair.Item2 + "/Mcp" + pair.Item2 + "Section.uxml")
                         .CloneTree(root.Q(pair.Item1 + "-container"));
+                if (settings)
+                    PopulateSettings(root);
                 Type navigationType = typeof(MCPForUnityEditorWindow).Assembly.GetType("MCPForUnity.Editor.Windows.McpWindowNavigation");
                 Action<string> select = id =>
                 {
@@ -214,12 +253,12 @@ namespace MCPForUnityTests.EditMode.Windows
                     navigation = (IDisposable)Activator.CreateInstance(navigationType, PrivateInstance, null, new object[] { root, select }, null);
                 string directory = Path.GetFullPath(Path.Combine(Application.dataPath, "../Library/McpTestEvidence/window-" + Guid.NewGuid().ToString("N")));
                 Directory.CreateDirectory(directory);
-                foreach (int width in new[] { 500, 1100 })
+                foreach (int width in settings ? new[] { 500, 800, 1100 } : new[] { 500, 1100 })
                 {
                     root.EnableInClassList("unity-theme-dark", theme == "dark");
                     root.EnableInClassList("unity-theme-light", theme == "light");
                     window.position = new Rect(30, 30, width, 900);
-                    foreach (string page in Pages)
+                    foreach (string page in settings ? new[] { "clients", "advanced" } : Pages)
                     {
                         select(page);
                         navigationType?.GetMethod("Select", PrivateInstance).Invoke(navigation, new object[] { page });
@@ -236,6 +275,23 @@ namespace MCPForUnityTests.EditMode.Windows
                             .GetMethod("Capture", BindingFlags.NonPublic | BindingFlags.Static)
                             .Invoke(null, new object[] { window, path });
                         TestContext.Out.WriteLine("EDITOR_UX_CAPTURE " + path);
+                        if (settings)
+                        {
+                            var target = root.Q(page == "clients" ? "client-review-foldout" : "settings-development");
+                            scroll.ScrollTo(target);
+                            for (int i = 0; i < 12; i++)
+                            {
+                                window.Repaint();
+                                yield return null;
+                            }
+                            Assert.Less(target.worldBound.yMin, scroll.contentViewport.worldBound.yMax, "Expanded controls remain reachable");
+                            path = Path.Combine(directory, page + "-expanded-" + width + "-" + theme + ".png");
+                            typeof(OperationActivityTests)
+                                .GetMethod("Capture", BindingFlags.NonPublic | BindingFlags.Static)
+                                .Invoke(null, new object[] { window, path });
+                            TestContext.Out.WriteLine("EDITOR_UX_CAPTURE " + path);
+                            scroll.scrollOffset = Vector2.zero;
+                        }
                     }
                 }
             }

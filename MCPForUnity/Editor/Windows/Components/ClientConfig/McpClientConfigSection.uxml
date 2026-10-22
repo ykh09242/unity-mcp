@@ -1,12 +1,9 @@
-<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
+<ui:UXML xmlns:ui="UnityEngine.UIElements" editor-extension-mode="True">
     <ui:Style src="../Common.uss" />
     <ui:VisualElement name="client-section" class="section">
-        <ui:Label text="Client Configuration" class="section-title" />
+        <ui:Label text="AI client setup" class="section-title" />
         <ui:VisualElement class="section-content">
-            <ui:Button name="configure-all-button" text="Configure All Detected Clients" class="primary-button" />
-            <ui:Button name="retry-failed-button" text="Retry Failed Clients" enabled="false" class="action-button" />
-            <ui:Label name="retry-status" text="Uses current settings; successful clients are not changed." class="status-text" />
-            <ui:Foldout name="client-details-foldout" text="Per-client setup" value="true" class="client-details-foldout">
+            <ui:Foldout name="client-details-foldout" text="Selected client" value="true" class="client-details-foldout">
                 <ui:VisualElement class="setting-row">
                     <ui:Label text="Client:" class="setting-label" />
                     <ui:DropdownField name="client-dropdown" class="setting-dropdown-inline" />
@@ -16,7 +13,7 @@
                         <ui:VisualElement name="client-status-indicator" class="status-dot" />
                         <ui:Label name="client-status" text="Not Configured" class="status-text" />
                     </ui:VisualElement>
-                    <ui:Button name="configure-button" text="Configure" class="action-button" />
+                    <ui:Button name="configure-button" text="Configure" class="action-button primary-button" />
                     <ui:Button name="install-skills-button" text="Install Skills" class="action-button initially-hidden" />
                 </ui:VisualElement>
                 <ui:VisualElement class="setting-row initially-hidden" name="claude-cli-path-row">
@@ -30,17 +27,21 @@
                     <ui:Button name="browse-project-dir-button" text="Browse" class="icon-button" />
                     <ui:Button name="clear-project-dir-button" text="Clear" class="icon-button" />
                 </ui:VisualElement>
-                <ui:VisualElement class="client-configuration-review">
-                        <ui:Label text="Review a redacted Unity MCP entry change. Other settings are preserved." />
-                        <ui:TextField name="configuration-preview" readonly="true" multiline="true" />
-                        <ui:Label name="configuration-change-status" text="No reviewed change prepared." />
+                <ui:Foldout name="client-review-foldout" text="Review configuration changes" value="false" class="settings-group">
+                    <ui:VisualElement class="client-configuration-review">
+                        <ui:Label text="Review a redacted Unity MCP entry change. Other settings are preserved." class="help-text" />
+                        <ui:ScrollView mode="Vertical" class="config-preview-scroll">
+                            <ui:TextField name="configuration-preview" readonly="true" multiline="true" class="config-preview-field" />
+                        </ui:ScrollView>
+                        <ui:Label name="configuration-change-status" text="No reviewed change prepared." class="help-text" />
                         <ui:VisualElement class="client-configuration-review-actions">
-                            <ui:Button name="preview-configuration" text="Preview change" />
-                            <ui:Button name="apply-configuration" text="Apply reviewed change" enabled="false" />
-                            <ui:Button name="cancel-configuration-preview" text="Cancel preview" />
-                            <ui:Button name="restore-configuration" text="Restore previous Unity entry" enabled="false" />
+                            <ui:Button name="preview-configuration" text="Preview change" class="action-button" />
+                            <ui:Button name="apply-configuration" text="Apply reviewed change" enabled="false" class="action-button primary-button" />
+                            <ui:Button name="cancel-configuration-preview" text="Cancel preview" class="action-button" />
+                            <ui:Button name="restore-configuration" text="Restore previous Unity entry" enabled="false" class="action-button" />
                         </ui:VisualElement>
                     </ui:VisualElement>
+                </ui:Foldout>
                 <ui:Foldout name="manual-config-foldout" text="Manual Configuration" value="false" class="manual-config-foldout">
                     <ui:VisualElement class="manual-config-content">
                         <ui:Label text="Config Path:" class="config-label" />
@@ -58,6 +59,14 @@
                         <ui:Label name="installation-steps" class="installation-steps" />
                     </ui:VisualElement>
                 </ui:Foldout>
+            </ui:Foldout>
+            <ui:Foldout name="client-bulk-setup" text="Configure multiple clients" value="false" class="settings-group">
+                <ui:Label text="Apply the current connection settings to all detected clients. Retry only the clients that failed." class="help-text" />
+                <ui:VisualElement class="form-actions">
+                    <ui:Button name="configure-all-button" text="Configure All Detected Clients" class="action-button" />
+                    <ui:Button name="retry-failed-button" text="Retry Failed Clients" enabled="false" class="action-button" />
+                </ui:VisualElement>
+                <ui:Label name="retry-status" text="Uses current settings; successful clients are not changed." class="help-text" />
             </ui:Foldout>
         </ui:VisualElement>
     </ui:VisualElement>
