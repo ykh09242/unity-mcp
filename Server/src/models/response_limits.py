@@ -219,6 +219,14 @@ def _large_ascii_json_size(
         return None
 
 
+@dataclass(slots=True)
+class ResponseCopyPlan:
+    """Copy evidence produced by the same final-graph admission traversal."""
+
+    shareable: bool = False
+    detached_bytes: int | None = None
+
+
 def response_size(
     value: Any,
     *,
@@ -226,6 +234,7 @@ def response_size(
     max_depth: int = MAX_RESPONSE_DEPTH,
     max_nodes: int = MAX_RESPONSE_NODES,
     max_retained: int = MAX_RESPONSE_RETAINED_BYTES,
+    copy_plan: ResponseCopyPlan | None = None,
 ) -> int | None:
     """Bound traversal and JSON serialization; return a conservative memory charge.
 
@@ -239,6 +248,24 @@ def response_size(
     fast_limit = min(_MAX_FAST_JSON_BYTES, max_bytes)
     has_large_ascii = False
     exact_ascii_graph = True
+
+    shareable = copy_plan is not None
+    discount = 0
+    mutable_ids: set[int] = set()
+    if copy_plan is not None:
+        copy_plan.shareable = False
+        copy_plan.detached_bytes = None
+
+    def finish(charge: int) -> int | None:
+        if charge > max_retained:
+            return None
+        if copy_plan is not None and shareable:
+            copy_plan.shareable = True
+            if charge >= 256 * 1024:
+                detached = max(2048, charge - discount)
+                if detached < charge:
+                    copy_plan.detached_bytes = detached
+        return charge
 
     storage_nodes = 0
     storage_covered = False
@@ -286,13 +313,34 @@ def response_size(
 
     def visit(item: Any, depth: int) -> bool:
         nonlocal retained, nodes, encoded_bound, has_large_ascii, exact_ascii_graph, storage_covered
+        nonlocal shareable, discount
         nodes += 1
         if depth > max_depth or nodes > max_nodes:
             return False
-        retained += 128 + 2 * sys.getsizeof(item)
+        object_size = sys.getsizeof(item)
+        retained += 128 + 2 * object_size
         if retained > max_retained:
             return False
         item_type = type(item)
+        if shareable:
+            if item_type is dict or item_type is list:
+                identity = id(item)
+                if identity in mutable_ids:
+                    shareable = False
+                else:
+                    mutable_ids.add(identity)
+                    growth = (96 + 48 * len(item)) if item_type is dict else (80 + 16 * len(item))
+                    discount += 128 - max(0, growth - 2 * object_size)
+            elif (
+                item_type is str
+                or item_type is int
+                or item_type is float
+                or item_type is bool
+                or item is None
+            ):
+                discount += 128 + 2 * object_size
+            else:
+                shareable = False
         if encoded_bound is not None:
             # Only exact builtins have predictable length/serialization. Models,
             # URLs and subclasses keep the existing streaming encoder behavior.
@@ -400,7 +448,7 @@ def response_size(
                 if exact_bytes > max_bytes:
                     return None
                 retained += exact_bytes
-                return retained if retained <= max_retained else None
+                return finish(retained)
         encoder = json.JSONEncoder(
             ensure_ascii=False,
             allow_nan=False,
@@ -433,7 +481,7 @@ def response_size(
     except (ValueError, TypeError, UnicodeError, RecursionError):
         return None
     retained += encoded_bytes
-    return retained if retained <= max_retained else None
+    return finish(retained)
 
 
 def bound_response(value: Any) -> Any:

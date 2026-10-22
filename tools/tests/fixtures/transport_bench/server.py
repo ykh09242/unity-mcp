@@ -489,7 +489,7 @@ async def main(args: argparse.Namespace) -> None:
                 patch(
                     limits,
                     "response_size",
-                    ("value", "max_bytes", "max_depth", "max_nodes", "max_retained"),
+                    ("value", "max_bytes", "max_depth", "max_nodes", "max_retained", "copy_plan"),
                     diagnostic,
                     "mcp_envelope_validation",
                     synchronous=True,
