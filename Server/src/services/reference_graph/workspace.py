@@ -240,6 +240,29 @@ class GraphWorkspace:
                     self._set(connection, "analysis_dirty", True)
             return generations
 
+    def observe_external(
+        self, worker: str, observation: Observation, *, stamp: str, analysis_key: str, seen: str
+    ) -> int:
+        with self._write(worker) as connection:
+            generation = self.store._observe(connection, observation)
+            # Track an admitted owner before any later publication. A crash,
+            # parse failure or grant retirement must not orphan its evidence.
+            self._record_external(
+                connection,
+                [
+                    (
+                        observation.provider,
+                        observation.owner,
+                        observation.path,
+                        observation.fingerprint,
+                        stamp,
+                        analysis_key,
+                        seen,
+                    )
+                ],
+            )
+            return generation
+
     def record_page(
         self, worker: str, assets: Iterable[dict], progress: dict, seen: str, *, force: bool = True
     ) -> None:
@@ -768,10 +791,14 @@ class GraphWorkspace:
 
     def record_external_many(self, worker: str, rows: Iterable[tuple]) -> None:
         with self._write(worker) as connection:
-            connection.executemany(
-                "INSERT INTO graph_external VALUES (?,?,?,?,?,?,?) ON CONFLICT(provider,owner) DO UPDATE SET path=excluded.path,fingerprint=excluded.fingerprint,stamp=excluded.stamp,analysis_key=excluded.analysis_key,seen=excluded.seen",
-                rows,
-            )
+            self._record_external(connection, rows)
+
+    @staticmethod
+    def _record_external(connection, rows: Iterable[tuple]) -> None:
+        connection.executemany(
+            "INSERT INTO graph_external VALUES (?,?,?,?,?,?,?) ON CONFLICT(provider,owner) DO UPDATE SET path=excluded.path,fingerprint=excluded.fingerprint,stamp=excluded.stamp,analysis_key=excluded.analysis_key,seen=excluded.seen",
+            rows,
+        )
 
     def finish_external(self, worker: str, provider: str, seen: str) -> None:
         with self._write(worker) as connection:

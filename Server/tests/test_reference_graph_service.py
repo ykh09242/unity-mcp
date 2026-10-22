@@ -169,6 +169,36 @@ async def test_checked_query_refuses_partial_scan_and_empty_source_revocation(
 
 
 @pytest.mark.asyncio
+async def test_checked_empty_result_rechecks_every_provider_before_delivery(
+    setup, tmp_path, monkeypatch
+):
+    service, sender, ctx = setup
+    await external_fixture(service, sender, ctx, tmp_path / "settings", monkeypatch, files=0)
+    validate = service._validate_external
+    revoked = False
+
+    def operator(*_):
+        if revoked:
+            raise PermissionError("revoked before checked delivery")
+
+    def revoke_after_validation(*args):
+        nonlocal revoked
+        result = validate(*args)
+        revoked = True
+        return result
+
+    monkeypatch.setattr(ReferenceGraphService, "_operator_grant", staticmethod(operator))
+    monkeypatch.setattr(service, "_validate_external", revoke_after_validation)
+    try:
+        with pytest.raises(PermissionError, match="revoked before checked delivery"):
+            await service.execute(
+                ctx, "query", {"node": "missing", "direction": "incoming", "consistency": "checked"}
+            )
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_batch_validation_checks_operator_revocation_after_last_file(
     setup, tmp_path, monkeypatch
 ):

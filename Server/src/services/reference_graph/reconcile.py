@@ -512,6 +512,7 @@ class Reconciler:
             owner = provider + ":" + _hash(path)
             fingerprint = old["fingerprint"] if old else "unavailable"
             stamp = ""
+            recorded = False
             try:
                 stamp = _json(adapter.stamp(path))
                 if (
@@ -523,7 +524,7 @@ class Reconciler:
                 ):
                     document = adapter.read(path)
                     fingerprint = document.fingerprint
-                    generation = self.workspace.observe(
+                    generation = self.workspace.observe_external(
                         self.worker,
                         Observation(
                             owner,
@@ -535,7 +536,11 @@ class Reconciler:
                             source_version=source["version"],
                             rules_revision=rules,
                         ),
+                        stamp=stamp,
+                        analysis_key=analysis_key,
+                        seen=seen,
                     )
+                    recorded = True
                     result = analyze_document(path, document.text, catalog, adapter.mappings)
                     if _json(adapter.stamp(path)) != stamp:
                         raise RevisionConflict("External input changed during analysis")
@@ -546,7 +551,7 @@ class Reconciler:
                 raise
             except (OSError, ValueError, csv.Error, RecursionError) as error:
                 self._check_source(source, require_source)
-                generation = self.workspace.observe(
+                generation = self.workspace.observe_external(
                     self.worker,
                     Observation(
                         owner,
@@ -558,10 +563,15 @@ class Reconciler:
                         source_version=source["version"],
                         rules_revision=rules,
                     ),
+                    stamp=stamp,
+                    analysis_key=analysis_key,
+                    seen=seen,
                 )
+                recorded = True
                 self.workspace.fail_external(self.worker, owner, provider, generation, error)
                 failures += 1
-            pending.append((provider, owner, path, fingerprint, stamp, analysis_key, seen))
+            if not recorded:
+                pending.append((provider, owner, path, fingerprint, stamp, analysis_key, seen))
             if len(pending) == 256:
                 self._check_source(source, require_source)
                 self.workspace.record_external_many(self.worker, pending)

@@ -334,6 +334,31 @@ class ReferenceGraphService:
             raise RevisionConflict("Graph changed before delivery; restart the page")
         return bool(stale)
 
+    def _validate_checked_sources(
+        self, workspace: GraphWorkspace, expected: dict, revision: int
+    ) -> None:
+        # A checked absence is evidence too: authorize every participating root,
+        # including providers that supplied no rows to this particular page.
+        sources = [
+            source
+            for source in workspace.store.sources()
+            if source["enabled"] and source["provider"].startswith("external:")
+        ]
+        versions = {source["provider"]: source["version"] for source in sources}
+        expected_versions = {
+            provider: state.get("source_version")
+            for provider, state in expected.items()
+            if provider.startswith("external:")
+        }
+        if versions != expected_versions:
+            raise RevisionConflict("External sources changed before checked delivery")
+        for source in sources:
+            self._grant(workspace.store.scope, source["config"])
+        for source in sources:
+            self._operator_grant(workspace.store.scope, source["config"])
+        if workspace.store.status()["revision"] != revision:
+            raise RevisionConflict("Graph changed before checked delivery; restart the page")
+
     async def execute(self, ctx, action: str, options: dict) -> dict:
         fields = {
             "status": set(),
@@ -516,6 +541,9 @@ class ReferenceGraphService:
                 self._validate_external, workspace, data, options.get("node")
             )
         if checked_providers is not None:
+            await drained_thread(
+                self._validate_checked_sources, workspace, checked_providers, data["revision"]
+            )
             providers = await drained_thread(workspace.provider_status)
         external_providers = {
             key: value for key, value in providers.items() if key.startswith("external:")

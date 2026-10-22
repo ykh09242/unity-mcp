@@ -118,6 +118,45 @@ async def test_external_catalog_cache_is_invalidated_when_policy_empties_invento
     assert not store.query(target, direction="incoming")["edges"]
 
 
+@pytest.mark.asyncio
+async def test_external_owner_survives_interrupted_enumeration_and_is_removed_after_deletion(
+    setup, tmp_path, monkeypatch
+):
+    from services.reference_graph.external import ExternalSource
+
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    root = tmp_path / "settings"
+    root.mkdir()
+    path = root / "a.json"
+    path.write_text('{"prefab":"One"}', encoding="utf-8")
+    workspace.set_source(
+        "external:fixture",
+        {
+            "root": str(root),
+            "include": ["*.json"],
+            "mappings": [{"field": "/prefab", "scheme": "resources"}],
+        },
+        expected_version=0,
+    )
+    files = ExternalSource.files
+
+    def interrupted(_):
+        yield "a.json"
+        raise OSError("interrupted enumeration")
+
+    monkeypatch.setattr(ExternalSource, "files", interrupted)
+    assert not await engine.reconcile()
+    assert store.query(target, direction="incoming")["edges"]
+    monkeypatch.setattr(ExternalSource, "files", files)
+    path.unlink()
+    assert await engine.reconcile()
+    assert not store.query(target, direction="incoming")["edges"]
+    assert store.status()["queue_idle"]
+
+
 async def allowed():
     pass
 
