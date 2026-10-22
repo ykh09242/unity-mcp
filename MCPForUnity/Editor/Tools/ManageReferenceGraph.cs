@@ -52,6 +52,9 @@ namespace MCPForUnity.Editor.Tools
                     case "compilation":
                         fields = new[] { "paths", "revision" };
                         break;
+                    case "probe":
+                        fields = new[] { "paths" };
+                        break;
                     default:
                         throw new ArgumentException("Unknown reference collection action.");
                 }
@@ -63,7 +66,7 @@ namespace MCPForUnity.Editor.Tools
                     if (property.Name == "paths")
                     {
                         if (!(property.Value is JArray paths) || paths.Any(path => path.Type != JTokenType.String))
-                            throw new ArgumentException("Compilation paths must be an array of strings.");
+                            throw new ArgumentException("Collection paths must be an array of strings.");
                         continue;
                     }
                     bool number = property.Name == "offset" || property.Name == "after" || property.Name == "page_size";

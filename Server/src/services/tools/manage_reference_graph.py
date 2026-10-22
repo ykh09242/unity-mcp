@@ -40,6 +40,14 @@ from services.registry import mcp_for_unity_tool
         "Policy config: {exclude:[relative patterns]}; there are no application-specific exclusions. "
         "sync {force:true} rehashes external inputs. rebuild retains authored declarations and grants. "
         "Normal domain reload retains scope; a new Editor process has a separate graph."
+        " Mutation batches: begin_mutation {paths} captures incident evidence before writes; "
+        "add_mutation_targets {id,paths} appends target pages before dispatch. These actions also "
+        "accept guids instead of paths for assets in the synchronized inventory. finish_mutation "
+        "{id,outcome:'accepted'|'failed'|'unknown'} seals caller-reported outcomes. "
+        "await_mutation {id,wait_seconds?} waits for imported evidence without a total job deadline; "
+        "mutation_diff {id,limit?,cursor?} pages direct incident changes after synchronization. "
+        "release_mutation {id} releases private receipt state. A synchronized receipt is not proof "
+        "that an uncertain mutation succeeded; concurrent changes can contribute to its delta."
     ),
     annotations=ToolAnnotations(title="Reference Graph", destructiveHint=True, openWorldHint=True),
 )
@@ -57,6 +65,12 @@ async def manage_reference_graph(
         "diff",
         "release_query",
         "delete_snapshot",
+        "begin_mutation",
+        "add_mutation_targets",
+        "finish_mutation",
+        "await_mutation",
+        "mutation_diff",
+        "release_mutation",
         "declarations",
         "declare",
         "remove_declaration",

@@ -131,8 +131,39 @@ async def script_change_set(
         case unreachable:
             assert_never(unreachable)
     instance = await get_unity_instance_from_context(ctx)
-    response = await send_with_unity_instance(
-        async_send_command_with_retry, instance, "manage_script", params
+    from services.reference_graph.mutation_tracking import active_service, tracked_mutation
+
+    paths = None
+    if action in {"apply", "recover"} and active_service(ctx, instance) is not None:
+        observed = await send_with_unity_instance(
+            async_send_command_with_retry,
+            instance,
+            "manage_script",
+            {"action": "get_change_set", "change_set_id": change_set_id},
+        )
+        if (
+            isinstance(observed, dict)
+            and observed.get("success")
+            and isinstance(observed.get("data"), dict)
+        ):
+            rows = observed["data"].get("files")
+            if isinstance(rows, list) and all(
+                isinstance(row, dict) and isinstance(row.get("path"), str) for row in rows
+            ):
+                paths = [row["path"] for row in rows]
+    response = await tracked_mutation(
+        ctx,
+        instance,
+        "manage_script",
+        params,
+        lambda: send_with_unity_instance(
+            async_send_command_with_retry,
+            instance,
+            "manage_script",
+            params,
+            retry_on_reload=action not in {"apply", "recover"},
+        ),
+        paths=paths,
     )
     return (
         response

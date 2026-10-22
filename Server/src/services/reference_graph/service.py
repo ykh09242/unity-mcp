@@ -641,6 +641,12 @@ class ReferenceGraphService:
             "diff": {"before", "after", "limit", "cursor"},
             "release_query": {"id"},
             "delete_snapshot": {"id"},
+            "begin_mutation": {"paths", "guids"},
+            "add_mutation_targets": {"id", "paths", "guids"},
+            "finish_mutation": {"id", "outcome"},
+            "await_mutation": {"id", "wait_seconds"},
+            "mutation_diff": {"id", "limit", "cursor"},
+            "release_mutation": {"id"},
             "declarations": set(),
             "declare": {"id", "owner", "edge", "expected_version"},
             "remove_declaration": {"id", "expected_version"},
@@ -709,7 +715,35 @@ class ReferenceGraphService:
                 )
             editor = await entry.collect("status")
             checked_providers = await drained_thread(workspace.provider_status)
-        if action == "query":
+        if action in {
+            "begin_mutation",
+            "add_mutation_targets",
+            "finish_mutation",
+            "await_mutation",
+            "mutation_diff",
+            "release_mutation",
+        }:
+            from services.reference_graph.mutation_service import execute as execute_mutation
+
+            # Even an empty incident capture depends on participating source
+            # grants. Recheck before capture and again before delivery.
+            sources = await drained_thread(store.sources)
+            source_fence = {
+                "revision": (await drained_thread(store.status))["revision"],
+                "sources": {
+                    source["provider"]: source["version"]
+                    for source in sources
+                    if source["enabled"] and source["provider"].startswith("external:")
+                },
+            }
+            await drained_thread(self._validate_exploration, workspace, source_fence)
+            data = await execute_mutation(self, entry, editor, action, options)
+            source_fence["revision"] = (await drained_thread(store.status))["revision"]
+            await drained_thread(self._validate_exploration, workspace, source_fence)
+            editor = await entry.collect("status")
+            if action == "mutation_diff":
+                external_changed = await drained_thread(self._validate_exploration, workspace, data)
+        elif action == "query":
             data = await drained_thread(
                 store.query,
                 options["node"],
@@ -857,7 +891,7 @@ class ReferenceGraphService:
             external_changed |= await drained_thread(
                 self._validate_external, workspace, data, options.get("node")
             )
-        elif action in {"explain", "impact", "path", "snapshot", "diff"}:
+        elif action in {"explain", "impact", "path", "snapshot", "diff", "mutation_diff"}:
             external_changed |= await drained_thread(self._validate_exploration, workspace, data)
         if checked_providers is not None:
             await drained_thread(
@@ -912,6 +946,11 @@ class ReferenceGraphService:
                         "diff",
                         "release_query",
                         "delete_snapshot",
+                        "begin_mutation",
+                        "add_mutation_targets",
+                        "await_mutation",
+                        "mutation_diff",
+                        "release_mutation",
                         "declarations",
                         "sources",
                         "rules",

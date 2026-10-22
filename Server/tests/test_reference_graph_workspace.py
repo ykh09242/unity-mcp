@@ -113,7 +113,7 @@ def test_version_one_upgrade_preserves_evidence_and_progress(workspace):
     assert restored.progress()["after"] == 7
     assert restored.counts()["failed_assets"] == 0
     with restored.store._connect() as connection:
-        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 5
+        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 6
 
 
 def test_version_two_upgrade_retains_addressables_failures(workspace):

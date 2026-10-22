@@ -126,6 +126,7 @@ namespace MCPForUnity.Editor.Tools
                         ["revision"] = ++Revision,
                         ["path"] = item.Key,
                         ["deleted"] = item.Value,
+                        ["file_stamp"] = item.Value ? null : ReferenceGraphCollector.ImportedFileStamp(item.Key),
                     }
                 );
         }

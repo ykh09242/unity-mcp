@@ -124,6 +124,27 @@ async def send_mutation(
     *,
     verify_after_disconnect: Callable[[], Awaitable[dict | None]] | None = None,
 ) -> dict | Any:
+    from services.reference_graph.mutation_tracking import tracked_mutation
+
+    return await tracked_mutation(
+        ctx,
+        unity_instance,
+        command,
+        params,
+        lambda: _send_mutation(
+            ctx, unity_instance, command, params, verify_after_disconnect=verify_after_disconnect
+        ),
+    )
+
+
+async def _send_mutation(
+    ctx: Context,
+    unity_instance: str | None,
+    command: str,
+    params: dict[str, Any],
+    *,
+    verify_after_disconnect: Callable[[], Awaitable[dict | None]] | None = None,
+) -> dict | Any:
     """Send a non-idempotent mutation with reload recovery.
 
     Handles the full retry/recovery pattern for script mutations:
@@ -162,6 +183,15 @@ async def send_mutation(
     ):
         # Selection failed before dispatch; polling cannot select an instance.
         return resp
+    raw_error = str(
+        (resp.get("error") or resp.get("message") or "")
+        if isinstance(resp, dict)
+        else getattr(resp, "error", "")
+    ).lower()
+    if is_connection_lost_after_send(resp) or "timeout" in raw_error or "timed out" in raw_error:
+        from services.reference_graph.mutation_tracking import mark_uncertain_dispatch
+
+        mark_uncertain_dispatch()
     if is_connection_lost_after_send(resp) and verify_after_disconnect:
         ready, _ = await wait_for_editor_ready(ctx)
         verified = await verify_after_disconnect()

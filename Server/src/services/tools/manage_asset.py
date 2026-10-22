@@ -30,6 +30,26 @@ from services.tools.reference_diagnostics import (
 logger = logging.getLogger("mcp-for-unity-server")
 
 
+async def _send_asset(ctx, instance, params, **kwargs):
+    from services.reference_graph.mutation_tracking import target_paths, tracked_mutation
+
+    if target_paths("manage_asset", params):
+        kwargs["retry_on_reload"] = False
+    return await tracked_mutation(
+        ctx,
+        instance,
+        "manage_asset",
+        params,
+        lambda: send_with_unity_instance(
+            async_send_command_with_retry,
+            instance,
+            capability_command("manage_asset"),
+            params,
+            **kwargs,
+        ),
+    )
+
+
 class AssetLabelTarget(BaseModel):
     """One closed label target; mutation revisions are checked by action admission."""
 
@@ -336,10 +356,9 @@ async def manage_asset(
         gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=False)
         if gate is not None:
             return gate.model_dump()
-        result = await send_with_unity_instance(
-            async_send_command_with_retry,
+        result = await _send_asset(
+            ctx,
             instance,
-            capability_command("manage_asset"),
             params,
             loop=asyncio.get_running_loop(),
             retry_on_reload=not guarded_mutation,
@@ -392,10 +411,9 @@ async def manage_asset(
         gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=False)
         if gate is not None:
             return gate.model_dump()
-        result = await send_with_unity_instance(
-            async_send_command_with_retry,
+        result = await _send_asset(
+            ctx,
             instance,
-            capability_command("manage_asset"),
             params,
             loop=asyncio.get_running_loop(),
             retry_on_reload=action_l == "get_labels",
@@ -572,10 +590,9 @@ async def manage_asset(
     loop = asyncio.get_running_loop()
 
     # Use centralized async retry helper with instance routing
-    result = await send_with_unity_instance(
-        async_send_command_with_retry,
+    result = await _send_asset(
+        ctx,
         unity_instance,
-        capability_command("manage_asset"),
         params_dict,
         loop=loop,
     )

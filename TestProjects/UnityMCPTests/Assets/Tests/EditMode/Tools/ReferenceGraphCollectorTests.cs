@@ -51,6 +51,45 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void MutationProbeObservesUnimportedBytesWithoutSchedulingImport()
+        {
+            string path = CreateText("receipt.txt", "before");
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            JObject original = (JObject)Call("probe", "paths", new[] { path })["targets"][0];
+            JObject dependencies = Call("dependencies", "guid", guid);
+            Assert.AreEqual(original["stamp"], dependencies["file_stamp"]);
+            Assert.AreEqual(original["dependency"], dependencies["fingerprint"]);
+            JObject checkpoint = Call("status");
+            File.WriteAllText(path, "changed before a deferred import");
+            JObject changed = (JObject)Call("probe", "paths", new[] { path })["targets"][0];
+            Assert.AreNotEqual(original["stamp"], changed["stamp"]);
+            Assert.AreEqual(checkpoint["revision"], Call("status")["revision"], "A read-only probe must not cause an import.");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            JObject events = Call("changes", "epoch", checkpoint.Value<string>("epoch"), "after", checkpoint.Value<long>("revision"));
+            Assert.IsTrue(events["changes"].Any(row => row.Value<string>("path") == path));
+            JObject noop = Call("probe", "paths", new[] { path });
+            Assert.AreEqual(noop["targets"][0]["stamp"], events["changes"].Last(row => row.Value<string>("path") == path)["file_stamp"]);
+            Assert.IsTrue(JToken.DeepEquals(noop, Call("probe", "paths", new[] { path })));
+        }
+
+        [Test]
+        public void MutationProbeTracksCreateMoveDeleteAndFolderWithoutLoadingAssets()
+        {
+            string path = root + "/created.txt";
+            Assert.IsFalse(Call("probe", "paths", new[] { path })["targets"][0].Value<bool>("present"));
+            CreateText("created.txt", "owned");
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            string moved = root + "/moved.txt";
+            Assert.AreEqual("", AssetDatabase.MoveAsset(path, moved));
+            JObject page = Call("probe", "paths", new[] { path, moved, root });
+            Assert.IsFalse(page["targets"][0].Value<bool>("present"));
+            Assert.AreEqual(guid, page["targets"][1].Value<string>("guid"));
+            Assert.IsTrue(page["targets"][2].Value<bool>("folder"));
+            AssetDatabase.DeleteAsset(moved);
+            Assert.IsFalse(Call("probe", "paths", new[] { moved })["targets"][0].Value<bool>("present"));
+        }
+
+        [Test]
         public void AssetIdentityReportsMainTypeWithoutClaimingSubassetCompleteness()
         {
             string path = CreateText("identity.txt", "owned");

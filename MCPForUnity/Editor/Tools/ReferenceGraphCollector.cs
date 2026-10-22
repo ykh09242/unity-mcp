@@ -109,6 +109,8 @@ namespace MCPForUnity.Editor.Tools
                     return Source(request);
                 case "compilation":
                     return CompilationBindings(request);
+                case "probe":
+                    return Probe(request);
                 default:
                     throw new ArgumentException("Unknown reference collection action.");
             }
@@ -369,6 +371,7 @@ namespace MCPForUnity.Editor.Tools
             asset["epoch"] = dependencyEpoch;
             asset["revision"] = dependencyRevision;
             asset["fingerprint"] = AssetDatabase.GetAssetDependencyHash(path).ToString();
+            asset["file_stamp"] = FileStamp(path);
             asset["targets"] = new JArray(dependencies.Skip(offset).Take(end - offset));
             asset["next_offset"] = end < dependencies.Length ? (JToken)end : JValue.CreateNull();
             return asset;
@@ -447,6 +450,59 @@ namespace MCPForUnity.Editor.Tools
                 resolved = Path.Combine(root, path);
             }
             return GuardedFileSystem.CheckPath(resolved);
+        }
+
+        private static string FileStamp(string path)
+        {
+            var info = new FileInfo(ResolveSourcePath(path));
+            return info.Exists ? info.Length + ":" + info.LastWriteTimeUtc.Ticks : null;
+        }
+
+        internal static string ImportedFileStamp(string path)
+        {
+            try
+            {
+                return FileStamp(path);
+            }
+            catch (Exception)
+            {
+                // Unavailable import proof must not abort another user's import.
+                // Receipts remain pending when a current stamp cannot be matched.
+                return null;
+            }
+        }
+
+        private static JObject Probe(JObject request)
+        {
+            if (!(request["paths"] is JArray paths) || paths.Count < 1 || paths.Count > 1000)
+                throw new ArgumentException("Probe requires 1-1000 paths per page.");
+            var rows = new JArray();
+            foreach (string path in paths.Values<string>())
+            {
+                if (!Admitted(path))
+                    throw new ArgumentException("Probe requires admitted project paths.");
+                string resolved = ResolveSourcePath(path);
+                bool folder = Directory.Exists(resolved);
+                string stamp = folder ? null : FileStamp(path);
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                rows.Add(
+                    new JObject
+                    {
+                        ["path"] = path,
+                        ["guid"] = guid,
+                        ["present"] = folder || stamp != null,
+                        ["folder"] = folder,
+                        ["stamp"] = stamp,
+                        ["dependency"] = !folder && stamp != null && !string.IsNullOrEmpty(guid) ? AssetDatabase.GetAssetDependencyHash(path).ToString() : null,
+                    }
+                );
+            }
+            return new JObject
+            {
+                ["targets"] = rows,
+                ["epoch"] = ReferenceGraphJournal.Epoch,
+                ["revision"] = ReferenceGraphJournal.Revision,
+            };
         }
 
         private static JObject CompilationBindings(JObject request)
