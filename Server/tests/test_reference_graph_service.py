@@ -576,7 +576,7 @@ async def test_changed_source_grant_cannot_return_prior_root_diagnostics(
 
 
 @pytest.mark.asyncio
-async def test_replaced_credential_request_cannot_resurrect_an_untracked_watcher(
+async def test_two_valid_credentials_share_worker_without_invalidating_active_request(
     setup, monkeypatch
 ):
     service, _, ctx = setup
@@ -604,18 +604,474 @@ async def test_replaced_credential_request_cannot_resurrect_an_untracked_watcher
         replacement = next(iter(service.entries.values()))
         tasks.append(replacement.task)
         release.set()
-        with pytest.raises(RevisionConflict):
-            await pending
-        assert service.entries[entry.workspace.store.scope.key] is replacement
-        assert entry.task is None
+        assert (await pending)["success"]
+        assert replacement is entry
+        assert service.entries[entry.workspace.store.scope.key] is entry
         await service.aclose()
         assert all(task.done() for task in tasks)
         assert authority.owners == 0
     finally:
         release.set()
         await asyncio.gather(pending, return_exceptions=True)
-        tasks.extend(item.task for item in service.entries.values() if item.task)
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_idle_watch_releases_owner_and_disconnected_scope_parks_then_resumes(
+    setup, monkeypatch
+):
+    service, sender, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    monkeypatch.setattr(service, "POLL_SECONDS", 0.001)
+    authority = Authority()
+    lease = CredentialLease(authority, object(), "alice", LEGACY_GRANTS)
+    disconnected = False
+    failures = 0
+
+    async def send(instance, params):
+        nonlocal failures
+        if disconnected:
+            failures += 1
+            raise ConnectionError("Disconnected Editor")
+        return await sender(instance, params)
+
+    service.send = send
+    try:
+        with bind_credential_lease(lease):
+            await service.execute(ctx, "sync", {})
+        entry = next(iter(service.entries.values()))
+
+        async def completed():
+            while entry.workspace.progress().get("phase") != "idle":
+                await asyncio.sleep(0.001)
+
+        await asyncio.wait_for(completed(), 2)
+
+        # A completed reconciliation must not retain a credential owner while polling.
+        async def idle():
+            while authority.owners:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(idle(), 2)
+        disconnected = True
+        entry.wake.set()
+        task = entry.task
+        await asyncio.wait_for(asyncio.shield(task), 2)
+        await asyncio.sleep(0)
+        assert failures == service.PARK_FAILURES
+        assert authority.owners == 0
+        assert not service.entries
+        disconnected = False
+        with bind_credential_lease(lease):
+            resumed, _ = await service.resolve(ctx, "status")
+        assert resumed.workspace.store.path == entry.workspace.store.path
+        assert resumed.engine.worker != entry.engine.worker
+        assert resumed.workspace.progress()["initialized"]
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_retirement_drain_does_not_block_other_users(setup, monkeypatch):
+    from services.reference_graph.reconcile import drained_thread
+
+    service, sender, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    alice = CredentialLease(Authority(), object(), "alice", LEGACY_GRANTS)
+    bob = CredentialLease(Authority(), object(), "bob", LEGACY_GRANTS)
+    entered, release = threading.Event(), threading.Event()
+    with bind_credential_lease(alice):
+        old, _ = await service.resolve(ctx, "status")
+
+    async def held(**_):
+        await drained_thread(lambda: (entered.set(), release.wait(5)))
+
+    monkeypatch.setattr(old.engine, "reconcile", held)
+    service.start(old)
+    replacement = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        sender.identity = "restarted"
+        with bind_credential_lease(alice):
+            replacement = asyncio.create_task(service.resolve(ctx, "status"))
+        await asyncio.sleep(0.02)
+        with bind_credential_lease(bob):
+            other, _ = await asyncio.wait_for(service.resolve(ctx, "status"), 1)
+        assert other.workspace.store.scope.user_id == "remote:bob"
+        assert not replacement.done()
+    finally:
+        release.set()
+        if replacement:
+            await replacement
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_request_cannot_borrow_other_valid_credential_after_revocation(setup, monkeypatch):
+    service, _, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    first_authority, second_authority = Authority(), Authority()
+    first = CredentialLease(first_authority, object(), "alice", LEGACY_GRANTS)
+    second = CredentialLease(second_authority, object(), "alice", LEGACY_GRANTS)
+    entered, release = threading.Event(), threading.Event()
+    with bind_credential_lease(first):
+        entry, _ = await service.resolve(ctx, "declarations")
+        original = entry.workspace.store.declarations
+
+        def held(**kwargs):
+            entered.set()
+            release.wait(5)
+            return original(**kwargs)
+
+        monkeypatch.setattr(entry.workspace.store, "declarations", held)
+        request = asyncio.create_task(service.execute(ctx, "declarations", {}))
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        with bind_credential_lease(second):
+            same, _ = await service.resolve(ctx, "status")
+        assert same is entry
+        first_authority.revoked = True
+        release.set()
+        with pytest.raises(CredentialLeaseError):
+            await request
+        with bind_credential_lease(second):
+            assert (await service.execute(ctx, "status", {}))["success"]
+    finally:
+        release.set()
+        await asyncio.gather(request, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_revoked_attempt_drains_before_live_credential_takes_over(setup, monkeypatch):
+    service, _, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    monkeypatch.setattr(service, "POLL_SECONDS", 0.001)
+    first_authority, second_authority = Authority(), Authority()
+    first = CredentialLease(first_authority, object(), "alice", LEGACY_GRANTS)
+    second = CredentialLease(second_authority, object(), "alice", LEGACY_GRANTS)
+    active, draining, release, resumed = (asyncio.Event() for _ in range(4))
+    attempts = []
+    with bind_credential_lease(first):
+        entry, _ = await service.resolve(ctx, "status")
+    worker = entry.engine.worker
+
+    async def reconcile(**_):
+        lease = current_credential_lease()
+        attempts.append(asyncio.current_task())
+        if lease is first:
+            active.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                draining.set()
+                await release.wait()
+        else:
+            assert lease is second
+            assert first_authority.owners == 0
+            assert second_authority.owners == 1
+            resumed.set()
+        return True
+
+    monkeypatch.setattr(entry.engine, "reconcile", reconcile)
+    service.start(entry)
+    try:
+        await asyncio.wait_for(active.wait(), 2)
+        with bind_credential_lease(second):
+            same, _ = await service.resolve(ctx, "status")
+        assert same is entry and entry.engine.worker == worker
+        first_authority.revoked = True
+        attempts[0].cancel()
+        await asyncio.wait_for(draining.wait(), 2)
+        assert first_authority.owners == 1
+        assert not resumed.is_set()
+        release.set()
+        await asyncio.wait_for(resumed.wait(), 2)
+        assert entry.engine.worker == worker
+    finally:
+        release.set()
+        await service.aclose()
+        assert first_authority.owners == second_authority.owners == 0
+
+
+@pytest.mark.asyncio
+async def test_idle_expiry_waits_for_active_large_attempt_and_preserves_durable_state(
+    setup, monkeypatch
+):
+    service, _, ctx = setup
+    entry, _ = await service.resolve(ctx, "status")
+    started, release = asyncio.Event(), asyncio.Event()
+    clock = service._now()
+    monkeypatch.setattr(service, "_now", lambda: clock)
+
+    async def held(**_):
+        started.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(entry.engine, "reconcile", held)
+    service.start(entry)
+    task = entry.task
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        clock += 100 * service.IDLE_SECONDS
+        entry.wake.set()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert service.entries[entry.workspace.store.scope.key] is entry
+        release.set()
+        await asyncio.wait_for(task, 2)
+        await asyncio.sleep(0)
+        assert not service.entries
+        assert entry.workspace.store.path.is_file()
+    finally:
+        release.set()
+        await service.aclose()
+        assert not service._coordination
+
+
+@pytest.mark.asyncio
+async def test_database_open_for_one_scope_does_not_block_unrelated_scope(setup, monkeypatch):
+    from services.reference_graph.store import GraphStore
+
+    service, _, ctx = setup
+    opened, release = threading.Event(), threading.Event()
+    original = GraphStore.open
+
+    def open_store(root, scope):
+        if scope.instance_id.endswith("one"):
+            opened.set()
+            release.wait(5)
+        return original(root, scope)
+
+    monkeypatch.setattr(GraphStore, "open", open_store)
+    pending = asyncio.create_task(service.resolve(ctx, "status"))
+    try:
+        assert await asyncio.to_thread(opened.wait, 2)
+        other, _ = await asyncio.wait_for(service.resolve(Context(service, "two"), "status"), 1)
+        assert other.instance == "two"
+        assert not pending.done()
+    finally:
+        release.set()
+        await pending
+        await service.aclose()
+        assert not service._coordination
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drains_inflight_database_open_without_installing_entry(setup, monkeypatch):
+    from services.reference_graph.store import GraphStore
+
+    service, _, ctx = setup
+    entered, release = threading.Event(), threading.Event()
+    original = GraphStore.open
+
+    def held(root, scope):
+        entered.set()
+        release.wait(5)
+        return original(root, scope)
+
+    monkeypatch.setattr(GraphStore, "open", held)
+    opening = asyncio.create_task(service.resolve(ctx, "status"))
+    closing = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        closing = asyncio.create_task(service.aclose())
+        await asyncio.sleep(0)
+        assert not closing.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await opening
+        await asyncio.wait_for(closing, 2)
+        assert not service.entries and not service.tasks and not service._coordination
+    finally:
+        release.set()
+        await asyncio.gather(opening, *([closing] if closing else []), return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("foreground", [False, True])
+async def test_shutdown_cancels_active_native_collection_once_and_releases_database(
+    setup, foreground
+):
+    service, sender, ctx = setup
+    entered = asyncio.Event()
+    attempt = []
+
+    async def send(instance, params):
+        if params["action"] == "changes":
+            attempt.append(asyncio.current_task())
+            entered.set()
+            await asyncio.Event().wait()
+        return await sender(instance, params)
+
+    service.send = send
+    entry, _ = await service.resolve(ctx, "status")
+    if foreground:
+        pending = asyncio.create_task(
+            service.execute(ctx, "query", {"node": "missing", "consistency": "checked"})
+        )
+    else:
+        service.start(entry)
+        pending = entry.task
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(service.aclose(), 2)
+        assert attempt[0].cancelling() == 1
+        assert pending.done()
+        assert not service.tasks and not service.entries
+        assert entry.workspace.acquire("after-shutdown")
+        entry.workspace.release("after-shutdown")
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_status_lookup_before_entry_exists(setup):
+    service, sender, ctx = setup
+    entered = asyncio.Event()
+
+    async def held(instance, params):
+        entered.set()
+        await asyncio.Event().wait()
+        return await sender(instance, params)
+
+    service.send = held
+    request = asyncio.create_task(service.execute(ctx, "status", {}))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(service.aclose(), 2)
+        assert request.cancelled()
+        assert not service._resolving and not service._resolve_tasks and not service._routes
+        assert not service.entries and not service.tasks
+    finally:
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shutdown_first", [False, True])
+async def test_actual_revocation_and_shutdown_drain_heartbeat_in_both_orders(
+    setup, monkeypatch, shutdown_first
+):
+    from services.api_key_service import ApiKeyService, ValidationResult
+
+    service, sender, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    authority = ApiKeyService("https://synthetic.invalid/validate")
+
+    async def validate(_):
+        return ValidationResult(valid=True, user_id="alice")
+
+    monkeypatch.setattr(authority, "_validate_external", validate)
+    lease = (await authority.validate("synthetic-lifetime-key")).lease
+    entered, release = threading.Event(), threading.Event()
+    collecting = asyncio.Event()
+
+    async def send(instance, params):
+        if params["action"] == "changes":
+            collecting.set()
+            await asyncio.Event().wait()
+        return await sender(instance, params)
+
+    service.send = send
+    with bind_credential_lease(lease):
+        entry, _ = await service.resolve(ctx, "status")
+    renew = entry.workspace.renew
+
+    def held_renew(worker):
+        entered.set()
+        assert release.wait(5), "Synthetic heartbeat was not released"
+        return renew(worker)
+
+    monkeypatch.setattr(entry.workspace, "renew", held_renew)
+    sleep = asyncio.sleep
+
+    async def fast_sleep(delay, result=None):
+        return await sleep(0.001 if delay == 15 else delay, result)
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+    service.start(entry)
+    closing = None
+    try:
+        await asyncio.wait_for(collecting.wait(), 2)
+        assert await asyncio.to_thread(entered.wait, 2)
+        attempt = next(iter(authority._lease_records[lease.generation].owners.values()))
+        if shutdown_first:
+            closing = asyncio.create_task(service.aclose())
+        else:
+            await authority.invalidate_cache("synthetic-lifetime-key")
+
+        async def cancelling():
+            while not attempt.cancelling():
+                await sleep(0)
+            await sleep(0.01)
+
+        await asyncio.wait_for(cancelling(), 2)
+        if shutdown_first:
+            await authority.invalidate_cache("synthetic-lifetime-key")
+        else:
+            closing = asyncio.create_task(service.aclose())
+        await sleep(0.01)
+        assert authority._lease_owners == 1
+        assert not closing.done()
+        release.set()
+        await asyncio.wait_for(closing, 2)
+        assert authority._lease_owners == 0
+        assert not service.tasks and not service.entries
+        assert entry.workspace.acquire("after-overlap")
+        entry.workspace.release("after-overlap")
+    finally:
+        release.set()
+        if closing:
+            await closing
+        await service.aclose()
+        await authority.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delay_status", [False, True])
+async def test_superseded_editor_cannot_install_after_newer_resolution(
+    setup, monkeypatch, delay_status
+):
+    from services.reference_graph.store import GraphStore
+
+    service, sender, ctx = setup
+    entered, release = threading.Event(), threading.Event()
+    original = GraphStore.open
+
+    def held(root, scope):
+        if not delay_status and scope.instance_id.startswith("original"):
+            entered.set()
+            release.wait(5)
+        return original(root, scope)
+
+    async def delayed(instance, params):
+        response = await sender(instance, params)
+        if delay_status and response["instance_id"].startswith("original"):
+            entered.set()
+            from services.reference_graph.reconcile import drained_thread
+
+            await drained_thread(release.wait, 5)
+        return response
+
+    monkeypatch.setattr(GraphStore, "open", held)
+    service.send = delayed
+    old = asyncio.create_task(service.resolve(ctx, "status"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        sender.identity = "new"
+        current, _ = await asyncio.wait_for(service.resolve(ctx, "status"), 2)
+        release.set()
+        with pytest.raises(RevisionConflict, match="replacement Editor"):
+            await old
+        assert list(service.entries.values()) == [current]
+        assert not service._routes and not service._coordination
+    finally:
+        release.set()
+        await asyncio.gather(old, return_exceptions=True)
         await service.aclose()

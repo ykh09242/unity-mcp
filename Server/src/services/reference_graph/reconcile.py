@@ -31,9 +31,8 @@ from services.reference_graph.store import Edge, Observation, RevisionConflict, 
 from services.reference_graph.workspace import GraphWorkspace
 
 
-async def drained_thread(function, *args, _cancel_event: threading.Event | None = None, **kwargs):
-    """Cancellation must not abandon a thread that can still publish or read."""
-    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+async def drained_task(task: asyncio.Task, *, _cancel_event: threading.Event | None = None):
+    """Repeated caller cancellation cannot abandon an owned cleanup or thread."""
     cancelled = False
     while not task.done():
         try:
@@ -48,6 +47,14 @@ async def drained_thread(function, *args, _cancel_event: threading.Event | None 
             task.exception()
         raise asyncio.CancelledError
     return task.result()
+
+
+async def drained_thread(function, *args, _cancel_event: threading.Event | None = None, **kwargs):
+    """Cancellation must not abandon a thread that can still publish or read."""
+    return await drained_task(
+        asyncio.create_task(asyncio.to_thread(function, *args, **kwargs)),
+        _cancel_event=_cancel_event,
+    )
 
 
 class Reconciler:
@@ -155,10 +162,16 @@ class Reconciler:
                 pass
             raise
         finally:
-            if heartbeat is not None:
+            # Shutdown and exact credential retirement may both cancel this
+            # owner. Neither can interrupt heartbeat/thread/DB lease cleanup.
+            await drained_task(asyncio.create_task(self._release(heartbeat)))
+
+    async def _release(self, heartbeat: asyncio.Task | None) -> None:
+        if heartbeat is not None:
+            if not heartbeat.cancelling():
                 heartbeat.cancel()
-                await asyncio.gather(heartbeat, return_exceptions=True)
-            await drained_thread(self.workspace.release, self.worker)
+            await asyncio.gather(heartbeat, return_exceptions=True)
+        await drained_thread(self.workspace.release, self.worker)
 
     async def _census(self, status: dict, *, force: bool) -> None:
         census = self.progress.get("census") or {

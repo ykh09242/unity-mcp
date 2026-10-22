@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 import contextvars
 from dataclasses import dataclass, field
 import getpass
@@ -12,14 +12,17 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 from core.config import config
 from services.credential_lease import (
     CredentialLease,
+    CredentialLeaseError,
     bind_credential_lease,
+    current_credential_lease,
     require_credential_lease,
 )
-from services.operation_permissions import authorize_operation
+from services.operation_permissions import OperationPermissionError, authorize_operation
 from services.reference_graph.analysis import validate_rule
 from services.reference_graph.external import ExternalSource
 from services.reference_graph.reconcile import Reconciler, drained_thread
@@ -101,7 +104,6 @@ async def native_send(instance: str, params: dict) -> dict:
 class Entry:
     workspace: GraphWorkspace
     instance: str
-    lease: CredentialLease | None
     collect: object
     check: object
     engine: Reconciler
@@ -109,10 +111,41 @@ class Entry:
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     force: bool = False
     error: str | None = None
+    leases: list[tuple[CredentialLease, float]] = field(default_factory=list, repr=False)
+    last_used: float = field(default_factory=time.monotonic)
+    active_requests: int = 0
+    request_tasks: set[asyncio.Task] = field(default_factory=set, repr=False)
+    requests_drained: asyncio.Event = field(default_factory=asyncio.Event)
+    retired: bool = False
+    watching: bool = True
+    drain: asyncio.Task | None = None
+
+    def __post_init__(self):
+        self.requests_drained.set()
+
+
+@dataclass
+class _Route:
+    users: int = 0
+    sequence: int = 0
+    observed: int = -1
+    scope: str | None = None
+
+    def observe(self, ticket: int, scope: str) -> None:
+        if ticket > self.observed:
+            self.observed, self.scope = ticket, scope
+        self.check(scope)
+
+    def check(self, scope: str) -> None:
+        if self.scope != scope:
+            raise ScopeChanged("A newer request resolved a replacement Editor; retry the request")
 
 
 class ReferenceGraphService:
     POLL_SECONDS = 5
+    RETRY_SECONDS = 30
+    PARK_FAILURES = 3
+    IDLE_SECONDS = 300
 
     def __init__(self, root: Path | None = None, *, send=native_send):
         self.root = root
@@ -121,10 +154,61 @@ class ReferenceGraphService:
         self.tasks: set[asyncio.Task] = set()
         self.closed = False
         self.lock = asyncio.Lock()
+        self._coordination: dict[str, tuple[asyncio.Lock, int]] = {}
+        self._routes: dict[str, _Route] = {}
+        self._resolving = 0
+        self._resolve_tasks: set[asyncio.Task] = set()
+        self._resolved = asyncio.Event()
+        self._resolved.set()
+
+    @staticmethod
+    def _now() -> float:
+        return time.monotonic()
+
+    @asynccontextmanager
+    async def _coordinate(self, key: str):
+        # Count waiters as well as holders so cancellation cannot split a lock.
+        lock, users = self._coordination.get(key, (asyncio.Lock(), 0))
+        self._coordination[key] = (lock, users + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            _, users = self._coordination[key]
+            if users == 1:
+                del self._coordination[key]
+            else:
+                self._coordination[key] = (lock, users - 1)
+
+    @contextmanager
+    def _route(self, user: str, instance: str):
+        key = _hash((user, instance))
+        route = self._routes.setdefault(key, _Route())
+        route.users += 1
+        route.sequence += 1
+        try:
+            yield route, route.sequence
+        finally:
+            route.users -= 1
+            if not route.users:
+                self._routes.pop(key)
 
     async def resolve(self, ctx, action: str) -> tuple[Entry, dict]:
         if self.closed:
             raise RuntimeError("Reference graph service is stopping")
+        self._resolving += 1
+        request = asyncio.current_task()
+        self._resolve_tasks.add(request)
+        self._resolved.clear()
+        try:
+            return await self._resolve(ctx, action)
+        finally:
+            self._resolving -= 1
+            self._resolve_tasks.discard(request)
+            if not self._resolving:
+                self._resolved.set()
+
+    async def _resolve(self, ctx, action: str) -> tuple[Entry, dict]:
         instance = await get_unity_instance_from_context(ctx)
         if not isinstance(instance, str) or not instance:
             raise ValueError("Select a Unity instance before using its reference graph")
@@ -132,10 +216,96 @@ class ReferenceGraphService:
         if lease is not None:
             authorize_operation(lease.permissions, "manage_reference_graph", {"action": action})
         user = "remote:" + lease.user_id if lease else local_user()
+        with self._route(user, instance) as (route, ticket):
+            return await self._resolve_scope(instance, lease, user, route, ticket)
 
-        async def check():
+    async def _resolve_scope(
+        self, instance: str, lease: CredentialLease | None, user: str, route: _Route, ticket: int
+    ) -> tuple[Entry, dict]:
+
+        async def request_check():
             if lease is not None:
                 await lease.check()
+
+        await request_check()
+        status = await self.send(instance, {"action": "status"})
+        await request_check()
+        scope = GraphScope(user, status.get("instance_id"), status.get("project_id"))
+        route.observe(ticket, scope.key)
+        # Installation and retirement for one scope must not hold the global
+        # registry lock while SQLite, native collection or cancellation drains.
+        async with self._coordinate(scope.key):
+            route.check(scope.key)
+            async with self.lock:
+                if self.closed:
+                    raise RuntimeError("Reference graph service is stopping")
+                drains = []
+                for old_key, old_entry in list(self.entries.items()):
+                    if old_entry.workspace.store.scope.user_id == scope.user_id and (
+                        old_key != scope.key
+                        and old_entry.instance == instance
+                        or old_key == scope.key
+                        and old_entry.instance != instance
+                    ):
+                        drains.append(self._retire(old_entry))
+            if drains:
+                await self._join(drains)
+            entry = self.entries.get(scope.key)
+            if entry is None:
+                workspace = await drained_thread(
+                    lambda: GraphWorkspace(GraphStore.open(self.root or state_root(), scope))
+                )
+                await request_check()
+                async with self.lock:
+                    if self.closed:
+                        raise RuntimeError("Reference graph service is stopping")
+                    route.check(scope.key)
+                    entry = self._entry(workspace, instance)
+                    self.entries[scope.key] = entry
+            await request_check()
+            route.check(scope.key)
+            if entry.retired or self.entries.get(scope.key) is not entry:
+                raise RevisionConflict(
+                    "Reference graph request ownership changed; retry the request"
+                )
+            now = self._now()
+            entry.last_used = now
+            entry.leases = [
+                (candidate, used)
+                for candidate, used in entry.leases
+                if candidate is not lease
+                and not candidate.retired
+                and now - used < self.IDLE_SECONDS
+            ]
+            if lease is not None:
+                entry.leases.append((lease, now))
+        return entry, status
+
+    def _entry(self, workspace: GraphWorkspace, instance: str) -> Entry:
+        scope = workspace.store.scope
+
+        def active_lease():
+            if entry.retired or self.closed:
+                raise RevisionConflict(
+                    "Reference graph request ownership changed; retry the request"
+                )
+            if not scope.user_id.startswith("remote:"):
+                return None
+            candidate = current_credential_lease()
+            if candidate is None or scope.user_id != "remote:" + candidate.user_id:
+                raise CredentialLeaseError()
+            return candidate
+
+        async def check():
+            candidate = active_lease()
+            if candidate is not None:
+                await candidate.check()
+            active_lease()
+
+        def check_now():
+            candidate = active_lease()
+            if candidate is not None:
+                candidate.check_now()
 
         async def collect(action: str, **values):
             await check()
@@ -146,7 +316,7 @@ class ReferenceGraphService:
             parameters.update(
                 expected_instance_id=scope.instance_id, expected_project_id=scope.project_id
             )
-            with bind_credential_lease(lease):
+            with bind_credential_lease(active_lease()):
                 data = await self.send(instance, parameters)
             await check()
             if (
@@ -156,54 +326,28 @@ class ReferenceGraphService:
                 raise ScopeChanged("The selected Unity instance or project changed")
             return data
 
-        await check()
-        status = await self.send(instance, {"action": "status"})
-        await check()
-        scope = GraphScope(user, status.get("instance_id"), status.get("project_id"))
-        async with self.lock:
-            if self.closed:
-                raise RuntimeError("Reference graph service is stopping")
-            for old_key, old_entry in list(self.entries.items()):
-                if (
-                    old_key != scope.key
-                    and old_entry.instance == instance
-                    and old_entry.workspace.store.scope.user_id == scope.user_id
-                ):
-                    await self._stop(old_entry)
-                    self.entries.pop(old_key, None)
-            entry = self.entries.get(scope.key)
-            if entry is not None and (entry.instance != instance or entry.lease != lease):
-                await self._stop(entry)
-                self.entries.pop(scope.key, None)
-                entry = None
-            if entry is None:
-                workspace = await drained_thread(
-                    lambda: GraphWorkspace(GraphStore.open(self.root or state_root(), scope))
-                )
-                await check()
-                entry = Entry(
-                    workspace,
-                    instance,
-                    lease,
-                    collect,
-                    check,
-                    Reconciler(
-                        workspace,
-                        collect,
-                        check,
-                        lease.check_now if lease else lambda: None,
-                        lambda configuration: self._operator_grant(scope, configuration),
-                    ),
-                )
-                self.entries[scope.key] = entry
-        return entry, status
+        entry = Entry(
+            workspace,
+            instance,
+            collect,
+            check,
+            Reconciler(
+                workspace,
+                collect,
+                check,
+                check_now,
+                lambda configuration: self._operator_grant(scope, configuration),
+            ),
+        )
+        return entry
 
     def start(self, entry: Entry, *, force: bool = False, wake: bool = True) -> None:
         if self.closed:
             raise RuntimeError("Reference graph service is stopping")
-        if self.entries.get(entry.workspace.store.scope.key) is not entry:
+        if entry.retired or self.entries.get(entry.workspace.store.scope.key) is not entry:
             raise RevisionConflict("Reference graph request ownership changed; retry the request")
         entry.force |= force
+        entry.watching = True
         if wake:
             entry.wake.set()
         if entry.task is None or entry.task.done():
@@ -218,46 +362,142 @@ class ReferenceGraphService:
             task.exception()
         if entry.task is task:
             entry.task = None
-            if self.entries.get(entry.workspace.store.scope.key) is entry:
-                self.entries.pop(entry.workspace.store.scope.key, None)
+            if not entry.active_requests:
+                self._retire(entry)
+
+    async def _owner(self, entry: Entry) -> CredentialLease | None:
+        if not entry.workspace.store.scope.user_id.startswith("remote:"):
+            return None
+        # Candidates are opaque handles, never saved authorization. Check each
+        # exact generation again before pinning it for a single attempt.
+        entry.leases = [(lease, used) for lease, used in entry.leases if not lease.retired]
+        if entry.leases:
+            latest = entry.leases[-1][0]
+            now = self._now()
+            entry.leases = [
+                (lease, used)
+                for lease, used in entry.leases
+                if lease is latest or now - used < self.IDLE_SECONDS
+            ]
+        for lease, _ in reversed(entry.leases):
+            try:
+                await lease.check()
+                authorize_operation(lease.permissions, "manage_reference_graph", {"action": "sync"})
+                return lease
+            except (CredentialLeaseError, OperationPermissionError):
+                continue
+        raise CredentialLeaseError()
+
+    async def _attempt(self, entry: Entry, lease: CredentialLease | None, force: bool):
+        async with lease.owner_lifetime() if lease else nullcontext():
+            await entry.check()
+            return await entry.engine.reconcile(force_external=force)
 
     async def _watch(self, entry: Entry) -> None:
-        async with entry.lease.owner_lifetime() if entry.lease else nullcontext():
-            while not self.closed:
-                await entry.check()
-                entry.wake.clear()
-                force, entry.force = entry.force, False
-                try:
-                    await entry.engine.reconcile(force_external=force)
-                    entry.error = None
-                except ScopeChanged:
-                    return
-                except RevisionConflict as error:
-                    entry.error = str(error)
-                except (OSError, ValueError, RuntimeError) as error:
-                    entry.error = type(error).__name__ + ": " + str(error)
-                await entry.check()
-                try:
-                    await asyncio.wait_for(entry.wake.wait(), self.POLL_SECONDS)
-                except TimeoutError:
-                    pass
+        failures, caught_up = 0, False
+        while not self.closed and not entry.retired:
+            if not entry.active_requests and (
+                failures >= self.PARK_FAILURES
+                or caught_up
+                and self._now() - entry.last_used >= self.IDLE_SECONDS
+            ):
+                return
+            entry.wake.clear()
+            force, entry.force = entry.force, False
+            try:
+                lease = await self._owner(entry)
+            except CredentialLeaseError:
+                return
+            # Revocation cancels this attempt's owner, not the coordinating
+            # watcher. Its thread/lease cleanup finishes before another owner.
+            attempt = asyncio.create_task(self._attempt(entry, lease, force))
+            try:
+                caught_up = await asyncio.shield(attempt)
+                failures, entry.error = 0, None
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    if not attempt.cancelling():
+                        attempt.cancel()
+                    await self._join([attempt])
+                    raise
+                entry.error = "Reference reconciliation owner was cancelled"
+                failures += 1
+            except ScopeChanged:
+                return
+            except (OSError, ValueError, RuntimeError) as error:
+                entry.error = type(error).__name__ + ": " + str(error)
+                failures += 1
+            delay = min(self.RETRY_SECONDS, self.POLL_SECONDS * 2 ** min(failures, 16))
+            try:
+                await asyncio.wait_for(entry.wake.wait(), delay)
+            except TimeoutError:
+                pass
 
     @staticmethod
-    async def _stop(entry: Entry) -> None:
+    async def _join(tasks):
+        """Drain owned work even if the caller is cancelled during cleanup."""
+        joined = asyncio.gather(*tasks, return_exceptions=True)
+        cancelled = False
+        while not joined.done():
+            try:
+                await asyncio.shield(joined)
+            except asyncio.CancelledError:
+                cancelled = True
+        joined.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _stop(self, entry: Entry) -> None:
         if entry.task is not None:
             task = entry.task
             entry.task = None
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            if not task.cancelling():
+                task.cancel()
+            await self._join([task])
+
+    def _retire(self, entry: Entry) -> asyncio.Task:
+        if entry.drain is not None:
+            return entry.drain
+        entry.retired = True
+        entry.engine.stopped.set()
+        if self.entries.get(entry.workspace.store.scope.key) is entry:
+            self.entries.pop(entry.workspace.store.scope.key)
+        if entry.task is not None and not entry.task.cancelling():
+            entry.task.cancel()
+        for request in entry.request_tasks:
+            if request is not asyncio.current_task() and not request.cancelling():
+                request.cancel()
+        entry.drain = asyncio.create_task(self._drain(entry), context=contextvars.Context())
+        self.tasks.add(entry.drain)
+        entry.drain.add_done_callback(self._drained)
+        return entry.drain
+
+    def _drained(self, task: asyncio.Task) -> None:
+        self.tasks.discard(task)
+        if not task.cancelled():
+            task.exception()
+
+    async def _drain(self, entry: Entry) -> None:
+        await self._stop(entry)
+        await entry.requests_drained.wait()
+        async with entry.engine._gate:
+            entry.engine.clear_caches()
+            entry.leases.clear()
 
     async def aclose(self) -> None:
         async with self.lock:
             self.closed = True
-            tasks = list(self.tasks)
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            self.entries.clear()
+            for entry in list(self.entries.values()):
+                self._retire(entry)
+            for request in self._resolve_tasks:
+                if request is not asyncio.current_task() and not request.cancelling():
+                    request.cancel()
+        await self._resolved.wait()
+        while self.tasks:
+            await self._join(list(self.tasks))
+            # gather may complete synchronously for done tasks (Python 3.14+).
+            # Let their registry callbacks run before taking the next snapshot.
+            await asyncio.sleep(0)
 
     @staticmethod
     def _grant(scope: GraphScope, configuration: dict) -> ExternalSource:
@@ -389,12 +629,30 @@ class ReferenceGraphService:
         ):
             raise ValueError("A declaration owner id is required")
         entry, editor = await self.resolve(ctx, action)
+        entry.active_requests += 1
+        request = asyncio.current_task()
+        entry.request_tasks.add(request)
+        entry.requests_drained.clear()
+        try:
+            return await self._execute(entry, editor, action, options, fields[action])
+        finally:
+            entry.active_requests -= 1
+            entry.request_tasks.discard(request)
+            entry.last_used = self._now()
+            if not entry.active_requests:
+                entry.requests_drained.set()
+                if not entry.watching:
+                    self._retire(entry)
+
+    async def _execute(
+        self, entry: Entry, editor: dict, action: str, options: dict, fields: set
+    ) -> dict:
         workspace, store = entry.workspace, entry.workspace.store
         external_changed = False
         if action in {"declare", "remove_declaration", "set_source", "set_rule", "set_policy"}:
             if type(options.get("expected_version")) is not int or options["expected_version"] < 0:
                 raise ValueError("Read current state and supply its nonnegative expected_version")
-        if "id" in fields[action] and (not isinstance(options.get("id"), str) or not options["id"]):
+        if "id" in fields and (not isinstance(options.get("id"), str) or not options["id"]):
             raise ValueError("An explicit stable id is required")
         if action in {"query", "diagnostics"} and (
             not isinstance(options.get("node"), str) or not options["node"]
@@ -570,7 +828,7 @@ class ReferenceGraphService:
                     "Reference graph request ownership changed; retry the request"
                 )
             if action == "watch" and not options["enabled"]:
-                await self._stop(entry)
+                entry.watching = False
             else:
                 self.start(
                     entry,
@@ -587,6 +845,9 @@ class ReferenceGraphService:
                         "policy",
                     },
                 )
+        if action == "watch" and not options["enabled"]:
+            await self._stop(entry)
+            await entry.check()
         if external_changed:
             current = False
             status["queue_idle"] = False
