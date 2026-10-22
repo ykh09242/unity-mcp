@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import threading
+import time
 import weakref
 
 import pytest
@@ -55,7 +56,7 @@ async def test_analysis_reuses_unchanged_facts_and_reloads_after_cache_eviction(
     assert len(set(hydrated)) == 102
     assert {edge["target"] for edge in store.query(caller)["edges"]} == {target}
     cached = weakref.ref(engine._analysis_cache[3])
-    engine._analysis_used = 0
+    engine._analysis_used = time.monotonic() - 301
     assert await engine.reconcile()
     assert cached() is None
 
