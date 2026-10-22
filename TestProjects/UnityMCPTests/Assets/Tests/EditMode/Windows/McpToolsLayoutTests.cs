@@ -44,6 +44,7 @@ namespace MCPForUnityTests.EditMode.Windows
                 var frame = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>("Packages/com.ykh09242.unity-mcp/Editor/Windows/MCPForUnityEditorWindow.uxml");
                 Assert.IsNotNull(frame);
                 frame.CloneTree(root);
+                using var navigation = new MCPForUnity.Editor.Windows.McpWindowNavigation(root, _ => { });
                 root.Q<VisualElement>("clients-panel").AddToClassList("hidden");
                 root.Q<VisualElement>("tools-panel").RemoveFromClassList("hidden");
                 root.Q<UnityEditor.UIElements.ToolbarToggle>("clients-tab").SetValueWithoutNotify(false);
@@ -91,6 +92,8 @@ namespace MCPForUnityTests.EditMode.Windows
                     }
                     foreach (var tab in root.Query<UnityEditor.UIElements.ToolbarToggle>(className: "navigation-tab").ToList())
                     {
+                        if (tab.resolvedStyle.display == DisplayStyle.None || root.Q("navigation-scroll").resolvedStyle.display == DisplayStyle.None)
+                            continue;
                         var label = tab.Q<TextElement>(className: "unity-toggle__text");
                         Assert.IsNotNull(label, tab.name);
                         var measured = label.MeasureTextSize(label.text, 0, VisualElement.MeasureMode.Undefined, 0, VisualElement.MeasureMode.Undefined);
