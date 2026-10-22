@@ -297,7 +297,13 @@ class GraphStore:
             return old["generation"]
         generation = old["generation"] + 1 if old is not None else 1
         if observation.provenance is not None:
-            self._context(connection, owner, provider, generation, observation.provenance)
+            self._context(
+                connection,
+                owner,
+                provider,
+                generation,
+                {**observation.provenance, **({"path": path} if path else {})},
+            )
         connection.execute(
             "INSERT INTO observations VALUES (?,?,?,?,'pending',NULL) ON CONFLICT(owner,provider) DO UPDATE SET fingerprint=excluded.fingerprint,generation=excluded.generation,state='pending',error=NULL",
             (owner, provider, fingerprint, generation),

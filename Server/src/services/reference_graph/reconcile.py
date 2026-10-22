@@ -523,6 +523,14 @@ class Reconciler:
                 kind="script" if row["format"] == "csharp" else "asset",
                 force=True,
                 rules_revision=rules_revision,
+                provenance={
+                    "analysis_fingerprint": row["fingerprint"],
+                    "build": {
+                        key: value
+                        for key, value in row["data"].get("build", {}).items()
+                        if key != "references"
+                    },
+                },
             )
             for row in documents
         ]

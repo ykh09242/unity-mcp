@@ -26,6 +26,7 @@ class GraphWorkspace:
 
     def __init__(self, store: GraphStore):
         self.store = store
+        self._queries = None
         with store._connect(write=True) as connection:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
@@ -78,6 +79,14 @@ class GraphWorkspace:
                     "UPDATE graph_documents SET compilation_signature=json_extract(payload,'$.build.binding_revision') WHERE format='csharp'"
                 )
                 connection.execute("UPDATE graph_workspace SET version=5")
+
+    def queries(self):
+        """Lazily create scoped exploration state; the handle owns no connection."""
+        if self._queries is None:
+            from services.reference_graph.queries import GraphQueries
+
+            self._queries = GraphQueries(self.store)
+        return self._queries
 
     @staticmethod
     def _addressables(connection, asset: dict) -> None:

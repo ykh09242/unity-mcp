@@ -66,7 +66,7 @@ jobs:
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/reference-graph-logs
         run: |
           uv sync --python "${{ matrix.python }}" --locked --extra dev
-          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_reference_graph_store.py tests/test_reference_graph_analysis.py tests/test_reference_graph_semantics.py tests/test_reference_graph_provenance.py tests/test_reference_graph_external.py tests/test_reference_graph_workspace.py tests/test_reference_graph_reconcile.py tests/test_reference_graph_service.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-tests"
+          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_reference_graph_store.py tests/test_reference_graph_analysis.py tests/test_reference_graph_semantics.py tests/test_reference_graph_provenance.py tests/test_reference_graph_queries.py tests/test_reference_graph_external.py tests/test_reference_graph_workspace.py tests/test_reference_graph_reconcile.py tests/test_reference_graph_service.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-tests"
 
   server_bootstrap:
     name: Server Bootstrap (${{ matrix.os }})

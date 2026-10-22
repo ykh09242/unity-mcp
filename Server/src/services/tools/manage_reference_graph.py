@@ -19,14 +19,23 @@ from services.registry import mcp_for_unity_tool
         "instance and authenticated user. No extra database installation. sync starts/resumes background "
         "work; poll status for progress. query uses node='asset:<guid>', direction='incoming' or "
         "'outgoing', limit and returned cursor. diagnostics uses node, offset, limit and revision. "
-        "For a verified first page, query/diagnostics accept consistency='checked' to synchronize "
+        "explain {id} returns evidence for an edge. impact {node,direction?,limit?,cursor?,max_depth?} "
+        "traverses reachable evidence with disk-backed cycle detection. path {node,target,direction?,limit?,cursor?} "
+        "finds a shortest evidence path, returning its edges in target-to-start order; "
+        "path_found=null means searching, false means unreachable. snapshot {name?,limit?,cursor?} "
+        "captures a graph revision; continue until its state is ready. diff {before,after,limit?,cursor?} "
+        "compares snapshot IDs, with historical evidence reauthorized on each page. Empty pages can "
+        "have a next_cursor: always continue until null. release_query {id} releases a query_id; "
+        "delete_snapshot {id} removes only a captured snapshot. Keep first-page options on continuation. "
+        "For a verified first page, query/diagnostics/explain/impact/path/snapshot accept consistency='checked' to synchronize "
         "and rehash external inputs; ordinary cached pages expose provider verification timestamps. "
         "Code, Addressables and wrapper analysis is conservative: possible/unresolved evidence never "
         "proves an asset safe to delete. Sources require explicit read-only root and include patterns; "
         "remote paths belong to the server and require its operator's grant. Authored changes use id "
         "and expected_version from the corresponding list action. declare also needs owner and edge "
         "{target,kind}; set_source/set_rule/set_policy need config. watch needs enabled. "
-        "Source config: {root,include,exclude?,mappings?}; mapping {field,scheme,prefix?,suffix?}. "
+        "Source config: {root,include,exclude?,mappings?,git_revision?,adapter?}; "
+        "adapter defaults to {name:'json-csv',version:1}; mapping {field,scheme,prefix?,suffix?,values?}. "
         "Rule config: {call,argument,scheme,mode?,prefix?,suffix?}; {enabled:false} disables a rule. "
         "Policy config: {exclude:[relative patterns]}; there are no application-specific exclusions. "
         "sync {force:true} rehashes external inputs. rebuild retains authored declarations and grants. "
@@ -41,6 +50,13 @@ async def manage_reference_graph(
         "sync",
         "query",
         "diagnostics",
+        "explain",
+        "impact",
+        "path",
+        "snapshot",
+        "diff",
+        "release_query",
+        "delete_snapshot",
         "declarations",
         "declare",
         "remove_declaration",
