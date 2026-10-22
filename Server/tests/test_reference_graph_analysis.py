@@ -1,6 +1,8 @@
 """Conservative source analysis must preserve both evidence and uncertainty."""
 
 from dataclasses import asdict
+from itertools import product
+import tracemalloc
 
 import pytest
 
@@ -54,6 +56,136 @@ def catalog():
             },
         ]
     )
+
+
+def test_unused_branching_wrappers_do_not_materialize_exponential_summaries():
+    source = "using UnityEngine; class Loader { static void W0(string x) { Resources.Load(x); }"
+    for level in range(1, 14):
+        source += f'static void W{level}(string x) {{ W{level - 1}(x+"a"); W{level - 1}(x+"b"); }}'
+    facts = parse_csharp("wrapper", "Assets/Wrapper.cs", source + "}")
+    tracemalloc.start()
+    try:
+        index = AnalysisIndex([facts], catalog())
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 * 1024 * 1024
+    result = index.analyze("wrapper")
+    assert not result.edges
+    assert {issue["reason"] for issue in result.unresolved} == {"dynamic_key"}
+
+
+def test_incremental_constants_missing_symbols_and_duplicates_invalidate_callers():
+    caller = parse_csharp(
+        "caller",
+        "Assets/Caller.cs",
+        "using UnityEngine; class Use { void Go() { Resources.Load(Keys.Value); } }",
+    )
+    unrelated = parse_csharp(
+        "other", "Assets/Other.cs", 'class Other { const string Key = "unused"; }'
+    )
+    key = parse_csharp(
+        "keys", "Assets/Keys.cs", 'class Keys { public const string Value = "UI/Menu"; }'
+    )
+    index = AnalysisIndex([caller, unrelated], catalog())
+    assert not index.analyze("caller").edges
+    assert "caller" in index.update([key])
+    assert index.facts["other"] is unrelated
+    assert {edge.key for edge in index.analyze("caller").edges} == {"UI/Menu"}
+    duplicate = parse_csharp(
+        "duplicate", "Assets/Duplicate.cs", 'class Keys { public const string Value = "Missing"; }'
+    )
+    assert "caller" in index.update([duplicate])
+    assert not index.analyze("caller").edges
+    assert "caller" in index.update([], removed={"duplicate"})
+    assert index.analyze("caller").edges
+    assert "caller" in index.update([], removed={"keys"})
+    assert not index.analyze("caller").edges
+
+
+def test_incremental_type_shadowing_and_wrapper_change_preserve_reverse_dependencies():
+    caller = parse_csharp(
+        "caller",
+        "Assets/Caller.cs",
+        'using UnityEngine; class Use { void Go() { Loader.Load("Menu"); } }',
+    )
+    wrapper = parse_csharp(
+        "wrapper",
+        "Assets/Wrapper.cs",
+        'using UnityEngine; class Loader { public static object Load(string x) => Resources.Load("UI/" + x); }',
+    )
+    index = AnalysisIndex([caller, wrapper], catalog())
+    assert index.analyze("caller").edges
+    shadow = parse_csharp(
+        "shadow",
+        "Assets/Shadow.cs",
+        "class Resources { public static object Load(string x) => null; }",
+    )
+    assert {"caller", "wrapper"} <= index.update([shadow])
+    assert not index.analyze("caller").edges
+    assert {"caller", "wrapper"} <= index.update([], removed={"shadow"})
+    assert index.analyze("caller").edges
+
+
+def test_lazy_wrapper_walk_handles_deep_chains_and_checks_cancellation():
+    source = "using UnityEngine; class Loader { static void W0(string x) { Resources.Load(x); }"
+    for level in range(1, 1101):
+        source += f"public static void W{level}(string x) {{ W{level - 1}(x); }}"
+    wrapper = parse_csharp("wrapper", "Assets/Wrapper.cs", source + "}")
+    caller = parse_csharp(
+        "caller", "Assets/Caller.cs", 'class Use { void Go() { Loader.W1100("UI/Menu"); } }'
+    )
+    cancelled = False
+
+    def check():
+        if cancelled:
+            raise InterruptedError("cancelled analysis")
+
+    index = AnalysisIndex([wrapper, caller], catalog(), check=check)
+    assert {edge.key for edge in index.analyze("caller").edges} == {"UI/Menu"}
+    cancelled = True
+    with pytest.raises(InterruptedError, match="cancelled analysis"):
+        index.analyze("caller")
+    with pytest.raises(InterruptedError, match="cancelled analysis"):
+        AnalysisIndex([caller], catalog(), check=check)
+
+
+def test_concrete_branch_fanout_streams_every_key_without_dropping_dynamic_constant_loads():
+    source = "using UnityEngine; class Loader { static void W0(string x) { Resources.Load(x); }"
+    for level in range(1, 10):
+        source += f'static void W{level}(string x) {{ W{level - 1}(x+"a"); W{level - 1}(x+"b"); }}'
+    wrapper = parse_csharp("wrapper", "Assets/Wrapper.cs", source + "}")
+    caller = parse_csharp(
+        "caller", "Assets/Caller.cs", 'class Use { void Run() { Loader.W9(""); } }'
+    )
+    keys = {"".join(value) for value in product("ab", repeat=9)}
+    assets = Catalog(
+        [
+            {
+                "guid": f"{n:032x}",
+                "path": f"Assets/{n}.prefab",
+                "keys": [{"scheme": "resources", "value": key}],
+            }
+            for n, key in enumerate(sorted(keys), 1)
+        ]
+    )
+    index = AnalysisIndex([wrapper, caller], assets)
+    events = list(index.events("caller"))
+    assert len(events) == 512
+    assert {edge.key for edge in events} == keys
+    dynamic = parse_csharp(
+        "dynamic",
+        "Assets/Dynamic.cs",
+        """using UnityEngine;
+class Dynamic {
+static void Inner(string x) { Resources.Load(x); Resources.Load("UI/Menu"); }
+static void Outer(string x) { Inner(x+"a"); Inner(x+"b"); }
+void Run(string input) { Outer(input); }
+}""",
+    )
+    result = AnalysisIndex([dynamic], catalog()).analyze("dynamic")
+    assert {edge.key for edge in result.edges} == {"UI/Menu"}
+    assert any(issue["reason"] == "dynamic_key" for issue in result.unresolved)
 
 
 def analyze(source, *others, rules=()):

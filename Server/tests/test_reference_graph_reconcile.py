@@ -6,12 +6,59 @@ import base64
 import hashlib
 import json
 import threading
+import time
+import weakref
 
 import pytest
 
 from services.reference_graph.reconcile import Reconciler, drained_thread
 from services.reference_graph.store import GraphScope, GraphStore, RevisionConflict, _hash
 from services.reference_graph.workspace import GraphWorkspace
+
+
+@pytest.mark.asyncio
+async def test_analysis_reuses_unchanged_facts_and_reloads_after_cache_eviction(setup, monkeypatch):
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    caller = editor.add(
+        2,
+        "Assets/Caller.cs",
+        "using UnityEngine; class C { void M() { Resources.Load(Keys.Value); } }",
+    )
+    keys = editor.add(3, "Assets/Keys.cs", 'class Keys { public const string Value = "One"; }')
+    for number in range(4, 104):
+        editor.add(
+            number, f"Assets/T{number}.cs", f'class T{number} {{ const string Key = "unused"; }}'
+        )
+    assert await engine.reconcile()
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {target}
+    read = workspace.documents
+    hydrated = []
+
+    def capture(owners=None):
+        result = read(owners)
+        hydrated.extend(row["owner"] for row in result)
+        return result
+
+    monkeypatch.setattr(workspace, "documents", capture)
+    editor.add(3, "Assets/Keys.cs", 'class Keys { public const string Value = "Missing"; }')
+    editor.event("Assets/Keys.cs")
+    assert await engine.reconcile()
+    assert set(hydrated) <= {keys, caller}
+    assert not store.query(caller)["edges"]
+    engine.clear_caches()
+    hydrated.clear()
+    editor.add(3, "Assets/Keys.cs", 'class Keys { public const string Value = "One"; }')
+    editor.event("Assets/Keys.cs")
+    assert await engine.reconcile()
+    assert len(set(hydrated)) == 102
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {target}
+    cached = weakref.ref(engine._analysis_cache[3])
+    engine._analysis_used = time.monotonic() - 301
+    assert await engine.reconcile()
+    assert cached() is None
 
 
 @pytest.mark.asyncio
@@ -695,7 +742,7 @@ async def test_analysis_upgrade_reparses_old_facts_once_without_native_import(se
     editor.calls.clear()
     assert await engine.reconcile()
     assert any(action == "source" for action, _ in editor.calls)
-    assert workspace.documents()[0]["data"]["version"] == 3
+    assert workspace.documents()[0]["data"]["version"] == 4
     assert store.query(caller)["edges"]
     editor.calls.clear()
     assert await engine.reconcile()

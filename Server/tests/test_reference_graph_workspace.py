@@ -33,6 +33,60 @@ def row(guid="a" * 32, path="Assets/Resources/Fixture.prefab"):
     }
 
 
+def test_streamed_analysis_is_atomic_batched_and_cleans_cancelled_staging(workspace):
+    generation = workspace.observe("worker", Observation("owner", "code", "old"))
+    workspace.publish("worker", "owner", "code", generation, Analysis([Edge("old", "load")]))
+    generation = workspace.observe("worker", Observation("owner", "code", "new"))
+
+    def events():
+        for index in range(900):
+            if index == 600:
+                assert {edge["target"] for edge in workspace.store.query("owner")["edges"]} == {
+                    "old"
+                }
+                with workspace.store._connect() as connection:
+                    assert (
+                        connection.execute("SELECT count(*) FROM graph_staging").fetchone()[0] > 0
+                    )
+            yield Edge(f"target{index}", "load")
+        yield {"reason": "dynamic_key"}
+
+    workspace.publish_code_events("worker", "owner", generation, events(), lambda: {"dependency"})
+    with workspace.store._connect() as connection:
+        assert (
+            connection.execute("SELECT count(*) FROM edges WHERE owner='owner'").fetchone()[0]
+            == 900
+        )
+        assert connection.execute("SELECT count(*) FROM graph_staging").fetchone()[0] == 0
+    assert workspace.diagnostics("owner")["issues"][0]["reason"] == "dynamic_key"
+    generation = workspace.observe("worker", Observation("owner", "code", "next"))
+
+    def interrupted():
+        yield from (Edge(f"partial{index}", "load") for index in range(600))
+        raise InterruptedError("cancelled")
+
+    with pytest.raises(InterruptedError):
+        workspace.publish_code_events("worker", "owner", generation, interrupted(), set)
+    with workspace.store._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM graph_staging").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT count(*) FROM edges WHERE owner='owner'").fetchone()[0]
+            == 900
+        )
+
+
+def test_streamed_analysis_cannot_commit_after_generation_or_worker_changes(workspace):
+    generation = workspace.observe("worker", Observation("owner", "code", "source"))
+
+    def stale():
+        yield Edge("target", "load")
+        workspace.observe("worker", Observation("owner", "code", "changed"))
+
+    with pytest.raises(RevisionConflict):
+        workspace.publish_code_events("worker", "owner", generation, stale(), set)
+    assert workspace.store.query("owner")["edges"] == []
+
+
 def test_version_one_upgrade_preserves_evidence_and_progress(workspace):
     workspace.record_page("worker", [row()], {"phase": "collect", "after": 7}, "scan")
     generation = workspace.observe("worker", Observation("owner", "code", "hash"))
@@ -47,7 +101,7 @@ def test_version_one_upgrade_preserves_evidence_and_progress(workspace):
     assert restored.progress()["after"] == 7
     assert restored.counts()["failed_assets"] == 0
     with restored.store._connect() as connection:
-        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 3
+        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 4
 
 
 def test_version_two_upgrade_retains_addressables_failures(workspace):

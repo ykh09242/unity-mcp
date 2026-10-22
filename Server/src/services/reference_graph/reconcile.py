@@ -12,6 +12,7 @@ import csv
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 import hashlib
+from itertools import chain, islice
 import time
 import threading
 import uuid
@@ -69,6 +70,13 @@ class Reconciler:
         self.progress = {}
         self._gate = asyncio.Lock()
         self._catalog_cache: tuple[int, Catalog] | None = None
+        self._analysis_cache = None
+        self._analysis_used = 0.0
+
+    def clear_caches(self) -> None:
+        """Call only while this reconciler is idle; durable facts remain intact."""
+        self._catalog_cache = None
+        self._analysis_cache = None
 
     async def _phase(self, phase: str, **values) -> None:
         self.progress.update(phase=phase, **values)
@@ -340,6 +348,8 @@ class Reconciler:
         )
 
     async def _analysis(self) -> None:
+        if time.monotonic() - self._analysis_used > 300:
+            self._analysis_cache = None
         rules = await drained_thread(self.store.rules_state)
         rules_changed = rules["revision"] != await drained_thread(
             self.workspace.state, "analyzed_rules_revision", -1
@@ -349,29 +359,86 @@ class Reconciler:
         ):
             return
         await self._phase("analyzing")
-        documents = await drained_thread(self.workspace.documents)
+        manifest = await drained_thread(self.workspace.document_manifest)
         blocked = await drained_thread(self.workspace.blocked_analysis)
-        documents = [row for row in documents if row["owner"] not in blocked]
-        assets = await drained_thread(self.workspace.catalog)
-        index = await drained_thread(self._build_index, documents, assets, rules)
-        affected = await drained_thread(
-            index.affected, await drained_thread(self.workspace.changed_inputs)
+        manifest = {owner: row for owner, row in manifest.items() if owner not in blocked}
+        changed = await drained_thread(self.workspace.changed_inputs)
+        index, affected = await drained_thread(
+            self._refresh_analysis, manifest, rules, changed, _cancel_event=self.stopped
         )
         selected = [
-            row
-            for row in documents
-            if rules_changed or row["state"] != "ready" or row["owner"] in affected
+            owner
+            for owner, row in manifest.items()
+            if rules_changed or row["state"] != "ready" or owner in affected
         ]
         for offset in range(0, len(selected), 100):
             await self.check()
+            documents = await drained_thread(
+                self.workspace.documents, selected[offset : offset + 100]
+            )
             await drained_thread(
                 self._analyze_batch,
-                selected[offset : offset + 100],
+                documents,
                 index,
                 rules["revision"],
                 _cancel_event=self.stopped,
             )
         await drained_thread(self.workspace.finish_analysis, self.worker, rules["revision"])
+        self._analysis_used = time.monotonic()
+
+    def _refresh_analysis(self, manifest: dict, rules: dict, changed_inputs: set[str]) -> tuple:
+        cache = self._analysis_cache
+        if cache is not None and cache[0] != rules["revision"]:
+            cache = None
+        fingerprints = {
+            owner: (row["format"], row["fingerprint"]) for owner, row in manifest.items()
+        }
+        changed = sorted(
+            owner
+            for owner in manifest
+            if cache is None
+            or cache[2].get(owner) != fingerprints[owner]
+            or owner in changed_inputs
+        )
+
+        def facts():
+            owners = [owner for owner in changed if manifest[owner]["format"] == "csharp"]
+            for offset in range(0, len(owners), 256):
+                self._check_thread()
+                for row in self.workspace.documents(owners[offset : offset + 256]):
+                    self._check_thread()
+                    yield Facts.from_dict(row["data"])
+
+        try:
+            revision, assets = self.workspace.catalog_snapshot(cache[1] if cache else None)
+            if cache is None:
+                index = AnalysisIndex(
+                    facts(),
+                    Catalog(assets),
+                    [
+                        rule["config"]
+                        for rule in rules["rules"]
+                        if rule["config"].get("enabled", True)
+                    ],
+                    check=self._check_thread,
+                )
+                affected = index.affected(changed_inputs)
+            else:
+                index = cache[3]
+                if assets is not None:
+                    index.catalog = Catalog(assets)
+                removed = (cache[2].keys() - manifest.keys()) | {
+                    owner for owner in changed if manifest[owner]["format"] != "csharp"
+                }
+                affected = index.update(facts(), removed=removed)
+                affected.update(index.affected(changed_inputs))
+            self._analysis_cache = (rules["revision"], revision, fingerprints, index)
+            self._analysis_used = time.monotonic()
+            return index, affected
+        except BaseException:
+            # An interrupted in-place update must never become a reusable index.
+            self._analysis_cache = None
+            raise
 
     @staticmethod
     def _build_index(documents: list[dict], assets: list[dict], rules: dict) -> AnalysisIndex:
@@ -400,15 +467,30 @@ class Reconciler:
         publications = []
         for row, generation in zip(documents, generations):
             self._check_thread()
-            result = (
-                index.analyze(row["owner"])
-                if row["format"] == "csharp"
-                else Analysis(
+            if row["format"] == "csharp":
+                events = index.events(row["owner"])
+                preview = list(islice(events, 257))
+                if len(preview) > 256:
+                    self.workspace.publish_code_events(
+                        self.worker,
+                        row["owner"],
+                        generation,
+                        chain(preview, events),
+                        lambda owner=row["owner"]: index.transitive_dependencies(owner),
+                        check=self._check_thread,
+                    )
+                    continue
+                result = Analysis(
+                    [event for event in preview if isinstance(event, Edge)],
+                    [event for event in preview if isinstance(event, dict)],
+                    dependencies=index.transitive_dependencies(row["owner"]),
+                )
+            else:
+                result = Analysis(
                     [Edge(**edge) for edge in row["data"]["edges"]],
                     row["data"]["unresolved"],
                     coverage=row["data"]["coverage"],
                 )
-            )
             publications.append((row["owner"], "code", generation, result))
         self._check_thread()
         if not all(self.workspace.publish_many(self.worker, publications)):
