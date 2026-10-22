@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 import contextvars
 from dataclasses import dataclass, field
 import getpass
@@ -124,6 +124,23 @@ class Entry:
         self.requests_drained.set()
 
 
+@dataclass
+class _Route:
+    users: int = 0
+    sequence: int = 0
+    observed: int = -1
+    scope: str | None = None
+
+    def observe(self, ticket: int, scope: str) -> None:
+        if ticket > self.observed:
+            self.observed, self.scope = ticket, scope
+        self.check(scope)
+
+    def check(self, scope: str) -> None:
+        if self.scope != scope:
+            raise ScopeChanged("A newer request resolved a replacement Editor; retry the request")
+
+
 class ReferenceGraphService:
     POLL_SECONDS = 5
     RETRY_SECONDS = 30
@@ -138,7 +155,9 @@ class ReferenceGraphService:
         self.closed = False
         self.lock = asyncio.Lock()
         self._coordination: dict[str, tuple[asyncio.Lock, int]] = {}
+        self._routes: dict[str, _Route] = {}
         self._resolving = 0
+        self._resolve_tasks: set[asyncio.Task] = set()
         self._resolved = asyncio.Event()
         self._resolved.set()
 
@@ -161,15 +180,31 @@ class ReferenceGraphService:
             else:
                 self._coordination[key] = (lock, users - 1)
 
+    @contextmanager
+    def _route(self, user: str, instance: str):
+        key = _hash((user, instance))
+        route = self._routes.setdefault(key, _Route())
+        route.users += 1
+        route.sequence += 1
+        try:
+            yield route, route.sequence
+        finally:
+            route.users -= 1
+            if not route.users:
+                self._routes.pop(key)
+
     async def resolve(self, ctx, action: str) -> tuple[Entry, dict]:
         if self.closed:
             raise RuntimeError("Reference graph service is stopping")
         self._resolving += 1
+        request = asyncio.current_task()
+        self._resolve_tasks.add(request)
         self._resolved.clear()
         try:
             return await self._resolve(ctx, action)
         finally:
             self._resolving -= 1
+            self._resolve_tasks.discard(request)
             if not self._resolving:
                 self._resolved.set()
 
@@ -181,6 +216,12 @@ class ReferenceGraphService:
         if lease is not None:
             authorize_operation(lease.permissions, "manage_reference_graph", {"action": action})
         user = "remote:" + lease.user_id if lease else local_user()
+        with self._route(user, instance) as (route, ticket):
+            return await self._resolve_scope(instance, lease, user, route, ticket)
+
+    async def _resolve_scope(
+        self, instance: str, lease: CredentialLease | None, user: str, route: _Route, ticket: int
+    ) -> tuple[Entry, dict]:
 
         async def request_check():
             if lease is not None:
@@ -190,9 +231,11 @@ class ReferenceGraphService:
         status = await self.send(instance, {"action": "status"})
         await request_check()
         scope = GraphScope(user, status.get("instance_id"), status.get("project_id"))
+        route.observe(ticket, scope.key)
         # Installation and retirement for one scope must not hold the global
         # registry lock while SQLite, native collection or cancellation drains.
         async with self._coordinate(scope.key):
+            route.check(scope.key)
             async with self.lock:
                 if self.closed:
                     raise RuntimeError("Reference graph service is stopping")
@@ -216,9 +259,11 @@ class ReferenceGraphService:
                 async with self.lock:
                     if self.closed:
                         raise RuntimeError("Reference graph service is stopping")
+                    route.check(scope.key)
                     entry = self._entry(workspace, instance)
                     self.entries[scope.key] = entry
             await request_check()
+            route.check(scope.key)
             if entry.retired or self.entries.get(scope.key) is not entry:
                 raise RevisionConflict(
                     "Reference graph request ownership changed; retry the request"
@@ -367,10 +412,13 @@ class ReferenceGraphService:
             # watcher. Its thread/lease cleanup finishes before another owner.
             attempt = asyncio.create_task(self._attempt(entry, lease, force))
             try:
-                caught_up = await attempt
+                caught_up = await asyncio.shield(attempt)
                 failures, entry.error = 0, None
             except asyncio.CancelledError:
                 if asyncio.current_task().cancelling():
+                    if not attempt.cancelling():
+                        attempt.cancel()
+                    await self._join([attempt])
                     raise
                 entry.error = "Reference reconciliation owner was cancelled"
                 failures += 1
@@ -441,6 +489,9 @@ class ReferenceGraphService:
             self.closed = True
             for entry in list(self.entries.values()):
                 self._retire(entry)
+            for request in self._resolve_tasks:
+                if request is not asyncio.current_task() and not request.cancelling():
+                    request.cancel()
         await self._resolved.wait()
         while self.tasks:
             await self._join(list(self.tasks))

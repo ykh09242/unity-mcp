@@ -34,6 +34,13 @@ opening, retiring workers, active request cleanup and cache release happen outsi
 it, so a large drain for one user cannot block another user's graph. Retired
 entries reject further dispatch/publication and cannot restart an untracked worker.
 Shutdown also drains database opens already in flight and refuses late installation.
+Overlapping resolutions on one user/transport carry an ordered observation fence:
+an old status response or delayed database open cannot install an Editor scope
+after a newer request has observed its replacement. The fence is released with
+the last overlapping resolver, so it does not retain inactive transport identities.
+Shutdown cancels pending status lookups as well as installed workers. The final
+heartbeat/thread/database release is shielded from repeated cancellation, including
+both orderings of actual credential revocation and server shutdown.
 
 The service tests exercise concurrent clients, revocation during active work,
 fallback after cleanup, disconnect/reconnect, unchanged durable state, long active

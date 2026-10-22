@@ -880,7 +880,7 @@ async def test_shutdown_drains_inflight_database_open_without_installing_entry(s
         await asyncio.sleep(0)
         assert not closing.done()
         release.set()
-        with pytest.raises(RuntimeError, match="stopping"):
+        with pytest.raises(asyncio.CancelledError):
             await opening
         await asyncio.wait_for(closing, 2)
         assert not service.entries and not service.tasks and not service._coordination
@@ -926,4 +926,152 @@ async def test_shutdown_cancels_active_native_collection_once_and_releases_datab
     finally:
         pending.cancel()
         await asyncio.gather(pending, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_status_lookup_before_entry_exists(setup):
+    service, sender, ctx = setup
+    entered = asyncio.Event()
+
+    async def held(instance, params):
+        entered.set()
+        await asyncio.Event().wait()
+        return await sender(instance, params)
+
+    service.send = held
+    request = asyncio.create_task(service.execute(ctx, "status", {}))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(service.aclose(), 2)
+        assert request.cancelled()
+        assert not service._resolving and not service._resolve_tasks and not service._routes
+        assert not service.entries and not service.tasks
+    finally:
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shutdown_first", [False, True])
+async def test_actual_revocation_and_shutdown_drain_heartbeat_in_both_orders(
+    setup, monkeypatch, shutdown_first
+):
+    from services.api_key_service import ApiKeyService, ValidationResult
+
+    service, sender, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    authority = ApiKeyService("https://synthetic.invalid/validate")
+
+    async def validate(_):
+        return ValidationResult(valid=True, user_id="alice")
+
+    monkeypatch.setattr(authority, "_validate_external", validate)
+    lease = (await authority.validate("synthetic-lifetime-key")).lease
+    entered, release = threading.Event(), threading.Event()
+    collecting = asyncio.Event()
+
+    async def send(instance, params):
+        if params["action"] == "changes":
+            collecting.set()
+            await asyncio.Event().wait()
+        return await sender(instance, params)
+
+    service.send = send
+    with bind_credential_lease(lease):
+        entry, _ = await service.resolve(ctx, "status")
+    renew = entry.workspace.renew
+
+    def held_renew(worker):
+        entered.set()
+        assert release.wait(5), "Synthetic heartbeat was not released"
+        return renew(worker)
+
+    monkeypatch.setattr(entry.workspace, "renew", held_renew)
+    sleep = asyncio.sleep
+
+    async def fast_sleep(delay, result=None):
+        return await sleep(0.001 if delay == 15 else delay, result)
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+    service.start(entry)
+    closing = None
+    try:
+        await asyncio.wait_for(collecting.wait(), 2)
+        assert await asyncio.to_thread(entered.wait, 2)
+        attempt = next(iter(authority._lease_records[lease.generation].owners.values()))
+        if shutdown_first:
+            closing = asyncio.create_task(service.aclose())
+        else:
+            await authority.invalidate_cache("synthetic-lifetime-key")
+
+        async def cancelling():
+            while not attempt.cancelling():
+                await sleep(0)
+            await sleep(0.01)
+
+        await asyncio.wait_for(cancelling(), 2)
+        if shutdown_first:
+            await authority.invalidate_cache("synthetic-lifetime-key")
+        else:
+            closing = asyncio.create_task(service.aclose())
+        await sleep(0.01)
+        assert authority._lease_owners == 1
+        assert not closing.done()
+        release.set()
+        await asyncio.wait_for(closing, 2)
+        assert authority._lease_owners == 0
+        assert not service.tasks and not service.entries
+        assert entry.workspace.acquire("after-overlap")
+        entry.workspace.release("after-overlap")
+    finally:
+        release.set()
+        if closing:
+            await closing
+        await service.aclose()
+        await authority.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delay_status", [False, True])
+async def test_superseded_editor_cannot_install_after_newer_resolution(
+    setup, monkeypatch, delay_status
+):
+    from services.reference_graph.store import GraphStore
+
+    service, sender, ctx = setup
+    entered, release = threading.Event(), threading.Event()
+    original = GraphStore.open
+
+    def held(root, scope):
+        if not delay_status and scope.instance_id.startswith("original"):
+            entered.set()
+            release.wait(5)
+        return original(root, scope)
+
+    async def delayed(instance, params):
+        response = await sender(instance, params)
+        if delay_status and response["instance_id"].startswith("original"):
+            entered.set()
+            from services.reference_graph.reconcile import drained_thread
+
+            await drained_thread(release.wait, 5)
+        return response
+
+    monkeypatch.setattr(GraphStore, "open", held)
+    service.send = delayed
+    old = asyncio.create_task(service.resolve(ctx, "status"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        sender.identity = "new"
+        current, _ = await asyncio.wait_for(service.resolve(ctx, "status"), 2)
+        release.set()
+        with pytest.raises(RevisionConflict, match="replacement Editor"):
+            await old
+        assert list(service.entries.values()) == [current]
+        assert not service._routes and not service._coordination
+    finally:
+        release.set()
+        await asyncio.gather(old, return_exceptions=True)
         await service.aclose()
