@@ -892,7 +892,10 @@ async def test_direct_private_state_admission_separates_ordinary_flights(peer):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", [False, True])
-async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(peer, monkeypatch, cancel):
+@pytest.mark.parametrize("large", [False, True])
+async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(
+    peer, monkeypatch, cancel, large
+):
     # Given: actual installed SDK HTTP transport and a blocked final ASGI consumer.
     from main import UnityMCP
     from transport.response_limit_middleware import ResponseLimitMiddleware, _http_response_owners
@@ -912,6 +915,14 @@ async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(peer, m
             editor_state_read_mode="ordinary",
         )
 
+    result = (
+        {"success": True, "data": {"rows": [{"label": "payload-" * 128} for _ in range(256)]}}
+        if large
+        else {"success": True, "data": {"value": 7}}
+    )
+    charge = response_size(result)
+    if large:
+        monkeypatch.setattr(PluginHub, "MAX_RETAINED_RESULT_BYTES_PER_USER", int(charge * 2.8))
     app = server.http_app(transport="http", json_response=True)
     async with app.router.lifespan_context(app):
         initialize = {
@@ -955,11 +966,18 @@ async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(peer, m
             source = await peer.next_command()
             await yield_callers()
             # When: one state source completes but both actual sends are blocked.
-            await peer.reply(source)
+            await peer.reply(source, result)
             await asyncio.gather(
                 *(asyncio.wait_for(request.blocked.wait(), 2) for request in requests)
             )
-            assert len(PluginHub._retained_results) == 2
+            assert len(PluginHub._retained_results) == (3 if large else 2)
+            if large:
+                assert charge < PluginHub._retained_results.total_bytes < 3 * charge
+            import json
+
+            for request in requests:
+                body = b"".join(message.get("body", b"") for message in request.sent)
+                assert json.loads(body)["result"]["structuredContent"] == result
             assert peer.counts() == {"ping": 1, "get_editor_state": 1}
             if cancel:
                 tasks[0].cancel()
@@ -967,7 +985,7 @@ async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(peer, m
                 requests[0].resume.set()
             await asyncio.gather(tasks[0], return_exceptions=cancel)
             # Then: finishing one HTTP delivery leaves the other copy charged.
-            assert len(PluginHub._retained_results) == 1
+            assert len(PluginHub._retained_results) == (2 if large else 1)
             requests[1].resume.set()
             await tasks[1]
             assert PluginHub._retained_results == {}
@@ -976,3 +994,68 @@ async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(peer, m
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_discounted_fanouts_keep_concurrent_principal_budgets_separate(peer, monkeypatch):
+    registry = PluginHub._registry
+    await registry.register("second-session", "Owned", "ownedhash", "test", user_id="second-user")
+    second = Peer(
+        "second-session",
+        "second-generation",
+        "second-user",
+        plugin_lease=(await peer.credential_service.validate("second-plugin-key")).lease,
+        requester_lease=(await peer.credential_service.validate("second-requester-key")).lease,
+    )
+    PluginHub._connections["second-session"] = second
+    values = [
+        {
+            "success": True,
+            "data": {"owner": user, "rows": [{"label": "payload-" * 128} for _ in range(256)]},
+        }
+        for user in ("owned-user", "second-user")
+    ]
+    charges = [response_size(value) for value in values]
+    monkeypatch.setattr(PluginHub, "MAX_RETAINED_RESULT_BYTES_PER_USER", int(max(charges) * 2.8))
+    owners = [ResponseOwner() for _ in range(4)]
+
+    async def fetch(wire, owner):
+        token = response_owner.set(owner)
+        try:
+            return await wire.request(
+                PluginHub.send_command_for_instance,
+                "ownedhash",
+                "get_editor_state",
+                {},
+                user_id=wire.state.user_id,
+                editor_state_read_mode="ordinary",
+                retry_on_reload=False,
+            )
+        finally:
+            response_owner.reset(token)
+
+    tasks = [
+        asyncio.create_task(fetch(wire, owner))
+        for wire, owner in zip((peer, peer, second, second), owners)
+    ]
+    try:
+        commands = [await wire.next_command() for wire in (peer, second)]
+        await yield_callers()
+        for wire, command, value in zip((peer, second), commands, values):
+            await wire.reply(command, value)
+        outputs = await asyncio.gather(*tasks)
+        assert outputs == [values[0], values[0], values[1], values[1]]
+        assert peer.counts() == second.counts() == {"get_editor_state": 1}
+        for user, charge in zip(("owned-user", "second-user"), charges):
+            assert charge < PluginHub._retained_results.user_bytes(user) < 3 * charge
+        owners[0].release()
+        owners[1].release()
+        assert PluginHub._retained_results.user_bytes("owned-user") == 0
+        assert PluginHub._retained_results.user_bytes("second-user") > charges[1]
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for owner in owners:
+            owner.release()
+    assert PluginHub._retained_results == {}
