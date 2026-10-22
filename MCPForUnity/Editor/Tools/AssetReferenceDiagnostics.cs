@@ -94,12 +94,14 @@ namespace MCPForUnity.Editor.Tools
         private sealed class Budget
         {
             internal int Maximum;
+            internal CancellationToken Token;
             internal int Used;
             internal bool Complete = true;
             internal string StopReason;
 
             internal bool Step()
             {
+                Token.ThrowIfCancellationRequested();
                 if (Used >= Maximum)
                 {
                     Stop("maxWork");
@@ -162,8 +164,8 @@ namespace MCPForUnity.Editor.Tools
             string destination = operation == "preview_move" ? ReferenceDiagnosticUtility.Path(parameters, "destination") : null;
             if (destination == null && parameters["destination"] != null)
                 throw new ArgumentException("Only move/preview_move accepts destination.");
-            int maxAssets = ReferenceDiagnosticUtility.Integer(parameters, "maxAssets", 1024, 250000);
-            var budget = new Budget { Maximum = ReferenceDiagnosticUtility.Integer(parameters, "maxWork", 10000, 4000000) };
+            int maxAssets = ReferenceDiagnosticUtility.Integer(parameters, "maxAssets", 1024, ReferenceAssetInventory.MaximumAssets);
+            var budget = new Budget { Maximum = ReferenceDiagnosticUtility.Integer(parameters, "maxWork", 10000, 4000000), Token = cancellationToken };
             int size = ReferenceDiagnosticUtility.Integer(parameters, "pageSize", 50, 100);
             int page = ReferenceDiagnosticUtility.Integer(parameters, "pageNumber", 1, int.MaxValue);
             bool recursive = ReferenceDiagnosticUtility.Boolean(parameters, "recursive");
@@ -237,26 +239,22 @@ namespace MCPForUnity.Editor.Tools
                 var results = new List<Node>();
                 int inspected = 0;
                 int excluded = 0;
+                int inventoryGuidCount = 0;
                 if (reverse)
                 {
-                    // Unity's enumeration is indivisible; refuse a large native result before processing it.
+                    // Unity returns the complete recursive GUID array in one native call.
+                    // A post-allocation GUID ceiling did not bound that native allocation.
+                    cancellationToken.ThrowIfCancellationRequested();
                     string[] guids = AssetDatabase.FindAssets("", new[] { root });
-                    if (guids.Length > 65536)
-                        throw new ArgumentException("Native scope enumeration exceeds 65536 GUIDs; narrow scanRoot.");
-                    var candidates = new SortedSet<string>(StringComparer.Ordinal);
-                    foreach (string guid in guids)
-                    {
-                        string candidate = AssetDatabase.GUIDToAssetPath(guid);
-                        if (!Eligible(candidate))
-                        {
-                            excluded++;
-                            continue;
-                        }
-                        if (!AssetDatabase.IsValidFolder(candidate))
-                            candidates.Add(candidate);
-                        if (candidates.Count > maxAssets)
-                            throw new ArgumentException("Scope exceeds maxAssets; narrow scanRoot or increase maxAssets (maximum 4096).");
-                    }
+                    inventoryGuidCount = guids.Length;
+                    var candidates = ReferenceAssetInventory.Collect(
+                        guids,
+                        AssetDatabase.GUIDToAssetPath,
+                        AssetDatabase.IsValidFolder,
+                        maxAssets,
+                        cancellationToken,
+                        out excluded
+                    );
                     var incoming = new Dictionary<string, List<string>>(StringComparer.Ordinal);
                     foreach (string candidate in candidates)
                     {
@@ -355,6 +353,7 @@ namespace MCPForUnity.Editor.Tools
                         }
                     }
                 }
+                cancellationToken.ThrowIfCancellationRequested();
                 observation.Add(budget.Complete.ToString());
                 observation.Add(budget.StopReason);
                 string revision = observation.Finish();
@@ -386,6 +385,9 @@ namespace MCPForUnity.Editor.Tools
                     ["workUsed"] = budget.Used,
                     ["maxWork"] = budget.Maximum,
                     ["maxAssets"] = maxAssets,
+                    ["maximumMaxAssets"] = ReferenceAssetInventory.MaximumAssets,
+                    ["maxAssetsAppliesTo"] = reverse ? "distinct_eligible_candidate_files" : "visited_assets_including_source",
+                    ["inventoryGuidCount"] = reverse ? new JValue(inventoryGuidCount) : JValue.CreateNull(),
                     ["inspectedAssets"] = inspected,
                     ["excludedEntries"] = excluded,
                     ["pageSize"] = size,
@@ -396,6 +398,7 @@ namespace MCPForUnity.Editor.Tools
                         "Imported AssetDatabase edges for Assets files only; reverse candidates are limited to scanRoot. Packages and built-ins are omitted. No comprehensive arbitrary string/custom-loader/Addressables discovery. Unsaved/unimported graph changes are not covered. Native FindAssets/GetDependencies calls are indivisible. Rechecks are observations, not an atomic filesystem transaction.",
                 };
                 data["nextPageNumber"] = offset + entries.Count < results.Count && page < int.MaxValue ? new JValue(page + 1) : JValue.CreateNull();
+                cancellationToken.ThrowIfCancellationRequested();
                 if (capture)
                     ReferenceSnapshotStore.CaptureAssets(data, results.Select(node => Row(node, reverse)), results.Count, snapshotScope, cancellationToken);
                 ReferenceDiagnosticUtility.PageBytes(data);
