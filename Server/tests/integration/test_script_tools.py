@@ -151,9 +151,10 @@ async def test_manage_asset_prefab_modify_request(monkeypatch):
     manage_asset = tools["manage_asset"]
     captured = {}
 
-    async def fake_async(cmd, params, loop=None):
+    async def fake_async(cmd, params, loop=None, *, retry_on_reload=True):
         captured["cmd"] = cmd
         captured["params"] = params
+        captured["retry_on_reload"] = retry_on_reload
         return {"success": True}
 
     # Patch the async function in the tools module
@@ -174,4 +175,5 @@ async def test_manage_asset_prefab_modify_request(monkeypatch):
     assert captured["params"]["action"] == "modify"
     assert captured["params"]["path"] == "Assets/Prefabs/Player.prefab"
     assert captured["params"]["properties"] == {"hp": 100}
+    assert captured["retry_on_reload"] is False
     assert resp["success"] is True

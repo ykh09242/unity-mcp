@@ -27,12 +27,13 @@ class GraphWorkspace:
     def __init__(self, store: GraphStore):
         self.store = store
         self._queries = None
+        self._mutations = None
         with store._connect(write=True) as connection:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2, 3, 4, 5):
+            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -79,6 +80,19 @@ class GraphWorkspace:
                     "UPDATE graph_documents SET compilation_signature=json_extract(payload,'$.build.binding_revision') WHERE format='csharp'"
                 )
                 connection.execute("UPDATE graph_workspace SET version=5")
+            if version is None or version[0] < 6:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS graph_collected_versions(guid TEXT PRIMARY KEY,payload TEXT NOT NULL)"
+                )
+                connection.execute("UPDATE graph_workspace SET version=6")
+
+    def mutations(self):
+        """Receipt state belongs to the same user/Editor database as evidence."""
+        if self._mutations is None:
+            from services.reference_graph.mutations import MutationReceipts
+
+            self._mutations = MutationReceipts(self)
+        return self._mutations
 
     def queries(self):
         """Lazily create scoped exploration state; the handle owns no connection."""
@@ -393,6 +407,7 @@ class GraphWorkspace:
         connection.execute("DELETE FROM graph_addressables WHERE owner=?", (owner,))
         if owner.startswith("asset:"):
             connection.execute("DELETE FROM graph_asset_failures WHERE guid=?", (owner[6:],))
+            connection.execute("DELETE FROM graph_collected_versions WHERE guid=?", (owner[6:],))
         connection.execute(
             "UPDATE observations SET generation=generation+1,state='deleted',error=NULL WHERE owner=? AND provider<>'manual'",
             (owner,),
@@ -472,8 +487,13 @@ class GraphWorkspace:
                 )
             ]
 
-    def clean_asset(self, worker: str, guid: str) -> None:
+    def clean_asset(self, worker: str, guid: str, *, version: dict | None = None) -> None:
         with self._write(worker) as connection:
+            if version is not None:
+                connection.execute(
+                    "INSERT OR REPLACE INTO graph_collected_versions VALUES (?,?)",
+                    (guid, _json(version)),
+                )
             connection.execute("UPDATE graph_assets SET dirty=0 WHERE guid=?", (guid,))
             if connection.execute(
                 "DELETE FROM graph_asset_failures WHERE guid=?", (guid,)

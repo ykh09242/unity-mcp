@@ -335,7 +335,12 @@ class Reconciler:
                     self.workspace.publish, self.worker, owner, "unity", generation, result
                 )
                 await self._source(asset)
-                await drained_thread(self.workspace.clean_asset, self.worker, guid)
+                await drained_thread(
+                    self.workspace.clean_asset,
+                    self.worker,
+                    guid,
+                    version={"stamp": page.get("file_stamp"), "dependency": fingerprint},
+                )
                 return
 
     async def _source(self, asset: dict) -> None:

@@ -51,6 +51,45 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void MutationProbeObservesUnimportedBytesWithoutSchedulingImport()
+        {
+            string path = CreateText("receipt.txt", "before");
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            JObject original = (JObject)Call("probe", "paths", new[] { path })["targets"][0];
+            JObject dependencies = Call("dependencies", "guid", guid);
+            Assert.AreEqual(original["stamp"], dependencies["file_stamp"]);
+            Assert.AreEqual(original["dependency"], dependencies["fingerprint"]);
+            JObject checkpoint = Call("status");
+            File.WriteAllText(path, "changed before a deferred import");
+            JObject changed = (JObject)Call("probe", "paths", new[] { path })["targets"][0];
+            Assert.AreNotEqual(original["stamp"], changed["stamp"]);
+            Assert.AreEqual(checkpoint["revision"], Call("status")["revision"], "A read-only probe must not cause an import.");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            JObject events = Call("changes", "epoch", checkpoint.Value<string>("epoch"), "after", checkpoint.Value<long>("revision"));
+            Assert.IsTrue(events["changes"].Any(row => row.Value<string>("path") == path));
+            JObject noop = Call("probe", "paths", new[] { path });
+            Assert.AreEqual(noop["targets"][0]["stamp"], events["changes"].Last(row => row.Value<string>("path") == path)["file_stamp"]);
+            Assert.IsTrue(JToken.DeepEquals(noop, Call("probe", "paths", new[] { path })));
+        }
+
+        [Test]
+        public void MutationProbeTracksCreateMoveDeleteAndFolderWithoutLoadingAssets()
+        {
+            string path = root + "/created.txt";
+            Assert.IsFalse(Call("probe", "paths", new[] { path })["targets"][0].Value<bool>("present"));
+            CreateText("created.txt", "owned");
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            string moved = root + "/moved.txt";
+            Assert.AreEqual("", AssetDatabase.MoveAsset(path, moved));
+            JObject page = Call("probe", "paths", new[] { path, moved, root });
+            Assert.IsFalse(page["targets"][0].Value<bool>("present"));
+            Assert.AreEqual(guid, page["targets"][1].Value<string>("guid"));
+            Assert.IsTrue(page["targets"][2].Value<bool>("folder"));
+            AssetDatabase.DeleteAsset(moved);
+            Assert.IsFalse(Call("probe", "paths", new[] { moved })["targets"][0].Value<bool>("present"));
+        }
+
+        [Test]
         public void AssetIdentityReportsMainTypeWithoutClaimingSubassetCompleteness()
         {
             string path = CreateText("identity.txt", "owned");
@@ -58,6 +97,43 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(typeof(TextAsset).FullName, row.Value<string>("main_type"));
             Assert.AreEqual("main_type_only", row.Value<string>("identity_coverage"));
             Assert.IsNull(row["subassets"]);
+        }
+
+        [Test]
+        public void CopyDestinationPreparationIsReadOnlyAndExplicitCopyDoesNotOverwrite()
+        {
+            string source = CreateText("copy.txt", "original");
+            JObject before = Call("status");
+            JObject prepared = Call("copy_destination", "path", source);
+            string destination = prepared.Value<string>("path");
+            Assert.AreNotEqual(source, destination);
+            Assert.IsFalse(File.Exists(destination));
+            Assert.AreEqual(before["revision"], prepared["revision"]);
+            var copied = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "duplicate",
+                        ["path"] = source,
+                        ["destination"] = destination,
+                    }
+                )
+            );
+            Assert.IsTrue(copied.Value<bool>("success"), copied.ToString());
+            Assert.AreEqual(destination, copied["data"].Value<string>("path"));
+            File.WriteAllText(destination, "concurrent");
+            var collision = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "duplicate",
+                        ["path"] = source,
+                        ["destination"] = destination,
+                    }
+                )
+            );
+            Assert.IsFalse(collision.Value<bool>("success"));
+            Assert.AreEqual("concurrent", File.ReadAllText(destination));
         }
 
         [Test]
