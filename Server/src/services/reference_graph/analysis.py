@@ -385,9 +385,9 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
             tokens[i].text
             for i in range(method[3] + 1, min(method[4], len(tokens) - 1))
             if tokens[i].kind == "id"
-            and tokens[i - 1].kind == "id"
+            and (tokens[i - 1].kind == "id" or tokens[i - 1].text in (">", "]", "?", "*", ",", ")"))
             and tokens[i - 1].text not in ("return", "throw", "await", "new")
-            and tokens[i + 1].text in ("=", ";", ",", ")")
+            and tokens[i + 1].text in ("=", ";", ",", ")", "=>")
         )
         tainted = set()
         for i in range(method[3] + 1, min(method[4], len(tokens) - 2)):
@@ -400,12 +400,19 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
             ):
                 tainted.add(tokens[i].text)
         local_names[method[0]] |= frozenset(tainted)
+        for i in range(method[3] + 1, min(method[4], len(tokens) - 1)):
+            if tokens[i].text == "=" and tokens[i - 1].text == ")" and tokens[i + 1].text != "=":
+                start = pairs.get(i - 1, i)
+                tainted.update(
+                    token.text for token in tokens[start + 1 : i - 1] if token.text in method[2]
+                )
+        local_names[method[0]] |= frozenset(tainted)
     fields = defaultdict(set)
     for i in range(1, len(tokens) - 1):
         if (
             not inside_method[i]
             and tokens[i].kind == "id"
-            and tokens[i - 1].kind == "id"
+            and (tokens[i - 1].kind == "id" or tokens[i - 1].text in (">", "]", "?", "*", ",", ")"))
             and tokens[i - 1].text
             not in (
                 "return",
@@ -418,7 +425,7 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
                 "struct",
                 "record",
             )
-            and tokens[i + 1].text in ("=", ";", "{")
+            and tokens[i + 1].text in ("=", ";", "{", "=>", ",")
             and not (i >= 2 and tokens[i - 2].text == "const")
         ):
             fields[scopes[i]].add(tokens[i].text)

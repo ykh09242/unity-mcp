@@ -237,6 +237,10 @@ def test_shadowed_receivers_never_resolve_to_unity_or_static_wrapper_types():
         'class Use { object Resources; void Go() { Resources.Load("UI/Menu"); } }',
         'class Use { void Go() { var Resources = Get(); Resources.Load("UI/Menu"); } }',
         'class Use { object Resources { get; set; } void Go() { Resources.Load("UI/Menu"); } }',
+        'class Use { object Resources => Get(); void Go() { Resources.Load("UI/Menu"); } }',
+        'class Use { Custom<int> Resources = Get(); void Go() { Resources.Load("UI/Menu"); } }',
+        'class Use { void Go() { Custom<int> Resources = Get(); Resources.Load("UI/Menu"); } }',
+        'class Use { Custom first, Resources; void Go() { Resources.Load("UI/Menu"); } }',
     ]
     for source in sources:
         result = analyze("using UnityEngine; " + source)
@@ -265,3 +269,14 @@ def test_added_shadow_type_or_ambiguous_wrapper_invalidates_existing_callers():
     ambiguous = AnalysisIndex([first, second, use], catalog())
     assert not ambiguous.analyze("use").edges
     assert "use" in ambiguous.affected({"second"})
+
+
+def test_deconstruction_and_ref_mutation_taint_formal_arguments():
+    for assignment in ('(key, _) = ("elsewhere", 1);', "Rewrite(ref key);", 'key += "Changed";'):
+        result = analyze(
+            "using UnityEngine; class Loader { static object Get(string key) { "
+            + assignment
+            + ' return Resources.Load(key); } void Go() { Get("UI/Menu"); } }'
+        )
+        assert not result.edges, assignment
+        assert any(item["reason"] == "dynamic_key" for item in result.unresolved)
