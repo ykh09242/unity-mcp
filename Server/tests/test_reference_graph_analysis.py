@@ -417,6 +417,6 @@ custom: {{m_AssetGUID: {"b" * 32}}}
     assert result.edges[0].kind == "serialized_guid_field"
 
 
-def test_malformed_yaml_remains_an_explicit_collection_failure():
+def test_unscannable_yaml_remains_an_explicit_collection_failure():
     with pytest.raises(ValueError, match="YAML"):
         serialized_references('notes: "unterminated', catalog())

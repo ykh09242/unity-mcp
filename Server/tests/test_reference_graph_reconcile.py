@@ -9,7 +9,7 @@ import threading
 import pytest
 
 from services.reference_graph.reconcile import Reconciler, drained_thread
-from services.reference_graph.store import GraphScope, GraphStore, RevisionConflict
+from services.reference_graph.store import GraphScope, GraphStore, RevisionConflict, _hash
 from services.reference_graph.workspace import GraphWorkspace
 
 
@@ -556,6 +556,33 @@ async def test_analysis_upgrade_reparses_old_facts_once_without_native_import(se
     editor.calls.clear()
     assert await engine.reconcile()
     assert not any(action == "source" for action, _ in editor.calls)
+
+
+@pytest.mark.asyncio
+async def test_analysis_upgrade_rechecks_unchanged_external_keys(setup, tmp_path):
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    root = tmp_path / "settings"
+    root.mkdir()
+    (root / "a.json").write_text('{"prefab":"one"}', encoding="utf-8")
+    workspace.set_source(
+        "external:settings", {"root": str(root), "include": ["*.json"]}, expected_version=0
+    )
+    assert await engine.reconcile()
+    previous_key = _hash(
+        (1, store.rules_state()["revision"], workspace.state("catalog_revision", 0))
+    )
+    with store._connect(write=True) as connection:
+        # Simulate a ready v1 scan that could not resolve the lower-case key.
+        connection.execute("DELETE FROM edges WHERE provider='external:settings'")
+        connection.execute("UPDATE graph_external SET analysis_key=?", (previous_key,))
+        workspace._set(connection, "analysis_version", 1)
+        store._bump(connection)
+    assert not store.query(target, direction="incoming")["edges"]
+    assert await engine.reconcile()
+    assert len(store.query(target, direction="incoming")["edges"]) == 1
 
 
 @pytest.mark.asyncio

@@ -449,7 +449,7 @@ class Reconciler:
         adapter = ExternalSource(source["config"])
         provider, seen = source["provider"], uuid.uuid4().hex
         previous = self.workspace.external_inputs(provider)
-        analysis_key = _hash((source["version"], rules, catalog_revision))
+        analysis_key = _hash((ANALYSIS_VERSION, source["version"], rules, catalog_revision))
         failures = 0
         for path in adapter.files():
             self._check_source(source)

@@ -895,7 +895,7 @@ class AnalysisIndex:
 
 
 def serialized_references(source: str, catalog: Catalog) -> Analysis:
-    result = Analysis(coverage="serialized_guid_fields_without_type_evidence")
+    result = Analysis(coverage="lexical_serialized_guid_fields_untyped")
     window = deque(maxlen=4)
     # Scan tokens only: never construct tagged objects or expand YAML aliases.
     # Scalar contents, comments and quoted text cannot masquerade as mapping keys.

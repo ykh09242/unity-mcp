@@ -15,6 +15,8 @@ Imports and aliases belong to their lexical namespace occurrence, including nest
 reopened and file-scoped namespaces. Constant expressions retain that context too.
 Analysis version changes schedule a one-time reparse of derived source facts while
 preserving authored declarations and the last evidence as stale until replacement.
+External analysis identity includes that version, so unchanged JSON/CSV is also
+reanalyzed when key-resolution semantics change.
 
 The index recognizes `UnityEngine.Resources.Load`, `LoadAsync`, `LoadAll` and
 `UnityEngine.AddressableAssets.Addressables.LoadAssetAsync`, `LoadAssetsAsync`,
@@ -57,7 +59,11 @@ scalars and multiline quoted strings cannot introduce fields. A real mapping
 field named `m_AssetGUID` produces `serialized_guid_field` evidence, including
 dangling targets, with `possible` confidence: a custom class may use that field
 name too. Without serialized field/type metadata it is not an observed
-AssetReference. Invalid YAML remains a collection error with prior evidence stale.
+AssetReference. Coverage is explicitly lexical and untyped. Scanner-detected
+errors (such as unterminated strings) remain collection errors with prior evidence
+stale; token extraction does not certify complete YAML grammar validity. Unity's
+importer remains responsible for document validity, including its special repeated
+document tags and stripped-object headers.
 Binary serialized files retain the collector's explicit unavailable coverage.
 
 The loader registry follows Unity's [Resources.Load path rules](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Resources.Load.html)
