@@ -391,6 +391,117 @@ def setup(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_exploration_actions_through_tool_keep_scope_and_authored_evidence(
+    setup, monkeypatch
+):
+    service, _, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    await service.execute(
+        ctx,
+        "declare",
+        {
+            "id": "manual",
+            "owner": "source",
+            "edge": {"target": "target", "kind": "declared"},
+            "expected_version": 0,
+        },
+    )
+
+    async def call(action, **options):
+        response = await manage_reference_graph(ctx, action, options)
+        assert response["success"], response
+        return response["data"]
+
+    impact = await call("impact", node="target")
+    edge = impact["edges"][0]
+    route = await call("path", node="target", target="source", limit=1)
+    assert route["path_found"] and route["edges"][0]["id"] == edge["id"]
+    explained = await call("explain", id=edge["id"])
+    assert explained["edges"][0]["provider"] == "manual"
+    before = (await call("snapshot", name="before"))["snapshot"]["id"]
+    await service.execute(
+        ctx,
+        "declare",
+        {
+            "id": "manual",
+            "owner": "source",
+            "edge": {"target": "updated", "kind": "declared"},
+            "expected_version": 1,
+        },
+    )
+    after = (await call("snapshot", name="after"))["snapshot"]["id"]
+    delta = await call("diff", before=before, after=after)
+    assert delta["historical"] and not delta["graph_status"]["current"]
+    assert delta["changes"][0]["change"] == "modified"
+    assert (await call("release_query", id=impact["query_id"]))["released"]
+    assert (await call("delete_snapshot", id=before))["deleted"]
+    ctx.instance = "another"
+    assert not (await manage_reference_graph(ctx, "diff", {"before": before, "after": after}))[
+        "success"
+    ]
+    for action in (
+        "impact",
+        "path",
+        "explain",
+        "snapshot",
+        "diff",
+        "release_query",
+        "delete_snapshot",
+    ):
+        assert required_permissions("manage_reference_graph", {"action": action}) == {
+            Permission.READ
+        }
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("empty", [False, True])
+async def test_snapshot_diff_rechecks_operator_grants_even_without_changed_edges(
+    setup, tmp_path, monkeypatch, empty
+):
+    service, sender, ctx = setup
+    entry, target = await external_fixture(
+        service, sender, ctx, tmp_path / "settings", monkeypatch, files=0 if empty else 1
+    )
+    before = (await service.execute(ctx, "snapshot", {}))["data"]["snapshot"]["id"]
+    after = (await service.execute(ctx, "snapshot", {}))["data"]["snapshot"]["id"]
+    calls = 0
+
+    def revoked(*_):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise PermissionError("operator revoked")
+
+    monkeypatch.setattr(service, "_operator_grant", revoked)
+    with pytest.raises(PermissionError, match="revoked"):
+        await service.execute(ctx, "diff", {"before": before, "after": after})
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_historical_paths_are_reauthorized_without_requiring_old_content(
+    setup, tmp_path, monkeypatch
+):
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, _ = await external_fixture(service, sender, ctx, root, monkeypatch)
+    before = (await service.execute(ctx, "snapshot", {}))["data"]["snapshot"]["id"]
+    path = root / "0.json"
+    path.write_text('{"prefab":"Elsewhere"}', encoding="utf-8")
+    assert await entry.engine.reconcile()
+    after = (await service.execute(ctx, "snapshot", {}))["data"]["snapshot"]["id"]
+    delta = (await service.execute(ctx, "diff", {"before": before, "after": after}))["data"]
+    assert delta["historical"] and delta["changes"]
+    monkeypatch.setattr(
+        ExternalSource, "stamp", lambda *_: (_ for _ in ()).throw(PermissionError("file revoked"))
+    )
+    with pytest.raises(PermissionError, match="file revoked"):
+        await service.execute(ctx, "diff", {"before": before, "after": after})
+    await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_requires_selected_instance_and_rejects_supplied_identity_before_io(setup):
     service, sender, ctx = setup
     ctx.instance = None

@@ -1,0 +1,206 @@
+"""Disk-backed exploration keeps exact revision and scope boundaries."""
+
+import pytest
+
+from services.reference_graph.queries import GraphQueries
+from services.reference_graph.store import (
+    Edge,
+    GraphScope,
+    GraphStore,
+    Observation,
+    RevisionConflict,
+)
+
+
+@pytest.fixture
+def graph(tmp_path):
+    store = GraphStore.open(tmp_path, GraphScope("user", "editor", "project"))
+    return store, GraphQueries(store)
+
+
+def publish(store, owner, targets):
+    generation = store.observe(
+        owner, "code", str(store.status()["revision"]), path=f"Assets/{owner}.cs"
+    )
+    store.publish(
+        owner,
+        "code",
+        generation,
+        [
+            Edge(target, "resources_load", target, 3, "possible", "call:Resources.Load")
+            for target in targets
+        ],
+    )
+
+
+def snapshot(queries, name="test", limit=2):
+    cursor = None
+    while True:
+        result = queries.snapshot(name=name, limit=limit, cursor=cursor)
+        cursor = result["next_cursor"]
+        if not cursor:
+            return result["snapshot"]["id"]
+
+
+def test_impact_preserves_cycles_multiple_routes_and_replayable_pages(graph):
+    store, queries = graph
+    publish(store, "a", ["b", "c"])
+    publish(store, "b", ["c"])
+    publish(store, "c", ["a"])
+    first = queries.impact("a", direction="outgoing", limit=1)
+    cursor = first["next_cursor"]
+    second = queries.impact("a", direction="outgoing", limit=1, cursor=cursor)
+    assert queries.impact("a", direction="outgoing", limit=1, cursor=cursor) == second
+    rows = first["edges"] + second["edges"]
+    cursor = second["next_cursor"]
+    while cursor:
+        page = queries.impact("a", direction="outgoing", limit=1, cursor=cursor)
+        rows.extend(page["edges"])
+        cursor = page["next_cursor"]
+    assert {(row["owner"], row["target"]) for row in rows} == {
+        ("a", "b"),
+        ("a", "c"),
+        ("b", "c"),
+        ("c", "a"),
+    }
+    assert len(rows) == 4
+    assert queries.release(first["query_id"])
+
+
+def test_large_fanout_uses_continuations_and_no_total_result_cap(graph):
+    store, queries = graph
+    publish(store, "root", [f"child{i}" for i in range(1200)])
+    cursor, total, pages = None, 0, 0
+    while True:
+        result = queries.impact("root", direction="outgoing", limit=73, cursor=cursor)
+        assert len(result["edges"]) <= 73
+        total += len(result["edges"])
+        pages += 1
+        cursor = result["next_cursor"]
+        if not cursor:
+            break
+    assert total == 1200 and pages > 16
+
+
+def test_cursor_is_bound_to_query_revision_and_graph_scope(graph, tmp_path):
+    store, queries = graph
+    publish(store, "root", ["a", "b"])
+    cursor = queries.impact("root", direction="outgoing", limit=1)["next_cursor"]
+    other = GraphQueries(GraphStore.open(tmp_path, GraphScope("other", "editor", "project")))
+    with pytest.raises(ValueError):
+        other.impact("root", direction="outgoing", cursor=cursor)
+    with pytest.raises(ValueError):
+        queries.impact("different", direction="outgoing", cursor=cursor)
+    publish(store, "x", ["y"])
+    with pytest.raises(RevisionConflict):
+        queries.impact("root", direction="outgoing", limit=1, cursor=cursor)
+
+
+def test_explain_preserves_evidence_location_and_authored_separation(graph):
+    store, queries = graph
+    publish(store, "owner", ["target"])
+    store.put_declaration("manual", "owner", Edge("target", "declared"), expected_version=0)
+    rows = store.query("owner")["edges"]
+    for row in rows:
+        result = queries.explain(row["id"])["edges"][0]
+        assert result["provider"] == row["provider"]
+        assert result["source_path"] == "Assets/owner.cs"
+        assert result["confidence"] == row["confidence"]
+    assert queries.explain("missing")["edges"] == []
+
+
+def test_snapshot_diff_is_paged_stable_and_keeps_manual_ids(graph):
+    store, queries = graph
+    publish(store, "owner", ["one"])
+    store.put_declaration("manual", "owner", Edge("before", "declared"), expected_version=0)
+    before = snapshot(queries, "before")
+    publish(store, "owner", ["two"])
+    store.put_declaration("manual", "owner", Edge("after", "declared"), expected_version=1)
+    after = snapshot(queries, "after")
+    rows, cursor = [], None
+    while True:
+        page = queries.diff(before, after, limit=1, cursor=cursor)
+        rows.extend(page["changes"])
+        cursor = page["next_cursor"]
+        if not cursor:
+            break
+    assert sorted(row["change"] for row in rows) == ["added", "modified", "removed"]
+    modified = next(row for row in rows if row["change"] == "modified")
+    assert modified["before"]["provider"] == modified["after"]["provider"] == "manual"
+    assert queries.delete_snapshot(before)
+    with pytest.raises(ValueError):
+        queries.diff(before, after)
+
+
+def test_snapshot_continuation_survives_restart_but_not_source_changes(graph):
+    store, queries = graph
+    publish(store, "owner", ["one", "two", "three"])
+    first = queries.snapshot(name="test", limit=1)
+    queries = GraphQueries(GraphStore(store.path, store.scope))
+    assert (
+        queries.snapshot(name="test", limit=1, cursor=first["next_cursor"])["snapshot"]["id"]
+        == first["snapshot"]["id"]
+    )
+    publish(store, "other", ["next"])
+    with pytest.raises(RevisionConflict):
+        queries.snapshot(name="test", limit=1, cursor=first["next_cursor"])
+
+
+def test_historical_source_grant_versions_cannot_be_reused_after_reconfiguration(graph):
+    store, queries = graph
+    store.set_source(
+        "external:fixture", {"root": "/synthetic", "include": ["*.json"]}, expected_version=0
+    )
+    generation = store.observe_batch(
+        [Observation("file", "external:fixture", "one", path="data.json", source_version=1)]
+    )[0]
+    store.publish("file", "external:fixture", generation, [Edge("target", "external")])
+    before = snapshot(queries)
+    store.set_source("external:fixture", {}, expected_version=1, enabled=False)
+    after = snapshot(queries)
+    with pytest.raises(RevisionConflict):
+        queries.diff(before, after)
+
+
+def test_unchanged_diff_pages_bound_comparison_work_and_release_finished_traversal(graph):
+    store, queries = graph
+    publish(store, "root", [f"child{i}" for i in range(1200)])
+    before = snapshot(queries, limit=1000)
+    after = snapshot(queries, limit=1000)
+    first = queries.diff(before, after, limit=10)
+    assert first["changes"] == []
+    assert first["compared"] == 10 and first["next_cursor"]
+    following = queries.diff(before, after, limit=10, cursor=first["next_cursor"])
+    assert following["compared"] == 10 and following["next_cursor"] != first["next_cursor"]
+    result = queries.impact("absent")
+    with store._connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM graph_query_nodes WHERE job=?", (result["query_id"],)
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_shortest_path_is_paged_and_distinguishes_unreachable_from_pending(graph):
+    store, queries = graph
+    publish(store, "a", ["long", "short"])
+    publish(store, "long", ["longer"])
+    publish(store, "longer", ["destination"])
+    publish(store, "short", ["destination"])
+    cursor, route = None, []
+    while True:
+        page = queries.path("a", "destination", direction="outgoing", limit=1, cursor=cursor)
+        route.extend(page["edges"])
+        cursor = page["next_cursor"]
+        if not cursor:
+            break
+    assert page["path_found"] is True
+    assert [(edge["owner"], edge["target"]) for edge in reversed(route)] == [
+        ("a", "short"),
+        ("short", "destination"),
+    ]
+    assert queries.path("a", "a")["path_found"] is True
+    assert queries.path("missing", "a")["path_found"] is False
+    incoming = queries.path("destination", "a", limit=100)
+    assert incoming["path_found"] and len(incoming["edges"]) == 2

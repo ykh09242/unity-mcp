@@ -400,9 +400,23 @@ UnityEngine.Resources.Load("Two");
     engine = Reconciler(workspace, collect, allowed)
     assert await engine.reconcile()
     assert {edge["target"] for edge in store.query(caller)["edges"]} == {one}
+    evidence = next(edge for edge in store.query(caller)["edges"] if edge["provider"] == "code")
+    assert evidence["provenance"]["build"]["revision"] == "a"
+    assert evidence["provenance"]["analysis_fingerprint"]
+    saved = workspace.queries().snapshot(limit=1000)["snapshot"]["id"]
     build.update(defines=[], revision="b")
     assert await engine.reconcile()
     assert {edge["target"] for edge in store.query(caller)["edges"]} == {two}
+    evidence = next(edge for edge in store.query(caller)["edges"] if edge["provider"] == "code")
+    assert evidence["provenance"]["build"]["revision"] == "b"
+    changed = workspace.queries().snapshot(limit=1000)["snapshot"]["id"]
+    delta = workspace.queries().diff(saved, changed)
+    previous = next(
+        item["before"]
+        for item in delta["changes"]
+        if item["before"] and item["before"]["provider"] == "code"
+    )
+    assert previous["provenance"]["build"]["revision"] == "a"
     editor.calls.clear()
     assert await engine.reconcile()
     assert not any(action == "source" for action, _ in editor.calls)

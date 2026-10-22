@@ -604,12 +604,49 @@ class ReferenceGraphService:
         if workspace.store.status()["revision"] != revision:
             raise RevisionConflict("Graph changed before checked delivery; restart the page")
 
+    def _validate_exploration(self, workspace: GraphWorkspace, result: dict) -> bool:
+        """Reauthorize current and historical evidence without retaining grants."""
+        wanted = result.get("sources", {})
+        sources = {source["provider"]: source for source in workspace.store.sources()}
+        adapters = {}
+        for provider, version in wanted.items():
+            source = sources.get(provider)
+            if source is None or not source["enabled"] or source["version"] != version:
+                raise RevisionConflict("Exploration source grant changed; start a new query")
+            adapters[provider] = self._grant(workspace.store.scope, source["config"])
+        if result.get("historical"):
+            paths = {
+                (edge["provider"], edge["source_path"])
+                for change in result["changes"]
+                for edge in (change["before"], change["after"])
+                if edge is not None and edge["provider"].startswith("external:")
+            }
+            for provider, path in paths:
+                # The captured bytes may differ today. Require access to the
+                # original path, never assert historical evidence is current.
+                adapters[provider].stamp(path)
+            changed = False
+        else:
+            changed = self._validate_external(workspace, result)
+        for provider in adapters:
+            self._operator_grant(workspace.store.scope, sources[provider]["config"])
+        if workspace.store.status()["revision"] != result["revision"]:
+            raise RevisionConflict("Graph changed before exploration delivery; restart the page")
+        return changed
+
     async def execute(self, ctx, action: str, options: dict) -> dict:
         fields = {
             "status": set(),
             "sync": {"force"},
             "query": {"node", "direction", "limit", "cursor", "consistency"},
             "diagnostics": {"node", "offset", "limit", "revision", "consistency"},
+            "explain": {"id", "consistency"},
+            "impact": {"node", "direction", "limit", "cursor", "max_depth", "consistency"},
+            "path": {"node", "target", "direction", "limit", "cursor", "consistency"},
+            "snapshot": {"name", "limit", "cursor", "consistency"},
+            "diff": {"before", "after", "limit", "cursor"},
+            "release_query": {"id"},
+            "delete_snapshot": {"id"},
             "declarations": set(),
             "declare": {"id", "owner", "edge", "expected_version"},
             "remove_declaration": {"id", "expected_version"},
@@ -659,7 +696,7 @@ class ReferenceGraphService:
                 raise ValueError("Read current state and supply its nonnegative expected_version")
         if "id" in fields and (not isinstance(options.get("id"), str) or not options["id"]):
             raise ValueError("An explicit stable id is required")
-        if action in {"query", "diagnostics"} and (
+        if action in {"query", "diagnostics", "impact", "path"} and (
             not isinstance(options.get("node"), str) or not options["node"]
         ):
             raise ValueError("A node id is required, for example asset:<Unity GUID>")
@@ -702,6 +739,27 @@ class ReferenceGraphService:
             external_changed = await drained_thread(
                 self._validate_external, workspace, data, options["node"]
             )
+        elif action in {
+            "explain",
+            "impact",
+            "path",
+            "snapshot",
+            "diff",
+            "release_query",
+            "delete_snapshot",
+        }:
+            queries = await drained_thread(workspace.queries)
+            arguments = {key: value for key, value in options.items() if key != "consistency"}
+            if action == "explain":
+                data = await drained_thread(queries.explain, options["id"])
+            elif action == "release_query":
+                data = {"released": await drained_thread(queries.release, options["id"])}
+            elif action == "delete_snapshot":
+                data = {"deleted": await drained_thread(queries.delete_snapshot, options["id"])}
+            else:
+                data = await drained_thread(getattr(queries, action), **arguments)
+            if action in {"explain", "impact", "path", "snapshot", "diff"}:
+                external_changed = await drained_thread(self._validate_exploration, workspace, data)
         elif action == "declarations":
             data = {"declarations": await drained_thread(store.declarations, include_deleted=True)}
         elif action == "declare":
@@ -805,6 +863,8 @@ class ReferenceGraphService:
             external_changed |= await drained_thread(
                 self._validate_external, workspace, data, options.get("node")
             )
+        elif action in {"explain", "impact", "path", "snapshot", "diff"}:
+            external_changed |= await drained_thread(self._validate_exploration, workspace, data)
         if checked_providers is not None:
             await drained_thread(
                 self._validate_checked_sources, workspace, checked_providers, data["revision"]
@@ -823,8 +883,10 @@ class ReferenceGraphService:
                 and provider["state"] == "verified_at_scan"
                 and not external_changed
             )
-        current = native_current and all(
-            provider["current"] for provider in external_providers.values()
+        current = (
+            not data.get("historical", False)
+            and native_current
+            and all(provider["current"] for provider in external_providers.values())
         )
         await entry.check()
         async with self.lock:
@@ -849,6 +911,13 @@ class ReferenceGraphService:
                         "status",
                         "query",
                         "diagnostics",
+                        "explain",
+                        "impact",
+                        "path",
+                        "snapshot",
+                        "diff",
+                        "release_query",
+                        "delete_snapshot",
                         "declarations",
                         "sources",
                         "rules",
