@@ -534,6 +534,31 @@ async def test_supplementary_unicode_escape_is_resolved_and_persisted(setup):
 
 
 @pytest.mark.asyncio
+async def test_analysis_upgrade_reparses_old_facts_once_without_native_import(setup):
+    store, workspace, editor, engine = setup
+    editor.add(1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}])
+    caller = editor.add(
+        2,
+        "Assets/Caller.cs",
+        'using UnityEngine; class Caller { void Go() { Resources.Load("One"); } }',
+    )
+    assert await engine.reconcile()
+    with store._connect(write=True) as connection:
+        workspace._set(connection, "analysis_version", 1)
+        connection.execute(
+            "UPDATE graph_documents SET payload=json_remove(payload,'$.imports','$.version')"
+        )
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert any(action == "source" for action, _ in editor.calls)
+    assert workspace.documents()[0]["data"]["version"] == 2
+    assert store.query(caller)["edges"]
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert not any(action == "source" for action, _ in editor.calls)
+
+
+@pytest.mark.asyncio
 async def test_external_decode_failure_does_not_skip_later_files(setup, tmp_path):
     store, workspace, editor, engine = setup
     target = editor.add(

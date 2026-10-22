@@ -1,8 +1,13 @@
 """Conservative source analysis must preserve both evidence and uncertainty."""
 
+from dataclasses import asdict
+
+import pytest
+
 from services.reference_graph.analysis import (
     AnalysisIndex,
     Catalog,
+    Facts,
     parse_csharp,
     serialized_references,
 )
@@ -53,6 +58,7 @@ def catalog():
 
 def analyze(source, *others, rules=()):
     facts = parse_csharp("script", "Assets/Use.cs", source)
+    facts = Facts.from_dict(asdict(facts))
     index = AnalysisIndex([facts, *others], catalog(), rules)
     return index.analyze("script")
 
@@ -195,10 +201,15 @@ def test_local_string_is_not_treated_as_a_type_constant():
 
 def test_serialized_asset_reference_keeps_missing_guid_evidence():
     result = serialized_references(
-        "%YAML 1.1\n  m_AssetGUID: " + "d" * 32 + '\n  m_AssetGUID: "' + "b" * 32 + '"\n', catalog()
+        "%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n--- !u!114 &1\nMonoBehaviour:\n  first:\n    m_AssetGUID: "
+        + "d" * 32
+        + '\n  second:\n    m_AssetGUID: "'
+        + "b" * 32
+        + '"\n',
+        catalog(),
     )
     assert {edge.target for edge in result.edges} == {"asset:" + char * 32 for char in "bd"}
-    assert {edge.line for edge in result.edges} == {2, 3}
+    assert {edge.line for edge in result.edges} == {6, 8}
 
 
 def test_preprocessor_and_nonliteral_expressions_remain_explicitly_partial():
@@ -295,3 +306,117 @@ def test_deconstruction_and_ref_mutation_taint_formal_arguments():
         )
         assert not result.edges, assignment
         assert any(item["reason"] == "dynamic_key" for item in result.unresolved)
+
+
+def test_resources_case_normalization_is_scheme_specific_and_preserves_key():
+    result = analyze(
+        'using UnityEngine; class C { void M() { Resources.Load("ui/menu"); Resources.LoadAll("ui"); } }'
+    )
+    assert len(result.edges) == 2
+    assert result.edges[0].key == "ui/menu"
+    assert catalog().resolve("addressables", "HUD")[1] == "key_not_found"
+    collision = Catalog(
+        [
+            {
+                "guid": "a" * 32,
+                "path": "Assets/A",
+                "keys": [{"scheme": "resources", "value": "UI/Menu"}],
+            },
+            {
+                "guid": "b" * 32,
+                "path": "Assets/B",
+                "keys": [{"scheme": "resources", "value": "ui/menu"}],
+            },
+        ]
+    )
+    assert collision.resolve("resources", "Ui/Menu")[1] == "ambiguous_key"
+    assert len(collision.resolve("resources", "UI", "all")[0]) == 2
+
+
+def test_resources_unicode_case_does_not_expand_distinct_key_spelling():
+    values = ["UI/Écran", "Straße", "STRASSE"]
+    assets = Catalog(
+        [
+            {
+                "guid": f"{i:032x}",
+                "path": f"Assets/{i}",
+                "keys": [{"scheme": "resources", "value": value}],
+            }
+            for i, value in enumerate(values, 1)
+        ]
+    )
+    assert assets.resolve("resources", "ui/écran")[0] == {"asset:" + f"{1:032x}"}
+    assert assets.resolve("resources", "Straße")[0] == {"asset:" + f"{2:032x}"}
+    assert assets.resolve("resources", "strasse")[0] == {"asset:" + f"{3:032x}"}
+
+
+def test_instantiation_scene_loaders_and_wrappers_produce_evidence_or_diagnostics():
+    result = analyze("""using UnityEngine.AddressableAssets;
+class Loader { public static object Spawn(string key) => Addressables.InstantiateAsync(key); }
+class C { void M(object location) {
+Addressables.InstantiateAsync("hud"); Addressables.LoadSceneAsync("map");
+Loader.Spawn("hud"); Addressables.LoadSceneAsync(location);
+} }""")
+    assert {(edge.key, edge.line) for edge in result.edges} == {("hud", 4), ("map", 4), ("hud", 5)}
+    assert any(
+        issue["reason"] == "dynamic_key" and issue["line"] == 5 for issue in result.unresolved
+    )
+
+
+def test_sibling_namespace_aliases_and_imports_do_not_bleed():
+    source = """namespace A { using R = Other.Loader; class C { void M() { R.Load("UI/Menu"); } } }
+namespace B { using R = UnityEngine.Resources; class C { void M() { R.Load("UI/Menu"); } } }
+namespace Other { class Loader { public static object Load(string key) => null; } }
+namespace C { using UnityEngine; class C { void M() { Resources.Load("UI/Menu"); } } }
+namespace D { class C { void M() { Resources.Load("UI/Menu"); } } }"""
+    result = analyze(source)
+    assert {edge.line for edge in result.edges} == {2, 4}
+
+
+def test_nested_and_reopened_namespaces_keep_their_lexical_aliases():
+    result = analyze("""using R = UnityEngine.Resources;
+namespace A { class C { void M() { R.Load("UI/Menu"); } }
+namespace Inner { using R = Other.Loader; class C { void M() { R.Load("UI/Menu"); } } } }
+namespace A { using R = Other.Loader; class D { void M() { R.Load("UI/Menu"); } } }
+namespace Other { class Loader { public static object Load(string key) => null; } }""")
+    assert {edge.line for edge in result.edges} == {2}
+    scoped = analyze(
+        'using R = UnityEngine.Resources; namespace Game; class C { void M() { R.Load("UI/Menu"); } }'
+    )
+    assert len(scoped.edges) == 1
+
+
+def test_constant_symbols_keep_lexical_alias_context():
+    result = analyze("""using UnityEngine;
+namespace One { class Keys { public const string Value = "UI/Menu"; } }
+namespace Two { class Keys { public const string Value = "Missing"; } }
+namespace A { using K = One.Keys; class C { public const string Key = K.Value; void M() { Resources.Load(Key); } } }
+namespace B { using K = Two.Keys; class C { public const string Key = K.Value; void M() { Resources.Load(Key); } } }""")
+    assert {edge.line for edge in result.edges} == {4}
+
+
+@pytest.mark.parametrize("scalar", ["|", ">-", "|2-"])
+def test_yaml_text_scalars_cannot_invent_asset_references(scalar):
+    source = f"notes: {scalar}\n  m_AssetGUID: {'a' * 32}\nreal:\n  m_AssetGUID: {'b' * 32}\n"
+    result = serialized_references(source, catalog())
+    assert {edge.target for edge in result.edges} == {"asset:" + "b" * 32}
+    assert all(edge.confidence == "possible" for edge in result.edges)
+
+
+def test_yaml_quotes_comments_flow_and_custom_fields_keep_conservative_evidence():
+    source = f"""notes: "multiline
+  m_AssetGUID: {"a" * 32}
+  text"
+# m_AssetGUID: {"a" * 32}
+custom: {{m_AssetGUID: {"b" * 32}}}
+"""
+    result = serialized_references(source, catalog())
+    assert len(result.edges) == 1
+    assert result.edges[0].target == "asset:" + "b" * 32
+    assert result.edges[0].confidence == "possible"
+    assert result.edges[0].kind == "serialized_guid_field"
+
+
+def test_malformed_yaml_remains_an_explicit_collection_failure():
+    with pytest.raises(ValueError, match="YAML"):
+        serialized_references('notes: "unterminated', catalog())

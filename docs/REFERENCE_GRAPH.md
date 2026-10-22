@@ -1,7 +1,7 @@
 # Automatic reference graph
 
 `manage_reference_graph` combines Unity's direct asset dependencies, conservative
-C# loader and wrapper analysis, serialized Addressables GUIDs, explicitly granted
+C# loader and wrapper analysis, possible serialized GUID fields, explicitly granted
 JSON/CSV sources, and authored reference declarations. It uses Python's bundled
 SQLite. Normal Unity MCP installation is sufficient: no database service, driver,
 compiler, parser download, or extra developer setup is required.
@@ -43,6 +43,10 @@ work, or unavailable external inputs must be resolved before treating a scan as 
 Observed Unity dependencies, possible static matches, and manually declared edges
 remain distinct. C# analysis follows supported Resources/Addressables calls,
 literal and constant composition, and wrapper argument forwarding across files.
+Supported Addressables calls include asset loads, instantiation and scene loads.
+Resources keys follow case-insensitive lookup; Addressables keys and filesystem
+paths retain their case. YAML GUID fields are possible references until their
+serialized type is verified; strings and comments are excluded.
 It is not a full C# compiler or whole-program proof: dynamic keys, reflection,
 unsupported overload/type flow, and generated runtime behavior can remain unknown.
 An empty query is **never** proof that deleting an asset is safe.
