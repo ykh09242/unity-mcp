@@ -22,7 +22,7 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] != 1:
+            if version is not None and version[0] not in (1, 2):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -41,6 +41,11 @@ class GraphWorkspace:
                 ):
                     connection.execute(statement)
                 connection.execute("INSERT INTO graph_workspace VALUES (1)")
+            if version is None or version[0] == 1:
+                connection.execute(
+                    "CREATE TABLE graph_asset_failures(guid TEXT PRIMARY KEY,attempts INTEGER NOT NULL,retry_at REAL NOT NULL)"
+                )
+                connection.execute("UPDATE graph_workspace SET version=2")
 
     @staticmethod
     def _state(connection, key: str, fallback=None):
@@ -133,6 +138,7 @@ class GraphWorkspace:
                 "graph_dependencies",
                 "graph_changed_inputs",
                 "graph_external",
+                "graph_asset_failures",
             ):
                 connection.execute("DELETE FROM " + table)
             connection.execute("DELETE FROM edges WHERE provider<>'manual'")
@@ -236,6 +242,8 @@ class GraphWorkspace:
             self._set(connection, "progress", progress)
 
     def _delete(self, connection, owner: str) -> None:
+        if owner.startswith("asset:"):
+            connection.execute("DELETE FROM graph_asset_failures WHERE guid=?", (owner[6:],))
         connection.execute(
             "UPDATE observations SET generation=generation+1,state='deleted',error=NULL WHERE owner=? AND provider<>'manual'",
             (owner,),
@@ -305,18 +313,78 @@ class GraphWorkspace:
                 for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid")
             ]
 
-    def dirty_assets(self, limit: int = 100) -> list[dict]:
+    def dirty_assets(self, limit: int = 100, *, after: str = "") -> list[dict]:
         with self.store._connect() as connection:
             return [
                 json.loads(row[0])
                 for row in connection.execute(
-                    "SELECT payload FROM graph_assets WHERE dirty=1 ORDER BY guid LIMIT ?", (limit,)
+                    "SELECT a.payload FROM graph_assets a LEFT JOIN graph_asset_failures f USING(guid) WHERE a.guid>? AND (a.dirty=1 OR f.retry_at<=?) ORDER BY a.guid LIMIT ?",
+                    (after, time.time(), limit),
                 )
             ]
 
     def clean_asset(self, worker: str, guid: str) -> None:
         with self._write(worker) as connection:
             connection.execute("UPDATE graph_assets SET dirty=0 WHERE guid=?", (guid,))
+            if connection.execute(
+                "DELETE FROM graph_asset_failures WHERE guid=?", (guid,)
+            ).rowcount:
+                self._set(connection, "analysis_dirty", True)
+
+    @staticmethod
+    def _failure(connection, owner: str, provider: str, error: Exception, reason: str) -> None:
+        message = type(error).__name__ + ": " + str(error)
+        connection.execute(
+            "INSERT INTO observations VALUES (?,?, 'unavailable',1,'error',?) ON CONFLICT(owner,provider) DO UPDATE SET generation=generation+1,state='error',error=excluded.error",
+            (owner, provider, message),
+        )
+        connection.execute(
+            "INSERT INTO graph_analysis SELECT owner,provider,?,generation FROM observations WHERE owner=? AND provider=? ON CONFLICT(owner,provider) DO UPDATE SET coverage=excluded.coverage,generation=excluded.generation",
+            (reason, owner, provider),
+        )
+        connection.execute(
+            "DELETE FROM graph_issues WHERE owner=? AND provider=?", (owner, provider)
+        )
+        connection.execute(
+            "INSERT INTO graph_issues VALUES (?,?,0,?)",
+            (owner, provider, _json({"reason": reason, "error": message})),
+        )
+
+    def fail_asset(self, worker: str, asset: dict, error: Exception) -> None:
+        with self._write(worker) as connection:
+            guid, owner = asset["guid"], "asset:" + asset["guid"]
+            old = connection.execute(
+                "SELECT attempts FROM graph_asset_failures WHERE guid=?", (guid,)
+            ).fetchone()
+            attempts = old[0] + 1 if old else 1
+            # Backoff bounds repeated failure cost, never an active job's lifetime.
+            retry_at = time.time() + min(300, 5 * 2 ** min(attempts - 1, 6))
+            connection.execute(
+                "INSERT INTO graph_asset_failures VALUES (?,?,?) ON CONFLICT(guid) DO UPDATE SET attempts=excluded.attempts,retry_at=excluded.retry_at",
+                (guid, attempts, retry_at),
+            )
+            connection.execute("UPDATE graph_assets SET dirty=0 WHERE guid=?", (guid,))
+            self._invalidate(connection, [owner])
+            self._failure(connection, owner, "unity", error, "collection_failed")
+            self.store._bump(connection)
+
+    def fail_external(
+        self, worker: str, owner: str, provider: str, generation: int, error: Exception
+    ) -> None:
+        with self._write(worker) as connection:
+            if not self.store._current(connection, owner, provider, generation):
+                raise RevisionConflict("External source changed before failure publication")
+            self._failure(connection, owner, provider, error, "analysis_failed")
+            self.store._bump(connection)
+
+    def blocked_analysis(self) -> set[str]:
+        with self.store._connect() as connection:
+            return {
+                row[0]
+                for row in connection.execute(
+                    "WITH RECURSIVE blocked(owner) AS (SELECT 'asset:'||guid FROM graph_asset_failures UNION SELECT d.owner FROM graph_dependencies d JOIN blocked b ON d.dependency=b.owner) SELECT owner FROM blocked"
+                )
+            }
 
     def save_document(
         self, worker: str, owner: str, format_: str, fingerprint: str, payload: dict
@@ -399,6 +467,7 @@ class GraphWorkspace:
         connection.execute(
             "WITH RECURSIVE affected(id) AS (SELECT id FROM graph_changed UNION SELECT d.owner FROM graph_dependencies d JOIN affected a ON d.dependency=a.id) UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state<>'deleted' AND owner IN (SELECT id FROM affected)"
         )
+        GraphWorkspace._set(connection, "analysis_dirty", True)
 
     def invalidate_dependents(self, worker: str, owners: Iterable[str]) -> None:
         with self._write(worker) as connection:
@@ -495,6 +564,9 @@ class GraphWorkspace:
                 "assets": connection.execute("SELECT count(*) FROM graph_assets").fetchone()[0],
                 "dirty_assets": connection.execute(
                     "SELECT count(*) FROM graph_assets WHERE dirty=1"
+                ).fetchone()[0],
+                "failed_assets": connection.execute(
+                    "SELECT count(*) FROM graph_asset_failures"
                 ).fetchone()[0],
                 "unresolved": connection.execute(
                     "SELECT count(*) FROM graph_issues i JOIN sources s USING(provider) WHERE s.enabled=1"

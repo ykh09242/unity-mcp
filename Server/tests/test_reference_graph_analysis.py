@@ -8,6 +8,21 @@ from services.reference_graph.analysis import (
 )
 
 
+def test_isolated_surrogate_escape_remains_unknown_and_facts_are_utf8_safe():
+    from dataclasses import asdict
+    from services.reference_graph.store import _json
+
+    facts = parse_csharp(
+        "script",
+        "Assets/Use.cs",
+        r'using UnityEngine; class Use { void Go() { Resources.Load("\uD800"); } }',
+    )
+    _json(asdict(facts)).encode("utf-8")
+    result = AnalysisIndex([facts], catalog()).analyze("script")
+    assert not result.edges
+    assert result.unresolved
+
+
 def catalog():
     return Catalog(
         [
