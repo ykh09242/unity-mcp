@@ -533,6 +533,18 @@ class ReferenceGraphService:
     def _validate_external(
         self, workspace: GraphWorkspace, result: dict, owner: str | None = None
     ) -> bool:
+        for edge in result.get("edges", []):
+            if edge["provider"].startswith("runtime:"):
+                provenance = edge.get("provenance", {})
+                for path in (
+                    edge.get("source_path", ""),
+                    provenance.get("path", ""),
+                    provenance.get("target_path", ""),
+                ):
+                    if path and not workspace.admitted(path):
+                        raise RevisionConflict(
+                            "Historical runtime evidence is excluded by the current collection policy"
+                        )
         pairs = {
             (edge["provider"], edge["owner"])
             for edge in result.get("edges", [])
@@ -613,12 +625,19 @@ class ReferenceGraphService:
             source = sources.get(provider)
             if source is None or not source["enabled"] or source["version"] != version:
                 raise RevisionConflict("Exploration source grant changed; start a new query")
-            adapters[provider] = self._grant(workspace.store.scope, source["config"])
+            if provider.startswith("external:"):
+                adapters[provider] = self._grant(workspace.store.scope, source["config"])
         if result.get("historical"):
             for provider, path in result["_history_access"]:
                 # The captured bytes may differ today. Require access to the
                 # original path, never assert historical evidence is current.
-                adapters[provider].stamp(path)
+                if provider.startswith("runtime:"):
+                    if not workspace.admitted(path):
+                        raise RevisionConflict(
+                            "Historical runtime evidence is excluded by the current collection policy"
+                        )
+                else:
+                    adapters[provider].stamp(path)
             changed = False
         else:
             changed = self._validate_external(workspace, result)
@@ -647,6 +666,14 @@ class ReferenceGraphService:
             "await_mutation": {"id", "wait_seconds"},
             "mutation_diff": {"id", "limit", "cursor"},
             "release_mutation": {"id"},
+            "runtime_sessions": {"after", "limit"},
+            "runtime_start": {"id"},
+            "runtime_poll": {"id", "limit"},
+            "runtime_status": {"id"},
+            "runtime_stop": {"id", "limit"},
+            "runtime_events": {"id", "after", "limit"},
+            "runtime_handles": {"id", "after", "limit"},
+            "runtime_release": {"id"},
             "declarations": set(),
             "declare": {"id", "owner", "edge", "expected_version"},
             "remove_declaration": {"id", "expected_version"},
@@ -694,7 +721,11 @@ class ReferenceGraphService:
         if action in {"declare", "remove_declaration", "set_source", "set_rule", "set_policy"}:
             if type(options.get("expected_version")) is not int or options["expected_version"] < 0:
                 raise ValueError("Read current state and supply its nonnegative expected_version")
-        if "id" in fields and (not isinstance(options.get("id"), str) or not options["id"]):
+        if (
+            "id" in fields
+            and not (action == "runtime_start" and "id" not in options)
+            and (not isinstance(options.get("id"), str) or not options["id"])
+        ):
             raise ValueError("An explicit stable id is required")
         if action in {"query", "diagnostics", "impact", "path"} and (
             not isinstance(options.get("node"), str) or not options["node"]
@@ -715,7 +746,12 @@ class ReferenceGraphService:
                 )
             editor = await entry.collect("status")
             checked_providers = await drained_thread(workspace.provider_status)
-        if action in {
+        if action.startswith("runtime_"):
+            from services.reference_graph.runtime_service import execute as execute_runtime
+
+            data = await execute_runtime(self, entry, action, options)
+            data["historical"] = True
+        elif action in {
             "begin_mutation",
             "add_mutation_targets",
             "finish_mutation",
@@ -913,6 +949,7 @@ class ReferenceGraphService:
             )
         current = (
             not data.get("historical", False)
+            and not any(edge["provider"].startswith("runtime:") for edge in data.get("edges", []))
             and native_current
             and all(provider["current"] for provider in external_providers.values())
         )
@@ -934,28 +971,31 @@ class ReferenceGraphService:
                     # Rehash all inputs only for an explicit force/checked request.
                     force=options.get("force", False),
                     wake=external_changed
-                    or action
-                    not in {
-                        "status",
-                        "query",
-                        "diagnostics",
-                        "explain",
-                        "impact",
-                        "path",
-                        "snapshot",
-                        "diff",
-                        "release_query",
-                        "delete_snapshot",
-                        "begin_mutation",
-                        "add_mutation_targets",
-                        "await_mutation",
-                        "mutation_diff",
-                        "release_mutation",
-                        "declarations",
-                        "sources",
-                        "rules",
-                        "policy",
-                    },
+                    or (
+                        not action.startswith("runtime_")
+                        and action
+                        not in {
+                            "status",
+                            "query",
+                            "diagnostics",
+                            "explain",
+                            "impact",
+                            "path",
+                            "snapshot",
+                            "diff",
+                            "release_query",
+                            "delete_snapshot",
+                            "begin_mutation",
+                            "add_mutation_targets",
+                            "await_mutation",
+                            "mutation_diff",
+                            "release_mutation",
+                            "declarations",
+                            "sources",
+                            "rules",
+                            "policy",
+                        }
+                    ),
                 )
         if action == "watch" and not options["enabled"]:
             await self._stop(entry)
@@ -965,6 +1005,11 @@ class ReferenceGraphService:
             status["queue_idle"] = False
         # Internal bounded authorization inputs are never part of tool output.
         data.pop("_history_access", None)
+        runtime_policy = data.pop("_runtime_policy", None)
+        if runtime_policy is not None and runtime_policy != await drained_thread(workspace.policy):
+            raise RevisionConflict(
+                "Runtime collection policy changed before delivery; restart the page"
+            )
         return {
             "success": True,
             "data": {

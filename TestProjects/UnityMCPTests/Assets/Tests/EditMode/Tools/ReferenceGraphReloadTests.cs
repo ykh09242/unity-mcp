@@ -24,11 +24,19 @@ namespace MCPForUnityTests.EditMode.Tools
                 SessionState.SetString(Key + ".root", root);
                 SessionState.SetString(Key + ".domain", Domain);
                 SessionState.SetString(Key + ".before", ReferenceGraphCollectorTests.Call("status").ToString());
+                string capture = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+                SessionState.SetString(Key + ".capture", capture);
+                ReferenceGraphRuntimeTests.Call("runtime_start", capture);
+                MCPForUnity.Runtime.ReferenceGraphRuntime.Load("resources", "reload-evidence");
                 File.WriteAllText(root + "/source.txt", "owned reload evidence");
                 AssetDatabase.ImportAsset(root + "/source.txt", ImportAssetOptions.ForceSynchronousImport);
                 EditorUtility.RequestScriptReload();
                 yield return new WaitForDomainReload();
                 Assert.AreNotEqual(SessionState.GetString(Key + ".domain", ""), Domain);
+                JObject runtime = ReferenceGraphRuntimeTests.Call("runtime_read", SessionState.GetString(Key + ".capture", ""));
+                Assert.AreEqual("domain_reload", runtime.Value<string>("state"));
+                Assert.AreEqual("reload-evidence", runtime["events"][0].Value<string>("key"));
+                Assert.IsFalse(MCPForUnity.Runtime.ReferenceGraphRuntime.Enabled);
                 JObject before = JObject.Parse(SessionState.GetString(Key + ".before", ""));
                 JObject after = ReferenceGraphCollectorTests.Call("status");
                 Assert.AreEqual(before["instance_id"], after["instance_id"]);
@@ -49,6 +57,10 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             finally
             {
+                string capture = SessionState.GetString(Key + ".capture", "");
+                SessionState.EraseString(Key + ".capture");
+                if (capture.Length > 0)
+                    ReferenceGraphRuntimeTests.Call("runtime_release", capture);
                 string root = SessionState.GetString(Key + ".root", "");
                 SessionState.EraseString(Key + ".root");
                 SessionState.EraseString(Key + ".domain");

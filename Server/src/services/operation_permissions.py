@@ -152,7 +152,7 @@ _ACTIONS: Final = {
     "manage_object_handles": {Permission.READ: _names("capture resolve")},
     "manage_reference_graph": {
         Permission.READ: _names(
-            "status sync query diagnostics explain impact path snapshot diff release_query delete_snapshot begin_mutation add_mutation_targets finish_mutation await_mutation mutation_diff release_mutation declarations sources rules policy watch inventory asset dependencies source changes probe compilation copy_destination"
+            "status sync query diagnostics explain impact path snapshot diff release_query delete_snapshot begin_mutation add_mutation_targets finish_mutation await_mutation mutation_diff release_mutation declarations sources rules policy watch inventory asset dependencies source changes probe compilation copy_destination runtime_sessions runtime_start runtime_poll runtime_status runtime_stop runtime_events runtime_handles runtime_release runtime_read"
         ),
         Permission.EDIT: _names(
             "declare remove_declaration set_source set_rule set_policy rebuild"

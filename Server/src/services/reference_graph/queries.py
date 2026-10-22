@@ -57,7 +57,7 @@ class GraphQueries:
     def _sources(connection) -> dict:
         return dict(
             connection.execute(
-                "SELECT provider,version FROM sources WHERE enabled=1 AND provider LIKE 'external:%'"
+                "SELECT provider,version FROM sources WHERE enabled=1 AND (provider LIKE 'external:%' OR provider LIKE 'runtime:%')"
             )
         )
 
@@ -432,6 +432,16 @@ class GraphQueries:
                     (edge["provider"], edge["source_path"])
                     for edge in (previous, current)
                     if edge is not None and edge["provider"].startswith("external:")
+                )
+                access.update(
+                    (edge["provider"], path)
+                    for edge in (previous, current)
+                    if edge is not None and edge["provider"].startswith("runtime:")
+                    for path in (
+                        edge.get("source_path", ""),
+                        edge.get("provenance", {}).get("target_path", ""),
+                    )
+                    if path
                 )
                 if row["previous"] != row["current"]:
                     changes.append(
