@@ -49,13 +49,39 @@ def put(repo, path, text):
 
 def snapshot(repo):
     result = {}
-    for p in repo.rglob("*"):
-        relative = p.relative_to(repo)
-        if relative.parts[0] in (".git", ".work"):
-            continue
-        if p.is_file():
-            result[relative.as_posix()] = p.read_bytes()
+
+    def fail(error):
+        raise error
+
+    for directory, folders, files in os.walk(repo, onerror=fail):
+        root = Path(directory)
+        if root == repo:
+            folders[:] = [name for name in folders if name not in (".git", ".work")]
+            files = [name for name in files if name not in (".git", ".work")]
+        for name in files:
+            path = root / name
+            if path.is_file():
+                result[path.relative_to(repo).as_posix()] = path.read_bytes()
     return result
+
+
+def test_snapshot_excludes_unstable_metadata_without_reading_it(tmp_path, monkeypatch):
+    put(tmp_path, "src/keep.txt", "kept")
+    put(tmp_path, ".git/objects/temporary", "moving Git data")
+    put(tmp_path, ".work/temporary", "moving task data")
+    scandir = os.scandir
+    excluded_reads = []
+
+    def unstable_metadata(path):
+        relative = Path(path).relative_to(tmp_path)
+        if relative.parts and relative.parts[0] in (".git", ".work"):
+            excluded_reads.append(relative)
+            raise FileNotFoundError("Transient metadata disappeared")
+        return scandir(path)
+
+    monkeypatch.setattr(os, "scandir", unstable_metadata)
+    assert snapshot(tmp_path) == {"src/keep.txt": b"kept"}
+    assert excluded_reads == []
 
 
 @pytest.fixture
