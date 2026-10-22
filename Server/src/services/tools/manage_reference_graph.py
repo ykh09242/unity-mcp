@@ -55,12 +55,24 @@ from services.registry import mcp_for_unity_tool
         "{after?,limit?} lists this scope's captures. runtime_release {id} stops and removes only "
         "that capture. Wrappers must explicitly call the bundled ReferenceGraphRuntime hooks. "
         "Runtime events do not prove a resource unused or a retained handle leaked."
+        " overview reports scoped storage, cache presence, jobs and retention. retry resumes failed collection. "
+        "export_config {kind:'rule'|'source'|'policy',after?,limit?} returns portable authored items in pages; "
+        "pages are not an atomic snapshot. import_config {kind,id?,config,expected_version,enabled?,reauthorize?} "
+        "imports one item with destination CAS; sources require reauthorize=true and current operator access. "
+        "cleanup {before:<Unix timestamp>,limit?} removes completed query scratch older than before and "
+        "abandoned staging in batches; repeat while more. It preserves active jobs, snapshots, captures, "
+        "receipts and authored state, and clears memory caches only when idle. SQLite pages remain reusable."
     ),
     annotations=ToolAnnotations(title="Reference Graph", destructiveHint=True, openWorldHint=True),
 )
 async def manage_reference_graph(
     ctx: Context,
     action: Literal[
+        "overview",
+        "retry",
+        "export_config",
+        "import_config",
+        "cleanup",
         "status",
         "sync",
         "query",

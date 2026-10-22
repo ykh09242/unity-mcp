@@ -217,10 +217,23 @@ class ReferenceGraphService:
             authorize_operation(lease.permissions, "manage_reference_graph", {"action": action})
         user = "remote:" + lease.user_id if lease else local_user()
         with self._route(user, instance) as (route, ticket):
-            return await self._resolve_scope(instance, lease, user, route, ticket)
+            return await self._resolve_scope(
+                instance,
+                lease,
+                user,
+                route,
+                ticket,
+                getattr(ctx, "reference_graph_expected_scope", None),
+            )
 
     async def _resolve_scope(
-        self, instance: str, lease: CredentialLease | None, user: str, route: _Route, ticket: int
+        self,
+        instance: str,
+        lease: CredentialLease | None,
+        user: str,
+        route: _Route,
+        ticket: int,
+        expected_scope=None,
     ) -> tuple[Entry, dict]:
 
         async def request_check():
@@ -231,6 +244,8 @@ class ReferenceGraphService:
         status = await self.send(instance, {"action": "status"})
         await request_check()
         scope = GraphScope(user, status.get("instance_id"), status.get("project_id"))
+        if expected_scope is not None and expected_scope != (scope.instance_id, scope.project_id):
+            raise ScopeChanged("The operations panel belongs to another Editor or project")
         route.observe(ticket, scope.key)
         # Installation and retirement for one scope must not hold the global
         # registry lock while SQLite, native collection or cancellation drains.
@@ -649,6 +664,11 @@ class ReferenceGraphService:
 
     async def execute(self, ctx, action: str, options: dict) -> dict:
         fields = {
+            "overview": set(),
+            "export_config": {"kind", "after", "limit"},
+            "import_config": {"kind", "id", "config", "expected_version", "enabled", "reauthorize"},
+            "cleanup": {"before", "limit"},
+            "retry": set(),
             "status": set(),
             "sync": {"force"},
             "query": {"node", "direction", "limit", "cursor", "consistency"},
@@ -717,6 +737,11 @@ class ReferenceGraphService:
         self, entry: Entry, editor: dict, action: str, options: dict, fields: set
     ) -> dict:
         workspace, store = entry.workspace, entry.workspace.store
+        if action == "import_config":
+            from services.reference_graph.operations import import_action
+
+            action, options = import_action(options)
+            fields = set(options)
         external_changed = False
         if action in {"declare", "remove_declaration", "set_source", "set_rule", "set_policy"}:
             if type(options.get("expected_version")) is not int or options["expected_version"] < 0:
@@ -746,7 +771,24 @@ class ReferenceGraphService:
                 )
             editor = await entry.collect("status")
             checked_providers = await drained_thread(workspace.provider_status)
-        if action.startswith("runtime_"):
+        if action in {"overview", "export_config", "cleanup", "retry"}:
+            from services.reference_graph import operations
+
+            if action == "overview":
+                data = await drained_thread(operations.overview, entry)
+            elif action == "export_config":
+                data = await drained_thread(operations.export_config, workspace, **options)
+            elif action == "retry":
+                await drained_thread(operations.retry, workspace)
+                data = {"scheduled": True}
+            else:
+                data = await drained_thread(operations.cleanup, workspace, **options)
+                data["memory_caches_cleared"] = False
+                if not entry.engine._gate.locked():
+                    async with entry.engine._gate:
+                        entry.engine.clear_caches()
+                        data["memory_caches_cleared"] = True
+        elif action.startswith("runtime_"):
             from services.reference_graph.runtime_service import execute as execute_runtime
 
             data = await execute_runtime(self, entry, action, options)
@@ -976,6 +1018,9 @@ class ReferenceGraphService:
                         and action
                         not in {
                             "status",
+                            "overview",
+                            "export_config",
+                            "cleanup",
                             "query",
                             "diagnostics",
                             "explain",

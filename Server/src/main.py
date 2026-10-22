@@ -649,6 +649,17 @@ def create_mcp_server(
     global custom_tool_service
     custom_tool_service = CustomToolService(mcp, project_scoped_tools=project_scoped_tools)
 
+    @mcp.custom_route("/api/reference-graph", methods=["POST"])
+    async def reference_graph_operations_route(request: Request) -> JSONResponse:
+        from services.reference_graph.http import handle
+
+        service = getattr(mcp, "_reference_graph_service", None)
+        if service is None:
+            return JSONResponse(
+                {"success": False, "error": "reference_graph_unavailable"}, status_code=503
+            )
+        return await handle(request, service)
+
     @mcp.custom_route("/health", methods=["GET"])
     async def health_http(_: Request) -> JSONResponse:
         return JSONResponse(
