@@ -353,13 +353,24 @@ async def test_level_cancelled_eviction_finishes_owned_cleanup(
             cancelled.set()
             raise
 
-    with anyio.fail_after(1):
+    async def cancel_after_routing_removed() -> None:
         async with anyio.create_task_group() as group:
             async with isolated_hub._lock:
                 group.start_soon(evict)
                 while session_id in PluginHub._connections:
                     await anyio.sleep(0)
                 group.cancel_scope.cancel()
+
+    scenario = asyncio.create_task(cancel_after_routing_removed())
+    try:
+        # Observe completion without adding another cancellation scope to the scenario.
+        done, _ = await asyncio.wait({scenario}, timeout=10)
+        assert scenario in done, "Level-cancelled eviction cleanup did not finish"
+        scenario.result()
+    finally:
+        if not scenario.done():
+            scenario.cancel()
+        await asyncio.gather(scenario, return_exceptions=True)
     assert cancelled.is_set(), "Owned cleanup must preserve AnyIO caller cancellation"
     assert await isolated_hub.get_session(session_id) is None
     websocket.close.assert_awaited_once_with(code=1001)
