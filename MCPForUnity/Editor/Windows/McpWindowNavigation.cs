@@ -125,7 +125,11 @@ namespace MCPForUnity.Editor.Windows
             if (next != null)
                 root.Q<ScrollView>("navigation-scroll")?.ScrollTo(next);
             evt.StopPropagation();
+#if UNITY_6000_0_OR_NEWER
+            root.focusController?.IgnoreEvent(evt);
+#else
             evt.PreventDefault();
+#endif
         }
 
         private void OnGeometryChanged(GeometryChangedEvent evt) => UpdateLayout(evt.newRect.width);
