@@ -14,6 +14,7 @@ using MCPForUnity.Editor.Windows.Components.AssetGen;
 using MCPForUnity.Editor.Windows.Components.Branding;
 using MCPForUnity.Editor.Windows.Components.ClientConfig;
 using MCPForUnity.Editor.Windows.Components.Connection;
+using MCPForUnity.Editor.Windows.Components.ReferenceGraph;
 using MCPForUnity.Editor.Windows.Components.Resources;
 using MCPForUnity.Editor.Windows.Components.Tools;
 using MCPForUnity.Editor.Windows.Components.Validation;
@@ -36,6 +37,9 @@ namespace MCPForUnity.Editor.Windows
         private McpResourcesSection resourcesSection;
         private McpAssetGenSection assetGenSection;
         private McpActivitySection activitySection;
+        private McpReferenceGraphSection graphSection;
+        private ToolbarToggle graphTabToggle;
+        private VisualElement graphPanel;
         private ToolbarToggle activityTabToggle;
         private VisualElement activityPanel;
 
@@ -80,6 +84,7 @@ namespace MCPForUnity.Editor.Windows
             Resources,
             AssetGen,
             Activity,
+            ReferenceGraph,
         }
 
         internal static void CloseAllWindows()
@@ -251,6 +256,7 @@ namespace MCPForUnity.Editor.Windows
             }
 
             activityPanel = rootVisualElement.Q<VisualElement>("activity-panel");
+            graphPanel = rootVisualElement.Q<VisualElement>("graph-panel");
 
             // Initialize version label
             UpdateVersionLabel();
@@ -596,6 +602,8 @@ namespace MCPForUnity.Editor.Windows
             updateCheckQueued = false;
             updateCheckPending = false;
             OpenWindows.Remove(this);
+            graphSection?.Dispose();
+            graphSection = null;
             activitySection?.Dispose();
             activitySection = null;
             guiCreated = false;
@@ -664,6 +672,8 @@ namespace MCPForUnity.Editor.Windows
 
             activityTabToggle = rootVisualElement.Q<ToolbarToggle>("activity-tab");
             RegisterTab(activityTabToggle, ActivePanel.Activity);
+            graphTabToggle = rootVisualElement.Q<ToolbarToggle>("graph-tab");
+            RegisterTab(graphTabToggle, ActivePanel.ReferenceGraph);
             RegisterTab(clientsTabToggle, ActivePanel.Clients);
             RegisterTab(depsTabToggle, ActivePanel.Deps);
             RegisterTab(advancedTabToggle, ActivePanel.Advanced);
@@ -701,6 +711,10 @@ namespace MCPForUnity.Editor.Windows
             if (panel == ActivePanel.Activity && activitySection == null)
                 activitySection = new McpActivitySection(rootVisualElement.Q<VisualElement>("activity-container"));
             activitySection?.SetVisible(panel == ActivePanel.Activity);
+            graphPanel?.EnableInClassList("hidden", panel != ActivePanel.ReferenceGraph);
+            if (panel == ActivePanel.ReferenceGraph && graphSection == null)
+                graphSection = new McpReferenceGraphSection(rootVisualElement.Q<VisualElement>("graph-container"));
+            graphSection?.SetVisible(panel == ActivePanel.ReferenceGraph);
             clientsPanel?.EnableInClassList("hidden", panel != ActivePanel.Clients);
             depsPanel?.EnableInClassList("hidden", panel != ActivePanel.Deps);
             advancedPanel?.EnableInClassList("hidden", panel != ActivePanel.Advanced);
@@ -732,6 +746,7 @@ namespace MCPForUnity.Editor.Windows
 
             // Update toggle states
             activityTabToggle?.SetValueWithoutNotify(panel == ActivePanel.Activity);
+            graphTabToggle?.SetValueWithoutNotify(panel == ActivePanel.ReferenceGraph);
             clientsTabToggle?.SetValueWithoutNotify(panel == ActivePanel.Clients);
             depsTabToggle?.SetValueWithoutNotify(panel == ActivePanel.Deps);
             advancedTabToggle?.SetValueWithoutNotify(panel == ActivePanel.Advanced);
