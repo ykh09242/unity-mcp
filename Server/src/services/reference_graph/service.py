@@ -839,7 +839,10 @@ class ReferenceGraphService:
             else:
                 self.start(
                     entry,
-                    force=external_changed or options.get("force", False),
+                    # Cached validation detects stamps or repository identity.
+                    # The ordinary scan already handles both incrementally.
+                    # Rehash all inputs only for an explicit force/checked request.
+                    force=options.get("force", False),
                     wake=external_changed
                     or action
                     not in {

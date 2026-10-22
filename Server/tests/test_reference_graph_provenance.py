@@ -81,14 +81,18 @@ def test_git_provenance_is_opt_in_and_never_follows_an_external_gitdir(tmp_path)
         ExternalSource({**config, "git_revision": True}).repository_revision()["state"]
         == "unavailable"
     )
-    (root / ".git").unlink()
+    # Separate fixtures avoid replacing a Git worktree marker while desktop
+    # repository discovery may still have that marker open on Windows.
+    root = tmp_path / "repository-metadata"
+    root.mkdir()
+    config = {"root": str(root), "include": ["*.json"]}
     (root / ".git" / "refs" / "heads").mkdir(parents=True)
     (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
     (root / ".git" / "refs" / "heads" / "main").write_text("1" * 40 + "\n")
     adapter = ExternalSource({**config, "git_revision": True})
     assert adapter.repository_revision() == {"state": "observed_head", "commit": "1" * 40}
-    (root / ".git" / "refs" / "heads" / "main").unlink()
-    (root / ".git" / "packed-refs").write_text("2" * 40 + " refs/heads/main\n")
+    (root / ".git" / "HEAD").write_text("ref: refs/heads/packed\n")
+    (root / ".git" / "packed-refs").write_text("2" * 40 + " refs/heads/packed\n")
     assert adapter.repository_revision()["commit"] == "2" * 40
     (root / ".git" / "HEAD").write_text("ref: ../private\n")
     assert adapter.repository_revision()["state"] == "unavailable"
