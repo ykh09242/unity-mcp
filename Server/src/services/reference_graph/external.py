@@ -208,6 +208,43 @@ class ExternalSource:
             raise PermissionError("External input changed while reading; retry")
         return Document(raw.decode("utf-8-sig"), hashlib.sha256(raw).hexdigest())
 
+    def stamp(self, relative: str) -> tuple[int, ...]:
+        """Recheck current file access without loading unchanged configuration."""
+        if not self.admitted(relative):
+            raise PermissionError("File is outside the source include/exclude policy")
+        self.check_access()
+        path = check_owned_path(self.root.joinpath(*_relative(relative)))
+        before = path.stat()
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        current = check_owned_path(path).stat()
+        identity = lambda value: (
+            value.st_dev,
+            value.st_ino,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_nlink,
+        )
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or identity(before) != identity(opened)
+            or identity(opened) != identity(current)
+            or before.st_ctime_ns != current.st_ctime_ns
+        ):
+            raise PermissionError("External file changed while checking access")
+        return (
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_ctime_ns,
+        )
+
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict:
     value = {}

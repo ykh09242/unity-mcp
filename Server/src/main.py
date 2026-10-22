@@ -382,6 +382,9 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                     "plugin_registry": _plugin_registry,
                 }
     finally:
+        reference_graph = getattr(server, "_reference_graph_service", None)
+        if reference_graph is not None:
+            await reference_graph.aclose()
         state_store = getattr(server, "_unity_session_state_store", None)
         if state_store is not None:
             state_store.clear()
@@ -633,6 +636,9 @@ def create_mcp_server(
     )
     mcp._unity_session_state_store = state_store
     mcp._scene_load_inputs = scene_inputs
+    from services.reference_graph.service import ReferenceGraphService
+
+    mcp._reference_graph_service = ReferenceGraphService()
     mcp.add_middleware(InventoryOrderingMiddleware())
     mcp.add_middleware(ResponseLimitMiddleware())
     install_execution_receipts(
