@@ -51,6 +51,26 @@ def test_initial_wal_transition_retries_real_writer_lock(graph, monkeypatch):
         assert reopened.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
+def test_last_connection_may_remove_sidecars_during_ownership_check(graph, monkeypatch):
+    keeper = sqlite3.connect(graph.path)
+    keeper.execute("SELECT * FROM graph_meta").fetchall()
+    wal = Path(str(graph.path) + "-wal")
+    assert wal.exists()
+    exists = Path.exists
+
+    def close_after_existence(path, *args, **kwargs):
+        result = exists(path, *args, **kwargs)
+        if path == wal and result:
+            keeper.close()
+        return result
+
+    monkeypatch.setattr(Path, "exists", close_after_existence)
+    try:
+        assert graph.status()["backend"] == "sqlite"
+    finally:
+        keeper.close()
+
+
 def publish(graph, owner, fingerprint, targets, provider="unity"):
     source_version = next(
         source["version"] for source in graph.sources() if source["provider"] == provider

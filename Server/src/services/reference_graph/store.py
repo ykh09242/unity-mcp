@@ -123,7 +123,12 @@ class GraphStore:
     def _connect(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
         for suffix in ("", "-wal", "-shm", "-journal"):
             candidate = check_owned_path(Path(str(self.path) + suffix))
-            if candidate.exists() and (not candidate.is_file() or candidate.stat().st_nlink > 1):
+            try:
+                info = candidate.lstat()
+            except FileNotFoundError:
+                # SQLite can remove its sidecars when the last other handle closes.
+                continue
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
                 raise ValueError("Reference graph files must be owned regular files")
         connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
