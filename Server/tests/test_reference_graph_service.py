@@ -134,6 +134,43 @@ async def test_empty_external_result_requires_explicit_checked_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_cached_head_change_wakes_incremental_scan_without_reloading_unchanged_sources(
+    setup, tmp_path, monkeypatch
+):
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, target = await external_fixture(service, sender, ctx, root, monkeypatch, files=3)
+    (root / ".git").mkdir()
+    (root / ".git" / "HEAD").write_text("1" * 40)
+    source = next(
+        item for item in entry.workspace.store.sources() if item["provider"] == "external:fixture"
+    )
+    entry.workspace.set_source(
+        source["provider"],
+        {**source["config"], "git_revision": True},
+        expected_version=source["version"],
+    )
+    assert await entry.engine.reconcile()
+    scheduled = {}
+    monkeypatch.setattr(service, "start", lambda _, **options: scheduled.update(options))
+    (root / ".git" / "HEAD").write_text("2" * 40)
+    response = await service.execute(ctx, "query", {"node": target, "direction": "incoming"})
+    assert response["data"]["graph_status"]["external_inputs_changed"]
+    assert scheduled["wake"] and not scheduled["force"]
+    monkeypatch.setattr(
+        ExternalSource, "read", lambda *_: pytest.fail("HEAD-only query caused content reread")
+    )
+    assert await entry.engine.reconcile(force_external=scheduled["force"])
+    assert (
+        entry.workspace.store.query(target, direction="incoming")["edges"][0]["provenance"][
+            "repository"
+        ]["commit"]
+        == "2" * 40
+    )
+    await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_external_validation_batches_metadata_without_skipping_each_file(
     setup, tmp_path, monkeypatch
 ):

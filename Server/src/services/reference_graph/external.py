@@ -68,12 +68,18 @@ def validate_mappings(mappings: object) -> list[dict]:
         if mapping.get("scheme") not in (
             "resources",
             "addressables",
+            "addressables_label",
             "guid",
             "path",
         ) or mapping.get("mode", "single") not in ("single", "all"):
             raise ValueError("Invalid mapping scheme or mode")
         if not all(isinstance(mapping.get(key, ""), str) for key in ("prefix", "suffix")):
             raise ValueError("Mapping prefix and suffix must be strings")
+        values = mapping.get("values", {})
+        if not isinstance(values, dict) or not all(
+            isinstance(key, str) and isinstance(value, str) for key, value in values.items()
+        ):
+            raise ValueError("Mapping values must explicitly map string IDs to asset keys")
     return mappings
 
 
@@ -93,7 +99,88 @@ class ExternalSource:
         self.include_paths = tuple(config["include"])
         self.exclude = self._patterns(config.get("exclude", []), allow_empty=True)
         self.mappings = validate_mappings(config.get("mappings", []))
+        self.adapter = config.get("adapter", {"name": "json-csv", "version": 1})
+        if (
+            self.adapter != {"name": "json-csv", "version": 1}
+            or type(self.adapter.get("version")) is not int
+        ):
+            raise ValueError("Unsupported external adapter name or version")
+        self.git_revision = config.get("git_revision", False)
+        if type(self.git_revision) is not bool:
+            raise ValueError("git_revision must be boolean")
         self.check_access()
+
+    def _git_lines(self, relative: str) -> Iterator[str]:
+        """Read only explicitly opted-in, in-root Git identity metadata."""
+        path = check_owned_path(self.root / ".git" / relative)
+        before = path.stat()
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise PermissionError("Git metadata must be an unlinked regular file")
+        descriptor = os.open(
+            path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        )
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            opened = os.fstat(stream.fileno())
+            identity = lambda value: (
+                value.st_dev,
+                value.st_ino,
+                value.st_size,
+                value.st_mtime_ns,
+                value.st_nlink,
+            )
+            if identity(before) != identity(opened):
+                raise PermissionError("Git metadata changed while opening")
+            yield from stream
+            after = os.fstat(stream.fileno())
+        current = check_owned_path(path).stat()
+        if (
+            identity(opened) != identity(after)
+            or identity(after) != identity(current)
+            or before.st_ctime_ns != current.st_ctime_ns
+        ):
+            raise PermissionError("Git metadata changed while reading")
+
+    def repository_revision(self) -> dict:
+        if not self.git_revision:
+            return {"state": "disabled"}
+        try:
+            self.check_access()
+            if not stat.S_ISDIR(check_owned_path(self.root / ".git").stat().st_mode):
+                return {"state": "unavailable", "reason": "gitdir_outside_source_not_followed"}
+            head = "".join(self._git_lines("HEAD")).strip()
+            commit = head
+            if head.startswith("ref: "):
+                reference = head[5:]
+                if (
+                    not reference.startswith("refs/")
+                    or any(part in ("", ".", "..") for part in reference.split("/"))
+                    or re.fullmatch(r"[A-Za-z0-9_./-]+", reference) is None
+                ):
+                    return {"state": "unavailable", "reason": "invalid_ref"}
+                try:
+                    commit = "".join(self._git_lines(reference)).strip()
+                except FileNotFoundError:
+                    commit = ""
+                    for line in self._git_lines("packed-refs"):
+                        fields = line.strip().split(" ")
+                        if len(fields) == 2 and fields[1] == reference:
+                            commit = fields[0]
+            if "".join(self._git_lines("HEAD")).strip() != head:
+                return {"state": "unavailable", "reason": "head_changed"}
+            if re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", commit) is None:
+                return {"state": "unavailable", "reason": "missing_or_invalid_commit"}
+            return {"state": "observed_head", "commit": commit.lower()}
+        except (OSError, ValueError):
+            return {"state": "unavailable", "reason": "metadata_inaccessible"}
+
+    def provenance(self, path: str, fingerprint: str, repository: dict) -> dict:
+        return {
+            "schema_version": 1,
+            "adapter": self.adapter,
+            "path": path,
+            "sha256": fingerprint,
+            "repository": repository,
+        }
 
     @staticmethod
     def _patterns(values: object, *, allow_empty: bool = False) -> list[re.Pattern]:
@@ -255,7 +342,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
     return value
 
 
-def _values(relative: str, text: str) -> Iterator[tuple[str, str, int]]:
+def _values(relative: str, text: str) -> Iterator[tuple[str, str | int, int, str]]:
     if Path(relative).suffix.lower() == ".json":
         document = json.loads(text, object_pairs_hook=_unique_object)
         pending = [("", document)]
@@ -270,8 +357,8 @@ def _values(relative: str, text: str) -> Iterator[tuple[str, str, int]]:
                 pending.extend(
                     (path + "/" + str(i), child) for i, child in reversed(list(enumerate(value)))
                 )
-            elif isinstance(value, str):
-                yield path, value, 0
+            elif isinstance(value, str) or type(value) is int:
+                yield path, value, 0, path
     elif Path(relative).suffix.lower() == ".csv":
         # csv exposes only a process-wide field limit. Raise it monotonically
         # to the already-admitted document's size; restoring a lower value would
@@ -282,11 +369,14 @@ def _values(relative: str, text: str) -> Iterator[tuple[str, str, int]]:
         reader = csv.DictReader(io.StringIO(text, newline=""), strict=True)
         if reader.fieldnames is None or len(set(reader.fieldnames)) != len(reader.fieldnames):
             raise ValueError("CSV requires distinct column names")
-        for row in reader:
+        for ordinal, row in enumerate(reader):
             if None in row or any(value is None for value in row.values()):
                 raise ValueError("CSV row does not match its header")
             for field_name, value in row.items():
-                yield field_name, value, reader.line_num
+                pointer = (
+                    "/rows/" + str(ordinal) + "/" + field_name.replace("~", "~0").replace("/", "~1")
+                )
+                yield field_name, value, reader.line_num, pointer
     else:
         raise ValueError("Only JSON and CSV sources are supported")
 
@@ -302,30 +392,60 @@ def analyze_document(relative: str, text: str, catalog: Catalog, mappings: list[
     validate_mappings(mappings)
     result = Analysis(coverage="mapped_fields" if mappings else "exact_catalog_strings")
     seen = set()
-    for field_name, value, line in _values(relative, text):
+    for field_name, value, line, pointer in _values(relative, text):
         matches = [
             (i, mapping)
             for i, mapping in enumerate(mappings)
             if _field_matches(mapping["field"], field_name)
         ]
-        if not mappings:
+        if not mappings and isinstance(value, str):
             targets = set()
             for scheme in ("resources", "addressables", "addressables_label", "path", "guid"):
                 targets.update(catalog.keys.get((scheme, catalog.canonical_key(scheme, value)), ()))
             result.edges.extend(
-                Edge(target, "external_key_candidate", value, line, "possible", field_name)
+                Edge(
+                    target,
+                    "external_key_candidate",
+                    value,
+                    line,
+                    "possible",
+                    field_name,
+                    source_pointer=pointer,
+                )
                 for target in sorted(targets)
             )
         for i, mapping in matches:
             seen.add(i)
-            key = mapping.get("prefix", "") + value + mapping.get("suffix", "")
-            targets, reason = catalog.resolve(mapping["scheme"], key, mapping.get("mode", "single"))
+            mapped = mapping.get("values", {}).get(str(value)) if "values" in mapping else value
+            if not isinstance(mapped, str):
+                result.unresolved.append(
+                    {
+                        "field": field_name,
+                        "line": line,
+                        "reason": "unmapped_value" if "values" in mapping else "non_string_value",
+                        "source_pointer": pointer,
+                    }
+                )
+                continue
+            key = mapping.get("prefix", "") + mapped + mapping.get("suffix", "")
+            targets, reason, subobject = catalog.resolve_detail(
+                mapping["scheme"], key, mapping.get("mode", "single")
+            )
             if reason:
                 result.unresolved.append(
                     {"field": field_name, "line": line, "reason": reason, "key": key}
                 )
             result.edges.extend(
-                Edge(target, "external_mapped_key", key, line, "possible", field_name)
+                Edge(
+                    target,
+                    "external_mapped_key",
+                    key,
+                    line,
+                    "possible",
+                    field_name,
+                    source_pointer=pointer,
+                    subobject=subobject,
+                )
                 for target in sorted(targets)
             )
     result.unresolved.extend(

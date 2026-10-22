@@ -51,6 +51,16 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void AssetIdentityReportsMainTypeWithoutClaimingSubassetCompleteness()
+        {
+            string path = CreateText("identity.txt", "owned");
+            JObject row = Call("asset", "guid", AssetDatabase.AssetPathToGUID(path));
+            Assert.AreEqual(typeof(TextAsset).FullName, row.Value<string>("main_type"));
+            Assert.AreEqual("main_type_only", row.Value<string>("identity_coverage"));
+            Assert.IsNull(row["subassets"]);
+        }
+
+        [Test]
         public void IndependentConsumersSeeTheSameImportMoveAndDeleteHistory()
         {
             JObject start = Call("status");

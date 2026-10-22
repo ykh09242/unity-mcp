@@ -198,6 +198,15 @@ namespace MCPForUnity.Editor.Tools
                 return row;
             row["path"] = path;
             row["kind"] = path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? "script" : "asset";
+            row["identity_coverage"] = "main_type_only";
+            try
+            {
+                row["main_type"] = AssetDatabase.GetMainAssetTypeAtPath(path)?.FullName;
+            }
+            catch (Exception error)
+            {
+                row["identity_error"] = error.GetBaseException().GetType().Name;
+            }
             row["source_format"] =
                 row.Value<string>("kind") == "script" ? "csharp"
                 : SerializedExtensions.Contains(Path.GetExtension(path)) ? "unity_yaml"

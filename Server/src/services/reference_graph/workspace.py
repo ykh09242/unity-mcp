@@ -734,6 +734,7 @@ class GraphWorkspace:
                     "UPDATE observations SET state='ready',error=NULL WHERE owner=? AND provider='code'",
                     (owner,),
                 )
+                self.store._publish_context(connection, owner, "code", generation)
                 connection.execute(
                     "DELETE FROM graph_staging WHERE worker=? AND owner=?", (worker, owner)
                 )
@@ -761,6 +762,7 @@ class GraphWorkspace:
             "UPDATE observations SET state='ready',error=NULL WHERE owner=? AND provider=?",
             (owner, provider),
         )
+        self.store._publish_context(connection, owner, provider, generation)
         connection.execute(
             "INSERT INTO graph_analysis VALUES (?,?,?,?) ON CONFLICT(owner,provider) DO UPDATE SET coverage=excluded.coverage,generation=excluded.generation",
             (owner, provider, analysis.coverage, generation),
@@ -849,7 +851,7 @@ class GraphWorkspace:
             return {
                 row["path"]: dict(row)
                 for row in connection.execute(
-                    "SELECT e.*,o.state FROM graph_external e LEFT JOIN observations o USING(owner,provider) WHERE e.provider=?",
+                    "SELECT e.*,o.state,c.published AS provenance FROM graph_external e LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE e.provider=?",
                     (provider,),
                 )
             }
@@ -903,7 +905,7 @@ class GraphWorkspace:
             return {
                 (row["provider"], row["owner"]): dict(row)
                 for row in connection.execute(
-                    "SELECT e.*,s.enabled,s.version,s.config FROM json_each(?) r JOIN graph_external e ON e.provider=json_extract(r.value,'$[0]') AND e.owner=json_extract(r.value,'$[1]') JOIN sources s USING(provider)",
+                    "SELECT e.*,s.enabled,s.version,s.config,c.published AS provenance FROM json_each(?) r JOIN graph_external e ON e.provider=json_extract(r.value,'$[0]') AND e.owner=json_extract(r.value,'$[1]') JOIN sources s USING(provider) LEFT JOIN evidence_context c ON c.provider=e.provider AND c.owner=e.owner",
                     (_json(list(pairs)),),
                 )
             }
@@ -978,6 +980,29 @@ class GraphWorkspace:
     def record_external_many(self, worker: str, rows: Iterable[tuple]) -> None:
         with self._write(worker) as connection:
             self._record_external(connection, rows)
+
+    def refresh_external_provenance(self, worker: str, source: dict, rows: Iterable[tuple]) -> None:
+        with self._write(worker) as connection:
+            current = connection.execute(
+                "SELECT version,enabled FROM sources WHERE provider=?", (source["provider"],)
+            ).fetchone()
+            if current is None or current[0] != source["version"] or not current[1]:
+                raise RevisionConflict("External source grant changed")
+            changed = False
+            for owner, fingerprint, provenance in rows:
+                observation = connection.execute(
+                    "SELECT generation FROM observations WHERE owner=? AND provider=? AND fingerprint=? AND state='ready'",
+                    (owner, source["provider"], fingerprint),
+                ).fetchone()
+                if observation is None:
+                    raise RevisionConflict("External evidence changed before provenance refresh")
+                self.store._context(
+                    connection, owner, source["provider"], observation[0], provenance
+                )
+                self.store._publish_context(connection, owner, source["provider"], observation[0])
+                changed = True
+            if changed:
+                self.store._bump(connection)
 
     @staticmethod
     def _record_external(connection, rows: Iterable[tuple]) -> None:

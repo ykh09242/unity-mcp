@@ -59,6 +59,7 @@ class Observation:
     force: bool = False
     source_version: int | None = None
     rules_revision: int = 0
+    provenance: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,11 +70,27 @@ class Edge:
     line: int = 0
     confidence: str = "observed"
     evidence: str = ""
+    source_pointer: str = ""
+    target_file_id: str = ""
+    subobject: str = ""
+    subobject_guid: str = ""
+    target_type: str = ""
 
     def __post_init__(self) -> None:
         if not all(
             isinstance(v, str)
-            for v in (self.target, self.kind, self.key, self.confidence, self.evidence)
+            for v in (
+                self.target,
+                self.kind,
+                self.key,
+                self.confidence,
+                self.evidence,
+                self.source_pointer,
+                self.target_file_id,
+                self.subobject,
+                self.subobject_guid,
+                self.target_type,
+            )
         ):
             raise ValueError("Edge text fields must be strings")
         if not self.target or not self.kind or type(self.line) is not int or self.line < 0:
@@ -97,7 +114,7 @@ def check_owned_path(path: Path) -> Path:
 
 class GraphStore:
     APPLICATION_ID = 0x554D5247
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     @classmethod
     def open(cls, root: Path, scope: GraphScope) -> GraphStore:
@@ -153,7 +170,10 @@ class GraphStore:
             if application != self.APPLICATION_ID and (application != 0 or tables):
                 raise ValueError("This database is not owned by the reference graph")
             if application == self.APPLICATION_ID:
-                if connection.execute("PRAGMA user_version").fetchone()[0] != self.SCHEMA_VERSION:
+                if connection.execute("PRAGMA user_version").fetchone()[0] not in (
+                    1,
+                    self.SCHEMA_VERSION,
+                ):
                     raise ValueError("Unsupported reference graph schema; preserve the database")
                 if (
                     connection.execute("SELECT scope FROM graph_meta").fetchone()[0]
@@ -182,6 +202,10 @@ class GraphStore:
                 )
                 connection.execute(f"PRAGMA application_id={self.APPLICATION_ID}")
                 connection.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS evidence_context(owner TEXT NOT NULL,provider TEXT NOT NULL,generation INTEGER NOT NULL,pending TEXT NOT NULL,published TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(owner,provider))"
+            )
+            connection.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
         self._ensure_wal()
 
     def _ensure_wal(self) -> None:
@@ -272,6 +296,8 @@ class GraphStore:
         ):
             return old["generation"]
         generation = old["generation"] + 1 if old is not None else 1
+        if observation.provenance is not None:
+            self._context(connection, owner, provider, generation, observation.provenance)
         connection.execute(
             "INSERT INTO observations VALUES (?,?,?,?,'pending',NULL) ON CONFLICT(owner,provider) DO UPDATE SET fingerprint=excluded.fingerprint,generation=excluded.generation,state='pending',error=NULL",
             (owner, provider, fingerprint, generation),
@@ -282,6 +308,20 @@ class GraphStore:
         )
         self._bump(connection)
         return generation
+
+    @staticmethod
+    def _context(connection, owner: str, provider: str, generation: int, provenance: dict) -> None:
+        connection.execute(
+            "INSERT INTO evidence_context(owner,provider,generation,pending) VALUES (?,?,?,?) ON CONFLICT(owner,provider) DO UPDATE SET generation=excluded.generation,pending=excluded.pending",
+            (owner, provider, generation, _json(provenance)),
+        )
+
+    @staticmethod
+    def _publish_context(connection, owner: str, provider: str, generation: int) -> None:
+        connection.execute(
+            "UPDATE evidence_context SET published=CASE WHEN generation=? THEN pending ELSE '{}' END WHERE owner=? AND provider=?",
+            (generation, owner, provider),
+        )
 
     @staticmethod
     def _current(
@@ -337,6 +377,7 @@ class GraphStore:
                         "UPDATE observations SET state='ready',error=NULL WHERE owner=? AND provider=?",
                         (owner, provider),
                     )
+                    self._publish_context(connection, owner, provider, generation)
                     self._bump(connection)
             return results
 
@@ -416,7 +457,7 @@ class GraphStore:
                 raise RevisionConflict("Graph changed between pages; restart the query")
             column = "owner" if direction == "outgoing" else "target"
             rows = connection.execute(
-                f"SELECT e.*,o.state,n.present FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 ORDER BY e.id LIMIT ?",
+                f"SELECT e.*,o.state,n.present,c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 ORDER BY e.id LIMIT ?",
                 (node, position["last"] if position else "", limit + 1),
             ).fetchall()
             more = len(rows) > limit
@@ -427,6 +468,7 @@ class GraphStore:
                     "id": row["id"],
                     "owner": row["owner"],
                     "provider": row["provider"],
+                    "provenance": json.loads(row["provenance"] or "{}"),
                     "stale": row["state"] != "ready" and row["provider"] != "manual",
                     "target_exists": None if row["present"] is None else bool(row["present"]),
                 }
