@@ -14,6 +14,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
         private readonly int workers;
         private readonly Func<double> clock;
         private int active;
+        private int agedBypasses;
+        private const int MaximumAgedBypasses = 3;
 
         internal ArtifactPreparationQueue(int workers = 2, Func<double> clock = null)
         {
@@ -75,14 +77,21 @@ namespace MCPForUnity.Editor.Services.AssetGen
             {
                 active--;
                 if (waiting.Count == 0)
+                {
+                    agedBypasses = 0;
                     return;
-                Waiter next = waiting.First.Value;
-                // After two seconds, the oldest waiter takes precedence. This is
-                // scheduling age, not a timeout or a bound on supported work.
-                if (clock() - next.QueuedAt < 2.0)
+                }
+                Waiter oldest = waiting.First.Value;
+                Waiter next = oldest;
+                bool aged = clock() - oldest.QueuedAt >= 2.0;
+                // Keep size preference useful after a long active copy, while
+                // granting the oldest aged job at least once every four grants.
+                // This bounds bypass grants, not execution time or input size.
+                if (!aged || agedBypasses < MaximumAgedBypasses)
                     for (LinkedListNode<Waiter> node = waiting.First.Next; node != null; node = node.Next)
                         if (node.Value.Bytes < next.Bytes)
                             next = node.Value;
+                agedBypasses = aged && !ReferenceEquals(next, oldest) ? agedBypasses + 1 : 0;
                 waiting.Remove(next.Node);
                 active++;
                 next.Completion.SetResult(new Lease(this));
