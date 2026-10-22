@@ -13,10 +13,10 @@ as a grant, and every returned external file is still stamped at both fences.
 
 | Files / catalog assets | Unchanged scan, median before / after | Query validation, median before / after | Idle write transactions before / after | Query read connections before / after |
 | --- | --- | --- | --- | --- |
-| 100 / 2,500 | 0.811 / 0.119 s | 0.740 / 0.146 s | 102 / 5 | 204 / 4 |
-| 1,000 / 25,000 | 8.575 / 0.811 s | 7.337 / 1.349 s | 1,002 / 8 | 2,004 / 4 |
+| 100 / 2,500 | 0.811 / 0.124 s | 0.740 / 0.152 s | 102 / 5 | 204 / 4 |
+| 1,000 / 25,000 | 8.575 / 0.811 s | 7.337 / 1.360 s | 1,002 / 8 | 2,004 / 4 |
 
-The adopted changes batch seen-file bookkeeping in 256-row transactions, reuse a
+The adopted changes batch unchanged seen-file bookkeeping in 256-row transactions, reuse a
 catalog only at the same scoped catalog revision, and join query metadata once
 per validation fence. A scan reuses one scoped read handle for grant-version
 checks. Each check finishes its statement in autocommit mode, so another writer's
@@ -30,6 +30,11 @@ An intermediate candidate with batching alone reduced writes but had inconsisten
 small-workload timings. It was not used as the final performance result. Scoped
 handle reuse gave the repeatable improvement above. Read-connection counts are not
 SQL-statement counts: source versions are still queried before every file.
+New or changed files atomically persist their observation and tracking row before
+publication, so interrupted enumeration cannot orphan their evidence. The table
+includes this recovery fix. Checked queries additionally reauthorize every enabled
+provider before delivery, including providers with no rows in the result; this
+provider-wide fence is outside the component query-validation timings above.
 
 Reproduce from an installed development environment:
 
