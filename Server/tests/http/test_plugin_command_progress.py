@@ -312,13 +312,23 @@ async def _held_hub_progress(hub, api, *, auth=None, session="session"):
             )
 
         call = asyncio.create_task(send())
+        dispatched = asyncio.create_task(sent.get())
         try:
-            execution = await asyncio.wait_for(sent.get(), 1)
-            assert not call.done()
-            yield ctx, call, execution
+            # Readiness is an event, not a one-second performance requirement.
+            # Observe early command failures as well; ten seconds is only an
+            # outer runaway guard and changes no production command deadline.
+            done, _ = await asyncio.wait(
+                {dispatched, call}, timeout=10, return_when=asyncio.FIRST_COMPLETED
+            )
+            if call in done:
+                result = await call
+                pytest.fail(f"Command settled before controlled dispatch: {result!r}")
+            assert dispatched in done, "Owned progress fixture did not dispatch"
+            yield ctx, call, dispatched.result()
         finally:
-            call.cancel()
-            await asyncio.gather(call, return_exceptions=True)
+            for task in (dispatched, call):
+                task.cancel()
+            await asyncio.gather(dispatched, call, return_exceptions=True)
 
 
 async def _sender_turns():
@@ -497,3 +507,36 @@ async def test_valid_maximum_command_id_progress_is_admitted_before_result(
         assert not call.done()
         await _complete(fixture, execution)
         assert await asyncio.wait_for(call, 1) == FINAL
+
+
+@pytest.mark.asyncio
+async def test_progress_fixture_waits_for_dispatch_under_scheduler_delay(
+    command_hub, progress_api, monkeypatch
+):
+    original = PluginHub.send_command
+
+    async def delayed(*args, **kwargs):
+        # Reproduce a loaded runner before the first native dispatch. This is
+        # fixture readiness, not a product deadline or progress timing assertion.
+        await asyncio.sleep(1.1)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(PluginHub, "send_command", delayed)
+    async with _held_hub_progress(command_hub, progress_api) as (_, call, execution):
+        await _complete(SimpleNamespace(hub=command_hub), execution)
+        assert await call == FINAL
+    assert not PluginHub._pending
+
+
+@pytest.mark.asyncio
+async def test_progress_fixture_surfaces_failure_before_dispatch(
+    command_hub, progress_api, monkeypatch
+):
+    async def failed(*_args, **_kwargs):
+        raise RuntimeError("controlled failure before dispatch")
+
+    monkeypatch.setattr(PluginHub, "send_command", failed)
+    with pytest.raises(RuntimeError, match="controlled failure before dispatch"):
+        async with _held_hub_progress(command_hub, progress_api):
+            pytest.fail("A failed command must not produce a ready fixture")
+    assert not PluginHub._pending
