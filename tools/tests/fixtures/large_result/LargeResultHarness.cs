@@ -11,7 +11,9 @@ internal static class LargeResultHarness
     private static readonly SemaphoreSlim SendLock = new SemaphoreSlim(1, 1);
     private static readonly TaskCompletionSource<bool> FirstChunk = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     private static readonly TaskCompletionSource<bool> ControlQueued = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static readonly TaskCompletionSource<bool> SecondChunk = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     private static int _binaryCount;
+    private static bool _holdControlCaller;
     private static bool _interleave;
     private static bool _cancel;
     private static CancellationTokenSource _cancellation;
@@ -38,6 +40,10 @@ internal static class LargeResultHarness
                 if (_cancel)
                     _cancellation.Cancel();
             }
+            else if (kind == WebSocketMessageType.Binary && _binaryCount == 2)
+            {
+                SecondChunk.TrySetResult(true);
+            }
         }
         finally
         {
@@ -48,16 +54,23 @@ internal static class LargeResultHarness
     private static async Task SendControlAsync()
     {
         await FirstChunk.Task;
-        ControlQueued.SetResult(true);
         byte[] pong = System.Text.Encoding.UTF8.GetBytes("{\"type\":\"pong\"}");
-        await SendFrameAsync(new ArraySegment<byte>(pong), WebSocketMessageType.Text, CancellationToken.None);
+        // Start the send synchronously so WaitAsync is queued behind the first chunk
+        // before that chunk is allowed to release the send lock.
+        Task pendingSend = SendFrameAsync(new ArraySegment<byte>(pong), WebSocketMessageType.Text, CancellationToken.None);
+        ControlQueued.SetResult(true);
+        // The queued send must progress even while its notifying caller is suspended.
+        if (_holdControlCaller)
+            await SecondChunk.Task;
+        await pendingSend;
     }
 
     public static async Task<int> Main(string[] args)
     {
         byte[] bytes = File.ReadAllBytes(args[0]);
         string mode = args[1];
-        _interleave = mode == "interleave";
+        _holdControlCaller = mode == "interleave-held-caller";
+        _interleave = mode == "interleave" || _holdControlCaller;
         _cancel = mode == "cancel";
         using (_cancellation = new CancellationTokenSource())
         using (var socket = new ClientWebSocket())

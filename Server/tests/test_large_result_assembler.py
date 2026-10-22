@@ -181,8 +181,9 @@ def run_writer(harness, tmp_path, payload, mode):
     ]
 
 
+@pytest.mark.parametrize("mode", ["interleave", "interleave-held-caller"])
 def test_csharp_large_result_reconstructs_identical_json_with_control_interleaving(
-    csharp_harness, tmp_path
+    csharp_harness, tmp_path, mode
 ):
     # Given: synthetic UTF-8 JSON produced by the same C# writer used in transport.
     payload = json.dumps(
@@ -196,7 +197,7 @@ def test_csharp_large_result_reconstructs_identical_json_with_control_interleavi
     budget = Budget()
     assembler = budget.assembler()
     # When: complete individually locked messages include a queued control send.
-    records = run_writer(csharp_harness, tmp_path, payload, "interleave")
+    records = run_writer(csharp_harness, tmp_path, payload, mode)
     metadata = json.loads(records[0][1])
     assembler.begin(OWNER, metadata["id"], metadata["total_bytes"], metadata["chunk_count"])
     completed = None
@@ -437,8 +438,9 @@ def test_two_results_can_interleave_without_payload_mixing():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["interleave", "interleave-held-caller"])
 async def test_real_csharp_websocket_messages_reconstruct_with_control_between_chunks(
-    csharp_harness, tmp_path
+    csharp_harness, tmp_path, mode
 ):
     """Only an ephemeral loopback socket carries owned synthetic bytes."""
     server_api = pytest.importorskip("websockets.asyncio.server")
@@ -480,7 +482,7 @@ async def test_real_csharp_websocket_messages_reconstruct_with_control_between_c
                 csharp_harness[0],
                 str(csharp_harness[1]),
                 str(path),
-                "interleave",
+                mode,
                 COMMAND_ID,
                 f"ws://127.0.0.1:{port}",
                 stdout=subprocess.DEVNULL,
