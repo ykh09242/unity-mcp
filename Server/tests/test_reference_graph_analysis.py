@@ -221,3 +221,47 @@ def test_facts_roundtrip_and_long_wrapper_chain():
     assert restored == facts
     result = AnalysisIndex([restored], catalog()).analyze("script")
     assert {edge.target for edge in result.edges} == {"asset:" + "a" * 32}
+
+
+def test_reassigned_wrapper_argument_is_not_substituted_with_old_caller_value():
+    result = analyze(
+        'using UnityEngine; class Loader { static object Get(string key) { key="elsewhere"; return Resources.Load(key); } void Go() { Get("UI/Menu"); } }'
+    )
+    assert not result.edges
+    assert any(item["reason"] == "dynamic_key" for item in result.unresolved)
+
+
+def test_shadowed_receivers_never_resolve_to_unity_or_static_wrapper_types():
+    sources = [
+        'class Use { void Go(object Resources) { Resources.Load("UI/Menu"); } }',
+        'class Use { object Resources; void Go() { Resources.Load("UI/Menu"); } }',
+        'class Use { void Go() { var Resources = Get(); Resources.Load("UI/Menu"); } }',
+        'class Use { object Resources { get; set; } void Go() { Resources.Load("UI/Menu"); } }',
+    ]
+    for source in sources:
+        result = analyze("using UnityEngine; " + source)
+        assert not result.edges, source
+        assert any(item["reason"] == "unresolved_receiver" for item in result.unresolved)
+
+
+def test_added_shadow_type_or_ambiguous_wrapper_invalidates_existing_callers():
+    caller = parse_csharp(
+        "caller",
+        "Assets/Use.cs",
+        'using UnityEngine; class Use { void Go() { Resources.Load("UI/Menu"); } }',
+    )
+    shadow = parse_csharp(
+        "shadow",
+        "Assets/Shadow.cs",
+        "class Resources : Custom {} class Custom { public static object Load(string key) => null; }",
+    )
+    index = AnalysisIndex([caller, shadow], catalog())
+    assert not index.analyze("caller").edges
+    assert "caller" in index.affected({"shadow"})
+    wrapper_source = "using UnityEngine; class Loader { public static object Get(string key) => Resources.Load(key); }"
+    first = parse_csharp("first", "Assets/First.cs", wrapper_source)
+    second = parse_csharp("second", "Assets/Second.cs", wrapper_source)
+    use = parse_csharp("use", "Assets/Use.cs", 'class Use { void Go() { Loader.Get("UI/Menu"); } }')
+    ambiguous = AnalysisIndex([first, second, use], catalog())
+    assert not ambiguous.analyze("use").edges
+    assert "use" in ambiguous.affected({"second"})

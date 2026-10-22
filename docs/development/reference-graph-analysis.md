@@ -15,7 +15,9 @@ expressions. File facts can be serialized independently of the original text.
 The index recognizes `UnityEngine.Resources.Load`, `LoadAsync`, `LoadAll` and
 `UnityEngine.AddressableAssets.Addressables.LoadAssetAsync` / `LoadAssetsAsync`.
 Visible short names and aliases are resolved conservatively. A project type with
-the same name prevents assuming that a call belongs to Unity. Single-key lookups
+the same name prevents assuming that a call belongs to Unity, and its owner is a
+dependency even when no reference can be resolved. Value receivers and reassigned
+formal arguments remain unresolved instead of becoming static calls. Single-key lookups
 with multiple possible targets remain unresolved. Bulk Resources paths and
 Addressables labels can produce multiple targets without truncating their fanout.
 Addressables GUID keys must be present in the Addressables catalog; an arbitrary
@@ -95,9 +97,9 @@ python tools/experiments/reference_graph_analysis.py --scripts 50000 --assets 25
 ```
 
 One local Windows/Python 3.14.6 run used 50,000 short caller scripts, a shared
-wrapper, 250,000 resource assets and 50,000 CSV rows. Catalog creation took 0.764s,
-source parsing 2.406s, summary indexing 0.787s, resolution 0.519s, wrapper-change
-fanout 0.039s and CSV resolution 0.398s. Every generated edge and all 50,001
+wrapper, 250,000 resource assets and 50,000 CSV rows. Catalog creation took 0.797s,
+source parsing 2.692s, summary indexing 1.007s, resolution 0.511s, wrapper-change
+fanout 0.041s and CSV resolution 0.243s. Every generated edge and all 50,001
 affected owners were checked. These are one-run synthetic component timings,
 not end-to-end Unity import or arbitrary real-project throughput guarantees.
 Source mutation, transport and durable publication are measured by integration

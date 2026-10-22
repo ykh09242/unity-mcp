@@ -242,7 +242,7 @@ def _values(relative: str, text: str) -> Iterator[tuple[str, str, int]]:
         with _CSV_LIMIT_LOCK:
             if len(text) > csv.field_size_limit():
                 csv.field_size_limit(len(text))
-        reader = csv.DictReader(io.StringIO(text, newline=""))
+        reader = csv.DictReader(io.StringIO(text, newline=""), strict=True)
         if reader.fieldnames is None or len(set(reader.fieldnames)) != len(reader.fieldnames):
             raise ValueError("CSV requires distinct column names")
         for row in reader:

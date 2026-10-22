@@ -235,6 +235,7 @@ class Call:
     line: int
     scope: str
     method: str
+    shadowed_receiver: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +279,7 @@ class Facts:
                     item["line"],
                     item["scope"],
                     item["method"],
+                    item.get("shadowed_receiver", False),
                 )
                 for item in data["calls"]
             ),
@@ -375,7 +377,10 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
             candidates.append((i, name, start, end))
     method_ranges = sorted(declarations.values(), key=lambda item: item[3])
     local_names = {}
+    inside_method = [False] * len(tokens)
     for method in method_ranges:
+        for i in range(method[3] + 1, min(method[4], len(tokens))):
+            inside_method[i] = True
         local_names[method[0]] = frozenset(
             tokens[i].text
             for i in range(method[3] + 1, min(method[4], len(tokens) - 1))
@@ -384,6 +389,39 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
             and tokens[i - 1].text not in ("return", "throw", "await", "new")
             and tokens[i + 1].text in ("=", ";", ",", ")")
         )
+        tainted = set()
+        for i in range(method[3] + 1, min(method[4], len(tokens) - 2)):
+            if tokens[i].text in method[2] and (
+                tokens[i - 1].text in ("ref", "out")
+                or tokens[i + 1].text == "="
+                and tokens[i + 2].text != "="
+                or tokens[i + 1].text in ("+", "-", "?", "??")
+                and tokens[i + 2].text == "="
+            ):
+                tainted.add(tokens[i].text)
+        local_names[method[0]] |= frozenset(tainted)
+    fields = defaultdict(set)
+    for i in range(1, len(tokens) - 1):
+        if (
+            not inside_method[i]
+            and tokens[i].kind == "id"
+            and tokens[i - 1].kind == "id"
+            and tokens[i - 1].text
+            not in (
+                "return",
+                "throw",
+                "await",
+                "new",
+                "using",
+                "namespace",
+                "class",
+                "struct",
+                "record",
+            )
+            and tokens[i + 1].text in ("=", ";", "{")
+            and not (i >= 2 and tokens[i - 2].text == "const")
+        ):
+            fields[scopes[i]].add(tokens[i].text)
     calls, method_calls = [], defaultdict(list)
     active_methods = []
     cursor = 0
@@ -396,15 +434,20 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
         method = active_methods[-1] if active_methods else None
         parameters = method[2] if method else ()
         identity = method[0] if method else ""
+        locals_ = local_names.get(identity, frozenset()) | fields[scopes[i]]
+        receiver = name.partition(".")[0]
         call = Call(
             name,
             tuple(
-                _expression(part, scopes[i], parameters, local_names.get(identity, frozenset()))
+                _expression(part, scopes[i], parameters, locals_)
                 for part in _split(tokens[i + 1 : end], ",")
             ),
             tokens[start].line,
             scopes[i],
             identity,
+            "." in name
+            and receiver in (locals_ | set(parameters))
+            and tokens[start].text != "global",
         )
         method_calls[identity].append(len(calls))
         calls.append(call)
@@ -504,7 +547,10 @@ class AnalysisIndex:
         self.constants: dict[str, list[tuple[str, Expr]]] = defaultdict(list)
         self.methods: dict[str, list[tuple[str, Method]]] = defaultdict(list)
         self.method_ids = {}
-        self.types = {name for item in self.facts.values() for name in item.types}
+        self.types = defaultdict(set)
+        for item in self.facts.values():
+            for name in item.types:
+                self.types[name].add(item.owner)
         self.dependencies: dict[str, set[str]] = defaultdict(set)
         for item in self.facts.values():
             for name, expr in item.constants.items():
@@ -515,6 +561,12 @@ class AnalysisIndex:
         self.constant_cache: dict[tuple[str, str], Expr] = {}
         self.summaries: dict[str, tuple[tuple[Effect, ...], tuple[str, ...]]] = {}
         self._build_summaries()
+        for item in self.facts.values():
+            for call in item.calls:
+                if not call.method:
+                    self._resolve_call(item, call)
+                    for expr in call.arguments:
+                        self._expand(item, expr, {})
 
     def _names(self, item: Facts, name: str, scope: str) -> list[str]:
         first, _, rest = name.partition(".")
@@ -547,6 +599,7 @@ class AnalysisIndex:
             for full in self._names(item, name, scope)
             for row in self.constants.get(full, ())
         ]
+        self.dependencies[item.owner].update(row[0] for _, row in matches)
         if len(matches) != 1 or matches[0][0] in active:
             return UNKNOWN
         full, (owner, expr) = matches[0]
@@ -573,6 +626,8 @@ class AnalysisIndex:
         return UNKNOWN if any(kind == "unknown" for kind, _ in output) else tuple(output)
 
     def _resolve_call(self, item: Facts, call: Call) -> tuple[list[Effect], str | None, str | None]:
+        if call.shadowed_receiver:
+            return [], None, "unresolved_receiver"
         names = self._names(item, call.name, call.scope)
         rule_matches = [self.rules[name] for name in names if name in self.rules]
         if len(rule_matches) > 1:
@@ -604,6 +659,7 @@ class AnalysisIndex:
             if len(method.parameters) == len(call.arguments)
         ]
         if matches:
+            self.dependencies[item.owner].update(owner for owner, _ in matches)
             if len(matches) != 1:
                 return [], None, "ambiguous_call"
             owner, method = matches[0]
@@ -615,6 +671,9 @@ class AnalysisIndex:
         qualified = self._names(item, qualifier, call.scope)
         # A project type with the same visible qualifier takes precedence.
         if any(name in self.types for name in qualified):
+            self.dependencies[item.owner].update(
+                owner for name in qualified for owner in self.types.get(name, ())
+            )
             return [], None, "unresolved_loader"
         scheme = None
         if "UnityEngine.Resources" in qualified and method in ("Load", "LoadAsync", "LoadAll"):

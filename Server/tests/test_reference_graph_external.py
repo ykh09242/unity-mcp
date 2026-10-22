@@ -157,3 +157,12 @@ def test_large_csv_field_and_disallowed_subdirectories_are_supported(tmp_path, m
         [{"field": "icon", "scheme": "resources"}],
     )
     assert len(result.edges) == 1
+
+
+def test_unterminated_csv_quote_is_an_error():
+    import csv
+
+    with pytest.raises(csv.Error):
+        analyze_document(
+            "bad.csv", 'icon\n"GameData/icon', assets(), [{"field": "icon", "scheme": "resources"}]
+        )
