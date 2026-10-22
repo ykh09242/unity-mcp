@@ -58,6 +58,14 @@ namespace MCPForUnity.Editor.Tools
                     case "copy_destination":
                         fields = new[] { "path" };
                         break;
+                    case "runtime_start":
+                    case "runtime_stop":
+                    case "runtime_release":
+                        fields = new[] { "token" };
+                        break;
+                    case "runtime_read":
+                        fields = new[] { "token", "offset", "page_size" };
+                        break;
                     default:
                         throw new ArgumentException("Unknown reference collection action.");
                 }
@@ -92,7 +100,10 @@ namespace MCPForUnity.Editor.Tools
                         };
                 }
                 token.ThrowIfCancellationRequested();
-                JObject data = action == "status" ? status : ReferenceGraphCollector.Handle(parameters);
+                JObject data =
+                    action == "status" ? status
+                    : action.StartsWith("runtime_", StringComparison.Ordinal) ? ReferenceGraphRuntimeCapture.Handle(parameters)
+                    : ReferenceGraphCollector.Handle(parameters);
                 data["instance_id"] = instance;
                 data["project_id"] = project;
                 return new SuccessResponse("Reference evidence collected", data);
@@ -107,7 +118,10 @@ namespace MCPForUnity.Editor.Tools
                 {
                     success = false,
                     error = "reference_collection_unavailable",
-                    message = error.Message,
+                    message = parameters?["action"]?.Type == JTokenType.String
+                    && ((string)parameters["action"]).StartsWith("runtime_", StringComparison.Ordinal)
+                        ? "Runtime capture unavailable (" + error.GetType().Name + "). Inspect capture status, then retry or release it."
+                        : error.Message,
                 };
             }
         }

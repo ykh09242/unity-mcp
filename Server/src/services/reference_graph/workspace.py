@@ -272,9 +272,11 @@ class GraphWorkspace:
                 "graph_addressables",
             ):
                 connection.execute("DELETE FROM " + table)
-            connection.execute("DELETE FROM edges WHERE provider<>'manual'")
             connection.execute(
-                "UPDATE observations SET generation=generation+1,state='deleted',error=NULL WHERE provider<>'manual'"
+                "DELETE FROM edges WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%'"
+            )
+            connection.execute(
+                "UPDATE observations SET generation=generation+1,state='deleted',error=NULL WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%'"
             )
             self._set(connection, "progress", {"phase": "not_initialized"})
             self._set(connection, "analysis_dirty", True)

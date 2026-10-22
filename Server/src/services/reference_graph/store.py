@@ -278,6 +278,7 @@ class GraphStore:
             raise RevisionConflict("The external source grant changed before observation")
         if (
             provider != "unity"
+            and not provider.startswith("runtime:")
             and connection.execute("SELECT rules_revision FROM graph_meta").fetchone()[0]
             != observation.rules_revision
         ):
@@ -595,7 +596,7 @@ class GraphStore:
                 (identity, version, _json(payload)),
             )
             connection.execute(
-                "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider NOT IN ('manual','unity') AND state<>'deleted'"
+                "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider NOT IN ('manual','unity') AND provider NOT LIKE 'runtime:%' AND state<>'deleted'"
             )
             connection.execute("UPDATE graph_meta SET rules_revision=rules_revision+1")
             self._bump(connection)
@@ -615,8 +616,10 @@ class GraphStore:
 
     def rebuild(self) -> None:
         with self._connect(write=True) as connection:
-            connection.execute("DELETE FROM edges WHERE provider<>'manual'")
             connection.execute(
-                "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider<>'manual' AND state<>'deleted'"
+                "DELETE FROM edges WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%'"
+            )
+            connection.execute(
+                "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%' AND state<>'deleted'"
             )
             self._bump(connection)

@@ -48,6 +48,13 @@ from services.registry import mcp_for_unity_tool
         "mutation_diff {id,limit?,cursor?} pages direct incident changes after synchronization. "
         "release_mutation {id} releases private receipt state. A synchronized receipt is not proof "
         "that an uncertain mutation succeeded; concurrent changes can contribute to its delta."
+        " Runtime evidence is opt-in: runtime_start {} (or {id} to recover a start) returns a capture ID; "
+        "runtime_poll {id,limit?} ingests one native page, runtime_stop {id} ends observation, "
+        "runtime_events {id,after?,limit?} and runtime_handles {id,after?,limit?} page historical "
+        "loads and acquired/released tokens. runtime_status {id} is cached; runtime_sessions "
+        "{after?,limit?} lists this scope's captures. runtime_release {id} stops and removes only "
+        "that capture. Wrappers must explicitly call the bundled ReferenceGraphRuntime hooks. "
+        "Runtime events do not prove a resource unused or a retained handle leaked."
     ),
     annotations=ToolAnnotations(title="Reference Graph", destructiveHint=True, openWorldHint=True),
 )
@@ -71,6 +78,14 @@ async def manage_reference_graph(
         "await_mutation",
         "mutation_diff",
         "release_mutation",
+        "runtime_sessions",
+        "runtime_start",
+        "runtime_poll",
+        "runtime_status",
+        "runtime_stop",
+        "runtime_events",
+        "runtime_handles",
+        "runtime_release",
         "declarations",
         "declare",
         "remove_declaration",
