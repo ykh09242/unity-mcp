@@ -49,6 +49,9 @@ namespace MCPForUnity.Editor.Tools
                     case "changes":
                         fields = new[] { "epoch", "after", "page_size" };
                         break;
+                    case "compilation":
+                        fields = new[] { "paths", "revision" };
+                        break;
                     default:
                         throw new ArgumentException("Unknown reference collection action.");
                 }
@@ -57,6 +60,12 @@ namespace MCPForUnity.Editor.Tools
                     throw new ArgumentException("Unsupported reference collection fields.");
                 foreach (JProperty property in parameters.Properties())
                 {
+                    if (property.Name == "paths")
+                    {
+                        if (!(property.Value is JArray paths) || paths.Any(path => path.Type != JTokenType.String))
+                            throw new ArgumentException("Compilation paths must be an array of strings.");
+                        continue;
+                    }
                     bool number = property.Name == "offset" || property.Name == "after" || property.Name == "page_size";
                     if (property.Value.Type != (number ? JTokenType.Integer : JTokenType.String))
                         throw new ArgumentException("Reference fields require their exact string or integer type.");

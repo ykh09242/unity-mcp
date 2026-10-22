@@ -125,9 +125,11 @@ class Reconciler:
             await drained_thread(
                 self.workspace.ensure_analysis_version, self.worker, ANALYSIS_VERSION
             )
+            compilation_context = status.get("compilation_context")
             if not self.progress.get("initialized") or self.progress.get("census"):
                 await self._census(status, force=True)
             await self._changes()
+            await self._compilation(compilation_context)
             await self._assets()
             await self._analysis()
             await self._external(force=force_external)
@@ -135,6 +137,7 @@ class Reconciler:
             providers = await drained_thread(self.workspace.provider_status)
             caught_up = (
                 status["epoch"] == self.progress.get("epoch")
+                and status.get("compilation_context") == compilation_context
                 and status["revision"] == self.progress.get("after")
                 and not self.progress.get("external_errors")
                 and not providers["addressables"]["errors"]
@@ -266,6 +269,40 @@ class Reconciler:
                     await drained_thread(self.workspace.fail_asset, self.worker, asset, error)
                 after = asset["guid"]
 
+    async def _compilation(self, context: dict | None) -> None:
+        if context == await drained_thread(self.workspace.state, "compilation_context"):
+            return
+        checked = bool(context and context.get("state") == "available")
+        if checked:
+            await self._phase("checking_compilation")
+            after = ""
+            while candidates := await drained_thread(self.workspace.compilation_candidates, after):
+                await self.check()
+                paths = [item["path"] for item in candidates]
+                page = await self.collect("compilation", paths=paths, revision=context["revision"])
+                bindings = page.get("bindings", [])
+                if (
+                    page.get("revision") != context["revision"]
+                    or [row.get("path") for row in bindings] != paths
+                    or any(
+                        not isinstance(row.get("signature"), str)
+                        and not isinstance(row.get("error"), str)
+                        for row in bindings
+                    )
+                ):
+                    raise RevisionConflict("Compilation metadata changed during verification")
+                dirty = [
+                    item["guid"]
+                    for item, binding in zip(candidates, bindings)
+                    if binding.get("error") or item["signature"] != binding.get("signature")
+                ]
+                if dirty:
+                    await drained_thread(self.workspace.dirty_compilation, self.worker, dirty)
+                after = candidates[-1]["guid"]
+        await drained_thread(
+            self.workspace.ensure_compilation_context, self.worker, context, checked=checked
+        )
+
     async def _asset(self, asset: dict) -> None:
         guid, owner = asset["guid"], "asset:" + asset["guid"]
         targets, offset, snapshot, fingerprint = [], 0, None, None
@@ -276,6 +313,7 @@ class Reconciler:
             if not page.get("present"):
                 await drained_thread(self.workspace.remove_path, self.worker, asset["path"])
                 return
+
             if fingerprint is not None and fingerprint != page["fingerprint"]:
                 raise RevisionConflict("Dependencies changed while reading")
             fingerprint, snapshot = page["fingerprint"], page["snapshot"]
@@ -306,7 +344,7 @@ class Reconciler:
                 self.workspace.drop_document, self.worker, "asset:" + asset["guid"]
             )
             return
-        content, offset, fingerprint = bytearray(), 0, None
+        content, offset, fingerprint, context = bytearray(), 0, None, None
         while True:
             page = await self.collect(
                 "source", guid=asset["guid"], offset=offset, fingerprint=fingerprint
@@ -323,10 +361,21 @@ class Reconciler:
             if fingerprint is not None and fingerprint != page["fingerprint"]:
                 raise RevisionConflict("Source changed while reading")
             fingerprint = page["fingerprint"]
+            if offset == 0:
+                context = page.get("compilation_context")
+                expected = self.progress.get("editor", {}).get("compilation_context")
+                if (
+                    expected
+                    and (context is None or context.get("revision") != expected.get("revision"))
+                    and asset["source_format"] == "csharp"
+                ):
+                    raise RevisionConflict("Compilation context changed while collecting")
             content.extend(base64.b64decode(page["bytes_base64"], validate=True))
             offset = page["next_offset"]
             if offset is None:
-                format_, payload, fingerprint = await drained_thread(self._parse, asset, content)
+                format_, payload, fingerprint = await drained_thread(
+                    self._parse, asset, content, context
+                )
                 break
         await drained_thread(
             self.workspace.save_document,
@@ -338,16 +387,17 @@ class Reconciler:
         )
 
     @staticmethod
-    def _parse(asset: dict, content: bytes) -> tuple:
+    def _parse(asset: dict, content: bytes, context: dict | None = None) -> tuple:
         text = content.decode(
             "utf-16" if content[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
         )
         fingerprint = hashlib.sha256(content).hexdigest()
         if asset["source_format"] == "csharp":
+            facts = parse_csharp("asset:" + asset["guid"], asset["path"], text, context=context)
             return (
                 "csharp",
-                asdict(parse_csharp("asset:" + asset["guid"], asset["path"], text)),
-                fingerprint,
+                asdict(facts),
+                _hash([fingerprint, facts.build, (context or {}).get("defines")]),
             )
         result = serialized_references(text, Catalog([]))
         return (

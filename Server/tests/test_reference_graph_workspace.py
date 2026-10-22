@@ -33,6 +33,17 @@ def row(guid="a" * 32, path="Assets/Resources/Fixture.prefab"):
     }
 
 
+def test_document_state_hydrates_from_observation_after_schema5(workspace):
+    generation = workspace.observe("worker", Observation("owner", "code", "hash"))
+    with workspace.store._connect(write=True) as connection:
+        connection.execute(
+            "INSERT INTO graph_documents VALUES (?,?,?,?,?)",
+            ("owner", "csharp", "hash", "{}", "assembly-signature"),
+        )
+    workspace.publish("worker", "owner", "code", generation, Analysis())
+    assert workspace.documents()[0]["state"] == "ready"
+
+
 def test_streamed_analysis_is_atomic_batched_and_cleans_cancelled_staging(workspace):
     generation = workspace.observe("worker", Observation("owner", "code", "old"))
     workspace.publish("worker", "owner", "code", generation, Analysis([Edge("old", "load")]))
@@ -95,13 +106,14 @@ def test_version_one_upgrade_preserves_evidence_and_progress(workspace):
     before = workspace.store.query("owner")
     with workspace.store._connect(write=True) as connection:
         connection.execute("DROP TABLE graph_asset_failures")
+        connection.execute("ALTER TABLE graph_documents DROP COLUMN compilation_signature")
         connection.execute("UPDATE graph_workspace SET version=1")
     restored = GraphWorkspace(GraphStore(workspace.store.path, workspace.store.scope))
     assert restored.store.query("owner") == before
     assert restored.progress()["after"] == 7
     assert restored.counts()["failed_assets"] == 0
     with restored.store._connect() as connection:
-        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 4
+        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 5
 
 
 def test_version_two_upgrade_retains_addressables_failures(workspace):
@@ -109,12 +121,29 @@ def test_version_two_upgrade_retains_addressables_failures(workspace):
     workspace.record_page("worker", [asset], {}, "scan")
     with workspace.store._connect(write=True) as connection:
         connection.execute("DROP TABLE graph_addressables")
+        connection.execute("ALTER TABLE graph_documents DROP COLUMN compilation_signature")
         connection.execute("UPDATE graph_workspace SET version=2")
     restored = GraphWorkspace(workspace.store)
     assert restored.provider_status()["addressables"]["errors"] == 1
     assert restored.diagnostics("asset:" + asset["guid"])["coverage"][0]["state"] == "failed"
     restored.remove_path("worker", asset["path"])
     assert restored.provider_status()["addressables"]["errors"] == 0
+
+
+def test_version_four_migrates_compilation_signature_without_losing_facts(workspace):
+    asset = {**row(), "source_format": "csharp", "path": "Assets/Caller.cs"}
+    owner = "asset:" + asset["guid"]
+    workspace.record_page("worker", [asset], {}, "scan")
+    workspace.save_document(
+        "worker", owner, "csharp", "bytes", {"build": {"binding_revision": "assembly-a"}}
+    )
+    workspace.clean_asset("worker", asset["guid"])
+    with workspace.store._connect(write=True) as connection:
+        connection.execute("ALTER TABLE graph_documents DROP COLUMN compilation_signature")
+        connection.execute("UPDATE graph_workspace SET version=4")
+    restored = GraphWorkspace(workspace.store)
+    assert restored.compilation_candidates()[0]["signature"] == "assembly-a"
+    assert restored.documents([owner])[0]["fingerprint"] == "bytes"
 
 
 def test_source_guard_observes_concurrent_revocation_without_a_pinned_snapshot(workspace):

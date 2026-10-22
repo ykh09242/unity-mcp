@@ -780,6 +780,8 @@ class ReferenceGraphService:
             progress.get("initialized", False)
             and progress.get("epoch") == editor.get("epoch")
             and progress.get("after") == editor.get("revision")
+            and progress.get("editor", {}).get("compilation_context")
+            == editor.get("compilation_context")
             and progress.get("phase") == "idle"
             and status["queue_idle"]
             and not providers["addressables"]["errors"]

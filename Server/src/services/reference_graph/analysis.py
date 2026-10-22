@@ -10,17 +10,18 @@ from __future__ import annotations
 
 from collections import OrderedDict, defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import re
 
 import yaml
 from yaml.tokens import KeyToken, ScalarToken, ValueToken
 
+from services.reference_graph.compilation import source_for_build
 from services.reference_graph.store import Edge
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 4
+ANALYSIS_VERSION = 5
 # Registry version follows the fact/analysis version. Values describe the string
 # key overload; object/location/AssetReference expressions stay unresolved unless
 # a later semantic provider can prove their identity.
@@ -244,7 +245,7 @@ def _expression(
         )
         and len(tokens) % 2
     ):
-        name = "".join(t.text for t in tokens).removeprefix("global::")
+        name = "".join(t.text for t in tokens)
         if name.partition(".")[0] in locals_:
             return UNKNOWN
         if name in parameters:
@@ -262,6 +263,8 @@ class Call:
     method: str
     shadowed_receiver: bool = False
     import_scope: str = ""
+    argument_names: tuple[str, ...] = ()
+    argument_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +273,8 @@ class Method:
     name: str
     parameters: tuple[str, ...]
     calls: tuple[int, ...]
+    parameter_types: tuple[str, ...] = ()
+    defaults: tuple[Expr | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +289,8 @@ class Facts:
     calls: tuple[Call, ...]
     imports: dict[str, dict] = field(default_factory=dict)
     version: int = ANALYSIS_VERSION
+    build: dict = field(default_factory=dict)
+    diagnostics: tuple[dict, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> Facts:
@@ -296,7 +303,15 @@ class Facts:
             {key: tuple(tuple(atom) for atom in expr) for key, expr in data["constants"].items()},
             tuple(
                 Method(
-                    item["identity"], item["name"], tuple(item["parameters"]), tuple(item["calls"])
+                    item["identity"],
+                    item["name"],
+                    tuple(item["parameters"]),
+                    tuple(item["calls"]),
+                    tuple(item.get("parameter_types", ())),
+                    tuple(
+                        None if expr is None else tuple(tuple(atom) for atom in expr)
+                        for expr in item.get("defaults", ())
+                    ),
                 )
                 for item in data["methods"]
             ),
@@ -309,20 +324,25 @@ class Facts:
                     item["method"],
                     item.get("shadowed_receiver", False),
                     item.get("import_scope", ""),
+                    tuple(item.get("argument_names", ())),
+                    tuple(item.get("argument_types", ())),
                 )
                 for item in data["calls"]
             ),
             data.get("imports", {}),
             data.get("version", 1),
+            data.get("build", {}),
+            tuple(data.get("diagnostics", ())),
         )
 
 
-def parse_csharp(owner: str, path: str, source: str) -> Facts:
+def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = None) -> Facts:
+    source, build, diagnostics = source_for_build(source, context)
     tokens = _tokens(source)
     pairs = _pairs(tokens)
     scopes = [""] * len(tokens)
     import_scopes = [""] * len(tokens)
-    imports = {"": {"usings": [], "aliases": {}}}
+    imports = {"": {"usings": [], "statics": [], "aliases": {}, "alias_scopes": {}}}
     import_parents = {}
     active_imports = []
     types, usings, aliases, constants = [], [], {}, {}
@@ -353,7 +373,12 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
                     types.append(full)
                 else:
                     identity = str(i)
-                    imports[identity] = {"usings": [], "aliases": {}}
+                    imports[identity] = {
+                        "usings": [],
+                        "statics": [],
+                        "aliases": {},
+                        "alias_scopes": {},
+                    }
                     import_parents[identity] = import_scope
                     active_imports.append((stop, identity))
         elif token.text == "using" and (not active or active[-1][2] == "namespace"):
@@ -362,12 +387,17 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
                 end += 1
             parts = tokens[i + 1 : end]
             if end < len(tokens) and tokens[end].text == ";" and parts:
-                value = "".join(t.text for t in parts).removeprefix("global::")
+                value = "".join(t.text for t in parts)
                 if "=" in value:
                     name, target = value.split("=", 1)
-                    imports[import_scope]["aliases"][name] = target.removeprefix("global::")
+                    imports[import_scope]["aliases"][name] = target
+                    imports[import_scope]["alias_scopes"][name] = scope
+                elif parts[0].text == "static":
+                    imports[import_scope]["statics"].append("".join(t.text for t in parts[1:]))
                 else:
                     imports[import_scope]["usings"].append(value)
+                if i and tokens[i - 1].text == "global":
+                    diagnostics += ({"reason": "global_using_not_propagated", "line": token.line},)
     # Each namespace occurrence has its own import scope, including reopened
     # namespaces with the same qualified name. Imports are inherited lexically.
     for identity, parent in import_parents.items():
@@ -376,6 +406,13 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
                 dict.fromkeys([*imports[parent]["usings"], *imports[identity]["usings"]])
             ),
             "aliases": {**imports[parent]["aliases"], **imports[identity]["aliases"]},
+            "statics": list(
+                dict.fromkeys([*imports[parent]["statics"], *imports[identity]["statics"]])
+            ),
+            "alias_scopes": {
+                **imports[parent]["alias_scopes"],
+                **imports[identity]["alias_scopes"],
+            },
         }
     usings, aliases = imports[""]["usings"], imports[""]["aliases"]
     candidates = []
@@ -399,7 +436,7 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
             and tokens[start - 2].kind == "id"
         ):
             start -= 2
-        name = "".join(t.text for t in tokens[start : name_end + 1]).removeprefix("global::")
+        name = "".join(t.text for t in tokens[start : name_end + 1])
         end = pairs[i]
         after = end + 1
         if after < len(tokens) and tokens[after].text == "where":
@@ -409,11 +446,18 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
             after < len(tokens) and tokens[after].text in ("{", "=>") and "." not in name
         )
         if is_definition:
-            parameters = []
+            parameters, parameter_types, defaults = [], [], []
             for part in _split(tokens[i + 1 : end], ","):
-                before_default = _split(part, "=")[0]
+                pieces = _split(part, "=")
+                before_default = pieces[0]
                 names = [t.text for t in before_default if t.kind == "id"]
                 parameters.append(names[-1] if names else "?")
+                parameter_types.append("".join(t.text for t in before_default[:-1]))
+                defaults.append(
+                    _expression(pieces[1], scopes[i], (), import_scope=import_scopes[i])
+                    if len(pieces) == 2
+                    else None
+                )
             stop = pairs.get(after, after)
             if tokens[after].text == "=>":
                 stop = after + 1
@@ -426,6 +470,8 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
                 tuple(parameters),
                 after,
                 stop,
+                tuple(parameter_types),
+                tuple(defaults),
             )
         else:
             candidates.append((i, name, start, end))
@@ -462,9 +508,13 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
                 )
         local_names[method[0]] |= frozenset(tainted)
     fields = defaultdict(set)
+    parameter_positions = {
+        position for start in declarations for position in range(start, pairs[start] + 1)
+    }
     for i in range(1, len(tokens) - 1):
         if (
             not inside_method[i]
+            and i not in parameter_positions
             and tokens[i].kind == "id"
             and (tokens[i - 1].kind == "id" or tokens[i - 1].text in (">", "]", "?", "*", ",", ")"))
             and tokens[i - 1].text
@@ -497,11 +547,17 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
         identity = method[0] if method else ""
         locals_ = local_names.get(identity, frozenset()) | fields[scopes[i]]
         receiver = name.partition(".")[0]
+        argument_parts, argument_names = [], []
+        for part in _split(tokens[i + 1 : end], ","):
+            named = len(part) >= 2 and part[0].kind == "id" and part[1].text == ":"
+            argument_names.append(part[0].text if named else "")
+            argument_parts.append(part[2:] if named else part)
+        parameter_types = dict(zip(parameters, method[5])) if method else {}
         call = Call(
             name,
             tuple(
                 _expression(part, scopes[i], parameters, locals_, import_scopes[i])
-                for part in _split(tokens[i + 1 : end], ",")
+                for part in argument_parts
             ),
             tokens[start].line,
             scopes[i],
@@ -510,6 +566,8 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
             and receiver in (locals_ | set(parameters))
             and tokens[start].text != "global",
             import_scopes[i],
+            tuple(argument_names),
+            tuple(_argument_type(part, parameter_types) for part in argument_parts),
         )
         method_calls[identity].append(len(calls))
         calls.append(call)
@@ -529,10 +587,77 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
         constants[(scopes[i] + "." if scopes[i] else "") + name] = _expression(
             tokens[end:stop], scopes[i], (), import_scope=import_scopes[i]
         )
-    methods = tuple(Method(m[0], m[1], m[2], tuple(method_calls[m[0]])) for m in method_ranges)
-    return Facts(
-        owner, path, tuple(usings), aliases, tuple(types), constants, methods, tuple(calls), imports
+    methods = tuple(
+        Method(m[0], m[1], m[2], tuple(method_calls[m[0]]), m[5], m[6]) for m in method_ranges
     )
+    return Facts(
+        owner,
+        path,
+        tuple(usings),
+        aliases,
+        tuple(types),
+        constants,
+        methods,
+        tuple(calls),
+        imports,
+        build=build,
+        diagnostics=diagnostics,
+    )
+
+
+def _argument_type(tokens: list[Token], parameters: dict[str, str]) -> str:
+    if len(tokens) == 1:
+        token = tokens[0]
+        if token.kind == "string":
+            return "char" if token.text.startswith("'") else "string"
+        if token.text in {"true", "false"}:
+            return "bool"
+        if token.text in parameters:
+            return parameters[token.text]
+    literal = re.fullmatch(
+        r"([+-]?)(0[xX][0-9a-fA-F_]+|0[bB][01_]+|[0-9][0-9_]*)([uU][lL]?|[lL][uU]?)?",
+        "".join(token.text for token in tokens),
+    )
+    if literal:
+        sign, digits, suffix = literal.groups()
+        suffix = (suffix or "").lower()
+        digits = digits.replace("_", "")
+        base = (
+            16 if digits.lower().startswith("0x") else 2 if digits.lower().startswith("0b") else 10
+        )
+        digits = digits[2:] if base != 10 else digits
+        # A C# integral literal has at most 64 significant binary digits.
+        # Avoid parsing an arbitrarily long invalid token into a Python bigint.
+        digits = digits.lstrip("0") or "0"
+        if len(digits) > {16: 16, 2: 64, 10: 20}[base]:
+            return "invalid_numeric_literal"
+        number = int(digits, base)
+        candidates = (
+            (("ulong", 64),)
+            if "u" in suffix and "l" in suffix
+            else (("uint", 32), ("ulong", 64))
+            if suffix == "u"
+            else (("long", 63), ("ulong", 64))
+            if suffix == "l"
+            else (("int", 31), ("uint", 32), ("long", 63), ("ulong", 64))
+        )
+        result = next(
+            (name for name, bits in candidates if number < 1 << bits), "invalid_numeric_literal"
+        )
+        if sign == "-":
+            if not suffix and number == 1 << 31:
+                return "int"
+            if suffix in ("", "l") and number == 1 << 63:
+                return "long"
+            return (
+                "long"
+                if result == "uint"
+                else "invalid_numeric_literal"
+                if result == "ulong"
+                else result
+            )
+        return result
+    return ""
 
 
 class Catalog:
@@ -624,6 +749,8 @@ class AnalysisIndex:
     ):
         self.check = check
         self.facts: dict[str, Facts] = {}
+        self._contexts = {}
+        self._visibility = {}
         self.catalog = catalog
         self.rules = {}
         for rule in rules:
@@ -635,6 +762,7 @@ class AnalysisIndex:
         self.methods: dict[str, list[tuple[str, Method]]] = defaultdict(list)
         self.method_ids = {}
         self.types = defaultdict(set)
+        self.namespaces = defaultdict(set)
         self.dependencies: dict[str, set[str]] = defaultdict(set)
         self.reverse: dict[str, set[str]] = defaultdict(set)
         self.lookups: dict[str, set[str]] = defaultdict(set)
@@ -648,13 +776,40 @@ class AnalysisIndex:
         self._prepare(set(self.facts))
 
     @staticmethod
+    def _prefixes(item: Facts) -> set[str]:
+        names = set()
+        for name in item.types:
+            while name := name.rpartition(".")[0]:
+                names.add(name)
+        return names
+
+    @staticmethod
     def _symbols(item: Facts) -> set[str]:
-        return {*item.types, *item.constants, *(method.name for method in item.methods)}
+        return {
+            *item.types,
+            *item.constants,
+            *(method.name for method in item.methods),
+            *AnalysisIndex._prefixes(item),
+        }
 
     def _add(self, item: Facts) -> None:
+        context_key = self._context_key(item.build)
+        if context_key not in self._contexts:
+            self._contexts[context_key] = [
+                item.build,
+                0,
+                frozenset(item.build.get("references", ())),
+            ]
+        context = self._contexts[context_key]
+        context[1] += 1
+        if item.build and item.build is not context[0]:
+            item = replace(item, build=context[0])
+        self._visibility[item.owner] = context[2]
         self.facts[item.owner] = item
         for name in item.types:
             self.types[name].add(item.owner)
+        for name in self._prefixes(item):
+            self.namespaces[name].add(item.owner)
         for name, expr in item.constants.items():
             self.constants[name].append((item.owner, expr))
         for method in item.methods:
@@ -665,10 +820,19 @@ class AnalysisIndex:
         item = self.facts.pop(owner, None)
         if item is None:
             return
+        context_key = self._context_key(item.build)
+        self._contexts[context_key][1] -= 1
+        if not self._contexts[context_key][1]:
+            del self._contexts[context_key]
+        self._visibility.pop(owner, None)
         for name in item.types:
             self.types[name].discard(owner)
             if not self.types[name]:
                 del self.types[name]
+        for name in self._prefixes(item):
+            self.namespaces[name].discard(owner)
+            if not self.namespaces[name]:
+                del self.namespaces[name]
         for mapping, names in (
             (self.constants, item.constants),
             (self.methods, {m.name for m in item.methods}),
@@ -738,7 +902,7 @@ class AnalysisIndex:
             arguments = dict.fromkeys(method.parameters, UNKNOWN)
             values, reusable = set(), True
             for index in method.calls:
-                direct, child, issue = self.resolutions[item.owner][index]
+                direct, child, issue, bindings = self.resolutions[item.owner][index]
                 if issue:
                     values.add(issue)
                 values.update(
@@ -746,9 +910,7 @@ class AnalysisIndex:
                     for e in direct
                 )
                 if child:
-                    bound = [
-                        self._bound(item, expr, arguments) for expr in item.calls[index].arguments
-                    ]
+                    bound = [self._bound(item, expr, arguments) for expr in bindings]
                     summary = self.unknown_summaries.get(child)
                     if summary is None or any(value != UNKNOWN for value in bound):
                         reusable = False
@@ -788,14 +950,39 @@ class AnalysisIndex:
 
     def _names(self, item: Facts, name: str, scope: str, import_scope: str = "") -> list[str]:
         imports = item.imports.get(import_scope, {"aliases": item.aliases, "usings": item.usings})
+        if name.startswith("global::"):
+            return self._lookup_names(item.owner, [name[len("global::") :]])
         first, _, rest = name.partition(".")
-        if first in imports["aliases"]:
-            names = [imports["aliases"][first] + ("." + rest if rest else "")]
-            return self._lookup_names(item.owner, names)
         names = []
         while scope:
-            names.append(scope + "." + name)
+            if first in imports["aliases"] and scope == imports.get("alias_scopes", {}).get(first):
+                break
+            full = scope + "." + name
+            names.append(full)
+            self._lookup_names(item.owner, [full, scope + "." + first])
+            if self._declared(item, scope + "." + first) or self._declared(item, full):
+                return [full]
             scope = scope.rpartition(".")[0]
+        if first in imports["aliases"]:
+            target = imports["aliases"][first]
+            alias_scope = imports.get("alias_scopes", {}).get(first, "")
+            if not target.startswith("global::"):
+                while alias_scope:
+                    candidate = alias_scope + "." + target
+                    self._lookup_names(item.owner, [candidate])
+                    if self._declared(item, candidate):
+                        target = candidate
+                        break
+                    alias_scope = alias_scope.rpartition(".")[0]
+            return self._lookup_names(
+                item.owner, [target.removeprefix("global::") + ("." + rest if rest else "")]
+            )
+        # A new global type/namespace can shadow a previously imported name.
+        # Track this candidate even before it exists so incremental and cold
+        # binding agree after the new source is imported.
+        self._lookup_names(item.owner, [first])
+        if self._declared(item, first) or self._declared(item, name):
+            return self._lookup_names(item.owner, [name, first])[:1]
         return self._lookup_names(
             item.owner,
             list(
@@ -804,13 +991,37 @@ class AnalysisIndex:
                         *names,
                         name,
                         *(
-                            using + "." + name
-                            for using in imports["usings"]
-                            if not using.startswith("static")
+                            using.removeprefix("global::") + "." + name
+                            for using in [*imports["usings"], *imports.get("statics", ())]
                         ),
                     ]
                 )
             ),
+        )
+
+    def _visible(self, item: Facts, owner: str) -> bool:
+        build = item.build
+        target = self.facts[owner].build
+        return (
+            build.get("state") != "available"
+            or target.get("state") != "available"
+            or target.get("assembly") == build.get("assembly")
+            or target.get("assembly") in self._visibility[item.owner]
+        )
+
+    @staticmethod
+    def _context_key(build: dict) -> tuple:
+        return tuple(
+            (key, tuple(value) if key == "references" else value)
+            for key, value in sorted(build.items())
+        )
+
+    def _declared(self, item: Facts, name: str) -> bool:
+        return (
+            any(self._visible(item, owner) for owner in self.types.get(name, ()))
+            or any(self._visible(item, owner) for owner in self.namespaces.get(name, ()))
+            or any(self._visible(item, owner) for owner, _ in self.methods.get(name, ()))
+            or any(self._visible(item, owner) for owner, _ in self.constants.get(name, ()))
         )
 
     def _lookup_names(self, owner: str, names: list[str]) -> list[str]:
@@ -830,6 +1041,7 @@ class AnalysisIndex:
             (full, row)
             for full in self._names(item, name, scope, import_scope)
             for row in self.constants.get(full, ())
+            if self._visible(item, row[0])
         ]
         self._depend(item.owner, (row[0] for _, row in matches))
         if len(matches) != 1 or matches[0][0] in active:
@@ -862,17 +1074,66 @@ class AnalysisIndex:
                 output.append((kind, value))
         return UNKNOWN if any(kind == "unknown" for kind, _ in output) else tuple(output)
 
-    def _resolve_call(self, item: Facts, call: Call) -> tuple[list[Effect], str | None, str | None]:
+    def _bind(self, item: Facts, call: Call, owner: str, method: Method) -> tuple[Expr, ...] | None:
+        if len(call.arguments) > len(method.parameters):
+            return None
+        supplied = {}
+        for index, expression in enumerate(call.arguments):
+            name = call.argument_names[index] if call.argument_names else ""
+            if name:
+                if name not in method.parameters:
+                    return None
+                target = method.parameters.index(name)
+            else:
+                target = index
+            if target in supplied:
+                return None
+            argument_type = call.argument_types[index] if call.argument_types else ""
+            if not argument_type and self._bound(item, expression, {}) != UNKNOWN:
+                argument_type = "string"
+            parameter_type = method.parameter_types[target] if method.parameter_types else ""
+            canonical = {
+                "System.String": "string",
+                "System.Int32": "int",
+                "System.Int64": "long",
+                "System.UInt32": "uint",
+                "System.UInt64": "ulong",
+                "System.Boolean": "bool",
+                "System.Char": "char",
+            }
+            parameter_type = canonical.get(parameter_type.removeprefix("global::"), parameter_type)
+            argument_type = canonical.get(argument_type.removeprefix("global::"), argument_type)
+            if argument_type and parameter_type and argument_type != parameter_type:
+                return None
+            supplied[target] = expression
+        bound = []
+        for index in range(len(method.parameters)):
+            if index in supplied:
+                bound.append(supplied[index])
+            else:
+                default = method.defaults[index] if method.defaults else None
+                if default is None:
+                    return None
+                bound.append(self._expand(self.facts[owner], default, {}))
+        return tuple(bound)
+
+    def _resolve_call(
+        self, item: Facts, call: Call
+    ) -> tuple[list[Effect], str | None, str | None, tuple[Expr, ...]]:
         if call.shadowed_receiver:
-            return [], None, "unresolved_receiver"
+            return [], None, "unresolved_receiver", ()
         names = self._names(item, call.name, call.scope, call.import_scope)
         rule_matches = [self.rules[name] for name in names if name in self.rules]
         if len(rule_matches) > 1:
-            return [], None, "ambiguous_call"
+            return [], None, "ambiguous_call", ()
         if rule_matches:
             rule = rule_matches[0]
             index = rule.get("argument", 0)
-            expr = call.arguments[index] if index < len(call.arguments) else UNKNOWN
+            expr = (
+                call.arguments[index]
+                if index < len(call.arguments) and not any(call.argument_names)
+                else UNKNOWN
+            )
             return (
                 [
                     Effect(
@@ -888,45 +1149,73 @@ class AnalysisIndex:
                 ],
                 None,
                 None,
+                (),
             )
         matches = [
-            (owner, method)
+            (owner, method, bindings)
             for name in names
             for owner, method in self.methods.get(name, ())
-            if len(method.parameters) == len(call.arguments)
+            if self._visible(item, owner)
+            and (bindings := self._bind(item, call, owner, method)) is not None
         ]
         if matches:
-            self._depend(item.owner, (owner for owner, _ in matches))
+            self._depend(item.owner, (owner for owner, _, _ in matches))
             if len(matches) != 1:
-                return [], None, "ambiguous_call"
-            owner, method = matches[0]
+                return [], None, "ambiguous_call", ()
+            owner, method, bindings = matches[0]
             self._depend(item.owner, (owner,))
-            return [], method.identity, None
+            return [], method.identity, None, bindings
+        if any(
+            self._visible(item, owner) for name in names for owner, _ in self.methods.get(name, ())
+        ):
+            return [], None, "unsupported_call_binding", ()
         qualifier, _, method = call.name.rpartition(".")
         if method not in _LOADER_METHODS:
-            return [], None, None
+            return [], None, None, ()
         qualified = self._names(item, qualifier, call.scope, call.import_scope)
         # A project type with the same visible qualifier takes precedence.
-        if any(name in self.types for name in qualified):
+        if any(
+            self._visible(item, owner) for name in qualified for owner in self.types.get(name, ())
+        ):
             self._depend(
                 item.owner, (owner for name in qualified for owner in self.types.get(name, ()))
             )
-            return [], None, "unresolved_loader"
+            return [], None, "unresolved_loader", ()
         signatures = {LOADERS[name] for name in names if name in LOADERS}
         if len(signatures) != 1:
-            return [], None, "unresolved_loader"
+            return [], None, "unresolved_loader", ()
         scheme, mode = signatures.pop()
+        expression = call.arguments[0] if call.arguments else UNKNOWN
+        if any(call.argument_names):
+            key_name = (
+                "path"
+                if scheme == "resources"
+                else "keys"
+                if method == "LoadAssetsAsync"
+                else "key"
+            )
+            expression = next(
+                (
+                    expr
+                    for index, expr in enumerate(call.arguments)
+                    if call.argument_names[index] == key_name
+                    or index == 0
+                    and not call.argument_names[index]
+                ),
+                UNKNOWN,
+            )
         return (
             [
                 Effect(
                     scheme,
                     mode,
-                    call.arguments[0] if call.arguments else UNKNOWN,
+                    expression,
                     "call:" + call.name,
                 )
             ],
             None,
             None,
+            (),
         )
 
     def affected(self, changed: set[str]) -> set[str]:
@@ -960,7 +1249,7 @@ class AnalysisIndex:
                 active.discard(identity)
                 continue
             call = item.calls[index]
-            direct, child, issue = self.resolutions[item.owner][index]
+            direct, child, issue, bindings = self.resolutions[item.owner][index]
             if issue:
                 yield issue
             for effect in direct:
@@ -976,7 +1265,7 @@ class AnalysisIndex:
                 yield "recursive_wrapper"
                 continue
             child_item, method = self.method_ids[child]
-            values = tuple(self._bound(item, expr, arguments) for expr in call.arguments)
+            values = tuple(self._bound(item, expr, arguments) for expr in bindings)
             state = (child, values)
             symbolic = all(value == UNKNOWN for value in values)
             summary = self.unknown_summaries.get(child) if symbolic else None
@@ -1020,6 +1309,7 @@ class AnalysisIndex:
     def events(self, owner: str) -> Iterator[Edge | dict]:
         """Stream concrete evidence without retaining a wrapper's entire fanout."""
         self.check()
+        yield from self.facts[owner].diagnostics
         for call_index in range(len(self.facts[owner].calls)):
             yield from self._call_events(owner, call_index)
 
@@ -1064,6 +1354,7 @@ class AnalysisIndex:
         # Convenience API for bounded component callers. The reconciler consumes
         # events into a disk-backed staging sink for potentially large owners.
         result = Analysis()
+        result.unresolved.extend(self.facts[owner].diagnostics)
         for call_index in range(len(self.facts[owner].calls)):
             edges, issues = set(), set()
             for event in self._call_events(owner, call_index):

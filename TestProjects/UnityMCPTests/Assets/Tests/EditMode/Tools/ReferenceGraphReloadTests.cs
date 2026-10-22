@@ -33,6 +33,10 @@ namespace MCPForUnityTests.EditMode.Tools
                 JObject after = ReferenceGraphCollectorTests.Call("status");
                 Assert.AreEqual(before["instance_id"], after["instance_id"]);
                 Assert.AreEqual(before["epoch"], after["epoch"]);
+                Assert.IsTrue(
+                    JToken.DeepEquals(before["compilation_context"], after["compilation_context"]),
+                    "Reload rebuilds the same current compiler context."
+                );
                 JObject changes = ReferenceGraphCollectorTests.Call("changes", "epoch", before.Value<string>("epoch"), "after", before.Value<long>("revision"));
                 Assert.IsFalse(changes.Value<bool>("requires_census"));
                 Assert.IsNotEmpty(changes["changes"]);

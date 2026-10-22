@@ -181,6 +181,9 @@ namespace MCPForUnityTests.EditMode.Tools
             JObject before = Call("status");
             using var bytes = new MemoryStream();
             JObject page = Call("source", "guid", sourceGuid);
+            Assert.AreEqual("available", page["compilation_context"].Value<string>("state"));
+            Assert.AreEqual(before["compilation_context"]["revision"], page["compilation_context"]["revision"]);
+            Assert.IsTrue(page["compilation_context"]["defines"].Values<string>().Contains("UNITY_EDITOR"));
             while (true)
             {
                 byte[] part = Convert.FromBase64String(page.Value<string>("bytes_base64"));
@@ -188,10 +191,81 @@ namespace MCPForUnityTests.EditMode.Tools
                 if (page["next_offset"].Type == JTokenType.Null)
                     break;
                 page = Call("source", "guid", sourceGuid, "offset", page.Value<long>("next_offset"), "fingerprint", page.Value<string>("fingerprint"));
+                Assert.AreEqual(JTokenType.Null, page["compilation_context"].Type, "Assembly metadata is sent once per source read.");
             }
             CollectionAssert.AreEqual(File.ReadAllBytes(path), bytes.ToArray());
             Assert.Greater(bytes.Length, 65536, "Exercise real source continuation across transport pages.");
             Assert.AreEqual(before["revision"], Call("status")["revision"]);
+        }
+
+        [Test]
+        public void CompilationContextIsDeterministicCachedAndReleasedWhenIdle()
+        {
+            var type = typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCompilation", true);
+            var flags = BindingFlags.NonPublic | BindingFlags.Static;
+            var status = type.GetMethod("Status", flags);
+            var invalidate = type.GetMethod("Invalidate", flags);
+            JObject first = (JObject)status.Invoke(null, null);
+            Assert.AreEqual("available", first.Value<string>("state"));
+            Assert.AreEqual(EditorUserBuildSettings.activeBuildTarget.ToString(), first.Value<string>("target"));
+            var sourceMap = type.GetField("sources", flags).GetValue(null);
+            long calibration = GC.GetAllocatedBytesForCurrentThread();
+            GC.KeepAlive(new byte[4096]);
+            bool counterAvailable = GC.GetAllocatedBytesForCurrentThread() > calibration;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            long allocated = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1000; i++)
+                status.Invoke(null, null);
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            clock.Stop();
+            Assert.AreSame(sourceMap, type.GetField("sources", flags).GetValue(null));
+            TestContext.WriteLine(
+                "REFERENCE_COMPILATION_WARM "
+                    + new JObject
+                    {
+                        ["calls"] = 1000,
+                        ["milliseconds"] = clock.Elapsed.TotalMilliseconds,
+                        ["allocated_bytes"] = counterAvailable ? (JToken)allocated : JValue.CreateNull(),
+                    }
+            );
+            invalidate.Invoke(null, new object[] { null });
+            clock.Restart();
+            allocated = GC.GetAllocatedBytesForCurrentThread();
+            JObject rebuilt = (JObject)status.Invoke(null, null);
+            allocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            clock.Stop();
+            Assert.IsTrue(JToken.DeepEquals(first, rebuilt));
+            Assert.AreNotSame(sourceMap, type.GetField("sources", flags).GetValue(null));
+            TestContext.WriteLine(
+                "REFERENCE_COMPILATION_REBUILD "
+                    + new JObject
+                    {
+                        ["milliseconds"] = clock.Elapsed.TotalMilliseconds,
+                        ["allocated_bytes"] = counterAvailable ? (JToken)allocated : JValue.CreateNull(),
+                    }
+            );
+            type.GetMethod("ReleaseExpired", flags).Invoke(null, new object[] { EditorApplication.timeSinceStartup + 601 });
+            Assert.IsNull(type.GetField("sources", flags).GetValue(null));
+            Assert.IsFalse((bool)type.GetProperty("Retained", flags).GetValue(null));
+            Assert.IsTrue(JToken.DeepEquals(first, (JObject)status.Invoke(null, null)));
+        }
+
+        [Test]
+        public void CompilationPagesMatchSourceContextAndRejectStaleRevision()
+        {
+            string guid = AssetDatabase
+                .FindAssets("ManageScript t:MonoScript")
+                .Single(id => AssetDatabase.GUIDToAssetPath(id).EndsWith("/ManageScript.cs", StringComparison.Ordinal));
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            JObject source = Call("source", "guid", guid);
+            string revision = source["compilation_context"].Value<string>("revision");
+            JObject page = Call("compilation", "paths", new JArray(path), "revision", revision);
+            Assert.AreEqual(revision, page.Value<string>("revision"));
+            Assert.AreEqual(source["compilation_context"]["binding_revision"], page["bindings"][0]["signature"]);
+            var stale = Assert.Throws<TargetInvocationException>(() => Call("compilation", "paths", new JArray(path), "revision", "old"));
+            Assert.IsInstanceOf<InvalidOperationException>(stale.InnerException);
+            var escaped = Assert.Throws<TargetInvocationException>(() => Call("compilation", "paths", new JArray("../outside.cs"), "revision", revision));
+            Assert.IsInstanceOf<ArgumentException>(escaped.InnerException);
         }
 
         [TestCase("Assets/Resources/GameData/example.asset")]

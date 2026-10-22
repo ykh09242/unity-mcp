@@ -44,10 +44,13 @@ unrecognized loaders and absent/ambiguous keys retain explicit diagnostics.
 Qualified wrapper rules can specify `call`, zero-based `argument`, `scheme`,
 `mode`, `prefix` and `suffix` for APIs whose implementation is unavailable.
 
-This is **partial static evidence**, not Roslyn semantic analysis. It does not
-evaluate conditional compilation, runtime reflection, arbitrary expressions,
-interpolated strings, multiline raw-string indentation, instance type flow,
-inheritance, default/named argument binding or assembly reference resolution.
+This is **partial static evidence**, not Roslyn semantic analysis. The
+[build-aware binder](reference-graph-compilation.md) uses existing Unity compiler
+metadata for active defines and assembly visibility, and supports static imports,
+named/default arguments and conservative primitive-type overload binding. It does
+not resolve runtime reflection, arbitrary expressions, interpolated strings,
+multiline raw-string indentation, instance type flow, inheritance, user-defined
+conversions, extension methods or cross-file global using directives.
 In particular, it does not certify that a script or asset has no runtime
 references. Code edges use `possible` confidence even when their literal key is
 unique. Compiler failures and collection errors must remain visible in the

@@ -85,6 +85,7 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
             ReleaseExpired();
+            ScheduleCleanup();
             string action = request.Value<string>("action") ?? "status";
             int count = Integer(request, "page_size", 128, 1, 1000);
             if (action == "status")
@@ -106,6 +107,8 @@ namespace MCPForUnity.Editor.Tools
                     return Dependencies(request, count);
                 case "source":
                     return Source(request);
+                case "compilation":
+                    return CompilationBindings(request);
                 default:
                     throw new ArgumentException("Unknown reference collection action.");
             }
@@ -121,6 +124,8 @@ namespace MCPForUnity.Editor.Tools
                 ["compiling"] = EditorApplication.isCompiling,
                 ["importing"] = EditorApplication.isUpdating,
                 ["compilation_failed"] = EditorUtility.scriptCompilationFailed,
+                ["compilation_context"] = ReferenceGraphCompilation.Status(),
+                ["unity_version"] = Application.unityVersion,
                 ["addressables_event_error"] = addressableObservationError,
                 ["scope"] = "Assets and Packages; collection exclusions belong to the requesting user's graph policy",
             };
@@ -218,6 +223,7 @@ namespace MCPForUnity.Editor.Tools
                 row["addressables"] = "not_installed";
                 return;
             }
+            row["addressables_version"] = defaults.Assembly.GetName().Version.ToString();
             try
             {
                 object settings = ReadAddressableSettings(defaults);
@@ -366,23 +372,11 @@ namespace MCPForUnity.Editor.Tools
             if (!asset.Value<bool>("present") || asset.Value<string>("source_format") == "none")
                 throw new ArgumentException("Source collection requires admitted C# or Unity serialized text.");
             string path = asset.Value<string>("path");
-            string resolved = path;
-            if (path.StartsWith("Packages/", StringComparison.Ordinal))
-            {
-                var package = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(path);
-                if (package == null)
-                    throw new ArgumentException("Package source cannot be resolved.");
-                resolved = Path.Combine(package.resolvedPath, path.Substring(("Packages/" + package.name + "/").Length));
-            }
-            else
-            {
-                if (!ProjectIdentityUtility.TryGetConsentProjectRoot(out string root))
-                    throw new InvalidOperationException("The current Editor project root is unavailable.");
-                resolved = Path.Combine(root, path);
-            }
-            resolved = GuardedFileSystem.CheckPath(resolved);
+            string resolved = ResolveSourcePath(path);
+            JObject context = asset.Value<string>("source_format") == "csharp" ? ReferenceGraphCompilation.ForSource(path, resolved) : null;
             var info = new FileInfo(resolved);
-            string fingerprint = info.Length + ":" + info.LastWriteTimeUtc.Ticks;
+            string stamp = info.Length + ":" + info.LastWriteTimeUtc.Ticks;
+            string fingerprint = stamp + (context == null ? "" : ":" + context.Value<string>("revision"));
             string expected = request.Value<string>("fingerprint");
             long offset = request.Value<long?>("offset") ?? 0;
             if (offset < 0 || offset > info.Length || (offset != 0 && expected == null) || (expected != null && expected != fingerprint))
@@ -412,16 +406,63 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
             info.Refresh();
-            if (fingerprint != info.Length + ":" + info.LastWriteTimeUtc.Ticks)
+            if (stamp != info.Length + ":" + info.LastWriteTimeUtc.Ticks)
                 throw new IOException("Source changed while reading.");
             return new JObject
             {
                 ["guid"] = guid,
                 ["source_format"] = asset["source_format"],
                 ["fingerprint"] = fingerprint,
+                ["compilation_context"] = offset == 0 ? context : null,
                 ["bytes_base64"] = Convert.ToBase64String(bytes),
                 ["next_offset"] = offset + length < info.Length ? (JToken)(offset + length) : JValue.CreateNull(),
             };
+        }
+
+        private static string ResolveSourcePath(string path)
+        {
+            if (!Admitted(path))
+                throw new ArgumentException("Source path must belong to the admitted project.");
+            string resolved;
+            if (path.StartsWith("Packages/", StringComparison.Ordinal))
+            {
+                var package = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(path);
+                if (package == null)
+                    throw new ArgumentException("Package source cannot be resolved.");
+                resolved = Path.Combine(package.resolvedPath, path.Substring(("Packages/" + package.name + "/").Length));
+            }
+            else
+            {
+                if (!ProjectIdentityUtility.TryGetConsentProjectRoot(out string root))
+                    throw new InvalidOperationException("The current Editor project root is unavailable.");
+                resolved = Path.Combine(root, path);
+            }
+            return GuardedFileSystem.CheckPath(resolved);
+        }
+
+        private static JObject CompilationBindings(JObject request)
+        {
+            if (!(request["paths"] is JArray paths) || paths.Count > 1000 || paths.Any(path => path.Type != JTokenType.String))
+                throw new ArgumentException("Compilation metadata requires a page of at most 1000 source paths.");
+            JObject status = ReferenceGraphCompilation.Status();
+            if (status.Value<string>("state") != "available" || request.Value<string>("revision") != status.Value<string>("revision"))
+                throw new InvalidOperationException("Compilation metadata changed; restart the page.");
+            var rows = new JArray();
+            foreach (string path in paths.Values<string>())
+            {
+                if (!Admitted(path) || !path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("Compilation metadata requires C# source paths.");
+                try
+                {
+                    string signature = ReferenceGraphCompilation.Binding(path, ResolveSourcePath(path));
+                    rows.Add(new JObject { ["path"] = path, ["signature"] = signature });
+                }
+                catch (Exception error)
+                {
+                    rows.Add(new JObject { ["path"] = path, ["error"] = error.GetType().Name });
+                }
+            }
+            return new JObject { ["revision"] = status["revision"], ["bindings"] = rows };
         }
 
         private static void ScheduleCleanup()
@@ -439,6 +480,7 @@ namespace MCPForUnity.Editor.Tools
             if (now < nextSweep)
                 return;
             nextSweep = now + 60;
+            ReferenceGraphCompilation.ReleaseExpired(now);
             if (inventory != null && now - inventoryUsed > 600)
                 inventory = null;
             if (dependencies != null && now - dependencyUsed > 600)
@@ -448,7 +490,7 @@ namespace MCPForUnity.Editor.Tools
                 addressableSettings = null;
                 addressableRevision = -1;
             }
-            if (inventory == null && dependencies == null && addressableSettings == null && cleanupScheduled)
+            if (inventory == null && dependencies == null && addressableSettings == null && !ReferenceGraphCompilation.Retained && cleanupScheduled)
             {
                 EditorApplication.update -= ReleaseExpired;
                 cleanupScheduled = false;
