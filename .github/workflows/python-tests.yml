@@ -37,6 +37,37 @@ permissions:
   contents: read
 
 jobs:
+  reference_graph:
+    name: Reference graph (${{ matrix.os }}, Python ${{ matrix.python }})
+    if: inputs.validation_profile != 'tools-only'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-26.04, macos-26-intel]
+        python: ["3.11", "3.15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.3"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-suffix: reference-graph-${{ matrix.python }}
+          cache-dependency-glob: Server/uv.lock
+      - name: Install and exercise isolated reference storage
+        working-directory: Server
+        env:
+          PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python == '3.15' && 'true' || 'false' }}
+          UNITY_MCP_LOG_DIR: ${{ runner.temp }}/reference-graph-logs
+        run: |
+          uv sync --python "${{ matrix.python }}" --locked --extra dev
+          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_reference_graph_store.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-tests"
+
   server_bootstrap:
     name: Server Bootstrap (${{ matrix.os }})
     if: inputs.validation_profile != 'tools-only'
