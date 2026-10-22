@@ -15,7 +15,8 @@ from services.execution_receipt_context import execution_owner, own_future
 from core.config import config
 from services.credential_lease import current_credential_lease, require_credential_lease
 
-from models.response_limits import ResponseOwner, response_owner, response_size
+from models.response_limits import ResponseCopyPlan, ResponseOwner, response_owner, response_size
+from services.tools.response_work import needs_response_worker, response_work
 from services.tools.shared_read_budget import shared_read_budget
 from services.tools.shared_read_accounting import SharedReadAccounting
 from services.tools.immutable_json import prepare_json_copy
@@ -26,6 +27,7 @@ T = TypeVar("T")
 @dataclass(frozen=True, slots=True)
 class _CompletedRead(Generic[T]):
     copy_value: Callable[[], T]
+    in_worker: bool
     received_at: float
 
 
@@ -77,15 +79,22 @@ class _ReadFlight(Generic[T]):
                 value = await factory()
                 if lease is not None:
                     await lease.check()
-                validated_charge = None
+                large = needs_response_worker(value)
+                supported_copier = copy_preparer is None or copy_preparer is prepare_json_copy
+                plan = ResponseCopyPlan() if supported_copier else None
+                # The factory may transform an admitted transport response. Size
+                # the final graph without yielding before any worker can retain it.
+                charge = response_size(value, copy_plan=plan)
+                if charge is None:
+                    raise SharedReadCapacityError()
                 if not self.owner.entries:
-                    # HTTP results already carry Hub reservations; stdio and small
-                    # transport errors need their own aggregate retained-copy budget.
-                    charge = validated_charge = response_size(value)
-                    if charge is None or not shared_read_budget.reserve(self.owner, charge):
+                    # HTTP retains its transport admission; unowned transports
+                    # acquire the same aggregate budget before copying.
+                    if not shared_read_budget.reserve(self.owner, charge):
                         raise SharedReadCapacityError()
-                if copy_preparer is None or copy_preparer is prepare_json_copy:
-                    self.accounting.enable(value, validated_charge=validated_charge)
+                if plan is not None:
+                    self.accounting.enable_plan(plan, charge)
+                in_worker = large and plan is not None and plan.shareable
                 copy_value: Callable[[], T] = partial(deepcopy, value)
                 # One cache reference plus sixteen waiting readers is the measured
                 # break-even range. Single/sparse reads keep their existing path.
@@ -93,14 +102,16 @@ class _ReadFlight(Generic[T]):
                     temporary = self.owner.reserve_copy()
                     if temporary is not None:
                         try:
-                            prepared = copy_preparer(value)
+                            prepared = await response_work(
+                                partial(copy_preparer, value), large=in_worker
+                            )
                             if prepared is not None:
                                 copy_value = prepared
                             del value
                         finally:
                             temporary.release()
                 received = True
-                return _CompletedRead(copy_value, asyncio.get_running_loop().time())
+                return _CompletedRead(copy_value, in_worker, asyncio.get_running_loop().time())
         finally:
             response_owner.reset(token)
             # Completed flights may remain cached. Do not retain the owning
@@ -180,7 +191,7 @@ class SharedRead(Generic[T]):
                 raise SharedReadCapacityError()
             transferred = False
             try:
-                value = completed.copy_value()
+                value = await response_work(completed.copy_value, large=completed.in_worker)
                 if consumer is None:
                     # Direct internal callers have no MCP delivery owner; their
                     # active shared-read lifetime owns the detached allocation.

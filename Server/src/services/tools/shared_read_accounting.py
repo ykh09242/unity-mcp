@@ -2,71 +2,21 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable, Mapping
 
-from models.response_limits import ResponseOwner, response_size
+from models.response_limits import ResponseCopyPlan, ResponseOwner, response_size
 
 # Avoid adding a traversal and ownership group to small response deliveries.
 _MIN_SHARED_CHARGE = 256 * 1024
 
 
-def detached_copy_charge(
-    value: object, source_charge: int, *, validated_charge: int | None = None
-) -> int | None:
-    """Keep encoding workspace, but do not charge shared immutable objects twice.
-
-    response_size validates the final graph and charges 128 bytes per
-    visited node plus twice its object size, string encoding workspace and wire
-    bytes. Exact builtins share immutable scalars under both supported copiers.
-    The original full charge stays pinned for those objects and traversal work.
-    Each detached copy still owns conservative container growth, all per-string
-    encoding workspace, wire bytes and its own reservation overhead.
-    """
+def detached_copy_charge(value: object, source_charge: int) -> int | None:
+    """Discount only a final graph whose complete charge fits its pinned source."""
     if source_charge < _MIN_SHARED_CHARGE:
         return None
-    # A transport factory can transform a result after its original admission.
-    # Equal object storage alone does not cover changed JSON escaping/wire size.
-    final_charge = response_size(value) if validated_charge is None else validated_charge
-    if final_charge is None or final_charge > source_charge:
-        return None
-    seen: set[int] = set()
-    discount = 0
-    covered = 1024
-
-    def visit(item: object) -> bool:
-        nonlocal discount, covered
-        kind = type(item)
-        if kind not in (dict, list, str, int, float, bool, type(None)):
-            return False
-        covered += 128 + 2 * sys.getsizeof(item)
-        if kind is str:
-            covered += 4 * len(item)
-        if covered > source_charge:
-            return False
-        if kind in (dict, list):
-            identity = id(item)
-            if identity in seen:
-                return False
-            seen.add(identity)
-            measured = 2 * sys.getsizeof(item)
-            # A split-table source dict can be smaller than its combined copy.
-            growth = (96 + 48 * len(item)) if kind is dict else (80 + 16 * len(item))
-            discount += 128 - max(0, growth - measured)
-            if kind is dict:
-                return all(
-                    type(key) is str and visit(key) and visit(child) for key, child in item.items()
-                )
-            return all(visit(child) for child in item)
-        if item is None or kind in (str, int, float, bool):
-            discount += 128 + 2 * sys.getsizeof(item)
-            return True
-        return False
-
-    if not visit(value):
-        return None
-    charge = max(2048, source_charge - discount)
-    return charge if charge < source_charge else None
+    plan = ResponseCopyPlan()
+    charge = response_size(value, copy_plan=plan)
+    return plan.detached_bytes if charge is not None and charge <= source_charge else None
 
 
 class SharedReadAccounting:
@@ -78,18 +28,23 @@ class SharedReadAccounting:
         self.copy_bytes: int | None = None
         self._reserve: Callable[[ResponseOwner], bool] | None = None
 
-    def enable(self, value: object, *, validated_charge: int | None = None) -> None:
+    def enable(self, value: object) -> None:
+        plan = ResponseCopyPlan()
+        charge = response_size(value, copy_plan=plan)
+        self.enable_plan(plan, charge)
+
+    def enable_plan(self, plan: ResponseCopyPlan, validated_charge: int | None) -> None:
+        """Apply worker-produced evidence only on the ledger's owning loop."""
         if len(self.source.entries) != 1 or len(self.source.copy_reservations) != 1:
             return
         ledger, key = self.source.entries[0]
         reservation = ledger.get(key)
         charge = reservation.get("bytes") if isinstance(reservation, Mapping) else reservation
-        if type(charge) is not int:
+        if type(charge) is not int or validated_charge is None or validated_charge > charge:
             return
-        copy_bytes = detached_copy_charge(value, charge, validated_charge=validated_charge)
-        if copy_bytes is None:
+        if plan.detached_bytes is None:
             return
-        self.copy_bytes = copy_bytes
+        self.copy_bytes = plan.detached_bytes
         self._reserve = self.source.copy_reservations[0]
         self.source.copy_reservations[0] = self._reserve_copy
 
