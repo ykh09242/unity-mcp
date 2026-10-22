@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -393,55 +394,69 @@ namespace MCPForUnity.Editor.Tools
         private static JObject Source(JObject request)
         {
             string guid = ValidateGuid(request);
-            JObject asset = Describe(guid);
-            if (!asset.Value<bool>("present") || asset.Value<string>("source_format") == "none")
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            string format =
+                path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? "csharp"
+                : SerializedExtensions.Contains(Path.GetExtension(path)) ? "unity_yaml"
+                : "none";
+            if (!Admitted(path) || AssetDatabase.IsValidFolder(path) || format == "none")
                 throw new ArgumentException("Source collection requires admitted C# or Unity serialized text.");
-            string path = asset.Value<string>("path");
             string resolved = ResolveSourcePath(path);
-            JObject context = asset.Value<string>("source_format") == "csharp" ? ReferenceGraphCompilation.ForSource(path, resolved) : null;
+            long offset = request.Value<long?>("offset") ?? 0;
+            // Continuations need the build revision fence, not another copy of
+            // the assembly's defines/references or unused Addressables keys.
+            JObject context =
+                format == "csharp" ? (offset == 0 ? ReferenceGraphCompilation.ForSource(path, resolved) : ReferenceGraphCompilation.Status()) : null;
             var info = new FileInfo(resolved);
             string stamp = info.Length + ":" + info.LastWriteTimeUtc.Ticks;
             string fingerprint = stamp + (context == null ? "" : ":" + context.Value<string>("revision"));
             string expected = request.Value<string>("fingerprint");
-            long offset = request.Value<long?>("offset") ?? 0;
             if (offset < 0 || offset > info.Length || (offset != 0 && expected == null) || (expected != null && expected != fingerprint))
                 throw new InvalidOperationException("Source changed or continuation is invalid; restart reading it.");
-            byte[] bytes = new byte[(int)Math.Min(65536, info.Length - offset)];
+            int wanted = (int)Math.Min(65536, info.Length - offset);
+            byte[] bytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, wanted));
             int length = 0;
-            using (var stream = new FileStream(resolved, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            try
             {
-                if (asset.Value<string>("source_format") == "unity_yaml")
+                using (var stream = new FileStream(resolved, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                 {
-                    byte[] header = new byte[5];
-                    if (stream.Read(header, 0, header.Length) != header.Length || System.Text.Encoding.ASCII.GetString(header) != "%YAML")
-                        return new JObject
-                        {
-                            ["guid"] = guid,
-                            ["source_format"] = "binary",
-                            ["coverage"] = "serialized_string_references_unavailable",
-                        };
+                    if (format == "unity_yaml")
+                    {
+                        byte[] header = new byte[5];
+                        if (stream.Read(header, 0, header.Length) != header.Length || System.Text.Encoding.ASCII.GetString(header) != "%YAML")
+                            return new JObject
+                            {
+                                ["guid"] = guid,
+                                ["source_format"] = "binary",
+                                ["coverage"] = "serialized_string_references_unavailable",
+                            };
+                    }
+                    stream.Position = offset;
+                    while (length < wanted)
+                    {
+                        int read = stream.Read(bytes, length, wanted - length);
+                        if (read == 0)
+                            throw new IOException("Source changed while reading.");
+                        length += read;
+                    }
                 }
-                stream.Position = offset;
-                while (length < bytes.Length)
+                info.Refresh();
+                if (stamp != info.Length + ":" + info.LastWriteTimeUtc.Ticks)
+                    throw new IOException("Source changed while reading.");
+                return new JObject
                 {
-                    int read = stream.Read(bytes, length, bytes.Length - length);
-                    if (read == 0)
-                        throw new IOException("Source changed while reading.");
-                    length += read;
-                }
+                    ["guid"] = guid,
+                    ["source_format"] = format,
+                    ["fingerprint"] = fingerprint,
+                    ["compilation_context"] = offset == 0 ? context : null,
+                    ["bytes_base64"] = Convert.ToBase64String(bytes, 0, length),
+                    ["next_offset"] = offset + length < info.Length ? (JToken)(offset + length) : JValue.CreateNull(),
+                };
             }
-            info.Refresh();
-            if (stamp != info.Length + ":" + info.LastWriteTimeUtc.Ticks)
-                throw new IOException("Source changed while reading.");
-            return new JObject
+            finally
             {
-                ["guid"] = guid,
-                ["source_format"] = asset["source_format"],
-                ["fingerprint"] = fingerprint,
-                ["compilation_context"] = offset == 0 ? context : null,
-                ["bytes_base64"] = Convert.ToBase64String(bytes),
-                ["next_offset"] = offset + length < info.Length ? (JToken)(offset + length) : JValue.CreateNull(),
-            };
+                ArrayPool<byte>.Shared.Return(bytes, clearArray: true);
+            }
         }
 
         private static string ResolveSourcePath(string path)

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -39,15 +41,19 @@ namespace MCPForUnity.Editor.Tools
             if (!active)
                 return;
             ReferenceGraphCollector.FlushPendingChanges();
-            SessionState.SetString(
-                StateKey,
-                new JObject
-                {
-                    ["epoch"] = Epoch,
-                    ["revision"] = Revision,
-                    ["changes"] = changes.DeepClone(),
-                }.ToString(Formatting.None)
-            );
+            using var text = new StringWriter(CultureInfo.InvariantCulture);
+            using (var writer = new JsonTextWriter(text))
+            {
+                writer.WriteStartObject();
+                writer.WritePropertyName("epoch");
+                writer.WriteValue(Epoch);
+                writer.WritePropertyName("revision");
+                writer.WriteValue(Revision);
+                writer.WritePropertyName("changes");
+                changes.WriteTo(writer);
+                writer.WriteEndObject();
+            }
+            SessionState.SetString(StateKey, text.ToString());
         }
 
         internal static void Activate()
