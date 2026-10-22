@@ -184,7 +184,7 @@ namespace MCPForUnityTests.EditMode.Windows
         {
             var (section, root) = CreateCatalog(toolCatalog);
             var rows = root.Query<VisualElement>(className: "tool-item").ToList();
-            var alphaToggle = rows.Single(row => row.Q<Toggle>().name == "tool-toggle-alpha" || row.Q<Toggle>().label == "alpha").Q<Toggle>();
+            var alphaToggle = rows.Single(row => row.Q<Toggle>().name == "tool-toggle-alpha" || row.Q<Toggle>().name == "resource-toggle-alpha").Q<Toggle>();
             alphaToggle.SetValueWithoutNotify(needsChange ? requested : !requested);
             if (toolCatalog)
             {
@@ -215,7 +215,7 @@ namespace MCPForUnityTests.EditMode.Windows
             var (section, root) = CreateCatalog(true);
             var alphaToggle = root.Query<VisualElement>(className: "tool-item")
                 .ToList()
-                .Single(row => row.Q<Toggle>().name == "tool-toggle-alpha" || row.Q<Toggle>().label == "alpha")
+                .Single(row => row.Q<Toggle>().name == "tool-toggle-alpha" || row.Q<Toggle>().name == "resource-toggle-alpha")
                 .Q<Toggle>();
             alphaToggle.SetValueWithoutNotify(needsChange ? requested : !requested);
             tools.SetToolEnabled("alpha", needsChange ? !requested : requested);

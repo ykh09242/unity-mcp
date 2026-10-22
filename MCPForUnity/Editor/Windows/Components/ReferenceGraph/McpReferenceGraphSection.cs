@@ -136,9 +136,9 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             };
             payload.AddToClassList("graph-json");
             editor.Add(payload);
-            sourceEnabled = new Toggle("Enable this external source") { value = false };
+            sourceEnabled = new Toggle { text = "Enable this external source", value = false };
             editor.Add(sourceEnabled);
-            reauthorize = new Toggle("Approve this source's read access for this account") { value = false };
+            reauthorize = new Toggle { text = "Approve this source's read access for this account", value = false };
             editor.Add(reauthorize);
             AddButton(editor, "Apply item", "graph-import", Import).AddToClassList("graph-primary");
             kind.RegisterValueChangedCallback(_ =>

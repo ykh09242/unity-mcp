@@ -593,13 +593,13 @@
     display: none;
 }
 
-#tools-section .catalog-summary {
+.catalog-summary {
     -unity-font-style: bold;
     white-space: normal;
     margin-bottom: 8px;
 }
 
-#tools-section .catalog-search > .unity-base-field__label,
+.catalog-search > .unity-base-field__label,
 .catalog-state-filter > .unity-base-field__label {
     min-width: 0;
     width: auto;
@@ -731,3 +731,19 @@
 .config-preview-field .unity-text-field__input { white-space: normal; }
 #advanced-section, #validation-section { max-width: 900px; }
 #client-section .primary-button { align-self: flex-start; }
+
+#resources-section .tool-item-toggle { flex-grow: 1; -unity-font-style: bold; }
+#resources-section .tool-item-toggle .unity-toggle__text { margin-left: 6px; }
+#resources-section .tool-wire-name, #resources-section .tool-item-description { margin-left: 20px; }
+.provider-category { background-color: var(--mcp-surface); }
+.provider-row { padding: 6px 0 12px 0; margin-bottom: 12px; border-bottom-width: 1px; border-bottom-color: var(--mcp-border); min-width: 0; }
+.provider-header { flex-direction: row; flex-wrap: wrap; align-items: center; margin-bottom: 6px; min-width: 0; }
+.provider-name { -unity-font-style: bold; margin-right: 8px; white-space: normal; }
+.provider-status { flex-grow: 1; margin: 0 8px 0 0; }
+.provider-key-row { flex-direction: row; flex-wrap: wrap; align-items: center; margin-bottom: 10px; min-width: 0; }
+.provider-key-field { flex-grow: 1; flex-shrink: 1; flex-basis: 160px; min-width: 100px; margin-right: 6px; }
+.provider-key-row Button { margin: 3px 6px 3px 0; }
+.package-row { padding: 14px 12px; margin-top: 10px; background-color: var(--mcp-surface); border-width: 1px; border-color: var(--mcp-border); border-radius: 4px; }
+.package-version-field { flex-direction: column; margin: 8px 0; }
+.package-version-field > .unity-base-field__label { min-width: 0; margin-bottom: 4px; }
+.package-actions { margin-top: 8px; }

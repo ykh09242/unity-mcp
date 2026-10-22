@@ -170,3 +170,8 @@
 #activity-retention { margin-top: 12px; color: var(--mcp-muted); }
 
 .compact-navigation .panel-scroll { padding-left: 16px; padding-right: 16px; }
+
+.activity-state { -unity-font-style: bold; margin-top: 6px; }
+.activity-id { color: var(--mcp-muted); font-size: 10px; }
+.activity-active { border-left-color: var(--mcp-accent); }
+#activity-empty { padding: 20px 12px; margin-top: 12px; background-color: var(--mcp-surface); }

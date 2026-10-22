@@ -1,8 +1,8 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
     <ui:VisualElement name="resources-section" class="section">
-        <ui:Label text="Resources" class="section-title" />
+        <ui:Label text="Project information available to your AI" class="section-title" />
         <ui:VisualElement class="section-content">
-            <ui:Label name="resources-summary" class="help-text" text="Discovering resources..." />
+            <ui:Label name="resources-summary" class="catalog-summary" text="Discovering resources..." />
             <ui:VisualElement class="catalog-toolbar">
                 <ui:TextField name="resources-search" label="Search" class="catalog-search" tooltip="Search resource names, descriptions, and categories." />
                 <ui:Label name="resources-visible-count" class="catalog-count" />
