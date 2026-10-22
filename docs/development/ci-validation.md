@@ -618,8 +618,8 @@ The checker accepts only its documented GitHub Actions, pytest/JUnit, Unity/NUni
 policy. The cache contains complete Editor package directories from the validated optional
 dependency closure, including transitive modules, from the version-matching, digest-pinned
 test Editor image. It also retains exact official-registry package trees and an integrity
-receipt. It contains no prepared product package, test project, Unity `Library`, credentials
-or GameData. Both paths call the normal package preparer and freshly copy the current
+receipt. It contains no prepared product package, test project, Unity `Library` or credentials.
+Both paths call the normal package preparer and freshly copy the current
 product/test sources, preserving Unity metadata and registry executable file modes.
 Cold preparation reads the complete stopped-image inputs first to establish the closure,
 then publishes only the selected directories; resources, metadata and empty directories
