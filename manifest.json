@@ -303,6 +303,10 @@
       "description": "Start, poll and stop bounded silent Game View or Scene View MP4 recording on supported interactive Editors (group: core)"
     },
     {
+      "name": "manage_reference_graph",
+      "description": "Maintain an isolated automatic asset, code and external-config reference graph."
+    },
+    {
       "name": "manage_render_environment",
       "description": "Inspect the environment or configure skybox, ambient light and sun."
     },

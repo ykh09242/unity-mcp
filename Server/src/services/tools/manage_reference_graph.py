@@ -30,7 +30,7 @@ from services.registry import mcp_for_unity_tool
         "sync {force:true} rehashes external inputs. rebuild retains authored declarations and grants. "
         "Normal domain reload retains scope; a new Editor process has a separate graph."
     ),
-    annotations=ToolAnnotations(title="Reference Graph", destructiveHint=False, openWorldHint=True),
+    annotations=ToolAnnotations(title="Reference Graph", destructiveHint=True, openWorldHint=True),
 )
 async def manage_reference_graph(
     ctx: Context,
