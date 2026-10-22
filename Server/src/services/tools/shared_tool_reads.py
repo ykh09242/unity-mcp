@@ -17,6 +17,8 @@ from services.credential_lease import current_credential_lease, require_credenti
 
 from models.response_limits import ResponseOwner, response_owner, response_size
 from services.tools.shared_read_budget import shared_read_budget
+from services.tools.shared_read_accounting import SharedReadAccounting
+from services.tools.immutable_json import prepare_json_copy
 
 T = TypeVar("T")
 
@@ -34,8 +36,8 @@ class SharedReadCapacityError(RuntimeError):
         super().__init__("result_capacity")
 
 
-def _release_snapshot(owner: ResponseOwner, copies: list[ResponseOwner]) -> None:
-    owner.release()
+def _release_snapshot(accounting: SharedReadAccounting, copies: list[ResponseOwner]) -> None:
+    accounting.release()
     for copy_owner in copies:
         copy_owner.release()
     copies.clear()
@@ -50,10 +52,11 @@ class _ReadFlight(Generic[T]):
         copy_preparer: Callable[[T], Callable[[], T] | None] | None,
     ) -> None:
         self.owner = ResponseOwner()
+        self.accounting = SharedReadAccounting(self.owner)
         self.detached_copies: list[ResponseOwner] = []
         # A closed loop cannot run its expiry task. GC still releases aggregate
         # accounting without retaining that loop through the registry.
-        self._cleanup = finalize(self, _release_snapshot, self.owner, self.detached_copies)
+        self._cleanup = finalize(self, _release_snapshot, self.accounting, self.detached_copies)
         self.references = 1
         self.task = asyncio.create_task(self._fetch(factory, copy_preparer))
 
@@ -80,6 +83,8 @@ class _ReadFlight(Generic[T]):
                     charge = response_size(value)
                     if charge is None or not shared_read_budget.reserve(self.owner, charge):
                         raise SharedReadCapacityError()
+                if copy_preparer is None or copy_preparer is prepare_json_copy:
+                    self.accounting.enable(value)
                 copy_value: Callable[[], T] = partial(deepcopy, value)
                 # One cache reference plus sixteen waiting readers is the measured
                 # break-even range. Single/sparse reads keep their existing path.

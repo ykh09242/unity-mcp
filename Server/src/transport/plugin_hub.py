@@ -2760,16 +2760,21 @@ class PluginHub(WebSocketEndpoint):
                             reservation=result_ledger[command_id],
                             ledger=result_ledger,
                         ):
+                            copy_charge = copy_owner.requested_copy_bytes
+                            copy_charge = (
+                                reservation["bytes"] if copy_charge is None else copy_charge
+                            )
                             # Synchronous on the same owner loop: admission and
                             # insertion cannot interleave with another producer.
                             if (
                                 ledger is not cls._retained_results
                                 or ledger.get(source_id) is not reservation
-                                or not cls._has_result_capacity(reservation, reservation["bytes"])
+                                or not 0 <= copy_charge <= reservation["bytes"]
+                                or not cls._has_result_capacity(reservation, copy_charge)
                             ):
                                 return False
                             copy_id = "copy:" + str(uuid.uuid4())
-                            ledger[copy_id] = reservation
+                            ledger[copy_id] = {**reservation, "bytes": copy_charge}
                             copy_owner.entries.append((ledger, copy_id))
                             copy_owner.copy_reservations.append(reserve_copy)
                             return True

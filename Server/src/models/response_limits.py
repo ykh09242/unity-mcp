@@ -31,6 +31,8 @@ class ResponseOwner:
     on_release: list[Callable[[], None]] = field(default_factory=list)
     copy_reservations: list[Callable[[ResponseOwner], bool]] = field(default_factory=list)
     released: bool = False
+    # Internal copy accounting; unset owners retain conservative full admission.
+    requested_copy_bytes: int | None = None
 
     def reserve_copy(self) -> ResponseOwner | None:
         """Admit every detached copy before allocation, rolling back on refusal."""

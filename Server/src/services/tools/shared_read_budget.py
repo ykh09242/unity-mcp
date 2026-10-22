@@ -46,7 +46,14 @@ class SharedReadBudget:
     def _reserve_copy(self, source_key: str, owner: ResponseOwner) -> bool:
         with self._lock:
             charge = self.entries.get(source_key)
-        return charge is not None and self.reserve(owner, charge)
+        if charge is None:
+            return False
+        requested = owner.requested_copy_bytes
+        if requested is not None:
+            if not 0 <= requested <= charge:
+                return False
+            charge = requested
+        return self.reserve(owner, charge)
 
     def _release(self, charge: int) -> None:
         # ResponseOwner removes its entry before invoking this callback. Avoid

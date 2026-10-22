@@ -119,13 +119,15 @@ async def test_actual_sdk_keeps_source_and_delayed_copy_charged_until_each_flush
         await asyncio.wait_for(entered.wait(), 3)
         await asyncio.wait_for(first, 3)
         await asyncio.sleep(0)  # producer task_done has run, stdout is still blocked
-        assert budget.retained_bytes == 2 * charge
+        one_delivery = budget.retained_bytes
+        assert charge < one_delivery < 2 * charge
+        copy_charge = one_delivery - charge
         second = asyncio.create_task(produce("7", write))
         for _ in range(200):
-            if budget.retained_bytes == 3 * charge:
+            if budget.retained_bytes == charge + 2 * copy_charge:
                 break
             await asyncio.sleep(0.005)
-        assert budget.retained_bytes == 3 * charge
+        assert budget.retained_bytes == charge + 2 * copy_charge
         assert len(stdio_delivery.get().pending) == 2
         refused = ResponseOwner()
         assert not budget.reserve(refused, charge)
@@ -134,7 +136,7 @@ async def test_actual_sdk_keeps_source_and_delayed_copy_charged_until_each_flush
         await asyncio.wait_for(entered_second.wait(), 3)
         await asyncio.wait_for(second, 3)
         await asyncio.sleep(0)
-        assert budget.retained_bytes == 2 * charge  # source + independently delayed string-ID copy
+        assert budget.retained_bytes == one_delivery  # source + delayed string-ID copy
         assert len(stdio_delivery.get().pending) == 1
         resume_second.set()
         await write.aclose()

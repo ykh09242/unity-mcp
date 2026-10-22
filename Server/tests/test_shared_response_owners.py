@@ -273,3 +273,33 @@ async def test_replacement_keeps_old_snapshot_until_suspended_fetch_reserves_cop
     for owner in owners:
         owner.release()
     assert PluginHub._retained_results == {}
+
+
+@pytest.mark.asyncio
+async def test_large_shared_hub_copies_keep_source_charged(peer, monkeypatch):
+    value = {"rows": [{"id": index, "label": "payload-" * 128} for index in range(256)]}
+    monkeypatch.setattr(importlib.import_module(__name__), "RESULT", value)
+    charge = response_size(value)
+    for name in (
+        "MAX_RETAINED_RESULT_BYTES",
+        "MAX_RETAINED_RESULT_BYTES_PER_USER",
+        "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
+    ):
+        monkeypatch.setattr(PluginHub, name, int(charge * 2.8))
+    reads = SharedToolReads(freshness_s=1)
+    owners = [ResponseOwner(), ResponseOwner()]
+    try:
+        tasks = [asyncio.create_task(wait(reads, owner)) for owner in owners]
+        await peer.sent.wait()
+        await peer.deliver()
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        assert outputs == [value, value]
+        assert len(peer.messages) == 1
+        outputs[0]["rows"].clear()
+        assert outputs[1] == value
+        owners[0].release()
+        assert sum(entry["bytes"] for entry in PluginHub._retained_results.values()) >= charge
+    finally:
+        for owner in owners:
+            owner.release()
+    assert PluginHub._retained_results == {}
