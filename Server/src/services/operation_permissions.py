@@ -150,6 +150,14 @@ _ACTIONS: Final = {
         Permission.RUN: _names("render_ui"),
     },
     "manage_object_handles": {Permission.READ: _names("capture resolve")},
+    "manage_reference_graph": {
+        Permission.READ: _names(
+            "status sync query diagnostics declarations sources rules policy watch inventory asset dependencies source changes"
+        ),
+        Permission.EDIT: _names(
+            "declare remove_declaration set_source set_rule set_policy rebuild"
+        ),
+    },
     "manage_input": {
         Permission.READ: _names("status player_status"),
         Permission.RUN: _names(
@@ -360,9 +368,13 @@ _CANONICAL_ALIASES: Final = {
     "manage_object_handles_v2": "manage_object_handles",
     "execute_menu_item_observed": "execute_menu_item",
 }
-_NATIVE_COMMANDS: Final = _names(
-    "batch_execute batch_validate batch_apply_preview blender_bridge cancel_test_job capture_ui_snapshot execute_code execute_menu_item execute_menu_item_observed export_test_job find_gameobjects generate_audio generate_image generate_model get_active_tool get_cameras get_compile_job get_editor_state get_gameobject get_gameobject_by_handle_v2 get_gameobject_component get_gameobject_component_selected get_gameobject_components get_layers get_menu_items get_prefab_stage get_project_info get_renderer_features get_rendering_stats get_selection get_tags get_test_job get_tests get_tests_for_mode get_tool_states get_volumes get_windows import_model import_model_file inspect_menu_item inspect_serialized_object_v1 manage_animation manage_addressables manage_asset manage_audio manage_build manage_camera manage_components manage_components_selected manage_editor manage_gameobject manage_graphics manage_input manage_input_actions manage_material manage_localization manage_navigation manage_netcode manage_object_handles_v2 manage_packages manage_physics manage_play_scenario manage_prefabs manage_probuilder manage_profiler manage_recording manage_scenario_recording manage_scene manage_scene_edits manage_script manage_scriptable_object manage_shader manage_sprite manage_simulation_profiles manage_sprite_atlas manage_terrain manage_texture manage_timeline manage_ugui manage_ui manage_vfx ping read_console refresh_unity run_tests tail_console unity_reflect"
-) | frozenset(_CAPABILITIES)
+_NATIVE_COMMANDS: Final = (
+    _names(
+        "batch_execute batch_validate batch_apply_preview blender_bridge cancel_test_job capture_ui_snapshot execute_code execute_menu_item execute_menu_item_observed export_test_job find_gameobjects generate_audio generate_image generate_model get_active_tool get_cameras get_compile_job get_editor_state get_gameobject get_gameobject_by_handle_v2 get_gameobject_component get_gameobject_component_selected get_gameobject_components get_layers get_menu_items get_prefab_stage get_project_info get_renderer_features get_rendering_stats get_selection get_tags get_test_job get_tests get_tests_for_mode get_tool_states get_volumes get_windows import_model import_model_file inspect_menu_item inspect_serialized_object_v1 manage_animation manage_addressables manage_asset manage_audio manage_build manage_camera manage_components manage_components_selected manage_editor manage_gameobject manage_graphics manage_input manage_input_actions manage_material manage_localization manage_navigation manage_netcode manage_object_handles_v2 manage_packages manage_physics manage_play_scenario manage_prefabs manage_probuilder manage_profiler manage_recording manage_scenario_recording manage_scene manage_scene_edits manage_script manage_scriptable_object manage_shader manage_sprite manage_simulation_profiles manage_sprite_atlas manage_terrain manage_texture manage_timeline manage_ugui manage_ui manage_vfx ping read_console refresh_unity run_tests tail_console unity_reflect"
+    )
+    | frozenset(_CAPABILITIES)
+    | {"manage_reference_graph"}
+)
 _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"}
 _RESOURCE_PATHS: Final = _names(
     "capabilities capabilities/scoped doctor doctor/runtime tool-diagnostics custom-tools editor/active-tool editor/state scene/cameras scene/gameobject-api project/layers menu-items editor/prefab-stage prefab-api project/info pipeline/renderer-features rendering/stats editor/selection project/tags tests tool-groups instances scene/volumes editor/windows"
@@ -455,6 +467,8 @@ def required_permissions(
     if actions is None or not isinstance(action, str):
         raise OperationPermissionError()
     action = action.strip().lower()
+    if name == "manage_reference_graph" and action in _ACTIONS[name][Permission.EDIT]:
+        return frozenset({Permission.READ, Permission.EDIT})
     if (
         name == "manage_input_actions"
         and action in _ACTIONS["manage_input_actions"][Permission.EDIT]

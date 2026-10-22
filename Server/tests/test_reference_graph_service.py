@@ -1,0 +1,286 @@
+"""Real scoped SQLite with fake transport and opaque credential lifetimes."""
+
+import asyncio
+from contextvars import ContextVar
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from core.config import config
+from services.credential_lease import (
+    CredentialLease,
+    CredentialLeaseError,
+    bind_credential_lease,
+    current_credential_lease,
+)
+from services.operation_permissions import (
+    LEGACY_GRANTS,
+    OperationGrants,
+    OperationPermissionError,
+    Permission,
+    required_permissions,
+)
+from services.reference_graph.analysis import Analysis
+from services.reference_graph.external import ExternalSource
+from services.reference_graph.service import ReferenceGraphService
+from services.reference_graph.store import Edge, GraphScope, RevisionConflict, _json
+from services.tools.manage_reference_graph import manage_reference_graph
+
+REQUEST_MARKER = ContextVar("graph_test_request_marker", default=None)
+
+
+class Context:
+    def __init__(self, service, instance="one"):
+        self.instance = instance
+        self.fastmcp = SimpleNamespace(_reference_graph_service=service)
+
+    async def get_state(self, name):
+        return self.instance if name == "unity_instance" else None
+
+
+class Authority:
+    def __init__(self):
+        self.revoked = False
+        self.owners = 0
+
+    def check_lease_now(self, _):
+        if self.revoked:
+            raise CredentialLeaseError()
+
+    async def check_lease(self, lease):
+        self.check_lease_now(lease)
+
+    def acquire_lease_owner(self, lease):
+        self.check_lease_now(lease)
+        self.owners += 1
+        return object()
+
+    def release_lease_owner(self, *_):
+        self.owners -= 1
+
+    def lease_retired(self, _):
+        return self.revoked
+
+
+class Sender:
+    def __init__(self):
+        self.calls = []
+        self.identity = "original"
+        self.complete = asyncio.Event()
+
+    async def __call__(self, instance, params):
+        self.calls.append((params.copy(), REQUEST_MARKER.get(), current_credential_lease()))
+        result = {
+            "instance_id": self.identity + instance,
+            "project_id": "project",
+            "epoch": "epoch",
+            "revision": 0,
+        }
+        if params["action"] == "inventory":
+            result.update(snapshot="snapshot", assets=[], next_offset=None)
+        elif params["action"] == "changes":
+            result.update(requires_census=False, changes=[], next_after=0, has_more=False)
+            self.complete.set()
+        return result
+
+
+@pytest.fixture
+def setup(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    sender = Sender()
+    service = ReferenceGraphService(tmp_path / "graphs", send=sender)
+    return service, sender, Context(service)
+
+
+@pytest.mark.asyncio
+async def test_requires_selected_instance_and_rejects_supplied_identity_before_io(setup):
+    service, sender, ctx = setup
+    ctx.instance = None
+    with pytest.raises(ValueError, match="Select"):
+        await service.execute(ctx, "status", {})
+    ctx.instance = "one"
+    result = await manage_reference_graph(ctx, "query", {"node": "asset:a", "user_id": "another"})
+    assert not result["success"]
+    assert sender.calls == []
+
+
+@pytest.mark.asyncio
+async def test_same_project_different_instances_and_authenticated_users_are_isolated(
+    setup, monkeypatch
+):
+    service, _, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    authority = Authority()
+    alice = CredentialLease(authority, object(), "alice", LEGACY_GRANTS)
+    bob = CredentialLease(authority, object(), "bob", LEGACY_GRANTS)
+    with bind_credential_lease(alice):
+        a = await service.execute(
+            ctx,
+            "declare",
+            {
+                "id": "manual",
+                "owner": "source",
+                "edge": {"target": "target", "kind": "declared"},
+                "expected_version": 0,
+            },
+        )
+        ctx.instance = "two"
+        b = await service.execute(ctx, "declarations", {})
+    ctx.instance = "one"
+    with bind_credential_lease(bob):
+        c = await service.execute(ctx, "declarations", {})
+    assert len({result["data"]["scope"] for result in (a, b, c)}) == 3
+    assert b["data"]["declarations"] == c["data"]["declarations"] == []
+    with pytest.raises(CredentialLeaseError):
+        await service.execute(ctx, "status", {})
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_detached_worker_drops_request_context_pins_lease_and_drains_on_shutdown(
+    setup, monkeypatch
+):
+    service, sender, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    authority = Authority()
+    lease = CredentialLease(authority, object(), "alice", LEGACY_GRANTS)
+    token = REQUEST_MARKER.set("private request")
+    try:
+        with bind_credential_lease(lease):
+            await service.execute(ctx, "sync", {})
+    finally:
+        REQUEST_MARKER.reset(token)
+    await asyncio.wait_for(sender.complete.wait(), 5)
+    assert authority.owners == 1
+    background = [call for call in sender.calls if call[0]["action"] == "changes"]
+    assert background[0][1] is None
+    assert background[0][2] is lease
+    await service.aclose()
+    assert authority.owners == 0
+    assert service.entries == {}
+
+
+@pytest.mark.asyncio
+async def test_native_response_cannot_switch_graph_identity(setup):
+    service, sender, ctx = setup
+    entry, _ = await service.resolve(ctx, "status")
+    sender.identity = "replacement"
+    with pytest.raises(RevisionConflict, match="changed"):
+        await entry.collect("changes", epoch="epoch", after=0)
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_read_permission_cannot_mutate_authored_configuration(setup, monkeypatch):
+    service, sender, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    lease = CredentialLease(
+        Authority(),
+        object(),
+        "read-only",
+        OperationGrants(frozenset({Permission.READ}), scoped=True),
+    )
+    with bind_credential_lease(lease), pytest.raises(OperationPermissionError):
+        await service.execute(ctx, "set_policy", {"config": {"exclude": []}, "expected_version": 0})
+    assert not sender.calls
+    assert required_permissions("manage_reference_graph", {"action": "set_source"}) == {
+        Permission.READ,
+        Permission.EDIT,
+    }
+
+
+def test_remote_external_roots_require_operator_grant_before_any_adapter_probe(
+    tmp_path, monkeypatch
+):
+    scope = GraphScope("remote:alice", "editor", "project")
+    root = tmp_path / "settings"
+    root.mkdir()
+    monkeypatch.delenv("UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", raising=False)
+    with pytest.raises(PermissionError, match="operator"):
+        ReferenceGraphService._grant(scope, {"root": str(root / "missing"), "include": ["*.json"]})
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", json.dumps({"bob": [str(root)]}))
+    with pytest.raises(PermissionError):
+        ReferenceGraphService._grant(scope, {"root": str(root), "include": ["*.json"]})
+    monkeypatch.setenv(
+        "UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", json.dumps({"alice": [str(root)]})
+    )
+    ReferenceGraphService._grant(scope, {"root": str(root), "include": ["*.json"]})
+    with pytest.raises(PermissionError):
+        ReferenceGraphService._grant(scope, {"root": str(root.parent), "include": ["*.json"]})
+
+
+@pytest.mark.asyncio
+async def test_cached_external_results_recheck_file_access_and_operator_revocation(
+    setup, tmp_path, monkeypatch
+):
+    service, _, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    lease = CredentialLease(Authority(), object(), "alice", LEGACY_GRANTS)
+    root = tmp_path / "settings"
+    root.mkdir()
+    path = root / "a.json"
+    path.write_text('{"key":"asset"}')
+    grant = {"root": str(root), "include": ["*.json"]}
+    monkeypatch.setenv(
+        "UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", json.dumps({"alice": [str(root)]})
+    )
+    with bind_credential_lease(lease):
+        entry, _ = await service.resolve(ctx, "status")
+        workspace = entry.workspace
+        workspace.store.set_source("external:settings", grant, expected_version=0)
+        workspace.acquire("test")
+        generation = workspace.store.observe(
+            "external:owner",
+            "external:settings",
+            "hash",
+            path="a.json",
+            kind="external",
+            source_version=1,
+        )
+        workspace.publish(
+            "test",
+            "external:owner",
+            "external:settings",
+            generation,
+            Analysis([Edge("target", "external")]),
+        )
+        workspace.record_external(
+            "test",
+            "external:settings",
+            "external:owner",
+            "a.json",
+            "hash",
+            _json(ExternalSource(grant).stamp("a.json")),
+            "key",
+            "scan",
+        )
+        workspace.release("test")
+        response = await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})
+        assert len(response["data"]["edges"]) == 1
+        path.write_text('{"key":"changed"}')
+        response = await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})
+        assert response["data"]["edges"][0]["stale"]
+        monkeypatch.delenv("UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS")
+        with pytest.raises(PermissionError):
+            await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})
+        monkeypatch.setenv(
+            "UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", json.dumps({"alice": [str(root)]})
+        )
+        path.unlink()
+        with pytest.raises(FileNotFoundError):
+            await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_resolve_installs_one_scope_and_new_editor_gets_new_scope(setup):
+    service, sender, ctx = setup
+    entries = await asyncio.gather(*(service.resolve(ctx, "status") for _ in range(8)))
+    assert len({id(entry) for entry, _ in entries}) == 1
+    sender.identity = "restarted"
+    restarted, _ = await service.resolve(ctx, "status")
+    assert restarted.workspace.store.scope != entries[0][0].workspace.store.scope
+    await service.aclose()

@@ -83,6 +83,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Branch off `beta`. The full dev setup an
 ## Advanced
 
 - **Multiple Unity instances** — [Multi-Instance Routing](website/docs/guides/multi-instance.md)
+- **Asset, code, and external configuration references** — [Automatic Reference Graph](docs/REFERENCE_GRAPH.md)
 - **Tool groups (vfx / animation / ui / testing / etc.)** — [Tool Groups](website/docs/guides/tool-groups.md)
 - **Upstream v10 asset generation and upgrade notes** — [v10 Migration](website/docs/migrations/v10.md)
 - **Roslyn script validation** — [Roslyn Validation](website/docs/guides/roslyn.md)

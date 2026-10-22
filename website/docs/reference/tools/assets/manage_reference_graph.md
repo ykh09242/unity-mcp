@@ -1,0 +1,33 @@
+---
+title: manage_reference_graph
+sidebar_label: manage_reference_graph
+description: "Maintain an automatic asset/code/external-config reference graph for the selected Unity instance and authenticated user."
+---
+
+# `manage_reference_graph`
+
+> **Auto-generated** from the Python tool registry. Do not hand-edit outside `<!-- examples:start --><!-- examples:end -->` blocks — the generator (`tools/generate_docs_reference.py`) will overwrite them.
+
+**Group:** `assets` &nbsp;·&nbsp; **Module:** `services.tools.manage_reference_graph`
+
+## Description
+
+Maintain an automatic asset/code/external-config reference graph for the selected Unity instance and authenticated user. No extra database installation. sync starts/resumes background work; poll status for progress. query uses node='asset:<guid>', direction='incoming' or 'outgoing', limit and returned cursor. diagnostics uses node, offset, limit and revision. Code, Addressables and wrapper analysis is conservative: possible/unresolved evidence never proves an asset safe to delete. Sources require explicit read-only root and include patterns; remote paths belong to the server and require its operator's grant. Authored changes use id and expected_version from the corresponding list action. declare also needs owner and edge {target,kind}; set_source/set_rule/set_policy need config. watch needs enabled. Source config: {root,include,exclude?,mappings?}; mapping {field,scheme,prefix?,suffix?}. Rule config: {call,argument,scheme,mode?,prefix?,suffix?}; {enabled:false} disables a rule. Policy config: {exclude:[relative patterns]}; there are no application-specific exclusions. sync {force:true} rehashes external inputs. rebuild retains authored declarations and grants. Normal domain reload retains scope; a new Editor process has a separate graph.
+
+## Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `action` | `Literal['status', 'sync', 'query', 'diagnostics', 'declarations', 'declare', 'remove_declaration', 'sources', 'set_source', 'rules', 'set_rule', 'policy', 'set_policy', 'rebuild', 'watch']` | yes |  |
+| `options` | `dict[str, Any] \| None` | — | Only the selected action's documented fields; identity and database paths cannot be supplied. |
+
+## Returns
+
+A `dict` containing the Unity response. The exact shape depends on the action.
+
+## Examples
+
+<!-- examples:start -->
+*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+<!-- examples:end -->
+

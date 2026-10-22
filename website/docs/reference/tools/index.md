@@ -28,12 +28,13 @@ AI asset generation – 3D model gen/import, 2D image gen & audio gen (bring-you
 - **[`import_model`](./asset_gen/import_model.md)** — Import 3D models from the Sketchfab marketplace into the Unity project.
 - **[`import_model_file`](./asset_gen/import_model_file.md)** — Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project.
 
-## `assets` &nbsp; (4 tools)
+## `assets` &nbsp; (5 tools)
 Asset changes, labels, bundles and reference diagnostics
 - **[`asset_bundles`](./assets/asset_bundles.md)** — Inspect asset bundles, their contents and dependencies.
 - **[`asset_edit`](./assets/asset_edit.md)** — Create, import, modify, duplicate, move or delete assets and folders.
 - **[`asset_labels`](./assets/asset_labels.md)** — Read or change asset labels with revision checks.
 - **[`asset_reference_diagnostics`](./assets/asset_reference_diagnostics.md)** — Inspect dependencies and reverse references, or preview asset moves and deletion.
+- **[`manage_reference_graph`](./assets/manage_reference_graph.md)** — Maintain an automatic asset/code/external-config reference graph for the selected Unity instance and authenticated user.
 
 ## `camera` &nbsp; (3 tools)
 Camera setup, Cinemachine and view capture

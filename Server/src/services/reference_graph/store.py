@@ -544,7 +544,7 @@ class GraphStore:
                 (identity, version, _json(payload)),
             )
             connection.execute(
-                "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider<>'manual' AND state<>'deleted'"
+                "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider NOT IN ('manual','unity') AND state<>'deleted'"
             )
             connection.execute("UPDATE graph_meta SET rules_revision=rules_revision+1")
             self._bump(connection)
