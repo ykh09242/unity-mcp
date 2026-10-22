@@ -129,3 +129,40 @@ creation/import took 720.92 s and is excluded from query timing. This demonstrat
 capacity and complete output, not a claim that a full large scan is inexpensive
 or that its Unity API traversal is asynchronous. Captured-cursor behavior is
 verified separately by the reference snapshot and small native inventory tests.
+
+## Artifact queue fairness under long copies
+
+Two workers still run without preemption. Once the oldest pending job has waited
+at least two seconds, up to three smaller jobs may pass before the oldest must
+receive a grant. This preserves size preference after a long active copy without
+starving large artifacts under new small arrivals. The bound counts grants, not
+wall-clock time; it neither rejects large inputs nor changes worker or size limits.
+Cancellation removes its waiter and does not consume an additional slot.
+
+Windows Unity 6000.0.69f1 measured six alternating rounds per workload (three per
+arm), using the previous queue and the new queue with the same complete artifact
+copy/hash work. Values below are medians of per-round statistics. Each round
+verified every output length and hash and left zero staging files. The 536 MiB
+profile submits later jobs every 500 ms across actual queued grants; recorded
+submission/start/completion timestamps and overlap assertions verify this.
+
+| Workload | Small completion median, old to new | Small observed p95, old to new | Total completion, old to new |
+| --- | --- | --- | --- |
+| 132 MiB mixed burst | 1668 to 1691 ms | 1722 to 1744 ms | 3452 to 3402 ms |
+| 264 MiB mixed burst | 4986 to 3341 ms | 6666 to 3518 ms | 6668 to 6804 ms |
+| 536 MiB sustained arrivals | 113 to 69 ms | 2672 to 2749 ms | 16860 to 16913 ms |
+
+Large-job median completion was 4870 ms in both arms of the 264 MiB burst and
+3220 to 3202 ms with sustained arrivals. The median per-round maximum large-job
+queue wait increased from 3379 to 3519 ms and 2112 to 2178 ms respectively. The
+264 MiB small-job gain trades a modest additional large-job wait and about 2.0%
+total elapsed time. Sustained total elapsed increased about 0.3%, while its small
+observed p95 increased about 2.9%; there is no universal tail-latency improvement.
+All large jobs completed. Three rounds per arm are observational evidence, not
+production tail guarantees. The 132 MiB workload did not show a material gain.
+These measurements cover preparation, excluding network transfer and Unity import.
+
+An earlier 536 MiB comparison used a 35 ms arrival interval and finished submission
+before the first grant. It is retained as staggered-burst evidence only, not the
+sustained-arrival result above. Deterministic fake-clock tests separately establish
+the grant bound during continuous new arrivals and oldest-waiter cancellation.

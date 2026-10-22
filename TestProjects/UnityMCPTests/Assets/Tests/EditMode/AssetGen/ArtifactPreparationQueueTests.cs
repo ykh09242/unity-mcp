@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.AssetGen;
@@ -27,20 +29,82 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
-        public async Task AgedLargeWorkRunsBeforeNewSmallWork()
+        public async Task AgedLargeWorkAllowsThreeShortestGrantsThenProgressesDuringNewArrivals()
         {
             double now = 0;
             var queue = new ArtifactPreparationQueue(1, () => now);
             IDisposable active = await queue.AcquireAsync(1, CancellationToken.None);
+            var pending = new Dictionary<Task<IDisposable>, string>();
             Task<IDisposable> large = queue.AcquireAsync(8L * 1024 * 1024 * 1024, CancellationToken.None);
+            pending.Add(large, "large");
             now = 3;
-            Task<IDisposable> small = queue.AcquireAsync(1, CancellationToken.None);
+            for (int i = 0; i < 4; i++)
+                pending.Add(queue.AcquireAsync(1, CancellationToken.None), "small-" + i);
             active.Dispose();
-            Task<IDisposable> first = await Task.WhenAny(large, small);
-            bool largeFirst = ReferenceEquals(first, large);
-            using (await first) { }
-            using (await (largeFirst ? small : large)) { }
-            Assert.IsTrue(largeFirst, "Age must prevent an endless stream of small files from starving a large job.");
+            var granted = new List<string>();
+            while (pending.Count > 0)
+            {
+                Task<IDisposable> next = await Task.WhenAny(pending.Keys);
+                using (await next)
+                {
+                    granted.Add(pending[next]);
+                    pending.Remove(next);
+                    // New arrivals cannot repeatedly push the oldest large job back.
+                    if (granted.Count <= 6)
+                        pending.Add(queue.AcquireAsync(1, CancellationToken.None), "arrival-" + granted.Count);
+                }
+            }
+            CollectionAssert.AreEqual(new[] { "small-0", "small-1", "small-2", "large" }, granted.Take(4));
+            using (await queue.AcquireAsync(1, CancellationToken.None)) { }
+        }
+
+        [TestCase(0)]
+        [TestCase(2)]
+        public async Task CancelingOldestAgedWorkPreservesNextLargeProgress(int consumedBypasses)
+        {
+            double now = 0;
+            var queue = new ArtifactPreparationQueue(1, () => now);
+            IDisposable lease = await queue.AcquireAsync(1, CancellationToken.None);
+            using var cancel = new CancellationTokenSource();
+            Task<IDisposable> canceled = queue.AcquireAsync(long.MaxValue, cancel.Token);
+            Task<IDisposable> large = queue.AcquireAsync(long.MaxValue, CancellationToken.None);
+            var pending = new List<Task<IDisposable>> { large };
+            now = 3;
+            for (int i = 0; i < 8; i++)
+                pending.Add(queue.AcquireAsync(1, CancellationToken.None));
+            for (int i = 0; i < consumedBypasses; i++)
+            {
+                lease.Dispose();
+                Task<IDisposable> next = await Task.WhenAny(pending.Append(canceled));
+                lease = await next;
+                pending.Remove(next);
+            }
+            cancel.Cancel();
+            bool wasCanceled = false;
+            try
+            {
+                using (await canceled) { }
+            }
+            catch (OperationCanceledException)
+            {
+                wasCanceled = true;
+            }
+            lease.Dispose();
+            int grants = 0,
+                largeGrant = -1;
+            while (pending.Count > 0)
+            {
+                Task<IDisposable> next = await Task.WhenAny(pending);
+                using (await next)
+                {
+                    grants++;
+                    if (ReferenceEquals(next, large))
+                        largeGrant = grants;
+                    pending.Remove(next);
+                }
+            }
+            Assert.IsTrue(wasCanceled);
+            Assert.That(largeGrant, Is.InRange(1, 4), "Canceling the oldest must not permit indefinite large-job bypass.");
         }
 
         [Test]
