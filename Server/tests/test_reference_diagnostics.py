@@ -340,3 +340,44 @@ def test_scene_snapshot_rejects_ambiguous_or_invalid_admission(wire, extra):
 
     assert anyio.run(call)["success"] is False
     wire.send.assert_not_awaited()
+
+
+@pytest.mark.parametrize("action", sorted(assets.ASSET_REFERENCE_ACTIONS))
+def test_asset_reference_captured_pages_forward_identity(wire, action):
+    async def call():
+        return await assets.manage_asset(
+            None,
+            action=action,
+            path="Assets/a.asset",
+            destination="Assets/b.asset" if action == "preview_move" else None,
+            reference_cursor="mcp-ref-snapshot-v1_" + "a" * 32,
+            page_number=100,
+        )
+
+    assert anyio.run(call)["success"]
+    assert wire.send.await_args.args[3]["referenceCursor"] == "mcp-ref-snapshot-v1_" + "a" * 32
+    assert wire.send.await_args.args[3]["pageNumber"] == 100
+
+
+@pytest.mark.parametrize(
+    "action,extra",
+    [
+        ("get_dependencies", {"reference_snapshot": "yes"}),
+        ("get_dependencies", {"reference_cursor": "invalid"}),
+        (
+            "get_dependencies",
+            {
+                "reference_cursor": "mcp-ref-snapshot-v1_" + "a" * 32,
+                "reference_revision": "mcp-ref-v1_" + "b" * 64,
+            },
+        ),
+        ("get_info", {"reference_snapshot": True}),
+        ("delete", {"reference_snapshot": True, "reference_revision": "mcp-ref-v1_" + "b" * 64}),
+    ],
+)
+def test_asset_capture_invalid_or_mutating_options_never_dispatch(wire, action, extra):
+    async def call():
+        return await assets.manage_asset(None, action=action, path="Assets/a.asset", **extra)
+
+    assert not anyio.run(call)["success"]
+    wire.send.assert_not_awaited()

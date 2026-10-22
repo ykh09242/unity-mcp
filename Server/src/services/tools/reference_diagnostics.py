@@ -51,13 +51,12 @@ def reference_page(
             raise ValueError("reference_revision must be an observed diagnostic revision.")
         params["referenceRevision"] = reference_revision
     if reference_snapshot is not None:
-        if not scene or type(reference_snapshot) is not bool:
-            raise ValueError("reference_snapshot must be a boolean for scene diagnostics.")
+        if type(reference_snapshot) is not bool:
+            raise ValueError("reference_snapshot must be a boolean for reference diagnostics.")
         params["referenceSnapshot"] = reference_snapshot
     if reference_cursor is not None:
         if (
-            not scene
-            or type(reference_cursor) is not str
+            type(reference_cursor) is not str
             or re.fullmatch(r"mcp-ref-snapshot-v1_[0-9a-f]{32}", reference_cursor) is None
             or reference_revision is not None
             or reference_snapshot is True

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
@@ -30,15 +31,24 @@ namespace MCPForUnity.Editor.Tools
             internal FileStream File;
             internal long[] Offsets;
             internal double Touched;
+            internal string RowField;
+            internal bool AssetObservation;
 
             public void Dispose() => File?.Dispose();
         }
 
         internal static string Scope(string scope, string path, int objects, int work) => new JArray(scope, path, objects, work).ToString(Formatting.None);
 
-        internal static void Capture(JObject data, List<JObject> issues, string scope)
+        internal static void Capture(JObject data, List<JObject> issues, string scope) =>
+            Capture(data, issues, issues.Count, scope, "issues", false, CancellationToken.None);
+
+        internal static void CaptureAssets(JObject data, IEnumerable<JObject> rows, int count, string scope, CancellationToken token) =>
+            Capture(data, rows, count, scope, "entries", true, token);
+
+        private static void Capture(JObject data, IEnumerable<JObject> rows, int count, string scope, string field, bool asset, CancellationToken token)
         {
-            var snapshot = new Snapshot();
+            token.ThrowIfCancellationRequested();
+            var snapshot = new Snapshot { RowField = field, AssetObservation = asset };
             try
             {
                 string root = Path.GetDirectoryName(Application.dataPath);
@@ -48,18 +58,25 @@ namespace MCPForUnity.Editor.Tools
                 string path = SafePathUtility.ResolveWithinRoot(root, Path.Combine(directory, snapshot.Cursor + ".snapshot"));
                 snapshot.File = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 64 * 1024, FileOptions.DeleteOnClose);
                 SafePathUtility.ResolveWithinRoot(root, path);
-                snapshot.Offsets = new long[issues.Count];
+                snapshot.Offsets = new long[count];
                 using (var writer = new BinaryWriter(snapshot.File, Encoding.UTF8, true))
                 {
-                    for (int i = 0; i < issues.Count; i++)
+                    int i = 0;
+                    foreach (JObject row in rows)
                     {
-                        snapshot.Offsets[i] = snapshot.File.Position;
-                        writer.Write(issues[i].ToString(Formatting.None));
+                        token.ThrowIfCancellationRequested();
+                        if (i >= count)
+                            throw new InvalidOperationException("Reference observation row count changed.");
+                        snapshot.Offsets[i++] = snapshot.File.Position;
+                        writer.Write(row.ToString(Formatting.None));
                         if (snapshot.File.Position > MaximumBytes)
                             throw new IOException("Snapshot retention budget exceeded; use live pages.");
                     }
+                    if (i != count)
+                        throw new InvalidOperationException("Reference observation row count changed.");
                     writer.Flush();
                 }
+                token.ThrowIfCancellationRequested();
                 snapshot.Scope = scope;
                 snapshot.Touched = EditorApplication.timeSinceStartup;
                 data["referenceCursor"] = snapshot.Cursor;
@@ -68,7 +85,9 @@ namespace MCPForUnity.Editor.Tools
                 data["snapshotRetention"] =
                     "10 minutes idle; up to 64 recent snapshots and 8 GiB of temporary evidence. Expired cursors require a fresh capture.";
                 snapshot.Metadata = (JObject)data.DeepClone();
-                snapshot.Metadata.Remove("issues");
+                snapshot.Metadata.Remove(field);
+                data["snapshotExpiresAtUtc"] = DateTimeOffset.UtcNow.AddSeconds(IdleSeconds).ToString("O");
+                snapshot.Metadata["snapshotExpiresAtUtc"] = data["snapshotExpiresAtUtc"];
                 while (Recent.Count != 0 && (Recent.Count >= 64 || retainedBytes + snapshot.File.Length > MaximumBytes))
                     Remove(Recent.First);
                 Entries.Add(snapshot.Cursor, Recent.AddLast(snapshot));
@@ -118,10 +137,13 @@ namespace MCPForUnity.Editor.Tools
                     rows.Add(JObject.Load(json));
                 }
             var result = (JObject)snapshot.Metadata.DeepClone();
-            result["issues"] = rows;
+            result[snapshot.RowField] = rows;
             result["pageSize"] = size;
             result["pageNumber"] = page;
             result["hasMore"] = offset + rows.Count < snapshot.Offsets.Length;
+            if (snapshot.AssetObservation)
+                result["nextPageNumber"] = (bool)result["hasMore"] && page < int.MaxValue ? new JValue(page + 1) : JValue.CreateNull();
+            result["snapshotExpiresAtUtc"] = DateTimeOffset.UtcNow.AddSeconds(IdleSeconds).ToString("O");
             ReferenceDiagnosticUtility.PageBytes(result);
             snapshot.Touched = EditorApplication.timeSinceStartup;
             Recent.Remove(node);
@@ -156,12 +178,35 @@ namespace MCPForUnity.Editor.Tools
             EditorApplication.quitting -= Clear;
         }
 
+        internal static void InvalidateAssets()
+        {
+            var node = Recent.First;
+            while (node != null)
+            {
+                var next = node.Next;
+                if (node.Value.AssetObservation)
+                    Remove(node);
+                node = next;
+            }
+            if (Recent.Count == 0)
+                Detach();
+        }
+
         internal static void Clear()
         {
             while (Recent.First != null)
                 Remove(Recent.First);
             sweepAt = 0;
             Detach();
+        }
+    }
+
+    internal sealed class ReferenceSnapshotInvalidation : AssetPostprocessor
+    {
+        private static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
+        {
+            if (imported.Length != 0 || deleted.Length != 0 || moved.Length != 0 || movedFrom.Length != 0)
+                ReferenceSnapshotStore.InvalidateAssets();
         }
     }
 }

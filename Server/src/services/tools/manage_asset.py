@@ -132,6 +132,7 @@ def asset_label_params(
         "Performs asset operations (import, create, modify, delete, etc.) in Unity. "
         "Read-only get_dependencies/get_reverse_references/preview_move/preview_delete use bounded "
         "AssetDatabase references, explicit scan_root, work/assets budgets and pages up to 100. "
+        "reference_snapshot retains scalar pages; reference_cursor reuses them until expiry/import changes. "
         "reference_revision rechecks observations and optionally guards move/delete using matching scan options. "
         "String/custom-loader/Addressables references are not comprehensively discovered. "
         "Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase "
@@ -252,6 +253,17 @@ async def manage_asset(
         int | str, "Reference actions: at most 1-4000000 node/edge work units; default 10000."
     ]
     | None = None,
+    reference_snapshot: Annotated[
+        bool,
+        Field(strict=True),
+        "Reference reads/previews only: retain captured scalar pages for ten minutes idle.",
+    ]
+    | None = None,
+    reference_cursor: Annotated[
+        StrictStr,
+        "Reference reads/previews only: continue a captured observation with identical scan options. Imported changes invalidate it.",
+    ]
+    | None = None,
     reference_revision: Annotated[
         str,
         "Recheck the same bounded read/preview or guard move/delete immediately before mutation.",
@@ -286,7 +298,18 @@ async def manage_asset(
                 )
             if type(recursive) is not bool:
                 raise ValueError("recursive must be a boolean.")
-            params = reference_page(page_size, page_number, max_work, reference_revision)
+            if guarded_mutation and (
+                reference_snapshot is not None or reference_cursor is not None
+            ):
+                raise ValueError("Guarded mutations require live checks without snapshot options.")
+            params = reference_page(
+                page_size,
+                page_number,
+                max_work,
+                reference_revision,
+                reference_snapshot=reference_snapshot,
+                reference_cursor=reference_cursor,
+            )
             params.update(
                 action=action_l,
                 path=reference_path(path, "path"),
@@ -321,7 +344,17 @@ async def manage_asset(
             retry_on_reload=not guarded_mutation,
         )
         return result if isinstance(result, dict) else {"success": False, "message": str(result)}
-    if any(value is not None for value in (scan_root, max_assets, max_work, reference_revision)):
+    if any(
+        value is not None
+        for value in (
+            scan_root,
+            max_assets,
+            max_work,
+            reference_revision,
+            reference_snapshot,
+            reference_cursor,
+        )
+    ):
         return {
             "success": False,
             "code": "invalid_reference_diagnostics",
