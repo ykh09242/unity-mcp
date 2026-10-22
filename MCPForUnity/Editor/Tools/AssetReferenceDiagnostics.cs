@@ -20,7 +20,7 @@ namespace MCPForUnity.Editor.Tools
             action == "get_dependencies" || action == "get_reverse_references" || action == "preview_move" || action == "preview_delete";
 
         internal static bool HasOptions(JObject parameters) =>
-            new[] { "scanRoot", "maxAssets", "maxWork", "referenceRevision" }.Any(name => parameters[name] != null);
+            new[] { "scanRoot", "maxAssets", "maxWork", "referenceRevision", "referenceSnapshot", "referenceCursor" }.Any(name => parameters[name] != null);
 
         internal static object Handle(JObject parameters)
         {
@@ -137,7 +137,9 @@ namespace MCPForUnity.Editor.Tools
                 "maxWork",
                 "pageSize",
                 "pageNumber",
-                "referenceRevision"
+                "referenceRevision",
+                "referenceSnapshot",
+                "referenceCursor"
             );
             string action = ReferenceDiagnosticUtility.Text(parameters, "action");
             string operation =
@@ -166,6 +168,30 @@ namespace MCPForUnity.Editor.Tools
             int page = ReferenceDiagnosticUtility.Integer(parameters, "pageNumber", 1, int.MaxValue);
             bool recursive = ReferenceDiagnosticUtility.Boolean(parameters, "recursive");
             string expected = ReferenceDiagnosticUtility.ExpectedRevision(parameters);
+            JToken captureOption = parameters["referenceSnapshot"];
+            if (captureOption != null && captureOption.Type != JTokenType.Boolean)
+                throw new ArgumentException("referenceSnapshot must be a boolean.");
+            bool capture = captureOption?.Value<bool>() == true;
+            string cursor = ReferenceDiagnosticUtility.Text(parameters, "referenceCursor", null);
+            if (mutation && (captureOption != null || cursor != null))
+                throw new ArgumentException("Guarded mutations require live reference checks, without snapshot options.");
+            string snapshotScope = new JArray(
+                "asset_references",
+                operation,
+                source,
+                sourceGuid,
+                root,
+                destination,
+                recursive,
+                maxAssets,
+                budget.Maximum
+            ).ToString(Newtonsoft.Json.Formatting.None);
+            if (cursor != null)
+            {
+                if (capture || expected != null)
+                    throw new ArgumentException("A captured page cannot request a new snapshot or a live revision check.");
+                return ReferenceSnapshotStore.Read(cursor, snapshotScope, size, page);
+            }
             if (mutation && expected == null)
                 throw new ArgumentException("Guarded mutation requires an observed referenceRevision.");
             string sourceRevision = AssetDatabase.GetAssetDependencyHash(source).ToString();
@@ -339,25 +365,8 @@ namespace MCPForUnity.Editor.Tools
                         "Guarded mutation requires a complete scan within the declared candidate scope; increase budgets or narrow scanRoot and preview again."
                     );
                 long offset = PaginationBounds.StartIndex(page, size);
-                var entries = new JArray();
-                foreach (Node node in results.OrderBy(node => node.Path, StringComparer.Ordinal).Skip((int)Math.Min(offset, results.Count)).Take(size))
-                {
-                    var chain = new List<string>();
-                    for (Node current = node; current != null; current = current.Via)
-                        chain.Add(current.Path);
-                    if (!reverse)
-                        chain.Reverse();
-                    entries.Add(
-                        new JObject
-                        {
-                            ["path"] = node.Path,
-                            ["guid"] = AssetDatabase.AssetPathToGUID(node.Path),
-                            ["direct"] = node.Depth == 1,
-                            ["depth"] = node.Depth,
-                            ["provenance"] = new JObject { ["api"] = "AssetDatabase.GetDependencies(recursive:false)", ["chain"] = new JArray(chain) },
-                        }
-                    );
-                }
+                results.Sort((left, right) => StringComparer.Ordinal.Compare(left.Path, right.Path));
+                var entries = new JArray(results.Skip((int)Math.Min(offset, results.Count)).Take(size).Select(node => Row(node, reverse)));
                 var data = new JObject
                 {
                     ["path"] = source,
@@ -386,9 +395,29 @@ namespace MCPForUnity.Editor.Tools
                     ["limitations"] =
                         "Imported AssetDatabase edges for Assets files only; reverse candidates are limited to scanRoot. Packages and built-ins are omitted. No comprehensive arbitrary string/custom-loader/Addressables discovery. Unsaved/unimported graph changes are not covered. Native FindAssets/GetDependencies calls are indivisible. Rechecks are observations, not an atomic filesystem transaction.",
                 };
+                data["nextPageNumber"] = offset + entries.Count < results.Count && page < int.MaxValue ? new JValue(page + 1) : JValue.CreateNull();
+                if (capture)
+                    ReferenceSnapshotStore.CaptureAssets(data, results.Select(node => Row(node, reverse)), results.Count, snapshotScope, cancellationToken);
                 ReferenceDiagnosticUtility.PageBytes(data);
                 return data;
             }
+        }
+
+        private static JObject Row(Node node, bool reverse)
+        {
+            var chain = new List<string>();
+            for (Node current = node; current != null; current = current.Via)
+                chain.Add(current.Path);
+            if (!reverse)
+                chain.Reverse();
+            return new JObject
+            {
+                ["path"] = node.Path,
+                ["guid"] = AssetDatabase.AssetPathToGUID(node.Path),
+                ["direct"] = node.Depth == 1,
+                ["depth"] = node.Depth,
+                ["provenance"] = new JObject { ["api"] = "AssetDatabase.GetDependencies(recursive:false)", ["chain"] = new JArray(chain) },
+            };
         }
 
         private static bool Eligible(string path) => !string.IsNullOrEmpty(path) && path.StartsWith("Assets/", StringComparison.Ordinal) && path.Length <= 2048;

@@ -38,6 +38,18 @@ and 8 GiB of temporary evidence are retained for ten minutes of inactivity. Relo
 quit, expiration and eviction close their owned DeleteOnClose handles. An expired
 cursor requires a new capture; these retention limits do not lower scan budgets.
 
+Asset reference reads and move/delete previews also accept `reference_snapshot`
+and `reference_cursor`. Keep the source, operation, destination, scan root,
+recursive option and budgets unchanged. Responses include `nextPageNumber` and
+`snapshotExpiresAtUtc`; each successful cursor read renews the idle retention.
+The first scan writes ordered scalar rows once, so subsequent pages do not
+rehash the source or enumerate the reference graph. Imported asset changes,
+deletions and moves invalidate asset captures; existing captured scene evidence
+keeps its frozen-observation behavior. Unimported changes are not claimed as
+current graph evidence. A cursor cannot replace `reference_revision` on a live
+recheck or guarded mutation. Storage failure falls back to the complete live
+page, and cancellation before publication closes the temporary snapshot.
+
 ## Asynchronous asset reference hashes
 
 On Windows, dispatched asset reference reads and move/delete previews hash the

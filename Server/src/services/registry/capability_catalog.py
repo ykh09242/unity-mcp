@@ -355,7 +355,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "assets",
         "Asset References & Change Previews",
         "get_dependencies get_reverse_references preview_move preview_delete",
-        "path destination scan_root max_assets max_work recursive page_size page_number reference_revision",
+        "path destination scan_root max_assets max_work recursive page_size page_number reference_revision reference_snapshot reference_cursor",
         effects=READ_ONLY_EFFECTS,
     ),
     _feature(

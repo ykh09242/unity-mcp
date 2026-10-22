@@ -27,6 +27,8 @@ Inspect dependencies and reverse references, or preview asset moves and deletion
 | `scan_root` | `str \| None` | — | Reference actions: candidate/dependency folder (Assets by default). |
 | `max_assets` | `int \| str \| None` | — | Reference actions: at most 1-250000 candidate/visited assets; default 1024. |
 | `max_work` | `int \| str \| None` | — | Reference actions: at most 1-4000000 node/edge work units; default 10000. |
+| `reference_snapshot` | `bool \| None` | — | Reference reads/previews only: retain captured scalar pages for ten minutes idle. |
+| `reference_cursor` | `str \| None` | — | Reference reads/previews only: continue a captured observation with identical scan options. Imported changes invalidate it. |
 | `reference_revision` | `str \| None` | — | Recheck the same bounded read/preview or guard move/delete immediately before mutation. |
 
 ## Returns
