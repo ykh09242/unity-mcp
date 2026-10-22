@@ -405,13 +405,33 @@ async def test_stored_selection_reconnect_wait_is_inside_capability_budget(
         await client.call_tool("select_fixture")
         await command_hub.registry.unregister("session")
 
-        # When: discovery includes middleware selection rather than starting its clock afterward.
-        started = anyio.current_time()
-        data = await read_capabilities(client)
-        elapsed = anyio.current_time() - started
+        resolutions = []
+        resolve = PluginHub._resolve_session_id
 
-    # Then: an unrelated reconnect policy cannot add its own wait before discovery's deadline.
-    assert elapsed < 0.2
+        async def observe_resolution(cls, instance, *, user_id=None, retry_on_reload=True):
+            resolutions.append(
+                (
+                    retry_on_reload,
+                    capabilities._read_deadline.get(),
+                    anyio.current_effective_deadline(),
+                )
+            )
+            return await resolve(instance, user_id=user_id, retry_on_reload=retry_on_reload)
+
+        monkeypatch.setattr(PluginHub, "_resolve_session_id", classmethod(observe_resolution))
+
+        # When: the real SDK request resolves its stored selection under the capability budget.
+        with anyio.fail_after(5):
+            data = await read_capabilities(client)
+
+    # Then: the reconnect policy is disabled inside the same bounded cancellation scope.
+    # Runner scheduling and SDK delivery are outside this contract; do not time the round trip.
+    assert resolutions, "Stored selection must reach real plugin-session resolution"
+    for retry, deadline, effective_deadline in resolutions:
+        assert retry is False
+        assert deadline is not None
+        assert effective_deadline <= deadline
+        assert deadline == resolutions[0][1]
     assert data["connection"]["status"] in {"unknown", "unavailable"}
     assert command_hub.sent == []
 
