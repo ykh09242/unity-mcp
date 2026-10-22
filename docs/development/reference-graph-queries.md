@@ -53,8 +53,8 @@ coverage or independently prove filesystem freshness. An unreachable target mean
 no path in that captured graph, never proof that an asset can safely be deleted.
 
 External source version and operator root authorization are checked for every
-participating provider, including zero-result pages. Delivered historical changed
-edges additionally require current read access to their original file paths. A
+participating provider, including zero-result pages. Every historical comparison
+candidate, including unchanged rows, requires current read access to its original file path. A
 revoked or changed grant, inaccessible/deleted original file, or replaced scope
 fails closed. File content may legitimately differ from the captured version;
 historical comparisons do not reread it or pretend the historical hash is current.
@@ -66,7 +66,10 @@ can appear as a removal and addition. Provenance or node-state changes with the
 same identity appear as modifications. Code analysis now publishes a compact build
 context and analysis fingerprint atomically with its edge generation. Older
 evidence without that metadata remains explicitly absent until its next analysis;
-the tool does not attach today's build context to an older edge.
+the tool does not attach today's build context to an older edge. Published source
+paths remain attached to their evidence generation. For stale legacy evidence
+without a captured path, `source_path` is empty and `source_path_origin` reports
+`unavailable`; `current_source_path` separately reports the owner's current location.
 
 ## Reproducible scale check
 

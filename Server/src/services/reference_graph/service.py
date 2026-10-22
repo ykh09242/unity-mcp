@@ -615,13 +615,7 @@ class ReferenceGraphService:
                 raise RevisionConflict("Exploration source grant changed; start a new query")
             adapters[provider] = self._grant(workspace.store.scope, source["config"])
         if result.get("historical"):
-            paths = {
-                (edge["provider"], edge["source_path"])
-                for change in result["changes"]
-                for edge in (change["before"], change["after"])
-                if edge is not None and edge["provider"].startswith("external:")
-            }
-            for provider, path in paths:
+            for provider, path in result["_history_access"]:
                 # The captured bytes may differ today. Require access to the
                 # original path, never assert historical evidence is current.
                 adapters[provider].stamp(path)
@@ -930,6 +924,8 @@ class ReferenceGraphService:
         if external_changed:
             current = False
             status["queue_idle"] = False
+        # Internal bounded authorization inputs are never part of tool output.
+        data.pop("_history_access", None)
         return {
             "success": True,
             "data": {

@@ -63,15 +63,24 @@ class GraphQueries:
 
     @staticmethod
     def _evidence(row) -> dict:
+        provenance = json.loads(row["provenance"] or "{}")
+        stale = row["state"] != "ready" and row["provider"] != "manual"
+        published_path = provenance.get("path")
         return {
             **json.loads(row["payload"]),
             "id": row["id"],
             "owner": row["owner"],
             "provider": row["provider"],
-            "source_path": row["source_path"] or "",
+            "source_path": published_path or ("" if stale else row["source_path"] or ""),
+            "source_path_origin": "published"
+            if published_path
+            else "unavailable"
+            if stale
+            else "current_owner",
+            "current_source_path": row["source_path"] or "",
             "target_path": row["target_path"] or "",
-            "provenance": json.loads(row["provenance"] or "{}"),
-            "stale": row["state"] != "ready" and row["provider"] != "manual",
+            "provenance": provenance,
+            "stale": stale,
             "target_exists": None if row["present"] is None else bool(row["present"]),
         }
 
@@ -153,6 +162,7 @@ class GraphQueries:
                 "revision": self._revision(connection),
                 "edges": [self._evidence(row) for row in rows],
                 "explanation_coverage": "recorded_evidence",
+                "sources": self._sources(connection),
             }
 
     def impact(
@@ -406,25 +416,42 @@ class GraphQueries:
                 (before, last, after, last, limit + 1, before, after),
             ).fetchall()
             more = len(rows) > limit
-            changes = [
-                {
-                    "id": row["id"],
-                    "change": "added"
-                    if row["previous"] is None
-                    else "removed"
-                    if row["current"] is None
-                    else "modified",
-                    "before": json.loads(row["previous"]) if row["previous"] else None,
-                    "after": json.loads(row["current"]) if row["current"] else None,
-                }
-                for row in rows[:limit]
-                if row["previous"] != row["current"]
-            ]
+            changes, access = [], set()
+            for row in rows[:limit]:
+                previous = json.loads(row["previous"]) if row["previous"] else None
+                current = (
+                    previous
+                    if row["previous"] == row["current"]
+                    else json.loads(row["current"])
+                    if row["current"]
+                    else None
+                )
+                # An unchanged comparison is evidence too. Authorize all page
+                # candidates before delivering even an empty changes array.
+                access.update(
+                    (edge["provider"], edge["source_path"])
+                    for edge in (previous, current)
+                    if edge is not None and edge["provider"].startswith("external:")
+                )
+                if row["previous"] != row["current"]:
+                    changes.append(
+                        {
+                            "id": row["id"],
+                            "change": "added"
+                            if previous is None
+                            else "removed"
+                            if current is None
+                            else "modified",
+                            "before": previous,
+                            "after": current,
+                        }
+                    )
             return {
                 "revision": self._revision(connection),
                 "before": old,
                 "after": new,
                 "changes": changes,
+                "_history_access": sorted(access),
                 "sources": {**old["sources"], **new["sources"]},
                 "historical": True,
                 "compared": min(limit, len(rows)),

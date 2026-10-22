@@ -502,6 +502,31 @@ async def test_historical_paths_are_reauthorized_without_requiring_old_content(
 
 
 @pytest.mark.asyncio
+async def test_unchanged_comparison_candidates_and_empty_explain_reauthorize(
+    setup, tmp_path, monkeypatch
+):
+    service, sender, ctx = setup
+    await external_fixture(service, sender, ctx, tmp_path / "settings", monkeypatch)
+    before = (await service.execute(ctx, "snapshot", {}))["data"]["snapshot"]["id"]
+    after = (await service.execute(ctx, "snapshot", {}))["data"]["snapshot"]["id"]
+    data = (await service.execute(ctx, "diff", {"before": before, "after": after}))["data"]
+    assert not data["changes"] and "_history_access" not in data
+    monkeypatch.setattr(
+        ExternalSource, "stamp", lambda *_: (_ for _ in ()).throw(PermissionError("file revoked"))
+    )
+    with pytest.raises(PermissionError, match="file revoked"):
+        await service.execute(ctx, "diff", {"before": before, "after": after})
+    monkeypatch.setattr(
+        service,
+        "_operator_grant",
+        lambda *_: (_ for _ in ()).throw(PermissionError("operator revoked")),
+    )
+    with pytest.raises(PermissionError, match="operator revoked"):
+        await service.execute(ctx, "explain", {"id": "missing-edge"})
+    await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_requires_selected_instance_and_rejects_supplied_identity_before_io(setup):
     service, sender, ctx = setup
     ctx.instance = None

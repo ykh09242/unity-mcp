@@ -204,3 +204,30 @@ def test_shortest_path_is_paged_and_distinguishes_unreachable_from_pending(graph
     assert queries.path("missing", "a")["path_found"] is False
     incoming = queries.path("destination", "a", limit=100)
     assert incoming["path_found"] and len(incoming["edges"]) == 2
+
+
+@pytest.mark.parametrize("with_provenance", [False, True])
+def test_stale_source_move_preserves_published_path_or_reports_unknown(graph, with_provenance):
+    store, queries = graph
+    old = {"build": {"revision": "old"}} if with_provenance else None
+    generation = store.observe_batch(
+        [Observation("owner", "code", "old", path="Assets/Old.cs", provenance=old)]
+    )[0]
+    store.publish("owner", "code", generation, [Edge("target", "load", line=42)])
+    edge = store.query("owner")["edges"][0]
+    store.observe_batch(
+        [
+            Observation(
+                "owner",
+                "code",
+                "new",
+                path="Assets/New.cs",
+                provenance={"build": {"revision": "new"}},
+            )
+        ]
+    )
+    explained = queries.explain(edge["id"])["edges"][0]
+    assert explained["stale"] and explained["line"] == 42
+    assert explained["source_path"] == ("Assets/Old.cs" if with_provenance else "")
+    assert explained["current_source_path"] == "Assets/New.cs"
+    assert explained["source_path_origin"] == ("published" if with_provenance else "unavailable")
