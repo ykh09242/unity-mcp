@@ -166,3 +166,35 @@ An earlier 536 MiB comparison used a 35 ms arrival interval and finished submiss
 before the first grant. It is retained as staggered-burst evidence only, not the
 sustained-arrival result above. Deterministic fake-clock tests separately establish
 the grant bound during continuous new arrivals and oldest-waiter cancellation.
+
+## Serialization-only result sharing: not adopted
+
+A last-writer experiment uses the installed MCP SDK's minimal structured result
+encoding and the actual settled binary stdio writer. It compares detached mutable
+values with one immutable encoded result and separately constructed request
+frames. All ordered bytes, request identities and flush counts match; compatibility
+checks preserve arbitrary integers, Unicode, float bits, fallback models and
+cancellation through real flush completion. The raw [measurement artifact](../../tools/experiments/service_optimizations/serialization-delivery-results.json)
+records source hashes, package versions and each round.
+
+| Rows / readers | Text | Detached median | Encoded candidate | Python traced peak, detached to candidate |
+| --- | --- | --- | --- | --- |
+| 8,000 / 16 | ASCII | 435 ms | 50 ms | 29.89 to 22.24 MB |
+| 8,000 / 16 | Unicode | 495 ms | 53 ms | 32.05 to 24.84 MB |
+| 25,000 / 4 | ASCII | 449 ms | 140 ms | 39.56 to 23.42 MB |
+| 25,000 / 4 | Unicode | 513 ms | 162 ms | 40.91 to 26.12 MB |
+| 50,000 / 1 | ASCII | 238 ms | 287 ms | 55.90 to 40.43 MB |
+| 50,000 / 1 | Unicode | 252 ms | 294 ms | 55.90 to 40.43 MB |
+
+Three alternating samples per arm measure timing separately from traced peak
+memory on Windows CPython 3.14.6. Peak means Python allocations within the traced
+pass, not allocation traffic, process RSS or retained memory after delivery.
+The minimal structured response has empty content blocks. Authority, admission,
+mutable middleware, transport queues and network costs are excluded, so these
+numbers are a lower-bound experiment rather than end-to-end request performance.
+
+Multiple readers benefit in this slice, but the single-reader case is 17-21%
+slower. Shared reads currently promise independent mutable results; FastMCP and
+per-caller response ownership still operate on those values. Shared encoded bytes
+cannot replace that interface without a new explicit contract and complete
+ownership/middleware validation. Production behavior is therefore unchanged.

@@ -67,3 +67,38 @@ or for removing external-file/final-publication integrity checks.
 ## Shared regression cohorts
 
 The [large-workload cohort guide](../../../docs/development/large-workload-cohorts.md) adds source-bound raw captures and environment-matched advisory comparisons around these probes. `shared_read.py` also writes `concurrent-readers.json`; the strengthened OPT12 probe verifies each output digest and writes `mixed-artifacts.json` alongside its legacy sample file. Follow the guide's explicit output/input identity settings when using the common capture adapter.
+
+## Serialization-only delivery experiment
+
+`serialization_delivery.py` evaluates a last-writer optimization boundary using
+SDK `CallToolResult`/`JSONRPCResponse` encoding and the actual settled binary stdio
+writer. Set `PYTHONPATH` to the repository root and `Server/src`, then run:
+
+```sh
+python tools/experiments/service_optimizations/serialization_delivery.py --output <owned-output-file.json>
+```
+
+The output parent must exist. The experiment records Python/package versions and
+hashes of its serializer, immutable copier and writer before and after execution.
+`serialization-delivery-results.json` preserves all measured rounds and frame
+digests. Six alternating rounds per timing/memory series give three samples per
+arm; tracing runs separately. Inputs are 8,000 rows/16 readers, 25,000/4 and
+50,000/1, each with ASCII and Unicode strings. All frames, typed request IDs,
+newline bytes and flush counts must match the SDK baseline.
+
+This is an intentionally narrow lower-bound experiment: minimal structured
+results have empty content blocks; authority, response reservations, middleware,
+transport queues, network transfer and client parsing are excluded. It is not a
+`SessionMessage` replacement or full HTTP measurement. The prepared arm encodes
+one immutable result and makes request-specific frames; unsupported Python models
+or shapes fall back to the baseline. Regression tests retain arbitrary integers,
+Unicode and float bits, reject aliases/cycles from sharing, preserve mutation
+isolation and wait for actual blocked flush completion on cancellation.
+
+The candidate is **not adopted**. Multiple readers improve in this final writer
+slice, but one 50,000-row reader takes 17-21% longer. More importantly, the existing
+shared-read API returns independently mutable values before FastMCP builds each
+caller's result. Skipping that contract or the response owner's reservation and
+release boundaries is not justified by last-writer timings. Keep the measured
+production copy path; a future opt-in immutable SDK contract needs full delivery,
+ownership and middleware evidence before replacing it.
