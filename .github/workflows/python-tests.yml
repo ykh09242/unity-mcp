@@ -59,14 +59,14 @@ jobs:
           enable-cache: true
           cache-suffix: reference-graph-${{ matrix.python }}
           cache-dependency-glob: Server/uv.lock
-      - name: Install and exercise isolated reference storage
+      - name: Install and exercise isolated reference graph
         working-directory: Server
         env:
           PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python == '3.15' && 'true' || 'false' }}
           UNITY_MCP_LOG_DIR: ${{ runner.temp }}/reference-graph-logs
         run: |
           uv sync --python "${{ matrix.python }}" --locked --extra dev
-          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_reference_graph_store.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-tests"
+          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_reference_graph_store.py tests/test_reference_graph_analysis.py tests/test_reference_graph_external.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-tests"
 
   server_bootstrap:
     name: Server Bootstrap (${{ matrix.os }})
