@@ -44,6 +44,17 @@ retain incoming references as dangling evidence instead of erasing the problem.
 `queue_idle` describes pending/error work only: it does not certify a complete project
 scan, successful compilation, complete static analysis or safe asset deletion.
 
+Failed asset collection records a durable, owner-specific error and continues with
+other assets. Retries back off from five seconds to five minutes; a new import
+bypasses that delay. The delay limits repeated failures, not valid job duration or
+project size. A failed script and its known transitive dependents keep their previous
+code evidence stale until collection recovers. Reimporting identical bytes also
+reconciles pending evidence. External decoding/parser failures remain visible per
+file, preserve previous evidence and retry on the next scan without stopping the
+watcher or discarding other files. Source and worker fences still apply to errors.
+Workspace schema version 2 adds retry state transactionally, preserving version 1
+evidence, progress, source grants and authored declarations.
+
 ## External grants and authored data
 
 Changing an external source configuration invalidates its workers and removes its

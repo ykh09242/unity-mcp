@@ -87,7 +87,12 @@ def _string_value(value: str) -> str | None:
             offset += count
         else:
             return None
-    return "".join(output)
+    try:
+        # C# escapes denote UTF-16 code units; Python keys denote Unicode scalars.
+        # Preserve supplementary characters without persisting lone surrogates.
+        return "".join(output).encode("utf-16-le", "surrogatepass").decode("utf-16-le")
+    except UnicodeError:
+        return None
 
 
 def _tokens(source: str) -> list[Token]:

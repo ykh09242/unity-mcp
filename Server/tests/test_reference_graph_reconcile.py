@@ -349,3 +349,203 @@ async def test_addressables_observer_error_never_claims_current(setup):
     assert not await Reconciler(workspace, collect, allowed).reconcile()
     assert workspace.counts()["assets"] == 1
     assert workspace.progress()["phase"] == "changes_pending"
+
+
+@pytest.mark.asyncio
+async def test_unchanged_reimport_recovers_wrapper_and_dependent_evidence(setup):
+    store, _, editor, engine = setup
+    editor.add(1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}])
+    wrapper = editor.add(
+        2,
+        "Assets/Loader.cs",
+        'using UnityEngine; class Loader { public static Object Get() => Resources.Load("One"); }',
+    )
+    caller = editor.add(3, "Assets/Caller.cs", "class Caller { void Go() { Loader.Get(); } }")
+    assert await engine.reconcile()
+    expected = {owner: store.query(owner)["edges"] for owner in (wrapper, caller)}
+    editor.event("Assets/Loader.cs")
+    assert await engine.reconcile()
+    assert store.status()["queue_idle"]
+    assert {owner: store.query(owner)["edges"] for owner in (wrapper, caller)} == expected
+
+
+@pytest.mark.asyncio
+async def test_bad_source_does_not_starve_good_assets_and_repair_bypasses_backoff(setup):
+    store, workspace, editor, engine = setup
+    bad = editor.add(1, "Assets/Bad.cs", "class Bad {}")
+    editor.sources[bad[6:]] = b"// unsupported source encoding \xff\nclass Bad {}"
+    target = editor.add(
+        2, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    good = editor.add(
+        3,
+        "Assets/Good.cs",
+        'using UnityEngine; class Good { void Go() { Resources.Load("One"); } }',
+    )
+    assert not await engine.reconcile()
+    assert store.query(good)["edges"][0]["target"] == target
+    assert store.status()["errors"]
+    assert workspace.diagnostics(bad)["issues"][0]["reason"] == "collection_failed"
+    restored = GraphWorkspace(GraphStore(store.path, store.scope))
+    assert restored.counts()["failed_assets"] == 1
+    editor.calls.clear()
+    assert not await engine.reconcile()
+    assert not [params for action, params in editor.calls if action == "source"]
+    editor.sources[bad[6:]] = b"class Bad {}"
+    editor.event("Assets/Bad.cs")
+    assert await engine.reconcile()
+    assert workspace.counts()["failed_assets"] == 0
+    assert store.status()["queue_idle"]
+
+
+@pytest.mark.asyncio
+async def test_failed_wrapper_keeps_previous_dependents_stale_until_repaired(setup):
+    store, _, editor, engine = setup
+    editor.add(1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}])
+    wrapper = editor.add(
+        2,
+        "Assets/Loader.cs",
+        'using UnityEngine; class Loader { public static Object Get() => Resources.Load("One"); }',
+    )
+    caller = editor.add(3, "Assets/Caller.cs", "class Caller { void Go() { Loader.Get(); } }")
+    assert await engine.reconcile()
+    previous = editor.sources[wrapper[6:]]
+    editor.sources[wrapper[6:]] = b"\xffinvalid"
+    editor.event("Assets/Loader.cs")
+    assert not await engine.reconcile()
+    assert store.query(caller)["edges"][0]["stale"]
+    assert not await engine.reconcile()
+    assert store.query(caller)["edges"][0]["stale"]
+    editor.sources[wrapper[6:]] = previous
+    editor.event("Assets/Loader.cs")
+    assert await engine.reconcile()
+    assert not store.query(caller)["edges"][0]["stale"]
+
+
+@pytest.mark.asyncio
+async def test_same_byte_wrapper_repair_rechecks_new_callers_added_during_failure(setup):
+    store, _, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    wrapper = editor.add(
+        2,
+        "Assets/Loader.cs",
+        'using UnityEngine; class Loader { public static Object Get() => Resources.Load("One"); }',
+    )
+    assert await engine.reconcile()
+    original = editor.sources[wrapper[6:]]
+    editor.sources[wrapper[6:]] = b"\xffinvalid"
+    editor.event("Assets/Loader.cs")
+    assert not await engine.reconcile()
+    caller = editor.add(3, "Assets/Caller.cs", "class Caller { void Go() { Loader.Get(); } }")
+    editor.event("Assets/Caller.cs")
+    assert not await engine.reconcile()
+    editor.sources[wrapper[6:]] = original
+    editor.event("Assets/Loader.cs")
+    assert await engine.reconcile()
+    assert store.query(caller)["edges"][0]["target"] == target
+
+
+@pytest.mark.asyncio
+async def test_native_collection_error_envelope_is_isolated_from_later_assets(setup, monkeypatch):
+    import services.reference_graph.service as module
+
+    store, workspace, editor, _ = setup
+    bad = editor.add(1, "Assets/Bad.cs", "class Bad {}")
+    target = editor.add(
+        2, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    good = editor.add(
+        3,
+        "Assets/Good.cs",
+        'using UnityEngine; class Good { void Go() { Resources.Load("One"); } }',
+    )
+
+    async def transport(_, instance, command, params, **options):
+        if params["action"] == "source" and params["guid"] == bad[6:]:
+            return {"success": False, "error": "reference_collection_unavailable"}
+        action = params["action"]
+        return {
+            "success": True,
+            "data": await editor(action, **{k: v for k, v in params.items() if k != "action"}),
+        }
+
+    monkeypatch.setattr(module, "send_with_unity_instance", transport)
+
+    async def collect(action, **params):
+        return await module.native_send("editor", {"action": action, **params})
+
+    engine = Reconciler(workspace, collect, allowed)
+    assert not await engine.reconcile()
+    assert workspace.counts()["failed_assets"] == 1
+    assert store.query(good)["edges"][0]["target"] == target
+
+
+@pytest.mark.asyncio
+async def test_malformed_csv_isolated_from_good_file_and_recovers_on_repair(setup, tmp_path):
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    root = tmp_path / "settings"
+    root.mkdir()
+    bad = root / "a.csv"
+    bad.write_text('prefab\n"unterminated', encoding="utf-8")
+    (root / "b.csv").write_text("prefab\nOne", encoding="utf-8")
+    workspace.set_source(
+        "external:settings",
+        {
+            "root": str(root),
+            "include": ["*.csv"],
+            "mappings": [{"field": "prefab", "scheme": "resources"}],
+        },
+        expected_version=0,
+    )
+    assert not await engine.reconcile()
+    assert len(store.query(target, direction="incoming")["edges"]) == 1
+    assert store.status()["errors"] == 1
+    inputs = workspace.external_inputs("external:settings")
+    assert set(inputs) == {"a.csv", "b.csv"}
+    assert (
+        workspace.diagnostics(inputs["a.csv"]["owner"])["issues"][0]["reason"] == "analysis_failed"
+    )
+    bad.write_text("prefab\nOne", encoding="utf-8")
+    assert await engine.reconcile()
+    assert len(store.query(target, direction="incoming")["edges"]) == 2
+    assert store.status()["queue_idle"]
+
+
+@pytest.mark.asyncio
+async def test_supplementary_unicode_escape_is_resolved_and_persisted(setup):
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/Icon.prefab", keys=[{"scheme": "resources", "value": "\U0001f600"}]
+    )
+    caller = editor.add(
+        2,
+        "Assets/Caller.cs",
+        r'using UnityEngine; class Caller { void Go() { Resources.Load("\uD83D\uDE00"); } }',
+    )
+    assert await engine.reconcile()
+    assert store.query(caller)["edges"][0]["target"] == target
+    restored = GraphWorkspace(GraphStore(store.path, store.scope))
+    assert restored.documents() == workspace.documents()
+
+
+@pytest.mark.asyncio
+async def test_external_decode_failure_does_not_skip_later_files(setup, tmp_path):
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    root = tmp_path / "settings"
+    root.mkdir()
+    (root / "a.json").write_bytes(b'{"prefab":"\xff"}')
+    (root / "b.json").write_text('{"prefab":"One"}', encoding="utf-8")
+    workspace.set_source(
+        "external:settings", {"root": str(root), "include": ["*.json"]}, expected_version=0
+    )
+    assert not await engine.reconcile()
+    assert len(store.query(target, direction="incoming")["edges"]) == 1
+    assert store.status()["errors"] == 1

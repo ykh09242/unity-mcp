@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import csv
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 import hashlib
@@ -108,6 +109,7 @@ class Reconciler:
                 status["epoch"] == self.progress.get("epoch")
                 and status["revision"] == self.progress.get("after")
                 and not self.progress.get("external_errors")
+                and (await drained_thread(self.store.status))["queue_idle"]
                 and not any(
                     status.get(key)
                     for key in (
@@ -217,41 +219,51 @@ class Reconciler:
 
     async def _assets(self) -> None:
         await self._phase("collecting")
-        while batch := await drained_thread(self.workspace.dirty_assets):
+        after = ""
+        while batch := await drained_thread(self.workspace.dirty_assets, after=after):
             for asset in batch:
                 await self.check()
-                guid, owner = asset["guid"], "asset:" + asset["guid"]
-                targets, offset, snapshot, fingerprint = [], 0, None, None
-                while True:
-                    page = await self.collect(
-                        "dependencies", guid=guid, offset=offset, snapshot=snapshot, page_size=1000
-                    )
-                    if not page.get("present"):
-                        await drained_thread(self.workspace.remove_path, self.worker, asset["path"])
-                        break
-                    if fingerprint is not None and fingerprint != page["fingerprint"]:
-                        raise RevisionConflict("Dependencies changed while reading")
-                    fingerprint, snapshot = page["fingerprint"], page["snapshot"]
-                    targets.extend(page["targets"])
-                    offset = page["next_offset"]
-                    if offset is None:
-                        generation = await drained_thread(
-                            self.workspace.observe,
-                            self.worker,
-                            Observation(
-                                owner, "unity", fingerprint, path=asset["path"], kind=asset["kind"]
-                            ),
-                        )
-                        result = Analysis(
-                            [Edge("asset:" + target, "unity_dependency") for target in targets],
-                            coverage="direct_asset_database_dependencies",
-                        )
-                        await drained_thread(
-                            self.workspace.publish, self.worker, owner, "unity", generation, result
-                        )
-                        await self._source(asset)
-                        await drained_thread(self.workspace.clean_asset, self.worker, guid)
-                        break
+                try:
+                    await self._asset(asset)
+                except RevisionConflict:
+                    raise
+                except (OSError, ValueError, RecursionError) as error:
+                    await drained_thread(self.workspace.fail_asset, self.worker, asset, error)
+                after = asset["guid"]
+
+    async def _asset(self, asset: dict) -> None:
+        guid, owner = asset["guid"], "asset:" + asset["guid"]
+        targets, offset, snapshot, fingerprint = [], 0, None, None
+        while True:
+            page = await self.collect(
+                "dependencies", guid=guid, offset=offset, snapshot=snapshot, page_size=1000
+            )
+            if not page.get("present"):
+                await drained_thread(self.workspace.remove_path, self.worker, asset["path"])
+                return
+            if fingerprint is not None and fingerprint != page["fingerprint"]:
+                raise RevisionConflict("Dependencies changed while reading")
+            fingerprint, snapshot = page["fingerprint"], page["snapshot"]
+            targets.extend(page["targets"])
+            offset = page["next_offset"]
+            if offset is None:
+                generation = await drained_thread(
+                    self.workspace.observe,
+                    self.worker,
+                    Observation(
+                        owner, "unity", fingerprint, path=asset["path"], kind=asset["kind"]
+                    ),
+                )
+                result = Analysis(
+                    [Edge("asset:" + target, "unity_dependency") for target in targets],
+                    coverage="direct_asset_database_dependencies",
+                )
+                await drained_thread(
+                    self.workspace.publish, self.worker, owner, "unity", generation, result
+                )
+                await self._source(asset)
+                await drained_thread(self.workspace.clean_asset, self.worker, guid)
+                return
 
     async def _source(self, asset: dict) -> None:
         if asset["source_format"] == "none":
@@ -324,6 +336,8 @@ class Reconciler:
             return
         await self._phase("analyzing")
         documents = await drained_thread(self.workspace.documents)
+        blocked = await drained_thread(self.workspace.blocked_analysis)
+        documents = [row for row in documents if row["owner"] not in blocked]
         assets = await drained_thread(self.workspace.catalog)
         index = await drained_thread(self._build_index, documents, assets, rules)
         affected = await drained_thread(
@@ -402,7 +416,7 @@ class Reconciler:
         for source in sources:
             await self.check()
             try:
-                await drained_thread(
+                failures = await drained_thread(
                     self._external_source,
                     source,
                     catalog,
@@ -411,9 +425,14 @@ class Reconciler:
                     force,
                     _cancel_event=self.stopped,
                 )
+                if failures:
+                    self.progress["external_errors"][source["provider"]] = {
+                        "failed_files": failures
+                    }
+                    await self._phase("external")
             except RevisionConflict:
                 raise
-            except (OSError, ValueError) as error:
+            except (OSError, ValueError, csv.Error, RecursionError) as error:
                 self.progress["external_errors"][source["provider"]] = (
                     type(error).__name__ + ": " + str(error)
                 )
@@ -421,32 +440,59 @@ class Reconciler:
 
     def _external_source(
         self, source: dict, catalog: Catalog, rules: int, catalog_revision: int, force: bool
-    ) -> None:
+    ) -> int:
         self._check_source(source)
         adapter = ExternalSource(source["config"])
         provider, seen = source["provider"], uuid.uuid4().hex
         previous = self.workspace.external_inputs(provider)
         analysis_key = _hash((source["version"], rules, catalog_revision))
+        failures = 0
         for path in adapter.files():
             self._check_source(source)
-            stamp = _json(adapter.stamp(path))
             old = previous.get(path)
             owner = provider + ":" + _hash(path)
-            fingerprint = old["fingerprint"] if old else ""
-            if (
-                force
-                or old is None
-                or old["state"] != "ready"
-                or old["stamp"] != stamp
-                or old["analysis_key"] != analysis_key
-            ):
-                document = adapter.read(path)
+            fingerprint = old["fingerprint"] if old else "unavailable"
+            stamp = ""
+            try:
+                stamp = _json(adapter.stamp(path))
+                if (
+                    force
+                    or old is None
+                    or old["state"] != "ready"
+                    or old["stamp"] != stamp
+                    or old["analysis_key"] != analysis_key
+                ):
+                    document = adapter.read(path)
+                    fingerprint = document.fingerprint
+                    generation = self.workspace.observe(
+                        self.worker,
+                        Observation(
+                            owner,
+                            provider,
+                            fingerprint,
+                            path=path,
+                            kind="external",
+                            force=True,
+                            source_version=source["version"],
+                            rules_revision=rules,
+                        ),
+                    )
+                    result = analyze_document(path, document.text, catalog, adapter.mappings)
+                    if _json(adapter.stamp(path)) != stamp:
+                        raise RevisionConflict("External input changed during analysis")
+                    self._check_source(source)
+                    if not self.workspace.publish(self.worker, owner, provider, generation, result):
+                        raise RevisionConflict("External source grant changed during analysis")
+            except RevisionConflict:
+                raise
+            except (OSError, ValueError, csv.Error, RecursionError) as error:
+                self._check_source(source)
                 generation = self.workspace.observe(
                     self.worker,
                     Observation(
                         owner,
                         provider,
-                        document.fingerprint,
+                        fingerprint,
                         path=path,
                         kind="external",
                         force=True,
@@ -454,18 +500,14 @@ class Reconciler:
                         rules_revision=rules,
                     ),
                 )
-                result = analyze_document(path, document.text, catalog, adapter.mappings)
-                if _json(adapter.stamp(path)) != stamp:
-                    raise RevisionConflict("External input changed during analysis")
-                self._check_source(source)
-                if not self.workspace.publish(self.worker, owner, provider, generation, result):
-                    raise RevisionConflict("External source grant changed during analysis")
-                fingerprint = document.fingerprint
+                self.workspace.fail_external(self.worker, owner, provider, generation, error)
+                failures += 1
             self.workspace.record_external(
                 self.worker, provider, owner, path, fingerprint, stamp, analysis_key, seen
             )
         self._check_source(source)
         self.workspace.finish_external(self.worker, provider, seen)
+        return failures
 
     def _check_source(self, source: dict) -> None:
         self._check_thread()

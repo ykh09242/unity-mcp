@@ -33,6 +33,34 @@ def row(guid="a" * 32, path="Assets/Resources/Fixture.prefab"):
     }
 
 
+def test_version_one_upgrade_preserves_evidence_and_progress(workspace):
+    workspace.record_page("worker", [row()], {"phase": "collect", "after": 7}, "scan")
+    generation = workspace.observe("worker", Observation("owner", "code", "hash"))
+    workspace.publish("worker", "owner", "code", generation, Analysis([Edge("target", "load")]))
+    workspace.store.put_declaration("manual", "owner", Edge("other", "manual"), expected_version=0)
+    before = workspace.store.query("owner")
+    with workspace.store._connect(write=True) as connection:
+        connection.execute("DROP TABLE graph_asset_failures")
+        connection.execute("UPDATE graph_workspace SET version=1")
+    restored = GraphWorkspace(GraphStore(workspace.store.path, workspace.store.scope))
+    assert restored.store.query("owner") == before
+    assert restored.progress()["after"] == 7
+    assert restored.counts()["failed_assets"] == 0
+    with restored.store._connect() as connection:
+        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 2
+
+
+def test_retired_worker_cannot_record_failure_or_replace_diagnostics(workspace):
+    workspace.record_page("worker", [row()], {}, "scan")
+    workspace.release("worker")
+    assert workspace.acquire("replacement")
+    before = workspace.store.status()
+    with pytest.raises(RevisionConflict):
+        workspace.fail_asset("worker", row(), ValueError("retired input"))
+    assert workspace.store.status() == before
+    assert workspace.counts()["failed_assets"] == 0
+
+
 def test_worker_lease_excludes_other_server_and_fences_expired_owner(workspace):
     other = GraphWorkspace(GraphStore(workspace.store.path, workspace.store.scope))
     assert not other.acquire("other")

@@ -86,6 +86,41 @@ class Sender:
         return result
 
 
+@pytest.mark.asyncio
+async def test_watcher_survives_malformed_csv_and_recovers_on_next_wake(setup, tmp_path):
+    service, _, ctx = setup
+    root = tmp_path / "settings"
+    root.mkdir()
+    path = root / "a.csv"
+    path.write_text('prefab\n"unterminated', encoding="utf-8")
+    entry, _ = await service.resolve(ctx, "status")
+    entry.workspace.set_source(
+        "external:settings", {"root": str(root), "include": ["*.csv"]}, expected_version=0
+    )
+    completed = asyncio.Queue()
+    reconcile = entry.engine.reconcile
+
+    async def watched(**options):
+        result = await reconcile(**options)
+        completed.put_nowait(result)
+        return result
+
+    entry.engine.reconcile = watched
+    service.start(entry)
+    try:
+        assert not await asyncio.wait_for(completed.get(), 5)
+        task = entry.task
+        assert task is not None and not task.done()
+        assert entry.workspace.store.status()["errors"] == 1
+        path.write_text("prefab\nOne", encoding="utf-8")
+        entry.wake.set()
+        assert await asyncio.wait_for(completed.get(), 5)
+        assert entry.task is task and not task.done()
+        assert entry.workspace.store.status()["queue_idle"]
+    finally:
+        await service.aclose()
+
+
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
