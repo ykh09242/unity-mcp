@@ -11,9 +11,18 @@ its background reconciliation integrate them separately.
 contents cannot introduce calls. It records type and method declarations,
 namespace imports and aliases, class string constants, calls, and formal argument
 expressions. File facts can be serialized independently of the original text.
+Imports and aliases belong to their lexical namespace occurrence, including nested,
+reopened and file-scoped namespaces. Constant expressions retain that context too.
+Analysis version changes schedule a one-time reparse of derived source facts while
+preserving authored declarations and the last evidence as stale until replacement.
+External analysis identity includes that version, so unchanged JSON/CSV is also
+reanalyzed when key-resolution semantics change.
 
 The index recognizes `UnityEngine.Resources.Load`, `LoadAsync`, `LoadAll` and
-`UnityEngine.AddressableAssets.Addressables.LoadAssetAsync` / `LoadAssetsAsync`.
+`UnityEngine.AddressableAssets.Addressables.LoadAssetAsync`, `LoadAssetsAsync`,
+`InstantiateAsync` and `LoadSceneAsync`. A versioned signature registry follows the
+string-key overloads and wrapper propagation. Nonliteral location/AssetReference
+arguments remain diagnostic evidence, not guessed catalog keys.
 Visible short names and aliases are resolved conservatively. A project type with
 the same name prevents assuming that a call belongs to Unity, and its owner is a
 dependency even when no reference can be resolved. Value receivers and reassigned
@@ -22,6 +31,9 @@ with multiple possible targets remain unresolved. Bulk Resources paths and
 Addressables labels can produce multiple targets without truncating their fanout.
 Addressables GUID keys must be present in the Addressables catalog; an arbitrary
 asset GUID is not automatically an Addressables entry.
+Resources keys and folder-prefix lookups are case insensitive; returned evidence
+retains the original key spelling. Addressables keys and filesystem paths remain
+case sensitive. Colliding Resources names stay ambiguous for a single load.
 
 String literals, verbatim literals, single-line raw literals, constant references
 and string concatenation propagate through nested wrappers, including across
@@ -41,10 +53,23 @@ references. Code edges use `possible` confidence even when their literal key is
 unique. Compiler failures and collection errors must remain visible in the
 integrating service. Nothing here relaxes the existing live asset deletion guard.
 
-Unity YAML `m_AssetGUID` fields provide separate serialized AssetReference
-evidence, including dangling target GUIDs. Binary serialized files need the
-collector's explicit unavailable-coverage result; an empty text scan is not a
-substitute for that result.
+Unity YAML is scanned as tokens using the server's existing PyYAML dependency.
+The scan constructs no tagged objects and expands no aliases. Comments, block
+scalars and multiline quoted strings cannot introduce fields. A real mapping
+field named `m_AssetGUID` produces `serialized_guid_field` evidence, including
+dangling targets, with `possible` confidence: a custom class may use that field
+name too. Without serialized field/type metadata it is not an observed
+AssetReference. Coverage is explicitly lexical and untyped. Scanner-detected
+errors (such as unterminated strings) remain collection errors with prior evidence
+stale; token extraction does not certify complete YAML grammar validity. Unity's
+importer remains responsible for document validity, including its special repeated
+document tags and stripped-object headers.
+Binary serialized files retain the collector's explicit unavailable coverage.
+
+The loader registry follows Unity's [Resources.Load path rules](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Resources.Load.html)
+and Addressables 2.7's [InstantiateAsync](https://docs.unity3d.com/Packages/com.unity.addressables@2.7/api/UnityEngine.AddressableAssets.Addressables.InstantiateAsync.html)
+and [LoadSceneAsync](https://docs.unity3d.com/Packages/com.unity.addressables@2.7/api/UnityEngine.AddressableAssets.Addressables.LoadSceneAsync.html)
+key overloads. Token handling uses [PyYAML's scanner API](https://pyyaml.org/wiki/PyYAMLDocumentation).
 
 ## External sources
 

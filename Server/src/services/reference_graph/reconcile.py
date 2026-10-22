@@ -17,6 +17,7 @@ import threading
 import uuid
 
 from services.reference_graph.analysis import (
+    ANALYSIS_VERSION,
     Analysis,
     AnalysisIndex,
     Catalog,
@@ -98,6 +99,9 @@ class Reconciler:
             if any(status.get(key) for key in ("compiling", "importing", "compilation_failed")):
                 await self._phase("waiting_for_editor")
                 return False
+            await drained_thread(
+                self.workspace.ensure_analysis_version, self.worker, ANALYSIS_VERSION
+            )
             if not self.progress.get("initialized") or self.progress.get("census"):
                 await self._census(status, force=True)
             await self._changes()
@@ -445,7 +449,7 @@ class Reconciler:
         adapter = ExternalSource(source["config"])
         provider, seen = source["provider"], uuid.uuid4().hex
         previous = self.workspace.external_inputs(provider)
-        analysis_key = _hash((source["version"], rules, catalog_revision))
+        analysis_key = _hash((ANALYSIS_VERSION, source["version"], rules, catalog_revision))
         failures = 0
         for path in adapter.files():
             self._check_source(source)

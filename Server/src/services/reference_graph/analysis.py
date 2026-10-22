@@ -13,10 +13,27 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 import re
 
+import yaml
+from yaml.tokens import KeyToken, ScalarToken, ValueToken
+
 from services.reference_graph.store import Edge
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
+ANALYSIS_VERSION = 2
+# Registry version follows the fact/analysis version. Values describe the string
+# key overload; object/location/AssetReference expressions stay unresolved unless
+# a later semantic provider can prove their identity.
+LOADERS = {
+    "UnityEngine.Resources.Load": ("resources", "single"),
+    "UnityEngine.Resources.LoadAsync": ("resources", "single"),
+    "UnityEngine.Resources.LoadAll": ("resources", "all"),
+    "UnityEngine.AddressableAssets.Addressables.LoadAssetAsync": ("addressables", "single"),
+    "UnityEngine.AddressableAssets.Addressables.LoadAssetsAsync": ("addressables", "all"),
+    "UnityEngine.AddressableAssets.Addressables.InstantiateAsync": ("addressables", "single"),
+    "UnityEngine.AddressableAssets.Addressables.LoadSceneAsync": ("addressables", "single"),
+}
+_LOADER_METHODS = frozenset(name.rpartition(".")[2] for name in LOADERS)
 _IDENT = re.compile(r"@?[^\W\d]\w*", re.UNICODE)
 _GUID = re.compile(r"^[0-9a-fA-F]{32}$")
 _CONTROL = {
@@ -206,13 +223,16 @@ def _expression(
     scope: str,
     parameters: tuple[str, ...],
     locals_: frozenset[str] = frozenset(),
+    import_scope: str = "",
 ) -> Expr:
     while tokens and tokens[0].text == "(" and _pairs(tokens).get(0) == len(tokens) - 1:
         tokens = tokens[1:-1]
     parts = _split(tokens, "+")
     if len(parts) > 1:
         atoms = tuple(
-            atom for part in parts for atom in _expression(part, scope, parameters, locals_)
+            atom
+            for part in parts
+            for atom in _expression(part, scope, parameters, locals_, import_scope)
         )
         return UNKNOWN if any(kind == "unknown" for kind, _ in atoms) else atoms
     if len(tokens) == 1 and tokens[0].kind == "string":
@@ -229,7 +249,7 @@ def _expression(
             return UNKNOWN
         if name in parameters:
             return (("parameter", name),)
-        return (("symbol", scope + "|" + name),)
+        return (("symbol", scope + "|" + name + "|" + import_scope),)
     return UNKNOWN
 
 
@@ -241,6 +261,7 @@ class Call:
     scope: str
     method: str
     shadowed_receiver: bool = False
+    import_scope: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +282,8 @@ class Facts:
     constants: dict[str, Expr]
     methods: tuple[Method, ...]
     calls: tuple[Call, ...]
+    imports: dict[str, dict] = field(default_factory=dict)
+    version: int = ANALYSIS_VERSION
 
     @classmethod
     def from_dict(cls, data: dict) -> Facts:
@@ -285,9 +308,12 @@ class Facts:
                     item["scope"],
                     item["method"],
                     item.get("shadowed_receiver", False),
+                    item.get("import_scope", ""),
                 )
                 for item in data["calls"]
             ),
+            data.get("imports", {}),
+            data.get("version", 1),
         )
 
 
@@ -295,11 +321,19 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
     tokens = _tokens(source)
     pairs = _pairs(tokens)
     scopes = [""] * len(tokens)
+    import_scopes = [""] * len(tokens)
+    imports = {"": {"usings": [], "aliases": {}}}
+    import_parents = {}
+    active_imports = []
     types, usings, aliases, constants = [], [], {}, {}
-    active: list[tuple[int, str]] = []
+    active: list[tuple[int, str, str]] = []
     for i, token in enumerate(tokens):
         while active and active[-1][0] <= i:
             active.pop()
+        while active_imports and active_imports[-1][0] <= i:
+            active_imports.pop()
+        import_scope = active_imports[-1][1] if active_imports else ""
+        import_scopes[i] = import_scope
         scope = active[-1][1] if active else ""
         scopes[i] = scope
         if token.text in ("namespace", "class", "struct", "record") and i + 1 < len(tokens):
@@ -314,10 +348,15 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
                 end += 1
             if end < len(tokens):
                 stop = pairs.get(end, len(tokens)) if tokens[end].text == "{" else len(tokens)
-                active.append((stop, full))
+                active.append((stop, full, token.text))
                 if token.text != "namespace":
                     types.append(full)
-        elif token.text == "using":
+                else:
+                    identity = str(i)
+                    imports[identity] = {"usings": [], "aliases": {}}
+                    import_parents[identity] = import_scope
+                    active_imports.append((stop, identity))
+        elif token.text == "using" and (not active or active[-1][2] == "namespace"):
             end = i + 1
             while end < len(tokens) and tokens[end].text not in (";", "(", "{"):
                 end += 1
@@ -326,9 +365,19 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
                 value = "".join(t.text for t in parts).removeprefix("global::")
                 if "=" in value:
                     name, target = value.split("=", 1)
-                    aliases[name] = target.removeprefix("global::")
+                    imports[import_scope]["aliases"][name] = target.removeprefix("global::")
                 else:
-                    usings.append(value)
+                    imports[import_scope]["usings"].append(value)
+    # Each namespace occurrence has its own import scope, including reopened
+    # namespaces with the same qualified name. Imports are inherited lexically.
+    for identity, parent in import_parents.items():
+        imports[identity] = {
+            "usings": list(
+                dict.fromkeys([*imports[parent]["usings"], *imports[identity]["usings"]])
+            ),
+            "aliases": {**imports[parent]["aliases"], **imports[identity]["aliases"]},
+        }
+    usings, aliases = imports[""]["usings"], imports[""]["aliases"]
     candidates = []
     declarations = {}
     for i, token in enumerate(tokens):
@@ -451,7 +500,7 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
         call = Call(
             name,
             tuple(
-                _expression(part, scopes[i], parameters, locals_)
+                _expression(part, scopes[i], parameters, locals_, import_scopes[i])
                 for part in _split(tokens[i + 1 : end], ",")
             ),
             tokens[start].line,
@@ -460,6 +509,7 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
             "." in name
             and receiver in (locals_ | set(parameters))
             and tokens[start].text != "global",
+            import_scopes[i],
         )
         method_calls[identity].append(len(calls))
         calls.append(call)
@@ -477,15 +527,23 @@ def parse_csharp(owner: str, path: str, source: str) -> Facts:
         if any(m[3] < i < m[4] for m in method_ranges):
             continue
         constants[(scopes[i] + "." if scopes[i] else "") + name] = _expression(
-            tokens[end:stop], scopes[i], ()
+            tokens[end:stop], scopes[i], (), import_scope=import_scopes[i]
         )
     methods = tuple(Method(m[0], m[1], m[2], tuple(method_calls[m[0]])) for m in method_ranges)
     return Facts(
-        owner, path, tuple(usings), aliases, tuple(types), constants, methods, tuple(calls)
+        owner, path, tuple(usings), aliases, tuple(types), constants, methods, tuple(calls), imports
     )
 
 
 class Catalog:
+    @staticmethod
+    def canonical_key(scheme: str, value: str) -> str:
+        if scheme == "resources":
+            # Avoid full Unicode folding that conflates different-length names
+            # such as sharp-s and SS. Paths/Addressables retain exact spelling.
+            return "".join(folded if len(folded := char.upper()) == 1 else char for char in value)
+        return value
+
     def __init__(self, assets: Iterable[dict]):
         self.keys: dict[tuple[str, str], set[str]] = defaultdict(set)
         self.guids: set[str] = set()
@@ -496,9 +554,12 @@ class Catalog:
             self.keys["guid", guid].add(target)
             self.keys["path", asset["path"]].add(target)
             for key in asset.get("keys", ()):
-                self.keys[key["scheme"], key["value"]].add(target)
+                self.keys[key["scheme"], self.canonical_key(key["scheme"], key["value"])].add(
+                    target
+                )
 
     def resolve(self, scheme: str, key: str, mode: str = "single") -> tuple[set[str], str | None]:
+        key = self.canonical_key(scheme, key)
         targets = set(self.keys.get((scheme, key), ()))
         if scheme == "resources" and mode == "all":
             prefix = key.rstrip("/") + "/" if key else ""
@@ -580,10 +641,11 @@ class AnalysisIndex:
                     for expr in call.arguments:
                         self._expand(item, expr, {})
 
-    def _names(self, item: Facts, name: str, scope: str) -> list[str]:
+    def _names(self, item: Facts, name: str, scope: str, import_scope: str = "") -> list[str]:
+        imports = item.imports.get(import_scope, {"aliases": item.aliases, "usings": item.usings})
         first, _, rest = name.partition(".")
-        if first in item.aliases:
-            return [item.aliases[first] + ("." + rest if rest else "")]
+        if first in imports["aliases"]:
+            return [imports["aliases"][first] + ("." + rest if rest else "")]
         names = []
         while scope:
             names.append(scope + "." + name)
@@ -595,20 +657,22 @@ class AnalysisIndex:
                     name,
                     *(
                         using + "." + name
-                        for using in item.usings
+                        for using in imports["usings"]
                         if not using.startswith("static")
                     ),
                 ]
             )
         )
 
-    def _constant(self, item: Facts, scope: str, name: str, active: set[str]) -> Expr:
-        key = (item.owner, scope + "|" + name)
+    def _constant(
+        self, item: Facts, scope: str, name: str, active: set[str], import_scope: str = ""
+    ) -> Expr:
+        key = (item.owner, scope + "|" + name + "|" + import_scope)
         if key in self.constant_cache:
             return self.constant_cache[key]
         matches = [
             (full, row)
-            for full in self._names(item, name, scope)
+            for full in self._names(item, name, scope, import_scope)
             for row in self.constants.get(full, ())
         ]
         self.dependencies[item.owner].update(row[0] for _, row in matches)
@@ -626,9 +690,13 @@ class AnalysisIndex:
         output = []
         for kind, value in expr:
             if kind == "symbol":
-                scope, name = value.split("|", 1)
+                scope, name, *imports = value.split("|", 2)
                 try:
-                    output.extend(self._constant(item, scope, name, active or set()))
+                    output.extend(
+                        self._constant(
+                            item, scope, name, active or set(), imports[0] if imports else ""
+                        )
+                    )
                 except RecursionError:
                     output.extend(UNKNOWN)
             elif kind == "parameter":
@@ -640,7 +708,7 @@ class AnalysisIndex:
     def _resolve_call(self, item: Facts, call: Call) -> tuple[list[Effect], str | None, str | None]:
         if call.shadowed_receiver:
             return [], None, "unresolved_receiver"
-        names = self._names(item, call.name, call.scope)
+        names = self._names(item, call.name, call.scope, call.import_scope)
         rule_matches = [self.rules[name] for name in names if name in self.rules]
         if len(rule_matches) > 1:
             return [], None, "ambiguous_call"
@@ -678,30 +746,24 @@ class AnalysisIndex:
             self.dependencies[item.owner].add(owner)
             return [], method.identity, None
         qualifier, _, method = call.name.rpartition(".")
-        if method not in ("Load", "LoadAsync", "LoadAll", "LoadAssetAsync", "LoadAssetsAsync"):
+        if method not in _LOADER_METHODS:
             return [], None, None
-        qualified = self._names(item, qualifier, call.scope)
+        qualified = self._names(item, qualifier, call.scope, call.import_scope)
         # A project type with the same visible qualifier takes precedence.
         if any(name in self.types for name in qualified):
             self.dependencies[item.owner].update(
                 owner for name in qualified for owner in self.types.get(name, ())
             )
             return [], None, "unresolved_loader"
-        scheme = None
-        if "UnityEngine.Resources" in qualified and method in ("Load", "LoadAsync", "LoadAll"):
-            scheme = "resources"
-        if "UnityEngine.AddressableAssets.Addressables" in qualified and method in (
-            "LoadAssetAsync",
-            "LoadAssetsAsync",
-        ):
-            scheme = "addressables"
-        if scheme is None:
+        signatures = {LOADERS[name] for name in names if name in LOADERS}
+        if len(signatures) != 1:
             return [], None, "unresolved_loader"
+        scheme, mode = signatures.pop()
         return (
             [
                 Effect(
                     scheme,
-                    "all" if method in ("LoadAll", "LoadAssetsAsync") else "single",
+                    mode,
                     call.arguments[0] if call.arguments else UNKNOWN,
                     "call:" + call.name,
                 )
@@ -833,19 +895,37 @@ class AnalysisIndex:
 
 
 def serialized_references(source: str, catalog: Catalog) -> Analysis:
-    result = Analysis(coverage="serialized_asset_reference_guids")
-    for line, text in enumerate(source.splitlines(), 1):
-        match = re.fullmatch(r'\s*m_AssetGUID:\s*["\']?([0-9a-fA-F]{32})["\']?\s*', text)
-        if match and set(match[1]) != {"0"}:
-            guid = match[1].lower()
+    result = Analysis(coverage="lexical_serialized_guid_fields_untyped")
+    window = deque(maxlen=4)
+    # Scan tokens only: never construct tagged objects or expand YAML aliases.
+    # Scalar contents, comments and quoted text cannot masquerade as mapping keys.
+    try:
+        for token in yaml.scan(source, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)):
+            window.append(token)
+            if len(window) != 4:
+                continue
+            key, field_name, separator, value = window
+            if not (
+                isinstance(key, KeyToken)
+                and isinstance(field_name, ScalarToken)
+                and field_name.value == "m_AssetGUID"
+                and isinstance(separator, ValueToken)
+                and isinstance(value, ScalarToken)
+                and _GUID.fullmatch(value.value)
+                and set(value.value) != {"0"}
+            ):
+                continue
+            guid = value.value.lower()
             result.edges.append(
                 Edge(
                     "asset:" + guid,
-                    "serialized_asset_reference",
+                    "serialized_guid_field",
                     guid,
-                    line,
-                    "observed",
-                    "m_AssetGUID",
+                    field_name.start_mark.line + 1,
+                    "possible",
+                    "m_AssetGUID; type_unverified",
                 )
             )
+    except yaml.YAMLError as error:
+        raise ValueError("Serialized YAML could not be scanned") from error
     return result

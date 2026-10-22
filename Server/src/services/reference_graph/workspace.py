@@ -66,6 +66,20 @@ class GraphWorkspace:
     def progress(self) -> dict:
         return self.state("progress", {"phase": "not_initialized"})
 
+    def ensure_analysis_version(self, worker: str, version: int) -> None:
+        with self._write(worker) as connection:
+            if self._state(connection, "analysis_version") == version:
+                return
+            connection.execute(
+                "UPDATE graph_assets SET dirty=1 WHERE json_extract(payload,'$.source_format')<>'none'"
+            )
+            self._invalidate(
+                connection,
+                (row[0] for row in connection.execute("SELECT owner FROM graph_documents")),
+            )
+            self._set(connection, "analysis_version", version)
+            self.store._bump(connection)
+
     def acquire(self, owner: str) -> bool:
         now = time.time()
         with self.store._connect(write=True) as connection:

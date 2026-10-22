@@ -311,7 +311,7 @@ def analyze_document(relative: str, text: str, catalog: Catalog, mappings: list[
         if not mappings:
             targets = set()
             for scheme in ("resources", "addressables", "addressables_label", "path", "guid"):
-                targets.update(catalog.keys.get((scheme, value), ()))
+                targets.update(catalog.keys.get((scheme, catalog.canonical_key(scheme, value)), ()))
             result.edges.extend(
                 Edge(target, "external_key_candidate", value, line, "possible", field_name)
                 for target in sorted(targets)
