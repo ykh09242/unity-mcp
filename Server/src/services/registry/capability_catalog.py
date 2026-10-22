@@ -427,7 +427,7 @@ NATIVE_HANDLERS = {
     "manage_gameobject": ("MCPForUnity.Editor.Tools.GameObjects.ManageGameObject", False),
     "manage_prefabs": ("MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs", True),
     "manage_scene": ("MCPForUnity.Editor.Tools.ManageScene", False),
-    "manage_asset": ("MCPForUnity.Editor.Tools.ManageAsset", False),
+    "manage_asset": ("MCPForUnity.Editor.Tools.ManageAsset", True),
     "manage_ui": ("MCPForUnity.Editor.Tools.ManageUI", False),
 }
 

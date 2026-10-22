@@ -73,7 +73,8 @@ def render() -> str:
             lines += [
                 "        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>",
                 f"            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, {native}.HandleCommand, cancellationToken);",
-                "        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);",
+                "        public static object HandleCommand(JObject parameters) =>",
+                f"            ToolCapabilityDispatch.Invoke(parameters, Actions, {native}.HandleCommand);",
             ]
         else:
             lines += [

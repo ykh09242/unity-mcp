@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers; // For Response class
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
@@ -54,6 +56,18 @@ namespace MCPForUnity.Editor.Tools
             "add_labels",
             "remove_labels",
         };
+
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string action = parameters?["action"]?.ToString()?.ToLowerInvariant();
+            if (!AssetReferenceDiagnostics.IsAction(action))
+                return Task.FromResult(HandleCommand(parameters));
+            var optionError = AssetSearchSnapshots.ValidateOptions(parameters, false);
+            return optionError != null
+                ? Task.FromResult<object>(optionError)
+                : AssetReferenceDiagnostics.HandleAsync((JObject)parameters.DeepClone(), cancellationToken);
+        }
 
         public static object HandleCommand(JObject @params)
         {

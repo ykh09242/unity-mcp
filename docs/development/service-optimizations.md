@@ -38,6 +38,27 @@ and 8 GiB of temporary evidence are retained for ten minutes of inactivity. Relo
 quit, expiration and eviction close their owned DeleteOnClose handles. An expired
 cursor requires a new capture; these retention limits do not lower scan budgets.
 
+## Asynchronous asset reference hashes
+
+On Windows, dispatched asset reference reads and move/delete previews hash the
+complete source and metadata on at most two owned file workers. The Editor
+continues updating while they run. Read leases remain open through the final
+Editor-thread identity/revision check and graph observation. Cancellation, quit
+and assembly reload settle actual file work before releasing its handles.
+`AssetDatabase` queries remain on the Editor thread. Guarded mutations still
+perform their synchronous final revalidation immediately before the write.
+Direct synchronous callers and other Editor platforms retain the existing path;
+file sharing outside Windows needs separate native verification before enabling
+this asynchronous handoff. The existing 8 GiB source and 16 MiB metadata budgets
+are unchanged.
+
+In four alternating complete-file comparisons on Windows Unity 6000.0.69f1,
+17/64/128 MiB requests produced identical results and strong revisions. Median
+maximum Editor update intervals changed from 897/3374/6680 ms to 4.2/3.5/4.1 ms;
+median asynchronous dispatch was approximately 1 ms. Total completion time stayed
+within about 1.4% of the synchronous path. These are observed Editor callback
+intervals under the isolated test runner, not rendered-frame guarantees.
+
 ## Measured choices
 
 Unity 6000.0.69f1, Direct3D11 / GTX 1660 SUPER, Python 3.14, existing warm Library
