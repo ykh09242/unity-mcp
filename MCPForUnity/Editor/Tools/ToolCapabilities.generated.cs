@@ -152,7 +152,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "volume_create", "volume_add_effect", "volume_set_effect", "volume_remove_effect", "volume_get_info", "volume_set_properties", "volume_list_effects", "volume_create_profile" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand);
     }
 
     [McpForUnityTool("manage_light_baking", AutoRegister = false, Group = "graphics",
@@ -162,7 +163,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "bake_start", "bake_cancel", "bake_status", "bake_clear", "bake_reflection_probe", "bake_get_settings", "bake_set_settings", "bake_create_light_probe_group", "bake_create_reflection_probe", "bake_set_probe_positions" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand);
     }
 
     [McpForUnityTool("manage_rendering_stats", AutoRegister = false, Group = "graphics",
@@ -172,7 +174,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "stats_get", "stats_list_counters", "stats_set_scene_debug", "stats_get_memory" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand);
     }
 
     [McpForUnityTool("manage_render_pipeline", AutoRegister = false, Group = "graphics",
@@ -182,7 +185,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "ping", "pipeline_get_info", "pipeline_set_quality", "pipeline_get_settings", "pipeline_set_settings" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand);
     }
 
     [McpForUnityTool("manage_renderer_features", AutoRegister = false, Group = "graphics",
@@ -192,7 +196,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "feature_list", "feature_add", "feature_remove", "feature_configure", "feature_toggle", "feature_reorder" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand);
     }
 
     [McpForUnityTool("manage_render_environment", AutoRegister = false, Group = "graphics",
@@ -202,7 +207,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "skybox_get", "skybox_set_material", "skybox_set_properties", "skybox_set_ambient", "skybox_set_sun" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand);
     }
 
     [McpForUnityTool("manage_render_fog", AutoRegister = false, Group = "graphics",
@@ -212,7 +218,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "skybox_set_fog" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand);
     }
 
     [McpForUnityTool("manage_render_reflections", AutoRegister = false, Group = "graphics",
@@ -222,7 +229,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "skybox_set_reflection" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand);
     }
 
     [McpForUnityTool("manage_cameras", AutoRegister = false, Group = "camera",
@@ -314,7 +322,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "get_info", "get_hierarchy" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand);
     }
 
     [McpForUnityTool("prefab_create", AutoRegister = false, Group = "prefabs",
@@ -324,7 +333,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "create_from_gameobject" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand);
     }
 
     [McpForUnityTool("prefab_contents", AutoRegister = false, Group = "prefabs",
@@ -334,7 +344,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "modify_contents", "preview_modify_contents", "apply_preview" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand);
     }
 
     [McpForUnityTool("prefab_stage", AutoRegister = false, Group = "prefabs",
@@ -344,7 +355,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "open_prefab_stage", "save_prefab_stage", "close_prefab_stage" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand);
     }
 
     [McpForUnityTool("prefab_overrides", AutoRegister = false, Group = "prefabs",
@@ -354,7 +366,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "list_overrides", "revert_overrides", "apply_overrides" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand, cancellationToken);
-        public static object HandleCommand(JObject parameters) => HandleCommand(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) =>
+            ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs.HandleCommand);
     }
 
     [McpForUnityTool("scene_lifecycle", AutoRegister = false, Group = "core",
@@ -406,6 +419,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     public static class AssetInspect
     {
         private static readonly string[] Actions = { "search", "get_info", "get_components", "search_metadata_v1" };
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand);
     }
@@ -415,6 +430,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     public static class AssetEdit
     {
         private static readonly string[] Actions = { "import", "create", "modify", "delete", "duplicate", "move", "rename", "create_folder" };
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand);
     }
@@ -424,6 +441,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     public static class AssetReferenceDiagnostics
     {
         private static readonly string[] Actions = { "get_dependencies", "get_reverse_references", "preview_move", "preview_delete" };
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand);
     }
@@ -433,6 +452,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     public static class AssetLabels
     {
         private static readonly string[] Actions = { "get_labels", "set_labels", "add_labels", "remove_labels" };
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand);
     }
@@ -442,6 +463,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     public static class AssetBundles
     {
         private static readonly string[] Actions = { "list_asset_bundles", "get_bundle_assets", "get_bundle_dependencies" };
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.ManageAsset.HandleCommand);
     }

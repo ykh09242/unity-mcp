@@ -4,6 +4,8 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -25,6 +27,29 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 return new SuccessResponse("Observed bounded AssetDatabase references; no asset was changed.", Scan(parameters, false));
+            }
+            catch (ReferenceConflict failure)
+            {
+                return new ErrorResponse("reference_revision_conflict", new { reason = failure.Message });
+            }
+            catch (Exception failure)
+            {
+                return new ErrorResponse("reference_diagnostics_unavailable", new { reason = failure.Message });
+            }
+        }
+
+        internal static async Task<object> HandleAsync(JObject parameters, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return new SuccessResponse(
+                    "Observed bounded AssetDatabase references; no asset was changed.",
+                    await ScanCore(parameters, false, true, cancellationToken)
+                );
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (ReferenceConflict failure)
             {
@@ -91,8 +116,16 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static JObject Scan(JObject parameters, bool mutation)
+        private static JObject Scan(JObject parameters, bool mutation) =>
+            ScanCore(parameters, mutation, false, CancellationToken.None).GetAwaiter().GetResult();
+
+        private static async Task<JObject> ScanCore(JObject parameters, bool mutation, bool background, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+#if !UNITY_EDITOR_WIN
+            // Preserve no-yield file observation where read-sharing guarantees have not been verified.
+            background = false;
+#endif
             ReferenceDiagnosticUtility.Allowed(
                 parameters,
                 "action",
@@ -135,8 +168,20 @@ namespace MCPForUnity.Editor.Tools
             string expected = ReferenceDiagnosticUtility.ExpectedRevision(parameters);
             if (mutation && expected == null)
                 throw new ArgumentException("Guarded mutation requires an observed referenceRevision.");
+            string sourceRevision = AssetDatabase.GetAssetDependencyHash(source).ToString();
+            using (ReferenceFilePreparation prepared = background ? await ReferenceFilePreparation.CreateAsync(source, cancellationToken) : null)
             using (var observation = new ReferenceDiagnosticUtility.Observation())
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (
+                    prepared != null
+                    && (
+                        AssetDatabase.AssetPathToGUID(source, AssetPathToGUIDOptions.OnlyExistingAssets) != sourceGuid
+                        || AssetDatabase.GUIDToAssetPath(sourceGuid) != source
+                        || AssetDatabase.GetAssetDependencyHash(source).ToString() != sourceRevision
+                    )
+                )
+                    throw new ReferenceConflict("Source identity or imported revision changed during preparation.");
                 foreach (
                     string value in new[]
                     {
@@ -151,10 +196,9 @@ namespace MCPForUnity.Editor.Tools
                     }
                 )
                     observation.Add(value);
-                string sourceRevision = AssetDatabase.GetAssetDependencyHash(source).ToString();
                 observation.Add(sourceRevision);
-                observation.Add(FileHash(source, 8L * 1024 * 1024 * 1024));
-                observation.Add(FileHash(source + ".meta", 16L * 1024 * 1024));
+                observation.Add(prepared?.SourceHash ?? FileHash(source, 8L * 1024 * 1024 * 1024));
+                observation.Add(prepared?.MetadataHash ?? FileHash(source + ".meta", 16L * 1024 * 1024));
                 if (destination != null)
                 {
                     observation.Add(AssetDatabase.AssetPathToGUID(destination, AssetPathToGUIDOptions.OnlyExistingAssets));
