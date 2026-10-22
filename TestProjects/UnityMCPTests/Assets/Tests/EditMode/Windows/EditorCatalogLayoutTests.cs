@@ -223,6 +223,43 @@ namespace MCPForUnityTests.EditMode.Windows
                             Assert.LessOrEqual(button.worldBound.xMax, root.worldBound.xMax + 1, page + ": " + button.text);
                         }
                         Capture(window, Path.Combine(directory, page + "-" + width + "-" + theme + ".png"));
+                        if (page == "graph")
+                        {
+                            var transfer = root.Q<Foldout>("graph-transfer");
+                            var editor = root.Q<Foldout>("graph-item-editor");
+                            transfer.value = editor.value = true;
+                            transfer.Q<DropdownField>().value = "External sources";
+                            yield return Settle(window);
+                            scroll.ScrollTo(editor);
+                            yield return Settle(window);
+                            Capture(window, Path.Combine(directory, "graph-permissions-" + width + "-" + theme + ".png"));
+                            transfer.value = editor.value = false;
+                            scroll.scrollOffset = Vector2.zero;
+                        }
+                        if (page == "assetgen")
+                        {
+                            foreach (var category in generation.Query<Foldout>(className: "provider-category").ToList())
+                                category.value = false;
+                            var setup = generation.Q<Foldout>("blender-setup-foldout");
+                            var imports = generation.Q<Foldout>("assetgen-import-foldout");
+                            setup.value = imports.value = true;
+                            yield return Settle(window);
+                            scroll.ScrollTo(setup);
+                            yield return Settle(window);
+                            Capture(window, Path.Combine(directory, "assetgen-settings-" + width + "-" + theme + ".png"));
+                            setup.value = imports.value = false;
+                            foreach (var category in generation.Query<Foldout>(className: "provider-category").ToList())
+                                category.value = true;
+                            scroll.scrollOffset = Vector2.zero;
+                        }
+                        if (page == "deps")
+                        {
+                            var bulk = root.Q<Foldout>("dependency-bulk-actions");
+                            bulk.value = true;
+                            yield return Settle(window);
+                            Capture(window, Path.Combine(directory, "deps-actions-" + width + "-" + theme + ".png"));
+                            bulk.value = false;
+                        }
                         if (page == "resources")
                         {
                             var search = resources.Q<TextField>("resources-search");
