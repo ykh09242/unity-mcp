@@ -9,6 +9,11 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine.UIElements;
+#if UNITY_2022_1_OR_NEWER
+using IntegerField = UnityEngine.UIElements.IntegerField;
+#else
+using IntegerField = UnityEditor.UIElements.IntegerField;
+#endif
 
 namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
 {
