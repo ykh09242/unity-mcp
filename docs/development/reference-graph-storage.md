@@ -21,8 +21,9 @@ cover direct/reverse lookup, four-hop distinct reachability including cycles, an
 replacement of 1,000 sources' outgoing edges in a durable transaction.
 
 Every run checks the complete sorted relationship SHA-256 before mutation and
-after close/reopen. Every query result is checked against an independent in-memory
-breadth-first oracle. Small literal fixtures test the oracle's cycle/depth behavior
+after close/reopen. Each query's final timed result is checked against an independent
+in-memory breadth-first oracle; earlier timed samples are not separately validated.
+Small literal fixtures test the oracle's cycle/depth behavior
 and catch lost/stale edges after replacement. Input generation and the oracle run
 in the parent process, outside the measured worker's time and memory.
 
