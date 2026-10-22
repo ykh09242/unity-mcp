@@ -52,6 +52,10 @@ namespace MCPForUnity.Editor.Tools
                     return previous;
                 }
                 Directory.CreateDirectory(Path.GetDirectoryName(location));
+                // No lifecycle observer is retained while idle. A gap starts a
+                // fresh context even when Play Mode disables domain reload.
+                if (Active.Count == 0)
+                    runtimeSession = Guid.NewGuid().ToString("N");
                 var capture = new Capture(location, runtimeSession);
                 Active.Add(token, capture);
                 if (!subscribed)

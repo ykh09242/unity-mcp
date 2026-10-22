@@ -175,6 +175,18 @@ def test_snapshot_history_rechecks_runtime_policy_and_source_release(capture, tm
         queries.diff(before, after)
 
 
+def test_rule_changes_and_static_rebuild_preserve_runtime_evidence(capture):
+    workspace, runtime, identity = capture
+    runtime.ingest(identity, 0, page([event()]))
+    workspace.store.put_rule("custom", {"enabled": False}, expected_version=0)
+    assert not workspace.store.query("runtime:" + identity + ":1")["edges"][0]["stale"]
+    runtime.ingest(identity, 100, page([event(2, "release")], offset=200))
+    workspace.store.rebuild()
+    assert runtime.status(identity)["events"] == 2
+    assert not workspace.store.query("runtime:" + identity + ":1")["edges"][0]["stale"]
+    assert not workspace.store.pending()
+
+
 class Native:
     def __init__(self):
         self.captures = {}

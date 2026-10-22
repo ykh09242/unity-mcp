@@ -63,6 +63,8 @@ provenance includes the capture, runtime session, build context, sequence, origi
 owner path and observed target path. Query/explain/impact/snapshot evidence retains
 the `runtime_observed` or `runtime_unresolved` confidence and historical context.
 The graph's normal static refresh does not reinterpret runtime evidence.
+Rule changes and static rebuilds preserve these observations rather than queuing
+them for static analysis.
 
 ## Isolation, lifecycle and limits of evidence
 
@@ -81,7 +83,10 @@ snapshots that require its source. Authored declarations are preserved.
 
 Independent consumers have independent files and can stop separately. Domain
 reload, Editor quit and Play Mode transitions close subscriptions and writers.
-The next capture receives a new runtime context. Existing records remain readable
+Captures overlapping in time share a runtime context; after all
+consumers stop, the next capture conservatively starts a new context, including
+when Play Mode disables domain reload. No lifecycle observer remains while idle.
+Existing records remain readable
 until explicitly released; no silent age-based deletion removes large sessions.
 An interrupted process can leave an incomplete final record, which is reported
 as an error rather than silently accepted. Observer I/O failures stop that sink

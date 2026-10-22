@@ -17,6 +17,7 @@ namespace MCPForUnityTests.EditMode.Tools
 {
     public sealed class ReferenceGraphRuntimeTests
     {
+        private static readonly string Domain = Guid.NewGuid().ToString("N");
         private readonly List<string> captures = new List<string>();
 
         internal static JObject Call(string action, string token, long offset = 0, int pageSize = 128)
@@ -133,6 +134,69 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(1, Call("runtime_read", healthy).Value<int>("count"));
             Call("runtime_release", failed);
             Assert.IsTrue(Call("runtime_release", failed).Value<bool>("released"));
+        }
+
+        [Test]
+        public void MissingCaptureErrorDoesNotExposeNativeCredentialOrUserPath()
+        {
+            string token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            JObject status = ReferenceGraphCollectorTests.Call("status");
+            JObject result = JObject.FromObject(
+                ManageReferenceGraph.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "runtime_read",
+                        ["token"] = token,
+                        ["expected_instance_id"] = status["instance_id"],
+                        ["expected_project_id"] = status["project_id"],
+                    }
+                )
+            );
+            Assert.IsFalse(result.Value<bool>("success"));
+            StringAssert.DoesNotContain(token, result.ToString());
+            StringAssert.DoesNotContain(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), result.ToString());
+            StringAssert.Contains("Runtime capture unavailable", result.Value<string>("message"));
+        }
+
+        [UnityTest, Explicit("Controller-owned two Play sessions with domain reload disabled.")]
+        public IEnumerator CaptureGapSeparatesTwoPlaySessionsWithoutDomainReload()
+        {
+            bool originalEnabled = EditorSettings.enterPlayModeOptionsEnabled;
+            EnterPlayModeOptions originalOptions = EditorSettings.enterPlayModeOptions;
+            string domain = Domain,
+                previous = null;
+            EditorSettings.enterPlayModeOptionsEnabled = true;
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload | EnterPlayModeOptions.DisableSceneReload;
+            try
+            {
+                for (int i = 0; i < 2; i++)
+                {
+                    yield return new EnterPlayMode(false);
+                    Assert.AreEqual(domain, Domain);
+                    string first = Start(),
+                        concurrent = Start();
+                    ReferenceGraphRuntime.Load("custom", "session/" + i);
+                    JObject firstPage = Call("runtime_read", first),
+                        concurrentPage = Call("runtime_read", concurrent);
+                    string session = firstPage.Value<string>("runtime_session");
+                    Assert.IsTrue(firstPage.Value<bool>("playing"));
+                    Assert.AreEqual(session, concurrentPage.Value<string>("runtime_session"));
+                    if (previous != null)
+                        Assert.AreNotEqual(previous, session);
+                    previous = session;
+                    Call("runtime_stop", first);
+                    Call("runtime_stop", concurrent);
+                    Assert.IsFalse(ReferenceGraphRuntime.Enabled);
+                    yield return new ExitPlayMode();
+                }
+            }
+            finally
+            {
+                EditorSettings.enterPlayModeOptions = originalOptions;
+                EditorSettings.enterPlayModeOptionsEnabled = originalEnabled;
+                if (EditorApplication.isPlaying)
+                    EditorApplication.isPlaying = false;
+            }
         }
 
         [UnityTest, Explicit("Controller-owned isolated Play Mode observation only.")]

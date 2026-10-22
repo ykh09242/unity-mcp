@@ -118,7 +118,10 @@ namespace MCPForUnity.Editor.Tools
                 {
                     success = false,
                     error = "reference_collection_unavailable",
-                    message = error.Message,
+                    message = parameters?["action"]?.Type == JTokenType.String
+                    && ((string)parameters["action"]).StartsWith("runtime_", StringComparison.Ordinal)
+                        ? "Runtime capture unavailable (" + error.GetType().Name + "). Inspect capture status, then retry or release it."
+                        : error.Message,
                 };
             }
         }
