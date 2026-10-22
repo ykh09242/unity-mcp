@@ -719,12 +719,18 @@ async def test_ordered_invalid_current_range_refuses_without_commit(ordered_wire
 @pytest.mark.asyncio
 async def test_ordered_active_processing_allowance_cannot_renew(ordered_wire, monkeypatch):
     original_runner = tools._run_regex_work
+    loop = asyncio.get_running_loop()
+    clock = [loop.time()]
+    allowances = []
+    monkeypatch.setattr(loop, "time", lambda: clock[0])
+    monkeypatch.setattr(tools.bounded_regex, "monotonic", lambda: clock[0])
     monkeypatch.setattr(tools.bounded_regex, "TOTAL_TIMEOUT_SECONDS", 1.0)
 
     async def queued_processing(budget, work):
-        # A deterministic queue interval is part of active preprocessing accounting.
-        # Each 0.4 second phase fits the individual one-second WorkBudget; three do not.
-        await asyncio.sleep(0.4)
+        # Account for exactly 0.4 seconds per queue/processing phase. Real sleeps
+        # can exceed that interval on a loaded runner and fail before stage three.
+        allowances.append(budget.deadline - clock[0])
+        clock[0] += 0.4
         return await original_runner(budget, work)
 
     monkeypatch.setattr(tools, "_run_regex_work", queued_processing)
@@ -736,7 +742,10 @@ async def test_ordered_active_processing_allowance_cannot_renew(ordered_wire, mo
     ]
     result = await ordered_preview(ordered_wire, edits)
     assert result["success"] is False
-    assert len(ordered_wire.calls) >= 3, result
+    assert result["code"] == "bad_regex" and "total work timed out" in result["message"]
+    assert allowances == pytest.approx([1.0, 0.6, 0.2])
+    # Snapshot, two completed regex stages and the intervening native method stage.
+    assert len(ordered_wire.calls) == 4, result
     assert not ordered_wire.commits and not ordered_wire.legacy_writes
 
 
