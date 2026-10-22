@@ -107,6 +107,44 @@ async def test_idle_external_scan_batches_bookkeeping_and_reuses_catalog(
 
 
 @pytest.mark.asyncio
+async def test_external_repository_head_refreshes_provenance_without_reparsing(
+    setup, tmp_path, monkeypatch
+):
+    from services.reference_graph.external import ExternalSource
+
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    root = tmp_path / "settings"
+    (root / ".git").mkdir(parents=True)
+    (root / ".git" / "HEAD").write_text("1" * 40)
+    (root / "data.json").write_text('{"prefab":"One"}')
+    workspace.set_source(
+        "external:fixture",
+        {
+            "root": str(root),
+            "include": ["*.json"],
+            "git_revision": True,
+            "mappings": [{"field": "/prefab", "scheme": "resources"}],
+        },
+        expected_version=0,
+    )
+    assert await engine.reconcile()
+    before = store.query(target, direction="incoming")["edges"][0]
+    assert before["provenance"]["repository"]["commit"] == "1" * 40
+    (root / ".git" / "HEAD").write_text("2" * 40)
+    monkeypatch.setattr(
+        ExternalSource, "read", lambda *_: pytest.fail("Unchanged source was reread")
+    )
+    assert await engine.reconcile()
+    after = store.query(target, direction="incoming")["edges"][0]
+    assert before["id"] == after["id"]
+    assert after["provenance"]["repository"]["commit"] == "2" * 40
+    assert before["provenance"]["sha256"] == after["provenance"]["sha256"]
+
+
+@pytest.mark.asyncio
 async def test_addressables_collection_failure_is_durable_and_not_missing_key(setup):
     store, workspace, editor, engine = setup
     target = editor.add(1, "Assets/A.prefab")

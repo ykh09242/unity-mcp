@@ -14,14 +14,25 @@ from dataclasses import dataclass, field, replace
 import re
 
 import yaml
-from yaml.tokens import KeyToken, ScalarToken, ValueToken
+from yaml.tokens import (
+    BlockMappingStartToken,
+    BlockSequenceStartToken,
+    BlockEndToken,
+    FlowMappingStartToken,
+    FlowMappingEndToken,
+    FlowSequenceStartToken,
+    FlowSequenceEndToken,
+    KeyToken,
+    ScalarToken,
+    ValueToken,
+)
 
 from services.reference_graph.compilation import source_for_build
 from services.reference_graph.store import Edge
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 5
+ANALYSIS_VERSION = 6
 # Registry version follows the fact/analysis version. Values describe the string
 # key overload; object/location/AssetReference expressions stay unresolved unless
 # a later semantic provider can prove their identity.
@@ -265,6 +276,7 @@ class Call:
     import_scope: str = ""
     argument_names: tuple[str, ...] = ()
     argument_types: tuple[str, ...] = ()
+    target_type: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +338,7 @@ class Facts:
                     item.get("import_scope", ""),
                     tuple(item.get("argument_names", ())),
                     tuple(item.get("argument_types", ())),
+                    item.get("target_type", ""),
                 )
                 for item in data["calls"]
             ),
@@ -568,6 +581,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
             import_scopes[i],
             tuple(argument_names),
             tuple(_argument_type(part, parameter_types) for part in argument_parts),
+            _generic_type(tokens, i),
         )
         method_calls[identity].append(len(calls))
         calls.append(call)
@@ -603,6 +617,19 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
         build=build,
         diagnostics=diagnostics,
     )
+
+
+def _generic_type(tokens: list[Token], opening: int) -> str:
+    if not opening or tokens[opening - 1].text != ">":
+        return ""
+    depth, start = 1, opening - 2
+    while start >= 0:
+        depth += (tokens[start].text == ">") - (tokens[start].text == "<")
+        if not depth:
+            parts = tokens[start + 1 : opening - 1]
+            return "".join(token.text for token in parts) if len(_split(parts, ",")) == 1 else ""
+        start -= 1
+    return ""
 
 
 def _argument_type(tokens: list[Token], parameters: dict[str, str]) -> str:
@@ -708,6 +735,17 @@ class Catalog:
             return set(), "ambiguous_key"
         return targets, None
 
+    def resolve_detail(
+        self, scheme: str, key: str, mode: str = "single"
+    ) -> tuple[set[str], str | None, str]:
+        targets, reason = self.resolve(scheme, key, mode)
+        if scheme == "addressables" and reason in {"key_not_found", "provider_unavailable"}:
+            match = re.fullmatch(r"([^\[\]]+)\[([^\[\]]+)\]", key)
+            if match:
+                targets, reason = self.resolve(scheme, match[1], mode)
+                return targets, reason, match[2]
+        return targets, reason, ""
+
 
 @dataclass(frozen=True, slots=True)
 class Effect:
@@ -715,6 +753,7 @@ class Effect:
     mode: str
     expression: Expr
     evidence: str
+    target_type: str = ""
 
 
 @dataclass(slots=True)
@@ -906,7 +945,13 @@ class AnalysisIndex:
                 if issue:
                     values.add(issue)
                 values.update(
-                    Effect(e.scheme, e.mode, self._bound(item, e.expression, arguments), "")
+                    Effect(
+                        e.scheme,
+                        e.mode,
+                        self._bound(item, e.expression, arguments),
+                        "",
+                        e.target_type,
+                    )
                     for e in direct
                 )
                 if child:
@@ -1211,6 +1256,7 @@ class AnalysisIndex:
                     mode,
                     expression,
                     "call:" + call.name,
+                    call.target_type,
                 )
             ],
             None,
@@ -1258,6 +1304,7 @@ class AnalysisIndex:
                     effect.mode,
                     self._bound(item, effect.expression, arguments),
                     evidence or effect.evidence,
+                    effect.target_type,
                 )
             if not child:
                 continue
@@ -1279,6 +1326,7 @@ class AnalysisIndex:
                             value.mode,
                             value.expression,
                             evidence or "wrapper:" + call.name,
+                            value.target_type,
                         )
                 continue
             if symbolic and child in unknown_seen:
@@ -1325,13 +1373,22 @@ class AnalysisIndex:
                 issues.add("dynamic_key")
                 continue
             key = "".join(value for _, value in expr)
-            targets, reason = self.catalog.resolve(effect.scheme, key, effect.mode)
+            targets, reason, subobject = self.catalog.resolve_detail(
+                effect.scheme, key, effect.mode
+            )
             if reason:
                 yield {"line": call.line, "call": call.name, "reason": reason, "key": key}
             for target in sorted(targets):
                 self.check()
                 yield Edge(
-                    target, effect.scheme + "_load", key, call.line, "possible", effect.evidence
+                    target,
+                    effect.scheme + "_load",
+                    key,
+                    call.line,
+                    "possible",
+                    effect.evidence,
+                    target_type=effect.target_type,
+                    subobject=subobject,
                 )
         for reason in sorted(issues):
             yield {"line": call.line, "call": call.name, "reason": reason}
@@ -1374,10 +1431,53 @@ class AnalysisIndex:
 def serialized_references(source: str, catalog: Catalog) -> Analysis:
     result = Analysis(coverage="lexical_serialized_guid_fields_untyped")
     window = deque(maxlen=4)
+    mappings = []
+    selected = {"guid", "fileID", "m_AssetGUID", "m_SubObjectName", "m_SubObjectGUID"}
+
+    def finish(fields):
+        if not fields:
+            return
+        for field_name in ("guid", "m_AssetGUID"):
+            value = fields.get(field_name)
+            if value is None or not _GUID.fullmatch(value[0]) or set(value[0]) == {"0"}:
+                continue
+            file_id = fields.get("fileID", ("", 0))[0]
+            if field_name == "guid" and not re.fullmatch(r"-?[0-9]+", file_id):
+                continue
+            guid = value[0].lower()
+            sub_guid = fields.get("m_SubObjectGUID", ("", 0))[0]
+            result.edges.append(
+                Edge(
+                    "asset:" + guid,
+                    "serialized_guid_field"
+                    if field_name == "m_AssetGUID"
+                    else "serialized_object_reference",
+                    guid,
+                    value[1],
+                    "possible",
+                    field_name + "; type_unverified",
+                    source_pointer=field_name,
+                    target_file_id=file_id if field_name == "guid" else "",
+                    subobject=fields.get("m_SubObjectName", ("", 0))[0]
+                    if field_name == "m_AssetGUID"
+                    else "",
+                    subobject_guid=sub_guid.lower()
+                    if field_name == "m_AssetGUID" and _GUID.fullmatch(sub_guid)
+                    else "",
+                )
+            )
+
     # Scan tokens only: never construct tagged objects or expand YAML aliases.
     # Scalar contents, comments and quoted text cannot masquerade as mapping keys.
     try:
         for token in yaml.scan(source, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)):
+            if isinstance(token, (BlockMappingStartToken, FlowMappingStartToken)):
+                mappings.append({})
+            elif isinstance(token, (BlockSequenceStartToken, FlowSequenceStartToken)):
+                mappings.append(None)
+            elif isinstance(token, (BlockEndToken, FlowMappingEndToken, FlowSequenceEndToken)):
+                if mappings:
+                    finish(mappings.pop())
             window.append(token)
             if len(window) != 4:
                 continue
@@ -1385,24 +1485,17 @@ def serialized_references(source: str, catalog: Catalog) -> Analysis:
             if not (
                 isinstance(key, KeyToken)
                 and isinstance(field_name, ScalarToken)
-                and field_name.value == "m_AssetGUID"
+                and field_name.value in selected
                 and isinstance(separator, ValueToken)
                 and isinstance(value, ScalarToken)
-                and _GUID.fullmatch(value.value)
-                and set(value.value) != {"0"}
+                and mappings
+                and mappings[-1] is not None
             ):
                 continue
-            guid = value.value.lower()
-            result.edges.append(
-                Edge(
-                    "asset:" + guid,
-                    "serialized_guid_field",
-                    guid,
-                    field_name.start_mark.line + 1,
-                    "possible",
-                    "m_AssetGUID; type_unverified",
-                )
-            )
+            fields = mappings[-1]
+            if field_name.value in fields:
+                raise ValueError("Duplicate serialized identity field")
+            fields[field_name.value] = (value.value, field_name.start_mark.line + 1)
     except yaml.YAMLError as error:
         raise ValueError("Serialized YAML could not be scanned") from error
     return result

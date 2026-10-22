@@ -591,7 +591,7 @@ class Reconciler:
             }
             try:
                 await drained_thread(self.workspace.external_scan, self.worker, source, scan)
-                failures = await drained_thread(
+                failures, repository = await drained_thread(
                     self._external_source,
                     source,
                     catalog,
@@ -604,6 +604,7 @@ class Reconciler:
                     state="failed" if failures else "verified_at_scan",
                     failed_files=failures,
                     completed_at=time.time(),
+                    repository=repository,
                 )
                 if not failures:
                     scan["last_verified_at"] = scan["completed_at"]
@@ -629,7 +630,7 @@ class Reconciler:
 
     def _external_source(
         self, source: dict, catalog: Catalog, rules: int, catalog_revision: int, force: bool
-    ) -> int:
+    ) -> tuple[int, dict]:
         with self.workspace.source_guard(source["provider"], source["version"]) as require_source:
             return self._scan_external_source(
                 source, catalog, rules, catalog_revision, force, require_source
@@ -643,14 +644,16 @@ class Reconciler:
         catalog_revision: int,
         force: bool,
         require_source: Callable[[], None],
-    ) -> int:
+    ) -> tuple[int, dict]:
         self._check_source(source, require_source)
         adapter = ExternalSource(source["config"])
+        repository = adapter.repository_revision()
         provider, seen = source["provider"], uuid.uuid4().hex
         previous = self.workspace.external_inputs(provider)
         analysis_key = _hash((ANALYSIS_VERSION, source["version"], rules, catalog_revision))
         failures = 0
         pending = []
+        provenance_updates = []
         for path in adapter.files():
             self._check_source(source, require_source)
             old = previous.get(path)
@@ -680,6 +683,7 @@ class Reconciler:
                             force=True,
                             source_version=source["version"],
                             rules_revision=rules,
+                            provenance=adapter.provenance(path, fingerprint, repository),
                         ),
                         stamp=stamp,
                         analysis_key=analysis_key,
@@ -717,15 +721,27 @@ class Reconciler:
                 failures += 1
             if not recorded:
                 pending.append((provider, owner, path, fingerprint, stamp, analysis_key, seen))
+                provenance = adapter.provenance(path, fingerprint, repository)
+                if old.get("provenance") != _json(provenance):
+                    provenance_updates.append((owner, fingerprint, provenance))
             if len(pending) == 256:
                 self._check_source(source, require_source)
                 self.workspace.record_external_many(self.worker, pending)
                 pending.clear()
+                if provenance_updates:
+                    self.workspace.refresh_external_provenance(
+                        self.worker, source, provenance_updates
+                    )
+                    provenance_updates.clear()
         self._check_source(source, require_source)
+        if adapter.repository_revision() != repository:
+            raise RevisionConflict("Repository identity changed during source scan")
         if pending:
             self.workspace.record_external_many(self.worker, pending)
+        if provenance_updates:
+            self.workspace.refresh_external_provenance(self.worker, source, provenance_updates)
         self.workspace.finish_external(self.worker, provider, seen)
-        return failures
+        return failures, repository
 
     def _check_source(self, source: dict, require_source: Callable[[], None]) -> None:
         self._check_thread()

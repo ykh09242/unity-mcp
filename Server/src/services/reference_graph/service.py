@@ -546,6 +546,7 @@ class ReferenceGraphService:
         stale = set()
         metadata = workspace.external_validation(pairs)
         adapters = {}
+        repositories = {}
         for provider, identity in pairs:
             cached = metadata.get((provider, identity))
             if cached is None or not cached["enabled"]:
@@ -556,9 +557,11 @@ class ReferenceGraphService:
                     self._grant(workspace.store.scope, configuration),
                     configuration,
                 )
+                repositories[provider] = adapters[provider][0].repository_revision()
             adapter = adapters[provider][0]
             stamp = _json(adapter.stamp(cached["path"]))
-            if stamp != cached["stamp"]:
+            provenance = json.loads(cached["provenance"] or "{}")
+            if stamp != cached["stamp"] or provenance.get("repository") != repositories[provider]:
                 stale.add((provider, identity))
         # Permission objects are request-local. Recheck operator revocation
         # after file access as well as at the next delivery fence.
@@ -593,7 +596,9 @@ class ReferenceGraphService:
         if versions != expected_versions:
             raise RevisionConflict("External sources changed before checked delivery")
         for source in sources:
-            self._grant(workspace.store.scope, source["config"])
+            adapter = self._grant(workspace.store.scope, source["config"])
+            if adapter.repository_revision() != expected[source["provider"]].get("repository"):
+                raise RevisionConflict("Repository identity changed before checked delivery")
         for source in sources:
             self._operator_grant(workspace.store.scope, source["config"])
         if workspace.store.status()["revision"] != revision:
