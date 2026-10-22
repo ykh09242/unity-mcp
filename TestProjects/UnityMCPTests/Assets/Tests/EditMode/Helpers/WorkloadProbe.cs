@@ -5,6 +5,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using Unity.Profiling;
 using UnityEngine;
@@ -41,26 +42,10 @@ namespace MCPForUnityTests
                 );
             }
             // Separate untimed instrumentation pass. This is allocation traffic, not retention/RSS.
-            long? allocated = null;
-            using (
-                var recorder = ProfilerRecorder.StartNew(
-                    ProfilerCategory.Memory,
-                    "GC.Alloc",
-                    262144,
-                    ProfilerRecorderOptions.StartImmediately | ProfilerRecorderOptions.CollectOnlyOnCurrentThread
-                )
-            )
-            {
-                Assert.AreEqual(expected, Digest(verifiedOutput()));
-                recorder.Stop();
-                if (recorder.Valid && recorder.Count < recorder.Capacity)
-                {
-                    long bytes = 0;
-                    for (int i = 0; i < recorder.Count; i++)
-                        bytes += recorder.GetSample(i).Value;
-                    allocated = bytes;
-                }
-            }
+            string allocationOutput = null;
+            JObject allocation = MeasureCurrentThreadAllocation(() => allocationOutput = verifiedOutput());
+            Assert.AreEqual(expected, Digest(allocationOutput));
+            allocationOutput = null;
             long before = GC.GetTotalMemory(true);
             Assert.AreEqual(expected, Digest(verifiedOutput()));
             long retained = GC.GetTotalMemory(true) - before;
@@ -87,13 +72,74 @@ namespace MCPForUnityTests
                             gpu = SystemInfo.graphicsDeviceType.ToString(),
                         },
                         samples,
-                        allocation_bytes = allocated,
+                        allocation_bytes = allocation["bytes"],
+                        allocation_observation = allocation,
+                        worker_allocation_observation = new
+                        {
+                            metric = "managed_allocated_bytes",
+                            scope = "worker_threads",
+                            status = "not_measured",
+                            reason = "main_thread_pass_only",
+                            bytes = (long?)null,
+                        },
                         retained_managed_delta_bytes = retained,
                         main_thread_stall_ms = (double?)null,
                     },
                     Formatting.Indented
                 )
             );
+        }
+
+        internal static JObject MeasureCurrentThreadAllocation(Action work, int capacity = 262144, string counter = "GC.Alloc")
+        {
+            JObject control = RecordAllocation(() => GC.KeepAlive(new byte[65536]), 1024, counter);
+            JObject measured = RecordAllocation(work, capacity, counter);
+            bool validControl = control.Value<string>("status") == "complete" && control.Value<long>("bytes") >= 65536;
+            measured["positive_control_bytes"] = validControl ? control["bytes"] : JValue.CreateNull();
+            if (measured.Value<string>("status") == "complete" && !validControl)
+            {
+                measured["status"] = "positive_control_failed";
+                measured["reason"] = "known_64_kib_allocation_not_observed_as_bytes";
+                measured["bytes"] = JValue.CreateNull();
+            }
+            return measured;
+        }
+
+        private static JObject RecordAllocation(Action work, int capacity, string counter)
+        {
+            using var recorder = ProfilerRecorder.StartNew(
+                ProfilerCategory.Memory,
+                counter,
+                capacity,
+                ProfilerRecorderOptions.StartImmediately | ProfilerRecorderOptions.CollectOnlyOnCurrentThread
+            );
+            work();
+            recorder.Stop();
+            int samples = recorder.Valid ? recorder.Count : 0;
+            int available = recorder.Valid ? recorder.Capacity : capacity;
+            string unit = recorder.Valid ? recorder.UnitType.ToString() : "invalid";
+            string status =
+                !recorder.Valid ? "invalid"
+                : samples >= available ? "full"
+                : unit != "Bytes" ? "unit_mismatch"
+                : samples == 0 ? "empty"
+                : "complete";
+            long bytes = 0;
+            if (status == "complete")
+                for (int i = 0; i < samples; i++)
+                    bytes += recorder.GetSample(i).Value;
+            return new JObject
+            {
+                ["metric"] = "unity_gc_alloc_bytes",
+                ["scope"] = "current_thread",
+                ["method"] = "profiler_recorder",
+                ["unit"] = unit,
+                ["reason"] = status == "unit_mismatch" ? "recorder_value_is_not_allocation_bytes" : null,
+                ["status"] = status,
+                ["samples"] = samples,
+                ["capacity"] = available,
+                ["bytes"] = status == "complete" ? new JValue(bytes) : JValue.CreateNull(),
+            };
         }
 
         private static string Digest(string value)

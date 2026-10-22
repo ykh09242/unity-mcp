@@ -143,7 +143,7 @@ namespace MCPForUnityTests.EditMode.Windows
                         var timer = Stopwatch.StartNew();
                         work();
                         timer.Stop();
-                        long bytes = 0;
+                        long allocationEvents = 0;
                         using (
                             var recorder = ProfilerRecorder.StartNew(
                                 ProfilerCategory.Memory,
@@ -156,17 +156,15 @@ namespace MCPForUnityTests.EditMode.Windows
                             work();
                             recorder.Stop();
                             Assert.Less(recorder.Count, recorder.Capacity, "Allocation samples must not be truncated.");
-                            for (int sample = 0; sample < recorder.Count; sample++)
-                                bytes += recorder.GetSample(sample).Value;
-                            if (!recorder.Valid)
-                                bytes = -1;
+                            Assert.IsTrue(recorder.Valid, "Allocation event instrumentation is unavailable.");
+                            allocationEvents = recorder.Count;
                         }
                         var list = window.rootVisualElement.Q("activity-rows");
                         CollectionAssert.AreEqual(rows.Select(row => "activity-" + row.Key), list.Children().Select(child => child.name));
                         if (cohort.changed)
                             Assert.AreEqual("Odd progress", ((Label)list[0][2]).text);
                         TestContext.WriteLine(
-                            $"BETA10_ROWS rows={cohort.count} changed={cohort.changed} revisions=100 repetition={repetition} ms={timer.Elapsed.TotalMilliseconds:F3} alloc={bytes}"
+                            $"BETA10_ROWS rows={cohort.count} changed={cohort.changed} revisions=100 repetition={repetition} ms={timer.Elapsed.TotalMilliseconds:F3} alloc_events={allocationEvents}"
                         );
                     }
                     section.Dispose();

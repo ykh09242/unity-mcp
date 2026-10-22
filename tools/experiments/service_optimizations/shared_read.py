@@ -19,7 +19,60 @@ from services.tools.shared_tool_reads import SharedToolReads
 from services.tools.shared_read_budget import shared_read_budget
 
 
-async def measure(arm, value, readers, memory=False):
+class LoopCallbackObservation:
+    """Constant-state scheduling observer; owns exactly one pending callback."""
+
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+        self.count = 0
+        self.maximum_gap_ms = None
+        self.previous = None
+        self.handle = None
+        self.closed = False
+        self.tick = asyncio.Event()
+
+    def _observe(self):
+        if self.closed:
+            return
+        now = self.loop.time()
+        if self.previous is not None:
+            gap = (now - self.previous) * 1000
+            self.maximum_gap_ms = max(self.maximum_gap_ms or 0, gap)
+        self.previous = now
+        self.count += 1
+        self.tick.set()
+        self.handle = self.loop.call_later(0.001, self._observe)
+
+    async def start(self):
+        self.handle = self.loop.call_later(0.001, self._observe)
+        try:
+            await self.tick.wait()
+        except BaseException:
+            self.close()
+            raise
+
+    async def finish(self):
+        try:
+            self.tick.clear()
+            await self.tick.wait()
+        finally:
+            self.close()
+        return {
+            "callback_count": self.count,
+            "maximum_gap_ms": self.maximum_gap_ms,
+            "observer_released": self.closed and self.handle is None,
+        }
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        if self.handle is not None:
+            self.handle.cancel()
+            self.handle = None
+
+
+async def measure(arm, value, readers, memory=False, callback_metrics=None):
     calls = 0
 
     async def factory():
@@ -31,15 +84,24 @@ async def measure(arm, value, readers, memory=False):
     reads = SharedToolReads(freshness_s=1, copy_preparer=prepare_json_copy if arm == "B" else None)
     before = shared_read_budget.retained_bytes
     gc.collect()
-    if memory:
-        tracemalloc.start()
-    start = time.perf_counter_ns()
-    async with reads.session("owned-benchmark") as shared:
-        copies = await asyncio.gather(*(shared.fetch(factory) for _ in range(readers)))
-    ms = (time.perf_counter_ns() - start) / 1e6
-    peak = tracemalloc.get_traced_memory()[1] if memory else None
-    if memory:
-        tracemalloc.stop()
+    observer = LoopCallbackObservation() if callback_metrics is not None else None
+    try:
+        if observer is not None:
+            await observer.start()
+        if memory:
+            tracemalloc.start()
+        start = time.perf_counter_ns()
+        async with reads.session("owned-benchmark") as shared:
+            copies = await asyncio.gather(*(shared.fetch(factory) for _ in range(readers)))
+        ms = (time.perf_counter_ns() - start) / 1e6
+        peak = tracemalloc.get_traced_memory()[1] if memory else None
+        if observer is not None:
+            callback_metrics.update(await observer.finish())
+    finally:
+        if observer is not None:
+            observer.close()
+        if memory:
+            tracemalloc.stop()
     assert calls == 1 and shared_read_budget.retained_bytes == before
     assert copies == [value] * readers
     copies[0]["data"]["rows"][0]["name"] = "changed"
@@ -124,6 +186,12 @@ async def main():
                 ms, _ = await measure(arm, value, readers)
                 samples[arm].append(ms)
             peaks = {arm: (await measure(arm, value, readers, True))[1] for arm in "AB"}
+            callbacks = {"A": [], "B": []}
+            for pass_index in range(7):
+                for arm in "AB":
+                    observation = {"pass_index": pass_index}
+                    await measure(arm, value, readers, callback_metrics=observation)
+                    callbacks[arm].append(observation)
             row = {
                 "shape": shape,
                 "readers": readers,
@@ -160,6 +228,19 @@ async def main():
                         "retained_managed_delta_bytes": None,
                         "retained_owner_bytes_delta": 0,
                         "main_thread_stall_ms": None,
+                        "event_loop_callback_gap_ms": max(
+                            p["maximum_gap_ms"] for p in callbacks[arm]
+                        ),
+                        "python_observation": {
+                            "schema": "python-traced-and-callback-v1",
+                            "tracemalloc": {
+                                "metric": "python_traced_peak_bytes",
+                                "scope": "python_allocations",
+                                "phase": "separate_pass",
+                                "peak_bytes": peaks[arm],
+                            },
+                            "callbacks": callbacks[arm],
+                        },
                     }
                 )
             print(

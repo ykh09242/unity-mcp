@@ -127,15 +127,15 @@ namespace MCPForUnityTests.Editor.Performance
                     recorder.Stop();
                     Assert.IsTrue(recorder.Valid);
                     Assert.Less(recorder.Count, recorder.Capacity);
-                    long bytes = 0;
-                    for (int i = 0; i < recorder.Count; i++)
-                        bytes += recorder.GetSample(i).Value;
+                    // Event counts are valid independently of marker duration units.
                     allocations.Add(
                         new
                         {
                             arm = arm.ToString(),
                             events = recorder.Count,
-                            sampledBytes = bytes,
+                            sampledBytes = (long?)null,
+                            allocationBytesStatus = "not_measured",
+                            recordedUnit = recorder.UnitType.ToString(),
                         }
                     );
                     Assert.AreEqual(expected, copy);

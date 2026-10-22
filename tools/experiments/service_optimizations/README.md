@@ -42,7 +42,8 @@ textures and persistent readback buffers after all requests settle.
   prototype using the actual bounded writer via reflection. Preparation is measured
   separately because it occurs on the Editor thread. Six samples per arm. Native
   `ProfilerRecorder` allocation events are collected in a separate untimed pass;
-  sampled bytes are not peak retention. Mono's `GC.GetAllocatedBytesForCurrentThread`
+  legacy sampledBytes values were marker durations, not bytes, and are invalid
+  as allocation-size evidence. New captures keep byte counts null and retain events. Mono's `GC.GetAllocatedBytesForCurrentThread`
   returned zero on this host and is deliberately excluded from the evidence.
 - OPT11 compares GLB validation to an ideal content-cache hit that still hashes
   mutable external bytes. This omits cache lookup/copy costs, favoring the candidate.

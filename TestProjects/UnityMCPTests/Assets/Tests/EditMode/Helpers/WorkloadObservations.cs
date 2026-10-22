@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -105,6 +106,17 @@ namespace MCPForUnityTests
             return point;
         }
 
+        internal static Task RunNoWorkControl(int rounds = 64) =>
+            RunObservedCore(
+                "harness_control",
+                "no_work",
+                1,
+                () => Task.FromResult("owned-no-work-control"),
+                () => new Dictionary<string, long> { ["work_owners"] = 0 },
+                synchronous: true,
+                rounds: rounds
+            );
+
         internal static Task RunObserved(string scenario, string variant, int units, Func<string> work, Func<Dictionary<string, long>> owners) =>
             RunObservedCore(scenario, variant, units, () => Task.FromResult(work()), owners, synchronous: true);
 
@@ -117,21 +129,32 @@ namespace MCPForUnityTests
             int units,
             Func<Task<string>> work,
             Func<Dictionary<string, long>> owners,
-            bool synchronous
+            bool synchronous,
+            int rounds = 7
         )
         {
+            if (rounds < 1)
+                throw new ArgumentOutOfRangeException(nameof(rounds));
             string output = Environment.GetEnvironmentVariable("UNITY_MCP_WORKLOAD_OUTPUT");
             Assert.IsNotEmpty(output, "An explicit controller-owned output directory is required.");
+            Directory.CreateDirectory(output);
+            using var journal = new FileStream(
+                Path.Combine(output, ".observation-" + Guid.NewGuid().ToString("N") + ".jsonl"),
+                FileMode.CreateNew,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                4096,
+                FileOptions.DeleteOnClose
+            );
+            using var journalWriter = new StreamWriter(journal, new UTF8Encoding(false), 4096, leaveOpen: true);
             int observersBefore = ActiveObservers;
             var ownersBefore = JObject.FromObject(owners());
             var baseline = MemoryPoint(owners());
-            var samples = new JArray();
-            var observations = new JArray();
             string expected = null;
             double maximumGap = 0;
             using (var watch = new UpdateObservation())
             {
-                for (int run = 0; run < 7; run++)
+                for (int run = 0; run < rounds; run++)
                 {
                     await watch.Wait(2);
                     watch.ResetMeasurements();
@@ -157,20 +180,30 @@ namespace MCPForUnityTests
                     point["sampled_peak_managed_bytes"] = Math.Max(Math.Max(watch.PeakManaged, afterWork), (long)point["post_idle_managed_bytes"]);
                     point["editor_update_count"] = workUpdates;
                     point["editor_update_gap_ms"] = workGap;
-                    observations.Add(point);
-                    samples.Add(
-                        new JObject
-                        {
-                            ["preparation"] = run == 0 ? "first_call_warm_library" : "warm",
-                            ["elapsed_ms"] = timer.Elapsed.TotalMilliseconds,
-                            ["completed_units"] = units,
-                            ["output_sha256"] = hash,
-                            ["main_thread_work_ms"] = synchronous ? new JValue(timer.Elapsed.TotalMilliseconds) : JValue.CreateNull(),
-                        }
-                    );
+                    var sample = new JObject
+                    {
+                        ["preparation"] = run == 0 ? "first_call_warm_library" : "warm",
+                        ["elapsed_ms"] = timer.Elapsed.TotalMilliseconds,
+                        ["completed_units"] = units,
+                        ["output_sha256"] = hash,
+                        ["main_thread_work_ms"] = synchronous ? new JValue(timer.Elapsed.TotalMilliseconds) : JValue.CreateNull(),
+                    };
+                    // Stream bounded current rows; materialize history only after observation ends.
+                    journalWriter.WriteLine(new JObject { ["sample"] = sample, ["observation"] = point }.ToString(Formatting.None));
+                    journalWriter.Flush();
                 }
             }
             Assert.AreEqual(observersBefore, ActiveObservers, "Measurement must release its update subscription.");
+            var samples = new JArray();
+            var observations = new JArray();
+            journal.Position = 0;
+            using (var reader = new StreamReader(journal, Encoding.UTF8, false, 4096, leaveOpen: true))
+                while (!reader.EndOfStream)
+                {
+                    var row = JObject.Parse(reader.ReadLine());
+                    samples.Add(row["sample"]);
+                    observations.Add(row["observation"]);
+                }
             Directory.CreateDirectory(output);
             File.WriteAllText(
                 Path.Combine(output, scenario + "-" + variant + ".json"),
@@ -195,6 +228,23 @@ namespace MCPForUnityTests
                         },
                         samples,
                         allocation_bytes = (long?)null,
+                        allocation_observation = new
+                        {
+                            metric = "unity_gc_alloc_bytes",
+                            scope = "current_thread",
+                            status = "not_measured",
+                            reason = "observed_async_or_update_cohort",
+                            bytes = (long?)null,
+                        },
+                        worker_allocation_observation = new
+                        {
+                            metric = "managed_allocated_bytes",
+                            scope = "worker_threads",
+                            status = "not_measured",
+                            reason = "requires_separate_worker_pass",
+                            bytes = (long?)null,
+                        },
+                        history_retention = "one_current_row_plus_fixed_stream_buffers; materialized_after_measurement",
                         retained_managed_delta_bytes = (long)observations.Last["post_idle_managed_bytes"] - (long)baseline["post_idle_managed_bytes"],
                         main_thread_stall_ms = maximumGap,
                         observation_schema = "editor-update-retention-v1",
