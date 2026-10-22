@@ -898,7 +898,18 @@ namespace MCPForUnity.Editor.Windows
             uninstallAllButton.AddToClassList("action-button");
             bulkRow.Add(uninstallAllButton);
 
-            content.Add(bulkRow);
+            var bulk = new Foldout
+            {
+                text = "Manage all optional packages",
+                value = false,
+                name = "dependency-bulk-actions",
+            };
+            bulk.AddToClassList("settings-group");
+            var bulkHelp = new Label("Install all missing packages at the exact versions selected below, or explicitly remove all optional packages.");
+            bulkHelp.AddToClassList("help-text");
+            bulk.Add(bulkHelp);
+            bulk.Add(bulkRow);
+            content.Add(bulk);
 
             // Roslyn — for execute_code modern C# support
             // Check if Roslyn types are actually loaded (covers NuGet, Plugins folder, etc.)
@@ -1001,7 +1012,7 @@ namespace MCPForUnity.Editor.Windows
             };
             selectedPackages[packageId] = selection.value;
             selection.RegisterValueChangedCallback(evt => selectedPackages[packageId] = evt.newValue);
-            AddDependencyRow(
+            var row = AddDependencyRow(
                 parent,
                 name,
                 description,
@@ -1025,8 +1036,8 @@ namespace MCPForUnity.Editor.Windows
                 },
                 done => RemoveUpmPackage(packageId, done)
             );
-            var row = parent.ElementAt(parent.childCount - 1);
-            row.Insert(2, selection);
+            selection.AddToClassList("package-version-field");
+            row.Insert(row.IndexOf(row.Q(className: "package-actions")), selection);
             if (isInstalled)
             {
                 Button change = null;
@@ -1052,7 +1063,7 @@ namespace MCPForUnity.Editor.Windows
                     text = "Change Version",
                 };
                 change.AddToClassList("action-button");
-                row.Add(change);
+                row.Q(className: "package-actions").Add(change);
             }
         }
 
@@ -1090,7 +1101,7 @@ namespace MCPForUnity.Editor.Windows
                 .ToArray();
         }
 
-        private static void AddDependencyRow(
+        private static VisualElement AddDependencyRow(
             VisualElement parent,
             string name,
             string description,
@@ -1117,6 +1128,9 @@ namespace MCPForUnity.Editor.Windows
             header.Add(statusIcon);
 
             row.Add(header);
+            var purpose = new Label(description) { enableRichText = false };
+            purpose.AddToClassList("help-text");
+            row.Add(purpose);
 
             var statusText = new Label(isInstalled ? installedText : missingText);
             statusText.AddToClassList("help-text");
@@ -1125,6 +1139,7 @@ namespace MCPForUnity.Editor.Windows
 
             var buttonRow = new VisualElement();
             buttonRow.AddToClassList("tool-actions");
+            buttonRow.AddToClassList("package-actions");
 
             if (!isInstalled && installAction != null)
             {
@@ -1152,10 +1167,10 @@ namespace MCPForUnity.Editor.Windows
                 buttonRow.Add(btn);
             }
 
-            if (buttonRow.childCount > 0)
-                row.Add(buttonRow);
+            row.Add(buttonRow);
 
             parent.Add(row);
+            return row;
         }
 
         private static void RunDependencyAction(Button button, string busyText, string idleText, Action<Action> action)

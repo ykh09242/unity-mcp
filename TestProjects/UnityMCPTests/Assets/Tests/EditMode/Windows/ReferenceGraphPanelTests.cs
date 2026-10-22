@@ -137,6 +137,7 @@ namespace MCPForUnityTests.EditMode.Windows
                 root.AddToClassList("mcp-editor");
                 AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(Template).CloneTree(root);
                 using var navigation = new MCPForUnity.Editor.Windows.McpWindowNavigation(root, _ => { });
+                navigation.Select("graph");
                 root.Q("clients-panel").AddToClassList("hidden");
                 root.Q("graph-panel").RemoveFromClassList("hidden");
                 root.Q<UnityEditor.UIElements.ToolbarToggle>("clients-tab").SetValueWithoutNotify(false);

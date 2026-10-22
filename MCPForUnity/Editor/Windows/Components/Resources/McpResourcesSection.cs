@@ -161,7 +161,12 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             var header = new VisualElement();
             header.AddToClassList("tool-item-header");
 
-            var toggle = new Toggle(resource.Name) { value = MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(resource.Name) };
+            var toggle = new Toggle
+            {
+                name = "resource-toggle-" + resource.Name,
+                text = ObjectNames.NicifyVariableName(resource.Name.Replace('_', ' ')),
+                value = MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(resource.Name),
+            };
             toggle.AddToClassList("tool-item-toggle");
             toggle.tooltip = string.IsNullOrWhiteSpace(resource.Description) ? resource.Name : resource.Description;
 
@@ -180,6 +185,9 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
 
             header.Add(tagsContainer);
             row.Add(header);
+            var wireName = new Label(resource.Name) { enableRichText = false };
+            wireName.AddToClassList("tool-wire-name");
+            row.Add(wireName);
 
             if (!string.IsNullOrWhiteSpace(resource.Description) && !resource.Description.StartsWith("Resource:", StringComparison.Ordinal))
             {

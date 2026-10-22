@@ -68,6 +68,42 @@ namespace MCPForUnityTests.Editor.AssetGen
                 Directory.Delete(directory, true);
         }
 
+        private sealed class CategoryWindow : EditorWindow { }
+
+        [Test]
+        public void ProviderCategoriesPreserveUserStateAcrossRefreshAndChildChanges()
+        {
+            var window = ScriptableObject.CreateInstance<CategoryWindow>();
+            try
+            {
+                window.ShowUtility();
+                var root = AssetDatabase
+                    .LoadAssetAtPath<VisualTreeAsset>("Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/AssetGen/McpAssetGenSection.uxml")
+                    .CloneTree();
+                root.Q("blender-bridge-panel").RemoveFromHierarchy();
+                window.rootVisualElement.Add(root);
+                var section = new McpAssetGenSection(root);
+                var category = root.Q<Foldout>(className: "provider-category");
+                category.value = false;
+                section.Refresh();
+                category = root.Q<Foldout>(className: "provider-category");
+                Assert.IsFalse(category.value, "Refreshing model choices must preserve a collapsed category.");
+                category.value = true;
+                var child = new Toggle();
+                category.Add(child);
+                child.value = true;
+                child.value = false;
+                section.Refresh();
+                Assert.IsTrue(root.Q<Foldout>(className: "provider-category").value, "A child control cannot overwrite its category state.");
+                Assert.IsEmpty(fal.RecordedRequests);
+                Assert.IsEmpty(router.RecordedRequests);
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+
         private static McpAssetGenSection Section()
         {
             var root = new VisualElement();

@@ -269,7 +269,8 @@ namespace MCPForUnityTests.EditMode.Windows
                     Assert.AreEqual("owned-failure", error.Message);
                 }
                 Assert.AreEqual(before, WorkloadProbe.ActiveObservers);
-                Assert.IsFalse(Directory.Exists(output));
+                Assert.IsFalse(File.Exists(Path.Combine(output, "failed-fixture.json")), "Failed work must not publish completed evidence.");
+                Assert.IsEmpty(Directory.GetFiles(output), "The temporary observation journal must be released on failure.");
             }
             finally
             {
@@ -356,6 +357,8 @@ namespace MCPForUnityTests.EditMode.Windows
                     var root = window.rootVisualElement;
                     root.AddToClassList("mcp-editor");
                     AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(Template).CloneTree(root);
+                    using var navigation = new MCPForUnity.Editor.Windows.McpWindowNavigation(root, _ => { });
+                    navigation.Select("activity");
                     root.Q("clients-panel").AddToClassList("hidden");
                     root.Q("activity-panel").RemoveFromClassList("hidden");
                     root.Q<UnityEditor.UIElements.ToolbarToggle>("clients-tab").SetValueWithoutNotify(false);

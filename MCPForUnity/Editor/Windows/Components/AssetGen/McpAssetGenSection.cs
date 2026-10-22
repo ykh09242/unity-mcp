@@ -61,6 +61,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private readonly List<(string Id, Toggle Toggle)> modelEnableToggles = new();
         private readonly List<(VisualElement Container, string Kind, string Provider)> modelControls = new();
         private readonly Dictionary<string, string> searches = new();
+        private readonly Dictionary<string, bool> providerCategoryStates = new();
 
         // Last failed compatibility check per kind/provider, kept so a catalog rebuild cannot hide it.
         private readonly Dictionary<string, (string Id, string Error)> verifyErrors = new();
@@ -342,27 +343,18 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         }
 
         /// <summary>
-        /// Creates a darker rounded panel with a title (added to the providers container). Each of the
-        /// three categories (3D / 2D / sound) gets its own panel so they read as distinct blocks.
+        /// Groups provider controls by output type using the current Editor theme.
         /// </summary>
         private VisualElement AddCategoryPanel(string title)
         {
-            var panel = new VisualElement();
-            panel.style.backgroundColor = new Color(0f, 0f, 0f, 0.20f);
-            panel.style.paddingTop = 8;
-            panel.style.paddingBottom = 8;
-            panel.style.paddingLeft = 8;
-            panel.style.paddingRight = 8;
-            panel.style.marginBottom = 10;
-            panel.style.borderTopLeftRadius = 4;
-            panel.style.borderTopRightRadius = 4;
-            panel.style.borderBottomLeftRadius = 4;
-            panel.style.borderBottomRightRadius = 4;
-
-            var label = new Label(title);
-            label.AddToClassList("config-label");
-            label.style.marginTop = 0;
-            panel.Add(label);
+            var panel = new Foldout { text = title, value = !providerCategoryStates.TryGetValue(title, out var expanded) || expanded };
+            panel.RegisterValueChangedCallback(evt =>
+            {
+                if (evt.target == panel)
+                    providerCategoryStates[title] = evt.newValue;
+            });
+            panel.AddToClassList("settings-group");
+            panel.AddToClassList("provider-category");
 
             providersContainer.Add(panel);
             return panel;
@@ -371,47 +363,38 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private Toggle AddProviderRow(VisualElement parent, string id, string displayName, string kind)
         {
             var row = new VisualElement();
-            row.style.marginBottom = 8;
-            row.style.paddingBottom = 8;
-            row.style.borderBottomWidth = 1;
-            row.style.borderBottomColor = new Color(0.3f, 0.3f, 0.3f, 0.3f);
+            row.AddToClassList("provider-row");
 
             var statusLabel = new Label();
             statusLabel.AddToClassList("help-text");
 
-            // Header: bold provider name, key status inline to its right, enable toggle far right.
+            // Keep provider identity, key state and enablement readable when the row wraps.
             var header = new VisualElement();
-            header.style.flexDirection = FlexDirection.Row;
-            header.style.alignItems = Align.Center;
-            header.style.marginBottom = 2;
+            header.AddToClassList("provider-header");
 
             var nameLabel = new Label(displayName);
-            nameLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-            nameLabel.style.flexShrink = 0;
+            nameLabel.AddToClassList("provider-name");
             header.Add(nameLabel);
 
-            statusLabel.style.flexGrow = 1;
-            statusLabel.style.marginLeft = 8;
+            statusLabel.AddToClassList("provider-status");
             header.Add(statusLabel);
 
-            var enableToggle = new Toggle("Enabled");
+            var enableToggle = new Toggle { text = "Enabled" };
+            enableToggle.AddToClassList("field-toggle");
             enableToggle.SetValueWithoutNotify(AssetGenPrefs.IsProviderEnabled(id));
             enableToggle.tooltip = $"Enable the {displayName} provider for asset generation.";
             header.Add(enableToggle);
 
             row.Add(header);
 
-            // Masked key field + Save / Clear / Test buttons.
+            // Masked key field with storage and presence-check actions.
             var fieldRow = new VisualElement();
-            fieldRow.style.flexDirection = FlexDirection.Row;
-            fieldRow.style.alignItems = Align.Center;
+            fieldRow.AddToClassList("provider-key-row");
 
             var keyField = new TextField();
             keyField.isPasswordField = true;
             keyField.maskChar = '*';
-            keyField.style.flexGrow = 1;
-            keyField.style.flexShrink = 1;
-            keyField.style.marginRight = 4;
+            keyField.AddToClassList("provider-key-field");
             keyField.tooltip =
                 $"Paste your {displayName} API key, then press Save (or click away). "
                 + "The key is stored in your OS secure store and is never read back into this field.";
@@ -425,7 +408,8 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             clearButton.AddToClassList("icon-button");
             fieldRow.Add(clearButton);
 
-            var testButton = new Button { text = "Test" };
+            var testButton = new Button { text = "Check key" };
+            testButton.tooltip = "Check whether a key is stored. This does not contact the provider or validate authentication.";
             testButton.AddToClassList("icon-button");
             fieldRow.Add(testButton);
 
@@ -684,29 +668,22 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private void AddSharedFalRow(VisualElement parent, string kind, string displayName)
         {
             var row = new VisualElement();
-            row.style.marginBottom = 8;
-            row.style.paddingBottom = 8;
-            row.style.borderBottomWidth = 1;
-            row.style.borderBottomColor = new Color(0.3f, 0.3f, 0.3f, 0.3f);
+            row.AddToClassList("provider-row");
 
             // Header: name + shared-key status inline to its right. No key field — the fal key is
             // owned by the 2D fal row.
             var header = new VisualElement();
-            header.style.flexDirection = FlexDirection.Row;
-            header.style.alignItems = Align.Center;
-            header.style.marginBottom = 2;
+            header.AddToClassList("provider-header");
 
             var nameLabel = new Label(displayName);
-            nameLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-            nameLabel.style.flexShrink = 0;
+            nameLabel.AddToClassList("provider-name");
             header.Add(nameLabel);
 
             bool hasFal = HasKey("fal");
             var status = new Label(hasFal ? "key present ✓ (shared with 2D fal)" : "no fal key — set it in 2D Images");
             status.AddToClassList("help-text");
-            status.style.color = hasFal ? new Color(0.4f, 0.8f, 0.4f) : new Color(0.7f, 0.7f, 0.7f);
-            status.style.flexGrow = 1;
-            status.style.marginLeft = 8;
+            status.AddToClassList("provider-status");
+            SetStatus(status, status.text, hasFal);
             header.Add(status);
 
             row.Add(header);
@@ -775,7 +752,8 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             }
 
             label.text = text;
-            label.style.color = ok ? new Color(0.4f, 0.8f, 0.4f) : new Color(0.7f, 0.7f, 0.7f);
+            label.EnableInClassList("status-success", ok);
+            label.EnableInClassList("status-warning", !ok);
         }
 
         private static bool HasKey(string id)

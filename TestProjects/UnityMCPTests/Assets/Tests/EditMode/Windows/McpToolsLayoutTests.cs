@@ -45,6 +45,7 @@ namespace MCPForUnityTests.EditMode.Windows
                 Assert.IsNotNull(frame);
                 frame.CloneTree(root);
                 using var navigation = new MCPForUnity.Editor.Windows.McpWindowNavigation(root, _ => { });
+                navigation.Select("tools");
                 root.Q<VisualElement>("clients-panel").AddToClassList("hidden");
                 root.Q<VisualElement>("tools-panel").RemoveFromClassList("hidden");
                 root.Q<UnityEditor.UIElements.ToolbarToggle>("clients-tab").SetValueWithoutNotify(false);

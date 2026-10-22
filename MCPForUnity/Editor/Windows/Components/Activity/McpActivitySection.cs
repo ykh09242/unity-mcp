@@ -48,7 +48,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             root.Add(title);
             AddText("Project: " + Path.GetFileName(Path.GetDirectoryName(Application.dataPath)), "activity-project");
             AddText("Tests, builds, Play scenarios, packages and asset generation. Client wait timeouts do not stop these jobs.", "activity-scope");
-            empty = AddText("No retained activity in these job owners.", "activity-empty");
+            empty = AddText("No recent operations. Run a test, build, Play scenario or generation task to see progress here.", "activity-empty");
             list = new VisualElement { name = "activity-rows" };
             root.Add(list);
             AddText(
@@ -170,6 +170,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
         {
             internal readonly VisualElement Root = new();
             private readonly Label title = new(),
+                identifier = new(),
                 state = new(),
                 detail = new(),
                 cancellation = new(),
@@ -185,13 +186,15 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             {
                 Root.name = "activity-" + key;
                 Root.AddToClassList("activity-card");
-                foreach (var label in new[] { title, state, detail, cancellation, elapsed })
+                foreach (var label in new[] { title, state, identifier, detail, cancellation, elapsed })
                 {
                     label.enableRichText = false;
                     label.AddToClassList("activity-note");
                     Root.Add(label);
                 }
                 title.AddToClassList("activity-title");
+                state.AddToClassList("activity-state");
+                identifier.AddToClassList("activity-id");
                 var actions = new VisualElement();
                 actions.AddToClassList("activity-actions");
                 Root.Add(actions);
@@ -203,8 +206,12 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
 
             internal void Update(OperationActivityRow value, long now)
             {
-                if (!initialized || row.Operation != value.Operation || row.Id != value.Id)
-                    title.text = value.Operation + " · " + value.Id;
+                if (!initialized || row.Operation != value.Operation)
+                    title.text = value.Operation;
+                if (!initialized || row.Id != value.Id)
+                    identifier.text = "ID: " + value.Id;
+                if (!initialized || row.Active != value.Active)
+                    Root.EnableInClassList("activity-active", value.Active);
                 if (!initialized || row.State != value.State || row.Phase != value.Phase)
                     state.text = "State: " + value.State + " · Phase: " + value.Phase;
                 if (!initialized || row.Detail != value.Detail)

@@ -35,3 +35,6 @@
 .graph-config-list Button { align-self: stretch; -unity-text-align: middle-left; }
 .graph-empty { padding: 18px; color: var(--mcp-muted); }
 #graph-message { padding: 10px 12px; margin-bottom: 14px; border-left-width: 2px; border-left-color: var(--mcp-accent); background-color: var(--mcp-surface); }
+
+.graph-section .unity-toggle__text { white-space: normal; flex-shrink: 1; margin-left: 6px; }
+.graph-section .unity-toggle__input { flex-shrink: 1; }
