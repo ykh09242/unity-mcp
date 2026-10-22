@@ -148,14 +148,27 @@ namespace MCPForUnityTests.EditMode.Tools
             string secondPath = CreateText("second.txt", "owned second");
             string firstGuid = AssetDatabase.AssetPathToGUID(firstPath);
             string secondGuid = AssetDatabase.AssetPathToGUID(secondPath);
+            var asset = ScriptableObject.CreateInstance<ReferenceDiagnosticFixture>();
+            asset.reference = AssetDatabase.LoadAssetAtPath<TextAsset>(firstPath);
+            string ownerPath = root + "/interleaved-owner.asset";
+            AssetDatabase.CreateAsset(asset, ownerPath);
+            AssetDatabase.SaveAssetIfDirty(asset);
+            string ownerGuid = AssetDatabase.AssetPathToGUID(ownerPath);
             JObject one = Call("inventory", "page_size", 1);
             JObject two = Call("inventory", "page_size", 1);
             Assert.AreEqual(one["snapshot"], two["snapshot"]);
             Call("inventory", "snapshot", one.Value<string>("snapshot"), "offset", 1, "page_size", 1);
-            JObject dependencies = Call("dependencies", "guid", firstGuid);
+            JObject expected = Call("dependencies", "guid", ownerGuid);
+            Assert.Greater(expected["targets"].Count(), 1, "The owner references both its script and the text fixture.");
+            Assert.IsTrue(expected["targets"].Values<string>().Contains(firstGuid));
+            JObject dependencies = Call("dependencies", "guid", ownerGuid, "page_size", 1);
             Call("dependencies", "guid", secondGuid);
-            JObject resumed = Call("dependencies", "guid", firstGuid, "snapshot", dependencies.Value<string>("snapshot"), "offset", 0);
-            Assert.IsTrue(JToken.DeepEquals(dependencies["targets"], resumed["targets"]));
+            Assert.AreEqual(1, dependencies.Value<int>("next_offset"));
+            JObject resumed = Call("dependencies", "guid", ownerGuid, "snapshot", dependencies.Value<string>("snapshot"), "offset", 1);
+            var targets = (JArray)dependencies["targets"].DeepClone();
+            foreach (JToken target in resumed["targets"])
+                targets.Add(target);
+            Assert.IsTrue(JToken.DeepEquals(expected["targets"], targets));
         }
 
         [Test]
