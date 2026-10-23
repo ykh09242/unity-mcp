@@ -140,7 +140,9 @@ def flow_server(monkeypatch, prepared_tool_factory, request):
         monkeypatch.setattr(service, "_validate_external", validate)
         with monkeypatch.context() as patch:
             patch.setattr(Tool, "from_function", prepared_tool_factory)
-            return create_mcp_server(False)
+            server = create_mcp_server(False)
+            server.enable(names={"manage_scene"}, components={"tool"})
+            return server
 
     server = create()
     server._fixture_factory = create

@@ -332,7 +332,7 @@ class TestUnityInstanceMiddlewareInjection:
                         new_callable=AsyncMock,
                     ) as mock_get_sessions:
                         with patch(
-                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            "transport.unity_instance_middleware.PluginHub.get_catalog_for_project",
                             new_callable=AsyncMock,
                         ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
@@ -345,10 +345,12 @@ class TestUnityInstanceMiddlewareInjection:
                                     )
                                 }
                             )
-                            mock_get_tools.return_value = [
-                                SimpleNamespace(name="manage_scene"),
-                                SimpleNamespace(name="manage_script"),
-                            ]
+                            mock_get_tools.return_value = (
+                                "session-1",
+                                1,
+                                True,
+                                {"manage_scene": object(), "manage_script": object()},
+                            )
 
                             filtered = await middleware.on_list_tools(middleware_ctx, call_next)
 
@@ -399,7 +401,7 @@ class TestUnityInstanceMiddlewareInjection:
                         new_callable=AsyncMock,
                     ) as mock_get_sessions:
                         with patch(
-                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            "transport.unity_instance_middleware.PluginHub.get_catalog_for_project",
                             new_callable=AsyncMock,
                         ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
@@ -413,7 +415,7 @@ class TestUnityInstanceMiddlewareInjection:
                                 }
                             )
                             # Simulate register_tools not yet sent
-                            mock_get_tools.return_value = []
+                            mock_get_tools.return_value = None
 
                             filtered = await middleware.on_list_tools(middleware_ctx, call_next)
 
@@ -450,10 +452,6 @@ class TestUnityInstanceMiddlewareInjection:
         async def call_next(_ctx):
             return original_tools
 
-        # Simulate a registered tool that indicates all tools are disabled
-        disabled_tool = SimpleNamespace(name="_marker_tool_indicates_registration_sent")
-        registered_tools = [disabled_tool]
-
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
             with patch(
                 "transport.unity_instance_middleware.PluginHub.is_configured", return_value=True
@@ -467,7 +465,7 @@ class TestUnityInstanceMiddlewareInjection:
                         new_callable=AsyncMock,
                     ) as mock_get_sessions:
                         with patch(
-                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            "transport.unity_instance_middleware.PluginHub.get_catalog_for_project",
                             new_callable=AsyncMock,
                         ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
@@ -480,8 +478,8 @@ class TestUnityInstanceMiddlewareInjection:
                                     )
                                 }
                             )
-                            # register_tools has been sent (non-empty list), but all tools disabled
-                            mock_get_tools.return_value = registered_tools
+                            # The current generation explicitly registered an empty catalog.
+                            mock_get_tools.return_value = ("session-1", 1, True, {})
 
                             filtered = await middleware.on_list_tools(middleware_ctx, call_next)
 
@@ -530,7 +528,7 @@ class TestUnityInstanceMiddlewareInjection:
                         new_callable=AsyncMock,
                     ) as mock_get_sessions:
                         with patch(
-                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            "transport.unity_instance_middleware.PluginHub.get_catalog_for_project",
                             new_callable=AsyncMock,
                         ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
@@ -582,7 +580,7 @@ class TestUnityInstanceMiddlewareInjection:
                         new_callable=AsyncMock,
                     ) as mock_get_sessions:
                         with patch(
-                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            "transport.unity_instance_middleware.PluginHub.get_catalog_for_project",
                             new_callable=AsyncMock,
                         ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
@@ -595,7 +593,12 @@ class TestUnityInstanceMiddlewareInjection:
                                     )
                                 }
                             )
-                            mock_get_tools.return_value = [SimpleNamespace(name="manage_scene")]
+                            mock_get_tools.return_value = (
+                                "session-1",
+                                1,
+                                True,
+                                {"manage_scene": object()},
+                            )
 
                             async with remote_credentials(
                                 {"requester:user-123": "user-123"}
@@ -641,7 +644,7 @@ class TestUnityInstanceMiddlewareInjection:
                         new_callable=AsyncMock,
                     ) as mock_get_sessions:
                         with patch(
-                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            "transport.unity_instance_middleware.PluginHub.get_catalog_for_project",
                             new_callable=AsyncMock,
                         ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
@@ -694,7 +697,7 @@ class TestUnityInstanceMiddlewareInjection:
                         new_callable=AsyncMock,
                     ) as mock_get_sessions:
                         with patch(
-                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            "transport.unity_instance_middleware.PluginHub.get_catalog_for_project",
                             new_callable=AsyncMock,
                         ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
@@ -708,7 +711,12 @@ class TestUnityInstanceMiddlewareInjection:
                                 }
                             )
                             # manage_script is disabled; alias create_script should also be hidden.
-                            mock_get_tools.return_value = [SimpleNamespace(name="manage_scene")]
+                            mock_get_tools.return_value = (
+                                "session-1",
+                                1,
+                                True,
+                                {"manage_scene": object()},
+                            )
 
                             filtered = await middleware.on_list_tools(middleware_ctx, call_next)
 
@@ -750,7 +758,7 @@ class TestUnityInstanceMiddlewareInjection:
                         new_callable=AsyncMock,
                     ) as mock_get_sessions:
                         with patch(
-                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            "transport.unity_instance_middleware.PluginHub.get_catalog_for_project",
                             new_callable=AsyncMock,
                         ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(
@@ -763,7 +771,7 @@ class TestUnityInstanceMiddlewareInjection:
                                     )
                                 }
                             )
-                            mock_get_tools.return_value = []
+                            mock_get_tools.return_value = None
 
                             filtered = await middleware.on_list_tools(middleware_ctx, call_next)
 
@@ -790,10 +798,10 @@ class TestUnityInstanceMiddlewareInjection:
 
         async def get_tools_side_effect(project_hash, user_id=None):  # noqa: ARG001
             if project_hash == "hash-a":
-                return [SimpleNamespace(name="manage_scene")]
+                return ("session-a", 1, True, {"manage_scene": object()})
             if project_hash == "hash-b":
-                return [SimpleNamespace(name="manage_asset")]
-            return []
+                return ("session-b", 1, True, {"manage_asset": object()})
+            return None
 
         with patch.object(middleware, "_inject_unity_instance", new=AsyncMock()):
             with patch(
@@ -808,7 +816,7 @@ class TestUnityInstanceMiddlewareInjection:
                         new_callable=AsyncMock,
                     ) as mock_get_sessions:
                         with patch(
-                            "transport.unity_instance_middleware.PluginHub.get_tools_for_project",
+                            "transport.unity_instance_middleware.PluginHub.get_catalog_for_project",
                             new_callable=AsyncMock,
                         ) as mock_get_tools:
                             mock_get_sessions.return_value = SessionList(

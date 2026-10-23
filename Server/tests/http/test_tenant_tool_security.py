@@ -27,7 +27,6 @@ def tenant_state(monkeypatch):
         monkeypatch.setattr(PluginHub, name, {})
     monkeypatch.setattr(PluginHub, "_registry", registry)
     monkeypatch.setattr(PluginHub, "_lock", asyncio.Lock())
-    monkeypatch.setattr(PluginHub, "_unity_transform_start", None)
     monkeypatch.setattr(CustomToolService, "_instance", None)
     mcp = FastMCP("tenant-test")
     monkeypatch.setattr(PluginHub, "_mcp", mcp)

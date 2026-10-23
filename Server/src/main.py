@@ -465,7 +465,7 @@ Targeting Unity instances:
 - Use the resource mcpforunity://instances to list active Unity sessions (Name@hash).
 - When multiple instances are connected, specify the target for each request. Pass unity_instance as a tool argument (e.g. unity_instance="MyGame@abc123", unity_instance="abc" for a hash prefix, or unity_instance="6401" for a port number in stdio mode).
 - For resource reads, set request metadata _meta.unity_instance to the same identifier (FastMCP Python client: read_resource(uri, meta={{"unity_instance": "MyGame@abc123"}})). Per-request targeting does not change the session default.
-- Clients using a stateful legacy MCP protocol can call set_active_instance with an exact Name@hash to pin a session default. Modern sessionless clients must use per-request targeting; set_active_instance and persistent tool-group changes are unavailable.
+- Clients using a stateful legacy MCP protocol can call set_active_instance with an exact Name@hash to pin a session default. Modern sessionless clients must use per-request targeting; set_active_instance is unavailable. manage_tools selection requires a trusted client scope and resolved project; clients without one can use the static UNITY_MCP_TOOL_PROFILE=full profile.
 
 Important Workflows:
 

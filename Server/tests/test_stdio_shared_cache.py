@@ -475,3 +475,59 @@ async def test_job_polling_releases_superseded_copies_and_keeps_final_delivery(
         await asyncio.gather(caller, return_exceptions=True)
         response_owner.reset(token)
         owner.release()
+
+
+@pytest.mark.asyncio
+async def test_catalog_probe_discards_authenticated_session_after_real_fin(monkeypatch):
+    left, right = socket.socketpair()
+    connection = connections.UnityConnection(port=1111, auth_token_provider=lambda _: "x" * 64)
+    connection.sock = left
+    connection.session_generation = "socket-one"
+    connection.authenticated_session = SimpleNamespace(session_generation="socket-one")
+    pool = connections.UnityConnectionPool()
+    instance = "Owned@synthetic"
+    pool._known_instances = {instance: SimpleNamespace(id=instance)}
+    pool._connections = {instance: connection}
+    monkeypatch.setattr(connections, "_unity_connection_pool", pool)
+    monkeypatch.setattr(connections.config, "http_remote_hosted", False)
+    try:
+        assert await connections.get_stdio_catalog_generation(instance) == "socket-one"
+        right.close()
+        assert await connections.get_stdio_catalog_generation(instance) is None
+        assert connection.authenticated_session is None
+    finally:
+        left.close()
+        right.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["detach", "pool", "retire", "session", "socket", "generation"])
+async def test_catalog_fallback_rejects_connection_changes_during_probe(monkeypatch, change):
+    connection = connections.UnityConnection(port=1111, auth_token_provider=lambda _: "x" * 64)
+    connection.sock = object()
+    connection.session_generation = "socket-one"
+    connection.authenticated_session = SimpleNamespace(session_generation="socket-one")
+    pool = connections.UnityConnectionPool()
+    instance = "Owned@synthetic"
+    pool._known_instances = {instance: SimpleNamespace(id=instance)}
+    pool._connections = {instance: connection}
+    monkeypatch.setattr(connections, "_unity_connection_pool", pool)
+    monkeypatch.setattr(connections.config, "http_remote_hosted", False)
+
+    async def inconclusive_probe(_instance):
+        if change == "detach":
+            pool._connections.clear()
+        elif change == "pool":
+            monkeypatch.setattr(connections, "_unity_connection_pool", None)
+        elif change == "retire":
+            connection._retired = True
+        elif change == "session":
+            connection.authenticated_session = None
+        elif change == "socket":
+            connection.sock = object()
+        else:
+            connection.session_generation = "socket-two"
+        return None
+
+    monkeypatch.setattr(connections, "get_authenticated_stdio_generation", inconclusive_probe)
+    assert await connections.get_stdio_catalog_generation(instance) is None

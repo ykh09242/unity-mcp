@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import TypeVar
 
 from fastmcp import Context, FastMCP
-from fastmcp.tools import FunctionTool
+from fastmcp.tools import FunctionTool, Tool
 from core.telemetry_decorator import telemetry_tool
 from core.logging_decorator import log_execution
 from utils.module_discovery import discover_modules
-from services.registry import get_registered_tools, TOOL_GROUPS, DEFAULT_ENABLED_GROUPS
+from services.registry import get_registered_tools, TOOL_GROUPS
 from services.registry.action_contracts import ACTION_RULES, action_input_schema
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -32,7 +32,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
 
     On local servers, non-default tool groups are disabled at the server level
     so that new sessions only see the *core* tools (plus always-visible meta-tools).
-    Stateful clients can adjust their session's groups via ``manage_tools``.
+    Legacy clients and trusted project-bound modern scopes can adjust selection
+    via ``manage_tools``. UNITY_MCP_TOOL_PROFILE selects minimal/core/full defaults.
     Hosted remote servers use each authenticated user's Unity catalog instead;
     request middleware filters discovery and rejects disabled tool calls.
     A session override cannot grant access to a tool absent from that catalog.
@@ -50,6 +51,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         logger.warning("No MCP tools registered!")
         return
 
+    definitions = {}
+    groups = {}
     for tool_info in tools:
         func = tool_info["func"]
         tool_name = tool_info["name"]
@@ -66,43 +69,45 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         wrapped = log_execution(tool_name, "Tool")(func)
         wrapped = telemetry_tool(tool_name)(wrapped)
         # Keep the global declaration unchanged: each server owns its decorators.
+        factory = FunctionTool if tool_name in ACTION_RULES else Tool
+        registered = factory.from_function(
+            wrapped, name=tool_name, description=description, run_in_thread=True, **kwargs
+        )
         if tool_name in ACTION_RULES:
-            registered = FunctionTool.from_function(
-                wrapped, name=tool_name, description=description, run_in_thread=True, **kwargs
-            )
             registered.parameters = action_input_schema(tool_name, registered.parameters)
-            mcp.add_tool(registered)
-        else:
-            mcp.tool(name=tool_name, description=description, **kwargs)(wrapped)
+        mcp.add_tool(registered)
+        definitions[tool_name] = registered
+        groups[tool_name] = tool_info.get("group")
         logger.debug(f"Registered tool: {tool_name} - {description}")
 
     logger.info(f"Registered {len(tools)} MCP tools")
 
-    # Local transports start with the same focused essentials. Unity's saved
-    # catalog and stateful session selections can enable optional capabilities.
     from core.config import config as server_config
+    from services.tool_discovery import ToolDiscovery
 
-    if server_config.transport_mode.lower() == "http" and server_config.http_remote_hosted:
-        logger.info("Remote HTTP transport: tool availability follows each user's Unity catalog.")
-    else:
-        for group_name in sorted(set(TOOL_GROUPS) - DEFAULT_ENABLED_GROUPS):
-            mcp.disable(tags={f"group:{group_name}"}, components={"tool"})
-        logger.info(
-            "Default tool groups: %s. Use manage_tools for more.",
-            ", ".join(sorted(DEFAULT_ENABLED_GROUPS)),
-        )
+    discovery = ToolDiscovery(
+        mcp,
+        definitions,
+        groups,
+        hosted=server_config.transport_mode.lower() == "http" and server_config.http_remote_hosted,
+    )
+    mcp._tool_discovery = discovery
+    for group_name in sorted(set(TOOL_GROUPS) - discovery.default_groups):
+        mcp.disable(tags={f"group:{group_name}"}, components={"tool"})
+    mcp.add_transform(discovery)
+    logger.info(
+        "Tool discovery profile: %s. Use manage_tools for full guidance.", discovery.profile
+    )
 
 
 async def sync_tool_visibility_from_unity(
     instance_id: str | None = None,
     notify: bool = True,
 ) -> dict:
-    """Query Unity for tool enabled/disabled states and sync server-level visibility.
+    """Refresh source-owned availability without changing client selection.
 
-    This bridges the gap in stdio mode where Unity can't push ``register_tools``
-    messages.  The Python server queries Unity's ``get_tool_states`` resource via
-    the legacy TCP connection and feeds the result into
-    ``PluginHub._sync_server_tool_visibility``.
+    Stdio peers cannot push ``register_tools``. Query ``get_tool_states`` and
+    publish only to the authenticated connection's project/generation.
 
     Args:
         instance_id: Optional Unity instance identifier.
@@ -394,7 +399,6 @@ async def sync_tool_visibility_from_unity(
                 _commit_stdio_catalog,
             )
 
-            plan = PluginHub._prepare_server_tool_visibility(enabled_tools)
             if capture:
                 connection, generation = capture[0]
                 project = connection.instance_id.rsplit("@", 1)[-1]
@@ -409,28 +413,40 @@ async def sync_tool_visibility_from_unity(
                     previous is not None and previous.known and previous.generation == generation
                 )
                 authoritative = extended or (not tools and known_empty)
-                if service is not None and authoritative:
-                    visibility = (
-                        None
-                        if plan is None
-                        else (
-                            lambda: PluginHub._commit_server_tool_visibility(plan),
-                            lambda: PluginHub._rollback_server_tool_visibility(plan),
-                        )
-                    )
+                if service is not None and (authoritative or tools):
+                    catalog_models = enabled_models
+                    known = authoritative
+                    if not authoritative:
+                        # Legacy replies are toggle deltas: retain omitted descriptors,
+                        # and never invent a custom tool schema from just its name.
+                        same_generation = previous is not None and previous.generation == generation
+                        toggled = dict(previous.tools) if same_generation else {}
+                        known = same_generation and previous.known
+                        unity_builtins = {
+                            entry["unity_target"]
+                            for entry in get_registered_tools()
+                            if entry.get("unity_target")
+                        }
+                        for raw in tools:
+                            name = raw["name"]
+                            if not raw.get("enabled", True):
+                                toggled.pop(name, None)
+                            elif name not in toggled and name in unity_builtins:
+                                toggled[name] = ToolDefinitionModel(name=name)
+                        catalog_models = list(toggled.values())
                     outcome = _commit_stdio_catalog(
                         connection,
                         generation,
                         lambda: service.replace_project_catalog(
                             project,
-                            custom_models,
+                            catalog_models,
                             kind="stdio",
                             generation=generation,
                             expected_revision=previous.revision if previous is not None else 0,
-                            visibility=visibility,
+                            known=known,
                         ),
                     )
-                    if correlation is not None:
+                    if correlation is not None and authoritative:
                         settings_sync = {
                             "status": "applied",
                             **correlation.model_dump(),
@@ -438,19 +454,14 @@ async def sync_tool_visibility_from_unity(
                             "source_generation": generation,
                             "catalog_revision": outcome["revision"],
                         }
-                elif tools:
-                    _commit_stdio_catalog(
-                        connection,
-                        generation,
-                        lambda: PluginHub._commit_server_tool_visibility(plan),
-                    )
-                    outcome = {"changed": plan is not None}
-                else:
+                elif not tools:
                     raise ValueError("Empty Unity catalog has no same-generation extended evidence")
+                else:
+                    raise ValueError("Unity catalog service unavailable")
             elif tools and not extended:
-                # Compatibility for unknown old peers: visibility only, never removal.
-                PluginHub._commit_server_tool_visibility(plan)
-                outcome = {"changed": plan is not None}
+                # An old peer without authenticated provenance can be inspected,
+                # but cannot alter another project's catalog or server defaults.
+                settings_sync = {"status": "unconfirmed", "reason": "peer_provenance_unavailable"}
             else:
                 raise ValueError("Unity catalog has no authenticated connection provenance")
             if notify and outcome.get("changed"):

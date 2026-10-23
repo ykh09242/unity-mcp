@@ -113,142 +113,82 @@ def authenticated_catalog_context(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def catalog_service(monkeypatch):
+    from fastmcp import FastMCP
+    from services.custom_tool_service import CustomToolService
+    import services.registry.tool_registry as registry
+
+    monkeypatch.setattr(
+        registry,
+        "_tool_registry",
+        [{"name": "manage_gameobject", "unity_target": "manage_gameobject", "group": "core"}],
+    )
+    return CustomToolService(FastMCP("stdio-sync"))
+
+
 @pytest.mark.asyncio
-async def test_sync_registers_custom_tools():
-    """Custom (non-built-in) tools should be registered via CustomToolService."""
+async def test_sync_registers_custom_tools(catalog_service):
     response = _make_unity_response([BUILTIN_TOOL, CUSTOM_TOOL])
-
-    mock_service = MagicMock()
-    mock_service._sources = {}
-
-    with (
-        patch(
-            "transport.legacy.unity_connection.async_send_command_with_retry",
-            new_callable=AsyncMock,
-            side_effect=_captured_reply(response),
-        ),
-        patch(
-            "transport.plugin_hub.PluginHub._sync_server_tool_visibility",
-        ),
-        patch(
-            "transport.plugin_hub.PluginHub._notify_mcp_tool_list_changed",
-            new_callable=AsyncMock,
-        ),
-        patch(
-            "services.custom_tool_service.CustomToolService._instance",
-            new=mock_service,
-        ),
+    with patch(
+        "transport.legacy.unity_connection.async_send_command_with_retry",
+        new_callable=AsyncMock,
+        side_effect=_captured_reply(response),
     ):
         from services.tools import sync_tool_visibility_from_unity
 
         result = await sync_tool_visibility_from_unity(notify=False)
-
-    assert result["synced"] is True
-    assert result["custom_tool_count"] == 1
-
-    # The identified authoritative source replaces its complete custom subset.
-    mock_service.replace_project_catalog.assert_called_once()
-    registered = mock_service.replace_project_catalog.call_args[0][1]
-    assert len(registered) == 1
-    assert registered[0].name == "test_ping"
-    assert registered[0].description == "Simple test tool that returns a pong."
-    assert len(registered[0].parameters) == 1
-    assert registered[0].parameters[0].name == "message"
+    assert result["synced"] and result["custom_tool_count"] == 1
+    source = catalog_service._sources[("stdio", None, "deadbeef")]
+    assert set(source.tools) == {"manage_gameobject", "test_ping"}
+    assert source.tools["test_ping"].parameters[0].name == "message"
+    assert set(catalog_service._owned_tools) == {"test_ping"}
 
 
 @pytest.mark.asyncio
-async def test_sync_skips_builtin_tools():
-    """Built-in tools should NOT be passed to register_global_tools."""
-    response = _make_unity_response([BUILTIN_TOOL])
-
-    with (
-        patch(
-            "transport.legacy.unity_connection.async_send_command_with_retry",
-            new_callable=AsyncMock,
-            side_effect=_captured_reply(response),
-        ),
-        patch(
-            "transport.plugin_hub.PluginHub._sync_server_tool_visibility",
-        ),
-        patch(
-            "transport.plugin_hub.PluginHub._notify_mcp_tool_list_changed",
-            new_callable=AsyncMock,
-        ),
-        patch(
-            "services.custom_tool_service.CustomToolService.get_instance",
-        ) as mock_get_instance,
+async def test_sync_keeps_builtin_availability_without_custom_registration(catalog_service):
+    with patch(
+        "transport.legacy.unity_connection.async_send_command_with_retry",
+        new_callable=AsyncMock,
+        side_effect=_captured_reply(_make_unity_response([BUILTIN_TOOL])),
     ):
         from services.tools import sync_tool_visibility_from_unity
 
         result = await sync_tool_visibility_from_unity(notify=False)
-
-    assert result["synced"] is True
-    assert result["custom_tool_count"] == 0
-    # No custom tools → register_global_tools should NOT be called
-    mock_get_instance.assert_not_called()
+    assert result["synced"] and result["custom_tool_count"] == 0
+    assert catalog_service.get_stdio_availability("deadbeef", "authenticated-fixture") == {
+        "manage_gameobject"
+    }
+    assert not catalog_service._owned_tools
 
 
 @pytest.mark.asyncio
-async def test_sync_skips_when_no_extended_metadata():
-    """When Unity returns old-format data (no is_built_in), skip custom tool registration."""
+async def test_sync_without_provenance_keeps_existing_catalog(catalog_service):
     response = _make_unity_response([BUILTIN_TOOL, CUSTOM_TOOL], include_extended=False)
-
-    with (
-        patch(
-            "transport.legacy.unity_connection.async_send_command_with_retry",
-            new_callable=AsyncMock,
-            return_value=response,
-        ),
-        patch(
-            "transport.plugin_hub.PluginHub._sync_server_tool_visibility",
-        ),
-        patch(
-            "transport.plugin_hub.PluginHub._notify_mcp_tool_list_changed",
-            new_callable=AsyncMock,
-        ),
-        patch(
-            "services.custom_tool_service.CustomToolService.get_instance",
-        ) as mock_get_instance,
+    with patch(
+        "transport.legacy.unity_connection.async_send_command_with_retry",
+        new_callable=AsyncMock,
+        return_value=response,
     ):
         from services.tools import sync_tool_visibility_from_unity
 
         result = await sync_tool_visibility_from_unity(notify=False)
-
-    assert result["synced"] is True
-    assert result["custom_tool_count"] == 0
-    mock_get_instance.assert_not_called()
+    assert result["synced"] and result["custom_tool_count"] == 0
+    assert result["settings_sync"]["status"] == "unconfirmed"
+    assert not catalog_service._sources and not catalog_service._owned_tools
 
 
 @pytest.mark.asyncio
 async def test_sync_handles_custom_tool_service_not_initialized():
-    """If CustomToolService isn't initialized yet, skip gracefully (no crash)."""
-    response = _make_unity_response([CUSTOM_TOOL])
-
-    with (
-        patch(
-            "transport.legacy.unity_connection.async_send_command_with_retry",
-            new_callable=AsyncMock,
-            side_effect=_captured_reply(response),
-        ),
-        patch(
-            "transport.plugin_hub.PluginHub._sync_server_tool_visibility",
-        ),
-        patch(
-            "transport.plugin_hub.PluginHub._notify_mcp_tool_list_changed",
-            new_callable=AsyncMock,
-        ),
-        patch(
-            "services.custom_tool_service.CustomToolService.get_instance",
-            side_effect=RuntimeError("not initialized"),
-        ),
+    with patch(
+        "transport.legacy.unity_connection.async_send_command_with_retry",
+        new_callable=AsyncMock,
+        side_effect=_captured_reply(_make_unity_response([CUSTOM_TOOL])),
     ):
         from services.tools import sync_tool_visibility_from_unity
 
         result = await sync_tool_visibility_from_unity(notify=False)
-
-    # Should succeed overall even though custom tool registration failed
-    assert result["synced"] is True
-    assert result["custom_tool_count"] == 0
+    assert result == {"error": "Unity catalog service unavailable"}
 
 
 # ---------------------------------------------------------------------------

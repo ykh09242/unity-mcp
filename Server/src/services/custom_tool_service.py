@@ -796,6 +796,18 @@ class CustomToolService:
             catalog = self._sources.get((kind, user_id, project_id))
             return catalog.revision if catalog is not None else 0
 
+    def get_stdio_availability(self, project_id: str, generation: str | None) -> set[str] | None:
+        """Read only a current authenticated catalog; None preserves offline discovery."""
+        if not generation:
+            return None
+        with self._catalog_lock:
+            catalog = self._sources.get(("stdio", None, project_id))
+            if catalog is None or catalog.generation != generation or self._publishing:
+                return None
+            # Nonempty legacy snapshots are usable, but only authoritative evidence
+            # establishes that an empty catalog means all native tools are disabled.
+            return set(catalog.tools) if catalog.known or catalog.tools else None
+
     @staticmethod
     def _wire_contract(definition):
         schema = prepare_descriptor(
