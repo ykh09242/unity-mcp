@@ -199,7 +199,7 @@ def test_cli_wait_polls_instead_of_replaying_play():
         ("width", "1920"),
         ("height", -1),
         ("timeout_seconds", 0),
-        ("timeout_seconds", 301),
+        ("timeout_seconds", 86401),
         ("wait_until", "rendered"),
         ("aspect_ratio", "16/9"),
     ],
@@ -211,3 +211,46 @@ def test_public_schema_rejects_invalid_readiness_and_size_inputs(field, value):
     with pytest.raises(ValidationError):
         adapter.validate_python(value)
     # Then the invalid request is rejected before invoking Unity.
+
+
+@pytest.mark.parametrize("seconds", [900, 86400])
+def test_large_play_budget_reaches_native_once_and_remains_in_public_schema(
+    context, monkeypatch, seconds
+):
+    calls = []
+
+    async def send(_sender, _instance, _tool, params, **options):
+        calls.append(params)
+        assert options["retry_on_reload"] is False
+        return {"success": True, "data": {"job_id": params["job_id"], "status": "succeeded"}}
+
+    monkeypatch.setattr("services.tools.manage_editor.send_with_unity_instance", send)
+    adapter = TypeAdapter(inspect.signature(manage_editor).parameters["timeout_seconds"].annotation)
+    assert adapter.validate_python(seconds) == seconds
+
+    async def invoke():
+        return await manage_editor(
+            context, action="play", wait_until="scene_loaded", timeout_seconds=seconds
+        )
+
+    result = anyio.run(invoke)
+    assert result["success"] is True
+    assert len(calls) == 1 and calls[0]["timeout_seconds"] == seconds
+
+
+def test_large_play_budget_is_available_to_cli():
+    calls = []
+
+    def send(_tool, params, _config, **_options):
+        calls.append(params)
+        return {"success": True, "data": {"job_id": params["job_id"], "status": "succeeded"}}
+
+    with (
+        patch("cli.commands.editor.get_config", return_value=CLIConfig(format="json")),
+        patch("cli.commands.editor.run_command", side_effect=send),
+    ):
+        result = CliRunner().invoke(
+            editor, ["play", "--wait-until", "first_frame", "--timeout-seconds", "900"]
+        )
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1 and calls[0]["timeout_seconds"] == 900

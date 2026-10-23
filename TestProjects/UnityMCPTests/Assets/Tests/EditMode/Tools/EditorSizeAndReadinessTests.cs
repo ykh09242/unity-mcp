@@ -191,7 +191,7 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [TestCase("scene_loaded", 0)]
-        [TestCase("first_frame", 301)]
+        [TestCase("first_frame", 86401)]
         [TestCase("rendered", 30)]
         public void PlayReadiness_RejectsInvalidRequestWithoutEnteringPlay(string target, int timeout)
         {
@@ -443,8 +443,83 @@ namespace MCPForUnityTests.EditMode.Tools
             var callback = (EditorApplication.CallbackFunction)
                 Delegate.CreateDelegate(typeof(EditorApplication.CallbackFunction), _service.GetMethod("RequestPlay", Flags));
             EditorApplication.delayCall -= callback;
+            _service.GetField("_clockOverride", Flags)?.SetValue(null, null);
+            _service.GetField("_readinessOverride", Flags)?.SetValue(null, null);
             _jobField.SetValue(null, _originalJob);
             SessionState.SetString(SessionKey, _originalSaved);
+        }
+
+        private void Clock(double seconds)
+        {
+            var field = _service.GetField("_clockOverride", Flags);
+            Assert.IsNotNull(field, "Readiness needs an elapsed Editor clock boundary.");
+            field.SetValue(null, (Func<double>)(() => seconds));
+        }
+
+        private void Ready(bool value)
+        {
+            var field = _service.GetField("_readinessOverride", Flags);
+            Assert.IsNotNull(field);
+            field.SetValue(null, (Func<bool>)(() => value));
+        }
+
+        [TestCase(900)]
+        [TestCase(86400)]
+        public void LargeReadinessBudgetIsAdmittedWithoutStartingAnotherTransition(int seconds)
+        {
+            var result = Invoke("play", new JObject { ["wait_until"] = "first_frame", ["timeout_seconds"] = seconds });
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(seconds, result["data"].Value<int>("timeout_seconds"));
+            Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode);
+        }
+
+        [Test]
+        public void DefaultReadinessBudgetMatchesLargeProjectStartup()
+        {
+            var result = Invoke("play", new JObject { ["wait_until"] = "first_frame" });
+            Assert.AreEqual(300, result["data"].Value<int>("timeout_seconds"));
+        }
+
+        [Test]
+        public void ReloadKeepsMonotonicDeadlineDespiteChangedWallClock()
+        {
+            Clock(100);
+            var start = Invoke("play", new JObject { ["wait_until"] = "first_frame", ["timeout_seconds"] = 900 });
+            string id = start["data"].Value<string>("job_id");
+            var saved = JObject.Parse(SessionState.GetString(SessionKey, ""));
+            Assert.AreEqual(1000d, saved.Value<double>("deadline_editor_seconds"));
+            saved["deadline_unix_ms"] = 1;
+            SessionState.SetString(SessionKey, saved.ToString());
+            _jobField.SetValue(null, null);
+            _service.GetMethod("Restore", Flags).Invoke(null, null);
+            Clock(401);
+            Assert.AreEqual("running", Invoke("get_play_mode_job", new JObject { ["job_id"] = id })["data"].Value<string>("status"));
+            Clock(1001);
+            Assert.AreEqual("timed_out", Invoke("get_play_mode_job", new JObject { ["job_id"] = id })["data"].Value<string>("status"));
+            _service.GetMethod("RequestPlay", Flags).Invoke(null, null);
+            Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ExpiredReadinessUsesOriginalHandleForLateObservationOrCancellation(bool cancel)
+        {
+            Clock(100);
+            Ready(false);
+            var start = Invoke("play", new JObject { ["wait_until"] = "scene_loaded", ["timeout_seconds"] = 10 });
+            string id = start["data"].Value<string>("job_id");
+            Clock(111);
+            var timedOut = Invoke("get_play_mode_job", new JObject { ["job_id"] = id });
+            Assert.AreEqual("timed_out", timedOut["data"].Value<string>("status"));
+            if (cancel)
+                Invoke("cancel_play_mode_job", new JObject { ["job_id"] = id });
+            Ready(true);
+            var late = Invoke("get_play_mode_job", new JObject { ["job_id"] = id });
+            Assert.AreEqual(cancel ? "cancelled" : "succeeded", late["data"].Value<string>("status"));
+            Assert.IsTrue(late["data"].Value<bool>("observation_expired"));
+            Assert.AreEqual(!cancel, late["data"].Value<bool>("observed_after_deadline"));
+            Assert.AreEqual(id, late["data"].Value<string>("job_id"));
+            Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode);
         }
 
         [Test]

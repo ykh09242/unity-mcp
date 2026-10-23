@@ -22,12 +22,20 @@ namespace MCPForUnity.Editor.Services
             public string status = "running";
             public string error;
             public long deadline_unix_ms;
+            public double deadline_editor_seconds;
+            public int timeout_seconds;
+            public bool observation_expired;
+            public bool observed_after_deadline;
             public bool transition_requested;
             public bool entered;
             public int entry_frame;
         }
 
         private static Job _job;
+        internal static Func<double> _clockOverride = null;
+        internal static Func<bool> _readinessOverride = null;
+
+        private static double Now() => _clockOverride?.Invoke() ?? EditorApplication.timeSinceStartup;
 
         static PlayModeReadiness()
         {
@@ -44,6 +52,14 @@ namespace MCPForUnity.Editor.Services
                 try
                 {
                     _job = JsonConvert.DeserializeObject<Job>(saved);
+                    if (_job != null && _job.status == "running" && _job.deadline_editor_seconds <= 0)
+                    {
+                        // Upgrade the pre-existing session record once, retaining only its
+                        // remaining time. SessionState cannot cross an Editor process restart.
+                        double remaining = Math.Max(0, Math.Min(86400, (_job.deadline_unix_ms - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) / 1000d));
+                        _job.deadline_editor_seconds = Now() + remaining;
+                        Persist();
+                    }
                 }
                 catch (JsonException)
                 {
@@ -60,7 +76,7 @@ namespace MCPForUnity.Editor.Services
             string target = parameters["wait_until"]?.ToString();
             if (target != "scene_loaded" && target != "first_frame")
                 return new ErrorResponse("wait_until must be scene_loaded or first_frame.");
-            if (!PaginationBounds.TryRead(parameters["timeout_seconds"], 30, 1, 300, "timeout_seconds", out int timeout, out string error))
+            if (!PaginationBounds.TryRead(parameters["timeout_seconds"], 300, 1, 86400, "timeout_seconds", out int timeout, out string error))
                 return new ErrorResponse(error);
             Tick();
             if (requestedId != null && _job != null && _job.job_id == requestedId)
@@ -72,6 +88,8 @@ namespace MCPForUnity.Editor.Services
                 job_id = requestedId ?? Guid.NewGuid().ToString("N"),
                 wait_until = target,
                 deadline_unix_ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + timeout * 1000L,
+                deadline_editor_seconds = Now() + timeout,
+                timeout_seconds = timeout,
                 // Do not attempt to enter again when a user or another tool is already entering.
                 transition_requested = EditorApplication.isPlayingOrWillChangePlaymode,
             };
@@ -94,13 +112,13 @@ namespace MCPForUnity.Editor.Services
             if (cancel)
                 Cancel("Readiness monitoring cancelled; Play Mode is unchanged.");
             else
-                Tick();
+                Observe(allowExpired: true);
             return new SuccessResponse("Play mode readiness status.", Snapshot());
         }
 
         public static void Cancel(string reason)
         {
-            if (_job == null || _job.status != "running")
+            if (_job == null || (_job.status != "running" && _job.status != "timed_out"))
                 return;
             _job.status = "cancelled";
             _job.error = reason;
@@ -131,7 +149,7 @@ namespace MCPForUnity.Editor.Services
             SessionState.SetBool(PlayingKey, state == PlayModeStateChange.EnteredPlayMode);
             if (state == PlayModeStateChange.ExitingPlayMode || state == PlayModeStateChange.EnteredEditMode)
                 Cancel("Play Mode exited before readiness was confirmed.");
-            else if (state == PlayModeStateChange.EnteredPlayMode && _job != null && _job.status == "running")
+            else if (state == PlayModeStateChange.EnteredPlayMode && _job != null && (_job.status == "running" || _job.status == "timed_out"))
             {
                 _job.entered = true;
                 _job.entry_frame = Time.frameCount;
@@ -140,26 +158,40 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static void Tick()
+        private static void Tick() => Observe(allowExpired: false);
+
+        private static void Observe(bool allowExpired)
         {
-            if (_job == null || _job.status != "running")
+            if (_job == null || (_job.status != "running" && !(allowExpired && _job.status == "timed_out")))
                 return;
-            if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= _job.deadline_unix_ms)
+            bool expired = Now() >= _job.deadline_editor_seconds;
+            // A blocked Editor can first observe completion after its budget. Report the
+            // current state honestly without implying timely completion or replaying Play.
+            if (IsReady())
+            {
+                _job.status = "succeeded";
+                _job.error = null;
+                _job.observation_expired |= expired;
+                _job.observed_after_deadline = expired;
+                Persist();
+            }
+            else if (expired && _job.status == "running")
             {
                 _job.status = "timed_out";
-                _job.error = "Readiness deadline expired; Play Mode is unchanged.";
+                _job.observation_expired = true;
+                _job.error = "Readiness observation expired; Play Mode is unchanged. Poll get_play_mode_job with this job_id before starting another request.";
                 Persist();
-                return;
             }
+        }
+
+        private static bool IsReady()
+        {
+            if (_readinessOverride != null)
+                return _readinessOverride();
             if (!_job.entered || !EditorApplication.isPlaying || EditorApplication.isCompiling || EditorApplication.isUpdating)
-                return;
+                return false;
             Scene active = SceneManager.GetActiveScene();
-            if (!active.IsValid() || !active.isLoaded)
-                return;
-            if (_job.wait_until == "first_frame" && Time.frameCount <= _job.entry_frame)
-                return;
-            _job.status = "succeeded";
-            Persist();
+            return active.IsValid() && active.isLoaded && (_job.wait_until != "first_frame" || Time.frameCount > _job.entry_frame);
         }
 
         private static object Snapshot() =>
@@ -170,6 +202,11 @@ namespace MCPForUnity.Editor.Services
                 _job.status,
                 _job.error,
                 _job.deadline_unix_ms,
+                _job.deadline_editor_seconds,
+                _job.timeout_seconds,
+                _job.observation_expired,
+                _job.observed_after_deadline,
+                _job.transition_requested,
                 is_playing = EditorApplication.isPlaying,
                 is_paused = EditorApplication.isPaused,
                 frame_count = Time.frameCount,

@@ -37,7 +37,7 @@ def editor():
     default=None,
     help="Wait for loaded active scene or subsequent simulation frame (not app async initialization).",
 )
-@click.option("--timeout-seconds", type=click.IntRange(1, 300), default=30, show_default=True)
+@click.option("--timeout-seconds", type=click.IntRange(1, 86400), default=300, show_default=True)
 @handle_unity_errors
 def play(wait_until: str | None, timeout_seconds: int):
     """Enter play mode."""
@@ -75,6 +75,8 @@ def play(wait_until: str | None, timeout_seconds: int):
                             "data": {
                                 "job_id": job_id,
                                 "status": "wait_timed_out",
+                                "observation_expired": True,
+                                "follow_up": "get_play_mode_job",
                                 "last_response": result,
                             },
                         }
@@ -119,6 +121,8 @@ def play(wait_until: str | None, timeout_seconds: int):
                     "data": {
                         "job_id": job_id,
                         "status": "wait_timed_out",
+                        "observation_expired": True,
+                        "follow_up": "get_play_mode_job",
                         "last_response": result,
                     },
                 }

@@ -51,8 +51,8 @@ async def execute_menu_item(
         StrictInt | None,
         Field(
             ge=1,
-            le=10000,
-            description="Observation ceiling, default 2000ms; permitted only with a supported wait_for.",
+            le=86400000,
+            description="Observation ceiling, default 300000ms; permitted only with a supported wait_for.",
         ),
     ] = None,
 ) -> MCPResponse:
@@ -81,10 +81,10 @@ async def execute_menu_item(
         invalid = "console_window_open is supported only for Window/General/Console execution."
     if timeout_ms is not None and (
         type(timeout_ms) is not int
-        or not 1 <= timeout_ms <= 10000
+        or not 1 <= timeout_ms <= 86400000
         or wait_for != "console_window_open"
     ):
-        invalid = "timeout_ms must be integer 1..10000 with a supported wait_for."
+        invalid = "timeout_ms must be integer 1..86400000 with a supported wait_for."
     if invalid:
         return MCPResponse(success=False, error=invalid)
     unity_instance = await get_unity_instance_from_context(ctx)
@@ -95,6 +95,10 @@ async def execute_menu_item(
         "timeout_ms": timeout_ms,
     }
     params_dict = {k: v for k, v in params_dict.items() if v is not None}
+    if wait_for == "console_window_open":
+        # Both HTTP and stdio read this explicit envelope budget. Native timeout_ms
+        # still owns observation; neither transport may silently keep its old cap.
+        params_dict["timeout_seconds"] = (timeout_ms if timeout_ms is not None else 300000) / 1000
     command = (
         "inspect_menu_item"
         if action in ("inspect", "exists")

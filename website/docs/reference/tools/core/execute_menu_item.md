@@ -21,7 +21,7 @@ Inspect menu existence/availability evidence or invoke a menu by exact path. Def
 | `menu_path` | `str \| None` | — | Exact menu path, maximum 1024 UTF-16 characters/4096 UTF-8 bytes; no NUL/newlines. |
 | `action` | `Literal['execute', 'inspect', 'exists'] \| None` | — | Default execute; inspect (or exists alias) does not invoke the command. |
 | `wait_for` | `Literal['none', 'console_window_open'] \| None` | — | Optional allowlisted window-presence observation, not general menu completion. |
-| `timeout_ms` | `int \| None` | — | Observation ceiling, default 2000ms; permitted only with a supported wait_for. |
+| `timeout_ms` | `int \| None` | — | Observation ceiling, default 300000ms; permitted only with a supported wait_for. |
 
 ## Returns
 

@@ -137,6 +137,16 @@ namespace MCPForUnityTests.Editor.Helpers
             EditorConfigurationCache.Instance.Refresh();
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FreshStdioConfigurationAllowsColdBootstrapWithinFiveMinutes(bool upsert)
+        {
+            string result = upsert ? CodexConfigHelper.UpsertCodexServerBlock("", null) : CodexConfigHelper.BuildCodexServerBlock(null);
+            using var reader = new StringReader(result);
+            var root = TOML.Parse(reader);
+            Assert.AreEqual(300, ((TomlInteger)root["mcp_servers"]["unityMCP"]["startup_timeout_sec"]).Value);
+        }
+
         [Test]
         public void UpsertCodexServerBlock_StdioPreservesCustomSettings()
         {

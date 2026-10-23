@@ -24,6 +24,38 @@ inside Unity. An ambiguous dispatch reports `inspect_state_before_retry`; inspec
 editor state or the returned compilation ID before deciding to issue another write.
 Only explicit pre-dispatch reload refusals are eligible for automatic replay.
 
+## Play Mode, Console and client startup
+
+`manage_editor(action="play", wait_until="first_frame", timeout_seconds=1800)`
+uses a 30-minute readiness observation budget. The default is 300 seconds; native,
+MCP and CLI callers accept integers from 1 to 86,400. CLI callers can use
+`unity-mcp editor play --wait-until first_frame --timeout-seconds 1800`.
+The native deadline uses [Editor elapsed time](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/EditorApplication-timeSinceStartup.html)
+and persists in the same Editor session across domain reload. The wall-clock
+deadline remains display metadata and cannot prematurely expire a new job after
+a system clock correction.
+
+Observation expiry leaves Play Mode unchanged and returns the original job ID.
+Use `get_play_mode_job` (CLI: `editor play-status JOB_ID`) to observe late readiness;
+do not replay `play`. A later successful observation includes
+`observed_after_deadline=true` and does not claim that startup completed within the
+original budget. `cancel_play_mode_job` retires monitoring, including an expired
+observation, without stopping Play Mode. Scene-loaded and first-frame readiness
+still do not guarantee application initialization or a rendered image.
+
+`execute_menu_item` supports `timeout_ms` from 1 to 86,400,000 for the allowlisted
+`console_window_open` observation only; the default is 300,000 milliseconds.
+HTTP and stdio receive the corresponding command budget. Console presence is
+checked before declaring expiry when the Editor resumes: a late positive result
+reports `observed_after_deadline` with `observed_within_budget=false`.
+Unavailable or cancelled observation remains distinct from an observed closed
+window. The accepted invocation is never automatically repeated.
+
+New Codex stdio entries use `startup_timeout_sec = 300` for cold package/server
+bootstrap. This belongs to the client startup layer, independently of normal tool
+request deadlines. Set a larger explicit value in the generated client entry for
+a slower environment; subsequent configuration updates preserve existing values.
+
 ## Recovery and transport settings
 
 Set environment variables on the process that owns the setting. Restart the server

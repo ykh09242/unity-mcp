@@ -71,7 +71,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
 
                 // Allow extra time for uvx to download packages on first run
-                unityMCP["startup_timeout_sec"] = new TomlInteger { Value = 60 };
+                unityMCP["startup_timeout_sec"] = new TomlInteger { Value = 300 };
             }
 
             mcpServers["unityMCP"] = unityMCP;
@@ -338,7 +338,7 @@ namespace MCPForUnity.Editor.Helpers
                     env["SystemRoot"] = inputs.SystemRoot;
                     table["env"] = env;
                 }
-                table["startup_timeout_sec"] = new TomlInteger { Value = 60 };
+                table["startup_timeout_sec"] = new TomlInteger { Value = 300 };
             }
             return table;
         }
@@ -563,7 +563,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
 
                 // Allow extra time for uvx to download packages on first run
-                unityMCP["startup_timeout_sec"] = new TomlInteger { Value = 60 };
+                unityMCP["startup_timeout_sec"] = new TomlInteger { Value = 300 };
             }
 
             return unityMCP;

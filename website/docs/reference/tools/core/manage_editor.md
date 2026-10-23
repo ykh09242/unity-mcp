@@ -23,7 +23,7 @@ Controls Unity editor state and settings. play optionally waits for scene_loaded
 | `tag_name` | `str \| None` | — | Tag name when adding and removing tags |
 | `layer_name` | `str \| None` | — | Layer name when adding and removing layers |
 | `wait_until` | `Literal['scene_loaded', 'first_frame'] \| None` | — | Optional bounded readiness wait for play |
-| `timeout_seconds` | `int` | — | Play readiness deadline in seconds |
+| `timeout_seconds` | `int` | — | Play readiness observation budget in seconds; expiry does not stop Play Mode |
 | `job_id` | `str \| None` | — | Job ID for get_play_mode_job/cancel_play_mode_job |
 | `width` | `int \| None` | — | Fixed Game View width; combined limit 16 megapixels |
 | `height` | `int \| None` | — | Fixed Game View height |
