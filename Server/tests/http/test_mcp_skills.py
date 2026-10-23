@@ -567,3 +567,19 @@ async def test_resource_manifest_covers_exact_utf8_and_newline_bytes(bare_skills
     assert content["text"].encode("utf-8") == raw
     assert descriptor["size"] == len(raw)
     assert descriptor["digest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_production_runtime_reports_installed_skills_with_visibility_transforms(
+    skills_server,
+):
+    from core.sdk_compatibility import runtime_sdk_report
+
+    report = runtime_sdk_report(skills_server)
+    assert report["features"]["skills"]["state"] == "active"
+    assert report["features"]["skills"]["installed"] is True
+    async with skills_http(skills_server) as client:
+        result = complete_result(await skill_request(client, "skills/list", declared=True))
+        assert len(result["skills"]) == 1
+        assert result["cacheScope"] == "private"
+        assert result["ttlMs"] == 0

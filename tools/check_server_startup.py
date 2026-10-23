@@ -49,8 +49,13 @@ async def check_registration():
             await receipts.start()
             async with tasks.lifespan():
                 report = runtime_sdk_report(server)
+                required_features = {"execution_receipts", "wait_tasks"}
+                # The immutable launcher may still point to the preceding reviewed
+                # server while a separate source-pin refresh is under validation.
+                if "skills" in report["features"]:
+                    required_features.add("skills")
                 if not report["sdk"]["supported"] or any(
-                    feature["state"] != "active" for feature in report["features"].values()
+                    report["features"][name]["state"] != "active" for name in required_features
                 ):
                     raise RuntimeError("Installed SDK set or optional adapter activation differs")
                 tools = await server.list_tools(run_middleware=False)

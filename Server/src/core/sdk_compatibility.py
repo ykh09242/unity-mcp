@@ -47,6 +47,37 @@ def runtime_sdk_report(server, *, version_reader=None) -> dict:
             state = "active" if active else "inactive"
         return {"configured": configured, "state": state}
 
+    def optional_feature(
+        configured, installed, active, *, unavailable_reason, unavailable_action, enable_action
+    ):
+        result = feature(configured, installed, active)
+        reasons = {
+            "disabled": ("not_configured", enable_action),
+            "sdk_unsupported": ("reviewed_sdk_required", "install_reviewed_sdk"),
+            "unavailable": (unavailable_reason, unavailable_action),
+            "inactive": ("closed", "restart_server"),
+            "active": ("installed", "none"),
+        }
+        reason, action = reasons[result["state"]]
+        return {**result, "installed": installed, "reason": reason, "next_action": action}
+
+    skills = getattr(server, "_packaged_skills", None)
+    skills_installed = (
+        skills is not None
+        and getattr(server, "_extensions", {}).get("io.modelcontextprotocol/skills") is skills
+    )
+    scene_inputs = getattr(server, "_scene_load_inputs", None)
+    scene_installed = scene_inputs is not None and any(
+        middleware is scene_inputs for middleware in getattr(server, "middleware", ())
+    )
+    scene_http = getattr(server, "_scene_load_inputs_transport", None) == "http"
+    scene_reason = (
+        "transport_unsupported"
+        if not scene_http
+        else ("middleware_missing" if scene_inputs is not None else "adapter_unavailable")
+    )
+    scene_action = "check_scene_input_installation" if scene_http else "use_http_transport"
+
     return {
         "schema_version": "unity-mcp/runtime@1",
         "sdk": {
@@ -65,6 +96,22 @@ def runtime_sdk_report(server, *, version_reader=None) -> dict:
                 configured_tasks,
                 tasks is not None,
                 tasks is not None and not tasks._closed,
+            ),
+            "skills": optional_feature(
+                bool(getattr(server, "_skills_requested", False)),
+                skills_installed,
+                skills_installed,
+                unavailable_reason="extension_unavailable",
+                unavailable_action="repair_packaged_skill_bundle",
+                enable_action="use_packaged_server",
+            ),
+            "scene_load_inputs": optional_feature(
+                bool(getattr(server, "_scene_load_inputs_requested", False)),
+                scene_installed,
+                scene_installed and not scene_inputs.ledger._closed,
+                unavailable_reason=scene_reason,
+                unavailable_action=scene_action,
+                enable_action="enable_scene_load_inputs",
             ),
         },
     }
