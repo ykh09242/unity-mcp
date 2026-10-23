@@ -140,7 +140,8 @@ namespace MCPForUnityTests.EditMode.Windows
                                     workers.Add(worker);
                             });
                         Assert.GreaterOrEqual(workers.Count, 5, "Session, soak, comparison and baseline readers must exist.");
-                        var name = root.Q<TextField>("scenarioName");
+                        var name = root.Q<TextField>("copyScenarioName");
+                        name.value = "retained-flow-copy";
                         name.value = "responsive-draft";
                         var step = root.Q<TextField>("stepName0");
                         step.value = "Retained step draft";
@@ -197,6 +198,147 @@ namespace MCPForUnityTests.EditMode.Windows
                             typeof(EditorWindow).GetProperty("hasUnsavedChanges").SetValue(window, false);
                             window.Close();
                         }
+                    }
+                }
+            }
+            finally
+            {
+                skin.SetValue(null, original);
+                UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+                SessionState.SetString(PlayScenarioWindow.SessionJobKey, oldJob);
+                SessionState.SetBool(PlayScenarioWindow.SessionSuiteModeKey, oldSuite);
+            }
+        }
+
+        private static void Submit(VisualElement root, string name)
+        {
+            var button = root.Q<Button>(name);
+            Assert.IsNotNull(button, name);
+            Assert.IsTrue(button.enabledInHierarchy, name);
+            typeof(Clickable).GetMethod("Invoke", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(button.clickable, new object[] { null });
+        }
+
+        [UnityTest, Explicit("Saved scenario, filled reports and imported soak evidence at narrow sizes.")]
+        public IEnumerator PopulatedScenarioEvidenceRemainsReachableAfterResize()
+        {
+            Assert.IsTrue(Guid.TryParseExact(Environment.GetEnvironmentVariable("UNITY_MCP_NATIVE_QA_NONCE"), "N", out _));
+            var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+            var skin = typeof(EditorGUIUtility).GetProperty("skinIndex", Static);
+            var original = skin.GetValue(null);
+            string oldJob = SessionState.GetString(PlayScenarioWindow.SessionJobKey, "");
+            bool oldSuite = SessionState.GetBool(PlayScenarioWindow.SessionSuiteModeKey, false);
+            string directory = EvidenceDirectory();
+            try
+            {
+                foreach (int theme in new[] { 1, 0 })
+                {
+                    SessionState.SetString(PlayScenarioWindow.SessionJobKey, "");
+                    SessionState.SetBool(PlayScenarioWindow.SessionSuiteModeKey, false);
+                    skin.SetValue(null, theme);
+                    UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+                    string storeRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "../Library/ux-" + Guid.NewGuid().ToString("N").Substring(0, 8)));
+                    Directory.CreateDirectory(storeRoot);
+                    var store = new PlayScenarioStore(storeRoot);
+                    var definition = new PlayScenarioDefinition
+                    {
+                        Name = "retained-flow",
+                        Steps = new System.Collections.Generic.List<PlayScenarioStep>
+                        {
+                            new PlayScenarioStep
+                            {
+                                Name = "Load menu",
+                                Action = "load_scene",
+                                Scene = "Assets/FixtureMenu.unity",
+                            },
+                        },
+                    };
+                    store.Save(definition);
+                    var report = new PlayScenarioRun
+                    {
+                        JobId = Guid.NewGuid().ToString("N"),
+                        Scenario = definition,
+                        Status = "succeeded",
+                        Phase = "finished",
+                        RepeatCount = 50,
+                        StartedUnixMs = 1000,
+                        FinishedUnixMs = 2000,
+                    };
+                    for (int index = 0; index < 50; index++)
+                        report.Steps.Add(
+                            new PlayScenarioStepResult
+                            {
+                                Name = "Saved result " + index,
+                                StepIndex = 0,
+                                Iteration = index + 1,
+                                Status = "passed",
+                                Detail = "Synthetic retained step result",
+                            }
+                        );
+                    store.SaveReport(report);
+                    var window = ScriptableObject.CreateInstance<PlayScenarioWindow>();
+                    window.ConfigureForTests(store);
+                    try
+                    {
+                        window.position = new Rect(30, 30, 1100, 700);
+                        window.ShowUtility();
+                        window.CreateGUI();
+                        var root = window.rootVisualElement;
+                        Submit(root, "savedScenario_retained-flow");
+                        typeof(PlayScenarioWindow)
+                            .GetMethod("AcceptReport", flags)
+                            .Invoke(window, new object[] { new MCPForUnity.Editor.Helpers.SuccessResponse("Saved fixture report", report) });
+                        Submit(root, "compareReports");
+                        Assert.Greater(root.Q<ScrollView>("runResults").childCount, 40);
+                        Assert.Greater(root.Q<ScrollView>("reportComparison").childCount, 0);
+                        string soakDirectory = Path.Combine(storeRoot, "soak");
+                        Directory.CreateDirectory(soakDirectory);
+                        var fixture = new PlayScenarioSoakEditorTests();
+                        typeof(PlayScenarioSoakEditorTests).GetField("root", flags).SetValue(fixture, soakDirectory);
+                        string soakPath = (string)typeof(PlayScenarioSoakEditorTests).GetMethod("Save", flags).Invoke(fixture, new object[] { 53, (int?)7 });
+                        window.ChoosePlayerSoakFile = () => soakPath;
+                        Submit(root, "openPlayerSoak");
+                        PlayScenarioImportTestPump.Drain(root, "playerSoak");
+                        Assert.Greater(root.Q("playerSoakSummary").childCount, 0);
+                        yield return Frames(window);
+                        var name = root.Q<TextField>("copyScenarioName");
+                        name.value = "retained-flow-copy";
+                        name.Focus();
+                        yield return Frames(window);
+                        var beforeResize = root.focusController.focusedElement as VisualElement;
+                        Assert.IsTrue(beforeResize == name || name.Contains(beforeResize), "Fixture must focus the scenario field before resizing.");
+                        window.position = new Rect(30, 30, 500, 340);
+                        yield return Frames(window);
+                        var focused = root.focusController.focusedElement as VisualElement;
+                        Assert.IsTrue(focused == name || name.Contains(focused), "Focused scenario field must survive wide-to-compact resize.");
+                        Assert.AreEqual("retained-flow", window.Draft.Name);
+                        Assert.AreEqual("retained-flow-copy", name.value);
+                        Submit(root, "scenario-tab-run");
+                        foreach (var size in new[] { new Vector2(500, 340), new Vector2(500, 600) })
+                        {
+                            window.position = new Rect(30, 30, size.x, size.y);
+                            yield return Frames(window);
+                            var scroll = root.Q<ScrollView>(className: "scenario-results-scroll");
+                            foreach (string target in new[] { "runResults", "reportHistory", "playerSoak" })
+                            {
+                                var item = root.Q(target);
+                                if (item is Foldout foldout)
+                                    foldout.value = true;
+                                yield return Frames(window);
+                                scroll.ScrollTo(item);
+                                yield return Frames(window);
+                                Assert.LessOrEqual(scroll.horizontalScroller.highValue, 1, target);
+                                Assert.IsTrue(item.worldBound.Overlaps(scroll.contentViewport.worldBound), target);
+                                Capture(window, directory, $"populated-{target}-{size.y}-{theme}");
+                            }
+                            Assert.IsTrue(root.Q<Button>("runScenario").worldBound.Overlaps(root.worldBound));
+                            Assert.IsFalse(window.IsPolling, "Saved evidence must not start polling or a new run.");
+                        }
+                        TestContext.Out.WriteLine("DISPLAY_PIXELS_PER_POINT " + EditorGUIUtility.pixelsPerPoint);
+                    }
+                    finally
+                    {
+                        typeof(EditorWindow).GetProperty("hasUnsavedChanges").SetValue(window, false);
+                        window.Close();
                     }
                 }
             }
