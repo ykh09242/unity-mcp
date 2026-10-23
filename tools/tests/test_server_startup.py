@@ -36,6 +36,11 @@ def test_installed_server_startup_probe_accepts_focused_defaults(tmp_path, alias
     inventory = json.loads(result.stdout.splitlines()[-1])
     assert all(inventory[kind] > 0 for kind in ("tools", "resources", "templates"))
     assert inventory["runtime"]["sdk"]["supported"] is True
+    features = inventory["runtime"]["features"]
     assert all(
-        feature["state"] == "active" for feature in inventory["runtime"]["features"].values()
+        features[name]["state"] == "active"
+        for name in ("execution_receipts", "wait_tasks", "skills")
     )
+    assert features["skills"]["installed"] is True
+    assert features["scene_load_inputs"]["state"] in {"disabled", "unavailable"}
+    assert features["scene_load_inputs"]["installed"] is False

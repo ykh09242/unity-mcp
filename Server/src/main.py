@@ -668,6 +668,8 @@ def create_mcp_server(
     )
     mcp._unity_session_state_store = state_store
     mcp._scene_load_inputs = scene_inputs
+    mcp._scene_load_inputs_requested = os.environ.get("UNITY_MCP_SCENE_LOAD_INPUTS") == "1"
+    mcp._scene_load_inputs_transport = config.transport_mode
     from services.reference_graph.service import ReferenceGraphService
 
     mcp._reference_graph_service = ReferenceGraphService()
@@ -1119,7 +1121,8 @@ def create_mcp_server(
     # Register all resources
     register_all_resources(mcp, project_scoped_tools=project_scoped_tools)
     install_test_results_app(mcp)
-    install_skills(mcp)
+    mcp._skills_requested = True
+    mcp._packaged_skills = install_skills(mcp)
 
     if test_wait_tasks_root is not None:
         install_test_job_tasks(mcp, test_wait_tasks_root, remote_hosted=config.http_remote_hosted)

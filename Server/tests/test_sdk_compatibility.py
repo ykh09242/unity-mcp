@@ -75,11 +75,17 @@ def test_sdk_report_distinguishes_reviewed_dependencies_from_enabled_features():
     server._test_job_tasks = SimpleNamespace(_closed=True)
     server._execution_receipts = SimpleNamespace(root=object(), store=None, closed=False)
     inactive = runtime_sdk_report(server)
-    assert all(item["state"] == "inactive" for item in inactive["features"].values())
+    assert all(
+        item["state"] == "inactive"
+        for item in (inactive["features"][key] for key in ("execution_receipts", "wait_tasks"))
+    )
     server._test_job_tasks._closed = False
     server._execution_receipts.store = SimpleNamespace(available=True)
     active = runtime_sdk_report(server)
-    assert all(item["state"] == "active" for item in active["features"].values())
+    assert all(
+        item["state"] == "active"
+        for item in (active["features"][key] for key in ("execution_receipts", "wait_tasks"))
+    )
     assert len(json.dumps(active)) < 4096
     server._execution_receipts.store.available = False
     assert runtime_sdk_report(server)["features"]["execution_receipts"]["state"] == "unavailable"
