@@ -352,6 +352,54 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void RecoveryAfterInterruptedExchangePreservesUnverifiedStagePreimage()
+        {
+            string id = Prepare();
+            SetSeam("_continueForTests", (Func<int, bool>)(_ => false));
+            Command("apply_change_set", id);
+            byte[] candidate = Bytes("First");
+            string backup = Directory.GetFiles(folder, "*.bak").Single();
+            string stage = Path.ChangeExtension(backup, ".tmp");
+            File.Move(backup, stage);
+            File.WriteAllText(stage, "external displaced bytes");
+            SetSeam("_domainForTests", (Func<string>)(() => "second-domain"));
+
+            JObject recovered = Command("recover_change_set", id);
+            Assert.IsFalse(recovered.Value<bool>("success"), recovered.ToString());
+            Assert.AreEqual("uncertain", (string)recovered["data"]["files"][0]["state"]);
+            CollectionAssert.AreEqual(candidate, Bytes("First"), "Unverified displaced preimages require explicit reconciliation.");
+            Assert.AreEqual("external displaced bytes", File.ReadAllText(stage));
+        }
+
+        [Test]
+        public void RecoveryRetriesInterruptedCompensationUsingTheSameOriginal()
+        {
+            byte[] original = Bytes("First");
+            string id = Prepare();
+            SetSeam("_continueForTests", (Func<int, bool>)(_ => false));
+            Command("apply_change_set", id);
+            byte[] candidate = Bytes("First");
+            SetSeam(
+                "_stageForTests",
+                (Action<string, int>)(
+                    (stage, index) =>
+                    {
+                        if (stage == "before_restore" && index == 0)
+                            throw new IOException("Owned interrupted compensation");
+                    }
+                )
+            );
+            JObject interrupted = Command("recover_change_set", id);
+            Assert.IsFalse(interrupted.Value<bool>("success"));
+            CollectionAssert.AreEqual(candidate, Bytes("First"));
+            SetSeam("_stageForTests", null);
+            SetSeam("_domainForTests", (Func<string>)(() => "recovery-domain"));
+            JObject recovered = Command("recover_change_set", id);
+            Assert.IsTrue(recovered.Value<bool>("success"), recovered.ToString());
+            CollectionAssert.AreEqual(original, Bytes("First"));
+        }
+
+        [Test]
         public void Prepare_DuplicateTargetsRefuseWithoutWriting()
         {
             // Given: two entries targeting the same physical source.

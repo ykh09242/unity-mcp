@@ -281,7 +281,7 @@ namespace MCPForUnity.Editor.Tools
                         throw new Refusal("staging_conflict", "A replacement backup appeared and was not overwritten.");
                     entry.ReplaceAttempted = true;
                     Save(plan);
-                    File.Replace(stage, Target(entry), backup);
+                    AtomicFilePublication.Replace(stage, Target(entry), backup);
                     entry.ReplaceReturned = true;
                     entry.State = "confirmed";
                     entry.Backup = Digest(ReadBounded(backup, MaxFileBytes));
@@ -345,6 +345,17 @@ namespace MCPForUnity.Editor.Tools
                     byte[] restore = ReadBounded(Blob(plan, i, false), MaxFileBytes);
                     string restoreDigest = entry.Original;
                     string backup = Staged(plan, i, "bak");
+                    // On Unix a process can stop after atomic exchange but before the preimage
+                    // is renamed to .bak. Reconcile that retained stage using the same digest guard.
+                    string stage = Staged(plan, i, "tmp");
+                    if (
+                        !File.Exists(backup)
+                        && entry.ReplaceAttempted
+                        && entry.StageCreated
+                        && File.Exists(stage)
+                        && Digest(ReadBounded(stage, MaxFileBytes)) != entry.Candidate
+                    )
+                        backup = stage;
                     if (File.Exists(backup))
                     {
                         byte[] actualBackup = ReadBounded(backup, MaxFileBytes);

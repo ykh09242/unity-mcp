@@ -66,12 +66,14 @@ namespace MCPForUnity.Editor.Helpers
                 if (expectedDigest != null && observed != expectedDigest)
                     throw new IOException("Source changed since preparation; no bytes were replaced.");
                 string metadata = Metadata(path);
-                using (var output = new FileStream(Checked(stage), FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                {
-                    staged = true;
-                    output.Write(contents, 0, contents.Length);
-                    output.Flush(true);
-                }
+                AtomicFilePublication.StageNew(
+                    Checked(stage),
+                    output =>
+                    {
+                        staged = true;
+                        output.Write(contents, 0, contents.Length);
+                    }
+                );
                 beforeCommit?.Invoke();
                 Checked(path);
                 if (Metadata(path) != metadata || (original != null ? DigestFile(path) != observed : File.Exists(path)))
@@ -79,26 +81,34 @@ namespace MCPForUnity.Editor.Helpers
                 if (File.Exists(Checked(backup)))
                     throw new IOException("An unexpected replacement backup already exists.");
                 attempted = true;
-                if (original == null)
-                    File.Move(stage, path);
-                else
-                    File.Replace(stage, path, backup);
-                // File.Replace is not compare-and-swap. Preserve its actual preimage on a rename
-                // race or uncertain postcommit outcome; never blindly restore over another writer.
-                if (original != null && DigestFile(backup) != observed || DigestFile(path) != Digest(contents) || Metadata(path) != metadata)
-                    throw new IOException("Concurrent source replacement detected; inspect the retained preimage before retrying.");
+                CommitPrepared(stage, path, backup, observed, metadata, Digest(contents));
                 confirmed = true;
-            }
-            catch (Exception ex) when (attempted && File.Exists(backup))
-            {
-                throw new IOException("Asset publication is uncertain. Replacement preimage retained at: " + backup, ex);
             }
             finally
             {
-                if (staged)
+                if (staged && (!attempted || confirmed))
                     TryDelete(stage);
                 if (confirmed)
                     TryDelete(backup);
+            }
+        }
+
+        // A separate commit boundary lets the caller finish admission before any publication.
+        // Its actual displaced preimage, including a post-admission external replacement, is verified.
+        internal static void CommitPrepared(string stage, string path, string backup, string observed, string metadata, string candidate)
+        {
+            try
+            {
+                if (observed == null)
+                    AtomicFilePublication.Create(Checked(stage), Checked(path));
+                else
+                    AtomicFilePublication.Replace(Checked(stage), Checked(path), Checked(backup));
+                if (observed != null && DigestFile(backup) != observed || DigestFile(path) != candidate || Metadata(path) != metadata)
+                    throw new IOException("Concurrent source replacement detected; inspect the retained preimage before retrying.");
+            }
+            catch (Exception ex) when (File.Exists(backup) || File.Exists(stage))
+            {
+                throw new IOException("Asset publication is uncertain. Retained staging/preimage paths: " + stage + "; " + backup, ex);
             }
         }
 
