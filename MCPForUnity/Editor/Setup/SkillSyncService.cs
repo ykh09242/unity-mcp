@@ -134,21 +134,37 @@ namespace MCPForUnity.Editor.Setup
             }
         }
 
-        public static void PreviewSourceAsync(SkillSyncSource source, string installDir, Action<string> log, Action<SyncPreview> onComplete)
+        public static void PreviewSourceAsync(SkillSyncSource source, string installDir, Action<string> log, Action<SyncPreview> onComplete) =>
+            PreviewSourceAsync(source, installDir, log, onComplete, CancellationToken.None);
+
+        public static void PreviewSourceAsync(
+            SkillSyncSource source,
+            string installDir,
+            Action<string> log,
+            Action<SyncPreview> onComplete,
+            CancellationToken cancellationToken,
+            double? editorWaitTimeoutSeconds = null
+        )
         {
             Task.Run(() =>
             {
                 SyncPreview preview;
                 try
                 {
+                    var budget = new SkillSyncWaitBudget(editorWaitTimeoutSeconds ?? SkillSyncWaitBudget.DefaultSeconds, cancellationToken);
+                    budget.ThrowIfCancellationRequested();
                     if (source == null)
                         throw new InvalidOperationException("An explicit skill source is required.");
                     if (source.IsPackagePinned)
-                        source.RequireCurrentSelection(ReadInstalledOnMainThread());
+                        source.RequireCurrentSelection(ReadInstalledWithBudget(budget));
                     var installPath = ResolveAndValidateInstallPath(installDir);
                     ListFiles(installPath); // Reject linked roots before any remote request.
                     using var client = CreateGitHubClient();
-                    preview = CreateSourcePreview(source, installPath, FetchSourceSnapshot(client, source, log));
+                    budget.ThrowIfCancellationRequested();
+                    var snapshot = FetchSourceSnapshot(client, source, log);
+                    budget.ThrowIfCancellationRequested();
+                    preview = CreateSourcePreview(source, installPath, snapshot);
+                    budget.ThrowIfCancellationRequested();
                     log?.Invoke(preview.SourceDescription + "; resolved commit " + preview.CommitSha);
                     LogPlanDetails(preview.Plan, log);
                 }
@@ -160,22 +176,42 @@ namespace MCPForUnity.Editor.Setup
             });
         }
 
-        public static void ApplyAsync(SyncPreview preview, Action<string> log, Action<SyncResult> onComplete)
+        public static void ApplyAsync(SyncPreview preview, Action<string> log, Action<SyncResult> onComplete) =>
+            ApplyAsync(preview, log, onComplete, CancellationToken.None);
+
+        public static void ApplyAsync(
+            SyncPreview preview,
+            Action<string> log,
+            Action<SyncResult> onComplete,
+            CancellationToken cancellationToken,
+            double? editorWaitTimeoutSeconds = null
+        )
         {
             Task.Run(() =>
             {
                 SyncResult result;
                 try
                 {
+                    var budget = new SkillSyncWaitBudget(editorWaitTimeoutSeconds ?? SkillSyncWaitBudget.DefaultSeconds, cancellationToken);
+                    budget.ThrowIfCancellationRequested();
                     if (preview == null || !preview.Success || !TryParseGitHubRepository("https://github.com/" + preview.Repository, out var repository))
                         throw new InvalidOperationException("A successful skill preview is required.");
                     using var client = CreateGitHubClient();
-                    result = ApplySourcePreview(
+                    result = ApplySourcePreviewWithBudget(
                         preview,
-                        ReadInstalledOnMainThread,
-                        () => FetchSourceSnapshot(client, preview.Source, log),
-                        (path, limit) => DownloadBytes(client, BuildRawFileUrl(repository, preview.CommitSha, CombineRemotePath(SkillSubdir, path)), limit),
-                        log
+                        () => ReadInstalledWithBudget(budget),
+                        () =>
+                        {
+                            budget.ThrowIfCancellationRequested();
+                            return FetchSourceSnapshot(client, preview.Source, log);
+                        },
+                        (path, limit) =>
+                        {
+                            budget.ThrowIfCancellationRequested();
+                            return DownloadBytes(client, BuildRawFileUrl(repository, preview.CommitSha, CombineRemotePath(SkillSubdir, path)), limit);
+                        },
+                        log,
+                        budget
                     );
                 }
                 catch (Exception error)
@@ -246,6 +282,15 @@ namespace MCPForUnity.Editor.Setup
             Func<RemoteSnapshot> fetchSnapshot,
             Func<string, long, byte[]> download,
             Action<string> log
+        ) => ApplySourcePreviewWithBudget(preview, readInstalled, fetchSnapshot, download, log, null);
+
+        private static SyncResult ApplySourcePreviewWithBudget(
+            SyncPreview preview,
+            Func<SkillSyncSource> readInstalled,
+            Func<RemoteSnapshot> fetchSnapshot,
+            Func<string, long, byte[]> download,
+            Action<string> log,
+            SkillSyncWaitBudget budget
         ) =>
             ApplyPreview(
                 preview,
@@ -254,6 +299,7 @@ namespace MCPForUnity.Editor.Setup
                 log,
                 () =>
                 {
+                    budget?.ThrowIfCancellationRequested();
                     if (preview?.Source?.IsPackagePinned == true)
                     {
                         SkillSyncSource current;
@@ -273,25 +319,12 @@ namespace MCPForUnity.Editor.Setup
                 }
             );
 
-        private static SkillSyncSource ReadInstalledOnMainThread()
-        {
-            var completion = new TaskCompletionSource<SkillSyncSource>();
-            EditorApplication.delayCall += () =>
+        private static SkillSyncSource ReadInstalledWithBudget(SkillSyncWaitBudget budget) =>
+            budget.Read(() =>
             {
-                try
-                {
-                    var reader = InstalledSelectionReader;
-                    completion.TrySetResult(reader != null ? reader() : SkillSyncSource.CaptureInstalled());
-                }
-                catch (Exception error)
-                {
-                    completion.TrySetException(error);
-                }
-            };
-            if (Task.WhenAny(completion.Task, Task.Delay(10000)).GetAwaiter().GetResult() != completion.Task)
-                throw new InvalidOperationException("Installed package selection could not be re-read. Preview again before applying.");
-            return completion.Task.GetAwaiter().GetResult();
-        }
+                var reader = InstalledSelectionReader;
+                return reader != null ? reader() : SkillSyncSource.CaptureInstalled();
+            });
 
         internal static SyncResult ApplyPreview(
             SyncPreview preview,

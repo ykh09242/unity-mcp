@@ -53,11 +53,12 @@ namespace MCPForUnityTests.Editor.Setup
         private static Task<SkillSyncSource> ReadOnWorker() =>
             Task.Run(() =>
             {
-                var method = typeof(SkillSyncService).GetMethod("ReadInstalledOnMainThread", Internal);
+                var method = typeof(SkillSyncService).GetMethod("ReadInstalledWithBudget", Internal);
                 Assert.IsNotNull(method);
                 try
                 {
-                    return (SkillSyncSource)method.Invoke(null, null);
+                    return (SkillSyncSource)
+                        method.Invoke(null, new object[] { new SkillSyncWaitBudget(SkillSyncWaitBudget.DefaultSeconds, CancellationToken.None) });
                 }
                 catch (TargetInvocationException error)
                 {
@@ -107,6 +108,46 @@ namespace MCPForUnityTests.Editor.Setup
             var read = ReadOnWorker();
             yield return Wait(read);
             StringAssert.Contains("fixture installed pin unavailable", Assert.Throws<InvalidOperationException>(() => read.GetAwaiter().GetResult()).Message);
+        }
+
+        [UnityTest]
+        public IEnumerator CancelledPreviewCompletesWithoutReadingSelectionOrInstallPath()
+        {
+            int reads = 0;
+            SetReader(() =>
+            {
+                reads++;
+                return Package(A);
+            });
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            var completion = new TaskCompletionSource<SkillSyncService.SyncPreview>();
+            SkillSyncService.PreviewSourceAsync(
+                Package(A),
+                "cancelled-unresolved-fixture",
+                null,
+                result => completion.SetResult(result),
+                cancellation.Token,
+                86400
+            );
+            yield return Wait(completion.Task);
+            var preview = completion.Task.GetAwaiter().GetResult();
+            Assert.IsFalse(preview.Success);
+            StringAssert.Contains("cancel", preview.Error.ToLowerInvariant());
+            Assert.AreEqual(0, reads);
+        }
+
+        [UnityTest]
+        public IEnumerator CancelledApplyCompletesBeforePreviewValidation()
+        {
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            var completion = new TaskCompletionSource<SkillSyncService.SyncResult>();
+            SkillSyncService.ApplyAsync(null, null, result => completion.SetResult(result), cancellation.Token);
+            yield return Wait(completion.Task);
+            var result = completion.Task.GetAwaiter().GetResult();
+            Assert.IsFalse(result.Success);
+            StringAssert.Contains("cancel", result.Error.ToLowerInvariant());
         }
 
         [Test]
