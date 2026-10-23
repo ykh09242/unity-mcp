@@ -49,6 +49,15 @@ namespace MCPForUnity.Editor.Windows
         private Button configureSelectedButton;
         private readonly List<(IMcpClientConfigurator client, Toggle toggle)> clientToggles = new();
 
+        private Label clientsResult;
+        private readonly HashSet<string> configuredClients = new();
+        private readonly Dictionary<string, bool> clientSelections = new();
+        private readonly Dictionary<string, string> clientResults = new();
+        private readonly Dictionary<string, Label> clientResultLabels = new();
+        private Func<IReadOnlyList<IMcpClientConfigurator>> getClients = () => McpClientRegistry.All;
+        private Action<IMcpClientConfigurator> configureClient = client => MCPServiceLocator.Client.ConfigureClient(client);
+        private Action finishSetup = null;
+
         private DependencyCheckResult _dependencyResult;
         private Task<DependencyCheckResult> _dependencyTask;
         private static Func<bool, Task<DependencyCheckResult>> dependencyCheck = DependencyManager.CheckAllDependenciesAsync;
@@ -122,6 +131,7 @@ namespace MCPForUnity.Editor.Windows
             stepDeps = rootVisualElement.Q<VisualElement>("step-deps");
             stepClients = rootVisualElement.Q<VisualElement>("step-clients");
             clientsList = rootVisualElement.Q<VisualElement>("clients-list");
+            clientsResult = rootVisualElement.Q<Label>("clients-result");
             skipClientsButton = rootVisualElement.Q<Button>("skip-clients-button");
             configureSelectedButton = rootVisualElement.Q<Button>("configure-selected-button");
 
@@ -211,14 +221,26 @@ namespace MCPForUnity.Editor.Windows
         {
             clientsList.Clear();
             clientToggles.Clear();
+            clientResultLabels.Clear();
             configureSelectedButton.SetEnabled(true);
-            foreach (var c in McpClientRegistry.All)
+            foreach (var c in getClients())
             {
                 if (!c.IsInstalled)
                     continue;
-                var toggle = new Toggle(c.DisplayName) { value = true, tooltip = c.GetConfigPath() };
+                bool configured = configuredClients.Contains(c.Id);
+                var toggle = new Toggle(c.DisplayName)
+                {
+                    value = !configured && (!clientSelections.TryGetValue(c.Id, out bool selected) || selected),
+                    tooltip = c.GetConfigPath(),
+                };
+                toggle.SetEnabled(!configured);
+                toggle.RegisterValueChangedCallback(evt => clientSelections[c.Id] = evt.newValue);
                 clientToggles.Add((c, toggle));
                 clientsList.Add(toggle);
+                var result = new Label(clientResults.TryGetValue(c.Id, out string message) ? message : "") { enableRichText = false };
+                result.AddToClassList("help-text");
+                clientsList.Add(result);
+                clientResultLabels[c.Id] = result;
             }
             if (clientToggles.Count == 0)
             {
@@ -229,51 +251,61 @@ namespace MCPForUnity.Editor.Windows
             }
         }
 
-        private void OnSkipClientsClicked()
+        private void OnSkipClientsClicked() => CompleteSetup();
+
+        private void CompleteSetup()
         {
-            Setup.SetupWindowService.MarkSetupCompleted();
-            Close();
+            if (finishSetup != null)
+                finishSetup();
+            else
+            {
+                Setup.SetupWindowService.MarkSetupCompleted();
+                Close();
+            }
         }
 
         private void OnConfigureSelectedClicked()
         {
             int success = 0,
                 failure = 0;
-            var failures = new List<string>();
-            foreach (var (c, toggle) in clientToggles)
+            foreach (var (client, toggle) in clientToggles)
             {
-                if (!toggle.value)
+                if (!toggle.value || configuredClients.Contains(client.Id))
                     continue;
+                string result;
                 try
                 {
-                    MCPServiceLocator.Client.ConfigureClient(c);
+                    configureClient(client);
                     success++;
+                    configuredClients.Add(client.Id);
+                    clientSelections[client.Id] = false;
+                    toggle.SetValueWithoutNotify(false);
+                    toggle.SetEnabled(false);
+                    result = "Configured. This client will not be repeated during retry.";
                 }
-                catch (System.Exception ex)
+                catch (Exception)
                 {
                     failure++;
-                    failures.Add($"⚠ {c.DisplayName}: {ex.Message}");
+                    clientSelections[client.Id] = true;
+                    result = "Configuration failed. Check the client installation and file permissions, then retry.";
                 }
+                clientResults[client.Id] = result;
+                if (clientResultLabels.TryGetValue(client.Id, out var label))
+                    label.text = result;
             }
-            if (success == 0 && failure == 0)
+            clientsResult.text = success + " configured, " + failure + " failed in this attempt. ";
+            if (failure > 0)
             {
-                EditorUtility.DisplayDialog(
-                    "Client Configuration",
-                    "No clients were selected. Tick at least one client to continue, or close the window to skip setup.",
-                    "OK"
-                );
+                clientsResult.text += "Failed selections are kept. Retry them or choose Skip to finish without them.";
+                configureSelectedButton.text = "Retry selected failures";
                 return;
             }
-            // Keep the summary short: a count, only the failures (if any), and the next step —
-            // no need to enumerate every successfully-configured client.
-            string failureList = failures.Count > 0 ? "\n\n" + string.Join("\n", failures) : "";
-            string nextStep =
-                (failure == 0 && success > 0)
-                    ? "\n\nYou're all set. Ask your AI assistant to create a GameObject in the open scene to confirm the connection."
-                    : "";
-            EditorUtility.DisplayDialog("Client Configuration", $"{success} configured, {failure} failed.{failureList}{nextStep}", "OK");
-            Setup.SetupWindowService.MarkSetupCompleted();
-            Close();
+            if (success == 0)
+            {
+                clientsResult.text = "Select a client to configure, or choose Skip to finish.";
+                return;
+            }
+            CompleteSetup();
         }
 
         private void OnOpenPythonInstallClicked()

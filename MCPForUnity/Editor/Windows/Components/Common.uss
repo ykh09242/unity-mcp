@@ -740,10 +740,19 @@
 .provider-header { flex-direction: row; flex-wrap: wrap; align-items: center; margin-bottom: 6px; min-width: 0; }
 .provider-name { -unity-font-style: bold; margin-right: 8px; white-space: normal; }
 .provider-status { flex-grow: 1; margin: 0 8px 0 0; }
-.provider-key-row { flex-direction: row; flex-wrap: wrap; align-items: center; margin-bottom: 10px; min-width: 0; }
-.provider-key-field { flex-grow: 1; flex-shrink: 1; flex-basis: 160px; min-width: 100px; margin-right: 6px; }
-.provider-key-row Button { margin: 3px 6px 3px 0; }
+.provider-key-row { flex-direction: column; align-items: stretch; margin-bottom: 10px; min-width: 0; }
+.provider-key-actions { flex-direction: row; flex-wrap: wrap; align-items: center; min-width: 0; }
+.provider-key-field { flex-grow: 0; flex-shrink: 1; min-width: 0; margin-left: 0; margin-right: 0; }
+.provider-key-row Button { height: 28px; min-height: 28px; margin: 6px 6px 0 0; }
 .package-row { padding: 14px 12px; margin-top: 10px; background-color: var(--mcp-surface); border-width: 1px; border-color: var(--mcp-border); border-radius: 4px; }
 .package-version-field { flex-direction: column; margin: 8px 0; }
 .package-version-field > .unity-base-field__label { min-width: 0; margin-bottom: 4px; }
 .package-actions { margin-top: 8px; }
+
+/* Labelled credentials and endpoint inputs wrap independently of action rows. */
+.provider-key-field { flex-direction: column; margin-top: 0; margin-bottom: 0; }
+.mcp-editor .provider-key-field > .unity-text-field__input { height: 28px; min-height: 28px; }
+.provider-key-field > .unity-base-field__label { min-width: 0; margin-bottom: 4px; }
+.labeled-endpoint { flex-direction: column; }
+.labeled-endpoint > .unity-base-field__label { min-width: 0; margin-bottom: 4px; }
+.endpoint-port.labeled-endpoint { width: 90px; }

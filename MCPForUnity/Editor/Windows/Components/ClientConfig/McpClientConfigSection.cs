@@ -376,9 +376,11 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             RefreshRestoreAvailability();
             configurationPreview = configurationChanges.Prepare(PreviewClient);
             if (configurationPreviewText != null)
-                configurationPreviewText.value = configurationPreview.DisplayText;
+                configurationPreviewText.value = configurationPreview.CanApply
+                    ? configurationPreview.DisplayText
+                    : ConfigurationStatusMessage(configurationPreview.Code, PreviewClient?.DisplayName);
             if (configurationChangeStatusLabel != null)
-                configurationChangeStatusLabel.text = configurationPreview.Code;
+                configurationChangeStatusLabel.text = ConfigurationStatusMessage(configurationPreview.Code, PreviewClient?.DisplayName);
             applyConfigurationButton?.SetEnabled(configurationPreview.CanApply);
         }
 
@@ -389,6 +391,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             applyConfigurationButton?.SetEnabled(false);
             if (configurationPreviewText != null)
                 configurationPreviewText.value = "";
+            if (configurationChangeStatusLabel != null)
+                configurationChangeStatusLabel.text = "";
         }
 
         private void OnApplyConfigurationPreviewClicked()
@@ -402,7 +406,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             }
             restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
             if (configurationChangeStatusLabel != null)
-                configurationChangeStatusLabel.text = result.Code;
+                configurationChangeStatusLabel.text = ConfigurationStatusMessage(result.Code, PreviewClient?.DisplayName);
         }
 
         private void OnRestoreConfigurationClicked()
@@ -416,7 +420,33 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             }
             restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
             if (configurationChangeStatusLabel != null)
-                configurationChangeStatusLabel.text = result.Code;
+                configurationChangeStatusLabel.text = ConfigurationStatusMessage(result.Code, PreviewClient?.DisplayName);
+        }
+
+        internal static string ConfigurationStatusMessage(string code, string client)
+        {
+            string name = string.IsNullOrWhiteSpace(client) ? "Selected client" : client;
+            string message = code switch
+            {
+                "prepared" => "Preview ready. Review the change, then Apply or Cancel.",
+                "applied" => "Saved. Reconnect the client to use this configuration.",
+                "restored" => "Restored the previous Unity MCP entry. Reconnect the client to use it.",
+                "unchanged" => "Already matches. No file was changed.",
+                "locked" => "Configuration is locked. Review and unlock editing before retrying.",
+                "stale_handle" => "This preview is no longer current. Preview again.",
+                "stale_target" => "The configuration destination changed. Preview again.",
+                "stale_context" => "Connection settings changed. Preview again.",
+                "stale_file" => "The configuration file changed. Preview again to preserve those edits.",
+                "owned_entry_changed" => "The Unity MCP entry changed after saving. Review it before restoring.",
+                "unsupported_client" => "Preview is unavailable for this client. Use its manual configuration instructions.",
+                "capability_unavailable" => "The required client capability is unavailable. Check the installed client and preview again.",
+                "unsupported_path" => "The configuration path is unsupported. Choose a regular local file.",
+                "unsupported_layout" => "The file layout is unsupported. Review it using the manual configuration instructions.",
+                "invalid_configuration" => "The configuration is invalid. Correct the file or connection settings and preview again.",
+                "input_limit" => "The configuration is too large for safe automatic editing. Use manual configuration.",
+                _ => "The change could not be completed. Check file permissions and preview again.",
+            };
+            return name + ": " + message;
         }
 
         private void OnConfigureAllClientsClicked()

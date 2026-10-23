@@ -782,10 +782,10 @@ namespace MCPForUnityTests.Editor.Windows.Characterization
                 "expected a shared-key fal row builder for audio and 3D"
             );
 
-            // AddProviderRow takes (parent, id, displayName, kind) so each row knows its catalog kind.
+            // Credential rows describe the provider's supported media independently of model selection.
             var addRow = type.GetMethod("AddProviderRow", BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.IsNotNull(addRow);
-            Assert.AreEqual(4, addRow.GetParameters().Length, "AddProviderRow should take (parent, id, displayName, kind)");
+            Assert.AreEqual(4, addRow.GetParameters().Length, "AddProviderRow should take (parent, id, displayName, media)");
 
             foreach (string phase in new[] { "CacheUIElements", "InitializeUI", "RegisterCallbacks" })
                 Assert.IsNotNull(type.GetMethod(phase, BindingFlags.NonPublic | BindingFlags.Instance), $"three-phase lifecycle method {phase} should remain");
