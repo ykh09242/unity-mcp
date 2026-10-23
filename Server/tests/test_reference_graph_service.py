@@ -1360,3 +1360,62 @@ async def test_cancelled_shutdown_observers_share_database_open_drain(setup, mon
         release.set()
         await asyncio.gather(opening, *observers, return_exceptions=True)
         await service.aclose()
+
+
+def test_runner_shutdown_keeps_physical_writer_lease_until_thread_finishes(setup, monkeypatch):
+    service, _, ctx = setup
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_SHUTDOWN_TIMEOUT_SECONDS", "0.01")
+    entered, release = threading.Event(), threading.Event()
+    main_returned, lease_released = threading.Event(), threading.Event()
+    captured, errors, premature = {}, [], []
+
+    async def run():
+        entry, _ = await service.resolve(ctx, "status")
+        captured["entry"] = entry
+        write, release_lease = entry.workspace.set_progress, entry.workspace.release
+
+        def held_write(*args, **kwargs):
+            entered.set()
+            assert release.wait(watchdog_timeout()), "The owned fixture must release its writer"
+            return write(*args, **kwargs)
+
+        def tracked_release(owner):
+            premature.append(not release.is_set())
+            release_lease(owner)
+            lease_released.set()
+
+        entry.workspace.set_progress = held_write
+        entry.workspace.release = tracked_release
+        service.start(entry)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+        assert await service.aclose() is False
+        main_returned.set()
+        # Return normally: asyncio.run now cancels every pending Task, including
+        # any to_thread wrapper. No fixture drain runs before this real teardown.
+
+    def runner():
+        try:
+            asyncio.run(run())
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    held = None
+    try:
+        assert main_returned.wait(watchdog_timeout())
+        # Observe the real runner's cancellation pass while the physical writer
+        # remains held; this adjustable watchdog is not a production deadline.
+        lease_released.wait(watchdog_timeout(0.2))
+        entry = captured["entry"]
+        held = not entry.workspace.acquire("replacement")
+        if not held:
+            entry.workspace.release("replacement")
+    finally:
+        release.set()
+        thread.join(watchdog_timeout())
+    assert not thread.is_alive() and not errors, errors
+    assert held, "Runner teardown must not admit another writer while the old thread lives"
+    assert premature and not any(premature), "Lease release must follow physical completion"
+    assert captured["entry"].workspace.acquire("after-runner")
+    captured["entry"].workspace.release("after-runner")

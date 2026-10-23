@@ -267,6 +267,9 @@ end an active read, shorten a reconciliation, or release its database lease. A
 subsequent close observes the same owner. The normal lease expiry and write-owner
 validation remain in force, including after process termination.
 
+Physical executor futures are shielded through runner teardown too: cancellation
+of an asyncio task does not count as completion of its underlying thread.
+
 Server shutdown attempts every independent cleanup even if another cleanup raises
 or its caller is repeatedly cancelled. If graph draining exceeds the observation
 budget, the server logs its pending counts and continues closing unrelated owners.
