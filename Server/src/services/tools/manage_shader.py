@@ -2,6 +2,7 @@ import base64
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
+from pydantic import StrictInt
 from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
@@ -15,6 +16,8 @@ from services.tools.pagination import page_integer
     group="vfx",
     description=(
         "Manages shader scripts in Unity (create, read, update, delete). Read-only: read, inspect_graph. "
+        "read returns a bounded source page (64 KiB by default); follow data.nextOffset with "
+        "read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. "
         "inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized "
         "nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 4 MiB files; "
         "at most 100 results per collection per page). This is structural inspection, not package "
@@ -39,6 +42,14 @@ async def manage_shader(
     contents: Annotated[str, "Shader code for 'create'/'update'"] | None = None,
     page_size: Annotated[int | str, "inspect_graph page size, 1-100 (default 50)."] | None = None,
     page_number: Annotated[int | str, "inspect_graph page number, 1-based."] | None = None,
+    read_offset: Annotated[StrictInt | str, "read source byte offset after the BOM (default 0)."]
+    | None = None,
+    read_limit: Annotated[StrictInt | str, "read page byte limit, 4-1048576 (default 65536)."]
+    | None = None,
+    read_encoding: Annotated[
+        Literal["text", "base64"], "read output encoding; Base64 represents UTF-8 text."
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     try:
         # Prepare parameters for Unity
@@ -55,6 +66,18 @@ async def manage_shader(
                 return {"success": False, "message": str(exc)}
         elif not name:
             return {"success": False, "message": f"Action '{action}' requires parameter 'name'."}
+
+        if action == "read":
+            try:
+                params["readOffset"] = page_integer(
+                    read_offset, 0, 0, 9_223_372_036_854_775_807, "read_offset"
+                )
+                params["readLimit"] = page_integer(read_limit, 65536, 4, 1048576, "read_limit")
+                if read_encoding not in {None, "text", "base64"}:
+                    raise ValueError("read_encoding must be text or base64")
+                params["readEncoding"] = read_encoding or "text"
+            except (ValueError, TypeError) as exc:
+                return {"success": False, "message": str(exc)}
 
         # Base64 encode the contents if they exist to avoid JSON escaping issues
         if contents is not None:
@@ -82,7 +105,7 @@ async def manage_shader(
         if isinstance(response, dict) and response.get("success"):
             # If the response contains base64 encoded content, decode it
             data = response.get("data")
-            if isinstance(data, dict) and data.get("contentsEncoded"):
+            if isinstance(data, dict) and data.get("contentsEncoded") and read_encoding != "base64":
                 decoded_contents = base64.b64decode(response["data"]["encodedContents"]).decode(
                     "utf-8"
                 )

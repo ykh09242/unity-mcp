@@ -3941,6 +3941,9 @@ Read a shader file. Examples: unity-mcp shader read "Assets/Shaders/MyShader.sha
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | path | text | required | nargs=1 | — | — |  |
+| --offset | integer range: [0..9223372036854775807] | optional | nargs=1 | 0 | — | Source byte offset after the BOM. |
+| --limit | integer range: [4..1048576] | optional | nargs=1 | 65536 | — | Maximum source bytes per page. |
+| --encoding | choice: text, base64 | optional | nargs=1 | "text" | — | Returned page encoding. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp shader update`

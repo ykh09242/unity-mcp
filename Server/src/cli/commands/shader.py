@@ -30,8 +30,26 @@ def shader():
 
 @shader.command("read")
 @click.argument("path")
+@click.option(
+    "--offset",
+    type=click.IntRange(min=0, max=9_223_372_036_854_775_807),
+    default=0,
+    help="Source byte offset after the BOM.",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=4, max=1048576),
+    default=65536,
+    help="Maximum source bytes per page.",
+)
+@click.option(
+    "--encoding",
+    type=click.Choice(["text", "base64"]),
+    default="text",
+    help="Returned page encoding.",
+)
 @handle_unity_errors
-def read_shader(path: str):
+def read_shader(path: str, offset: int, limit: int, encoding: str):
     """Read a shader file.
 
     \b
@@ -49,6 +67,9 @@ def read_shader(path: str):
             "action": "read",
             "name": name,
             "path": directory or "Assets/",
+            "readOffset": offset,
+            "readLimit": limit,
+            "readEncoding": encoding,
         },
         config,
     )
@@ -64,6 +85,13 @@ def read_shader(path: str):
         click.echo(result["data"]["contents"])
     else:
         click.echo(format_output(result, config.format))
+    if (
+        config.format != "json"
+        and result.get("success")
+        and isinstance(data, dict)
+        and data.get("hasMore")
+    ):
+        click.echo(f"More source remains; continue with --offset {data['nextOffset']}.", err=True)
 
 
 @shader.command("create")
