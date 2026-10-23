@@ -230,3 +230,24 @@ and cancels its pending capture when the panel detaches.
 Native callers should await the returned `Task<object>` for Scene View screenshots,
 as with composited Game View screenshots. Existing handler signatures remain
 available; `ExecuteSceneViewScreenshotAsync` provides an explicit cancellation API.
+
+## WebSocket shutdown and unfinished execution
+
+Stopping a WebSocket connection observes cleanup for 10 seconds by default.
+`UNITY_MCP_WEBSOCKET_CONTROL_TIMEOUT_SECONDS` accepts finite positive seconds up to
+86400; invalid values use the default. This bounds the control response and graceful
+close handshake, not the lifetime or size of an accepted command. Healthy cleanup
+returns immediately. A silent close peer is aborted when its handshake budget ends.
+
+If a handler ignores cancellation, `State.Error` reports `execution_unsettled` and
+`IsConnected` is false. Stop has ended its observation; it has not proved the handler
+stopped. Repeated stops share the retained cleanup task. Start returns false while
+that task or forced-stop command settlement remains unfinished, so a replacement
+connection cannot overlap the old mutation. Status stays readable during draining.
+The automatic reconnect worker waits for actual settlement before reconnecting;
+a manual caller can retry Start after cleanup finishes. No command is replayed.
+
+ForceStop, including the synchronous reload/shutdown path, aborts the owned socket
+but retains cancellation sources until their live tasks finish. This ownership is
+within the current managed domain; it does not make arbitrary third-party native
+work recoverable across an Editor process termination.

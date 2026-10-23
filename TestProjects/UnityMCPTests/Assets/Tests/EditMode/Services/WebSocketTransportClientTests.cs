@@ -716,6 +716,171 @@ namespace MCPForUnityTests.Editor.Services
                 EditorApplication.delayCall -= (EditorApplication.CallbackFunction)callback;
         }
 
+        [TestCase("stop")]
+        [TestCase("force")]
+        [TestCase("disconnect")]
+        public async Task UnsettledCommand_BoundsControlAndPreventsReplacementMutation(string transition)
+        {
+            RequireOwnedProgressEditor();
+            using var budget = new ControlObservationBudget("0.05");
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            const string child = "__tcr12_owned_mutation";
+            int calls = 0;
+            handlers.Set(
+                child,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    child,
+                    null,
+                    async _ =>
+                    {
+                        Interlocked.Increment(ref calls);
+                        entered.TrySetResult(true);
+                        return await release.Task;
+                    }
+                )
+            );
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            Task<bool> restart = null;
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(false);
+                string id = Guid.NewGuid().ToString("D");
+                var command = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = child }) };
+                peer.Execute(id, "batch_execute", command, false);
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                var oldConnection = (CancellationTokenSource)GetField(client, "_connectionCts");
+                var work = (ConnectionCommandWork)GetField(client, "_commandWork");
+                if (transition == "disconnect")
+                {
+                    peer.DropConnection();
+                    await AwaitControlCondition(() => client.State.Error?.Contains("execution_unsettled") == true);
+                }
+                else
+                {
+                    if (transition == "force")
+                        client.ForceStop();
+                    await NativeProgressProbe.AwaitOwned(client.StopAsync());
+                    StringAssert.Contains("execution_unsettled", client.State.Error);
+                    restart = client.StartAsync();
+                    await NativeProgressProbe.AwaitOwned(restart);
+                    Assert.IsFalse(await restart, "An observation deadline cannot authorize replacement execution.");
+                }
+                Assert.IsFalse(client.IsConnected);
+                Assert.IsFalse(work.DrainAsync().IsCompleted, "The real child must remain owned after the response ends.");
+                Assert.AreEqual(1, peer.RegisteredCount);
+                Assert.AreEqual(1, calls);
+                Assert.DoesNotThrow(
+                    () =>
+                    {
+                        _ = oldConnection.Token;
+                    },
+                    "Active execution must retain its cancellation owner."
+                );
+                release.TrySetResult(new { complete = true });
+                await NativeProgressProbe.AwaitOwned(work.DrainAsync());
+                if (transition != "disconnect")
+                {
+                    await client.StopAsync();
+                    Assert.IsTrue(await client.StartAsync());
+                }
+                await peer.WaitRegistered(2);
+                await peer.Barrier();
+                Assert.IsTrue(client.IsConnected);
+                Assert.AreEqual(1, calls, "The old mutation must not be replayed after reconnection.");
+                string nextId = Guid.NewGuid().ToString("D");
+                peer.Execute(nextId, "batch_execute", command, false);
+                await peer.Result(nextId);
+                Assert.AreEqual(2, calls);
+                Assert.IsFalse(peer.Remaining().Any(message => message.Value<string>("id") == id && message.Value<string>("type") == "command_result"));
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                release.TrySetResult(new { complete = true });
+                if (restart != null)
+                    await NativeProgressProbe.AwaitOwned(restart);
+                await StopOwnedProgressClient(client);
+            }
+        }
+
+        [Test]
+        public async Task RepeatedStop_RetainsOneActualDrainUntilPendingLoopFinishes()
+        {
+            using var budget = new ControlObservationBudget("0.05");
+            using var client = new WebSocketTransportClient();
+            using var lifecycle = new CancellationTokenSource();
+            var receive = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            SetField(client, "_lifecycleCts", lifecycle);
+            SetField(client, "_receiveTask", receive.Task);
+            try
+            {
+                await NativeProgressProbe.AwaitOwned(client.StopAsync());
+                StringAssert.Contains("execution_unsettled", client.State.Error);
+                var settlement = (Task)GetField(client, "_stopSettlement");
+                Assert.IsFalse(settlement.IsCompleted);
+                await NativeProgressProbe.AwaitOwned(client.StopAsync());
+                Assert.AreSame(settlement, GetField(client, "_stopSettlement"));
+                receive.TrySetResult(true);
+                await NativeProgressProbe.AwaitOwned(settlement);
+                await client.StopAsync();
+                Assert.IsNull(client.State.Error);
+            }
+            finally
+            {
+                receive.TrySetResult(true);
+                await client.StopAsync();
+            }
+        }
+
+        [Test]
+        public async Task SilentClosePeer_AbortsHandshakeAndReleasesOwnedSocket()
+        {
+            RequireOwnedProgressEditor();
+            using var budget = new ControlObservationBudget("0.05");
+            using var peer = new ProgressWirePeer();
+            using var socket = await peer.ConnectBare();
+            using var client = new WebSocketTransportClient();
+            using var lifecycle = new CancellationTokenSource();
+            SetField(client, "_lifecycleCts", lifecycle);
+            SetField(client, "_socket", socket);
+            try
+            {
+                await NativeProgressProbe.AwaitOwned(client.StopAsync());
+                await AwaitControlCondition(() => GetField(client, "_socket") == null);
+                Assert.That(socket.State, Is.Not.EqualTo(WebSocketState.Open).And.Not.EqualTo(WebSocketState.CloseSent));
+                Assert.IsNull(GetField(client, "_lifecycleCts"));
+            }
+            finally
+            {
+                client.ForceStop();
+            }
+        }
+
+        private static async Task AwaitControlCondition(Func<bool> predicate)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!predicate())
+            {
+                Assert.Less(clock.Elapsed.TotalSeconds, 10, "Owned control observation watchdog expired.");
+                await Task.Delay(10);
+            }
+        }
+
+        private sealed class ControlObservationBudget : IDisposable
+        {
+            private const string Key = "UNITY_MCP_WEBSOCKET_CONTROL_TIMEOUT_SECONDS";
+            private readonly string previous = Environment.GetEnvironmentVariable(Key);
+
+            internal ControlObservationBudget(string value) => Environment.SetEnvironmentVariable(Key, value);
+
+            public void Dispose() => Environment.SetEnvironmentVariable(Key, previous);
+        }
+
         [Test]
         public void StopAsync_ForceStopWhileReceivePending_CompletesWithoutFault()
         {
@@ -1466,6 +1631,29 @@ namespace MCPForUnityTests.Editor.Services
 
             private object Call(string name, params object[] arguments) =>
                 _type.GetMethod(name, BindingFlags.Public | BindingFlags.Instance).Invoke(_peer, arguments);
+
+            internal int RegisteredCount => (int)_type.GetField("RegisteredCount").GetValue(_peer);
+
+            internal void DropConnection() => Call("DropConnection");
+
+            internal Task WaitRegistered(int count) => (Task)Call("WaitRegistered", count);
+
+            internal async Task<ClientWebSocket> ConnectBare()
+            {
+                var socket = new ClientWebSocket();
+                try
+                {
+                    socket.Options.SetRequestHeader(AuthConstants.LocalTokenHeader, Token);
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    await socket.ConnectAsync((Uri)_type.GetProperty("Uri").GetValue(_peer), timeout.Token);
+                    return socket;
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            }
 
             internal WebSocketTransportClient CreateClient() =>
                 new WebSocketTransportClient(
