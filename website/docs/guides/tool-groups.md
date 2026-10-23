@@ -38,7 +38,7 @@ manage_tools(action="activate", group="physics")
 manage_tools(action="reset")
 ```
 
-For activation or deactivation, specify exactly one `tool` or `group`. Selection affects only that session. Reset returns to current server defaults. Enabling a tool never installs a Unity package or bypasses Editor selection, authenticated catalogs or explicit consent.
+For activation or deactivation, specify exactly one `tool` or `group`. Selection affects only that session. Reset restores the configured initial selection and returns `visible_tools`, the resulting list after Unity availability is applied. Enabling a tool never installs a Unity package or bypasses Editor selection, authenticated catalogs or explicit consent.
 
 ## Existing combined calls
 
@@ -62,7 +62,7 @@ The server keeps standard `tools/list` responses and full schemas for visible to
 
 The [MCP client best practices](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/docs/2026-07-28/develop/clients/client-best-practices.mdx) recommend progressive tool discovery in the client: inspect the catalog, select relevant tools and refresh it when tool-list notifications arrive. Server visibility settings complement that behavior; they do not implement host-side tool search or guarantee the same token savings in every client.
 
-Both local transports start with essential tools and then synchronize with the Editor. Saved Editor choices may enable more tools when it connects.
+Both local transports start with essential tools. Editor synchronization updates availability without changing the client selection. Enabling one optional tool in Unity does not select its group or reveal unavailable peers. Select the desired group or individual tool separately; both HTTP and stdio apply the current project catalog after selection. An explicitly empty catalog hides native tools, while an unknown or disconnected local catalog preserves offline discovery. Native execution still requires the selected Editor and its permissions.
 
 ## Related capabilities
 
@@ -78,9 +78,9 @@ The `core` group includes [`manage_recording`](../reference/tools/core/manage_re
 
 ## Local sessionless clients
 
-Use the Editor controls to select tools, then request `manage_tools(action="sync")` from the intended Unity instance. Refresh/reconnect the MCP client if it does not process tool-list notifications.
+Use the Editor controls to allow tools, then request `manage_tools(action="sync")` from the intended Unity instance. Refresh/reconnect the MCP client if it does not process tool-list notifications. Sync preserves the server discovery profile and cannot select an optional group.
 
-Sessionless `activate`, `deactivate` and `reset` return an explanatory failure because session selection cannot persist without a stateful handshake. Use Editor controls instead.
+Sessionless `activate`, `deactivate` and `reset` return an explanatory failure because session selection cannot persist without a stateful handshake. Use a stateful client to change the selection. Editor controls remain the availability and consent boundary.
 
 ## Hosted clients
 

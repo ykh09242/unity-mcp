@@ -148,7 +148,7 @@ def test_cancel_catalog_and_selected_tenant_enforcement_in_production_middleware
                     app.add_middleware(middleware)
                     tools.register_all_tools(app)
                     PluginHub._mcp = app
-                    PluginHub._sync_server_tool_visibility([ToolDefinitionModel(name="cancel_test_job")])
+                    app.enable(tags={"group:testing"}, components={"tool"})
                     calls = []
                     async def dispatch(instance, command, params, *, user_id, **kwargs):
                         sid = await PluginHub._resolve_session_id(instance, user_id=user_id)
@@ -170,7 +170,6 @@ def test_cancel_catalog_and_selected_tenant_enforcement_in_production_middleware
                                 assert len(calls) == 1
                     # A connected populated catalog must not grant an absent native tool.
                     await registry.register_tools_for_session("owned", [ToolDefinitionModel(name="run_tests")])
-                    PluginHub._sync_server_tool_visibility([ToolDefinitionModel(name="run_tests")])
                     async with Client(app) as client:
                         try:
                             reply = await client.call_tool("cancel_test_job", {"job_id": "a" * 32, "unity_instance": "owned@owned-hash"}, raise_on_error=False)

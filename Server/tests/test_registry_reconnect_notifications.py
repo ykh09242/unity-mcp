@@ -27,7 +27,6 @@ async def registry_hub(monkeypatch):
         "_readiness_reads",
         "_ordinary_state_reads",
         "_large_results",
-        "_unity_transform_start",
     ):
         monkeypatch.setattr(PluginHub, name, getattr(PluginHub, name))
     for name in (

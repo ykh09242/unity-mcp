@@ -502,6 +502,7 @@ async def test_registered_tool_reports_capacity_through_public_sdk(admission_hub
     # assertions prove refusal and recovery; this timeout only bounds a deadlock.
     sdk_watchdog_seconds = 10
     mcp = create_mcp_server(False)
+    mcp.enable(names={"run_tests"}, components={"tool"})
     async with Client(mcp) as client:
         PluginHub.configure(admission_hub, mcp=mcp)
         socket = await register_socket(admission_hub, "a", None)

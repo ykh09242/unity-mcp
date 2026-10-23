@@ -226,9 +226,6 @@ class PluginHub(WebSocketEndpoint):
     _mcp: FastMCP | None = None
     # Index into mcp._transforms where Unity's server-level overrides start.
     # Transforms before this index are startup defaults; at and after are Unity syncs.
-    _unity_transform_start: int | None = None
-    _unity_transforms: tuple = ()
-    _unity_visibility_signature: tuple | None = None
     _connections: dict[str, WebSocket] = {}
     # command_id -> {"future": Future, "session_id": str}
     _pending: dict[str, dict[str, Any]] = {}
@@ -596,10 +593,6 @@ class PluginHub(WebSocketEndpoint):
         cls._registry = registry
         if previous_registry is not None and previous_registry is not registry:
             previous_registry.notify_changed()
-        if cls._mcp is not mcp:
-            cls._unity_transform_start = None
-            cls._unity_transforms = ()
-            cls._unity_visibility_signature = None
         cls._mcp = mcp
         cls._loop = loop or asyncio.get_running_loop()
         # Ensure coordination primitives are bound to the configured loop
@@ -678,9 +671,6 @@ class PluginHub(WebSocketEndpoint):
             cls._mcp = None
             cls._loop = None
             cls._lock = None
-            cls._unity_transform_start = None
-            cls._unity_transforms = ()
-            cls._unity_visibility_signature = None
 
         for entry in pending:
             future = entry.get("future")
@@ -1885,6 +1875,15 @@ class PluginHub(WebSocketEndpoint):
         )
 
     @classmethod
+    async def get_catalog_for_project(cls, project_hash: str, user_id: str | None = None):
+        """Capture current membership and known-empty evidence under one registry lock."""
+        registry = cls._registry
+        if registry is None:
+            return None
+        snapshot = await registry.get_catalog_snapshot(project_hash, user_id=user_id)
+        return snapshot if cls._registry is registry else None
+
+    @classmethod
     async def get_tools_for_project(
         cls,
         project_hash: str,
@@ -2297,132 +2296,16 @@ class PluginHub(WebSocketEndpoint):
             logger.warning("Committed catalog notification failed (%s)", type(error).__name__)
 
     @classmethod
-    async def _refresh_server_tool_visibility(cls) -> None:
-        """Keep local server inventory large enough for every registered project."""
-        registry = cls._registry
-        if config.http_remote_hosted or registry is None:
-            return
-        sessions = await registry.list_sessions()
-        cls._commit_server_tool_visibility(
-            cls._prepare_server_tool_visibility(
-                [tool for session in sessions.values() for tool in session.tools.values()],
-                reset=not sessions,
-            )
-        )
-
-    @classmethod
-    def _prepare_server_tool_visibility(cls, registered_tools, *, reset=False):
-        """Build a detached local visibility delta, retaining foreign transforms."""
-        if config.http_remote_hosted or cls._mcp is None:
-            return None
-        from fastmcp.server.transforms.visibility import Visibility
-        from services.registry import get_group_tool_names, TOOL_GROUPS
-
-        mcp = cls._mcp
-        old = mcp._transforms
-        owned = getattr(cls, "_unity_transforms", ())
-        owned_ids = {id(transform) for transform in owned}
-        base = [transform for transform in old if id(transform) not in owned_ids]
-        names = {
-            tool.get("name") if isinstance(tool, dict) else tool.name for tool in registered_tools
-        }
-        groups = get_group_tool_names()
-        signature = (
-            None
-            if reset
-            else tuple(
-                (group, any(name in names for name in groups.get(group, ())))
-                for group in sorted(TOOL_GROUPS)
-            )
-        )
-        if signature == getattr(cls, "_unity_visibility_signature", None):
-            return None
-        transforms = (
-            ()
-            if reset
-            else tuple(
-                Visibility(enabled, tags={f"group:{group}"}, components={"tool"})
-                for group, enabled in signature
-            )
-        )
-        return {
-            "mcp": mcp,
-            "old": old,
-            "old_contents": tuple(old),
-            "new": base + list(transforms),
-            "owned": transforms,
-            "start": len(base) if not reset else None,
-            "signature": signature,
-            "previous": (
-                cls._unity_transform_start,
-                owned,
-                getattr(cls, "_unity_visibility_signature", None),
-            ),
-        }
-
-    @classmethod
-    def _commit_server_tool_visibility(cls, plan):
-        if plan is None:
-            return
-        mcp = plan["mcp"]
-        if (
-            cls._mcp is not mcp
-            or mcp._transforms is not plan["old"]
-            or tuple(mcp._transforms) != plan["old_contents"]
-        ):
-            raise ValueError("Tool visibility ownership changed during publication")
-        mcp._transforms = plan["new"]
-        cls._unity_transform_start = plan["start"]
-        cls._unity_transforms = plan["owned"]
-        cls._unity_visibility_signature = plan["signature"]
-
-    @classmethod
-    def _rollback_server_tool_visibility(cls, plan):
-        if plan is not None and plan["mcp"]._transforms is plan["new"]:
-            plan["mcp"]._transforms = plan["old"]
-            cls._unity_transform_start, cls._unity_transforms, cls._unity_visibility_signature = (
-                plan["previous"]
-            )
-
-    @classmethod
-    def _sync_server_tool_visibility(cls, registered_tools):
-        try:
-            cls._commit_server_tool_visibility(
-                cls._prepare_server_tool_visibility(registered_tools)
-            )
-        except Exception:
-            logger.debug("Failed to sync server-level tool visibility", exc_info=True)
-
-    @classmethod
     def _publish_session_catalog(
         cls, session, tools, sessions, *, known=True, generation=None, withdraw=False
     ):
         """Synchronous callback under Hub -> registry locks; never reacquire either."""
         from services.custom_tool_service import CustomToolService
 
-        advertised = [
-            definition
-            for sid, entry in sessions.items()
-            for definition in (
-                tools.values() if sid == session.session_id else entry.tools.values()
-            )
-        ]
-        plan = cls._prepare_server_tool_visibility(advertised, reset=not sessions)
-        visibility = (
-            None
-            if plan is None
-            else (
-                lambda: cls._commit_server_tool_visibility(plan),
-                lambda: cls._rollback_server_tool_visibility(plan),
-            )
-        )
         service = CustomToolService._instance
         if service is None or cls._mcp is None or service._mcp is not cls._mcp:
-            cls._commit_server_tool_visibility(plan)
             return {
-                "changed": plan is not None
-                or session.tools != tools
-                or session.tools_known != known,
+                "changed": session.tools != tools or session.tools_known != known,
                 "global_component_changed": False,
             }
         return service.replace_project_catalog(
@@ -2433,7 +2316,6 @@ class PluginHub(WebSocketEndpoint):
             user_id=session.user_id,
             publish_global=not config.http_remote_hosted,
             known=known,
-            visibility=visibility,
             withdraw=withdraw,
         )
 
@@ -2473,12 +2355,8 @@ class PluginHub(WebSocketEndpoint):
     ) -> None:
         """Queue ``tools/list_changed`` for each connected MCP client.
 
-        After server-level tool visibility is updated (e.g. when Unity reports
-        its registered tools), existing MCP clients (especially stdio-based
-        ones like Claude Code) must be told to re-fetch the tool list.
-        FastMCP's ``mcp.enable()``/``mcp.disable()`` update the server-level
-        transforms but do **not** push notifications to already-connected
-        sessions — we do that here.
+        Catalog publication changes availability without changing client selection.
+        Existing clients must re-fetch their final, filtered tool inventory.
         """
         # Legacy connections have no trusted tenant/project routing metadata.
         # Keep this process-global invalidation local. The trusted arguments

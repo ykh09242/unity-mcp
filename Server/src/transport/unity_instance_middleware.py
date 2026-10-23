@@ -681,6 +681,17 @@ class UnityInstanceMiddleware(Middleware):
             await authorize_remote_operation(
                 public_name, public_params, custom=public_custom, ctx=ctx
             )
+        if not config.http_remote_hosted:
+            self._refresh_tool_visibility_metadata_from_registry()
+            tool_name = getattr(context.message, "name", None)
+            if tool_name not in self._server_only_tool_names:
+                enabled_names = await self._resolve_enabled_tool_names_for_context(context)
+                if enabled_names is not None and not self._is_tool_visible(
+                    tool_name, enabled_names
+                ):
+                    raise ValueError(
+                        f"Tool '{tool_name}' is disabled or unavailable for this Unity instance"
+                    )
         if receipt is not None:
             selected = await ctx.get_state("unity_instance")
             if not isinstance(selected, str) or full_hash(selected) != receipt.options.project_hash:
@@ -824,9 +835,7 @@ class UnityInstanceMiddleware(Middleware):
         )
 
         if not self._should_filter_tool_listing() and not config.http_remote_hosted:
-            _diag.debug(
-                "on_list_tools: skipping middleware filter (not HTTP or PluginHub not configured)"
-            )
+            _diag.debug("on_list_tools: skipping middleware filter (HTTP PluginHub not configured)")
             return tools
 
         self._refresh_tool_visibility_metadata_from_registry()
@@ -858,7 +867,7 @@ class UnityInstanceMiddleware(Middleware):
 
     def _should_filter_tool_listing(self) -> bool:
         transport = (config.transport_mode or "stdio").lower()
-        return transport == "http" and PluginHub.is_configured()
+        return transport == "stdio" or PluginHub.is_configured()
 
     async def _resolve_enabled_tool_names_for_context(
         self,
@@ -867,6 +876,16 @@ class UnityInstanceMiddleware(Middleware):
         ctx = context.fastmcp_context
         user_id = (await ctx.get_state("user_id")) if config.http_remote_hosted else None
         active_instance = await ctx.get_state("unity_instance")
+        if (config.transport_mode or "stdio").lower() == "stdio":
+            from services.custom_tool_service import CustomToolService
+            from transport.legacy.unity_connection import get_authenticated_stdio_generation
+
+            service = CustomToolService._instance
+            if service is None or service._mcp is not ctx.fastmcp or not active_instance:
+                return None
+            project = active_instance.rsplit("@", 1)[-1]
+            generation = await get_authenticated_stdio_generation(active_instance)
+            return service.get_stdio_availability(project, generation)
         project_hashes = self._resolve_candidate_project_hashes(active_instance)
         try:
             sessions_data = await PluginHub.get_sessions(user_id=user_id)
@@ -912,32 +931,14 @@ class UnityInstanceMiddleware(Middleware):
         resolved_any_project = False
         for project_hash in project_hashes:
             try:
-                registered_tools = await PluginHub.get_tools_for_project(
-                    project_hash, user_id=user_id
-                )
-                # Only mark as resolved if tools are actually registered.
-                # An empty list means register_tools hasn't been sent yet.
-                if registered_tools:
-                    resolved_any_project = True
-            except Exception as exc:
-                logger.debug(
-                    "Failed to fetch tools for project hash %s (user_id=%s, %s)",
-                    project_hash,
-                    user_id,
-                    type(exc).__name__,
-                    exc_info=True,
-                )
+                snapshot = await PluginHub.get_catalog_for_project(project_hash, user_id=user_id)
+            except Exception:
+                logger.debug("Failed to capture tool availability", exc_info=True)
                 continue
-
-            for tool in registered_tools:
-                tool_name = getattr(tool, "name", None)
-                if isinstance(tool_name, str) and tool_name:
-                    enabled_tool_names.add(tool_name)
-
-        if not resolved_any_project:
-            return None
-
-        return enabled_tool_names
+            if snapshot is not None and snapshot[2]:
+                resolved_any_project = True
+                enabled_tool_names.update(snapshot[3])
+        return enabled_tool_names if resolved_any_project else None
 
     def _refresh_tool_visibility_metadata_from_registry(self) -> None:
         now = time.monotonic()

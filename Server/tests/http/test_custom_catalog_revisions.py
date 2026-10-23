@@ -322,7 +322,7 @@ async def test_withdrawal_releases_source_capacity_and_foreign_sdk_ownership(mon
 
 
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
-@pytest.mark.parametrize("failure", ["after_insert", "after_delete", "visibility", "reentrant"])
+@pytest.mark.parametrize("failure", ["after_insert", "after_delete", "reentrant"])
 def test_hub_catalog_and_visibility_roll_back_together(tmp_path, mode, failure):
     run_sdk(
         "FAILURE = "
@@ -374,7 +374,6 @@ def test_hub_catalog_and_visibility_roll_back_together(tmp_path, mode, failure):
                 original_tools = (await registry.get_session("session")).tools
                 original_revision = getattr(await registry.get_session("session"), "tools_revision", 0)
                 original_transforms = app._transforms
-                original_start = PluginHub._unity_transform_start
                 original_component = next(value for value in app._local_provider._components.values() if value.name == "stable")
                 stable_key = original_component.key
                 gone_key = next(value.key for value in app._local_provider._components.values() if value.name == "gone")
@@ -397,12 +396,6 @@ def test_hub_catalog_and_visibility_roll_back_together(tmp_path, mode, failure):
                         service.register_global_tools([module.ToolDefinitionModel(name="nested")])
                         return value
                     app._local_provider.add_tool = fail
-                else:
-                    apply = PluginHub._commit_server_tool_visibility
-                    def fail(plan):
-                        apply(plan)
-                        raise RuntimeError("visibility failed after mutation")
-                    PluginHub._commit_server_tool_visibility = fail
                 failed = False
                 try:
                     await publish([{"name": "stable", "parameters": [{"name": "new", "type": "string"}]}, {"name": "late"}])
@@ -411,7 +404,7 @@ def test_hub_catalog_and_visibility_roll_back_together(tmp_path, mode, failure):
                 assert failed
                 session = await registry.get_session("session")
                 assert session.tools is original_tools and session.tools_revision == original_revision
-                assert app._transforms is original_transforms and PluginHub._unity_transform_start == original_start
+                assert app._transforms is original_transforms
                 assert app._local_provider._components[stable_key] is original_component
                 assert {tool.name: tool.input_schema for tool in await client.list_tools()} == before
                 assert notify.await_count == 1

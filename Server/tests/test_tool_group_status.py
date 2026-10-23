@@ -199,21 +199,20 @@ def test_specialized_groups_start_hidden_and_reveal_complete_unchanged_schemas()
                         if mode == "legacy":
                             assert result["activated"] == group
                             visible = next(t for t in await client.list_tools() if t.name == name)
-                            assert visible.inputSchema == schemas[name]
+                            assert visible.input_schema == schemas[name]
                         else:
                             assert "sessionless" in result["error"]
                     if mode == "legacy":
                         await client.call_tool("manage_tools", {"action": "reset"})
                     assert {t.name for t in await client.list_tools()} == names
 
-            # An explicit Editor choice can publish an optional group to either
-            # protocol, without changing the complete input contract.
-            PluginHub._mcp = server
-            PluginHub._sync_server_tool_visibility([{"name": "capture_camera"}, {"name": "gameobject_create"}])
+            # Explicit server configuration is available to either protocol,
+            # without changing the complete input contract.
+            server.enable(names={"capture_camera"}, components={"tool"})
             async with Client(server, mode="2026-07-28") as client:
                 visible = {t.name: t for t in await client.list_tools()}
                 assert "capture_camera" in visible
                 assert "query_physics" not in visible
-                assert visible["capture_camera"].inputSchema == schemas["capture_camera"]
+                assert visible["capture_camera"].input_schema == schemas["capture_camera"]
         asyncio.run(scenario())
     """)

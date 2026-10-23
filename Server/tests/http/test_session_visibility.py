@@ -84,7 +84,7 @@ async def local_catalog(monkeypatch: pytest.MonkeyPatch):
         "_retained_results",
     ):
         monkeypatch.setattr(PluginHub, name, ChargeLedger() if name == "_retained_results" else {})
-    for name in ("_registry", "_lock", "_loop", "_mcp", "_unity_transform_start"):
+    for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
     metadata = [
         {"name": "run_tests", "group": "testing", "unity_target": "run_tests"},
@@ -108,7 +108,8 @@ async def local_catalog(monkeypatch: pytest.MonkeyPatch):
     def scene_alias() -> str:
         return "alias"
 
-    server.disable(tags={"group:testing"}, components={"tool"})
+    # This fixture explicitly selects testing; availability still caps each request.
+    server.add_middleware(UnityInstanceMiddleware())
     registry = PluginRegistry()
     PluginHub.configure(registry, mcp=server)
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
@@ -127,10 +128,15 @@ async def local_catalog(monkeypatch: pytest.MonkeyPatch):
     await PluginHub.shutdown()
 
 
+async def inventory(server):
+    async with Client(server, mode="legacy") as client:
+        return {tool.name for tool in await client.list_tools()}
+
+
 @pytest.mark.asyncio
 async def test_real_server_inventory_preserves_all_connected_project_groups(local_catalog) -> None:
     server, _, _, _ = local_catalog
-    assert {tool.name for tool in await server.list_tools()} == {
+    assert await inventory(server) == {
         "run_tests",
         "manage_scene",
         "scene_alias",
@@ -156,7 +162,7 @@ async def test_manual_http_sync_preserves_other_project_real_inventory(
     monkeypatch.setattr(PluginHub, "send_command_for_instance", send)
     result = await sync_tool_visibility_from_unity("B@b", notify=False)
     assert result["synced"] is True
-    assert {tool.name for tool in await server.list_tools()} == {
+    assert await inventory(server) == {
         "run_tests",
         "manage_scene",
         "scene_alias",
@@ -183,7 +189,7 @@ async def test_manual_http_sync_updates_only_queried_project_catalog(
     monkeypatch.setattr(PluginHub, "send_command_for_instance", send)
     result = await sync_tool_visibility_from_unity("B@b", notify=False)
     assert result["synced"] is True
-    assert {tool.name for tool in await server.list_tools()} == {"run_tests", "set_active_instance"}
+    assert await inventory(server) == {"run_tests", "set_active_instance"}
     assert {tool.name for tool in await PluginHub.get_tools_for_project("a")} == {"run_tests"}
     assert {tool.name for tool in await PluginHub.get_tools_for_project("b")} == {"run_tests"}
 
@@ -208,7 +214,7 @@ async def test_manual_http_sync_does_not_overwrite_reconnected_project_catalog(
     assert "synced" not in result
     assert result["error"] == "Unity catalog generation changed"
     assert {tool.name for tool in await PluginHub.get_tools_for_project("b")} == {"manage_scene"}
-    assert {tool.name for tool in await server.list_tools()} == {
+    assert await inventory(server) == {
         "run_tests",
         "manage_scene",
         "scene_alias",
@@ -418,7 +424,7 @@ async def test_malformed_old_http_toggle_delta_rejects_whole_publication(
     assert "error" in await sync_tool_visibility_from_unity("B@b", notify=False)
     assert session.tools is original_tools and session.tools_revision == original_revision
     assert server._transforms is original_transforms
-    assert {tool.name for tool in await server.list_tools()} == {
+    assert await inventory(server) == {
         "run_tests",
         "manage_scene",
         "scene_alias",
@@ -440,27 +446,29 @@ async def test_old_http_toggle_publication_failure_restores_union_and_catalog(
     original_revision = session.tools_revision
     original_transforms = server._transforms
     original_sources = service._sources
-    commit = PluginHub._commit_server_tool_visibility
+    add_tool = server.add_tool
 
-    def fail_after_mutation(plan):
-        commit(plan)
-        raise RuntimeError("visibility publication failed after mutation")
+    def fail_after_mutation(tool):
+        add_tool(tool)
+        raise RuntimeError("component publication failed after mutation")
 
-    monkeypatch.setattr(PluginHub, "_commit_server_tool_visibility", fail_after_mutation)
+    monkeypatch.setattr(server, "add_tool", fail_after_mutation)
     monkeypatch.setattr(
         PluginHub,
         "send_command_for_instance",
         AsyncMock(
             return_value={
                 "success": True,
-                "data": {"tools": [{"name": "manage_scene", "enabled": False}]},
+                "data": {
+                    "tools": [{"name": "custom_probe", "enabled": True, "is_built_in": False}]
+                },
             }
         ),
     )
     assert "error" in await sync_tool_visibility_from_unity("B@b", notify=False)
     assert session.tools is original_tools and session.tools_revision == original_revision
     assert server._transforms is original_transforms and service._sources is original_sources
-    assert {tool.name for tool in await server.list_tools()} == {
+    assert await inventory(server) == {
         "run_tests",
         "manage_scene",
         "scene_alias",
@@ -516,7 +524,6 @@ async def test_old_http_toggle_reply_cannot_overwrite_newer_same_session_revisio
 @pytest.mark.asyncio
 async def test_real_client_inventory_filters_union_to_selected_project(local_catalog) -> None:
     server, _, _, _ = local_catalog
-    server.add_middleware(UnityInstanceMiddleware())
     async with Client(server, mode="legacy") as first, Client(server, mode="legacy") as second:
         await first.call_tool("set_active_instance", {"instance": "A@a"})
         await second.call_tool("set_active_instance", {"instance": "B@b"})
@@ -539,11 +546,11 @@ async def test_reregistered_project_replaces_its_contribution_to_real_inventory(
     await hub._handle_register_tools(
         sockets["B"], RegisterToolsMessage(tools=[ToolDefinitionModel(name="run_tests")])
     )
-    assert {tool.name for tool in await server.list_tools()} == {"run_tests", "set_active_instance"}
+    assert await inventory(server) == {"run_tests", "set_active_instance"}
     await hub._handle_register_tools(
         sockets["A"], RegisterToolsMessage(tools=[ToolDefinitionModel(name="manage_scene")])
     )
-    assert {tool.name for tool in await server.list_tools()} == {
+    assert await inventory(server) == {
         "run_tests",
         "manage_scene",
         "scene_alias",
@@ -562,7 +569,7 @@ async def test_removed_project_no_longer_contributes_to_real_inventory(
     else:
         session_id = await registry.get_session_id_by_hash("b")
         await PluginHub._evict_connection(session_id, "test-removal")
-    assert {tool.name for tool in await server.list_tools()} == {"run_tests", "set_active_instance"}
+    assert await inventory(server) == {"run_tests", "set_active_instance"}
 
 
 @pytest.mark.asyncio
@@ -571,11 +578,11 @@ async def test_reconnected_project_preserves_other_project_inventory(local_catal
     replacement = AsyncMock()
     replacement.state = SimpleNamespace()
     await hub._handle_register(replacement, RegisterMessage(project_name="B", project_hash="b"))
-    assert {tool.name for tool in await server.list_tools()} == {"run_tests", "set_active_instance"}
+    assert await inventory(server) == {"run_tests", "set_active_instance"}
     await hub._handle_register_tools(
         replacement, RegisterToolsMessage(tools=[ToolDefinitionModel(name="manage_scene")])
     )
-    assert {tool.name for tool in await server.list_tools()} == {
+    assert await inventory(server) == {
         "run_tests",
         "manage_scene",
         "scene_alias",
@@ -588,7 +595,8 @@ async def test_last_disconnect_restores_startup_inventory(local_catalog) -> None
     server, hub, _, sockets = local_catalog
     await hub.on_disconnect(sockets["B"], 1001)
     await hub.on_disconnect(sockets["A"], 1001)
-    assert {tool.name for tool in await server.list_tools()} == {
+    assert await inventory(server) == {
+        "run_tests",
         "manage_scene",
         "scene_alias",
         "set_active_instance",

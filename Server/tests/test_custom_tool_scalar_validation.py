@@ -287,8 +287,6 @@ async def test_sync_rejects_whole_malformed_snapshot_without_partial_publication
     await registry.register("session", "project", "hash", "6000.0")
     monkeypatch.setattr(PluginHub, "_registry", registry)
     monkeypatch.setattr(PluginHub, "_resolve_session_id", AsyncMock(return_value="session"))
-    monkeypatch.setattr(PluginHub, "_refresh_server_tool_visibility", AsyncMock())
-    monkeypatch.setattr(PluginHub, "_sync_server_tool_visibility", lambda _: None)
     bad_default = "private-malformed-default"
     descriptors = [
         {

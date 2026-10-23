@@ -57,9 +57,14 @@ def registered_material(monkeypatch):
     middleware = UnityInstanceMiddleware()
     monkeypatch.setattr(middleware, "_inject_unity_instance", inject)
 
+    async def get_state(_key):
+        return None
+
     def invoke(parameters):
         context = SimpleNamespace(
-            fastmcp_context=SimpleNamespace(fastmcp=server, request_context=None),
+            fastmcp_context=SimpleNamespace(
+                fastmcp=server, request_context=None, get_state=get_state
+            ),
             message=SimpleNamespace(name=tool.name, arguments=parameters),
         )
         return inline(middleware.on_call_tool(context, next_call))

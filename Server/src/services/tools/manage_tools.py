@@ -36,7 +36,7 @@ logger = logging.getLogger("mcp-for-unity-server")
         "Manage visible groups or individual feature tools in this session. "
         "Actions: list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
-        "sync (refresh visibility from Unity Editor's toggle states), "
+        "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore defaults). "
         "Activating a group makes its tools appear; deactivating hides them. "
         "Use sync after toggling tools in the Unity Editor GUI."
@@ -146,7 +146,7 @@ async def manage_tools(
                 else {}
             ),
             "message": (
-                "Tool visibility synced from Unity Editor. "
+                "Unity availability refreshed; client selection is unchanged. "
                 f"Enabled groups: {', '.join(result.get('enabled_groups', []))}. "
                 f"Disabled groups: {', '.join(result.get('disabled_groups', []) or ['none'])}."
             ),
@@ -155,18 +155,19 @@ async def manage_tools(
     if action == "reset":
         logger.info("Resetting tool visibility to defaults")
         await ctx.reset_visibility()
+        visible = await _visible_tools(ctx)
         return {
             "reset": True,
             "default_groups": sorted(DEFAULT_ENABLED_GROUPS),
-            "message": "Tool visibility restored to server defaults.",
+            "visible_tools": sorted(tool.name for tool in visible),
+            "message": "Client selection restored to configured server defaults. Unity availability still applies.",
         }
 
     return {"error": f"Unknown action '{action}'"}
 
 
-async def _list_groups(ctx: Context) -> dict[str, Any]:
-    """Build the list_groups response with group metadata and tool names."""
-    group_tools = get_group_tool_names()
+async def _visible_tools(ctx: Context):
+    """Read the same final availability cap used by tools/list."""
     # Server/session transforms and authenticated Unity catalogs both affect visibility.
     # Reuse this request's resolved routing instead of reinjecting it via tools/list.
     from transport.unity_instance_middleware import UnityInstanceMiddleware
@@ -175,7 +176,13 @@ async def _list_groups(ctx: Context) -> dict[str, Any]:
     for middleware in ctx.fastmcp.middleware:
         if isinstance(middleware, UnityInstanceMiddleware):
             visible_tools = await middleware.filter_tools_for_context(ctx, visible_tools)
-    visible_names = {tool.name for tool in visible_tools}
+    return visible_tools
+
+
+async def _list_groups(ctx: Context) -> dict[str, Any]:
+    """Build the list_groups response with group metadata and tool names."""
+    group_tools = get_group_tool_names()
+    visible_names = {tool.name for tool in await _visible_tools(ctx)}
 
     groups = []
     for name in sorted(TOOL_GROUPS.keys()):

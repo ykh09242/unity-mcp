@@ -78,8 +78,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
 
     logger.info(f"Registered {len(tools)} MCP tools")
 
-    # Local transports start with the same focused essentials. Unity's saved
-    # catalog and stateful session selections can enable optional capabilities.
+    # Local transports start with the same focused essentials. Unity's catalog
+    # caps availability; only explicit client selection enables optional groups.
     from core.config import config as server_config
 
     if server_config.transport_mode.lower() == "http" and server_config.http_remote_hosted:
@@ -97,12 +97,10 @@ async def sync_tool_visibility_from_unity(
     instance_id: str | None = None,
     notify: bool = True,
 ) -> dict:
-    """Query Unity for tool enabled/disabled states and sync server-level visibility.
+    """Refresh source-owned availability without changing client selection.
 
-    This bridges the gap in stdio mode where Unity can't push ``register_tools``
-    messages.  The Python server queries Unity's ``get_tool_states`` resource via
-    the legacy TCP connection and feeds the result into
-    ``PluginHub._sync_server_tool_visibility``.
+    Stdio peers cannot push ``register_tools``. Query ``get_tool_states`` and
+    publish only to the authenticated connection's project/generation.
 
     Args:
         instance_id: Optional Unity instance identifier.
@@ -394,7 +392,6 @@ async def sync_tool_visibility_from_unity(
                 _commit_stdio_catalog,
             )
 
-            plan = PluginHub._prepare_server_tool_visibility(enabled_tools)
             if capture:
                 connection, generation = capture[0]
                 project = connection.instance_id.rsplit("@", 1)[-1]
@@ -409,28 +406,40 @@ async def sync_tool_visibility_from_unity(
                     previous is not None and previous.known and previous.generation == generation
                 )
                 authoritative = extended or (not tools and known_empty)
-                if service is not None and authoritative:
-                    visibility = (
-                        None
-                        if plan is None
-                        else (
-                            lambda: PluginHub._commit_server_tool_visibility(plan),
-                            lambda: PluginHub._rollback_server_tool_visibility(plan),
-                        )
-                    )
+                if service is not None and (authoritative or tools):
+                    catalog_models = enabled_models
+                    known = authoritative
+                    if not authoritative:
+                        # Legacy replies are toggle deltas: retain omitted descriptors,
+                        # and never invent a custom tool schema from just its name.
+                        same_generation = previous is not None and previous.generation == generation
+                        toggled = dict(previous.tools) if same_generation else {}
+                        known = same_generation and previous.known
+                        unity_builtins = {
+                            entry["unity_target"]
+                            for entry in get_registered_tools()
+                            if entry.get("unity_target")
+                        }
+                        for raw in tools:
+                            name = raw["name"]
+                            if not raw.get("enabled", True):
+                                toggled.pop(name, None)
+                            elif name not in toggled and name in unity_builtins:
+                                toggled[name] = ToolDefinitionModel(name=name)
+                        catalog_models = list(toggled.values())
                     outcome = _commit_stdio_catalog(
                         connection,
                         generation,
                         lambda: service.replace_project_catalog(
                             project,
-                            custom_models,
+                            catalog_models,
                             kind="stdio",
                             generation=generation,
                             expected_revision=previous.revision if previous is not None else 0,
-                            visibility=visibility,
+                            known=known,
                         ),
                     )
-                    if correlation is not None:
+                    if correlation is not None and authoritative:
                         settings_sync = {
                             "status": "applied",
                             **correlation.model_dump(),
@@ -438,19 +447,14 @@ async def sync_tool_visibility_from_unity(
                             "source_generation": generation,
                             "catalog_revision": outcome["revision"],
                         }
-                elif tools:
-                    _commit_stdio_catalog(
-                        connection,
-                        generation,
-                        lambda: PluginHub._commit_server_tool_visibility(plan),
-                    )
-                    outcome = {"changed": plan is not None}
-                else:
+                elif not tools:
                     raise ValueError("Empty Unity catalog has no same-generation extended evidence")
+                else:
+                    raise ValueError("Unity catalog service unavailable")
             elif tools and not extended:
-                # Compatibility for unknown old peers: visibility only, never removal.
-                PluginHub._commit_server_tool_visibility(plan)
-                outcome = {"changed": plan is not None}
+                # An old peer without authenticated provenance can be inspected,
+                # but cannot alter another project's catalog or server defaults.
+                settings_sync = {"status": "unconfirmed", "reason": "peer_provenance_unavailable"}
             else:
                 raise ValueError("Unity catalog has no authenticated connection provenance")
             if notify and outcome.get("changed"):

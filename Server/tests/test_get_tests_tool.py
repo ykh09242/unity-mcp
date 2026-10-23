@@ -165,7 +165,7 @@ def test_get_tests_http_catalog_visibility_keeps_resource_tenant_routing(tmp_pat
                         server.add_middleware(middleware)
                         tools.register_all_tools(server)
                         PluginHub._mcp = server
-                        PluginHub._sync_server_tool_visibility(catalog)
+                        server.enable(tags={"group:testing"}, components={"tool"})
                         page = {"items": [], "cursor": 0, "nextCursor": None,
                             "totalCount": 0, "pageSize": 50, "hasMore": False}
                         routed = []
