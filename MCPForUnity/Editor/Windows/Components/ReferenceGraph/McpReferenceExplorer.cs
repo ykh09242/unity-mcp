@@ -276,12 +276,18 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             SetAvailable(available);
         }
 
+        private static string Endpoint(JObject edge, string pathKey, string nodeKey)
+        {
+            string path = edge.Value<string>(pathKey);
+            return !string.IsNullOrWhiteSpace(path) ? path : edge.Value<string>(nodeKey) ?? "Unknown reference";
+        }
+
         private static string Describe(JObject edge, bool detailed)
         {
             string text =
-                (edge.Value<string>("source_path") ?? edge.Value<string>("owner") ?? "Unknown source")
+                Endpoint(edge, "source_path", "owner")
                 + " → "
-                + (edge.Value<string>("target_path") ?? edge.Value<string>("target") ?? "Unknown target")
+                + Endpoint(edge, "target_path", "target")
                 + "\nSource: "
                 + edge["provider"]
                 + " · Kind: "

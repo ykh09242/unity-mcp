@@ -93,6 +93,10 @@ namespace MCPForUnityTests.EditMode.Windows
                                 ["id"] = options["id"],
                                 ["evidence"] = "Recorded wrapper call",
                                 ["provider"] = "script",
+                                ["owner"] = "asset:source-" + options.Value<string>("id").Replace("edge-", ""),
+                                ["target"] = expectedNode,
+                                ["source_path"] = "",
+                                ["target_path"] = "  ",
                             }
                         );
                     }
@@ -128,6 +132,8 @@ namespace MCPForUnityTests.EditMode.Windows
             Click("graph-explorer-explain-edge-1000");
             Assert.AreEqual(2, explanations);
             StringAssert.Contains("Recorded wrapper call", Root.Q<Label>("graph-explorer-explanation").text);
+            StringAssert.Contains("asset:source-1000", Root.Q<Label>("graph-explorer-explanation").text);
+            StringAssert.Contains(expectedNode, Root.Q<Label>("graph-explorer-explanation").text);
         }
 
         [Test]
@@ -145,6 +151,8 @@ namespace MCPForUnityTests.EditMode.Windows
                         return pending.Task;
                     var data = Status();
                     data["edges"] = new JArray();
+                    if (action == "impact")
+                        data["query_id"] = "retained-query";
                     return Task.FromResult(data);
                 },
                 () => identity
@@ -162,6 +170,9 @@ namespace MCPForUnityTests.EditMode.Windows
             Click("graph-explorer-search");
             Assert.AreEqual("path", calls[calls.Count - 1].action);
             Assert.IsNotNull(calls[calls.Count - 1].options["target"]);
+            var released = calls.FindAll(call => call.action == "release_query");
+            Assert.AreEqual(1, released.Count);
+            Assert.AreEqual("retained-query", released[0].options.Value<string>("id"));
             pending = new TaskCompletionSource<JObject>();
             var request = section.Run("query", new JObject { ["node"] = "asset:old" });
             identity = "two";
