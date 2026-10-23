@@ -533,6 +533,145 @@ namespace MCPForUnityTests.EditMode.Windows
             StringAssert.Contains("2 / 2 enabled", root.Q<Foldout>(className: "catalog-category").text);
         }
 
+        [TestCase("Project info")]
+        [TestCase("project_info")]
+        [TestCase(" PROJECT INFO ")]
+        public void ResourcesSearchMatchesTheVisibleDisplayName(string query)
+        {
+            Assert.IsTrue(
+                Matches(
+                    typeof(McpResourcesSection),
+                    new ResourceMetadata
+                    {
+                        Name = "project_info",
+                        Description = "Resource: project_info",
+                        IsBuiltIn = true,
+                    },
+                    query
+                )
+            );
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void MatchingBulkActionsKeepHiddenItemsAndShowTheirScope(bool toolCatalog)
+        {
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "alpha",
+                    IsBuiltIn = true,
+                    Group = "core",
+                }
+            );
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "beta",
+                    IsBuiltIn = true,
+                    Group = "core",
+                }
+            );
+            resources.Items.Add(new ResourceMetadata { Name = "alpha", IsBuiltIn = true });
+            resources.Items.Add(new ResourceMetadata { Name = "beta", IsBuiltIn = true });
+            string prefix = toolCatalog ? "tools" : "resources";
+            var root = ActualCatalogRoot(toolCatalog);
+            object section = toolCatalog ? (object)new McpToolsSection(root) : new McpResourcesSection(root);
+            Invoke(section, "Refresh");
+            Search(root, prefix, "alpha");
+            var matching = root.Q<Button>("enable-matching-" + prefix);
+            Assert.IsNotNull(matching);
+            StringAssert.Contains("1", matching.text);
+            StringAssert.Contains("hidden", root.Q<Label>(prefix + "-bulk-scope").text);
+            Click(matching);
+            Assert.IsTrue(toolCatalog ? tools.IsToolEnabled("alpha") : resources.IsResourceEnabled("alpha"));
+            Assert.IsFalse(toolCatalog ? tools.IsToolEnabled("beta") : resources.IsResourceEnabled("beta"));
+            Search(root, prefix, "no-result");
+            Assert.IsFalse(matching.enabledSelf);
+            var global = root.Q<Button>(toolCatalog ? "enable-all-button" : "enable-all-resources-button");
+            StringAssert.Contains("2", global.text);
+            Assert.IsTrue(global.enabledSelf);
+            Click(global);
+            Assert.IsTrue(toolCatalog ? tools.IsToolEnabled("beta") : resources.IsResourceEnabled("beta"));
+        }
+
+        [Test]
+        public void MatchingToolBulkUsesAStableSnapshotOfTheStateFilter()
+        {
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "alpha_first",
+                    IsBuiltIn = true,
+                    Group = "core",
+                }
+            );
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "alpha_second",
+                    IsBuiltIn = true,
+                    Group = "core",
+                }
+            );
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "beta",
+                    IsBuiltIn = true,
+                    Group = "core",
+                }
+            );
+            var root = ActualToolsRoot();
+            new McpToolsSection(root).Refresh();
+            root.Q<DropdownField>("tools-state-filter").SetValueWithoutNotify("Disabled");
+            Search(root, "tools", "alpha");
+            var button = root.Q<Button>("enable-matching-tools");
+            Assert.IsNotNull(button);
+            Click(button);
+            Assert.IsTrue(tools.IsToolEnabled("alpha_first"));
+            Assert.IsTrue(tools.IsToolEnabled("alpha_second"));
+            Assert.IsFalse(tools.IsToolEnabled("beta"));
+            Assert.IsFalse(button.enabledSelf, "Both matching items left the Disabled view.");
+            StringAssert.Contains("0", button.text);
+        }
+
+        [Test]
+        public void ResourceLocalChangesNeverClaimServerAcknowledgementOrReconnect()
+        {
+            resources.Items.Add(new ResourceMetadata { Name = "project_info", IsBuiltIn = true });
+            var root = ActualCatalogRoot(false);
+            var section = new McpResourcesSection(root);
+            section.Refresh();
+            var status = root.Q<Label>("resources-apply-status");
+            Assert.IsNotNull(status);
+            StringAssert.Contains("not confirmed", status.text);
+            Click(root.Q<Button>("enable-all-resources-button"));
+            StringAssert.Contains("Saved", root.Q<Label>("resources-summary").text);
+            StringAssert.Contains("not confirmed", status.text);
+            var connect = root.Q<Button>("resources-open-connection");
+            Assert.IsNotNull(connect);
+            int requested = 0;
+            var evt = typeof(McpResourcesSection).GetEvent("OnConnectionRequested");
+            Assert.IsNotNull(evt);
+            evt.AddEventHandler(section, (Action)(() => requested++));
+            Assert.AreEqual(0, requested);
+            Click(connect);
+            Assert.AreEqual(1, requested);
+        }
+
+        private VisualElement ActualCatalogRoot(bool toolCatalog)
+        {
+            if (toolCatalog)
+                return ActualToolsRoot();
+            var tree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
+                "Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/Resources/McpResourcesSection.uxml"
+            );
+            var root = tree.CloneTree();
+            panels.Add(new OwnedPanel(root));
+            return root;
+        }
+
         private VisualElement ActualToolsRoot()
         {
             var tree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>("Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/Tools/McpToolsSection.uxml");

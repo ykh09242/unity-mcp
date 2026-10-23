@@ -49,6 +49,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private Button enableAllButton;
         private Button disableAllButton;
         private Button rescanButton;
+        private Button enableMatchingButton;
+        private Button disableMatchingButton;
         private Button reconfigureButton;
         private VisualElement categoryContainer;
         private List<ToolMetadata> allTools = new();
@@ -128,6 +130,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             enableAllButton = Root.Q<Button>("enable-all-button");
             disableAllButton = Root.Q<Button>("disable-all-button");
             rescanButton = Root.Q<Button>("rescan-button");
+            enableMatchingButton = Root.Q<Button>("enable-matching-tools");
+            disableMatchingButton = Root.Q<Button>("disable-matching-tools");
             reconfigureButton = Root.Q<Button>("reconfigure-button");
             categoryContainer = Root.Q<VisualElement>("tool-category-container");
         }
@@ -135,6 +139,10 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private void RegisterCallbacks()
         {
             searchField?.RegisterValueChangedCallback(evt => ApplySearch());
+            if (enableMatchingButton != null)
+                enableMatchingButton.clicked += () => SetToolsState(allTools.Where(MatchesFilter).ToList(), true);
+            if (disableMatchingButton != null)
+                disableMatchingButton.clicked += () => SetToolsState(allTools.Where(MatchesFilter).ToList(), false);
             if (stateFilter != null)
             {
                 stateFilter.choices = new List<string> { "All", "Enabled", "Disabled" };
@@ -305,11 +313,11 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             var groupCheckbox = new Toggle
             {
                 value = allEnabled,
-                text = "All",
+                text = $"All {toolList.Count}",
                 showMixedValue = enabledCount > 0 && !allEnabled,
             };
             groupCheckbox.AddToClassList("group-header-checkbox");
-            groupCheckbox.tooltip = $"Toggle all tools in \"{title}\" on or off.";
+            groupCheckbox.tooltip = $"Toggle all tools in \"{title}\", including hidden rows. Does not grant explicit consent.";
 
             // Prevent the click from propagating to the foldout expand/collapse toggle
             groupCheckbox.RegisterCallback<ClickEvent>(evt => evt.StopPropagation());
@@ -658,11 +666,13 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 ReregisterToolsAsync();
         }
 
-        private void SetAllToolsState(bool enabled)
+        private void SetAllToolsState(bool enabled) => SetToolsState(allTools, enabled);
+
+        private void SetToolsState(IEnumerable<ToolMetadata> targets, bool enabled)
         {
             bool hasChanges = false;
 
-            foreach (var tool in allTools)
+            foreach (var tool in targets)
             {
                 bool currentEnabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
                 if (toolToggleMap.TryGetValue(tool.Name, out var toggle))
@@ -930,7 +940,6 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
         private void ApplySearch()
         {
-            string query = (searchField?.value ?? string.Empty).Trim();
             bool searching = IsFiltering();
             int visibleCount = 0;
 
@@ -939,8 +948,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 int groupVisibleCount = 0;
                 foreach (var tool in tools)
                 {
-                    bool enabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
-                    bool matches = MatchesSearch(tool, query) && (stateFilter?.value != "Enabled" || enabled) && (stateFilter?.value != "Disabled" || !enabled);
+                    bool matches = MatchesFilter(tool);
                     if (toolRowMap.TryGetValue(tool.Name, out var row))
                         row.EnableInClassList("catalog-hidden", !matches);
                     if (matches)
@@ -963,6 +971,20 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             if (!searching)
                 foldoutStatesBeforeSearch.Clear();
+            if (enableAllButton != null)
+                enableAllButton.text = $"Enable all ({allTools.Count})";
+            if (disableAllButton != null)
+                disableAllButton.text = $"Disable all ({allTools.Count})";
+            if (enableMatchingButton != null)
+            {
+                enableMatchingButton.text = $"Enable matching ({visibleCount})";
+                enableMatchingButton.SetEnabled(visibleCount > 0);
+            }
+            if (disableMatchingButton != null)
+            {
+                disableMatchingButton.text = $"Disable matching ({visibleCount})";
+                disableMatchingButton.SetEnabled(visibleCount > 0);
+            }
             if (visibleCountLabel != null)
                 visibleCountLabel.text = $"{visibleCount} / {allTools.Count} shown";
             if (emptyStateLabel != null)
@@ -970,6 +992,12 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 emptyStateLabel.text = allTools.Count == 0 ? "No tools discovered." : "No tools match your search and filter.";
                 emptyStateLabel.EnableInClassList("catalog-hidden", visibleCount > 0);
             }
+        }
+
+        private bool MatchesFilter(ToolMetadata tool)
+        {
+            bool enabled = MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name);
+            return MatchesSearch(tool, searchField?.value) && (stateFilter?.value != "Enabled" || enabled) && (stateFilter?.value != "Disabled" || !enabled);
         }
 
         private bool IsFiltering() => !string.IsNullOrWhiteSpace(searchField?.value) || stateFilter?.value == "Enabled" || stateFilter?.value == "Disabled";

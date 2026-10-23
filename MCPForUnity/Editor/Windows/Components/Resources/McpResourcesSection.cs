@@ -24,6 +24,11 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         private Button enableAllButton;
         private Button disableAllButton;
         private Button rescanButton;
+        private Button enableMatchingButton;
+        private Button disableMatchingButton;
+        private Label applyStatusLabel;
+        public event Action OnConnectionRequested;
+
         private VisualElement categoryContainer;
         private List<ResourceMetadata> allResources = new();
         private readonly Dictionary<string, VisualElement> resourceRowMap = new();
@@ -49,12 +54,22 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             enableAllButton = Root.Q<Button>("enable-all-resources-button");
             disableAllButton = Root.Q<Button>("disable-all-resources-button");
             rescanButton = Root.Q<Button>("rescan-resources-button");
+            enableMatchingButton = Root.Q<Button>("enable-matching-resources");
+            disableMatchingButton = Root.Q<Button>("disable-matching-resources");
+            applyStatusLabel = Root.Q<Label>("resources-apply-status");
             categoryContainer = Root.Q<VisualElement>("resource-category-container");
         }
 
         private void RegisterCallbacks()
         {
             searchField?.RegisterValueChangedCallback(evt => ApplySearch());
+            if (enableMatchingButton != null)
+                enableMatchingButton.clicked += () => SetResourcesState(MatchingResources(), true);
+            if (disableMatchingButton != null)
+                disableMatchingButton.clicked += () => SetResourcesState(MatchingResources(), false);
+            var connect = Root.Q<Button>("resources-open-connection");
+            if (connect != null)
+                connect.clicked += () => OnConnectionRequested?.Invoke();
 
             if (enableAllButton != null)
             {
@@ -164,7 +179,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             var toggle = new Toggle
             {
                 name = "resource-toggle-" + resource.Name,
-                text = ObjectNames.NicifyVariableName(resource.Name.Replace('_', ' ')),
+                text = GetResourceDisplayName(resource),
                 value = MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(resource.Name),
             };
             toggle.AddToClassList("tool-item-toggle");
@@ -202,6 +217,8 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         private void HandleToggleChange(ResourceMetadata resource, bool enabled, bool updateSummary = true)
         {
             MCPServiceLocator.ResourceDiscovery.SetResourceEnabled(resource.Name, enabled);
+            if (applyStatusLabel != null)
+                applyStatusLabel.text = "Saved locally; server listing not confirmed. Refresh your client resource list if needed.";
 
             if (updateSummary)
             {
@@ -209,9 +226,13 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             }
         }
 
-        private void SetAllResourcesState(bool enabled)
+        private void SetAllResourcesState(bool enabled) => SetResourcesState(allResources, enabled);
+
+        private List<ResourceMetadata> MatchingResources() => allResources.Where(resource => MatchesSearch(resource, searchField?.value)).ToList();
+
+        private void SetResourcesState(IEnumerable<ResourceMetadata> resources, bool enabled)
         {
-            foreach (var resource in allResources)
+            foreach (var resource in resources)
             {
                 bool currentEnabled = MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(resource.Name);
                 if (resourceToggleMap.TryGetValue(resource.Name, out var toggle))
@@ -242,7 +263,8 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             }
 
             int enabledCount = allResources.Count(r => MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(r.Name));
-            summaryLabel.text = $"{enabledCount} of {allResources.Count} resources enabled.";
+            summaryLabel.text = $"Saved locally: {enabledCount} of {allResources.Count} resources enabled (this user).";
+            ApplySearch();
         }
 
         private void ApplySearch()
@@ -279,6 +301,20 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
 
             if (!searching)
                 foldoutStatesBeforeSearch.Clear();
+            if (enableAllButton != null)
+                enableAllButton.text = $"Enable all ({allResources.Count})";
+            if (disableAllButton != null)
+                disableAllButton.text = $"Disable all ({allResources.Count})";
+            if (enableMatchingButton != null)
+            {
+                enableMatchingButton.text = $"Enable matching ({visibleCount})";
+                enableMatchingButton.SetEnabled(visibleCount > 0);
+            }
+            if (disableMatchingButton != null)
+            {
+                disableMatchingButton.text = $"Disable matching ({visibleCount})";
+                disableMatchingButton.SetEnabled(visibleCount > 0);
+            }
             if (visibleCountLabel != null)
                 visibleCountLabel.text = $"{visibleCount} / {allResources.Count} shown";
             if (emptyStateLabel != null)
@@ -287,6 +323,9 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
                 emptyStateLabel.EnableInClassList("catalog-hidden", visibleCount > 0);
             }
         }
+
+        private static string GetResourceDisplayName(ResourceMetadata resource) =>
+            ObjectNames.NicifyVariableName((resource?.Name ?? string.Empty).Replace('_', ' '));
 
         private static bool MatchesSearch(ResourceMetadata resource, string query)
         {
@@ -297,6 +336,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
                 return true;
             string category = resource.IsBuiltIn ? "Built-in Resources" : "Custom Resources";
             return (resource.Name ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                || GetResourceDisplayName(resource).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
                 || (resource.Description ?? string.Empty).IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
                 || category.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
         }

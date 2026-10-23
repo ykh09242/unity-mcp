@@ -362,6 +362,7 @@ namespace MCPForUnity.Editor.Windows
                 var resourcesRoot = resourcesTree.Instantiate();
                 resourcesContainer.Add(resourcesRoot);
                 resourcesSection = new McpResourcesSection(resourcesRoot);
+                resourcesSection.OnConnectionRequested += () => SwitchPanel(ActivePanel.Clients);
 
                 if (resourcesTabToggle != null && resourcesTabToggle.value)
                 {
