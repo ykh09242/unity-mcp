@@ -147,7 +147,7 @@ namespace MCPForUnity.Editor.Services
     /// Concrete implementation of <see cref="ITestRunnerService"/>.
     /// Coordinates Unity Test Runner operations and produces structured results.
     /// </summary>
-    internal sealed class TestRunnerService : ITestRunnerService, IErrorCallbacks, IDisposable
+    internal sealed class TestRunnerService : ITestRunnerService, IBudgetedTestDiscovery, IErrorCallbacks, IDisposable
     {
         private static readonly TestMode[] AllModes = { TestMode.EditMode, TestMode.PlayMode };
 
@@ -232,7 +232,7 @@ namespace MCPForUnity.Editor.Services
         }
 
         public TestRunnerService()
-            : this(null, TimeSpan.FromSeconds(30)) { }
+            : this(null, TimeSpan.FromSeconds(OperationTimeouts.EnvironmentSeconds("UNITY_MCP_TEST_DISCOVERY_TIMEOUT", 300))) { }
 
         internal TestRunnerService(Action<TestMode, Action<ITestAdaptor>> retrieveTestList, TimeSpan retrievalTimeout)
         {
@@ -269,14 +269,24 @@ namespace MCPForUnity.Editor.Services
 
         private bool IsTrackingCurrentJob => !string.IsNullOrEmpty(_trackedJobId) && TestJobManager.CurrentJobId == _trackedJobId;
 
-        public async Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode)
+        public Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode) => GetTestsAsync(mode, _retrievalTimeout);
+
+        public async Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode, TimeSpan budget)
         {
+            if (budget <= TimeSpan.Zero || budget.TotalSeconds > OperationTimeouts.MaximumSeconds)
+                throw new ArgumentOutOfRangeException(nameof(budget));
             ThrowIfDisposed();
             ThrowIfRetiredRunPending();
-            var cancellationToken = _lifetimeCancellation.Token;
-            await _operationLock.WaitAsync(cancellationToken).ConfigureAwait(true);
+            var lifetime = _lifetimeCancellation.Token;
+            using var observation = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
+            observation.CancelAfter(budget);
+            var cancellationToken = observation.Token;
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            bool entered = false;
             try
             {
+                await _operationLock.WaitAsync(cancellationToken).ConfigureAwait(true);
+                entered = true;
                 cancellationToken.ThrowIfCancellationRequested();
                 ThrowIfDisposed();
                 ThrowIfRetiredRunPending();
@@ -288,8 +298,13 @@ namespace MCPForUnity.Editor.Services
                 foreach (var m in modes)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var root = await RetrieveTestRootAsync(m, cancellationToken).ConfigureAwait(true);
-                    cancellationToken.ThrowIfCancellationRequested();
+                    var remaining = budget - elapsed.Elapsed;
+                    if (remaining <= TimeSpan.Zero)
+                        throw new TimeoutException("Test discovery observation budget expired.");
+                    var root = await RetrieveTestRootAsync(m, cancellationToken, remaining).ConfigureAwait(true);
+                    // An accepted callback wins a later observation timer while the main
+                    // thread continuation is paused. Disposal still invalidates the result.
+                    lifetime.ThrowIfCancellationRequested();
                     if (root != null)
                     {
                         CollectFromNode(root, m, results, seen, new List<string>());
@@ -298,9 +313,13 @@ namespace MCPForUnity.Editor.Services
 
                 return results;
             }
+            catch (OperationCanceledException) when (!lifetime.IsCancellationRequested)
+            {
+                throw new TimeoutException("Test discovery observation budget expired.");
+            }
             finally
             {
-                if (!_disposed)
+                if (entered && !_disposed)
                     _operationLock.Release();
             }
         }
@@ -791,7 +810,7 @@ namespace MCPForUnity.Editor.Services
 
         #region Test list helpers
 
-        private async Task<ITestAdaptor> RetrieveTestRootAsync(TestMode mode, CancellationToken cancellationToken)
+        private async Task<ITestAdaptor> RetrieveTestRootAsync(TestMode mode, CancellationToken cancellationToken, TimeSpan remaining)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var completion = new TaskCompletionSource<ITestAdaptor>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -799,7 +818,7 @@ namespace MCPForUnity.Editor.Services
             using var timeout = new Timer(
                 _ => completion.TrySetException(new TimeoutException($"Timed out retrieving the {mode} test list.")),
                 null,
-                _retrievalTimeout,
+                remaining,
                 Timeout.InfiniteTimeSpan
             );
             try

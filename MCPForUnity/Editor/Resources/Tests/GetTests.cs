@@ -26,6 +26,13 @@ namespace MCPForUnity.Editor.Resources.Tests
         private const int DEFAULT_PAGE_SIZE = 50;
         private const int MAX_PAGE_SIZE = 200;
 
+        internal static Task<IReadOnlyList<Dictionary<string, string>>> RetrieveWithBudgetAsync(TestMode? mode, JObject parameters)
+        {
+            double seconds = OperationTimeouts.ReadSeconds(parameters, OperationTimeouts.EnvironmentSeconds("UNITY_MCP_TEST_DISCOVERY_TIMEOUT", 300));
+            var service = MCPServiceLocator.Tests;
+            return service is IBudgetedTestDiscovery timed ? timed.GetTestsAsync(mode, TimeSpan.FromSeconds(seconds)) : service.GetTestsAsync(mode);
+        }
+
         public static async Task<object> HandleCommand(JObject @params)
         {
             // Parse mode filter
@@ -47,7 +54,7 @@ namespace MCPForUnity.Editor.Resources.Tests
             IReadOnlyList<Dictionary<string, string>> allTests;
             try
             {
-                allTests = await MCPServiceLocator.Tests.GetTestsAsync(modeFilter).ConfigureAwait(true);
+                allTests = await RetrieveWithBudgetAsync(modeFilter, @params).ConfigureAwait(true);
             }
             catch (Exception ex)
             {
@@ -133,7 +140,7 @@ namespace MCPForUnity.Editor.Resources.Tests
             IReadOnlyList<Dictionary<string, string>> allTests;
             try
             {
-                allTests = await MCPServiceLocator.Tests.GetTestsAsync(parsedMode).ConfigureAwait(true);
+                allTests = await GetTests.RetrieveWithBudgetAsync(parsedMode, @params).ConfigureAwait(true);
             }
             catch (Exception ex)
             {

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
@@ -20,6 +22,16 @@ namespace MCPForUnity.Editor.Tools.Profiler
 
         internal static async Task<object> TakeSnapshotAsync(JObject @params)
         {
+            double timeoutSeconds;
+            try
+            {
+                timeoutSeconds = OperationTimeouts.ReadSeconds(@params, 300);
+            }
+            catch (ArgumentException error)
+            {
+                return new ErrorResponse(error.Message);
+            }
+            var elapsed = Stopwatch.StartNew();
             var p = new ToolParams(@params);
             if (!ProfilerPathUtility.TryResolve(p, "snapshot_path", false, false, out string snapshotPath, out var pathError))
                 return pathError;
@@ -126,13 +138,30 @@ namespace MCPForUnity.Editor.Tools.Profiler
                 return new ErrorResponse($"Failed to take snapshot: {ex.Message}");
             }
 
-            var timeout = Task.Delay(TimeSpan.FromSeconds(30));
-            var completed = await Task.WhenAny(tcs.Task, timeout);
-            if (completed == timeout)
-                // A native capture may still be writing. Only its eventual callback owns folder cleanup.
-                return new ErrorResponse("Snapshot timed out after 30 seconds.");
+            return await ObserveSnapshotAsync(tcs.Task, TimeSpan.FromSeconds(Math.Max(0, timeoutSeconds - elapsed.Elapsed.TotalSeconds)), snapshotPath);
+        }
 
-            return await tcs.Task;
+        internal static async Task<object> ObserveSnapshotAsync(Task<object> completion, TimeSpan budget, string snapshotPath)
+        {
+            if (completion.IsCompleted)
+                return await completion;
+            using var cancellation = new CancellationTokenSource();
+            try
+            {
+                var timeout = Task.Delay(budget, cancellation.Token);
+                if (await Task.WhenAny(completion, timeout) == completion)
+                    return await completion;
+                // Observation ending cannot cancel Unity's native writer. Its callback
+                // retains folder ownership; never dispose active output here.
+                return new ErrorResponse(
+                    "Snapshot observation timed out; capture may still be running. Inspect snapshot_path before retrying.",
+                    new { reason = "outcome_unknown", snapshot_path = snapshotPath }
+                );
+            }
+            finally
+            {
+                cancellation.Cancel();
+            }
         }
 
         private static object GetCaptureFlagsDefault(System.Reflection.ParameterInfo parameter)

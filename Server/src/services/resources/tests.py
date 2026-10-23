@@ -9,6 +9,8 @@ from services.registry import mcp_for_unity_resource
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+from transport.plugin_hub import extend_http_request_deadline
+from transport.command_timeout import configured_wait_timeout
 
 
 class TestItem(BaseModel):
@@ -49,13 +51,15 @@ async def get_tests(ctx: Context) -> GetTestsResponse | MCPResponse:
     Use mcpforunity://tests/{mode} for mode filtering. This resource does not
     expose name filtering or pagination controls; use the get_tests tool for those.
     """
+    timeout_seconds = configured_wait_timeout("UNITY_MCP_TEST_DISCOVERY_TIMEOUT", 300) or 300
+    extend_http_request_deadline(timeout_seconds + 5)
     unity_instance = await get_unity_instance_from_context(ctx)
 
     response = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
         "get_tests",
-        {},
+        {"timeout_seconds": timeout_seconds},
     )
     return parse_resource_response(response, GetTestsResponse)
 
@@ -81,12 +85,14 @@ async def get_tests_for_mode(
     Returns the first page of tests using Unity's default pagination (50 items).
     This resource does not expose name filtering or pagination controls; use the get_tests tool.
     """
+    timeout_seconds = configured_wait_timeout("UNITY_MCP_TEST_DISCOVERY_TIMEOUT", 300) or 300
+    extend_http_request_deadline(timeout_seconds + 5)
     unity_instance = await get_unity_instance_from_context(ctx)
 
     response = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
         "get_tests_for_mode",
-        {"mode": mode},
+        {"mode": mode, "timeout_seconds": timeout_seconds},
     )
     return parse_resource_response(response, GetTestsResponse)

@@ -65,7 +65,7 @@ FRAME DEBUGGER:
 | `markers` | `list[str] \| None` | — | 1–8 distinct exact marker/counter names for window_start. |
 | `frame_count` | `int \| None` | — | Window measurement frame limit (default 60). |
 | `warmup_frames` | `int \| None` | — | Excluded warmup frames (default 0). |
-| `timeout_seconds` | `int \| None` | — | Bounded window deadline (default 30 seconds). |
+| `timeout_seconds` | `int \| None` | — | Observation budget: snapshot 1..86400 (default 300), sampling window 1..120 (default 30). |
 | `window_id` | `str \| None` | — | Session-scoped ID returned by window_start; required for status/result/cancel. |
 | `include_samples` | `bool \| None` | — | Include bounded completed samples in window result (default false). |
 | `targets` | `list[str] \| None` | — | Loaded GameObject session ID strings for memory_aggregate; duplicate roots deduplicate. |

@@ -314,3 +314,24 @@ def test_tool_registered_with_profiling_group():
     profiler_tools = [t for t in _tool_registry if t.get("name") == "manage_profiler"]
     assert len(profiler_tools) == 1
     assert profiler_tools[0]["group"] == "profiling"
+
+
+@pytest.mark.parametrize("timeout", [True, 0, -1, float("inf"), float("nan"), 86401, "900"])
+@pytest.mark.asyncio
+async def test_snapshot_budget_rejects_invalid_value_before_dispatch(mock_unity, timeout):
+    result = await manage_profiler(None, action="memory_take_snapshot", timeout_seconds=timeout)
+    assert result["success"] is False and "timeout_seconds" in result["message"]
+    assert not mock_unity
+
+
+@pytest.mark.asyncio
+async def test_snapshot_default_budget_is_forwarded_to_both_transports(mock_unity):
+    await manage_profiler(None, action="memory_take_snapshot")
+    assert mock_unity["params"]["timeout_seconds"] == 300
+
+
+@pytest.mark.asyncio
+async def test_snapshot_large_budget_is_distinct_from_window_measurement(mock_unity):
+    result = await manage_profiler(None, action="memory_take_snapshot", timeout_seconds=1800)
+    assert result["success"] is True
+    assert mock_unity["params"]["timeout_seconds"] == 1800

@@ -50,6 +50,50 @@ namespace MCPForUnityTests.Editor.Tools
             Directory.Delete(ownedRoot, false);
         }
 
+        [TestCase("0")]
+        [TestCase("-1")]
+        [TestCase("true")]
+        [TestCase("86401")]
+        [TestCase("\"900\"")]
+        public async Task SnapshotRejectsInvalidBudgetBeforeAnyPathWork(string value)
+        {
+            var result = JObject.FromObject(
+                await MemorySnapshotOps.TakeSnapshotAsync(new JObject { ["timeout_seconds"] = JToken.Parse(value), ["snapshot_path"] = "invalid\0path" })
+            );
+            Assert.IsFalse(result.Value<bool>("success"));
+            StringAssert.Contains("timeout_seconds", result.Value<string>("error"));
+        }
+
+        [Test]
+        public async Task SnapshotObservationExpiryLeavesNativeCompletionOwned()
+        {
+            var completion = NewCompletion();
+            string path = Path.Combine(ownedRoot, "StillCapturing.snap");
+            var result = JObject.FromObject(await ObserveSnapshot(completion.Task, TimeSpan.Zero, path));
+            Assert.IsFalse(result.Value<bool>("success"));
+            StringAssert.Contains("may still be running", result.Value<string>("error"));
+            Assert.AreEqual(path, result["data"].Value<string>("snapshot_path"));
+            Assert.IsFalse(completion.Task.IsCompleted, "Observation must not cancel Unity's callback-owned work.");
+            Complete(completion, path, true);
+            Assert.IsTrue(JObject.FromObject(await completion.Task).Value<bool>("success"));
+        }
+
+        [Test]
+        public async Task CompletedSnapshotReturnsWithoutWaitingOutLargeBudget()
+        {
+            var expected = new object();
+            var observation = ObserveSnapshot(Task.FromResult(expected), TimeSpan.FromSeconds(1800), "unused.snap");
+            Assert.IsTrue(observation.IsCompleted);
+            Assert.AreSame(expected, await observation);
+        }
+
+        private static Task<object> ObserveSnapshot(Task<object> completion, TimeSpan budget, string path)
+        {
+            var method = typeof(MemorySnapshotOps).GetMethod("ObserveSnapshotAsync", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(method);
+            return (Task<object>)method.Invoke(null, new object[] { completion, budget, path });
+        }
+
         [TestCase("false", false)]
         [TestCase("\"false\"", false)]
         [TestCase("true", true)]

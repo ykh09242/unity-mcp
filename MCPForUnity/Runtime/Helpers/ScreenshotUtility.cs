@@ -1055,12 +1055,12 @@ namespace MCPForUnity.Runtime.Helpers
     /// </summary>
     public sealed class ScreenshotCapturer : MonoBehaviour
     {
-        public const float DefaultTimeoutSeconds = 2f;
+        public const float DefaultTimeoutSeconds = 30f;
 
         private int _superSize = 1;
         private Action<Texture2D, bool> _onComplete;
         private float _timeoutSeconds = DefaultTimeoutSeconds;
-        private float _startedAt;
+        private double _startedAt;
         private bool _finished;
         private bool _destroying;
 
@@ -1073,13 +1073,15 @@ namespace MCPForUnity.Runtime.Helpers
         /// <summary>Spawns a hidden GameObject, attaches a capturer, returns immediately.</summary>
         public static ScreenshotCapturer Begin(int superSize, Action<Texture2D, bool> onComplete, float timeoutSeconds = DefaultTimeoutSeconds)
         {
+            if (float.IsNaN(timeoutSeconds) || float.IsInfinity(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 86400)
+                throw new ArgumentOutOfRangeException(nameof(timeoutSeconds), "Expected finite positive seconds up to 86400.");
             ScreenshotUtility.ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             var go = new GameObject("__MCP_ScreenshotCapturer__") { hideFlags = HideFlags.HideAndDontSave };
             var c = go.AddComponent<ScreenshotCapturer>();
             c._superSize = superSize;
             c._onComplete = onComplete;
             c._timeoutSeconds = Mathf.Max(0.05f, timeoutSeconds);
-            c._startedAt = Time.realtimeSinceStartup;
+            c._startedAt = Time.realtimeSinceStartupAsDouble;
             c.ArmTimeout();
             return c;
         }
@@ -1113,7 +1115,7 @@ namespace MCPForUnity.Runtime.Helpers
         {
             if (_finished)
                 return;
-            if (Time.realtimeSinceStartup - _startedAt < _timeoutSeconds)
+            if (Time.realtimeSinceStartupAsDouble - _startedAt < _timeoutSeconds)
                 return;
             Complete(null, timedOut: true);
         }

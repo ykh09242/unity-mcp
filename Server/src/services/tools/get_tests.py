@@ -13,6 +13,7 @@ from services.resources.tests import PaginatedTestsData
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
+from transport.plugin_hub import extend_http_request_deadline
 
 
 class TestDiscoveryPage(PaginatedTestsData):
@@ -67,10 +68,24 @@ async def get_tests(
         int,
         Field(ge=0, le=2147483647, description="Zero-based offset; use the previous nextCursor."),
     ] = 0,
+    timeout_seconds: Annotated[
+        int,
+        Field(
+            strict=True,
+            ge=1,
+            le=86400,
+            description="Total discovery observation budget in seconds, including both modes (default 300).",
+        ),
+    ] = 300,
 ) -> TestDiscoveryResponse | MCPResponse:
     """Forward a single page request to native discovery without enumerating tests in Python."""
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 86400:
+        return MCPResponse(
+            success=False, error="timeout_seconds must be an integer between 1 and 86400."
+        )
+    extend_http_request_deadline(timeout_seconds + 5)
     unity_instance = await get_unity_instance_from_context(ctx)
-    params = {"page_size": page_size, "cursor": cursor}
+    params = {"page_size": page_size, "cursor": cursor, "timeout_seconds": timeout_seconds}
     if mode is not None:
         params["mode"] = mode
     if name_pattern is not None:

@@ -31,6 +31,12 @@ namespace MCPForUnity.Editor.Services
         public string[] AssemblyNames { get; set; }
     }
 
+    // Optional capability preserves existing integrations implementing ITestRunnerService.
+    internal interface IBudgetedTestDiscovery
+    {
+        Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode, System.TimeSpan budget);
+    }
+
     /// <summary>
     /// Provides access to Unity Test Runner data and execution.
     /// </summary>

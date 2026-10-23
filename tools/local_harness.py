@@ -918,8 +918,8 @@ class LocalLauncher:
                     return
             if pid is not None:
                 os.kill(pid, signal.SIGTERM)
-                deadline = time.time() + grace_s
-                while time.time() < deadline:
+                deadline = time.monotonic() + grace_s
+                while time.monotonic() < deadline:
                     try:
                         os.kill(pid, 0)
                     except OSError:
@@ -1214,9 +1214,9 @@ def wait_for_ready(
     the mapped exit code (4 license / 3 compile / else 2). On overall watchdog
     expiry -> SystemExit(2).
     """
-    wait_deadline = time.time() + bridge_wait_s
+    wait_deadline = time.monotonic() + bridge_wait_s
     while True:
-        now = time.time()
+        now = time.monotonic()
         if now > deadline:
             _redacted_tail(launcher, handle)
             raise SystemExit(2)
@@ -1361,7 +1361,7 @@ def run_smoke_leg(
         "--retry-ms",
         str(retry_ms),
     ]
-    timeout = max(1.0, deadline - time.time()) if deadline is not None else None
+    timeout = max(1.0, deadline - time.monotonic()) if deadline is not None else None
     try:
         rc = subprocess.run(argv, check=False, timeout=timeout).returncode
     except subprocess.TimeoutExpired:
@@ -1497,7 +1497,7 @@ def _poll_utf(
     non-terminal (keep polling). Returns the last response (terminal or a wedge
     marker dict when the deadline expires).
     """
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         try:
             # Running jobs have no result payload. Request complete rows for the terminal
             # response so JUnit represents passes as well as failures and ignored tests.
@@ -1673,10 +1673,10 @@ def run_utf_leg(
 
 def _ensure_clean_editmode(
     send, instance_id: str, max_retries: int, retry_ms: int, deadline: float
-) -> None:
-    """Best-effort: wait until no PlayMode/test job is running (S0)."""
-    end = min(time.time() + 30, deadline)
-    while time.time() < end:
+) -> bool:
+    """Wait for clean EditMode using the remaining overall monotonic budget."""
+    end = deadline
+    while time.monotonic() < end:
         try:
             resp = send(
                 "get_test_job",
@@ -1688,12 +1688,13 @@ def _ensure_clean_editmode(
             )
         except Exception:
             # Editor busy/unresponsive; best-effort wait, treat as still settling.
-            time.sleep(2)
+            time.sleep(min(2, max(0, end - time.monotonic())))
             continue
         status = _dig(resp, "status")
         if status not in ("running",):
-            return
-        time.sleep(2)
+            return time.monotonic() < end
+        time.sleep(min(2, max(0, end - time.monotonic())))
+    return False
 
 
 def run_playmode_with_retry(
@@ -1719,7 +1720,14 @@ def run_playmode_with_retry(
     blocking = bool(strict)
 
     def attempt(inst: str) -> LegOutcome:
-        _ensure_clean_editmode(send, inst, max_retries, retry_ms, deadline)
+        if not _ensure_clean_editmode(send, inst, max_retries, retry_ms, deadline):
+            return LegOutcome(
+                "playmode",
+                "fail",
+                blocking=blocking,
+                detail="Deadline exhausted waiting for clean EditMode",
+                exit_code=1,
+            )
         job_id, start = _start_utf(send, "PlayMode", inst, init_timeout_ms, max_retries, retry_ms)
         if job_id is None:
             suite = JUnitSuite(
@@ -1854,7 +1862,7 @@ def main(argv: list[str] | None = None) -> int:
     args._owned_status_dir = status_dir if owns_status_dir else None
 
     launcher = make_launcher(args)
-    boot_start = time.time()
+    boot_start = time.monotonic()
     deadline = boot_start + args.overall_timeout
 
     handle: Handle | None = None
@@ -1936,7 +1944,7 @@ def main(argv: list[str] | None = None) -> int:
     _watchdog_stop = threading.Event()
 
     def _watchdog() -> None:  # pragma: no cover - timing/daemon path
-        remaining = deadline - time.time()
+        remaining = deadline - time.monotonic()
         if remaining > 0:
             _watchdog_stop.wait(remaining)
         if _watchdog_stop.is_set():
@@ -1998,7 +2006,8 @@ def main(argv: list[str] | None = None) -> int:
                 if rc not in (0,):
                     tail = launcher.tail_log(Handle(log_path=str(warmup_log)), 200)
                     kind = classify_log(
-                        tail, license_grace_elapsed=(time.time() - boot_start) >= LICENSE_GRACE_S
+                        tail,
+                        license_grace_elapsed=(time.monotonic() - boot_start) >= LICENSE_GRACE_S,
                     )
                     if kind == "license_fatal":
                         print(redact(tail))
@@ -2092,7 +2101,7 @@ def main(argv: list[str] | None = None) -> int:
                         spec.binary, project_path, status_dir, editor_log, args.editor_args
                     )
                     ready = wait_for_ready(
-                        launcher, handle, status_dir, args.bridge_wait, time.time(), deadline
+                        launcher, handle, status_dir, args.bridge_wait, time.monotonic(), deadline
                     )
                     instance_id = ready.instance_id
                     os.environ["UNITY_MCP_DEFAULT_INSTANCE"] = instance_id

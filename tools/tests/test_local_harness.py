@@ -837,7 +837,7 @@ class TestUtfTransportResilience:
                 "data": {"status": "succeeded", "result": {"summary": {"total": 2, "passed": 2}}},
             }
 
-        terminal = lh._poll_utf(fake_send, "J1", "inst@hash", lh.time.time() + 1000, 8, 50)
+        terminal = lh._poll_utf(fake_send, "J1", "inst@hash", lh.time.monotonic() + 1000, 8, 50)
         assert lh._dig(terminal, "status") == "succeeded"
         assert calls["n"] == 4  # 3 timeouts tolerated, then terminal
 
@@ -847,7 +847,7 @@ class TestUtfTransportResilience:
         def fake_send(cmd, params, **kw):
             raise TimeoutError("editor unresponsive")
 
-        terminal = lh._poll_utf(fake_send, "J1", "inst@hash", lh.time.time() + 0.3, 8, 50)
+        terminal = lh._poll_utf(fake_send, "J1", "inst@hash", lh.time.monotonic() + 0.3, 8, 50)
         assert isinstance(terminal, dict) and terminal.get("_wedge") is True
 
     def test_start_tolerates_transport_exception_then_succeeds(self, monkeypatch):
@@ -928,7 +928,7 @@ class TestEditorDiagnostics:
             SimpleNamespace(send_command_with_retry=lambda *_a, **_k: None),
         )
         monkeypatch.setattr(lh, "_ensure_src_on_path", lambda: None)
-        monkeypatch.setattr(lh, "_ensure_clean_editmode", lambda *_a: None)
+        monkeypatch.setattr(lh, "_ensure_clean_editmode", lambda *_a: True)
         monkeypatch.setattr(lh, "_start_utf", lambda *_a: ("job", {}))
         monkeypatch.setattr(lh.time, "sleep", lambda *_a: None)
         events = []
@@ -947,7 +947,7 @@ class TestEditorDiagnostics:
 
         outcome = lh.run_playmode_with_retry(
             "instance",
-            lh.time.time() + 100,
+            lh.time.monotonic() + 100,
             1,
             10,
             1000,
@@ -1071,5 +1071,67 @@ class TestTerminalJUnit:
             assert params["includeDetails"] is True
             return self.terminal([{"state": "Passed"}], 1)
 
-        result = lh._poll_utf(send, "job", "instance", lh.time.time() + 10, 1, 10)
+        result = lh._poll_utf(send, "job", "instance", lh.time.monotonic() + 10, 1, 10)
         assert lh._dig(result, "status") == "succeeded"
+
+
+def test_editmode_settling_uses_elapsed_budget_beyond_thirty_seconds(monkeypatch):
+    from types import SimpleNamespace
+
+    now = [0.0]
+    calls = []
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    monkeypatch.setattr(
+        lh, "time", SimpleNamespace(monotonic=lambda: now[0], time=lambda: 999999, sleep=sleep)
+    )
+
+    def send(*args, **kwargs):
+        calls.append(now[0])
+        return {"data": {"status": "running" if now[0] < 50 else "succeeded"}}
+
+    lh._ensure_clean_editmode(send, "owned", 1, 50, 90)
+    assert calls and calls[-1] == 50
+    assert now[0] == 50
+
+
+def test_utf_poll_ignores_wall_clock_adjustment(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        lh, "time", SimpleNamespace(monotonic=lambda: 5, time=lambda: 999999, sleep=lambda _: None)
+    )
+    expected = {"data": {"status": "succeeded", "result": {"summary": {"total": 1, "passed": 1}}}}
+    result = lh._poll_utf(lambda *args, **kwargs: expected, "job", "owned", 60, 1, 50)
+    assert result == expected
+
+
+def test_expired_editmode_settling_does_not_probe_or_claim_ready(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(lh, "time", SimpleNamespace(monotonic=lambda: 60))
+
+    def send(*args, **kwargs):
+        raise AssertionError("No post-deadline probe")
+
+    assert lh._ensure_clean_editmode(send, "owned", 1, 50, 60) is False
+
+
+def test_expired_playmode_attempt_never_starts_or_relaunches(monkeypatch):
+    from types import SimpleNamespace
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("No work may start after the overall deadline")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transport.legacy.unity_connection",
+        SimpleNamespace(send_command_with_retry=unexpected),
+    )
+    monkeypatch.setattr(lh, "_ensure_src_on_path", lambda: None)
+    monkeypatch.setattr(lh, "_start_utf", unexpected)
+    monkeypatch.setattr(lh, "time", SimpleNamespace(monotonic=lambda: 60))
+    result = lh.run_playmode_with_retry("owned", 60, 1, 50, 120000, True, relaunch=unexpected)
+    assert result.status == "fail" and "Deadline exhausted" in result.detail

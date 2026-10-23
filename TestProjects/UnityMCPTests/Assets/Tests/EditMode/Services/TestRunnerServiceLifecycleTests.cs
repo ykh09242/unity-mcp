@@ -1000,6 +1000,44 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [Test]
+        public void Discovery_DelayedFirstContinuationCannotStartSecondModeAfterBudget()
+        {
+            var previous = SynchronizationContext.Current;
+            var paused = new PausedContext();
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(paused);
+                Action<ITestAdaptor> callback = null;
+                int calls = 0;
+                SetDiscovery(
+                    (_, received) =>
+                    {
+                        calls++;
+                        callback = received;
+                    },
+                    TimeSpan.FromMilliseconds(20)
+                );
+                var discovery = _service.GetTestsAsync(null);
+                callback(new DiscoveryNode());
+                // Deliberately cross the functional timeout, not a completion watchdog.
+                Thread.Sleep(50);
+                var watchdog = System.Diagnostics.Stopwatch.StartNew();
+                while (!discovery.IsCompleted && watchdog.Elapsed.TotalSeconds < 60)
+                {
+                    paused.Drain();
+                    Thread.Sleep(1);
+                }
+                Assert.IsTrue(discovery.IsCompleted);
+                Assert.Throws<TimeoutException>(() => discovery.GetAwaiter().GetResult());
+                Assert.AreEqual(1, calls, "No second-mode retrieval may begin after the shared deadline.");
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+            }
+        }
+
         private static void SetCurrent(string id) => typeof(TestJobManager).GetField("_currentJobId", StaticPrivate).SetValue(null, id);
 
         private static Exception ObserveFailure(Task task)

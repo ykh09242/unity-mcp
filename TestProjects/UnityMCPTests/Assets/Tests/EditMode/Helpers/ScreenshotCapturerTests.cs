@@ -21,6 +21,18 @@ namespace MCPForUnityTests.Editor.Helpers
             }
         }
 
+        [TestCase(float.NaN)]
+        [TestCase(float.PositiveInfinity)]
+        [TestCase(float.NegativeInfinity)]
+        [TestCase(0f)]
+        [TestCase(-1f)]
+        [TestCase(86401f)]
+        public void BeginRejectsInvalidTimeoutBeforeCreatingHiddenObject(float timeout)
+        {
+            Assert.Throws<System.ArgumentOutOfRangeException>(() => ScreenshotCapturer.Begin(1, _ => { }, timeout));
+            Assert.AreEqual(0, UnityEngine.Resources.FindObjectsOfTypeAll<ScreenshotCapturer>().Length);
+        }
+
         [TestCase(0)]
         [TestCase(5)]
         [TestCase(int.MaxValue)]
