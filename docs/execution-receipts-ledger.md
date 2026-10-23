@@ -137,3 +137,6 @@ SDK protocol/server metadata is regenerated. Public HTTP status is part of the R
 Storage follows existing file-fsync/atomic-replace behavior, with containing-directory fsync
 on POSIX. Windows relies on the explicit private inherited ACL boundary and existing Windows
 file/replace durability. Normal process loss and OS/power loss have different guarantees.
+
+See [private store initialization and recovery](private-store-recovery.md) for
+interrupted first startup, stable installation identities and refusal of ambiguous state.
