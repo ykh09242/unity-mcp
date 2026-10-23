@@ -43,6 +43,27 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private readonly Func<string> connectionIdentity;
         private readonly List<Button> buttons = new();
         private CancellationTokenSource pending;
+        private readonly Button stopWaiting;
+        private readonly Label waitStatus,
+            formMessage;
+        private readonly IVisualElementScheduledItem waitClock;
+        private DateTime waitStarted;
+        private int currentKind;
+        private bool draftDirty;
+        private Func<bool> confirmDiscard = () =>
+            EditorUtility.DisplayDialog("Replace unsaved item?", "Loading another item will discard this draft.", "Discard draft", "Keep editing");
+        private readonly Dictionary<int, FormDraft> drafts = new();
+
+        private sealed class FormDraft
+        {
+            internal string Id,
+                Json;
+            internal int Version;
+            internal bool Enabled,
+                Reauthorize,
+                Dirty;
+        }
+
         private string nextAfter,
             exportKind,
             exportPage,
@@ -65,6 +86,24 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             Text(heading, "Asset connections, collection health and source access.").AddToClassList("graph-muted");
             var toolbar = Box(root, "graph-toolbar");
             AddButton(toolbar, "Refresh status", "graph-refresh", () => Run("overview", new JObject())).AddToClassList("graph-primary");
+            stopWaiting = new Button(StopWaiting)
+            {
+                name = "graph-stop",
+                text = "Stop waiting",
+                tooltip = "Stop this request wait. Accepted server work may continue.",
+            };
+            toolbar.Add(stopWaiting);
+            waitStatus = Text(toolbar, "", "graph-wait-status");
+            waitStatus.AddToClassList("graph-muted");
+            waitClock = root
+                .schedule.Execute(() =>
+                    waitStatus.text =
+                        "Waiting "
+                        + Math.Max(0, (DateTime.UtcNow - waitStarted).TotalSeconds).ToString("0", CultureInfo.InvariantCulture)
+                        + "s · server work may continue after stopping"
+                )
+                .Every(1000);
+            waitClock.Pause();
             updated = Text(toolbar, "Updates on request");
             updated.AddToClassList("graph-muted");
             identity = Text(root, "This Editor · current connection account", "graph-identity");
@@ -95,7 +134,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             transfer.AddToClassList("graph-foldout");
             root.Add(transfer);
             Text(transfer, "Read this account's settings, select an item to edit, or copy a page to transfer it.").AddToClassList("graph-muted");
-            kind = new DropdownField("Configuration", new List<string> { "Wrapper rules", "External sources", "Collection policy" }, 0);
+            kind = new DropdownField("Configuration", new List<string> { "Wrapper rules", "External sources", "Collection policy" }, 0) { name = "graph-kind" };
             transfer.Add(kind);
             var exportActions = Box(transfer, "graph-actions");
             AddButton(exportActions, "Load settings", "graph-export", () => Export(false));
@@ -124,7 +163,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     "Select an existing item first. To create one, use a new ID and version 0. A changed destination version prevents overwriting someone else's update."
                 )
                 .AddToClassList("graph-muted");
-            itemId = new TextField("Item ID");
+            itemId = new TextField("Item ID") { name = "graph-item-id" };
             editor.Add(itemId);
             expectedVersion = new IntegerField("Destination version") { value = 0 };
             editor.Add(expectedVersion);
@@ -136,19 +175,25 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             };
             payload.AddToClassList("graph-json");
             editor.Add(payload);
+            formMessage = Text(editor, "", "graph-form-message");
+            formMessage.AddToClassList("hidden");
             sourceEnabled = new Toggle { text = "Enable this external source", value = false };
             editor.Add(sourceEnabled);
             reauthorize = new Toggle { text = "Approve this source's read access for this account", value = false };
             editor.Add(reauthorize);
             AddButton(editor, "Apply item", "graph-import", Import).AddToClassList("graph-primary");
+            itemId.RegisterValueChangedCallback(_ => draftDirty = true);
+            payload.RegisterValueChangedCallback(_ => draftDirty = true);
+            expectedVersion.RegisterValueChangedCallback(_ => draftDirty = true);
+            sourceEnabled.RegisterValueChangedCallback(_ => draftDirty = true);
+            reauthorize.RegisterValueChangedCallback(_ => draftDirty = true);
             kind.RegisterValueChangedCallback(_ =>
             {
+                drafts[currentKind] = CaptureDraft();
+                currentKind = kind.index;
                 nextAfter = exportKind = exportPage = null;
                 configurationRows.Clear();
-                itemId.value = "";
-                payload.value = "{}";
-                expectedVersion.value = 0;
-                reauthorize.value = sourceEnabled.value = false;
+                RestoreDraft(drafts.TryGetValue(currentKind, out var draft) ? draft : null);
                 SourceFields();
                 UpdateControls();
             });
@@ -175,6 +220,111 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             SourceFields();
             UpdateControls();
             EditorConfigurationCache.Instance.OnConfigurationChanged += ConfigurationChanged;
+        }
+
+        private FormDraft CaptureDraft() =>
+            new FormDraft
+            {
+                Id = itemId.value,
+                Json = payload.value,
+                Version = expectedVersion.value,
+                Enabled = sourceEnabled.value,
+                Reauthorize = reauthorize.value,
+                Dirty = draftDirty,
+            };
+
+        private void RestoreDraft(FormDraft draft)
+        {
+            itemId.SetValueWithoutNotify(draft?.Id ?? "");
+            payload.SetValueWithoutNotify(draft?.Json ?? "{}");
+            expectedVersion.SetValueWithoutNotify(draft?.Version ?? 0);
+            sourceEnabled.SetValueWithoutNotify(draft?.Enabled ?? false);
+            reauthorize.SetValueWithoutNotify(draft?.Reauthorize ?? false);
+            draftDirty = draft?.Dirty ?? false;
+            formMessage.text = draftDirty ? "Unsaved draft retained for this configuration and account." : "";
+            formMessage.EnableInClassList("hidden", !draftDirty);
+        }
+
+        private void LoadItem(JObject item)
+        {
+            if (!IsCurrentIdentity())
+            {
+                Invalidate();
+                return;
+            }
+            if (draftDirty && !confirmDiscard())
+                return;
+            RestoreDraft(
+                new FormDraft
+                {
+                    Id = item.Value<string>("id"),
+                    Version = item.Value<int>("version"),
+                    Json = item["config"].ToString(Formatting.Indented),
+                    Enabled = item.Value<bool?>("enabled") ?? false,
+                }
+            );
+            root.Q<Foldout>("graph-item-editor").value = true;
+        }
+
+        private bool IsCurrentIdentity()
+        {
+            try
+            {
+                return viewIdentity != null && viewIdentity == connectionIdentity();
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void StopWaiting()
+        {
+            var cancellation = pending;
+            pending = null;
+            waitClock.Pause();
+            waitStatus.text = "";
+            cancellation?.Cancel();
+            if (!disposed)
+            {
+                if (cancellation != null)
+                {
+                    message.RemoveFromClassList("hidden");
+                    message.text = "Request wait stopped; accepted server work may continue. Refresh before repeating a change.";
+                }
+                UpdateControls();
+            }
+        }
+
+        private void FormFeedback(string text, VisualElement field = null)
+        {
+            formMessage.text = text;
+            formMessage.RemoveFromClassList("hidden");
+            root.Q<Foldout>("graph-transfer").value = true;
+            root.Q<Foldout>("graph-item-editor").value = true;
+            field?.Focus();
+            root.schedule.Execute(() =>
+            {
+                if (disposed || !visible)
+                    return;
+                for (var parent = root.parent; parent != null; parent = parent.parent)
+                    if (parent is ScrollView scroll)
+                    {
+                        scroll.ScrollTo(formMessage);
+                        break;
+                    }
+            });
+        }
+
+        private void Feedback(string action, string text)
+        {
+            if (action == "import_config")
+                FormFeedback(text);
+            else
+            {
+                message.RemoveFromClassList("hidden");
+                message.text = text;
+            }
         }
 
         private string Kind =>
@@ -209,6 +359,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private void UpdateControls()
         {
             bool idle = pending == null;
+            stopWaiting.SetEnabled(!idle);
+            stopWaiting.EnableInClassList("hidden", idle);
             foreach (var button in buttons)
                 button.SetEnabled(idle && (button.name == "graph-refresh" || viewIdentity != null));
             root.Q<Button>("graph-next")?.SetEnabled(idle && nextAfter != null);
@@ -261,12 +413,16 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 || key == "ApiKey"
                 || key == "All"
             )
-                Invalidate();
+            {
+                if (viewIdentity != null && !IsCurrentIdentity())
+                    Invalidate();
+            }
         }
 
         private void Invalidate()
         {
-            pending?.Cancel();
+            StopWaiting();
+            drafts.Clear();
             viewIdentity = null;
             identity.text = "Connection changed · refresh to verify this account";
             identity.tooltip = null;
@@ -280,10 +436,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             providers.Clear();
             configurationRows.Clear();
             nextAfter = exportKind = exportPage = null;
-            payload.value = "{}";
-            itemId.value = "";
-            expectedVersion.value = 0;
-            reauthorize.value = sourceEnabled.value = false;
+            RestoreDraft(null);
             UpdateControls();
         }
 
@@ -293,6 +446,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 return;
             visible = value;
             if (!value)
+                StopWaiting();
+            else if (viewIdentity != null && !IsCurrentIdentity())
                 Invalidate();
         }
 
@@ -316,11 +471,31 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
 
         private Task Import()
         {
+            JObject config;
+            try
+            {
+                config = JObject.Parse(payload.value ?? "");
+            }
+            catch (JsonReaderException error)
+            {
+                FormFeedback($"Invalid JSON at line {error.LineNumber}, column {error.LinePosition}. Enter a JSON object and retry.", payload);
+                return Task.CompletedTask;
+            }
+            if (Kind != "policy" && string.IsNullOrWhiteSpace(itemId.value))
+            {
+                FormFeedback("Enter an item ID before applying this configuration.", itemId);
+                return Task.CompletedTask;
+            }
+            if (expectedVersion.value < 0)
+            {
+                FormFeedback("Destination version must be zero or greater.", expectedVersion);
+                return Task.CompletedTask;
+            }
             var options = new JObject
             {
                 ["kind"] = Kind,
                 ["id"] = Kind == "policy" ? "policy" : itemId.value,
-                ["config"] = JObject.Parse(payload.value),
+                ["config"] = config,
                 ["expected_version"] = expectedVersion.value,
             };
             if (Kind == "source")
@@ -335,21 +510,34 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         {
             if (disposed || !visible || pending != null)
                 return;
-            using var cancellation = new CancellationTokenSource();
-            pending = cancellation;
-            UpdateControls();
-            message.RemoveFromClassList("hidden");
-            message.text = "Working… You can leave this tab; accepted server work may continue.";
+            string before;
             try
             {
-                string before = connectionIdentity();
-                if (action != "overview" && viewIdentity != before)
-                {
-                    Invalidate();
-                    return;
-                }
+                before = connectionIdentity();
+            }
+            catch
+            {
+                Feedback(action, "Check the connection before retrying this request.");
+                return;
+            }
+            if (viewIdentity != null && viewIdentity != before)
+                Invalidate();
+            if (action != "overview" && viewIdentity != before)
+            {
+                Invalidate();
+                return;
+            }
+            using var cancellation = new CancellationTokenSource();
+            pending = cancellation;
+            waitStarted = DateTime.UtcNow;
+            waitStatus.text = "Waiting 0s";
+            waitClock.Resume();
+            UpdateControls();
+            Feedback(action, "Working… Stop waiting or leave this tab to abandon the wait; accepted server work may continue.");
+            try
+            {
                 JObject data = await send(action, options, cancellation.Token);
-                if (disposed || !visible || cancellation.IsCancellationRequested)
+                if (disposed || !visible || cancellation.IsCancellationRequested || !ReferenceEquals(pending, cancellation))
                     return;
                 if (before != connectionIdentity())
                 {
@@ -373,15 +561,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     configurationRows.Clear();
                     foreach (JObject item in (JArray)data["items"])
                     {
-                        var row = new Button(() =>
-                        {
-                            itemId.value = item.Value<string>("id");
-                            expectedVersion.value = item.Value<int>("version");
-                            payload.value = item["config"].ToString(Formatting.Indented);
-                            sourceEnabled.value = item.Value<bool?>("enabled") ?? false;
-                            reauthorize.value = false;
-                            root.Q<Foldout>("graph-item-editor").value = true;
-                        })
+                        var row = new Button(() => LoadItem(item))
                         {
                             text = item.Value<string>("id") + "   ·   v" + item.Value<int>("version") + "   ·   Edit",
                             enableRichText = false,
@@ -402,9 +582,10 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                         + ". SQLite space is reusable.";
                 else if (action == "import_config")
                 {
-                    expectedVersion.value = data.Value<int>("version");
-                    reauthorize.value = false;
-                    message.text = "Item updated. Refresh to inspect reconciliation progress.";
+                    expectedVersion.SetValueWithoutNotify(data.Value<int>("version"));
+                    reauthorize.SetValueWithoutNotify(false);
+                    draftDirty = false;
+                    FormFeedback("Item updated. Refresh to inspect reconciliation progress.");
                 }
                 else
                     message.text =
@@ -416,23 +597,27 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             }
             catch (OperationCanceledException)
             {
-                if (!disposed && visible)
-                    message.text = "Request wait stopped. Refresh before repeating a change.";
+                if (!disposed && visible && ReferenceEquals(pending, cancellation))
+                    Feedback(action, "Request wait stopped; accepted server work may continue. Refresh before repeating a change.");
             }
             catch (InvalidOperationException error)
             {
-                if (!disposed && visible)
-                    message.text = error.Message;
+                if (!disposed && visible && ReferenceEquals(pending, cancellation))
+                    Feedback(action, error.Message);
             }
             catch (Exception)
             {
-                if (!disposed && visible)
-                    message.text = "Graph request failed. Check the connection and refresh; no automatic retry was issued.";
+                if (!disposed && visible && ReferenceEquals(pending, cancellation))
+                    Feedback(action, "Graph request failed. Check the connection and refresh; no automatic retry was issued.");
             }
             finally
             {
                 if (ReferenceEquals(pending, cancellation))
+                {
                     pending = null;
+                    waitClock.Pause();
+                    waitStatus.text = "";
+                }
                 if (!disposed)
                     UpdateControls();
             }
@@ -593,7 +778,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 return;
             disposed = true;
             visible = false;
-            pending?.Cancel();
+            StopWaiting();
+            drafts.Clear();
             EditorConfigurationCache.Instance.OnConfigurationChanged -= ConfigurationChanged;
             buttons.Clear();
             root.Clear();
