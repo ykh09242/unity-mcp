@@ -19,6 +19,10 @@ from transport.plugin_hub import PluginDisconnectedError, PluginHub
 from transport.plugin_registry import PluginRegistry
 
 
+# Correctness watchdog, not a performance budget; successful waits return immediately.
+LIFECYCLE_WATCHDOG_SECONDS = 10
+
+
 @pytest.fixture
 def isolated_hub(monkeypatch: pytest.MonkeyPatch) -> PluginRegistry:
     monkeypatch.setattr(config, "http_remote_hosted", False)
@@ -153,7 +157,7 @@ async def test_command_timeout_includes_blocked_send(
     await entered.wait()
     try:
         # When the deadline passes while the write remains blocked.
-        done, _ = await asyncio.wait({command}, timeout=0.2)
+        done, _ = await asyncio.wait({command}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
         # Then the command returns its unknown-outcome response and releases state.
         assert command in done, "Command deadline must cover socket writes"
         result = command.result()
@@ -220,7 +224,7 @@ async def test_disconnect_interrupts_blocked_command_write(isolated_hub: PluginR
     try:
         await entered.wait()
         await hub.on_disconnect(ws, 1001)
-        done, _ = await asyncio.wait({command}, timeout=0.2)
+        done, _ = await asyncio.wait({command}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
         assert command in done, "Disconnect must interrupt a blocked write immediately"
         assert command.result()["hint"] == "inspect_state_before_retry"
         assert stopped.is_set()
@@ -249,7 +253,7 @@ async def test_disconnect_before_pending_registration_does_not_send(
     monkeypatch.setattr(PluginHub, "_get_connection", disconnect_after_lookup)
     command = asyncio.create_task(PluginHub.send_command("session", "manage_scene", {}))
     try:
-        done, _ = await asyncio.wait({command}, timeout=0.2)
+        done, _ = await asyncio.wait({command}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
         assert command in done, "A disconnected socket must not gain new pending commands"
         with pytest.raises(RuntimeError, match="not connected"):
             command.result()
@@ -261,14 +265,22 @@ async def test_disconnect_before_pending_registration_does_not_send(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cancellations", [0, 1, 2])
+@pytest.mark.parametrize("cancellations, close_delay", [(0, 0), (1, 0), (2, 0), (2, 1.25)])
 async def test_eviction_finishes_cleanup_when_cancelled_at_registry_lock(
-    isolated_hub: PluginRegistry, cancellations: int
+    isolated_hub: PluginRegistry,
+    cancellations: int,
+    close_delay: float,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     PluginHub.configure(isolated_hub)
     session_id = "evict-owned"
     await isolated_hub.register(session_id, "Fixture", "owned-hash", "6000.3")
     websocket = AsyncMock()
+
+    async def close_after_delay(**_kwargs):
+        await asyncio.sleep(close_delay)
+
+    websocket.close.side_effect = close_after_delay
     PluginHub._connections[session_id] = websocket
     PluginHub._last_pong[session_id] = 1.0
     ping_task = asyncio.create_task(asyncio.Event().wait())
@@ -276,25 +288,41 @@ async def test_eviction_finishes_cleanup_when_cancelled_at_registry_lock(
     pending = asyncio.get_running_loop().create_future()
     PluginHub._pending["owned-command"] = {"session_id": session_id, "future": pending}
 
-    async def wait_until_route_removed() -> None:
-        while session_id in PluginHub._connections:
-            await asyncio.sleep(0)
+    registry_entered = asyncio.Event()
+    unregister = isolated_hub.unregister
+    cleanup_task = None
+
+    async def observed_unregister(*args, **kwargs):
+        nonlocal cleanup_task
+        cleanup_task = asyncio.current_task()
+        registry_entered.set()
+        return await unregister(*args, **kwargs)
+
+    monkeypatch.setattr(isolated_hub, "unregister", observed_unregister)
+    # Watchdog only: this test checks ownership/order, not sub-second performance.
+    watchdog = LIFECYCLE_WATCHDOG_SECONDS
 
     eviction = None
     try:
         # Real registry contention places cancellation after the hub drops routing.
         async with isolated_hub._lock:
             eviction = asyncio.create_task(PluginHub._evict_connection(session_id, "test"))
-            await asyncio.wait_for(wait_until_route_removed(), timeout=1)
+            await asyncio.wait_for(registry_entered.wait(), timeout=watchdog)
+            assert session_id not in PluginHub._connections
             for index in range(cancellations):
                 eviction.cancel(f"caller cancellation {index}")
                 await asyncio.sleep(0)
+        # Do not let wait_for inject another cancellation into the operation under test.
+        done, _ = await asyncio.wait({eviction}, timeout=watchdog)
+        assert eviction in done, (
+            "Eviction cleanup did not finish after the registry lock was released"
+        )
         if cancellations:
             with pytest.raises(asyncio.CancelledError) as failure:
-                await asyncio.wait_for(eviction, timeout=1)
+                eviction.result()
             assert failure.value.args == ("caller cancellation 0",)
         else:
-            await asyncio.wait_for(eviction, timeout=1)
+            eviction.result()
 
         assert await isolated_hub.get_session(session_id) is None, (
             "Cancelled eviction orphaned the registry session"
@@ -308,13 +336,15 @@ async def test_eviction_finishes_cleanup_when_cancelled_at_registry_lock(
         assert ping_task.cancelled()
         assert isinstance(pending.exception(), PluginDisconnectedError)
     finally:
-        if eviction is not None:
-            eviction.cancel()
-            await asyncio.gather(eviction, return_exceptions=True)
-        ping_task.cancel()
-        await asyncio.gather(ping_task, return_exceptions=True)
+        tasks = {task for task in (eviction, cleanup_task, ping_task) if task is not None}
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        done, unfinished = await asyncio.wait(tasks, timeout=watchdog)
+        await asyncio.gather(*done, return_exceptions=True)
         if pending.done() and not pending.cancelled():
             pending.exception()
+        assert not unfinished, "Test-owned eviction tasks did not release during teardown"
         await isolated_hub.unregister(session_id)
 
 
@@ -328,7 +358,9 @@ async def test_ping_task_can_finish_its_own_eviction(isolated_hub: PluginRegistr
     ping_task = asyncio.create_task(PluginHub._evict_connection(session_id, "heartbeat_timeout"))
     PluginHub._ping_tasks[session_id] = ping_task
 
-    await asyncio.wait_for(ping_task, timeout=1)
+    done, _ = await asyncio.wait({ping_task}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
+    assert ping_task in done, "Self-evicting ping cleanup did not finish"
+    ping_task.result()
 
     assert not ping_task.cancelled(), "A cleanup child must recognize the initiating ping owner"
     assert await isolated_hub.get_session(session_id) is None
@@ -427,7 +459,7 @@ async def test_eviction_preserves_cleanup_errors_and_caller_cancellation(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancelled", [False, True])
 async def test_evicted_socket_disconnect_cannot_remove_replacement_session(
-    isolated_hub: PluginRegistry, cancelled: bool
+    isolated_hub: PluginRegistry, cancelled: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     PluginHub.configure(isolated_hub)
     session_id = "old-session"
@@ -438,6 +470,14 @@ async def test_evicted_socket_disconnect_cannot_remove_replacement_session(
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     closing = asyncio.Event()
     finish_close = asyncio.Event()
+    registry_entered = asyncio.Event()
+    unregister = isolated_hub.unregister
+
+    async def observed_unregister(*args, **kwargs):
+        registry_entered.set()
+        return await unregister(*args, **kwargs)
+
+    monkeypatch.setattr(isolated_hub, "unregister", observed_unregister)
 
     async def disconnect_old(**kwargs) -> None:
         closing.set()
@@ -449,21 +489,22 @@ async def test_evicted_socket_disconnect_cannot_remove_replacement_session(
     try:
         async with isolated_hub._lock:
             eviction = asyncio.create_task(PluginHub._evict_connection(session_id, "test"))
-            with anyio.fail_after(1):
-                while session_id in PluginHub._connections:
-                    await asyncio.sleep(0)
+            await asyncio.wait_for(registry_entered.wait(), timeout=LIFECYCLE_WATCHDOG_SECONDS)
+            assert session_id not in PluginHub._connections
             if cancelled:
                 eviction.cancel()
                 await asyncio.sleep(0)
-        await asyncio.wait_for(closing.wait(), timeout=1)
+        await asyncio.wait_for(closing.wait(), timeout=LIFECYCLE_WATCHDOG_SECONDS)
         await hub._handle_register(replacement, RegisterMessage(project_hash="replaced-hash"))
         replacement_id = replacement.send_json.call_args.args[0]["session_id"]
         finish_close.set()
+        done, _ = await asyncio.wait({eviction}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
+        assert eviction in done, "Old socket cleanup did not finish"
         if cancelled:
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(eviction, timeout=1)
+                eviction.result()
         else:
-            await asyncio.wait_for(eviction, timeout=1)
+            eviction.result()
         assert await isolated_hub.get_session_id_by_hash("replaced-hash") == replacement_id
         assert await isolated_hub.get_session(replacement_id) is not None
         assert PluginHub._connections == {replacement_id: replacement}
