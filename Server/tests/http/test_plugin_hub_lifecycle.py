@@ -261,14 +261,22 @@ async def test_disconnect_before_pending_registration_does_not_send(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cancellations", [0, 1, 2])
+@pytest.mark.parametrize("cancellations, close_delay", [(0, 0), (1, 0), (2, 0), (2, 1.25)])
 async def test_eviction_finishes_cleanup_when_cancelled_at_registry_lock(
-    isolated_hub: PluginRegistry, cancellations: int
+    isolated_hub: PluginRegistry,
+    cancellations: int,
+    close_delay: float,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     PluginHub.configure(isolated_hub)
     session_id = "evict-owned"
     await isolated_hub.register(session_id, "Fixture", "owned-hash", "6000.3")
     websocket = AsyncMock()
+
+    async def close_after_delay(**_kwargs):
+        await asyncio.sleep(close_delay)
+
+    websocket.close.side_effect = close_after_delay
     PluginHub._connections[session_id] = websocket
     PluginHub._last_pong[session_id] = 1.0
     ping_task = asyncio.create_task(asyncio.Event().wait())
@@ -276,25 +284,41 @@ async def test_eviction_finishes_cleanup_when_cancelled_at_registry_lock(
     pending = asyncio.get_running_loop().create_future()
     PluginHub._pending["owned-command"] = {"session_id": session_id, "future": pending}
 
-    async def wait_until_route_removed() -> None:
-        while session_id in PluginHub._connections:
-            await asyncio.sleep(0)
+    registry_entered = asyncio.Event()
+    unregister = isolated_hub.unregister
+    cleanup_task = None
+
+    async def observed_unregister(*args, **kwargs):
+        nonlocal cleanup_task
+        cleanup_task = asyncio.current_task()
+        registry_entered.set()
+        return await unregister(*args, **kwargs)
+
+    monkeypatch.setattr(isolated_hub, "unregister", observed_unregister)
+    # Watchdog only: this test checks ownership/order, not sub-second performance.
+    watchdog = 10
 
     eviction = None
     try:
         # Real registry contention places cancellation after the hub drops routing.
         async with isolated_hub._lock:
             eviction = asyncio.create_task(PluginHub._evict_connection(session_id, "test"))
-            await asyncio.wait_for(wait_until_route_removed(), timeout=1)
+            await asyncio.wait_for(registry_entered.wait(), timeout=watchdog)
+            assert session_id not in PluginHub._connections
             for index in range(cancellations):
                 eviction.cancel(f"caller cancellation {index}")
                 await asyncio.sleep(0)
+        # Do not let wait_for inject another cancellation into the operation under test.
+        done, _ = await asyncio.wait({eviction}, timeout=watchdog)
+        assert eviction in done, (
+            "Eviction cleanup did not finish after the registry lock was released"
+        )
         if cancellations:
             with pytest.raises(asyncio.CancelledError) as failure:
-                await asyncio.wait_for(eviction, timeout=1)
+                eviction.result()
             assert failure.value.args == ("caller cancellation 0",)
         else:
-            await asyncio.wait_for(eviction, timeout=1)
+            eviction.result()
 
         assert await isolated_hub.get_session(session_id) is None, (
             "Cancelled eviction orphaned the registry session"
@@ -308,13 +332,15 @@ async def test_eviction_finishes_cleanup_when_cancelled_at_registry_lock(
         assert ping_task.cancelled()
         assert isinstance(pending.exception(), PluginDisconnectedError)
     finally:
-        if eviction is not None:
-            eviction.cancel()
-            await asyncio.gather(eviction, return_exceptions=True)
-        ping_task.cancel()
-        await asyncio.gather(ping_task, return_exceptions=True)
+        tasks = {task for task in (eviction, cleanup_task, ping_task) if task is not None}
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        done, unfinished = await asyncio.wait(tasks, timeout=watchdog)
+        await asyncio.gather(*done, return_exceptions=True)
         if pending.done() and not pending.cancelled():
             pending.exception()
+        assert not unfinished, "Test-owned eviction tasks did not release during teardown"
         await isolated_hub.unregister(session_id)
 
 
