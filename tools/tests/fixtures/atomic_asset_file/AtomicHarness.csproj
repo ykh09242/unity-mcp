@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="AtomicHarness.cs" />
+    <Compile Include="../../../../MCPForUnity/Editor/Helpers/AtomicAssetFile.cs" />
+    <Compile Include="../../../../MCPForUnity/Editor/Helpers/AtomicFilePublication.cs" Condition="Exists('../../../../MCPForUnity/Editor/Helpers/AtomicFilePublication.cs')" />
+    <Compile Include="../../../../MCPForUnity/Runtime/Helpers/SafePathUtility.cs" />
+  </ItemGroup>
+</Project>

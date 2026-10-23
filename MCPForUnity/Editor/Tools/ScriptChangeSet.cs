@@ -281,7 +281,7 @@ namespace MCPForUnity.Editor.Tools
                         throw new Refusal("staging_conflict", "A replacement backup appeared and was not overwritten.");
                     entry.ReplaceAttempted = true;
                     Save(plan);
-                    File.Replace(stage, Target(entry), backup);
+                    AtomicFilePublication.Replace(stage, Target(entry), backup);
                     entry.ReplaceReturned = true;
                     entry.State = "confirmed";
                     entry.Backup = Digest(ReadBounded(backup, MaxFileBytes));
@@ -345,6 +345,17 @@ namespace MCPForUnity.Editor.Tools
                     byte[] restore = ReadBounded(Blob(plan, i, false), MaxFileBytes);
                     string restoreDigest = entry.Original;
                     string backup = Staged(plan, i, "bak");
+                    // On Unix a process can stop after atomic exchange but before the preimage
+                    // is renamed to .bak. Reconcile that retained stage using the same digest guard.
+                    string stage = Staged(plan, i, "tmp");
+                    if (
+                        !File.Exists(backup)
+                        && entry.ReplaceAttempted
+                        && entry.StageCreated
+                        && File.Exists(stage)
+                        && Digest(ReadBounded(stage, MaxFileBytes)) != entry.Candidate
+                    )
+                        backup = stage;
                     if (File.Exists(backup))
                     {
                         byte[] actualBackup = ReadBounded(backup, MaxFileBytes);
@@ -355,30 +366,30 @@ namespace MCPForUnity.Editor.Tools
                         restoreDigest = actualDigest;
                     }
                     string fullPath = Target(entry);
-                    using (var stream = File.Open(fullPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    string observed = AtomicAssetFile.DigestFile(fullPath);
+                    if (observed == entry.Original)
                     {
-                        string observed = Digest(ReadStream(stream, MaxFileBytes));
-                        if (observed == entry.Original)
-                        {
-                            entry.State = entry.ReplaceAttempted ? "original_observed" : "not_applied";
-                            entry.Reason = entry.ReplaceAttempted ? "original_bytes_observed_without_restoration" : "replacement_not_attempted";
-                            continue;
-                        }
-                        if (observed != entry.Candidate)
-                            throw new Refusal("external_writer", "Current source differs from the prepared candidate; it was not overwritten.");
-                        entry.State = "restoring";
-                        Save(plan);
-                        _stageForTests?.Invoke("before_restore", i);
-                        // Keep the exclusive target handle through comparison, write, flush and verification.
-                        // This is a journaled per-file restore, not a filesystem-wide or callback transaction.
-                        stream.Position = 0;
-                        stream.Write(restore, 0, restore.Length);
-                        stream.SetLength(restore.Length);
-                        stream.Flush(true);
-                        stream.Position = 0;
-                        if (Digest(ReadStream(stream, MaxFileBytes)) != restoreDigest)
-                            throw new IOException("Restored bytes could not be confirmed.");
+                        entry.State = entry.ReplaceAttempted ? "original_observed" : "not_applied";
+                        entry.Reason = entry.ReplaceAttempted ? "original_bytes_observed_without_restoration" : "replacement_not_attempted";
+                        continue;
                     }
+                    if (observed != entry.Candidate)
+                        throw new Refusal("external_writer", "Current source differs from the prepared candidate; it was not overwritten.");
+                    entry.State = "restoring";
+                    Save(plan);
+                    AtomicAssetFile.Replace(
+                        fullPath,
+                        restore,
+                        entry.Candidate,
+                        () =>
+                        {
+                            _stageForTests?.Invoke("before_restore", i);
+                            if (MetaDigest(entry.Path) != entry.Meta)
+                                throw new Refusal("metadata_changed", "Metadata changed externally.");
+                        }
+                    );
+                    if (!Matches(entry, restoreDigest))
+                        throw new IOException("Restored bytes could not be confirmed.");
                     entry.State = restoreDigest == entry.Original ? "restored" : "restored_external_preimage";
                     entry.Reason = restoreDigest == entry.Original ? "original_bytes_restored" : "interfering_preimage_restored";
                 }

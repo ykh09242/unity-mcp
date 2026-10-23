@@ -208,7 +208,7 @@ namespace MCPForUnity.Editor.Tools
             using var folders = new AssetFolderScope();
             folders.EnsureParentDirectory(path);
             fullPath = AssetPathUtility.GetFullAssetPath(path);
-            File.WriteAllText(fullPath, contents, Utf8NoBom);
+            AtomicAssetFile.Create(fullPath, Utf8NoBom.GetBytes(contents));
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
 
             if (isUxml)
@@ -292,6 +292,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"File not found: {path}. Use 'create' action for new files.");
             }
 
+            string originalDigest = AtomicAssetFile.DigestFile(fullPath);
             bool isUxml = path.EndsWith(".uxml", StringComparison.OrdinalIgnoreCase);
             var validationWarnings = new List<string>();
 
@@ -305,7 +306,7 @@ namespace MCPForUnity.Editor.Tools
                 contents = AddEditorExtensionMode(contents, document);
             }
 
-            File.WriteAllText(fullPath, contents, Utf8NoBom);
+            AtomicAssetFile.Replace(fullPath, Utf8NoBom.GetBytes(contents), originalDigest);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
 
             if (isUxml)
@@ -2084,6 +2085,7 @@ namespace MCPForUnity.Editor.Tools
             if (!File.Exists(fullPath))
                 return new ErrorResponse($"UXML file not found: {uxmlPath}");
 
+            string originalDigest = AtomicAssetFile.DigestFile(fullPath);
             string content = File.ReadAllText(fullPath, Encoding.UTF8);
 
             string xmlError = ReadUxmlContent(content, new List<string>(), out var document, stylesheetPath);
@@ -2111,7 +2113,7 @@ namespace MCPForUnity.Editor.Tools
             string styleTag = CreateStylesheetTag(stylesheetPath, document.StyleTagName);
             content = content.Insert(insertIdx, styleTag);
 
-            File.WriteAllText(fullPath, content, Utf8NoBom);
+            AtomicAssetFile.Replace(fullPath, Utf8NoBom.GetBytes(content), originalDigest);
             AssetDatabase.ImportAsset(uxmlPath, ImportAssetOptions.ForceUpdate);
 
             return new SuccessResponse($"Linked stylesheet '{stylesheetPath}' to '{uxmlPath}'.", new { path = uxmlPath, stylesheet = stylesheetPath });

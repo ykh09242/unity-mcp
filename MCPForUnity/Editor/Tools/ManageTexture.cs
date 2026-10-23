@@ -384,7 +384,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
+                AtomicAssetFile.Write(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
@@ -560,7 +560,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                     }
-                    File.WriteAllBytes(absolutePath, imageData);
+                    AtomicAssetFile.Replace(absolutePath, imageData, AtomicAssetFile.Digest(fileData));
                     AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
                 }
 
@@ -663,7 +663,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
+                AtomicAssetFile.Write(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
@@ -756,7 +756,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                File.WriteAllBytes(GetAbsolutePath(fullPath), imageData);
+                AtomicAssetFile.Write(GetAbsolutePath(fullPath), imageData);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 

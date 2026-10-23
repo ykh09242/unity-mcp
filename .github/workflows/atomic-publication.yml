@@ -1,0 +1,42 @@
+name: Atomic publication
+
+on:
+  pull_request:
+    branches: [main, beta]
+    paths:
+      - MCPForUnity/Editor/Helpers/Atomic*.cs
+      - MCPForUnity/Editor/Tools/ScriptChangeSet.cs
+      - MCPForUnity/Runtime/Helpers/SafePathUtility.cs
+      - tools/tests/fixtures/atomic_asset_file/**
+      - .github/workflows/atomic-publication.yml
+  push:
+    branches: [beta]
+    paths:
+      - MCPForUnity/Editor/Helpers/Atomic*.cs
+      - MCPForUnity/Editor/Tools/ScriptChangeSet.cs
+      - MCPForUnity/Runtime/Helpers/SafePathUtility.cs
+      - tools/tests/fixtures/atomic_asset_file/**
+      - .github/workflows/atomic-publication.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: Atomic files (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-26.04, macos-26-intel]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 9.0.x
+      - name: Verify filesystem publication and owned process interruption
+        run: dotnet run --project tools/tests/fixtures/atomic_asset_file/AtomicHarness.csproj -- "${{ runner.temp }}/atomic-publication"
