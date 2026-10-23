@@ -112,11 +112,15 @@ namespace MCPForUnity.Editor.Helpers
         {
             public readonly List<PropertyInfo> SerializableProperties;
             public readonly List<FieldInfo> SerializableFields;
+            public readonly List<PropertyInfo> SafeProperties;
+            public readonly string[] SkippedProperties;
 
             public CachedMetadata(List<PropertyInfo> properties, List<FieldInfo> fields)
             {
                 SerializableProperties = properties;
                 SerializableFields = fields;
+                SafeProperties = properties.Where(IsSafeNativeProperty).ToList();
+                SkippedProperties = properties.Except(SafeProperties).Select(property => property.Name).ToArray();
             }
         }
 
@@ -158,6 +162,17 @@ namespace MCPForUnity.Editor.Helpers
         /// Returns true for ref structs (Span, ReadOnlySpan), pointer types,
         /// by-ref types, and known IL-weaved types that crash the Editor.
         /// </summary>
+        internal static bool IsUnsafeInspectionType(Type type) => IsUnsafeType(type);
+
+        private static bool IsSafeNativeProperty(PropertyInfo property)
+        {
+            MethodInfo getter = property.GetGetMethod();
+            if (getter == null || getter.IsVirtual)
+                return false;
+            string assembly = property.DeclaringType.Assembly.GetName().Name;
+            return assembly == "UnityEngine" || assembly.StartsWith("UnityEngine.", StringComparison.Ordinal);
+        }
+
         private static bool IsUnsafeType(Type type)
         {
             return IsUnsafeType(type, new HashSet<Type>());
@@ -241,15 +256,36 @@ namespace MCPForUnity.Editor.Helpers
         [ThreadStatic]
         private static BoundedResponseJson.Budget _serializationBudget;
 
-        public static object GetComponentData(Component c, bool includeNonPublicSerializedFields = true) =>
-            GetComponentDataBounded(c, new BoundedResponseJson.Budget(), includeNonPublicSerializedFields);
+        [ThreadStatic]
+        private static bool _evaluateGetters;
 
-        internal static object GetComponentDataBounded(Component c, BoundedResponseJson.Budget budget, bool includeNonPublicSerializedFields = true)
+        [ThreadStatic]
+        private static bool _includePrivateFields;
+
+        public static object GetComponentData(Component c, bool includeNonPublicSerializedFields = true) =>
+            GetComponentData(c, includeNonPublicSerializedFields, false);
+
+        public static object GetComponentData(Component c, bool includeNonPublicSerializedFields, bool evaluateGetters) =>
+            GetComponentDataBounded(c, new BoundedResponseJson.Budget(), includeNonPublicSerializedFields, evaluateGetters);
+
+        internal static object GetComponentDataBounded(Component c, BoundedResponseJson.Budget budget, bool includeNonPublicSerializedFields = true) =>
+            GetComponentDataBounded(c, budget, includeNonPublicSerializedFields, false);
+
+        internal static object GetComponentDataBounded(
+            Component c,
+            BoundedResponseJson.Budget budget,
+            bool includeNonPublicSerializedFields,
+            bool evaluateGetters
+        )
         {
             if (c == null)
                 return null;
             var previous = _serializationBudget;
+            bool previousEvaluation = _evaluateGetters;
+            bool previousPrivateFields = _includePrivateFields;
             _serializationBudget = budget;
+            _evaluateGetters = evaluateGetters;
+            _includePrivateFields = includeNonPublicSerializedFields;
             try
             {
                 budget.Check();
@@ -269,6 +305,8 @@ namespace MCPForUnity.Editor.Helpers
             finally
             {
                 _serializationBudget = previous;
+                _evaluateGetters = previousEvaluation;
+                _includePrivateFields = previousPrivateFields;
             }
         }
 
@@ -345,7 +383,11 @@ namespace MCPForUnity.Editor.Helpers
                     { "enabled", () => cam.enabled },
                     { "name", () => cam.name },
                     { "tag", () => cam.tag },
-                    { "gameObject", () => new { name = cam.gameObject.name, instanceID = cam.gameObject.GetInstanceIDCompat() } },
+                    {
+                        "gameObject",
+                        () =>
+                            new Dictionary<string, object> { ["name"] = cam.gameObject.name, ["instanceID"] = cam.gameObject.GetInstanceIDCompat() }
+                    },
                 };
 
                 foreach (var prop in safeProperties)
@@ -380,11 +422,14 @@ namespace MCPForUnity.Editor.Helpers
             if (IsOrDerivedFrom(componentType, "UnityEngine.UIElements.UIDocument"))
             {
                 var uiDocProperties = new Dictionary<string, object>();
+                Type uiDocumentType = componentType;
+                while (uiDocumentType.FullName != "UnityEngine.UIElements.UIDocument")
+                    uiDocumentType = uiDocumentType.BaseType;
 
                 try
                 {
                     // Get panelSettings reference safely
-                    var panelSettingsProp = componentType.GetProperty("panelSettings");
+                    var panelSettingsProp = uiDocumentType.GetProperty("panelSettings");
                     if (panelSettingsProp != null)
                     {
                         var panelSettings = panelSettingsProp.GetValue(c) as UnityEngine.Object;
@@ -392,7 +437,7 @@ namespace MCPForUnity.Editor.Helpers
                     }
 
                     // Get visualTreeAsset reference safely (the UXML file)
-                    var visualTreeAssetProp = componentType.GetProperty("visualTreeAsset");
+                    var visualTreeAssetProp = uiDocumentType.GetProperty("visualTreeAsset");
                     if (visualTreeAssetProp != null)
                     {
                         var visualTreeAsset = visualTreeAssetProp.GetValue(c) as UnityEngine.Object;
@@ -400,21 +445,21 @@ namespace MCPForUnity.Editor.Helpers
                     }
 
                     // Get sortingOrder safely
-                    var sortingOrderProp = componentType.GetProperty("sortingOrder");
+                    var sortingOrderProp = uiDocumentType.GetProperty("sortingOrder");
                     if (sortingOrderProp != null)
                     {
                         uiDocProperties["sortingOrder"] = sortingOrderProp.GetValue(c);
                     }
 
                     // Get enabled state (from Behaviour base class)
-                    var enabledProp = componentType.GetProperty("enabled");
+                    var enabledProp = uiDocumentType.GetProperty("enabled");
                     if (enabledProp != null)
                     {
                         uiDocProperties["enabled"] = enabledProp.GetValue(c);
                     }
 
                     // Get parentUI reference safely (no asset path needed - it's a scene reference)
-                    var parentUIProp = componentType.GetProperty("parentUI");
+                    var parentUIProp = uiDocumentType.GetProperty("parentUI");
                     if (parentUIProp != null)
                     {
                         var parentUI = parentUIProp.GetValue(c) as UnityEngine.Object;
@@ -538,7 +583,10 @@ namespace MCPForUnity.Editor.Helpers
             // --- End Logging Before Property Loop ---
 
             // Use cached properties
-            foreach (var propInfo in cachedData.SerializableProperties)
+            data["inspectionMode"] = _evaluateGetters ? "evaluate_getters" : "fields_and_safe_properties";
+            if (!_evaluateGetters && cachedData.SkippedProperties.Length > 0)
+                data["skippedProperties"] = cachedData.SkippedProperties;
+            foreach (var propInfo in _evaluateGetters ? cachedData.SerializableProperties : cachedData.SafeProperties)
             {
                 string propName = propInfo.Name;
 
@@ -705,8 +753,8 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 dict[name] = value is JToken token
-                    ? ConvertJTokenToPlainObject(BoundedResponseJson.Freeze(token, _outputSerializer, budget))
-                    : BoundedResponseJson.ToPlain(value, _outputSerializer, budget);
+                    ? ConvertJTokenToPlainObject(BoundedResponseJson.Freeze(token, InspectionSerializer, budget))
+                    : BoundedResponseJson.ToPlain(value, InspectionSerializer, budget);
             }
             catch (Exception e) when (!budget.Exceeded)
             {
@@ -794,6 +842,26 @@ namespace MCPForUnity.Editor.Helpers
         };
         private static readonly JsonSerializer _outputSerializer = JsonSerializer.Create(_outputSerializerSettings);
 
+        private sealed class InspectionReferenceEquality : System.Collections.IEqualityComparer
+        {
+            public new bool Equals(object first, object second) => ReferenceEquals(first, second);
+
+            public int GetHashCode(object value) => value == null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value);
+        }
+
+        private static JsonSerializer SafeSerializer(bool includePrivate)
+        {
+            var serializer = JsonSerializer.Create(_outputSerializerSettings);
+            serializer.ContractResolver = new SafeComponentContractResolver(includePrivate);
+            serializer.EqualityComparer = new InspectionReferenceEquality();
+            return serializer;
+        }
+
+        private static readonly JsonSerializer _safePrivateSerializer = SafeSerializer(true);
+        private static readonly JsonSerializer _safePublicSerializer = SafeSerializer(false);
+        private static JsonSerializer InspectionSerializer =>
+            _evaluateGetters ? _outputSerializer : (_includePrivateFields ? _safePrivateSerializer : _safePublicSerializer);
+
         // --- End Define custom JsonSerializerSettings ---
 
         // Helper to create JToken using the output serializer
@@ -805,7 +873,7 @@ namespace MCPForUnity.Editor.Helpers
             try
             {
                 // Use the pre-configured OUTPUT serializer instance
-                return BoundedResponseJson.Freeze(value, _outputSerializer, _serializationBudget);
+                return BoundedResponseJson.Freeze(value, InspectionSerializer, _serializationBudget);
             }
             catch (JsonSerializationException e) when (_serializationBudget?.Exceeded != true)
             {

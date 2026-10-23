@@ -129,9 +129,9 @@ Read bounded direct child IDs in sibling order plus object metadata. page_size d
 
 ## `gameobject_component`
 
-**URI:** `mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection}`
+**URI:** `mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection,evaluate_getters}`
 
-Get a component on a GameObject. The bare URI preserves legacy case-insensitive first-match reads. Optional component_index or component_instance_id selects one live component; strict_selection=true requires uniqueness. Selected reads use the same canonical, case-sensitive component type as manage_components. Indices are zero-based within GetComponents(requested type), not the mixed component list. Prefer the component instanceID from /components; IDs and indices are ephemeral. Unsupported Editors fail without falling back.
+Get a component on a GameObject. The bare URI preserves legacy case-insensitive first-match reads. Optional component_index or component_instance_id selects one live component; strict_selection=true requires uniqueness. Selected reads use the same canonical, case-sensitive component type as manage_components. Indices are zero-based within GetComponents(requested type), not the mixed component list. Prefer the component instanceID from /components; IDs and indices are ephemeral. Unsupported Editors fail without falling back. Default inspection reads fields and safe native properties. evaluate_getters=true explicitly runs user getters and serialization hooks, which can block the Editor.
 
 **Parameters:**
 
@@ -140,14 +140,15 @@ Get a component on a GameObject. The bare URI preserves legacy case-insensitive 
 - `component_index` (`str | None`, optional)
 - `component_instance_id` (`str | None`, optional)
 - `strict_selection` (`str | bool`, optional)
+- `evaluate_getters` (`str | bool`, optional)
 
 ## `gameobject_components`
 
-**URI:** `mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}`
+**URI:** `mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties,evaluate_getters}`
 
-Get components on a GameObject. Optional URI query parameters: page_size (default 25), cursor (default 0), and include_properties (default true).
+Get components on a GameObject. Optional URI query parameters: page_size (default 25), cursor (default 0), include_properties (default true), and evaluate_getters (default false). Default reads use fields and safe native properties. Explicit getter evaluation can run user code and block the Editor.
 
-URI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}
+URI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties,evaluate_getters}
 
 **Parameters:**
 
@@ -155,6 +156,7 @@ URI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,i
 - `page_size` (`int`, optional)
 - `cursor` (`int`, optional)
 - `include_properties` (`bool`, optional)
+- `evaluate_getters` (`str | bool`, optional)
 
 ## `get_tests`
 

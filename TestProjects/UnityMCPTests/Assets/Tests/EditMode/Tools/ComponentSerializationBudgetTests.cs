@@ -23,7 +23,7 @@ namespace MCPForUnityTests.Editor.Tools
                 var component = go.AddComponent<SerializationBudgetComponent>();
                 var sequence = new BudgetSequence(120000);
                 component.values = sequence;
-                var result = (Dictionary<string, object>)GameObjectSerializer.GetComponentData(component);
+                var result = (Dictionary<string, object>)GameObjectSerializer.GetComponentData(component, true, true);
                 Assert.IsFalse(result.ContainsKey("serializationError"));
                 var values = (List<object>)((Dictionary<string, object>)result["properties"])["values"];
                 Assert.AreEqual(120000, values.Count);
@@ -62,7 +62,7 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 var component = go.AddComponent<HandledOverflowComponent>();
                 component.last = new HandledOverflowValue { Values = new BudgetSequence(BoundedResponseJson.MaxNodes + 5) };
-                var data = JObject.FromObject(GameObjectSerializer.GetComponentData(component));
+                var data = JObject.FromObject(GameObjectSerializer.GetComponentData(component, true, true));
                 Assert.AreEqual("component_serialization_limit", (string)data["serializationError"]);
                 Assert.IsNull(data["properties"], "An oversized value must never expose a partial-success payload.");
             }
@@ -81,12 +81,12 @@ namespace MCPForUnityTests.Editor.Tools
                 var component = go.AddComponent<SerializationBudgetComponent>();
                 var sequence = new BudgetSequence(BoundedResponseJson.MaxNodes * 2);
                 component.values = sequence;
-                var data = JObject.FromObject(GameObjectSerializer.GetComponentData(component));
+                var data = JObject.FromObject(GameObjectSerializer.GetComponentData(component, true, true));
                 Assert.AreEqual("component_serialization_limit", (string)data["serializationError"]);
                 Assert.LessOrEqual(sequence.Reads, BoundedResponseJson.MaxNodes + 1);
                 Assert.IsTrue(sequence.Disposed);
                 component.values = new[] { 1, 2, 3 };
-                var small = (Dictionary<string, object>)GameObjectSerializer.GetComponentData(component);
+                var small = (Dictionary<string, object>)GameObjectSerializer.GetComponentData(component, true, true);
                 var properties = (Dictionary<string, object>)small["properties"];
                 CollectionAssert.AreEqual(new[] { 1, 2, 3 }, (List<object>)properties["values"]);
                 Assert.IsFalse(small.ContainsKey("serializationError"));
@@ -107,7 +107,9 @@ namespace MCPForUnityTests.Editor.Tools
                 var second = new BudgetSequence(BoundedResponseJson.MaxNodes * 3 / 5);
                 go.AddComponent<SerializationBudgetComponent>().values = first;
                 go.AddComponent<SerializationBudgetComponent>().values = second;
-                var result = JObject.FromObject(GameObjectComponentsResource.HandleCommand(new JObject { ["instanceID"] = go.GetInstanceIDCompat() }));
+                var result = JObject.FromObject(
+                    GameObjectComponentsResource.HandleCommand(new JObject { ["instanceID"] = go.GetInstanceIDCompat(), ["evaluate_getters"] = true })
+                );
                 Assert.IsTrue((bool)result["success"]);
                 Assert.LessOrEqual(first.Reads + second.Reads, BoundedResponseJson.MaxNodes + 1);
                 Assert.IsTrue(first.Disposed && second.Disposed);
@@ -136,7 +138,7 @@ namespace MCPForUnityTests.Editor.Tools
                     current = child;
                 }
                 component.nested = root;
-                var result = JObject.FromObject(GameObjectSerializer.GetComponentData(component));
+                var result = JObject.FromObject(GameObjectSerializer.GetComponentData(component, true, true));
                 Assert.AreEqual("component_serialization_limit", (string)result["serializationError"]);
             }
             finally

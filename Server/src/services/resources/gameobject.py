@@ -91,16 +91,17 @@ async def get_gameobject_api_docs(_ctx: Context) -> MCPResponse:
                 "consistency": "Live indices: stable sources page exactly. Restart after any hierarchy edit; bounded observed-change checks cannot detect every same-frame mutation.",
                 "cursor": "Opaque editor-session cursor, expires after 30 seconds. Keep target/page_size unchanged; stale cursors require restart.",
             },
-            "mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}": {
+            "mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties,evaluate_getters}": {
                 "description": "Get all components with full property serialization (paginated)",
                 "example": "mcpforunity://scene/gameobject/-81840/components?page_size=10&cursor=0&include_properties=false",
                 "parameters": {
                     "page_size": "Number of components per page (default: 25)",
                     "cursor": "Pagination offset (default: 0)",
-                    "include_properties": "Include full property data (default: true)",
+                    "include_properties": "Include fields and safe native properties (default: true)",
+                    "evaluate_getters": "Explicitly execute user getters and serialization hooks (default: false)",
                 },
             },
-            "mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection}": {
+            "mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection,evaluate_getters}": {
                 "description": "Read one live component. Bare URIs preserve legacy case-insensitive first match; selectors or strict_selection=true require a compatible Editor and never fall back.",
                 "example": "mcpforunity://scene/gameobject/-81840/component/UnityEngine.AudioSource?component_index=1",
                 "parameters": {
@@ -243,10 +244,22 @@ class ComponentsResponse(MCPResponse):
     data: ComponentsData | None = None
 
 
+def _inspection_evaluation(value: str | bool) -> tuple[bool, MCPResponse | None]:
+    if type(value) is bool:
+        return value, None
+    if type(value) is str and value in {"true", "false"}:
+        return value == "true", None
+    return False, MCPResponse(
+        success=False,
+        error="invalid_inspection",
+        message="evaluate_getters must be true or false.",
+    )
+
+
 @mcp_for_unity_resource(
-    uri="mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}",
+    uri="mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties,evaluate_getters}",
     name="gameobject_components",
-    description="Get components on a GameObject. Optional URI query parameters: page_size (default 25), cursor (default 0), and include_properties (default true).\n\nURI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties}",
+    description="Get components on a GameObject. Optional URI query parameters: page_size (default 25), cursor (default 0), include_properties (default true), and evaluate_getters (default false). Default reads use fields and safe native properties. Explicit getter evaluation can run user code and block the Editor.\n\nURI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties,evaluate_getters}",
 )
 async def get_gameobject_components(
     ctx: Context,
@@ -254,8 +267,12 @@ async def get_gameobject_components(
     page_size: int = 25,
     cursor: int = 0,
     include_properties: bool = True,
+    evaluate_getters: str | bool = False,
 ) -> MCPResponse:
-    """Get all components on a GameObject."""
+    """Read component fields; executing arbitrary user getters requires explicit opt-in."""
+    evaluate, error = _inspection_evaluation(evaluate_getters)
+    if error:
+        return error
     unity_instance = await get_unity_instance_from_context(ctx)
 
     id_int, error = _validate_instance_id(instance_id)
@@ -271,6 +288,7 @@ async def get_gameobject_components(
             "pageSize": page_size,
             "cursor": cursor,
             "includeProperties": include_properties,
+            **({"evaluateGetters": True} if evaluate else {}),
         },
     )
 
@@ -325,9 +343,9 @@ def _component_selector_integer(
 
 
 @mcp_for_unity_resource(
-    uri="mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection}",
+    uri="mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection,evaluate_getters}",
     name="gameobject_component",
-    description="Get a component on a GameObject. The bare URI preserves legacy case-insensitive first-match reads. Optional component_index or component_instance_id selects one live component; strict_selection=true requires uniqueness. Selected reads use the same canonical, case-sensitive component type as manage_components. Indices are zero-based within GetComponents(requested type), not the mixed component list. Prefer the component instanceID from /components; IDs and indices are ephemeral. Unsupported Editors fail without falling back.",
+    description="Get a component on a GameObject. The bare URI preserves legacy case-insensitive first-match reads. Optional component_index or component_instance_id selects one live component; strict_selection=true requires uniqueness. Selected reads use the same canonical, case-sensitive component type as manage_components. Indices are zero-based within GetComponents(requested type), not the mixed component list. Prefer the component instanceID from /components; IDs and indices are ephemeral. Unsupported Editors fail without falling back. Default inspection reads fields and safe native properties. evaluate_getters=true explicitly runs user getters and serialization hooks, which can block the Editor.",
 )
 async def get_gameobject_component(
     ctx: Context,
@@ -336,8 +354,12 @@ async def get_gameobject_component(
     component_index: str | None = None,
     component_instance_id: str | None = None,
     strict_selection: str | bool = False,
+    evaluate_getters: str | bool = False,
 ) -> MCPResponse:
     """Read an exact live component when selectors are supplied; preserve the bare URI."""
+    evaluate, error = _inspection_evaluation(evaluate_getters)
+    if error:
+        return error
     if type(strict_selection) is str:
         if strict_selection not in {"true", "false"}:
             return MCPResponse(
@@ -381,6 +403,8 @@ async def get_gameobject_component(
             message="instance_id must be a nonzero Int32 integer.",
         )
     params: dict[str, Any] = {"instanceID": id_int, "componentName": component_name}
+    if evaluate:
+        params["evaluateGetters"] = True
     if index is not None:
         params["componentIndex"] = index
     if component_id is not None:
