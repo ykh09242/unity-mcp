@@ -68,7 +68,7 @@ namespace MCPForUnity.Editor.Services
 
         public void SetStoredSourcePath(string path)
         {
-            ValidateSource(path);
+            ValidateSource(path, scanTree: false);
             Write(EditorPrefKeys.PackageDeploySourcePath, Path.GetFullPath(path));
         }
 
@@ -281,7 +281,7 @@ namespace MCPForUnity.Editor.Services
             return backupPath;
         }
 
-        private static string ValidateSource(string sourcePath, bool throwOnError = true)
+        private static string ValidateSource(string sourcePath, bool throwOnError = true, bool scanTree = true)
         {
             if (string.IsNullOrEmpty(sourcePath))
             {
@@ -319,8 +319,12 @@ namespace MCPForUnity.Editor.Services
 
             try
             {
-                GuardedFileSystem.CheckTree(sourcePath);
-                string manifest = Path.Combine(sourcePath, "package.json");
+                GuardedFileSystem.CheckPath(sourcePath);
+                GuardedFileSystem.CheckPath(Path.Combine(sourcePath, "Editor"));
+                GuardedFileSystem.CheckPath(Path.Combine(sourcePath, "Runtime"));
+                if (scanTree)
+                    GuardedFileSystem.CheckTree(sourcePath);
+                string manifest = GuardedFileSystem.CheckPath(Path.Combine(sourcePath, "package.json"));
                 if (!File.Exists(manifest) || new FileInfo(manifest).Length > 1024 * 1024)
                     throw new ArgumentException("A bounded package.json is required.");
                 var metadata = JObject.Parse(File.ReadAllText(manifest));

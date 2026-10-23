@@ -70,6 +70,7 @@
                 </ui:VisualElement>
                 <ui:VisualElement class="path-override-controls">
                     <ui:TextField name="deploy-source-path" class="override-field" />
+                    <ui:Button name="apply-deploy-source-button" text="Apply source" class="icon-button" />
                     <ui:Button name="browse-deploy-source-button" text="Select" class="icon-button" />
                     <ui:Button name="clear-deploy-source-button" text="Clear" class="icon-button" />
                 </ui:VisualElement>

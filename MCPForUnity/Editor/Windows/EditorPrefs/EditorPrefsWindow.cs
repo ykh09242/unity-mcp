@@ -182,8 +182,30 @@ namespace MCPForUnity.Editor.Windows
             }
         }
 
+        internal static bool IsSensitiveKey(string key) =>
+            key == EditorPrefKeys.ApiKey
+            || key == EditorPrefKeys.CustomerUuid
+            || key == EditorPrefKeys.SessionId
+            || key == EditorPrefKeys.LastLocalHttpServerInstanceToken;
+
+        private static string InitialValue(EditorPrefItem item) =>
+            !item.IsUnset ? item.Value
+            : item.Type == EditorPrefType.Bool ? "false"
+            : item.Type == EditorPrefType.Int || item.Type == EditorPrefType.Float ? "0"
+            : string.Empty;
+
         private void RefreshPrefs()
         {
+            var drafts = new Dictionary<string, (string value, EditorPrefType type)>();
+            foreach (var item in currentPrefs)
+            {
+                if (!prefRows.TryGetValue(item.Key, out var row) || IsSensitiveKey(item.Key))
+                    continue;
+                var value = row.Q<TextField>("value-field").value;
+                var type = (EditorPrefType)row.Q<DropdownField>("type-dropdown").index;
+                if (value != InitialValue(item) || type != item.Type)
+                    drafts[item.Key] = (value, type);
+            }
             currentPrefs.Clear();
             prefRows.Clear();
             prefsContainer.Clear();
@@ -210,14 +232,21 @@ namespace MCPForUnity.Editor.Windows
             // Create items for existing prefs
             foreach (var key in allKeys)
             {
-                // Skip Customer UUID but show everything else that's defined
-                if (key != EditorPrefKeys.CustomerUuid)
+                // Exclude secrets before reading EditorPrefs or creating controls.
+                if (!IsSensitiveKey(key))
                 {
                     var item = CreateEditorPrefItem(key);
                     if (item != null)
                     {
                         currentPrefs.Add(item);
                         var row = CreateItemUI(item);
+                        if (drafts.TryGetValue(key, out var draft))
+                        {
+                            row.Q<TextField>("value-field").SetValueWithoutNotify(draft.value);
+                            if (!knownPrefTypes.ContainsKey(key))
+                                row.Q<DropdownField>("type-dropdown").index = (int)draft.type;
+                            row.Q<Label>("pref-state").text = "Unsaved draft retained";
+                        }
                         prefRows.Add(item.Key, row);
                         prefsContainer.Add(row);
                     }
@@ -260,6 +289,8 @@ namespace MCPForUnity.Editor.Windows
 
         private EditorPrefItem CreateEditorPrefItem(string key)
         {
+            if (IsSensitiveKey(key))
+                return null;
             var item = new EditorPrefItem { Key = key, IsKnown = knownMcpKeys.Contains(key) };
 
             // Check if we know the type of this pref
@@ -307,6 +338,8 @@ namespace MCPForUnity.Editor.Windows
 
         private VisualElement CreateItemUI(EditorPrefItem item)
         {
+            if (IsSensitiveKey(item.Key))
+                return new Label("Manage credentials in Connect or Generation.");
             if (itemTemplate == null)
             {
                 McpLog.Error("Item template not loaded");
@@ -320,30 +353,37 @@ namespace MCPForUnity.Editor.Windows
             keyLabel.text = item.Key;
             keyLabel.tooltip = item.Key;
             var valueField = itemElement.Q<TextField>("value-field");
-            valueField.value = item.Value;
+            valueField.SetValueWithoutNotify(InitialValue(item));
 
             var typeDropdown = itemElement.Q<DropdownField>("type-dropdown");
             typeDropdown.index = (int)item.Type;
+            typeDropdown.SetEnabled(!knownPrefTypes.ContainsKey(item.Key));
 
             // Buttons
             var saveButton = itemElement.Q<Button>("save-button");
 
-            // Style unset items
-            if (item.IsUnset)
-            {
-                valueField.SetEnabled(false);
-                valueField.AddToClassList("pref-unset");
-                saveButton.SetEnabled(false);
-            }
-
-            // Callbacks
+            saveButton.text = item.IsUnset ? "Initialize" : "Save";
+            var state = itemElement.Q<Label>("pref-state");
+            state.text = item.IsUnset ? "Unset: application default is in use" : "Stored value";
+            valueField.RegisterValueChangedCallback(_ => state.text = "Unsaved draft");
+            typeDropdown.RegisterValueChangedCallback(_ => state.text = "Unsaved draft");
             saveButton.clicked += () => SavePref(item, valueField.value, (EditorPrefType)typeDropdown.index);
+            var reset = itemElement.Q<Button>("reset-button");
+            reset.SetEnabled(!item.IsUnset);
+            reset.clicked += () => ResetPref(item);
 
             return itemElement;
         }
 
         private void SavePref(EditorPrefItem item, string newValue, EditorPrefType newType)
         {
+            if (IsSensitiveKey(item.Key))
+                return;
+            if (knownPrefTypes.TryGetValue(item.Key, out var requiredType) && requiredType != newType)
+            {
+                showSaveError("This preference has a fixed type. Refresh its row before saving.");
+                return;
+            }
             if (!SaveValue(item.Key, newValue, newType))
             {
                 return;
@@ -355,6 +395,9 @@ namespace MCPForUnity.Editor.Windows
             var row = prefRows[item.Key];
             row.Q<TextField>("value-field").SetValueWithoutNotify(newValue);
             row.Q<DropdownField>("type-dropdown").index = (int)newType;
+            row.Q<Button>("save-button").text = "Save";
+            row.Q<Button>("reset-button").SetEnabled(true);
+            row.Q<Label>("pref-state").text = "Stored value";
 
             if (cachedPrefNames.TryGetValue(item.Key, out var cacheName))
             {
@@ -362,8 +405,27 @@ namespace MCPForUnity.Editor.Windows
             }
         }
 
+        private void ResetPref(EditorPrefItem item)
+        {
+            if (IsSensitiveKey(item.Key))
+                return;
+            EditorPrefs.DeleteKey(item.Key);
+            item.IsUnset = true;
+            item.Value = "Unset";
+            var row = prefRows[item.Key];
+            row.Q<TextField>("value-field").SetValueWithoutNotify(InitialValue(item));
+            row.Q<DropdownField>("type-dropdown").SetValueWithoutNotify(item.Type.ToString());
+            row.Q<Button>("save-button").text = "Initialize";
+            row.Q<Button>("reset-button").SetEnabled(false);
+            row.Q<Label>("pref-state").text = "Unset: application default is in use";
+            if (cachedPrefNames.TryGetValue(item.Key, out var cacheName))
+                EditorConfigurationCache.Instance.InvalidateKey(cacheName);
+        }
+
         private bool SaveValue(string key, string value, EditorPrefType type)
         {
+            if (IsSensitiveKey(key))
+                return false;
             switch (type)
             {
                 case EditorPrefType.String:
