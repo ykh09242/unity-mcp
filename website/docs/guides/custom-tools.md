@@ -230,100 +230,40 @@ Mark your tool with `RequiresPolling = true` and specify a `PollAction` (typical
 
 2. **Implement the poll action:** Create a method (like `Status`) that checks progress and returns `_mcp_status` of `pending`, `complete`, or `error`. **Important:** The middleware calls your `PollAction` string exactly as written—no automatic case conversion—so make sure your `HandleCommand` recognizes it.
 
-3. **Persist your state:** Use `McpJobStateStore` to save progress to the `Library/` folder. This ensures your tool remembers what it was doing even after a domain reload wipes memory.
+3. **Separate observations from execution ownership:** Keep small display state in `SessionState` if it only needs to survive an assembly reload. Restart-safe work needs an operation-owned journal and reconciliation. See [Migrating legacy editor helpers](./legacy-helpers.md); `McpJobStateStore` is deprecated and is not a crash-recovery store.
 
-### Complete Example
+### Keeping a transient observation
+
+This stores a progress display within the current Editor session. It does not start,
+resume, or establish ownership of a bake. After a reload, reconnect to the actual
+operation before reporting that it is still running. An absent observation means
+unknown, not permission to restart a mutation.
 
 ```csharp
-using Newtonsoft.Json.Linq;
+using System;
 using UnityEditor;
 using UnityEngine;
-using MCPForUnity.Editor.Helpers;
-using MCPForUnity.Editor.Tools;
 
-[McpForUnityTool(
-    "bake_lightmaps",
-    Description = "Simulated async lightmap bake with polling",
-    RequiresPolling = true,
-    PollAction = "status"
-)]
-public static class BakeLightmaps
+internal static class BakeObservation
 {
-    private const string ToolName = "bake_lightmaps";
-    private const float SimulatedDurationSeconds = 5f;
+    private const string Key = "Example.BakeLightmaps.Observation";
 
-    private static bool s_isRunning;
-    private static double s_lastUpdateTime;
-
-    private class State
+    [Serializable]
+    internal sealed class State
     {
-        public string lastStatus { get; set; }
-        public float progress { get; set; }
+        public float progress;
+        public bool completed;
     }
 
-    public static object HandleCommand(JObject @params)
+    internal static void Save(State state) => SessionState.SetString(Key, JsonUtility.ToJson(state));
+
+    internal static State Read()
     {
-        if (s_isRunning)
-        {
-            var existing = McpJobStateStore.LoadState<State>(ToolName) ?? new State { lastStatus = "in_progress", progress = 0f };
-            return new PendingResponse("Bake already running", 0.5, existing);
-        }
-
-        var state = new State { lastStatus = "in_progress", progress = 0f };
-        McpJobStateStore.SaveState(ToolName, state);
-
-        s_isRunning = true;
-        s_lastUpdateTime = EditorApplication.timeSinceStartup;
-        EditorApplication.update += UpdateBake;
-
-        return new PendingResponse("Starting lightmap bake", 0.5, new { state.lastStatus, state.progress });
+        string json = SessionState.GetString(Key, "");
+        return string.IsNullOrEmpty(json) ? null : JsonUtility.FromJson<State>(json);
     }
 
-    public static object Status(JObject _)
-    {
-        var state = McpJobStateStore.LoadState<State>(ToolName) ?? new State { lastStatus = "unknown", progress = 0f };
-
-        if (state.lastStatus == "completed")
-        {
-            return new { _mcp_status = "complete", message = "Bake finished", data = state };
-        }
-
-        if (state.lastStatus == "error")
-        {
-            return new { _mcp_status = "error", error = "Bake failed", data = state };
-        }
-
-        return new PendingResponse($"Baking... {state.progress:P0}", 0.5, state);
-    }
-
-    private static void UpdateBake()
-    {
-        if (!s_isRunning)
-        {
-            EditorApplication.update -= UpdateBake;
-            return;
-        }
-
-        var now = EditorApplication.timeSinceStartup;
-        var delta = now - s_lastUpdateTime;
-        s_lastUpdateTime = now;
-
-        var state = McpJobStateStore.LoadState<State>(ToolName) ?? new State { lastStatus = "in_progress", progress = 0f };
-        state.progress = Mathf.Clamp01(state.progress + (float)(delta / SimulatedDurationSeconds));
-
-        if (state.progress >= 1f)
-        {
-            state.lastStatus = "completed";
-            s_isRunning = false;
-            EditorApplication.update -= UpdateBake;
-        }
-        else
-        {
-            state.lastStatus = "in_progress";
-        }
-
-        McpJobStateStore.SaveState(ToolName, state);
-    }
+    internal static void Clear() => SessionState.EraseString(Key);
 }
 ```
 

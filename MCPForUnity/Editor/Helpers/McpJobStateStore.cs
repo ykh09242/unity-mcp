@@ -6,9 +6,12 @@ using UnityEngine;
 namespace MCPForUnity.Editor.Helpers
 {
     /// <summary>
-    /// Utility for persisting tool state across domain reloads. State is stored in
-    /// Library so it stays local to the project and is cleared by Unity as needed.
+    /// Legacy project-local scratch storage retained for external API compatibility.
+    /// This helper is not atomic, user-isolated, or a crash-recovery journal.
     /// </summary>
+    [Obsolete(
+        "Legacy scratch storage. Use SessionState for transient observations or an operation-owned durable journal. See the legacy helpers migration guide."
+    )]
     public static class McpJobStateStore
     {
         private static string GetStatePath(string toolName)

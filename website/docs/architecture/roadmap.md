@@ -28,7 +28,7 @@ Animation, Asset, Audio, Camera, Components, Editor, GameObjects, Graphics, Ligh
 
 **Actions**: `add_package`, `remove_package`, `add_and_remove`, `list_packages`, `search_packages`, `get_package_info`, `embed_package`, `resolve_packages`, `list_registries`, `add_registry`, `remove_registry`, `list_assemblies`, `create_asmdef`, `ping`
 
-**Challenge**: Domain reload after install/remove kills state. Solution: `PendingResponse` + `McpJobStateStore` (existing patterns).
+**Challenge**: Domain reload after install/remove kills state. Use `PendingResponse` with operation-owned state and reconciliation. `SessionState` can retain transient observations across reloads; restart recovery requires a durable journal. See [legacy helper migration](../guides/legacy-helpers.md).
 
 #### 2. QoL: Extend Existing Tools
 | Dimension | Assessment |
