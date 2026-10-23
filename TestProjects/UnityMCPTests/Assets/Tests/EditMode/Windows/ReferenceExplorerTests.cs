@@ -186,8 +186,15 @@ namespace MCPForUnityTests.EditMode.Windows
             {
                 foreach (int theme in new[] { 1, 0 })
                 {
+                    host.Close();
+                    host = null;
                     skin.SetValue(null, theme);
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+                    for (int i = 0; i < 12; i++)
+                        yield return null;
+                    Assert.AreEqual(theme == 1, EditorGUIUtility.isProSkin);
+                    host = ScriptableObject.CreateInstance<Host>();
+                    host.ShowUtility();
                     var root = Root;
                     root.Clear();
                     root.AddToClassList("mcp-editor");
