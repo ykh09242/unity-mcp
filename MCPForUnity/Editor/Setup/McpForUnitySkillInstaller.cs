@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using MCPForUnity.Editor.Constants;
 using UnityEditor;
 using UnityEngine;
@@ -28,6 +29,7 @@ namespace MCPForUnity.Editor.Setup
         private string _packageError;
         private Vector2 _scroll;
         private volatile bool _isRunning;
+        private CancellationTokenSource _operation;
         private SkillSyncService.SyncPreview _preview;
         private readonly BoundedEditorLog _log = new();
         private long _displayedLogRevision;
@@ -62,6 +64,10 @@ namespace MCPForUnity.Editor.Setup
         private void OnDisable()
         {
             EditorApplication.update -= OnEditorUpdate;
+            _operation?.Cancel();
+            _operation?.Dispose();
+            _operation = null;
+            _isRunning = false;
             EditorPrefs.SetString(RepoUrlKey, _repoUrl);
             EditorPrefs.SetString(BranchKey, _targetBranch);
             EditorPrefs.SetString(CliKey, _cliType);
@@ -190,20 +196,24 @@ namespace MCPForUnity.Editor.Setup
             }
             _isRunning = true;
             _preview = null;
+            var operation = _operation = new CancellationTokenSource();
             SkillSyncService.PreviewSourceAsync(
                 source,
                 _installDir,
                 _log.Append,
                 preview =>
                 {
-                    if (this == null)
+                    if (this == null || !ReferenceEquals(_operation, operation))
                         return;
+                    operation.Dispose();
+                    _operation = null;
                     _isRunning = false;
                     _preview = preview.Success ? preview : null;
                     if (!preview.Success)
                         AppendLineImmediate("[ERROR] " + preview.Error);
                     Repaint();
-                }
+                },
+                operation.Token
             );
         }
 
@@ -228,17 +238,21 @@ namespace MCPForUnity.Editor.Setup
             var preview = _preview;
             _preview = null;
             _isRunning = true;
+            var operation = _operation = new CancellationTokenSource();
             SkillSyncService.ApplyAsync(
                 preview,
                 _log.Append,
                 result =>
                 {
-                    if (this == null)
+                    if (this == null || !ReferenceEquals(_operation, operation))
                         return;
+                    operation.Dispose();
+                    _operation = null;
                     _isRunning = false;
                     AppendLineImmediate(SkillSyncService.DescribeResult(result));
                     Repaint();
-                }
+                },
+                operation.Token
             );
         }
 

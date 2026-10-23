@@ -198,6 +198,49 @@ namespace MCPForUnityTests.Editor.Setup
             Assert.IsFalse(File.Exists(Path.Combine(_install, ".unity-mcp-skill-sync-baseline.json")));
         }
 
+        [TestCase("stage")]
+        [TestCase("install")]
+        [TestCase("metadata")]
+        public void CancelledLatestApplyDoesNotPublishAndRetainsRollbackOwnership(string phase)
+        {
+            var preview = SkillSyncService.CreatePreview(Repository, _install, "beta", Snapshot(A));
+            using var cancellation = new CancellationTokenSource();
+            var type = typeof(SkillSyncService).Assembly.GetType("MCPForUnity.Editor.Setup.SkillSyncWaitBudget");
+            Assert.IsNotNull(type);
+            object budget = Activator.CreateInstance(
+                type,
+                BindingFlags.NonPublic | BindingFlags.Instance,
+                null,
+                new object[] { 300d, cancellation.Token, null },
+                null
+            );
+            SkillSyncService.BeforeFileOperation = (operation, _) =>
+            {
+                if (operation == phase)
+                    cancellation.Cancel();
+            };
+            var method = typeof(SkillSyncService).GetMethod("ApplySourcePreviewWithBudget", Static);
+            Assert.IsNotNull(method);
+            var result = (SkillSyncService.SyncResult)
+                method.Invoke(
+                    null,
+                    new object[]
+                    {
+                        preview,
+                        (Func<SkillSyncSource>)(() => throw new AssertionException("Latest must not read a package pin.")),
+                        (Func<SkillSyncService.RemoteSnapshot>)(() => Snapshot(A)),
+                        (Func<string, long, byte[]>)((_, _) => Encoding.UTF8.GetBytes("skill")),
+                        null,
+                        budget,
+                    }
+                );
+            Assert.IsFalse(result.Success);
+            Assert.IsTrue(result.RolledBack);
+            Assert.IsFalse(result.PartialApplication);
+            Assert.IsFalse(File.Exists(Path.Combine(_install, "SKILL.md")));
+            Assert.IsFalse(File.Exists(Path.Combine(_install, ".unity-mcp-skill-sync-baseline.json")));
+        }
+
         [Test]
         public void PackageModeRejectsSnapshotForAnotherCommit()
         {

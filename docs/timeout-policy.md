@@ -97,6 +97,24 @@ remain in effect. Expiry, cancellation or disconnect releases partial buffers;
 a timeout does not authorize replaying the original command. Standalone internal
 assembler callers retain a 300-second default and may configure up to one day.
 
+## Skill installer readiness
+
+Each skill preview or apply shares a cumulative Editor selection-read allowance
+of 300 seconds. Set `UNITY_MCP_SKILL_SYNC_EDITOR_WAIT_TIMEOUT` on the Editor process
+for unusually slow imports; finite positive values up to one day are supported.
+The `PreviewSourceAsync` and `ApplyAsync` cancellation overloads also accept an
+explicit `editorWaitTimeoutSeconds`. Original callback signatures remain available.
+
+Only Editor observation spends this allowance. Download and staging time retain
+their existing policies, so a large multi-file synchronization does not acquire
+a new global five-minute deadline. Every package-bound write still revalidates the
+installed selection, and repeated reads consume the same remaining allowance.
+
+Cancellation retires a queued Editor read and releases its callback captures.
+Closing the installer cancels its operation; an in-progress download or file action
+settles through existing ownership and rollback before completion. A cancelled
+apply cannot pass a later write boundary, and recovery cleanup is not cancelled.
+
 ## Test discovery and native startup
 
 `get_tests(timeout_seconds=1800)` allows a 30-minute total discovery observation
