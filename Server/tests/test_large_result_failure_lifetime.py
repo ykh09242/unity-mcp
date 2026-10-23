@@ -1,5 +1,7 @@
 """Malformed large-result buffers must die before asynchronous close cleanup."""
 
+from tests.timing import await_signal
+
 import asyncio
 import gc
 import gzip
@@ -131,7 +133,7 @@ async def test_failure_releases_buffer_before_close_can_suspend(owned_hub, kind)
     state = owned_hub
     task = asyncio.create_task(failed_transfer(state, kind))
     try:
-        await asyncio.wait_for(state.entered.wait(), 2)
+        await await_signal(state.entered, "state.entered")
         gc.collect()
         assert state.cls._raw_results.total_bytes == 0
         assert state.cls._large_results.retained_bytes == 0
@@ -153,7 +155,7 @@ async def test_cancel_during_failed_transfer_close_does_not_retain_buffer(owned_
     state = owned_hub
     task = asyncio.create_task(failed_transfer(state, kind))
     try:
-        await asyncio.wait_for(state.entered.wait(), 2)
+        await await_signal(state.entered, "state.entered")
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -185,7 +187,7 @@ async def test_failure_close_keeps_other_generation_allocation_and_owner_charge(
     other_charge = state.cls._raw_results.total_bytes
     task = asyncio.create_task(failed_transfer(state, "crc"))
     try:
-        await asyncio.wait_for(state.entered.wait(), 2)
+        await await_signal(state.entered, "state.entered")
         gc.collect()
         assert other_buffer() is not None and all(ref() is None for ref in state.buffers[1:])
         assert state.cls._raw_results.total_bytes == other_charge

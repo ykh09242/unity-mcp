@@ -1,5 +1,7 @@
 """Cached readiness metadata must not wait for unrelated executor jobs."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -41,7 +43,7 @@ async def test_cached_snapshot_returns_while_executor_worker_is_occupied(
 
     def occupy():
         loop.call_soon_threadsafe(started.set_result, None)
-        assert release.wait(5)
+        assert release.wait(watchdog_timeout())
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         monkeypatch.setattr(

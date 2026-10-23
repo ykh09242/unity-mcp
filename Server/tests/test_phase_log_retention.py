@@ -1,5 +1,7 @@
 """Exercise real file leases and positively owned diagnostic retention."""
 
+from tests.timing import watchdog_timeout
+
 import os
 from pathlib import Path
 import subprocess
@@ -106,7 +108,7 @@ sys.stdin.read()
         text=True,
     )
     try:
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + watchdog_timeout()
         while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.01)
         assert ready.exists(), "Child did not acquire its diagnostic lease"
@@ -115,7 +117,7 @@ sys.stdin.read()
         assert path.exists()
     finally:
         process.kill()
-        process.communicate(timeout=10)
+        process.communicate(timeout=watchdog_timeout())
     assert sweep(tmp_path)["deleted_sessions"] == 1
     assert not path.exists()
 
@@ -245,14 +247,14 @@ def test_bounded_shutdown_does_not_release_a_blocked_writers_lease(tmp_path, mon
     def blocked(target, *args, **kwargs):
         if target == path:
             entered.set()
-            release.wait(10)
+            release.wait(watchdog_timeout())
         return original(target, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", blocked)
     sink = diag.BufferedSink()
     try:
         sink.offer({"event": "test"})
-        assert entered.wait(5)
+        assert entered.wait(watchdog_timeout())
         sink.close()
         assert sink.worker.is_alive()
         age([path.with_suffix(".owner")])
@@ -260,7 +262,7 @@ def test_bounded_shutdown_does_not_release_a_blocked_writers_lease(tmp_path, mon
         assert path.with_suffix(".owner").exists()
     finally:
         release.set()
-        sink.worker.join(5)
+        sink.worker.join(watchdog_timeout())
         sink.close()
     assert not sink.worker.is_alive()
     age([path, path.with_suffix(".owner")])

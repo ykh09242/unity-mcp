@@ -1,5 +1,7 @@
 """Phase 7 cancellation and gzip contracts over owned in-process ASGI sockets."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from concurrent.futures import CancelledError
 import gzip
@@ -31,7 +33,7 @@ def receive(client, wire):
     """Bound the ASGI receive so a missing control frame cannot hang the suite."""
     future = client.portal.start_task_soon(wire._send_rx.receive)
     try:
-        message = future.result(timeout=2)
+        message = future.result(timeout=watchdog_timeout())
     except BaseException:
         future.cancel()
         raise
@@ -100,10 +102,10 @@ def test_negotiated_cancel_uses_original_id_and_releases_partial_transfer(
             task.cancel()
         if reason == "cancel":
             with pytest.raises(CancelledError):
-                task.result(timeout=2)
+                task.result(timeout=watchdog_timeout())
         else:
-            assert task.result(timeout=2)["data"]["reason"] == "outcome_unknown"
-        assert done.wait(2)
+            assert task.result(timeout=watchdog_timeout())["data"]["reason"] == "outcome_unknown"
+        assert done.wait(watchdog_timeout())
         # Then the wire receives exactly the same command ID and all accounting is free.
         assert receive(client, wire) == {"type": "cancel", "id": cid}
         assert_released()
@@ -122,7 +124,7 @@ def test_capability_off_cancellation_does_not_send_control(client):
         task, _ = start_command(client, wire, sid, done=done)
         # When the caller cancels.
         task.cancel()
-        assert done.wait(2)
+        assert done.wait(watchdog_timeout())
         # Then the next received message is a new execute rather than a cancel frame.
         barrier(client, wire, sid)
         assert_released()
@@ -138,7 +140,7 @@ def test_old_generation_cleanup_and_late_result_cannot_affect_replacement(client
         with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as replacement:
             sid, _, _ = register(replacement, capabilities=[LARGE, GZIP, CANCEL])
             assert PluginHub._connections[sid].state.plugin_generation != old_generation
-            assert old_task.result(timeout=2)["success"] is False
+            assert old_task.result(timeout=watchdog_timeout())["success"] is False
             # When late old-result bytes arrive on the replacement and stale cancellation runs.
             active, active_id = start_command(client, replacement, sid)
             old_task.cancel()
@@ -164,7 +166,7 @@ def test_old_generation_cleanup_and_late_result_cannot_affect_replacement(client
                     "result": {"success": True, "data": "current"},
                 }
             )
-            assert active.result(timeout=2) == {"success": True, "data": "current"}
+            assert active.result(timeout=watchdog_timeout()) == {"success": True, "data": "current"}
             assert_released()
 
 
@@ -196,11 +198,11 @@ def test_blocked_cancel_send_has_bounded_cleanup_and_frees_capacity(client, monk
         monkeypatch.setattr(websocket, "send_json", blocked)
         # When the caller cancels while that write cannot finish.
         task.cancel()
-        assert entered.wait(2)
+        assert entered.wait(watchdog_timeout())
         # Then accounting was released before IO and cleanup terminates by its bound.
         client.portal.call(assert_released)
-        assert done.wait(2)
-        assert released.wait(2)
+        assert done.wait(watchdog_timeout())
+        assert released.wait(watchdog_timeout())
         assert_released()
         barrier(client, wire, sid)
 
@@ -223,7 +225,7 @@ def test_changed_generation_before_cleanup_suppresses_stale_cancel_and_releases_
         websocket = PluginHub._connections[sid]
         monkeypatch.setattr(websocket.state, "plugin_generation", "replacement-generation")
         task.cancel()
-        assert done.wait(2)
+        assert done.wait(watchdog_timeout())
         # Then captured old-generation accounting is freed and no stale cancel is emitted.
         assert_released()
         barrier(client, wire, sid)
@@ -259,7 +261,7 @@ def test_negotiated_gzip_decodes_complete_unicode_envelope_and_releases(client):
         for frame in frames(cid, payload):
             wire.send_bytes(frame)
         # Then the decoded envelope, including complete Unicode data, is unchanged.
-        assert task.result(timeout=2) == expected
+        assert task.result(timeout=watchdog_timeout()) == expected
         assert_released()
 
 
@@ -277,7 +279,7 @@ def test_gzip_stream_without_compression_negotiation_is_rejected(client, feature
         with pytest.raises(WebSocketDisconnect) as failure:
             receive(client, wire)
         assert failure.value.code == 4400
-        assert task.result(timeout=2)["success"] is False
+        assert task.result(timeout=watchdog_timeout())["success"] is False
         assert_released()
 
 
@@ -307,7 +309,7 @@ def test_invalid_compression_start_is_closed_without_allocation(client, metadata
         with pytest.raises(WebSocketDisconnect) as failure:
             receive(client, wire)
         assert failure.value.code == 4400
-        assert task.result(timeout=2)["success"] is False
+        assert task.result(timeout=watchdog_timeout())["success"] is False
         assert_released()
 
 
@@ -337,7 +339,7 @@ def test_invalid_gzip_stream_closes_only_owner_and_releases(client, kind):
             with pytest.raises(WebSocketDisconnect) as failure:
                 receive(client, wire)
             assert failure.value.code == 4400
-            assert task.result(timeout=2)["success"] is False
+            assert task.result(timeout=watchdog_timeout())["success"] is False
             assert_released()
             barrier(client, healthy, healthy_sid)
 
@@ -373,7 +375,7 @@ def test_compressed_capacity_includes_decoded_working_bytes_before_allocation(
         monkeypatch.setattr(assembler, "bytearray", reject_allocation, raising=False)
         # When metadata attempts reservation, before any compressed chunk arrives.
         gzip_start(wire, cid, payload, decoded)
-        reply = task.result(timeout=2)
+        reply = task.result(timeout=watchdog_timeout())
         # Then a capacity response leaves no allocation and this socket remains usable.
         assert reply["success"] is False
         assert reply["data"]["reason"] == "result_capacity"

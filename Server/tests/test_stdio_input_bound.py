@@ -1,5 +1,7 @@
 """Bounded stdio ingress before decoding or protocol dispatch."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import io
 import threading
@@ -109,7 +111,7 @@ async def test_cancelled_input_waits_for_owned_descriptor_read_to_settle():
         def read1(self, size):
             entered.set()
             loop.call_soon_threadsafe(observed.set)
-            if not resume.wait(5):
+            if not resume.wait(watchdog_timeout()):
                 raise TimeoutError("owned input gate was not released")
             result = super().read1(size)
             finished.set()
@@ -118,7 +120,7 @@ async def test_cancelled_input_waits_for_owned_descriptor_read_to_settle():
     reader = module._BoundedStdioInput(Blocked(b"line\n", 10), max_bytes=8)
     task = asyncio.create_task(reader.__anext__())
     try:
-        await asyncio.wait_for(observed.wait(), 3)
+        await await_signal(observed, "observed")
         task.cancel()
         await asyncio.sleep(0)
         task.cancel()
@@ -127,7 +129,7 @@ async def test_cancelled_input_waits_for_owned_descriptor_read_to_settle():
         assert not finished.is_set()
         resume.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, 3)
+            await asyncio.wait_for(task, watchdog_timeout())
         assert finished.is_set()
     finally:
         resume.set()
@@ -249,7 +251,7 @@ async def test_real_sdk_short_roundtrip_open_stdin_then_no_newline_oversize_and_
         "asyncio.run(run())\n"
     )
     async with owned_sdk_process(program, tmp_path) as process:
-        pid_line = await asyncio.wait_for(process.stderr.readline(), 5)
+        pid_line = await asyncio.wait_for(process.stderr.readline(), watchdog_timeout())
         assert int(pid_line.removeprefix(b"owned pid:")) == process.pid
         initialize = {
             "jsonrpc": "2.0",
@@ -264,19 +266,21 @@ async def test_real_sdk_short_roundtrip_open_stdin_then_no_newline_oversize_and_
         process.stdin.write(json.dumps(initialize).encode() + b"\n")
         await process.stdin.drain()
         # The client keeps stdin open while waiting: a filling read would hang.
-        initialized = json.loads(await asyncio.wait_for(process.stdout.readline(), 10))
+        initialized = json.loads(
+            await asyncio.wait_for(process.stdout.readline(), watchdog_timeout())
+        )
         assert initialized["id"] == 1 and "result" in initialized
         process.stdin.write(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
         process.stdin.write(b"x" * 513)  # no LF: reject at the byte ceiling, not EOF
         await process.stdin.drain()
-        restored = await asyncio.wait_for(process.stdout.readline(), 5)
+        restored = await asyncio.wait_for(process.stdout.readline(), watchdog_timeout())
         assert restored.rstrip() == b"owned stdout restored"
         process.stdin.write(b"Z")
         await process.stdin.drain()
-        restored_input = await asyncio.wait_for(process.stdout.readline(), 5)
+        restored_input = await asyncio.wait_for(process.stdout.readline(), watchdog_timeout())
         assert restored_input.rstrip() == b"owned stdin restored:Z"
         process.stdin.close()
-        await asyncio.wait_for(process.wait(), 5)
+        await asyncio.wait_for(process.wait(), watchdog_timeout())
         assert process.returncode == 0
         errors = await process.stderr.read()
         assert b"owned diverted stdout" in errors and b"owned bound rejected" in errors
@@ -287,7 +291,9 @@ async def test_owned_sdk_timeout_closes_stdin_and_reaps_actual_native_child(tmp_
     program = "import os,sys\nprint(os.getpid(),flush=True)\nsys.stdin.buffer.read()\n"
     with pytest.raises(TimeoutError):
         async with owned_sdk_process(program, tmp_path) as process:
-            executing_pid = int(await asyncio.wait_for(process.stdout.readline(), 5))
+            executing_pid = int(
+                await asyncio.wait_for(process.stdout.readline(), watchdog_timeout())
+            )
             assert executing_pid == process.pid
             assert process.returncode is None
             await asyncio.wait_for(process.stdout.readline(), 0.05)

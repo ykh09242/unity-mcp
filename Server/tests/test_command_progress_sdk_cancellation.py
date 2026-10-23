@@ -7,6 +7,8 @@ and all other messages remain real.
 
 from __future__ import annotations
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio  # noqa: ANYIO_OK -- actual SDK cancellation owner loop.
 import threading
 from contextlib import asynccontextmanager
@@ -158,10 +160,10 @@ async def test_real_sdk_pending_notification_joins_before_foreground_exit(
 
         def retained_work():
             try:
-                if late_offer.wait(5):
+                if late_offer.wait(watchdog_timeout()):
                     sink.offer_from_thread(CommandProgressUpdate(2, 2, "batch_items"))
                     late_attempted.set()
-                release_worker.wait(5)
+                release_worker.wait(watchdog_timeout())
             finally:
                 pin.close()
 
@@ -193,7 +195,7 @@ async def test_real_sdk_pending_notification_joins_before_foreground_exit(
                 call = asyncio.create_task(client.call_tool_mcp("owned_blocked_operation", {}))
                 assert len(gates) == 1
                 gate = gates[0]
-                await asyncio.wait_for(gate.entered.wait(), 2)
+                await await_signal(gate.entered, "gate.entered")
                 assert gate.active == 1 and not gate.exited.is_set()
                 assert not call.done()
                 assert gate.attempts[0]["params"]["progress"] == 1
@@ -211,11 +213,11 @@ async def test_real_sdk_pending_notification_joins_before_foreground_exit(
                     # Plain middleware TimeoutError is an era-specific public
                     # JSON-RPC failure, not FastMCP's ToolError result conversion.
                     with pytest.raises(MCPError) as timeout:
-                        await asyncio.wait_for(call, 2)
+                        await asyncio.wait_for(call, watchdog_timeout())
                     assert timeout.value.code == timeout_code
                     assert timeout.value.message == timeout_message
                     assert timeout.value.data is None
-                await asyncio.wait_for(foreground_exited.wait(), 2)
+                await await_signal(foreground_exited, "foreground_exited")
                 # Then: send tasks are joined BEFORE client/session teardown while
                 # actual receipt worker ownership remains alive.
                 assert gate.exited.is_set() and gate.active == 0
@@ -227,8 +229,10 @@ async def test_real_sdk_pending_notification_joins_before_foreground_exit(
                 assert workers[0].is_alive()
                 gate.release.set()
                 late_offer.set()
-                assert await asyncio.wait_for(asyncio.to_thread(late_attempted.wait, 1), 2)
-                tools = await asyncio.wait_for(client.list_tools(), 2)
+                assert await asyncio.wait_for(
+                    asyncio.to_thread(late_attempted.wait, watchdog_timeout()), watchdog_timeout()
+                )
+                tools = await asyncio.wait_for(client.list_tools(), watchdog_timeout())
                 assert any(tool.name == "owned_blocked_operation" for tool in tools)
                 assert handler_calls == [1]
                 assert len(gate.attempts) == 1 and gate.forwarded == 0
@@ -249,7 +253,9 @@ async def test_real_sdk_pending_notification_joins_before_foreground_exit(
             call.cancel()
             await asyncio.gather(call, return_exceptions=True)
         for thread in workers:
-            await asyncio.wait_for(asyncio.to_thread(thread.join, 2), 3)
+            await asyncio.wait_for(
+                asyncio.to_thread(thread.join, watchdog_timeout()), watchdog_timeout()
+            )
             assert not thread.is_alive()
         if invocation is not None and not settled:
             if handler_calls:

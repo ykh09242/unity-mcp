@@ -1,5 +1,7 @@
 """Rejected HTTP input must not live through slow error delivery or traceback handling."""
 
+from tests.timing import await_signal
+
 import asyncio
 import gc
 import weakref
@@ -52,7 +54,7 @@ async def test_rejected_chunk_is_released_while_413_send_is_blocked(completion):
     app = RequestBodyLimitMiddleware(parser, max_body_size=1024 * 1024)
     caller = asyncio.create_task(app(http_scope(), input_receiver(references), send))
     try:
-        await asyncio.wait_for(blocked.wait(), 2)
+        await await_signal(blocked, "blocked")
         gc.collect()
         assert sent == [("http.response.start", 413)]
         assert len(references) == 1
@@ -96,7 +98,7 @@ async def test_started_stream_rejection_traceback_does_not_own_raw_chunk():
     app = RequestBodyLimitMiddleware(parser, max_body_size=1024 * 1024)
     caller = asyncio.create_task(app(http_scope(), input_receiver(references), send))
     try:
-        await asyncio.wait_for(caught.wait(), 2)
+        await await_signal(caught, "caught")
         gc.collect()
         assert errors[0].status_code == 413
         assert errors[0].__traceback__ is not None
@@ -134,7 +136,7 @@ async def test_accepted_message_is_forwarded_without_middleware_retention():
     app = RequestBodyLimitMiddleware(parser, max_body_size=2 * 1024 * 1024)
     caller = asyncio.create_task(app(http_scope(), input_receiver(references), send))
     try:
-        await asyncio.wait_for(parsed.wait(), 2)
+        await await_signal(parsed, "parsed")
         gc.collect()
         assert references[0]() is None
         finish.set()

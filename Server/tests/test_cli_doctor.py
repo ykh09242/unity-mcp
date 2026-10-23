@@ -1,5 +1,7 @@
 """The doctor CLI reports its own SDK proof, without inspecting a desktop client."""
 
+from tests.timing import watchdog_timeout
+
 import json
 
 from click.testing import CliRunner
@@ -242,13 +244,13 @@ async def live_mcp(server, trace, legacy_only=False, required_token=None, redire
         )
         task = asyncio.create_task(host.serve(sockets=[listener]))
         try:
-            async with asyncio.timeout(3):
+            async with asyncio.timeout(watchdog_timeout()):
                 while not host.started:
                     await asyncio.sleep(0)
             yield port
         finally:
             host.should_exit = True
-            await asyncio.wait_for(task, 3)
+            await asyncio.wait_for(task, watchdog_timeout())
 
 
 @pytest.mark.asyncio
@@ -820,7 +822,7 @@ async def test_auth_wait_uses_original_deadline_and_discards_late_result(monkeyp
 
     def slow_auth(config):
         started.set()
-        release.wait(3)
+        release.wait(watchdog_timeout())
         finished.set()
         return {"X-Unity-MCP-Token": "late-disposable-secret"}
 
@@ -847,13 +849,13 @@ async def test_auth_wait_uses_original_deadline_and_discards_late_result(monkeyp
         assert receipt.residual_auth_io == "unknown"
         assert "late-disposable-secret" not in receipt.model_dump_json()
         release.set()
-        assert await anyio.to_thread.run_sync(finished.wait, 1)
+        assert await anyio.to_thread.run_sync(finished.wait, watchdog_timeout())
         await anyio.lowlevel.checkpoint()
         assert requests == []  # A completed late loader result cannot resume HTTP setup.
     finally:
         release.set()
         watchdog.cancel()
-        watchdog.join(timeout=1)
+        watchdog.join(timeout=watchdog_timeout())
 
 
 @pytest.mark.asyncio

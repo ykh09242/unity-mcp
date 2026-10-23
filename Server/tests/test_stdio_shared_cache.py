@@ -1,5 +1,7 @@
 """Authenticated generation, stdio read counts, TTL and retained-copy bounds."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import importlib
 import socket
@@ -44,7 +46,7 @@ async def test_retained_snapshot_and_detached_delivery_copies_have_separate_life
             response_owner.reset(token)
     try:
         assert budget.retained_bytes == 3 * charge
-        await asyncio.wait_for(asyncio.shield(read.expiry_task), timeout=1)
+        await asyncio.wait_for(asyncio.shield(read.expiry_task), timeout=watchdog_timeout())
         assert budget.retained_bytes == 2 * charge
         owners[0].release()
         assert budget.retained_bytes == charge
@@ -208,7 +210,7 @@ def test_fallback_aggregate_budget_is_strict_across_worker_threads():
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=2)
+        thread.join(timeout=watchdog_timeout())
         assert not thread.is_alive()
     assert sum(results) == 10 and bounded.retained_bytes == 100
     for owner in owners:
@@ -455,7 +457,7 @@ async def test_job_polling_releases_superseded_copies_and_keeps_final_delivery(
     caller = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=1))
     try:
         if completion == "cancel":
-            await asyncio.wait_for(entered.wait(), 1)
+            await await_signal(entered, "entered")
             caller.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await caller

@@ -1,5 +1,7 @@
 """Project capability discovery composes current, scoped native observations."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import json
 import time
 from types import SimpleNamespace
@@ -421,7 +423,7 @@ async def test_stored_selection_reconnect_wait_is_inside_capability_budget(
         monkeypatch.setattr(PluginHub, "_resolve_session_id", classmethod(observe_resolution))
 
         # When: the real SDK request resolves its stored selection under the capability budget.
-        with anyio.fail_after(5):
+        with anyio.fail_after(watchdog_timeout()):
             data = await read_capabilities(client)
 
     # Then: the reconnect policy is disabled inside the same bounded cancellation scope.
@@ -448,7 +450,7 @@ async def test_stored_selection_registry_lock_cannot_block_capability_resource(
         await client.call_tool("select_fixture")
         async with command_hub.registry._lock:
             # When: the public resource request encounters that locked registry.
-            with anyio.fail_after(0.2):
+            with anyio.fail_after(watchdog_timeout()):
                 data = await read_capabilities(client)
 
     # Then: it returns an honest unknown snapshot without dispatching a native probe.
@@ -609,13 +611,13 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
         capabilities.query_project_capabilities(SimpleNamespace(get_state=state))
     )
     try:
-        await asyncio.wait_for(entered.wait(), 1)
+        await await_signal(entered, "entered")
 
         # When: the query expires before the independently held I/O lock is released.
-        data = await asyncio.wait_for(query, 1)
+        data = await asyncio.wait_for(query, watchdog_timeout())
     finally:
         connection._io_lock.release()
-        await asyncio.wait_for(finished.wait(), 1)
+        await await_signal(finished, "finished")
         await query
 
     # Then: the blocking transport shares the deadline and cannot send after return.

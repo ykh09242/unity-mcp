@@ -1,5 +1,7 @@
 """Regression coverage for plugin sender identity and command lifetimes."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio  # noqa: ANYIO_OK -- the hub owns asyncio futures and tasks.
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
@@ -20,7 +22,7 @@ from transport.plugin_registry import PluginRegistry
 
 
 # Correctness watchdog, not a performance budget; successful waits return immediately.
-LIFECYCLE_WATCHDOG_SECONDS = 10
+LIFECYCLE_WATCHDOG_SECONDS = watchdog_timeout()
 
 
 @pytest.fixture
@@ -396,7 +398,7 @@ async def test_level_cancelled_eviction_finishes_owned_cleanup(
     scenario = asyncio.create_task(cancel_after_routing_removed())
     try:
         # Observe completion without adding another cancellation scope to the scenario.
-        done, _ = await asyncio.wait({scenario}, timeout=10)
+        done, _ = await asyncio.wait({scenario}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
         assert scenario in done, "Level-cancelled eviction cleanup did not finish"
         scenario.result()
     finally:
@@ -430,14 +432,14 @@ async def test_eviction_preserves_cleanup_errors_and_caller_cancellation(
     try:
         async with isolated_hub._lock:
             eviction = asyncio.create_task(PluginHub._evict_connection(session_id, "test"))
-            with anyio.fail_after(10):
+            with anyio.fail_after(LIFECYCLE_WATCHDOG_SECONDS):
                 while session_id in PluginHub._connections:
                     await asyncio.sleep(0)
             if cancelled:
                 eviction.cancel()
                 await asyncio.sleep(0)
         # A scheduling watchdog must not inject cancellation into the uncancelled case.
-        done, _ = await asyncio.wait({eviction}, timeout=10)
+        done, _ = await asyncio.wait({eviction}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
         assert eviction in done, "Eviction cleanup did not finish"
         if cancelled:
             with pytest.raises(asyncio.CancelledError) as failure:

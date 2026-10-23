@@ -1,5 +1,7 @@
 """Overlapping local package roots must not consume the scan budget twice."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from collections import Counter
 import json
@@ -168,13 +170,13 @@ async def test_cancelled_overlap_worker_releases_lock_and_next_scan_restarts(
 
     def blocked(roots):
         entered.set()
-        assert release.wait(5)
+        assert release.wait(watchdog_timeout())
         return real_scan(roots)
 
     monkeypatch.setattr(scanner, "_scan_paths_max_mtime_ns", blocked)
     caller = asyncio.create_task(scanner.update_and_get_async("one"))
     try:
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(watchdog_timeout()):
             while not entered.is_set():
                 await asyncio.sleep(0.001)
         caller.cancel()
@@ -183,7 +185,7 @@ async def test_cancelled_overlap_worker_releases_lock_and_next_scan_restarts(
         assert scanner._active_stop.is_set()
     finally:
         release.set()
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(watchdog_timeout()):
             while scanner._scan_lock.locked():
                 await asyncio.sleep(0.001)
     monkeypatch.setattr(scanner, "_scan_paths_max_mtime_ns", real_scan)

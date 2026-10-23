@@ -1,5 +1,7 @@
 """Bound whole polling executions, including initial dispatch and sleeping tasks."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from unittest.mock import AsyncMock
 
@@ -137,13 +139,14 @@ async def test_active_polling_capacity_is_retained_and_released(
                     service.execute_tool("project", "build", target, {}, user_id=user)
                 )
             )
-            await asyncio.wait_for(entered.get(), timeout=1)
+            await asyncio.wait_for(entered.get(), timeout=watchdog_timeout())
         user, target = identity(limit)
         if scope == "session":
             target = "HASH"  # An alternate spelling of the same Unity target.
         # When: one more execution reaches the same constrained scope.
         result = await asyncio.wait_for(
-            service.execute_tool("project", "build", target, {}, user_id=user), timeout=0.05
+            service.execute_tool("project", "build", target, {}, user_id=user),
+            timeout=watchdog_timeout(),
         )
         # Then: reject immediately without dispatching or queuing another waiter.
         assert not result.success
@@ -302,7 +305,7 @@ async def test_same_target_budgets_are_isolated_between_users(service, monkeypat
                         )
                     )
                 )
-                await asyncio.wait_for(entered.get(), timeout=1)
+                await asyncio.wait_for(entered.get(), timeout=watchdog_timeout())
             assert service._active_polls == 16
             capacity = await asyncio.wait_for(
                 credentials.call(
@@ -314,7 +317,7 @@ async def test_same_target_budgets_are_isolated_between_users(service, monkeypat
                     {},
                     user_id="user-a",
                 ),
-                timeout=1,
+                timeout=watchdog_timeout(),
             )
             assert not capacity.success
             assert capacity.hint == "retry" and "capacity" in capacity.message.lower()

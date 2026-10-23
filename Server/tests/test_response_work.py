@@ -1,5 +1,7 @@
 """Response CPU workers retain ownership until actual completion."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 import threading
 
@@ -59,7 +61,7 @@ async def test_cancelled_clone_holds_its_bytes_until_worker_exit(monkeypatch, mo
 
     def copy_work(*args):
         entered.set()
-        assert release.wait(5), "test must release its owned worker"
+        assert release.wait(watchdog_timeout()), "test must release its owned worker"
         return original(*args)
 
     monkeypatch.setattr(module, "deepcopy", copy_work)
@@ -81,7 +83,7 @@ async def test_cancelled_clone_holds_its_bytes_until_worker_exit(monkeypatch, mo
 
     task = asyncio.create_task(consume())
     try:
-        assert await asyncio.to_thread(entered.wait, 2)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         charged = module.shared_read_budget.retained_bytes
         assert charged > baseline
         if mode == "asyncio":
@@ -110,14 +112,14 @@ async def test_workers_are_bounded_and_queued_cancellation_does_not_submit():
     def operation(number):
         with guard:
             started.append(number)
-        assert gate.wait(5)
+        assert gate.wait(watchdog_timeout())
         return number
 
     tasks = [
         asyncio.create_task(response_work(lambda n=n: operation(n), large=True)) for n in range(6)
     ]
     try:
-        async with asyncio.timeout(2):
+        async with asyncio.timeout(watchdog_timeout()):
             while len(started) < 2:
                 await asyncio.sleep(0.001)
         for _ in range(10):
@@ -159,10 +161,10 @@ async def test_cancellation_aborts_an_unstarted_executor_operation(monkeypatch):
 
     def occupy():
         entered.set()
-        assert gate.wait(5)
+        assert gate.wait(watchdog_timeout())
 
     blocker = loop.run_in_executor(executor, occupy)
-    assert await asyncio.to_thread(entered.wait, 2)
+    assert await asyncio.to_thread(entered.wait, watchdog_timeout())
     original = module.submit_owned_executor
     submitted = asyncio.Event()
 
@@ -187,7 +189,7 @@ async def test_cancellation_aborts_an_unstarted_executor_operation(monkeypatch):
         await submitted.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(asyncio.shield(task), 1)
+            await asyncio.wait_for(asyncio.shield(task), watchdog_timeout())
         gc.collect()
         assert retained() is None
         assert not invoked

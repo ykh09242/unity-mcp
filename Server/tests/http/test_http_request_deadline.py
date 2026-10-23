@@ -1,5 +1,7 @@
 """The real SDK tool path shares selection and transport execution deadlines."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 from types import SimpleNamespace
 
@@ -102,7 +104,7 @@ async def test_sdk_selected_registry_lock_expires_before_dispatch(command_hub, m
         monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.06)
         async with command_hub.registry._lock:
             result = await asyncio.wait_for(
-                client.call_tool("manage_scene", raise_on_error=False), 0.3
+                client.call_tool("manage_scene", raise_on_error=False), watchdog_timeout()
             )
         assert result.structured_content["data"]["reason"] == "command_deadline_exceeded"
         assert result.structured_content["data"]["phase"] == "session_selection"
@@ -154,7 +156,7 @@ async def test_sdk_stale_cleanup_survives_deadline_and_preserves_replacement(
         task = asyncio.create_task(client.call_tool("manage_scene", raise_on_error=False))
         try:
             await entered.wait()
-            failed = await asyncio.wait_for(task, 0.3)
+            failed = await asyncio.wait_for(task, watchdog_timeout())
             assert failed.structured_content["data"]["reason"] == "command_deadline_exceeded"
             replacement = SimpleNamespace(
                 state=SimpleNamespace(
@@ -228,7 +230,7 @@ async def test_sdk_production_long_run_and_build_policy(
         command_hub.websocket.send_json = controlled_send
         task = asyncio.create_task(client.call_tool(tool, arguments, raise_on_error=False))
         try:
-            await asyncio.wait_for(entered.wait(), 10)
+            await await_signal(entered, "entered")
             assert observed["request_timeout"] == pytest.approx(request_timeout)
             assert observed["scope_deadline"] == pytest.approx(observed["request_deadline"])
             assert observed["command_deadline"] == observed["request_deadline"]
@@ -236,7 +238,7 @@ async def test_sdk_production_long_run_and_build_policy(
             assert len(PluginHub._pending) == 1
             assert command_hub.sent[0]["id"] in PluginHub._pending
             release.set()
-            result = await asyncio.wait_for(task, 10)
+            result = await asyncio.wait_for(task, watchdog_timeout())
             assert result.structured_content["success"] is True
             assert command_hub.sent[0]["timeout"] == wire_timeout
             assert command_hub.sent[0]["name"] == tool
@@ -569,7 +571,7 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
                 # This watchdog catches hangs, not the command's production deadline.
                 # Keep scheduling slack for oversubscribed CI workers; successful requests
                 # still finish immediately. Assert the actual budget below.
-                2.0,
+                watchdog_timeout(),
             )
     finally:
         if release is not None:

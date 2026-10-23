@@ -1,5 +1,7 @@
 """Real FastMCP requests keep per-call Unity routing isolated."""
 
+from tests.timing import await_signal
+
 import asyncio  # noqa: ANYIO_OK -- synchronize actual concurrent MCP requests.
 import json
 from typing_extensions import TypedDict
@@ -84,7 +86,7 @@ async def test_concurrent_inline_overrides_do_not_replace_each_others_routing(
         arrivals += 1
         if arrivals == 2:
             both_entered.set()
-        await asyncio.wait_for(both_entered.wait(), timeout=2)
+        await await_signal(both_entered, "both_entered")
         return {
             "instance": await ctx.get_state("unity_instance"),
             "session": await ctx.get_state("unity_session_id"),
@@ -170,7 +172,7 @@ async def test_resource_metadata_routes_concurrent_reads(
         arrivals += 1
         if arrivals >= 2:
             both_entered.set()
-        await asyncio.wait_for(both_entered.wait(), timeout=2)
+        await await_signal(both_entered, "both_entered")
         return json.dumps(
             {
                 "instance": await ctx.get_state("unity_instance"),

@@ -1,5 +1,7 @@
 """Persistence and publication races for generated and declared references."""
 
+from tests.timing import watchdog_timeout
+
 import sqlite3
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
@@ -42,11 +44,11 @@ def test_initial_wal_transition_retries_real_writer_lock(graph, monkeypatch):
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(graph._ensure_wal)
             try:
-                assert retry_started.wait(timeout=5)
+                assert retry_started.wait(timeout=watchdog_timeout())
                 assert not future.done()
             finally:
                 writer.rollback()
-            future.result(timeout=5)
+            future.result(timeout=watchdog_timeout())
     with closing(sqlite3.connect(graph.path)) as reopened:
         assert reopened.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 

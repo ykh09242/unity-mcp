@@ -1,5 +1,7 @@
 """Batch settings share the required scalar without copying unrelated snapshots."""
 
+from tests.timing import await_signal
+
 import asyncio
 import copy
 import gc
@@ -179,7 +181,7 @@ async def test_eight_batches_only_copy_scalar_and_keep_all_results(settings, mon
 
     tasks = [asyncio.create_task(caller()) for _ in range(8)]
     try:
-        await asyncio.wait_for(settings.entered.wait(), 2)
+        await await_signal(settings.entered, "settings.entered")
         await asyncio.sleep(0)
         settings.release.set()
         replies = await asyncio.gather(*tasks)
@@ -298,7 +300,7 @@ async def test_settings_cancellation_keeps_active_read_or_closes_final_owner(set
 
     tasks = [asyncio.create_task(caller()) for _ in range(2)]
     try:
-        await asyncio.wait_for(settings.entered.wait(), 2)
+        await await_signal(settings.entered, "settings.entered")
         await asyncio.sleep(0)
         tasks[0].cancel()
         with pytest.raises(asyncio.CancelledError):

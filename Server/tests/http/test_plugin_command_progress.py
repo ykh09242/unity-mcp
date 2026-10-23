@@ -6,6 +6,8 @@ its final response. This is not evidence of native BatchExecute production.
 
 from __future__ import annotations
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio  # noqa: ANYIO_OK -- existing Hub/uvicorn use one owned asyncio loop.
 import json
 import socket
@@ -133,7 +135,7 @@ async def progress_http(command_hub, monkeypatch):
         )
         task = asyncio.create_task(runner.serve(sockets=[listener]))
         try:
-            await asyncio.wait_for(runner.ready.wait(), 5)
+            await await_signal(runner.ready, "runner.ready")
             assert runner.started and not task.done()
             yield SimpleNamespace(
                 url=f"http://127.0.0.1:{listener.getsockname()[1]}/mcp",
@@ -145,7 +147,7 @@ async def progress_http(command_hub, monkeypatch):
         finally:
             runner.should_exit = True
             try:
-                await asyncio.wait_for(task, 5)
+                await asyncio.wait_for(task, watchdog_timeout())
             finally:
                 if not task.done():
                     task.cancel()
@@ -193,11 +195,11 @@ async def test_streaming_sdk_observes_progress_before_gated_final(progress_http,
         )
         execution = None
         try:
-            execution = await asyncio.wait_for(progress_http.executions.get(), 2)
+            execution = await asyncio.wait_for(progress_http.executions.get(), watchdog_timeout())
             assert not call.done(), "The peer's final response must still be held"
             # When: item one has settled while the second/final remains controlled.
             await _progress(progress_http, execution)
-            reported = await asyncio.wait_for(received.get(), 2)
+            reported = await asyncio.wait_for(received.get(), watchdog_timeout())
             # Then: real streaming delivers the count on the original request,
             # without completing it or altering its one-batch native payload.
             assert reported[:2] == (1, 2)
@@ -211,7 +213,7 @@ async def test_streaming_sdk_observes_progress_before_gated_final(progress_http,
             )
             assert progress_http.request_tokens[-1] is not None
             await _complete(progress_http, execution)
-            result = await asyncio.wait_for(call, 2)
+            result = await asyncio.wait_for(call, watchdog_timeout())
             assert not result.is_error
             assert result.structured_content == FINAL
             assert json.loads(result.content[0].text) == FINAL
@@ -224,7 +226,7 @@ async def test_streaming_sdk_observes_progress_before_gated_final(progress_http,
                 # Drain the real final SSE response before closing its SDK/client.
                 # Immediate cancellation here created baseline disconnect/reset
                 # and uvicorn shutdown noise; retain those original run logs.
-                done, _ = await asyncio.wait({call}, timeout=2)
+                done, _ = await asyncio.wait({call}, timeout=watchdog_timeout())
                 assert call in done, "Owned final response did not drain during teardown"
             if not call.done():
                 call.cancel()
@@ -257,11 +259,11 @@ async def test_raw_no_token_keeps_execute_and_final_contract_unchanged(progress_
         )
         execution = None
         try:
-            execution = await asyncio.wait_for(progress_http.executions.get(), 2)
+            execution = await asyncio.wait_for(progress_http.executions.get(), watchdog_timeout())
             # When: a peer attempts optional reporting despite no request opt-in.
             await _progress(progress_http, execution)
             await _complete(progress_http, execution)
-            response = await asyncio.wait_for(call, 2)
+            response = await asyncio.wait_for(call, watchdog_timeout())
             # Then: native command/result retain their existing shape with no progress.
             assert "progress" not in execution
             assert execution["params"] == {"commands": COMMANDS}
@@ -274,7 +276,7 @@ async def test_raw_no_token_keeps_execute_and_final_contract_unchanged(progress_
                 # Drain the real final SSE response before closing its SDK/client.
                 # Immediate cancellation here created baseline disconnect/reset
                 # and uvicorn shutdown noise; retain those original run logs.
-                done, _ = await asyncio.wait({call}, timeout=2)
+                done, _ = await asyncio.wait({call}, timeout=watchdog_timeout())
                 assert call in done, "Owned final response did not drain during teardown"
             if not call.done():
                 call.cancel()
@@ -315,10 +317,10 @@ async def _held_hub_progress(hub, api, *, auth=None, session="session"):
         dispatched = asyncio.create_task(sent.get())
         try:
             # Readiness is an event, not a one-second performance requirement.
-            # Observe early command failures as well; ten seconds is only an
-            # outer runaway guard and changes no production command deadline.
+            # Observe early command failures as well; the configurable watchdog
+            # bounds hangs without changing the production command deadline.
             done, _ = await asyncio.wait(
-                {dispatched, call}, timeout=10, return_when=asyncio.FIRST_COMPLETED
+                {dispatched, call}, timeout=watchdog_timeout(), return_when=asyncio.FIRST_COMPLETED
             )
             if call in done:
                 result = await call
@@ -384,9 +386,9 @@ async def test_malformed_progress_is_dropped_without_settling_command(
         assert not call.done()
         assert execution["id"] in PluginHub._pending
         await _progress(fixture, execution)
-        assert (await asyncio.wait_for(ctx.received.get(), 1))[:2] == (1, 2)
+        assert (await asyncio.wait_for(ctx.received.get(), watchdog_timeout()))[:2] == (1, 2)
         await _complete(fixture, execution)
-        assert await asyncio.wait_for(call, 1) == FINAL
+        assert await asyncio.wait_for(call, watchdog_timeout()) == FINAL
 
 
 @pytest.mark.asyncio
@@ -442,7 +444,7 @@ async def test_optional_frame_flood_stops_parsing_but_retains_original_final(
         assert ctx.calls == []
         assert not call.done()
         await _complete(fixture, execution)
-        assert await asyncio.wait_for(call, 1) == FINAL
+        assert await asyncio.wait_for(call, watchdog_timeout()) == FINAL
 
 
 @pytest.mark.asyncio
@@ -453,7 +455,7 @@ async def test_terminal_result_closes_pending_and_scheduled_progress(command_hub
         await _progress(fixture, execution)
         # When: the actual result wins before that scheduled optional send.
         await _complete(fixture, execution)
-        result = await asyncio.wait_for(call, 1)
+        result = await asyncio.wait_for(call, watchdog_timeout())
         await _progress(fixture, execution, completed=2)
         await _sender_turns()
         # Then: neither queued nor late work can notify after terminal settlement.
@@ -500,13 +502,13 @@ async def test_valid_maximum_command_id_progress_is_admitted_before_result(
         assert len(execution["id"]) == 36
         # When: its valid five-field progress graph crosses bounded size admission.
         await _progress(fixture, execution)
-        reported = await asyncio.wait_for(ctx.received.get(), 1)
+        reported = await asyncio.wait_for(ctx.received.get(), watchdog_timeout())
         # Then: conservative decoded-memory charging must permit the supported
         # wire schema; admission does not settle or resend the command.
         assert reported[:2] == (1, 2)
         assert not call.done()
         await _complete(fixture, execution)
-        assert await asyncio.wait_for(call, 1) == FINAL
+        assert await asyncio.wait_for(call, watchdog_timeout()) == FINAL
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,7 @@
 """Discovery remains complete while status timestamps and registry files vary."""
 
+from tests.timing import watchdog_timeout
+
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -168,7 +170,7 @@ def test_duplicate_port_memo_uses_real_framed_probe_and_refreshes_next_scan(monk
             first = PortDiscovery.discover_all_unity_instances()
             assert probes == [port]
             second = PortDiscovery.discover_all_unity_instances()
-            server.result(timeout=2)
+            server.result(timeout=watchdog_timeout())
     assert probes == [port, port]
     assert [instance.hash for instance in first] == ["1"]
     assert [instance.id for instance in first] == [instance.id for instance in second]

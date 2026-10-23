@@ -1,5 +1,7 @@
 """Accounting remains readable while optional diagnostic I/O is blocked or failing."""
 
+from tests.timing import watchdog_timeout
+
 import json
 from pathlib import Path
 import subprocess
@@ -24,7 +26,7 @@ def settled(sink):
 def finish(sink):
     sink.close()
     if sink.worker is not None:
-        sink.worker.join(5)
+        sink.worker.join(watchdog_timeout())
         assert not sink.worker.is_alive()
 
 
@@ -42,12 +44,12 @@ def test_queue_saturation_and_shutdown_have_complete_nonblocking_accounting():
 
     def blocked(_):
         entered.set()
-        release.wait(10)
+        release.wait(watchdog_timeout())
 
     sink = diag.BufferedSink(blocked)
     try:
         sink.offer({"event": "test"})
-        assert entered.wait(5)
+        assert entered.wait(watchdog_timeout())
         for _ in range(1000):
             sink.offer({"event": "test"})
         before = sink.capture_snapshot()
@@ -135,7 +137,7 @@ def test_concurrent_offers_do_not_lose_counter_updates():
         for worker in workers:
             worker.start()
         for worker in workers:
-            worker.join(5)
+            worker.join(watchdog_timeout())
             assert not worker.is_alive()
         result = settled(sink)
         assert result["offered"] == 1200
@@ -220,7 +222,7 @@ def test_checkpoint_write_failure_is_visible_after_disk_recovery(tmp_path, monke
     sink = diag.BufferedSink()
     try:
         sink.offer({"event": "server_phase_timing"})
-        assert failed.wait(5)
+        assert failed.wait(watchdog_timeout())
     finally:
         finish(sink)
     rows = [json.loads(line.split(" ", 1)[1]) for line in path.read_text().splitlines()]
@@ -238,18 +240,18 @@ def test_close_during_worker_start_cannot_enqueue_after_worker_shutdown(monkeypa
         original(worker)
         if worker.name == "unity-phase-diagnostics":
             started.set()
-            release.wait(10)
+            release.wait(watchdog_timeout())
 
     monkeypatch.setattr(threading.Thread, "start", hold_start)
     sink = diag.BufferedSink(lambda _: None)
     caller = threading.Thread(target=lambda: sink.offer({}))
     try:
         caller.start()
-        assert started.wait(5)
+        assert started.wait(watchdog_timeout())
         sink.close()
     finally:
         release.set()
-        caller.join(5)
+        caller.join(watchdog_timeout())
         finish(sink)
     assert not caller.is_alive()
     result = sink.capture_snapshot()
@@ -282,7 +284,7 @@ def test_write_attempt_sequence_excludes_drops_but_includes_failed_writes(tmp_pa
         finally:
             sink.lock.release()
         sink.offer({"event": "server_phase_timing"})
-        assert failed.wait(5)
+        assert failed.wait(watchdog_timeout())
         settled(sink)
         sink.offer({"event": "server_phase_timing"})
         settled(sink)

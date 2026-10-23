@@ -1,5 +1,7 @@
 """Mutation outcomes are distinct from authoritative imported graph evidence."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 import sqlite3
 from types import SimpleNamespace
@@ -458,7 +460,7 @@ async def test_release_is_not_blocked_by_another_requests_long_wait(service_grap
     try:
         await asyncio.sleep(0.03)
         released = await asyncio.wait_for(
-            call(service, ctx, "release_mutation", id=identity), timeout=1
+            call(service, ctx, "release_mutation", id=identity), timeout=watchdog_timeout()
         )
         assert released["released"]
         with pytest.raises(ValueError, match="released"):

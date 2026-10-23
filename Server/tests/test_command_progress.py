@@ -6,6 +6,8 @@ this module's future-helper prerequisite; a missing helper is not RED evidence.
 
 from __future__ import annotations
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio  # noqa: ANYIO_OK -- exercise the existing transport's owner loop.
 import importlib
 import importlib.util
@@ -113,7 +115,7 @@ async def test_bound_counter_reports_on_original_loop_before_foreground_finishes
         # When: an actual settled-item observation arrives while the request is open.
         assert sink.offer(progress_api.CommandProgressUpdate(1, 2, "batch_items"))
 
-        reported = await asyncio.wait_for(ctx.received.get(), 1)
+        reported = await asyncio.wait_for(ctx.received.get(), watchdog_timeout())
         # Then: the first real count is delivered on its original async owner.
         assert reported[:2] == (1, 2)
         assert ctx.calls[0][3] == owner_thread
@@ -157,13 +159,13 @@ async def test_slow_optional_send_is_cancelled_and_joined_on_scope_exit(progress
             sink = progress_api.claim_command_progress(total=100)
             assert sink.bind(source(progress_api))
             sink.offer(progress_api.CommandProgressUpdate(1, 100, "batch_items"))
-            await asyncio.wait_for(ctx.entered.wait(), 1)
+            await await_signal(ctx.entered, "ctx.entered")
             # When: a flood arrives and the public request returns.
             for completed in range(2, 101):
                 sink.offer(progress_api.CommandProgressUpdate(completed, 100, "batch_items"))
         return sink
 
-    sink = await asyncio.wait_for(request(), 1)
+    sink = await asyncio.wait_for(request(), watchdog_timeout())
     # Then: at most one SDK send ran and none survives foreground teardown.
     assert ctx.peak_active == 1
     assert ctx.active == 0 and ctx.exited.is_set()
@@ -180,7 +182,7 @@ async def test_optional_sdk_failure_does_not_replace_the_command_result(progress
         assert sink.bind(source(progress_api))
         # When: reporting fails before the ordinary handler returns.
         sink.offer(progress_api.CommandProgressUpdate(1, 2, "batch_items"))
-        await asyncio.wait_for(ctx.exited.wait(), 1)
+        await await_signal(ctx.exited, "ctx.exited")
         result = {"success": True, "data": {"applied": 2}}
     # Then: optional failure has neither become a retry nor a domain failure.
     assert result == {"success": True, "data": {"applied": 2}}
@@ -203,7 +205,7 @@ async def test_thread_offer_marshals_public_sdk_call_to_original_loop(progress_a
 
         # When: a worker offers one actual observation.
         await asyncio.to_thread(observe)
-        await asyncio.wait_for(ctx.received.get(), 1)
+        await asyncio.wait_for(ctx.received.get(), watchdog_timeout())
     # Then: no SDK Context method ran on that worker thread.
     assert worker_threads[0] != owner_thread
     assert [call[3] for call in ctx.calls] == [owner_thread]
@@ -247,7 +249,7 @@ async def test_outer_reporter_uses_explicit_inner_binding_after_context_reset(pr
         # captured authority, or an already-expired captured absolute deadline.
         sink.offer(progress_api.CommandProgressUpdate(1, 2, "batch_items"))
         if revoke:
-            await asyncio.wait_for(checked.wait(), 1)
+            await await_signal(checked, "checked")
             authorized[0] = False
         release.set()
         # Scheduler barriers let an already-ready sender run while the request
@@ -284,7 +286,7 @@ async def test_receipt_worker_pin_outlives_cancelled_foreground_without_late_pro
 
         request_task = asyncio.create_task(request())
         try:
-            sink = await asyncio.wait_for(ready.get(), 1)
+            sink = await asyncio.wait_for(ready.get(), watchdog_timeout())
             request_task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await request_task
@@ -318,12 +320,12 @@ async def test_monotonic_counts_reject_duplicate_and_mismatched_total(progress_a
         sink = progress_api.claim_command_progress(total=2)
         assert sink.bind(source(progress_api))
         sink.offer(progress_api.CommandProgressUpdate(1, 2, "batch_items"))
-        await asyncio.wait_for(ctx.received.get(), 1)
+        await asyncio.wait_for(ctx.received.get(), watchdog_timeout())
         # When: a duplicate and an observation for another total precede item two.
         assert not sink.offer(progress_api.CommandProgressUpdate(1, 2, "batch_items"))
         assert not sink.offer(progress_api.CommandProgressUpdate(2, 3, "batch_items"))
         assert sink.offer(progress_api.CommandProgressUpdate(2, 2, "batch_items"))
-        second = await asyncio.wait_for(ctx.received.get(), 1)
+        second = await asyncio.wait_for(ctx.received.get(), watchdog_timeout())
         # Then: invalid observations cannot add/reset or corrupt the real sequence.
         assert second[:2] == (2, 2)
         assert [call[:2] for call in ctx.calls] == [(1, 2), (2, 2)]
@@ -337,11 +339,11 @@ async def test_update_flood_coalesces_to_latest_without_exceeding_send_rate(prog
         sink = progress_api.claim_command_progress(total=100)
         assert sink.bind(source(progress_api))
         sink.offer(progress_api.CommandProgressUpdate(1, 100, "batch_items"))
-        await asyncio.wait_for(ctx.received.get(), 1)
+        await asyncio.wait_for(ctx.received.get(), watchdog_timeout())
         # When: all subsequent settled counts arrive before another event-loop turn.
         for completed in range(2, 101):
             sink.offer(progress_api.CommandProgressUpdate(completed, 100, "batch_items"))
-        last = await asyncio.wait_for(ctx.received.get(), 1)
+        last = await asyncio.wait_for(ctx.received.get(), watchdog_timeout())
         # Then: bounded coalescing keeps the latest count and enforces the 10Hz cap.
         assert last[:2] == (100, 100)
         assert [call[:2] for call in ctx.calls] == [(1, 100), (100, 100)]
@@ -365,12 +367,12 @@ async def test_concurrent_requests_keep_opaque_sinks_on_their_original_reporters
 
     tasks = [asyncio.create_task(request(index)) for index in range(2)]
     try:
-        sinks = dict([await asyncio.wait_for(admitted.get(), 1) for _ in range(2)])
+        sinks = dict([await asyncio.wait_for(admitted.get(), watchdog_timeout()) for _ in range(2)])
         # When: a caller with neither request context offers to both opaque handles.
         sinks[0].offer(progress_api.CommandProgressUpdate(1, 2, "batch_items"))
         sinks[1].offer(progress_api.CommandProgressUpdate(2, 2, "batch_items"))
-        first = await asyncio.wait_for(contexts[0].received.get(), 1)
-        second = await asyncio.wait_for(contexts[1].received.get(), 1)
+        first = await asyncio.wait_for(contexts[0].received.get(), watchdog_timeout())
+        second = await asyncio.wait_for(contexts[1].received.get(), watchdog_timeout())
         # Then: one request's token/context is never borrowed by the other.
         assert first[:2] == (1, 2)
         assert second[:2] == (2, 2)
@@ -394,7 +396,7 @@ async def test_reporter_capacity_drops_optional_reporting_and_recovers_after_clo
     tasks = [asyncio.create_task(hold(index)) for index in range(256)]
     try:
         for _ in range(256):
-            assert await asyncio.wait_for(admitted.get(), 2) is not None
+            assert await asyncio.wait_for(admitted.get(), watchdog_timeout()) is not None
         # When: another otherwise valid foreground request arrives at capacity.
         async with progress_api.foreground_progress(RecordingContext("overflow")):
             overflow = progress_api.claim_command_progress(total=2)

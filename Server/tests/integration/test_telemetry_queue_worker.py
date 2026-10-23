@@ -1,3 +1,4 @@
+from tests.timing import watchdog_timeout
 import logging
 from pathlib import Path
 import threading
@@ -31,7 +32,9 @@ def test_telemetry_queue_backpressure_and_single_worker(tmp_path, monkeypatch, c
         caplog.set_level("DEBUG", logger="unity-mcp-telemetry")
         collector = telemetry.TelemetryCollector()
         collector.record(telemetry.RecordType.TOOL_EXECUTION, {"i": -1})
-        assert entered.wait(timeout=1.0), "Worker did not enter the controlled sender"
+        assert entered.wait(timeout=watchdog_timeout()), (
+            "Worker did not enter the controlled sender"
+        )
         # Fill the real bounded queue while its sole consumer is event-gated.
         start = time.perf_counter()
         for i in range(collector._queue.maxsize + 50):

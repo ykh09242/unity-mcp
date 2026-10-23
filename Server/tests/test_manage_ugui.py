@@ -1,5 +1,7 @@
 """uGUI request validation and routing, without a running Unity Editor."""
 
+from tests.timing import watchdog_timeout
+
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -698,7 +700,7 @@ async def test_recovers_legacy_status_file_rejection_before_sending_mutation(
                 "manage_ugui",
                 {"action": "create", "element_type": "canvas"},
             ),
-            timeout=3,
+            timeout=watchdog_timeout(),
         )
     # Then: wait out the refusal, send exactly once and preserve the native result.
     assert result.structured_content == expected

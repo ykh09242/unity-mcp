@@ -1,5 +1,7 @@
 """Public file searches share bounded worker ownership with script edits."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 import base64
 import gc
@@ -34,7 +36,7 @@ class CountingPool(ThreadPoolExecutor):
 
 
 async def until(predicate):
-    async with asyncio.timeout(3):
+    async with asyncio.timeout(watchdog_timeout()):
         while not predicate():
             await asyncio.sleep(0.001)
 
@@ -100,7 +102,7 @@ async def test_cancelled_search_queue_retains_at_most_two_inputs(routing, execut
 
     def occupy():
         started.set()
-        assert release.wait(3)
+        assert release.wait(watchdog_timeout())
 
     blocker = pool.submit(occupy)
     routing.source = "x" * 1_000_000 + "\nneedle"
@@ -157,7 +159,7 @@ async def test_running_search_and_edit_keep_shared_admission_until_exit(
         index = 0 if args[0] == "needle" else 1
         entered[index].set()
         try:
-            assert release.wait(3)
+            assert release.wait(watchdog_timeout())
             return actual(*args, **kwargs)
         finally:
             exited[index].set()
@@ -233,7 +235,7 @@ async def test_queue_wait_is_part_of_the_search_budget(routing, executor, monkey
 
     def occupy():
         started.set()
-        assert release.wait(3)
+        assert release.wait(watchdog_timeout())
 
     blocker = pool.submit(occupy)
     await until(started.is_set)
@@ -309,7 +311,7 @@ async def test_sdk_reports_busy_and_recovers_with_the_same_search_result(routing
 
     def hold(index):
         entered[index].set()
-        assert release.wait(3)
+        assert release.wait(watchdog_timeout())
 
     tasks = [
         asyncio.create_task(

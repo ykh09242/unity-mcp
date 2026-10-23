@@ -4,6 +4,8 @@ No Unity endpoint is opened. Native worker tests below exercise real local worke
 they do not imply an actual Unity job or editor side effect was validated.
 """
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 from contextlib import asynccontextmanager
 from threading import Event
@@ -381,7 +383,7 @@ def request():
 async def settle_task(task):
     if not task.done():
         task.cancel()
-    await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=5)
+    await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=watchdog_timeout())
 
 
 @pytest.mark.asyncio
@@ -453,7 +455,7 @@ async def test_real_worker_keeps_key_and_input_charge_after_wrapper_cancellation
 
     def blocking():
         started.set()
-        assert release.wait(5)
+        assert release.wait(watchdog_timeout())
 
     async def invoke():
         await owned_to_thread(blocking)
@@ -467,7 +469,7 @@ async def test_real_worker_keeps_key_and_input_charge_after_wrapper_cancellation
 
     task = asyncio.create_task(wrapper())
     try:
-        assert await asyncio.to_thread(started.wait, 2)
+        assert await asyncio.to_thread(started.wait, watchdog_timeout())
         # When the public wrapper is cancelled while the actual worker remains blocked.
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -486,7 +488,7 @@ async def test_real_worker_keeps_key_and_input_charge_after_wrapper_cancellation
     finally:
         release.set()
         # The actual Future callback releases this exact memory owner.
-        await asyncio.wait_for(settled.wait(), timeout=2)
+        await await_signal(settled, "settled")
         response_owner.reset(token)
         delivery.release()
         runtime.close()
@@ -582,7 +584,7 @@ async def test_cancel_during_real_admission_adopts_intent_without_entering_handl
 
     def blocked_admit(store, *args, **kwargs):
         entered.set()
-        assert release.wait(3)
+        assert release.wait(watchdog_timeout())
         return actual_admit(store, *args, **kwargs)
 
     monkeypatch.setattr(ExecutionReceiptStore, "admit", blocked_admit)
@@ -609,12 +611,12 @@ async def test_cancel_during_real_admission_adopts_intent_without_entering_handl
 
     task = asyncio.create_task(invoke())
     try:
-        assert await asyncio.to_thread(entered.wait, 2)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         # When cancellation precedes admission return, including a non-yielding body.
         task.cancel()
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=3)
+            await asyncio.wait_for(task, timeout=watchdog_timeout())
         # Then the adopted intent settles as not_dispatched with no orphan wrapper.
         assert effects == []
         assert runtime.store.active_count == 0
@@ -660,7 +662,7 @@ async def test_native_journal_wait_keeps_owner_loop_live_and_cancel_prevents_sen
     def blocked_write(*args):
         if armed:
             writing.set()
-            assert release.wait(3)
+            assert release.wait(watchdog_timeout())
         return original_write(*args)
 
     monkeypatch.setattr(runtime.store._files, "write", blocked_write)
@@ -697,16 +699,16 @@ async def test_native_journal_wait_keeps_owner_loop_live_and_cancel_prevents_sen
 
     task = asyncio.create_task(invoke())
     try:
-        assert await asyncio.to_thread(writing.wait, 2)
+        assert await asyncio.to_thread(writing.wait, watchdog_timeout())
         # When the wrapper is cancelled while another owner-loop task still progresses.
         task.cancel()
         progress = asyncio.Event()
         asyncio.get_running_loop().call_soon(progress.set)
-        await asyncio.wait_for(progress.wait(), timeout=0.5)
+        await await_signal(progress, "progress")
         assert runtime.store.active_count == 1
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=3)
+            await asyncio.wait_for(task, timeout=watchdog_timeout())
         # Then no native boundary is reached, and the durable uncertainty never resends.
         assert sends == []
         view = runtime.store.get(
@@ -752,7 +754,7 @@ async def test_full_pin_budget_still_stops_dispatch_before_async_final_commit(
     def blocked_write(*args):
         if armed:
             writing.set()
-            assert release.wait(3)
+            assert release.wait(watchdog_timeout())
         return original_write(*args)
 
     monkeypatch.setattr(runtime.store._files, "write", blocked_write)
@@ -771,7 +773,7 @@ async def test_full_pin_budget_still_stops_dispatch_before_async_final_commit(
 
     task = asyncio.create_task(invoke())
     try:
-        assert await asyncio.to_thread(writing.wait, 2)
+        assert await asyncio.to_thread(writing.wait, watchdog_timeout())
         # When finalization cannot acquire its additional native pin.
         assert not task.done()
         assert prepared.stopping
@@ -781,7 +783,7 @@ async def test_full_pin_budget_still_stops_dispatch_before_async_final_commit(
             )
         # Then the owner loop remains live and no new dispatch can bypass stopping.
         release.set()
-        result = await asyncio.wait_for(task, timeout=3)
+        result = await asyncio.wait_for(task, timeout=watchdog_timeout())
         assert result.meta[META_KEY]["status"] == "completed"
         assert runtime.store.active_count == 1
     finally:

@@ -1,5 +1,7 @@
 """Actual SDK stdio writer backpressure and typed response ownership."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import gc
 import json
@@ -116,8 +118,8 @@ async def test_actual_sdk_keeps_source_and_delayed_copy_charged_until_each_flush
     async with owned_stdio_streams(stdin, stdout) as (_, write):
         first = asyncio.create_task(produce(7, write))
         entered, resume = stdout.gate(7)
-        await asyncio.wait_for(entered.wait(), 3)
-        await asyncio.wait_for(first, 3)
+        await await_signal(entered, "entered")
+        await asyncio.wait_for(first, watchdog_timeout())
         await asyncio.sleep(0)  # producer task_done has run, stdout is still blocked
         one_delivery = budget.retained_bytes
         assert charge < one_delivery < 2 * charge
@@ -133,8 +135,8 @@ async def test_actual_sdk_keeps_source_and_delayed_copy_charged_until_each_flush
         assert not budget.reserve(refused, charge)
         resume.set()
         entered_second, resume_second = stdout.gate("7")
-        await asyncio.wait_for(entered_second.wait(), 3)
-        await asyncio.wait_for(second, 3)
+        await await_signal(entered_second, "entered_second")
+        await asyncio.wait_for(second, watchdog_timeout())
         await asyncio.sleep(0)
         assert budget.retained_bytes == one_delivery  # source + delayed string-ID copy
         assert len(stdio_delivery.get().pending) == 1
@@ -187,10 +189,10 @@ async def test_cancelled_producer_releases_only_before_handoff_and_disconnect_dr
             await hold.wait()
 
     server = asyncio.create_task(serve())
-    await asyncio.wait_for(acquired.wait(), 3)
+    await await_signal(acquired, "acquired")
     if after_handoff:
-        await asyncio.wait_for(entered.wait(), 3)
-    await asyncio.wait_for(observed.wait(), 3)
+        await await_signal(entered, "entered")
+    await await_signal(observed, "observed")
     for _ in range(100):
         if (owner_ref and owner_ref[0].released) == (not after_handoff):
             break
@@ -258,7 +260,7 @@ async def test_duplicate_sdk_error_flush_cannot_release_original_active_producer
             while not stdout.flushed:
                 await asyncio.sleep(0)
 
-        await asyncio.wait_for(flushed(), 3)
+        await asyncio.wait_for(flushed(), watchdog_timeout())
         assert not original.done()
         assert ledger == {"original": 100}
         complete.set()
@@ -303,7 +305,7 @@ async def test_actual_sdk_writer_failure_releases_delivery(phase):
                 )
 
             task = asyncio.create_task(producer())
-            await asyncio.wait_for(entered.wait(), 3)
+            await await_signal(entered, "entered")
             await task
             await asyncio.sleep(0)
             assert ledger
@@ -396,7 +398,7 @@ async def test_cancel_during_sdk_channel_send_retains_ambiguous_handoff_until_di
             await asyncio.Event().wait()
 
     server = asyncio.create_task(serve())
-    await asyncio.wait_for(ready.wait(), 3)
+    await await_signal(ready, "ready")
     server.cancel()
     with pytest.raises(asyncio.CancelledError):
         await server
@@ -421,7 +423,7 @@ async def test_unity_runner_real_subprocess_preserves_sdk_wire_and_stray_print_d
         "server.run(transport='stdio',show_banner=False)\n"
     )
     async with owned_sdk_process(program, tmp_path) as process:
-        pid_line = await asyncio.wait_for(process.stderr.readline(), 5)
+        pid_line = await asyncio.wait_for(process.stderr.readline(), watchdog_timeout())
         assert int(pid_line.removeprefix(b"owned pid:")) == process.pid
 
         async def send(message):
@@ -440,7 +442,9 @@ async def test_unity_runner_real_subprocess_preserves_sdk_wire_and_stray_print_d
                 },
             }
         )
-        initialized = json.loads(await asyncio.wait_for(process.stdout.readline(), 15))
+        initialized = json.loads(
+            await asyncio.wait_for(process.stdout.readline(), watchdog_timeout())
+        )
         assert initialized["id"] == 1 and "result" in initialized
         capabilities = initialized["result"]["capabilities"]
         for catalog in ("tools", "resources", "prompts"):
@@ -454,10 +458,10 @@ async def test_unity_runner_real_subprocess_preserves_sdk_wire_and_stray_print_d
                 "params": {"name": "owned_echo", "arguments": {}},
             }
         )
-        answer = json.loads(await asyncio.wait_for(process.stdout.readline(), 5))
+        answer = json.loads(await asyncio.wait_for(process.stdout.readline(), watchdog_timeout()))
         assert answer["id"] == "owned" and answer["result"]["structuredContent"] == {"ok": True}
         process.stdin.close()
-        await asyncio.wait_for(process.wait(), 8)
+        await asyncio.wait_for(process.wait(), watchdog_timeout())
         assert process.returncode == 0
         assert await process.stdout.read() == b""
         assert b"owned stray print stays off wire" in await process.stderr.read()

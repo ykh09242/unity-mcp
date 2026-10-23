@@ -1,5 +1,7 @@
 """Inspection consumes actual SDK schemas and existing evidence without dispatch."""
 
+from tests.timing import watchdog_timeout
+
 import copy
 import json
 from typing import Literal
@@ -714,7 +716,7 @@ async def test_stalled_cleanup_is_separately_bounded_and_reported(monkeypatch):
     monkeypatch.setattr(inspection, "_CLEANUP_GRACE_SECONDS", 0.03)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
     monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
-    with anyio.fail_after(0.5):
+    with anyio.fail_after(watchdog_timeout()):
         receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
     assert receipt.tool is not None and receipt.partial and receipt.cleanup_complete is False
     assert receipt.evidence["cleanup"]["reason"] == "cleanup_incomplete" and connection.closed
@@ -757,7 +759,7 @@ async def test_expired_auth_worker_never_starts_sdk_later(monkeypatch):
 
     def auth(_):
         entered.set()
-        release.wait(2)
+        release.wait(watchdog_timeout())
         finished.set()
         return {}
 
@@ -772,7 +774,7 @@ async def test_expired_auth_worker_never_starts_sdk_later(monkeypatch):
         assert receipt.residual_auth_io == "unknown" and receipt.advertised is None
     finally:
         release.set()
-        await anyio.to_thread.run_sync(finished.wait, 2)
+        await anyio.to_thread.run_sync(finished.wait, watchdog_timeout())
 
 
 @pytest.mark.asyncio

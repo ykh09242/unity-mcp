@@ -1,5 +1,7 @@
 """Authenticated stdio negotiation against wholly owned ephemeral TCP peers."""
 
+from tests.timing import watchdog_timeout
+
 import socket
 import json
 import secrets
@@ -40,7 +42,7 @@ def greeting_peer(greeting):
     try:
         yield listener.getsockname()[1]
     finally:
-        thread.join(3)
+        thread.join(watchdog_timeout())
         listener.close()
         assert not thread.is_alive()
         assert not failures
@@ -168,7 +170,7 @@ def authenticated_peer(reply_kind="valid", connections=1):
     try:
         yield listener.getsockname()[1], observed
     finally:
-        thread.join(3)
+        thread.join(watchdog_timeout())
         listener.close()
         assert not thread.is_alive()
         assert not failures

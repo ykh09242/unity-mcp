@@ -1,5 +1,7 @@
 """Capacity snapshots remain observable without admitting more Unity commands."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio  # noqa: ANYIO_OK -- controlled Hub command ownership and cancellation.
 from contextlib import asynccontextmanager
 import json
@@ -52,7 +54,7 @@ async def pending_mutations(hub, count=2, session_id="session", *, auth=None, us
 
     tasks = [asyncio.create_task(dispatch(i)) for i in range(count)]
     try:
-        with anyio.fail_after(10):
+        with anyio.fail_after(watchdog_timeout()):
             await sent.wait()
         assert sum(e["session_id"] == session_id for e in PluginHub._pending.values()) == count
         assert all(not task.done() for task in tasks)
@@ -78,7 +80,7 @@ async def test_saturated_sdk_read_explains_unobserved_native_sources(
         async with pending_mutations(command_hub) as mutations:
             pending = dict(PluginHub._pending)
             sends = list(command_hub.sent)
-            with anyio.fail_after(10):
+            with anyio.fail_after(watchdog_timeout()):
                 data = await read_capabilities(client)
             assert data["connection"]["status"] == "connected"
             assert data["connection"]["admission_available"] is False
@@ -162,7 +164,7 @@ async def test_repeated_reads_ignore_ready_cache_and_preserve_admitted_send_orde
             before, sends = accounting(), list(command_hub.sent)
             assert [message["params"]["name"] for message in sends] == ["0", "1"]
             for _ in range(4):
-                with anyio.fail_after(10):
+                with anyio.fail_after(watchdog_timeout()):
                     observations = await asyncio.gather(
                         *(read_capabilities(client) for _ in range(8))
                     )
@@ -213,7 +215,7 @@ async def test_saturated_status_lock_wait_uses_original_deadline(
             async with lock:
                 # Completion while this lock remains held proves deadline expiry.
                 # Ten seconds is only a separate scheduler/runaway guard.
-                with anyio.fail_after(10):
+                with anyio.fail_after(watchdog_timeout()):
                     data = await read_capabilities(client)
             assert data["connection"]["status"] == "unknown"
             assert data["connection"]["generation"] is None
@@ -245,7 +247,7 @@ async def test_canceling_status_wait_does_not_cancel_mutations(command_hub, monk
             async with lock:  # pylint: disable=not-async-context-manager
                 request = asyncio.create_task(read_capabilities(client))
                 try:
-                    with anyio.fail_after(10):
+                    with anyio.fail_after(watchdog_timeout()):
                         await entered.wait()
                     request.cancel()
                     with pytest.raises(asyncio.CancelledError):

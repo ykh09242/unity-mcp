@@ -1,5 +1,7 @@
 """Installed SDK HTTP/SSE response ownership under actual blocked ASGI sends."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import json
 import time
@@ -179,7 +181,7 @@ class Wire:
                 self.changed.clear()
                 await self.changed.wait()
 
-        return await asyncio.wait_for(wait(), 2)
+        return await asyncio.wait_for(wait(), watchdog_timeout())
 
 
 @pytest_asyncio.fixture
@@ -279,7 +281,7 @@ async def test_real_sdk_retains_results_until_http_or_sse_delivery(
                 },
             }
             init = Wire(app, "POST", path, initialize)
-            await asyncio.wait_for(init.run(), 2)
+            await asyncio.wait_for(init.run(), watchdog_timeout())
             if transport == "http":
                 start = next(
                     message for message in init.sent if message["type"] == "http.response.start"
@@ -295,7 +297,7 @@ async def test_real_sdk_retains_results_until_http_or_sse_delivery(
                 {"jsonrpc": "2.0", "method": "notifications/initialized"},
                 headers,
             )
-            await asyncio.wait_for(initialized.run(), 2)
+            await asyncio.wait_for(initialized.run(), watchdog_timeout())
             failed = Wire(
                 app,
                 "POST",
@@ -308,7 +310,7 @@ async def test_real_sdk_retains_results_until_http_or_sse_delivery(
                 },
                 headers,
             )
-            await asyncio.wait_for(failed.run(), 2)
+            await asyncio.wait_for(failed.run(), watchdog_timeout())
             if transport == "sse":
                 await stream.until_body(b'"id":8')
             assert PluginHub._retained_results == {}, (
@@ -326,16 +328,18 @@ async def test_real_sdk_retains_results_until_http_or_sse_delivery(
             )
             blocked_task = asyncio.create_task(blocked.run())
             consumer = blocked if transport == "http" else stream
-            await asyncio.wait_for(consumer.blocked.wait(), 2)
+            await await_signal(consumer.blocked, "consumer.blocked")
             if transport == "sse":
-                await asyncio.wait_for(blocked_task, 2)  # POST202 completes before GET sends.
+                await asyncio.wait_for(
+                    blocked_task, watchdog_timeout()
+                )  # POST202 completes before GET sends.
             assert PluginHub._pending == {}
             assert len(PluginHub._retained_results) == 1, (
                 "Slow final consumer must retain the plugin result reservation"
             )
             assert len(_http_response_owners) == 1
             second = Wire(app, "POST", path, {**call, "id": 10}, headers)
-            await asyncio.wait_for(second.run(), 2)
+            await asyncio.wait_for(second.run(), watchdog_timeout())
             if transport == "http":
                 assert b"result_capacity" in b"".join(msg.get("body", b"") for msg in second.sent)
             assert len(PluginHub._retained_results) == 1
@@ -345,11 +349,11 @@ async def test_real_sdk_retains_results_until_http_or_sse_delivery(
                     await asyncio.gather(blocked_task, return_exceptions=True)
                 else:
                     stream.disconnect.set()
-                    await asyncio.wait_for(stream_task, 2)
+                    await asyncio.wait_for(stream_task, watchdog_timeout())
             else:
                 consumer.resume.set()
                 if transport == "http":
-                    await asyncio.wait_for(blocked_task, 2)
+                    await asyncio.wait_for(blocked_task, watchdog_timeout())
                 else:
                     await stream.until_body(b'"id":10')
             for _ in range(10):
@@ -360,7 +364,7 @@ async def test_real_sdk_retains_results_until_http_or_sse_delivery(
             assert _http_response_owners == {}
             if not cancel:
                 recovered = Wire(app, "POST", path, {**call, "id": 11}, headers)
-                await asyncio.wait_for(recovered.run(), 2)
+                await asyncio.wait_for(recovered.run(), watchdog_timeout())
                 if transport == "sse":
                     assert b"preview" in await stream.until_body(b'"id":11')
                 else:

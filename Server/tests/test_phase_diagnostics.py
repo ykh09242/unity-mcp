@@ -1,5 +1,7 @@
 """Payload-free diagnostic ownership and negotiated wire propagation."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from contextvars import copy_context
 
@@ -95,12 +97,12 @@ def test_bounded_sink_drops_observations_without_waiting_for_disk():
 
     def blocked(_):
         entered.set()
-        release.wait(5)
+        release.wait(watchdog_timeout())
 
     sink = diag.BufferedSink(blocked)
     try:
         sink.offer({"event": "test"})
-        assert entered.wait(2)
+        assert entered.wait(watchdog_timeout())
         for _ in range(1000):
             sink.offer({"event": "test"})
         assert sink.queue.qsize() == 256
@@ -159,12 +161,17 @@ def test_blocked_diagnostic_write_does_not_block_real_command_logging(monkeypatc
     entered, release, completed = threading.Event(), threading.Event(), threading.Event()
     path = tmp_path / "phase-timing-1234-00000000000000000000000000000001.log"
     monkeypatch.setattr(diag, "_log_path", path, raising=False)
+    gate_expired = threading.Event()
     original_open = Path.open
+
+    def hold_diagnostic_io():
+        entered.set()
+        if not release.wait(watchdog_timeout(180)):
+            gate_expired.set()
 
     def blocked_open(target, *args, **kwargs):
         if target == path:
-            entered.set()
-            release.wait(5)
+            hold_diagnostic_io()
         return original_open(target, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", blocked_open)
@@ -172,8 +179,7 @@ def test_blocked_diagnostic_write_does_not_block_real_command_logging(monkeypatc
     class OrdinaryHandler(logging.Handler):
         def emit(self, record):
             if record.getMessage().startswith("phase_timing "):
-                entered.set()
-                release.wait(5)
+                hold_diagnostic_io()
 
     logger = logging.getLogger("mcp-for-unity-server")
     handler = OrdinaryHandler()
@@ -190,13 +196,14 @@ def test_blocked_diagnostic_write_does_not_block_real_command_logging(monkeypatc
     worker = threading.Thread(target=command)
     try:
         sink.offer({"event": "server_phase_timing"})
-        assert entered.wait(2)
+        assert entered.wait(watchdog_timeout())
         worker.start()
-        assert completed.wait(1), "Diagnostic I/O blocked ordinary command logging"
+        assert completed.wait(watchdog_timeout()), "Diagnostic I/O blocked ordinary command logging"
+        assert not gate_expired.is_set(), "Diagnostic I/O gate expired before command completion"
     finally:
         release.set()
         if worker.ident is not None:
-            worker.join(2)
+            worker.join(watchdog_timeout())
         sink.close()
         logger._cache.clear()
     assert not worker.is_alive()

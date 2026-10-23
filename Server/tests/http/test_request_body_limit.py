@@ -1,5 +1,7 @@
 """Exercise lazy ingress limits using real FastMCP apps and controlled ASGI streams."""
 
+from tests.timing import watchdog_timeout
+
 import json
 import os
 from unittest.mock import AsyncMock
@@ -258,7 +260,7 @@ def test_public_mcp_oversize_never_materializes_or_parses(public_app, monkeypatc
 
     async def scenario():
         async with app.router.lifespan_context(app):
-            with anyio.fail_after(5):
+            with anyio.fail_after(watchdog_timeout()):
                 sent, reads = await invoke(
                     app,
                     scope_for(headers, "/mcp"),
@@ -393,7 +395,7 @@ def test_baseline_probe_public_valid_oversize(public_app, monkeypatch):
                     [(b"content-length", b"1")],
                     [(b"content-length", str(len(body)).encode())],
                 ]:
-                    with anyio.fail_after(5):
+                    with anyio.fail_after(watchdog_timeout()):
                         sent, reads = await invoke(
                             app,
                             scope_for(headers + lengths, path),
@@ -477,7 +479,7 @@ def test_public_legacy_sse_preserves_stream_and_limits_message_body(public_app):
         async with app.router.lifespan_context(app):
             async with anyio.create_task_group() as tasks:
                 tasks.start_soon(app, scope_for(headers, "/sse", "GET"), receive, send)
-                with anyio.fail_after(5):
+                with anyio.fail_after(watchdog_timeout()):
                     await endpoint_ready.wait()
                     target = urlsplit(endpoint[0])
                     message_scope = scope_for(headers, target.path)

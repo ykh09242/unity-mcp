@@ -1,5 +1,7 @@
 """Test-job focus budgets and identity routing without desktop activation."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 from collections import OrderedDict
 from itertools import count
@@ -161,7 +163,7 @@ async def test_one_active_task_does_not_spend_other_pollers_budgets(policy):
 
     policy.side_effect = wait_for_release
     await poll(wait=False)
-    await asyncio.wait_for(started.wait(), 1)
+    await await_signal(started, "started")
     try:
         same = await poll(wait=False)
         other = await poll(instance="Other@other", wait=False)
@@ -185,7 +187,7 @@ async def test_terminal_status_cancels_active_nudge_and_removes_state(policy):
 
     policy.side_effect = wait_forever
     await poll(wait=False)
-    await asyncio.wait_for(started.wait(), 1)
+    await await_signal(started, "started")
     task = mod._active_nudge_task
     await poll({"status": "succeeded"})
     await drain()
@@ -203,7 +205,7 @@ async def test_terminal_poll_does_not_cancel_another_waiting_poll(policy):
 
     policy.side_effect = wait_forever
     waiting_poll = asyncio.create_task(poll(wait=True))
-    await asyncio.wait_for(started.wait(), 1)
+    await await_signal(started, "started")
     await poll({"status": "succeeded"})
     await waiting_poll
     assert not waiting_poll.cancelled()
@@ -220,7 +222,7 @@ async def test_caller_cancellation_still_cancels_nudge(policy):
 
     policy.side_effect = wait_forever
     waiting_poll = asyncio.create_task(poll(wait=True))
-    await asyncio.wait_for(started.wait(), 1)
+    await await_signal(started, "started")
     child = mod._active_nudge_task
     waiting_poll.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -279,7 +281,7 @@ async def test_actual_fetch_order_preserves_newer_flags_when_older_request_repli
     context = SimpleNamespace()
     older_request = asyncio.create_task(mod.get_test_job(context, "job"))
     try:
-        await asyncio.wait_for(started.wait(), 1)
+        await await_signal(started, "started")
         await mod.get_test_job(context, "job")
     finally:
         release.set()
@@ -312,7 +314,9 @@ async def test_staggered_concurrent_resolvers_cannot_bypass_budget_or_cooldown(p
     mod._get_unity_project_path.side_effect = delayed_resolve
     calls = [asyncio.create_task(poll()) for _ in range(5)]
     try:
-        await asyncio.wait_for(asyncio.gather(*(event.wait() for event in ready)), 1)
+        await asyncio.wait_for(
+            asyncio.gather(*(event.wait() for event in ready)), watchdog_timeout()
+        )
         for index, call in enumerate(calls):
             release[index].set()
             await call
@@ -384,7 +388,7 @@ async def test_resolution_race_with_terminal_status_does_not_schedule(policy):
 
     mod._get_unity_project_path.side_effect = resolve
     task = asyncio.create_task(poll())
-    await asyncio.wait_for(entered.wait(), 1)
+    await await_signal(entered, "entered")
     await poll({"status": "succeeded"})
     release.set()
     await task

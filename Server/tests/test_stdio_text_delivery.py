@@ -1,5 +1,7 @@
 """Explicit text stdout owns responses until real flush completion."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import gc
 import threading
@@ -37,7 +39,7 @@ async def send_response(write, payload):
 
 
 async def wait_until(predicate):
-    async with asyncio.timeout(3):
+    async with asyncio.timeout(watchdog_timeout()):
         while not predicate():
             await asyncio.sleep(0)
 
@@ -72,7 +74,7 @@ async def test_text_output_keeps_installed_sdk_serialization_and_newline():
     async with retained_stdio_server(stdin=source, stdout=output) as (read, write):
         async with read, write:
             await write.send(SessionMessage(response))
-            await asyncio.wait_for(output.flushed.wait(), 3)
+            await await_signal(output.flushed, "output.flushed")
             assert output.wire == expected
             source.stop.set()
 
@@ -103,7 +105,9 @@ async def test_async_file_drops_serialized_and_wire_text_while_workers_idle():
 
     # Populate the real pool with concurrent unrelated jobs before the writer.
     barrier = threading.Barrier(2)
-    await asyncio.gather(*(anyio.to_thread.run_sync(lambda: barrier.wait(3)) for _ in range(2)))
+    await asyncio.gather(
+        *(anyio.to_thread.run_sync(lambda: barrier.wait(watchdog_timeout())) for _ in range(2))
+    )
     owner, source = ResponseOwner(), IdleInput()
     async with retained_stdio_server(stdin=source, stdout=anyio.wrap_file(DiscardFile())) as (
         read,
@@ -144,10 +148,10 @@ async def test_text_output_keeps_owner_through_held_flush_and_duplicate_identity
                 with pytest.raises(ValueError, match="already active"):
                     registry.register(7, ResponseOwner())
             await send_response(write, "owned")
-            await asyncio.wait_for(entered.wait(), 3)
+            await await_signal(entered, "entered")
             assert ledger and not owner.released
             resume.set()
-            await asyncio.wait_for(output.flushed.wait(), 3)
+            await await_signal(output.flushed, "output.flushed")
             for _ in range(5):
                 await asyncio.sleep(0)
             assert owner.released is not ambiguous
@@ -224,14 +228,14 @@ async def test_opaque_async_text_sink_settles_its_cancel_cleanup_before_owner_re
 
     server = asyncio.create_task(serve())
     try:
-        await asyncio.wait_for(entered.wait(), 3)
+        await await_signal(entered, "entered")
         server.cancel()
-        await asyncio.wait_for(cleaning.wait(), 3)
+        await await_signal(cleaning, "cleaning")
         assert ledger and not owner.released and not server.done()
     finally:
         complete.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(server, 3)
+            await asyncio.wait_for(server, watchdog_timeout())
     assert owner.released and not ledger
 
 
@@ -269,7 +273,9 @@ async def test_text_output_cancellation_waits_for_real_thread_io_before_releasin
         def hold(self):
             entered.set()
             try:
-                assert resume.wait(5), "test failed to unblock the owned flush worker"
+                assert resume.wait(watchdog_timeout()), (
+                    "test failed to unblock the owned flush worker"
+                )
             finally:
                 settled.set()
 
@@ -315,7 +321,7 @@ async def test_text_output_cancellation_waits_for_real_thread_io_before_releasin
         resume.set()
         server.cancel()
         try:
-            await asyncio.wait_for(server, 3)
+            await asyncio.wait_for(server, watchdog_timeout())
         except asyncio.CancelledError:
             pass
     assert settled.is_set() and owner.released and not ledger

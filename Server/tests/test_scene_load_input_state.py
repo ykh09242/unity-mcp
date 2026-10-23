@@ -1,5 +1,7 @@
 """Input nonces are scoped, bounded, expiring one-attempt claims."""
 
+from tests.timing import watchdog_timeout
+
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from threading import Barrier
@@ -145,7 +147,7 @@ def test_concurrent_retry_claims_are_atomic():
     barrier = Barrier(2)
 
     def claim():
-        barrier.wait(timeout=3)
+        barrier.wait(timeout=watchdog_timeout())
         return ledger.claim(nonce, scope())
 
     # When: both try to admit the continuation.

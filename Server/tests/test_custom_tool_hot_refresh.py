@@ -1,5 +1,7 @@
 """Actual SDK discovery/invocation across atomic owned catalog generations."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import os
 from pathlib import Path
 import subprocess
@@ -315,9 +317,9 @@ async def test_stdio_actual_worker_rechecks_catalog_and_connection_before_wire(
     task = asyncio.create_task(service.execute_tool("a", "mutate", "A@a", {}))
     try:
         if barrier == "admission":
-            await asyncio.wait_for(selected.wait(), 2)
+            await await_signal(selected, "selected")
         else:
-            assert await asyncio.to_thread(entered.wait, 2)
+            assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         if barrier != "reconnect":
             service.replace_project_catalog(
                 "a",
@@ -330,7 +332,7 @@ async def test_stdio_actual_worker_rechecks_catalog_and_connection_before_wire(
             conn._io_lock.release()
         elif barrier == "admission":
             gate.release()
-    result = await asyncio.wait_for(task, 3)
+    result = await asyncio.wait_for(task, watchdog_timeout())
     assert result.data == {"reason": "custom_tool_catalog_changed", "dispatched": False}
     assert writes == []
     monkeypatch.setattr(conn, "_ensure_live_connection", lambda: None)
@@ -357,7 +359,7 @@ def test_stdio_publication_rechecks_exact_cached_connection(monkeypatch, change)
     def busy():
         with connection._io_lock:
             entered.set()
-            release.wait(2)
+            release.wait(watchdog_timeout())
 
     thread = None
     if change == "pool_owner":
@@ -369,7 +371,7 @@ def test_stdio_publication_rechecks_exact_cached_connection(monkeypatch, change)
     else:
         thread = threading.Thread(target=busy)
         thread.start()
-        assert entered.wait(2)
+        assert entered.wait(watchdog_timeout())
     committed = []
     try:
         with pytest.raises(ValueError):
@@ -378,7 +380,7 @@ def test_stdio_publication_rechecks_exact_cached_connection(monkeypatch, change)
     finally:
         release.set()
         if thread is not None:
-            thread.join(2)
+            thread.join(watchdog_timeout())
             assert not thread.is_alive()
 
 

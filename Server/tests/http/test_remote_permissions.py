@@ -1,5 +1,7 @@
 """Scoped authority composes with real leases, transport admission and bounded reads."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 import importlib
 import json
@@ -609,7 +611,7 @@ async def test_downgrade_generation_cannot_join_an_old_shared_read_cache(monkeyp
             # Wait for this exact renewal, without retrying or bypassing real authentication.
             renewal = old_record.renewal
             if renewal is not None:
-                await asyncio.wait_for(asyncio.shield(renewal), 1)
+                await asyncio.wait_for(asyncio.shield(renewal), watchdog_timeout())
             assert old.retired and not fixture.service._inflight
             fresh = await fixture.service.validate("key")
             assert fresh.valid and not fresh.overloaded and fresh.lease is not None

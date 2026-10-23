@@ -1,5 +1,7 @@
 """Real legacy MCP connections receive catalog changes and leave no stale listeners."""
 
+from tests.timing import watchdog_timeout
+
 from weakref import WeakSet
 
 import anyio
@@ -45,7 +47,7 @@ async def test_catalog_notification_reaches_live_connection_and_cleans_up(
             assert len(connections) == 1
             # When the configured server publishes a catalog change.
             await PluginHub._notify_mcp_tool_list_changed()
-            with anyio.fail_after(2):
+            with anyio.fail_after(watchdog_timeout()):
                 await handler.received.wait()
         # Then the real client receives it and SDK teardown removes its listener.
         assert len(connections) == 0

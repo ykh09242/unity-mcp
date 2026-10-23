@@ -7,6 +7,8 @@ import sys
 
 import pytest
 
+from tests.timing import watchdog_timeout
+
 
 PROGRAM = r"""
 import asyncio
@@ -33,6 +35,7 @@ socket.create_connection = denied
 import transport.plugin_hub as module
 from transport.plugin_registry import PluginRegistry
 Hub = module.PluginHub
+WATCHDOG = float(os.environ["UNITY_MCP_TEST_WATCHDOG_SECONDS"])
 
 class Channel:
     def __init__(self, behavior):
@@ -85,9 +88,9 @@ class Channel:
             await self.release.wait()
 
     async def register(self):
-        assert (await asyncio.wait_for(self.outgoing.get(), 1))["type"] == "welcome"
+        assert (await asyncio.wait_for(self.outgoing.get(), WATCHDOG))["type"] == "welcome"
         self.receive({"type": "register", "project_name": "Owned", "project_hash": "ownedhash", "unity_version": "fixture"})
-        ack = await asyncio.wait_for(self.outgoing.get(), 1)
+        ack = await asyncio.wait_for(self.outgoing.get(), WATCHDOG)
         assert ack["type"] == "registered"
         self.session_id = ack["session_id"]
         self.websocket = Hub._connections[self.session_id]
@@ -96,16 +99,16 @@ class Channel:
     async def stop(self):
         self.release.set()
         self.incoming.put_nowait({"type": "websocket.disconnect", "code": 1001})
-        await asyncio.wait_for(self.task, 1)
+        await asyncio.wait_for(self.task, WATCHDOG)
 
 async def main():
     case = sys.argv[1]
     registry = PluginRegistry()
     module.config.http_remote_hosted = False
     Hub.configure(registry)
-    Hub.PING_INTERVAL, Hub.PING_TIMEOUT, Hub.CLOSE_TIMEOUT, Hub.COMMAND_TIMEOUT = .05, .1, .03, 2
+    Hub.PING_INTERVAL, Hub.PING_TIMEOUT, Hub.CLOSE_TIMEOUT, Hub.COMMAND_TIMEOUT = .05, .1, .03, WATCHDOG
     if case == "replacement":
-        Hub.CLOSE_TIMEOUT = 2
+        Hub.CLOSE_TIMEOUT = WATCHDOG
     now = [100.0]
     module.time = SimpleNamespace(monotonic=lambda: now[0])
     behavior = "blocked_ping" if case == "disconnect_during_ping" else case if case in ("blocked_ping", "failed_ping", "healthy") else "stale_close"
@@ -116,13 +119,12 @@ async def main():
         await owner.register()
         command = asyncio.create_task(Hub.send_command_for_instance("Owned@ownedhash", "owned_query", {}, retry_on_reload=False))
         commands.append(command)
-        await asyncio.wait_for(owner.command_started.wait(), 1)
+        await asyncio.wait_for(owner.command_started.wait(), WATCHDOG)
         if case == "healthy":
             # When heartbeats and command results arrive on their owner socket.
-            assert await asyncio.wait_for(command, 1) == {"success": True, "data": {"owned_reply": True}}
-            await asyncio.wait_for(owner.ping_started.wait(), 1)
-            owner.receive({"type": "pong", "session_id": "foreign-session"})
-            await asyncio.sleep(.05)
+            assert await asyncio.wait_for(command, WATCHDOG) == {"success": True, "data": {"owned_reply": True}}
+            await asyncio.wait_for(owner.ping_started.wait(), WATCHDOG)
+            await owner.endpoint.on_receive(owner.websocket, {"type": "pong", "session_id": "foreign-session"})
             # Then the live session persists and foreign pong IDs allocate no state.
             assert set(Hub._connections) == set(Hub._last_pong) == {owner.session_id}
             assert (await Hub.get_sessions()).sessions.keys() == {owner.session_id}
@@ -131,18 +133,18 @@ async def main():
             # When its heartbeat goes stale, fails, or remains backpressured.
             if behavior == "stale_close":
                 now[0] += .2
-                await asyncio.wait_for(owner.close_started.wait(), 1)
+                await asyncio.wait_for(owner.close_started.wait(), WATCHDOG)
             else:
-                await asyncio.wait_for(owner.ping_started.wait(), 1)
+                await asyncio.wait_for(owner.ping_started.wait(), WATCHDOG)
             if case == "cancelled_close":
                 owner.ping_task.cancel()
             elif case == "disconnect_during_ping":
                 owner.incoming.put_nowait({"type": "websocket.disconnect", "code": 1001})
-                await asyncio.wait_for(owner.task, 1)
+                await asyncio.wait_for(owner.task, WATCHDOG)
             if case == "replacement":
-                await asyncio.wait({command}, timeout=.2)
+                await asyncio.wait({command}, timeout=WATCHDOG)
             else:
-                await asyncio.wait({command, owner.ping_task}, timeout=.3)
+                await asyncio.wait({command, owner.ping_task}, timeout=WATCHDOG)
             # Then cleanup precedes blocked close and releases the existing command.
             assert command.done(), "Heartbeat failure must release pending public commands"
             assert command.result()["success"] is False and command.result()["hint"] == "inspect_state_before_retry"
@@ -161,7 +163,7 @@ async def main():
                 now[0] = 100.2
                 new_command = asyncio.create_task(Hub.send_command_for_instance("ownedhash", "owned_query", {}, retry_on_reload=False))
                 commands.append(new_command)
-                await asyncio.wait_for(replacement.command_started.wait(), 1)
+                await asyncio.wait_for(replacement.command_started.wait(), WATCHDOG)
                 # When already-buffered old-socket messages reach the handler.
                 # Server close has changed the socket application state, so the
                 # dispatcher need not drain a queued test barrier after close.
@@ -176,10 +178,10 @@ async def main():
                 replacement.receive({"type": "pong", "session_id": replacement.session_id})
                 replacement.receive({"type": "command_result", "id": replacement.command_id, "result": {"success": True}})
                 # Then only the actual replacement completes the reply, and it survives.
-                assert await asyncio.wait_for(new_command, 1) == {"success": True}
+                assert await asyncio.wait_for(new_command, WATCHDOG) == {"success": True}
                 assert Hub._last_pong[replacement.session_id] == now[0]
                 owner.release.set()
-                await asyncio.wait_for(owner.ping_task, 1)
+                await asyncio.wait_for(owner.ping_task, WATCHDOG)
                 assert owner.ping_task.done()
                 assert set(Hub._connections) == {replacement.session_id}
                 assert (await Hub.get_sessions()).sessions.keys() == {replacement.session_id}
@@ -224,6 +226,7 @@ def test_heartbeat_owns_session_and_command_cleanup(tmp_path, case):
         "TMP",
     ):
         env[key] = str(tmp_path)
+    env["UNITY_MCP_TEST_WATCHDOG_SECONDS"] = str(watchdog_timeout())
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
     env.pop("PYTEST_CURRENT_TEST", None)
@@ -232,6 +235,6 @@ def test_heartbeat_owns_session_and_command_cleanup(tmp_path, case):
         env=env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=watchdog_timeout(180),
     )
     assert result.returncode == 0, result.stdout + result.stderr

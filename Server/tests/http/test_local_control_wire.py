@@ -1,5 +1,7 @@
 """Exercise the console entry point, MCP handshake, and plugin command wire path."""
 
+from tests.timing import watchdog_timeout
+
 import json
 import os
 import socket
@@ -79,7 +81,7 @@ def local_server_process(tmp_path: Path) -> Iterator[tuple[str, int, str]]:
                 yield url, port, token_path.read_text(encoding="utf-8").strip()
             finally:
                 process.terminate()
-                process.wait(timeout=10)
+                process.wait(timeout=watchdog_timeout())
 
 
 @pytest.fixture
@@ -163,7 +165,7 @@ async def test_native_clients_work_and_browser_requests_fail_on_real_server(
                         }
                     )
                 )
-                assert response.result(timeout=5).json() == {
+                assert response.result(timeout=watchdog_timeout()).json() == {
                     "success": True,
                     "data": "wire-response",
                 }

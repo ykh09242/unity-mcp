@@ -1,5 +1,7 @@
 """Binary stdio serialization and delivery ownership on explicit owned streams."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import io
 import threading
@@ -44,7 +46,7 @@ class BinaryOutput(io.BytesIO):
     def flush(self):
         self.threads.append(threading.get_ident())
         self.loop.call_soon_threadsafe(self.entered.set)
-        if not self.resume.wait(5):
+        if not self.resume.wait(watchdog_timeout()):
             raise TimeoutError("owned flush gate was not released")
 
 
@@ -175,7 +177,7 @@ async def test_binary_disconnect_waits_for_worker_before_reservation_release():
 
     server = asyncio.create_task(serve())
     try:
-        await asyncio.wait_for(output.entered.wait(), 3)
+        await await_signal(output.entered, "output.entered")
         server.cancel()
         await asyncio.sleep(0)
         server.cancel()
@@ -184,7 +186,7 @@ async def test_binary_disconnect_waits_for_worker_before_reservation_release():
         assert not server.done()
         output.resume.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(server, 3)
+            await asyncio.wait_for(server, watchdog_timeout())
         assert owner.released
     finally:
         output.resume.set()
@@ -219,7 +221,7 @@ async def test_binary_duplicate_error_cannot_release_original_owner():
                         )
                     )
                 )
-                await asyncio.wait_for(output.flushed.wait(), 3)
+                await await_signal(output.flushed, "output.flushed")
                 assert not owner.released
                 await write.aclose()
                 stdin.stop.set()
@@ -287,9 +289,9 @@ async def test_real_subprocess_cancel_restores_protected_stdout(tmp_path):
         "asyncio.run(run())\n"
     )
     async with owned_sdk_process(program, tmp_path) as process:
-        pid_line = await asyncio.wait_for(process.stderr.readline(), 5)
+        pid_line = await asyncio.wait_for(process.stderr.readline(), watchdog_timeout())
         assert int(pid_line.removeprefix(b"owned pid:")) == process.pid
-        output, error = await asyncio.wait_for(process.communicate(), 10)
+        output, error = await asyncio.wait_for(process.communicate(), watchdog_timeout())
         assert process.returncode == 0
         lines = output.splitlines()
         assert json.loads(lines[0]) == {"jsonrpc": "2.0", "id": "owned", "result": {"ok": True}}
@@ -322,7 +324,7 @@ async def test_binary_writer_retains_until_flush_and_uses_one_worker():
             async with read, write:
                 stdio_delivery.get().register(7, owner)
                 await write.send(SessionMessage(message))
-                await asyncio.wait_for(output.entered.wait(), 3)
+                await await_signal(output.entered, "output.entered")
                 # Then handoff alone cannot release the reservation.
                 assert not owner.released
                 assert (

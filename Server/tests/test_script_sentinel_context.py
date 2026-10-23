@@ -1,5 +1,7 @@
 """The opt-in reload sentinel owns its command, not the finished script request."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import gc
 import importlib
@@ -54,7 +56,7 @@ async def sentinel_wire(monkeypatch):
     def command(command_type, params, **kwargs):
         sent.append((command_type, params, kwargs))
         loop.call_soon_threadsafe(entered.set)
-        assert release.wait(3), "test failed to release inert Unity IO"
+        assert release.wait(watchdog_timeout()), "test failed to release inert Unity IO"
         return {"success": True}
 
     async def observe_send(*args, **kwargs):
@@ -99,7 +101,7 @@ async def sentinel_wire(monkeypatch):
         await asyncio.sleep(0)
         # Canceled async callers still own running executor admission until IO ends.
         gate = conn._async_admission(loop)
-        async with asyncio.timeout(3):
+        async with asyncio.timeout(watchdog_timeout()):
             while gate.locked():
                 await asyncio.sleep(0.01)
 
@@ -131,7 +133,7 @@ async def test_finished_request_released_during_real_sentinel_admission(sentinel
     wire.selected["value"] = selector
     async with Client(wire.server, mode="legacy") as client:
         assert not (await edit(client)).is_error
-        await asyncio.wait_for(wire.entered.wait(), 2)
+        await await_signal(wire.entered, "wire.entered")
         await client.list_tools()
         await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -169,7 +171,7 @@ async def test_cancelled_sentinel_keeps_executor_admission_until_command_finishe
     wire = sentinel_wire
     async with Client(wire.server, mode="legacy") as client:
         assert not (await edit(client)).is_error
-        await asyncio.wait_for(wire.entered.wait(), 2)
+        await await_signal(wire.entered, "wire.entered")
         task = next(iter(scripts._background_tasks))
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

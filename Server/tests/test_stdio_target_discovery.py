@@ -1,5 +1,7 @@
 """Exact-target discovery avoids unrelated probes without relaxing identity guards."""
 
+from tests.timing import watchdog_timeout
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
@@ -269,7 +271,7 @@ def test_exact_target_real_pong_does_not_override_newer_port_identity(monkeypatc
             )
             os.utime(other_path, (20, 20))
             assert PortDiscovery.discover_unity_instance("Main@deadbeef") is None
-            server.result(timeout=2)
+            server.result(timeout=watchdog_timeout())
     assert len(received) == 2
 
 

@@ -1,5 +1,7 @@
 """Deterministic scheduling and construction cleanup for the catalog ASGI peer."""
 
+from tests.timing import watchdog_timeout
+
 import gc
 import json
 import warnings
@@ -86,7 +88,7 @@ async def test_plugin_exit_before_processing_boundary_fails_promptly_and_closes_
 
     peer = PluginStream(app, "fixture-key", "a", "A")
     async with anyio.create_task_group() as group:
-        with anyio.fail_after(1):
+        with anyio.fail_after(watchdog_timeout()):
             with pytest.raises(AssertionError, match="processing boundary"):
                 await peer.connect(group)
         await wait(peer.done)

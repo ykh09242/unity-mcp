@@ -1,5 +1,7 @@
 """Actual ASGI subscription streams preserve auth, scope and bounded ownership."""
 
+from tests.timing import watchdog_timeout
+
 import json
 import secrets
 import time
@@ -174,7 +176,7 @@ class PluginStream:
             await signal.wait()
             finished.set()
 
-        with anyio.fail_after(3):
+        with anyio.fail_after(watchdog_timeout()):
             async with anyio.create_task_group() as group:
                 group.start_soon(watch, event)
                 group.start_soon(watch, self.done)
@@ -250,7 +252,7 @@ def hosted_catalog(monkeypatch, prepared_tool_factory, request):
 
 
 async def wait(event):
-    with anyio.fail_after(3):
+    with anyio.fail_after(watchdog_timeout()):
         await event.wait()
 
 
