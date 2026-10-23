@@ -178,6 +178,10 @@ cases = [
     {'action': 'get_object_memory', 'object_path': 'Fixture'},
     {'action': 'memory_take_snapshot', 'snapshot_path': 'Fixture.snap'},
     {'action': 'memory_take_snapshot', 'snapshot_path': None},
+    {'action': 'memory_take_snapshot', 'timeout_seconds': None},
+    {'action': 'memory_take_snapshot', 'timeout_seconds': 1},
+    {'action': 'memory_take_snapshot', 'timeout_seconds': 1800},
+    {'action': 'memory_take_snapshot', 'timeout_seconds': 86400},
     {'action': 'memory_list_snapshots', 'search_path': ''},
     {'action': 'memory_compare_snapshots', 'snapshot_a': 'First.snap', 'snapshot_b': 'Second.snap'},
     {'action': 'frame_debugger_enable'}, {'action': 'frame_debugger_disable'},
@@ -214,6 +218,8 @@ async def main():
                     result, sent = await invoke(client, payload, mode)
                     expected = {key: value for key, value in payload.items() if value is not None}
                     expected['action'] = payload['action'].lower()
+                    if expected['action'] == 'memory_take_snapshot':
+                        expected.setdefault('timeout_seconds', 300)
                     check(sent == [('Project@fixture', 'manage_profiler', expected)],
                           'SDK literal values/defaults ' + mode + repr(payload))
                     check(result.structured_content == response, 'opaque native result fidelity ' + mode)
@@ -248,6 +254,9 @@ async def main():
                 {'action': 'frame_debugger_get_events', 'page_size': 'Infinity'},
                 {'action': 'profiler_set_areas', 'areas': {'CPU': 'bad'}},
                 {'action': 'get_counters', 'counters': [1]},
+                *({'action': 'memory_take_snapshot', 'timeout_seconds': value}
+                  for value in (0, -1, 86401, True, '1800', 1.0)),
+                {'action': 'window_start', 'markers': ['Owned'], 'timeout_seconds': 121},
             ):
                 result, sent = await invoke(client, payload, mode)
                 check(not sent and (result.is_error or result.structured_content.get('success') is False),
