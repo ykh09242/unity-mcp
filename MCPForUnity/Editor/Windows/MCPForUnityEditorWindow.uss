@@ -175,3 +175,10 @@
 .activity-id { color: var(--mcp-muted); font-size: 10px; }
 .activity-active { border-left-color: var(--mcp-accent); }
 #activity-empty { padding: 20px 12px; margin-top: 12px; background-color: var(--mcp-surface); }
+
+/* The page selector/sidebar already identifies the page in short docked windows. */
+.compact-height .header-bar { min-height: 28px; padding-top: 3px; padding-bottom: 3px; }
+.compact-height .header-logo { width: 20px; height: 20px; }
+.compact-height .page-header { display: none; }
+.compact-height .compact-page-navigation { padding-top: 4px; padding-bottom: 4px; }
+.compact-height .graph-heading { display: none; }

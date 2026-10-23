@@ -58,6 +58,7 @@ namespace MCPForUnity.Editor.Windows
             sidebar?.RegisterCallback<KeyDownEvent>(OnKeyDown);
             layout?.RegisterCallback<GeometryChangedEvent>(OnGeometryChanged);
             Select("clients");
+            UpdateHeight(layout?.resolvedStyle.height ?? 0);
             UpdateLayout(layout?.resolvedStyle.width ?? 0);
         }
 
@@ -132,7 +133,17 @@ namespace MCPForUnity.Editor.Windows
 #endif
         }
 
-        private void OnGeometryChanged(GeometryChangedEvent evt) => UpdateLayout(evt.newRect.width);
+        private void OnGeometryChanged(GeometryChangedEvent evt)
+        {
+            UpdateHeight(evt.newRect.height);
+            UpdateLayout(evt.newRect.width);
+        }
+
+        private void UpdateHeight(float height)
+        {
+            if (!disposed)
+                layout?.EnableInClassList("compact-height", !float.IsNaN(height) && height > 0 && height < 480);
+        }
 
         private void UpdateLayout(float width)
         {
