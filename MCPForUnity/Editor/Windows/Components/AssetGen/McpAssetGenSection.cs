@@ -287,13 +287,11 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             }
         }
 
-        /// <summary>Rebuilds live-catalog model controls; a null kind or provider matches all.</summary>
+        /// <summary>Refreshes model selection without replacing credential fields; null filters match all providers.</summary>
         private void RebuildModelControls(string kind, string provider)
         {
             foreach (var control in modelControls.ToArray())
             {
-                if (control.Provider != "fal" && control.Provider != "openrouter")
-                    continue;
                 if (kind != null && control.Kind != kind || provider != null && control.Provider != provider)
                     continue;
                 control.Container.Clear();

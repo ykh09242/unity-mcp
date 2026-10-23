@@ -6,9 +6,12 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Clients;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Dependencies.Models;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Security;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Windows;
@@ -17,6 +20,7 @@ using MCPForUnity.Editor.Windows.Components.ClientConfig;
 using MCPForUnity.Editor.Windows.Components.Connection;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.TestTools;
 using UnityEngine.UIElements;
@@ -153,24 +157,75 @@ namespace MCPForUnityTests.EditMode.Windows
             StringAssert.DoesNotContain(code + ":", message);
         }
 
-        [Test]
-        public void ConnectionBlockerHasAnInlineFocusableRecoveryAction()
+        [UnityTest]
+        public IEnumerator LocalConnectionBlockerFocusesItsFieldAndClearsAfterCorrection()
         {
-            var root = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(Base + "Components/Connection/McpConnectionSection.uxml").CloneTree();
-            var label = root.Q<Label>("connection-blocker");
-            var button = root.Q<Button>("connection-fix");
-            Assert.IsNotNull(label);
-            Assert.IsNotNull(button);
-            var section = (McpConnectionSection)FormatterServices.GetUninitializedObject(typeof(McpConnectionSection));
-            Set(section, "connectionBlocker", label);
-            Set(section, "connectionFixButton", button);
-            var target = root.Q<TextField>("api-key-field");
-            Invoke(section, "SetConnectionBlocker", "Enter a remote API key.", target);
-            StringAssert.Contains("API key", label.text);
-            Assert.IsFalse(button.ClassListContains("hidden"));
-            Invoke(section, "SetConnectionBlocker", null, null);
-            Assert.IsTrue(button.ClassListContains("hidden"));
-            Assert.IsEmpty(label.text);
+            var fields = new[] { "_bridgeService", "_serverManagementService" };
+            var previousServices = fields.ToDictionary(n => n, n => typeof(MCPServiceLocator).GetField(n, Static).GetValue(null));
+            var keys = new[] { EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.HttpTransportScope };
+            var prefs = keys.ToDictionary(k => k, k => (exists: EditorPrefs.HasKey(k), value: EditorPrefs.GetString(k)));
+            bool hadHttp = EditorPrefs.HasKey(EditorPrefKeys.UseHttpTransport);
+            bool http = EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport);
+            bool pinned = SessionState.GetBool("MCPForUnity.ForceStdioForSession", false);
+            var window = ScriptableObject.CreateInstance<EvidenceWindow>();
+            try
+            {
+                var fixture = typeof(MCPForUnityTests.Editor.Windows.McpConnectionSectionInteractionTests);
+                object bridge = Activator.CreateInstance(fixture.GetNestedType("FakeBridge", BindingFlags.NonPublic), true);
+                var serverType = fixture.GetNestedType("FakeServer", BindingFlags.NonPublic);
+                object server = Activator.CreateInstance(serverType, true);
+                serverType.GetField("Reachable").SetValue(server, true);
+                typeof(MCPServiceLocator).GetField("_bridgeService", Static).SetValue(null, bridge);
+                typeof(MCPServiceLocator).GetField("_serverManagementService", Static).SetValue(null, server);
+                EditorConfigurationCache.Instance.UnpinStdioForSession();
+                EditorConfigurationCache.Instance.SetUseHttpTransport(true);
+                EditorConfigurationCache.Instance.SetHttpTransportScope("local");
+                EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, "http://not-local.example:8080");
+                window.ShowUtility();
+                var root = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(Base + "Components/Connection/McpConnectionSection.uxml").CloneTree();
+                window.rootVisualElement.Add(root);
+                var section = (McpConnectionSection)FormatterServices.GetUninitializedObject(typeof(McpConnectionSection));
+                Set(section, "<Root>k__BackingField", root);
+                Invoke(section, "CacheUIElements");
+                var protocol = typeof(McpConnectionSection).GetNestedType("TransportProtocol", BindingFlags.NonPublic);
+                root.Q<EnumField>("transport-dropdown").Init((Enum)Enum.Parse(protocol, "HTTPLocal"));
+                section.UpdateConnectionStatus();
+                var blocker = root.Q<Label>("connection-blocker");
+                Assert.IsNotEmpty(blocker.text);
+                Assert.IsFalse(root.Q<Button>("connection-toggle").enabledSelf);
+                var action = root.Q<Button>("connection-fix");
+                Assert.IsFalse(action.ClassListContains("hidden"));
+                action.Focus();
+                yield return null;
+                using (var submit = NavigationSubmitEvent.GetPooled())
+                    action.SendEvent(submit);
+                yield return null;
+                var target = root.Q<TextField>("http-url");
+                var focus = target.focusController.focusedElement as VisualElement;
+                Assert.IsTrue(focus == target || focus != null && target.Contains(focus));
+                EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, "http://127.0.0.1:8080");
+                section.UpdateConnectionStatus();
+                Assert.IsEmpty(blocker.text);
+                Assert.IsTrue(action.ClassListContains("hidden"));
+                Assert.IsTrue(root.Q<Button>("connection-toggle").enabledSelf);
+            }
+            finally
+            {
+                window.Close();
+                EditorConfigurationCache.Instance.SetUseHttpTransport(http);
+                if (!hadHttp)
+                    EditorPrefs.DeleteKey(EditorPrefKeys.UseHttpTransport);
+                foreach (var pref in prefs)
+                    if (pref.Value.exists)
+                        EditorPrefs.SetString(pref.Key, pref.Value.value);
+                    else
+                        EditorPrefs.DeleteKey(pref.Key);
+                if (pinned)
+                    EditorConfigurationCache.Instance.PinStdioForSession();
+                EditorConfigurationCache.Instance.Refresh();
+                foreach (var previous in previousServices)
+                    typeof(MCPServiceLocator).GetField(previous.Key, Static).SetValue(null, previous.Value);
+            }
         }
 
         private sealed class Store : ISecureKeyStore
@@ -266,6 +321,29 @@ namespace MCPForUnityTests.EditMode.Windows
         [UnityTest, Explicit("Controller-owned provider and recovery layout evidence.")]
         public IEnumerator NarrowProviderCredentialsRemainVisible()
         {
+            var skinIndex = typeof(EditorGUIUtility).GetProperty("skinIndex", Static);
+            object originalSkin = skinIndex.GetValue(null);
+            try
+            {
+                foreach (int skin in new[] { 1, 0 })
+                {
+                    skinIndex.SetValue(null, skin);
+                    UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+                    for (int i = 0; i < 12; i++)
+                        yield return null;
+                    Assert.AreEqual(skin == 1, EditorGUIUtility.isProSkin);
+                    yield return CaptureProviderCredentials();
+                }
+            }
+            finally
+            {
+                skinIndex.SetValue(null, originalSkin);
+                UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+            }
+        }
+
+        private IEnumerator CaptureProviderCredentials()
+        {
             Assert.IsTrue(Guid.TryParseExact(Environment.GetEnvironmentVariable("UNITY_MCP_NATIVE_QA_NONCE"), "N", out _));
             var slot = typeof(SecureKeyStore).GetField("_current", Static);
             var previous = (ISecureKeyStore)slot.GetValue(null);
@@ -324,6 +402,44 @@ namespace MCPForUnityTests.EditMode.Windows
             {
                 navigation?.Dispose();
                 window.Close();
+                AssetGenModelCatalog.ResetForTests(true);
+                SecureKeyStore.OverrideForTests(previous);
+            }
+        }
+
+        [Test]
+        public void BundledModelRefreshFollowsSharedSelectionWithoutReplacingCredentials()
+        {
+            var slot = typeof(SecureKeyStore).GetField("_current", Static);
+            var previous = (ISecureKeyStore)slot.GetValue(null);
+            string originalModel = AssetGenPrefs.GetSelectedModel("model", "tripo");
+            var window = ScriptableObject.CreateInstance<EvidenceWindow>();
+            try
+            {
+                SecureKeyStore.OverrideForTests(new Store());
+                AssetGenModelCatalog.ResetForTests(true);
+                var transport = new FakeHttpTransport { Handler = _ => throw new InvalidOperationException("No network") };
+                FalModelCatalog.TransportOverrideForTests = transport;
+                OpenRouterModelCatalog.TransportOverrideForTests = transport;
+                AssetGenPrefs.SetSelectedModel("model", "tripo", AssetGenModelCatalog.ForProvider("tripo", "model").First().Id);
+                window.ShowUtility();
+                var root = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(Base + "Components/AssetGen/McpAssetGenSection.uxml").CloneTree();
+                root.Q("blender-bridge-panel").RemoveFromHierarchy();
+                window.rootVisualElement.Add(root);
+                var section = new McpAssetGenSection(root);
+                var key = root.Q<TextField>("provider-key-tripo");
+                key.value = "synthetic-key";
+                AssetGenPrefs.SetSelectedModel("model", "tripo", "external-synthetic-model");
+                section.Refresh();
+                StringAssert.Contains("external-synthetic-model", root.Q("provider-model-model-tripo").Q<DropdownField>().value);
+                Assert.AreSame(key, root.Q<TextField>("provider-key-tripo"));
+                Assert.AreEqual("synthetic-key", key.value);
+                Assert.IsEmpty(transport.RecordedRequests);
+            }
+            finally
+            {
+                window.Close();
+                AssetGenPrefs.SetSelectedModel("model", "tripo", originalModel);
                 AssetGenModelCatalog.ResetForTests(true);
                 SecureKeyStore.OverrideForTests(previous);
             }
