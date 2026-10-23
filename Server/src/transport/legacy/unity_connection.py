@@ -1537,6 +1537,38 @@ async def get_authenticated_stdio_generation(instance_id: str | None) -> str | N
         return None
 
 
+async def get_stdio_catalog_generation(instance_id: str | None) -> str | None:
+    """Retain availability during active work without authorizing cached reads.
+
+    An RPC may own the socket throughout a long Unity operation. The stricter
+    cache probe cannot inspect that socket, but its authenticated catalog still
+    caps discovery. Only the exact retained connection/session may supply this
+    fallback; an idle FIN, retirement or replacement invalidates it.
+    """
+    if not instance_id or config.http_remote_hosted:
+        return None
+    pool = _unity_connection_pool
+    connection = pool._connections.get(instance_id) if pool is not None else None
+    session = connection.authenticated_session if connection is not None else None
+    sock = connection.sock if connection is not None else None
+    generation = await get_authenticated_stdio_generation(instance_id)
+    if generation is not None:
+        return generation
+    if (
+        session is not None
+        and sock is not None
+        and pool is _unity_connection_pool
+        and pool._connections.get(instance_id) is connection
+        and instance_id in pool._known_instances
+        and not connection._retired
+        and connection.authenticated_session is session
+        and connection.sock is sock
+        and connection.session_generation == session.session_generation
+    ):
+        return session.session_generation
+    return None
+
+
 # -----------------------------
 # Centralized retry helpers
 # -----------------------------

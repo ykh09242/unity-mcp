@@ -1,6 +1,8 @@
 """Availability is a final cap, never a change to a client's selection."""
 
 import asyncio
+import socket
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,6 +15,8 @@ from models.models import ToolDefinitionModel
 from services.custom_tool_service import CustomToolService
 from services.tools import sync_tool_visibility_from_unity
 from services.tools.manage_tools import manage_tools
+from tests.timing import await_signal, watchdog_timeout
+import transport.legacy.unity_connection as connections
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 from transport.unity_instance_middleware import UnityInstanceMiddleware
@@ -222,3 +226,57 @@ async def test_local_call_admission_checks_availability_after_client_selection(c
         await publish(registry, "one", ["texture_probe"])
         with pytest.raises(MCPError, match="disabled or unavailable"):
             await client.call_tool("effect_probe", {}, raise_on_error=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("available", [["effect_probe"], []])
+async def test_busy_stdio_keeps_catalog_cap_without_reusing_cached_reads(
+    catalog_server, monkeypatch, available
+):
+    server, _, service, selected = catalog_server
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    left, right = socket.socketpair()
+    connection = connections.UnityConnection(port=1111, auth_token_provider=lambda _: "x" * 64)
+    connection.sock = left
+    connection.session_generation = "socket-one"
+    connection.authenticated_session = SimpleNamespace(session_generation="socket-one")
+    pool = connections.UnityConnectionPool()
+    instance = selected["project"]
+    pool._known_instances = {instance: SimpleNamespace(id=instance)}
+    pool._connections = {instance: connection}
+    monkeypatch.setattr(connections, "_unity_connection_pool", pool)
+    service.replace_project_catalog(
+        "first",
+        [ToolDefinitionModel(name=name) for name in available],
+        kind="stdio",
+        generation="socket-one",
+        publish_global=False,
+    )
+    entered, release = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def command_owns_socket():
+        with connection._io_lock:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(watchdog_timeout()), "test did not release the owned socket"
+
+    worker = threading.Thread(target=command_owns_socket)
+    try:
+        async with Client(server, mode="legacy") as client:
+            await client.call_tool("manage_tools", {"action": "activate", "group": "vfx"})
+            worker.start()
+            await await_signal(entered, "command acquiring the socket")
+            assert await connections.get_authenticated_stdio_generation(instance) is None
+            assert await names(client) == {*available, "manage_tools"}
+            with pytest.raises(MCPError, match="disabled or unavailable"):
+                await client.call_tool("texture_probe", {}, raise_on_error=False)
+            if available:
+                assert not (await client.call_tool("effect_probe", {})).is_error
+            assert worker.is_alive(), "discovery must not interrupt the running command"
+    finally:
+        release.set()
+        if worker.ident is not None:
+            await asyncio.to_thread(worker.join, watchdog_timeout())
+        left.close()
+        right.close()
+    assert not worker.is_alive()

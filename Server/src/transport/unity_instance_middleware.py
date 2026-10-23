@@ -885,13 +885,13 @@ class UnityInstanceMiddleware(Middleware):
         active_instance = await ctx.get_state("unity_instance")
         if (config.transport_mode or "stdio").lower() == "stdio":
             from services.custom_tool_service import CustomToolService
-            from transport.legacy.unity_connection import get_authenticated_stdio_generation
+            from transport.legacy.unity_connection import get_stdio_catalog_generation
 
             service = CustomToolService._instance
             if service is None or service._mcp is not ctx.fastmcp or not active_instance:
                 return None
             project = active_instance.rsplit("@", 1)[-1]
-            generation = await get_authenticated_stdio_generation(active_instance)
+            generation = await get_stdio_catalog_generation(active_instance)
             return service.get_stdio_availability(project, generation)
         project_hashes = self._resolve_candidate_project_hashes(active_instance)
         try:
