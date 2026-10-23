@@ -96,3 +96,28 @@ performance advantage or justify bypassing authorization.
 This matches the documented [experimental provider limitations](https://gofastmcp.com/servers/providers/experimental-skills).
 Revisit only when transforms, immutable provenance and the existing authorization
 and fallback contracts can all be preserved.
+
+
+## Build and dependency acquisition
+
+The server uses Starlette/MCP routes and has no FastAPI import or plugin contract.
+FastAPI is no longer a direct runtime dependency. External extensions that import
+FastAPI must declare their own dependency instead of relying on the server to
+install an unrelated framework.
+
+`Server/pyproject.toml` pins the isolated build backend and wheel's packaging
+dependency exactly. Unlike a uv-only workspace constraint, `build-system.requires`
+also accompanies immutable archive installs and pip builds. Runtime requirements
+and the reviewed SDK lock remain separate. Update these three build pins as one
+reviewed unit, then exercise an isolated build and cached/offline registration.
+
+Python CI keeps the existing uv caches and includes both the project metadata and
+lock in cache keys. uv's native HTTP retry count is five; dependency connection
+and read allowances are 30 and 60 seconds. These apply only to uv acquisition,
+not Unity commands, MCP requests, builds or assertions. Successful cached requests
+incur no delay. Persistent download errors, resolver/build failures and test
+failures still fail their step; no workflow or test-suite retry loop is added.
+Cold bootstrap intentionally uses its own empty cache before its offline pass.
+
+See uv's [HTTP settings](https://docs.astral.sh/uv/reference/environment/#uv_http_retries)
+and [build dependency behavior](https://docs.astral.sh/uv/concepts/projects/dependencies/#build-dependencies).
