@@ -37,6 +37,9 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
 
         public VisualElement Root { get; }
 
+        internal Newtonsoft.Json.Linq.JObject CaptureDiagnosticState() =>
+            new Newtonsoft.Json.Linq.JObject { ["known"] = resourceToggleMap.Count, ["enabled"] = resourceToggleMap.Values.Count(toggle => toggle.value) };
+
         public McpResourcesSection(VisualElement root)
         {
             Root = root;

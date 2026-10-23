@@ -10,6 +10,7 @@
                     <ui:Label name="connection-status" text="Disconnected" class="status-text" />
                 </ui:VisualElement>
                 <ui:Button name="connection-toggle" text="Connect" class="action-button primary-button" />
+                <ui:Button name="connection-diagnostics" text="Diagnostic bundle" class="action-button" />
             </ui:VisualElement>
             <ui:Label name="connection-blocker" class="help-text status-warning hidden" />
             <ui:Button name="connection-fix" text="Review URL" class="action-button hidden" />

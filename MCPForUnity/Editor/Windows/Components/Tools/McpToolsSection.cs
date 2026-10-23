@@ -83,6 +83,25 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
         public VisualElement Root { get; }
 
+        internal JObject CaptureDiagnosticState()
+        {
+            var status = statusSource?.Status;
+            return new JObject
+            {
+                ["known"] = toolToggleMap.Count,
+                ["enabled"] = toolToggleMap.Values.Count(toggle => toggle.value),
+                ["application"] =
+                    status == null
+                        ? null
+                        : new JObject
+                        {
+                            ["stage"] = status.Stage,
+                            ["desired_revision"] = status.DesiredRevision,
+                            ["confirmed_revision"] = status.ConfirmedRevision,
+                        },
+            };
+        }
+
         public McpToolsSection(VisualElement root)
             : this(root, null, null, null) { }
 

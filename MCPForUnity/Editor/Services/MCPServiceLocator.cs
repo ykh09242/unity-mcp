@@ -34,6 +34,7 @@ namespace MCPForUnity.Editor.Services
         public static IResourceDiscoveryService ResourceDiscovery => _resourceDiscoveryService ??= new ResourceDiscoveryService();
         public static IServerManagementService Server => _serverManagementService ??= new ServerManagementService();
         public static TransportManager TransportManager => _transportManager ??= new TransportManager();
+        internal static TransportManager ExistingTransportManager => _transportManager;
         public static IPackageDeploymentService Deployment => _packageDeploymentService ??= new PackageDeploymentService();
 
         /// <summary>

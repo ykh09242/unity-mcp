@@ -27,7 +27,7 @@ using UnityEngine.UIElements;
 
 namespace MCPForUnity.Editor.Windows
 {
-    public class MCPForUnityEditorWindow : EditorWindow
+    public partial class MCPForUnityEditorWindow : EditorWindow
     {
         // Section controllers
         private McpConnectionSection connectionSection;
@@ -278,6 +278,7 @@ namespace MCPForUnity.Editor.Windows
                 var connectionRoot = connectionTree.Instantiate();
                 clientsContainer.Add(connectionRoot);
                 connectionSection = new McpConnectionSection(connectionRoot);
+                connectionSection.OnDiagnosticsRequested += ShowDiagnostics;
                 connectionSection.OnManualConfigUpdateRequested += () => clientConfigSection?.UpdateManualConfiguration();
                 connectionSection.OnTransportChanged += () => clientConfigSection?.RefreshSelectedClient(forceImmediate: true);
             }
@@ -313,6 +314,7 @@ namespace MCPForUnity.Editor.Windows
                 var advancedRoot = advancedTree.Instantiate();
                 advancedContainer.Add(advancedRoot);
                 advancedSection = new McpAdvancedSection(advancedRoot);
+                advancedSection.OnDiagnosticsRequested += ShowDiagnostics;
 
                 // Wire up events from Advanced section
                 advancedSection.OnGitUrlChanged += () => clientConfigSection?.UpdateManualConfiguration();
@@ -724,11 +726,17 @@ namespace MCPForUnity.Editor.Windows
             activePanel = panel;
             activityPanel?.EnableInClassList("hidden", panel != ActivePanel.Activity);
             if (panel == ActivePanel.Activity && activitySection == null)
+            {
                 activitySection = new McpActivitySection(rootVisualElement.Q<VisualElement>("activity-container"));
+                activitySection.DiagnosticsRequested += ShowDiagnostics;
+            }
             activitySection?.SetVisible(panel == ActivePanel.Activity);
             graphPanel?.EnableInClassList("hidden", panel != ActivePanel.ReferenceGraph);
             if (panel == ActivePanel.ReferenceGraph && graphSection == null)
+            {
                 graphSection = new McpReferenceGraphSection(rootVisualElement.Q<VisualElement>("graph-container"));
+                graphSection.DiagnosticsRequested += ShowDiagnostics;
+            }
             graphSection?.SetVisible(panel == ActivePanel.ReferenceGraph);
             clientsPanel?.EnableInClassList("hidden", panel != ActivePanel.Clients);
             depsPanel?.EnableInClassList("hidden", panel != ActivePanel.Deps);

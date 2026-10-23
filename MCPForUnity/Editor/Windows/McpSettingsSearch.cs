@@ -45,6 +45,7 @@ namespace MCPForUnity.Editor.Windows
             new("Reference source access", "graph", "graph-kind", "external repository permission grant", "External sources"),
             new("Reference wrapper rules", "graph", "graph-kind", "Resources Addressables loader analysis", "Wrapper rules"),
             new("Reference collection policy", "graph", "graph-kind", "runtime snapshot coverage", "Collection policy"),
+            new("Diagnostic bundle", "advanced", "diagnostics-open", "support redacted export preview connection activity references"),
             new("Debug logging", "advanced", "debug-logs-toggle", "diagnostics console"),
             new("Log record file", "advanced", "log-record-toggle", "diagnostics output"),
             new("Server startup", "advanced", "auto-start-on-load-toggle", "HTTP editor startup"),
