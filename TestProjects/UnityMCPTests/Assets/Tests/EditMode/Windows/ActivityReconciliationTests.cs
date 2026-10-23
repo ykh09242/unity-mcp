@@ -62,7 +62,7 @@ namespace MCPForUnityTests.EditMode.Windows
             section.Tick();
             var labels = retained.Query<Label>().ToList().Select(label => label.text).ToArray();
             CollectionAssert.AreEqual(
-                new[] { "Build · 1", "State: unknown · Phase: reconciling", "Later evidence", "Not supported", "Elapsed: 0:00:10" },
+                new[] { "Build", "State: unknown · Phase: reconciling", "ID: 1", "Later evidence", "Not supported", "Elapsed: 0:00:10" },
                 labels
             );
             Assert.IsTrue(retained.Q<Button>("activity-cancel").enabledSelf);
@@ -111,7 +111,7 @@ namespace MCPForUnityTests.EditMode.Windows
         }
 
         [UnityTest]
-        public IEnumerator RepeatedActivityRevisionsMeasureCompleteUpdates()
+        public IEnumerator RepeatedActivityRevisionsMeasureVisiblePageUpdates()
         {
             Assert.AreNotEqual(UnityEngine.Rendering.GraphicsDeviceType.Null, SystemInfo.graphicsDeviceType);
             var window = ScriptableObject.CreateInstance<ActivityWindow>();
@@ -160,11 +160,11 @@ namespace MCPForUnityTests.EditMode.Windows
                             allocationEvents = recorder.Count;
                         }
                         var list = window.rootVisualElement.Q("activity-rows");
-                        CollectionAssert.AreEqual(rows.Select(row => "activity-" + row.Key), list.Children().Select(child => child.name));
+                        CollectionAssert.AreEqual(rows.Take(25).Select(row => "activity-" + row.Key), list.Children().Select(child => child.name));
                         if (cohort.changed)
-                            Assert.AreEqual("Odd progress", ((Label)list[0][2]).text);
+                            Assert.IsTrue(list[0].Query<Label>().ToList().Any(label => label.text == "Odd progress"));
                         TestContext.WriteLine(
-                            $"BETA10_ROWS rows={cohort.count} changed={cohort.changed} revisions=100 repetition={repetition} ms={timer.Elapsed.TotalMilliseconds:F3} alloc_events={allocationEvents}"
+                            $"ACTIVITY_PAGE retained={cohort.count} rendered={list.childCount} changed={cohort.changed} revisions=100 repetition={repetition} ms={timer.Elapsed.TotalMilliseconds:F3} alloc_events={allocationEvents}"
                         );
                     }
                     section.Dispose();
