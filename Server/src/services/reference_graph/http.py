@@ -49,6 +49,11 @@ async def handle(request, service):
             "import_config",
             "cleanup",
             "watch",
+            "query",
+            "explain",
+            "impact",
+            "path",
+            "release_query",
         }:
             raise ValueError("Unsupported operations action")
         ctx = EditorContext(body["instance"], (body["editor_id"], body["project_id"]))

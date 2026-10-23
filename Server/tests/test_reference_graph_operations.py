@@ -325,6 +325,14 @@ async def test_remote_http_principal_permissions_and_expiry(setup, monkeypatch):
         first = await handle(request, service)
         assert first.status_code == 200
         first_scope = json.loads(first.body)["data"]["scope"]
+        for action, options in (
+            ("query", {"node": "missing"}),
+            ("explain", {"id": "missing"}),
+            ("impact", {"node": "missing"}),
+            ("path", {"node": "missing", "target": "target"}),
+        ):
+            payload.update(action=action, options=options)
+            assert (await handle(request, service)).status_code == 200
         payload["action"] = "cleanup"
         payload["options"] = {"before": time.time()}
         assert (await handle(request, service)).status_code == 403
@@ -340,5 +348,60 @@ async def test_remote_http_principal_permissions_and_expiry(setup, monkeypatch):
         assert json.loads(second.body)["data"]["scope"] != first_scope
         authority.revoked = True
         assert (await handle(request, service)).status_code == 403
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_editor_explorer_routes_preserve_paging_and_scope(setup):
+    from transport.local_auth_middleware import AUTHENTICATED_LOCAL_STATE
+
+    service, ctx = setup
+    body = {
+        "action": "query",
+        "instance": "one",
+        "editor_id": "one",
+        "project_id": "project",
+        "options": {"node": "a", "direction": "outgoing", "limit": 25},
+    }
+
+    class Request:
+        state = SimpleNamespace()
+
+        async def json(self):
+            return body
+
+    request = Request()
+    setattr(request.state, AUTHENTICATED_LOCAL_STATE, True)
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        for index in range(61):
+            entry.workspace.store.put_declaration(
+                str(index), "a", Edge(f"b-{index}", "manual"), expected_version=0
+            )
+        edges = []
+        while True:
+            response = await handle(request, service)
+            assert response.status_code == 200
+            page = json.loads(response.body)["data"]
+            assert len(page["edges"]) <= 25
+            edges.extend(page["edges"])
+            if page["next_cursor"] is None:
+                break
+            body["options"]["cursor"] = page["next_cursor"]
+        assert len({edge["id"] for edge in edges}) == 61
+        for action, options in (
+            ("explain", {"id": edges[0]["id"]}),
+            ("impact", {"node": "a", "direction": "outgoing", "limit": 25}),
+            ("path", {"node": "a", "target": "b-0", "direction": "outgoing", "limit": 25}),
+        ):
+            body.update(action=action, options=options)
+            response = await handle(request, service)
+            assert response.status_code == 200
+            assert "graph_status" in json.loads(response.body)["data"]
+        body["editor_id"] = "another-editor"
+        assert (await handle(request, service)).status_code == 409
+        body.update(action="declare", editor_id="one")
+        assert (await handle(request, service)).status_code == 400
     finally:
         await service.aclose()
