@@ -65,6 +65,13 @@ namespace MCPForUnity.Editor.Windows
         private static readonly HashSet<MCPForUnityEditorWindow> OpenWindows = new();
         private static bool dependencyActionInFlight;
         private VisualElement dependencySection;
+        private readonly Dictionary<string, string> dependencySelections = new();
+        private readonly Dictionary<string, string> dependencySelectionBaselines = new();
+        private Func<Dictionary<string, string>> readDependencyRegistered = GetRegisteredUpmVersions;
+        private Func<Dictionary<string, string>> readDependencyDeclared = GetDeclaredUpmVersions;
+        private Action<string, Action<string[], string>> searchDependencyVersions = SearchCompatibleVersions;
+        private Action refreshDependencyBulkState = null;
+        private static string dependencyOperationStatus = string.Empty;
         private string expectedServerSource;
         private bool guiCreated = false;
         private bool toolsLoaded = false;
@@ -798,6 +805,9 @@ namespace MCPForUnity.Editor.Windows
 
         private void BuildDependenciesSection(VisualElement container)
         {
+            var registeredPackages = readDependencyRegistered();
+            var declaredPackages = readDependencyDeclared();
+            var installedPackages = MergeDependencyVersions(registeredPackages, declaredPackages);
             var section = new VisualElement();
             dependencySection = section;
             section.SetEnabled(!dependencyActionInFlight);
@@ -813,6 +823,17 @@ namespace MCPForUnity.Editor.Windows
             var serverVersions = new Label(ServerVersionDiagnostics.Describe(expectedServerSource, DateTime.UtcNow)) { name = "stdio-server-versions" };
             serverVersions.AddToClassList("help-text");
             content.Add(serverVersions);
+            var refresh = new Button(RefreshDependencies) { text = "Refresh package state", name = "dependencies-refresh" };
+            refresh.AddToClassList("tool-action-button");
+            content.Add(refresh);
+            var snapshotNote = new Label(
+                "Project scope. Registered packages are the last state reported by Unity; refresh after Package Manager changes. Edited version choices are kept."
+            );
+            snapshotNote.AddToClassList("help-text");
+            content.Add(snapshotNote);
+            var operationStatus = new Label(dependencyOperationStatus) { name = "dependencies-operation-status" };
+            operationStatus.AddToClassList("help-text");
+            content.Add(operationStatus);
             serverVersions.schedule.Execute(() => serverVersions.text = ServerVersionDiagnostics.Describe(expectedServerSource, DateTime.UtcNow)).Every(1000);
 
             // Install All / Uninstall All buttons
@@ -820,7 +841,12 @@ namespace MCPForUnity.Editor.Windows
             bulkRow.AddToClassList("tool-actions");
 
             var upmPackages = new[] { "com.unity.probuilder", "com.unity.cinemachine", "com.unity.visualeffectgraph", "com.unity.cloud.gltfast" };
-            var selectedPackages = upmPackages.ToDictionary(id => id, id => string.Empty);
+            var selectedPackages = dependencySelections;
+            foreach (string id in upmPackages)
+                if (!selectedPackages.ContainsKey(id))
+                    selectedPackages[id] = string.Empty;
+            var bulkValidation = new Label { name = "dependencies-bulk-validation" };
+            bulkValidation.AddToClassList("help-text");
 
             Button installAllButton = null;
             installAllButton = new Button(() =>
@@ -829,11 +855,7 @@ namespace MCPForUnity.Editor.Windows
                 var missing = upmPackages.Where(id => !installed.ContainsKey(id)).ToArray();
                 if (missing.Any(id => !TryGetExactPackageSelection(id, selectedPackages[id], out _)))
                 {
-                    EditorUtility.DisplayDialog(
-                        "Choose Dependency Versions",
-                        "Enter an exact package@version for each missing package before installing all. Installed packages are preserved.",
-                        "OK"
-                    );
+                    bulkValidation.text = "Choose an exact version for each missing package. Existing declarations and installed packages are preserved.";
                     return;
                 }
                 if (
@@ -910,6 +932,7 @@ namespace MCPForUnity.Editor.Windows
             bulkHelp.AddToClassList("help-text");
             bulk.Add(bulkHelp);
             bulk.Add(bulkRow);
+            bulk.Add(bulkValidation);
             content.Add(bulk);
 
             // Roslyn — for execute_code modern C# support
@@ -951,12 +974,24 @@ namespace MCPForUnity.Editor.Windows
                     : null
             );
 
-            var installedPackages = GetInstalledUpmVersions();
+            refreshDependencyBulkState = () =>
+            {
+                var missing = upmPackages.Where(id => !installedPackages.ContainsKey(id)).ToArray();
+                bool valid = missing.All(id => TryGetExactPackageSelection(id, selectedPackages[id], out _));
+                bool needed = missing.Length > 0 || !roslynLoaded && !roslynInstalledLocally;
+                installAllButton.SetEnabled(valid && needed);
+                bulkValidation.text =
+                    !needed ? "All optional dependencies are already present."
+                    : valid ? "Only missing packages will be installed at your selected exact versions."
+                    : "Choose an exact version for each missing package below before installing all.";
+            };
             AddUpmDependencyRow(
                 content,
                 "com.unity.probuilder",
                 selectedPackages,
                 installedPackages,
+                registeredPackages,
+                declaredPackages,
                 "ProBuilder",
                 "Required for the manage_probuilder tool (probuilder group)."
             );
@@ -967,6 +1002,8 @@ namespace MCPForUnity.Editor.Windows
                 "com.unity.cinemachine",
                 selectedPackages,
                 installedPackages,
+                registeredPackages,
+                declaredPackages,
                 "Cinemachine",
                 "Enhances manage_camera with virtual camera support (core group)."
             );
@@ -977,6 +1014,8 @@ namespace MCPForUnity.Editor.Windows
                 "com.unity.visualeffectgraph",
                 selectedPackages,
                 installedPackages,
+                registeredPackages,
+                declaredPackages,
                 "VFX Graph",
                 "Enables VisualEffect support in manage_vfx tool (vfx group)."
             );
@@ -987,84 +1026,290 @@ namespace MCPForUnity.Editor.Windows
                 "com.unity.cloud.gltfast",
                 selectedPackages,
                 installedPackages,
+                registeredPackages,
+                declaredPackages,
                 "glTFast (glTF/GLB import)",
                 "Enables .glb/.gltf model import for the AI Asset Generation tools (asset_gen group)."
             );
 
+            refreshDependencyBulkState();
             section.Add(content);
             container.Add(section);
         }
 
-        private static void AddUpmDependencyRow(
+        private void RefreshDependencies()
+        {
+            var parent = dependencySection?.parent;
+            if (parent == null || dependencyActionInFlight)
+                return;
+            var previous = dependencySection;
+            try
+            {
+                BuildDependenciesSection(parent);
+                previous.RemoveFromHierarchy();
+            }
+            catch (Exception)
+            {
+                SetDependencyOperationStatus("Could not read package state. Check Package Manager and refresh; edited choices are retained.");
+            }
+        }
+
+        private void AddUpmDependencyRow(
             VisualElement parent,
             string packageId,
             IDictionary<string, string> selectedPackages,
             IReadOnlyDictionary<string, string> installedPackages,
+            IReadOnlyDictionary<string, string> registeredPackages,
+            IReadOnlyDictionary<string, string> declaredPackages,
             string name,
             string description
         )
         {
-            bool isInstalled = installedPackages.TryGetValue(packageId, out string installedVersion);
+            bool present = installedPackages.ContainsKey(packageId);
+            registeredPackages.TryGetValue(packageId, out string registeredVersion);
+            declaredPackages.TryGetValue(packageId, out string declaredSource);
+            string baselineSource = declaredSource ?? registeredVersion;
+            string baseline = TryGetExactPackageSelection(packageId, packageId + "@" + baselineSource, out var exactBaseline) ? exactBaseline : packageId + "@";
+            if (
+                !selectedPackages.TryGetValue(packageId, out var draft)
+                || string.IsNullOrEmpty(draft)
+                || dependencySelectionBaselines.TryGetValue(packageId, out var previousBaseline) && draft == previousBaseline
+            )
+                selectedPackages[packageId] = baseline;
+            dependencySelectionBaselines[packageId] = baseline;
             var selection = new TextField("Exact package@version")
             {
                 name = packageId + "-version",
-                value = isInstalled ? packageId + "@" + installedVersion : packageId + "@",
-                tooltip = "Enter an exact registry version compatible with this Unity project, for example " + packageId + "@1.2.3.",
+                value = selectedPackages[packageId],
+                tooltip =
+                    "Choose an exact registry version compatible with this project. Existing Git/local declarations are preserved until an explicit change.",
             };
-            selectedPackages[packageId] = selection.value;
-            selection.RegisterValueChangedCallback(evt => selectedPackages[packageId] = evt.newValue);
+            var message = new Label { name = packageId + "-message", enableRichText = false };
+            message.AddToClassList("help-text");
             var row = AddDependencyRow(
                 parent,
                 name,
                 description,
-                isInstalled,
-                "Installed " + installedVersion,
-                "Not installed — choose an exact version to install",
-                done =>
-                {
-                    if (!TryGetExactPackageSelection(packageId, selection.value, out string selected))
-                    {
-                        EditorUtility.DisplayDialog("Choose Dependency Version", "Enter " + packageId + "@version with an exact version number.", "OK");
-                        done();
-                        return;
-                    }
-                    if (GetInstalledUpmVersions().ContainsKey(packageId))
-                    {
-                        done();
-                        return;
-                    }
-                    InstallUpmPackage(selected, done);
-                },
+                present,
+                string.Empty,
+                "Not installed — choose a compatible or exact version",
+                null,
                 done => RemoveUpmPackage(packageId, done)
             );
-            selection.AddToClassList("package-version-field");
-            row.Insert(row.IndexOf(row.Q(className: "package-actions")), selection);
-            if (isInstalled)
-            {
-                Button change = null;
-                change = new Button(() =>
-                {
-                    if (!TryGetExactPackageSelection(packageId, selection.value, out string selected))
-                    {
-                        EditorUtility.DisplayDialog("Choose Dependency Version", "Enter " + packageId + "@version with an exact version number.", "OK");
-                        return;
-                    }
-                    if (
-                        !EditorUtility.DisplayDialog(
-                            "Change Dependency Version",
-                            "Install " + selected + "? This explicitly replaces the installed version.",
-                            "Change Version",
-                            "Cancel"
+            row.name = "dependency-" + packageId;
+            var status = row.Q<Label>("dependency-status");
+            status.name = packageId + "-status";
+            string declaredDisplay = TryGetExactPackageSelection(packageId, packageId + "@" + declaredSource, out _)
+                ? declaredSource
+                : "Git/local or non-exact source (preserved)";
+            status.text =
+                registeredVersion != null
+                    ? "Installed (registered): "
+                        + registeredVersion
+                        + (
+                            declaredSource != null && declaredSource != registeredVersion
+                                ? ". Declared: " + declaredDisplay + "; resolution may be pending."
+                                : string.Empty
                         )
-                    )
-                        return;
-                    RunDependencyAction(change, "Installing...", "Change Version", done => InstallUpmPackage(selected, done));
-                })
+                : declaredSource != null
+                    ? "Declared: " + declaredDisplay + "; not registered. UPM may be resolving or have failed; inspect Package Manager and refresh."
+                : "Not declared or registered — choose a version to install.";
+            status.EnableInClassList("status-success", registeredVersion != null);
+            status.EnableInClassList("status-warning", registeredVersion == null);
+            var stateIcon = row.Q<Label>("dependency-state-icon");
+            stateIcon.text = registeredVersion != null ? "\u2713" : "\u2014";
+            stateIcon.EnableInClassList("status-success", registeredVersion != null);
+            stateIcon.EnableInClassList("status-warning", registeredVersion == null);
+
+            var choices = new DropdownField("Compatible versions") { name = packageId + "-versions" };
+            choices.choices = new List<string> { "Choose a version" };
+            choices.SetValueWithoutNotify("Choose a version");
+            choices.SetEnabled(false);
+            choices.AddToClassList("package-version-field");
+            var lookupStatus = new Label("Find versions when needed; choosing one does not install it.") { name = packageId + "-lookup-status" };
+            lookupStatus.AddToClassList("help-text");
+            Button find = null;
+            find = new Button(() =>
+                RunDependencyAction(
+                    find,
+                    "Finding versions...",
+                    "Find compatible versions",
+                    done =>
+                    {
+                        lookupStatus.text = "Looking up registry versions compatible with this Unity Editor...";
+                        try
+                        {
+                            searchDependencyVersions(
+                                packageId,
+                                (versions, error) =>
+                                {
+                                    try
+                                    {
+                                        var valid = (versions ?? Array.Empty<string>())
+                                            .Where(version => TryGetExactPackageSelection(packageId, packageId + "@" + version, out _))
+                                            .Distinct()
+                                            .ToList();
+                                        choices.choices = new List<string> { "Choose a version" };
+                                        if (error == null)
+                                            choices.choices.AddRange(valid);
+                                        choices.SetValueWithoutNotify("Choose a version");
+                                        choices.SetEnabled(error == null && valid.Count > 0);
+                                        lookupStatus.text =
+                                            error != null ? "Version lookup failed. Check registry access and retry, or enter an exact version manually."
+                                            : valid.Count == 0
+                                                ? "No compatible versions were reported. Check Package Manager or enter an exact version manually."
+                                            : valid.Count + " compatible versions found. Select one, then explicitly apply it.";
+                                    }
+                                    finally
+                                    {
+                                        done();
+                                    }
+                                }
+                            );
+                        }
+                        catch (Exception)
+                        {
+                            lookupStatus.text = "Version lookup failed. Check registry access and retry, or enter an exact version manually.";
+                            done();
+                        }
+                    }
+                )
+            )
+            {
+                text = "Find compatible versions",
+                name = packageId + "-find-versions",
+            };
+            find.AddToClassList("tool-action-button");
+            choices.RegisterValueChangedCallback(evt =>
+            {
+                if (TryGetExactPackageSelection(packageId, packageId + "@" + evt.newValue, out var exact))
+                    selection.value = exact;
+            });
+            var manual = new Foldout { text = "Enter an exact version manually", value = false };
+            selection.AddToClassList("package-version-field");
+            manual.Add(selection);
+            var actions = row.Q(className: "package-actions");
+            row.Insert(row.IndexOf(actions), find);
+            row.Insert(row.IndexOf(actions), choices);
+            row.Insert(row.IndexOf(actions), lookupStatus);
+            row.Insert(row.IndexOf(actions), manual);
+            row.Insert(row.IndexOf(actions), message);
+
+            Button apply = null;
+            apply = new Button(() =>
+            {
+                if (!TryGetExactPackageSelection(packageId, selection.value, out string exact) || exact == packageId + "@" + baselineSource)
+                    return;
+                Dictionary<string, string> currentRegistered;
+                Dictionary<string, string> currentDeclared;
+                try
                 {
-                    text = "Change Version",
-                };
-                change.AddToClassList("action-button");
-                row.Q(className: "package-actions").Add(change);
+                    currentRegistered = readDependencyRegistered();
+                    currentDeclared = readDependencyDeclared();
+                }
+                catch (Exception)
+                {
+                    message.text = "Could not read current package state. Check Package Manager and refresh before applying.";
+                    apply.SetEnabled(false);
+                    return;
+                }
+                currentRegistered.TryGetValue(packageId, out var currentVersion);
+                currentDeclared.TryGetValue(packageId, out var currentSource);
+                if (currentVersion != registeredVersion || currentSource != declaredSource)
+                {
+                    message.text = "Package state changed outside this view. Refresh before applying; your version choice is retained.";
+                    apply.SetEnabled(false);
+                    return;
+                }
+                if (
+                    present
+                    && !EditorUtility.DisplayDialog(
+                        "Change Dependency Version",
+                        "Install " + exact + "? This explicitly replaces the current package declaration or source.",
+                        "Change Version",
+                        "Cancel"
+                    )
+                )
+                    return;
+                RunDependencyAction(apply, "Installing...", present ? "Change version" : "Install", done => InstallUpmPackage(exact, done));
+            })
+            {
+                text = present ? "Change version" : "Install",
+                name = packageId + "-apply",
+            };
+            apply.AddToClassList("action-button");
+            actions.Insert(0, apply);
+            void ValidateSelection()
+            {
+                bool valid = TryGetExactPackageSelection(packageId, selection.value, out var exact);
+                bool unchanged = valid && exact == packageId + "@" + baselineSource;
+                apply.SetEnabled(valid && !unchanged);
+                message.text =
+                    !valid ? "Choose a compatible version or enter an exact package@version."
+                    : unchanged ? "This exact version is already declared or installed."
+                    : present ? "Applying explicitly replaces the current package declaration."
+                    : "Ready to install the selected exact version.";
+            }
+            selection.RegisterValueChangedCallback(evt =>
+            {
+                selectedPackages[packageId] = evt.newValue;
+                ValidateSelection();
+                refreshDependencyBulkState?.Invoke();
+            });
+            ValidateSelection();
+        }
+
+        private static void SearchCompatibleVersions(string packageId, Action<string[], string> complete)
+        {
+            var request = UnityEditor.PackageManager.Client.Search(packageId, offlineMode: false);
+            EditorCoroutineUtility.StartCoroutineOwnerless(PollCompatibleVersions(request, packageId, complete));
+        }
+
+        private static IEnumerator PollCompatibleVersions(
+            UnityEditor.PackageManager.Requests.SearchRequest request,
+            string packageId,
+            Action<string[], string> complete
+        )
+        {
+            string[] versions = null;
+            string error = null;
+            while (true)
+            {
+                bool completed = false;
+                try
+                {
+                    completed = request.IsCompleted;
+                }
+                catch (Exception)
+                {
+                    error = "lookup_failed";
+                }
+                if (error != null || completed)
+                    break;
+                yield return null;
+            }
+            try
+            {
+                if (error == null && request.Status == UnityEditor.PackageManager.StatusCode.Success)
+                    versions = request.Result.FirstOrDefault(package => package.name == packageId)?.versions.compatible ?? Array.Empty<string>();
+                else
+                    error = "lookup_failed";
+            }
+            catch (Exception)
+            {
+                error = "lookup_failed";
+            }
+            complete(versions, error);
+        }
+
+        private static void SetDependencyOperationStatus(string message)
+        {
+            dependencyOperationStatus = message;
+            foreach (var window in OpenWindows)
+            {
+                var label = window?.dependencySection?.Q<Label>("dependencies-operation-status");
+                if (label != null)
+                    label.text = message;
             }
         }
 
@@ -1124,7 +1369,7 @@ namespace MCPForUnity.Editor.Windows
             nameLabel.tooltip = description;
             header.Add(nameLabel);
 
-            var statusIcon = new Label(isInstalled ? "\u2713" : "\u2717");
+            var statusIcon = new Label(isInstalled ? "\u2713" : "\u2717") { name = "dependency-state-icon" };
             statusIcon.AddToClassList(isInstalled ? "status-success" : "status-warning");
             header.Add(statusIcon);
 
@@ -1133,7 +1378,7 @@ namespace MCPForUnity.Editor.Windows
             purpose.AddToClassList("help-text");
             row.Add(purpose);
 
-            var statusText = new Label(isInstalled ? installedText : missingText);
+            var statusText = new Label(isInstalled ? installedText : missingText) { name = "dependency-status" };
             statusText.AddToClassList("help-text");
             statusText.AddToClassList(isInstalled ? "status-success" : "status-warning");
             row.Add(statusText);
@@ -1250,6 +1495,7 @@ namespace MCPForUnity.Editor.Windows
                     }
                     catch (Exception ex)
                     {
+                        SetDependencyOperationStatus("The last package operation failed. Inspect Package Manager and refresh; version choices are retained.");
                         Debug.LogError($"[MCP] Package {verb} failed: {ex.Message}");
                         failed = true;
                     }
@@ -1265,20 +1511,26 @@ namespace MCPForUnity.Editor.Windows
                     if (request.Status == UnityEditor.PackageManager.StatusCode.Success)
                     {
                         Debug.Log($"[MCP] Package {verb} succeeded.");
+                        SetDependencyOperationStatus(string.Empty);
                         foreach (var window in OpenWindows.Where(window => window != null).ToArray())
                         {
                             var parent = window.dependencySection?.parent;
                             if (parent == null)
                                 continue;
-                            window.dependencySection.RemoveFromHierarchy();
+                            var previous = window.dependencySection;
                             window.BuildDependenciesSection(parent);
+                            previous.RemoveFromHierarchy();
                         }
                     }
                     else
+                    {
+                        SetDependencyOperationStatus("The last package operation failed. Inspect Package Manager and refresh; version choices are retained.");
                         Debug.LogError($"[MCP] Package {verb} failed: {request.Error?.message}");
+                    }
                 }
                 catch (Exception ex)
                 {
+                    SetDependencyOperationStatus("The last package operation failed. Inspect Package Manager and refresh; version choices are retained.");
                     Debug.LogError($"[MCP] Package {verb} failed: {ex.Message}");
                 }
             }
@@ -1298,22 +1550,30 @@ namespace MCPForUnity.Editor.Windows
             Debug.Log($"[MCP] Removed {removed} owned Roslyn DLLs; unowned or modified files were preserved.");
         }
 
-        private static Dictionary<string, string> GetInstalledUpmVersions()
+        private static Dictionary<string, string> GetRegisteredUpmVersions()
         {
             var versions = new Dictionary<string, string>();
             foreach (var package in UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages())
                 versions[package.name] = package.version;
-            // Include declared packages while UPM is resolving; never silently replace
-            // an unresolved direct dependency or a Git/local package with a registry release.
-            string manifestPath = System.IO.Path.Combine(Application.dataPath, "../Packages/manifest.json");
-            if (System.IO.File.Exists(manifestPath))
-            {
-                foreach (var pair in ParseDeclaredUpmVersions(System.IO.File.ReadAllText(manifestPath)))
-                    if (!versions.ContainsKey(pair.Key))
-                        versions[pair.Key] = pair.Value;
-            }
             return versions;
         }
+
+        private static Dictionary<string, string> GetDeclaredUpmVersions()
+        {
+            string path = System.IO.Path.Combine(Application.dataPath, "../Packages/manifest.json");
+            return System.IO.File.Exists(path) ? ParseDeclaredUpmVersions(System.IO.File.ReadAllText(path)) : new Dictionary<string, string>();
+        }
+
+        private static Dictionary<string, string> MergeDependencyVersions(IDictionary<string, string> registered, IDictionary<string, string> declared)
+        {
+            var versions = new Dictionary<string, string>(registered);
+            foreach (var pair in declared)
+                if (!versions.ContainsKey(pair.Key))
+                    versions[pair.Key] = pair.Value;
+            return versions;
+        }
+
+        private static Dictionary<string, string> GetInstalledUpmVersions() => MergeDependencyVersions(GetRegisteredUpmVersions(), GetDeclaredUpmVersions());
 
         internal static Dictionary<string, string> ParseDeclaredUpmVersions(string manifest)
         {
