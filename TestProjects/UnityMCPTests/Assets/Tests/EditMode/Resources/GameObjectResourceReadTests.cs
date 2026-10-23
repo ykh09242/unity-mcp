@@ -37,7 +37,6 @@ namespace MCPForUnityTests.Editor.Resources
         private ResourceReadCounter _first;
         private ResourceReadCounter _second;
         private Scene _ownedScene;
-        private Scene _previousScene;
         private Object[] _previousSelection;
         private bool _captured;
 
@@ -49,15 +48,12 @@ namespace MCPForUnityTests.Editor.Resources
             _ownedScene = default;
             if (PrefabStageUtility.GetCurrentPrefabStage() != null)
                 Assert.Ignore("An unowned prefab stage is open.");
-            _previousScene = SceneManager.GetActiveScene();
             _previousSelection = Selection.objects;
             _captured = true;
             try
             {
-                _ownedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-                SceneManager.SetActiveScene(_ownedScene);
                 _owned = new GameObject("ResourceRead_" + Guid.NewGuid().ToString("N"));
-                SceneManager.MoveGameObjectToScene(_owned, _ownedScene);
+                _ownedScene = _owned.scene;
                 _first = _owned.AddComponent<ResourceReadCounter>();
                 _second = _owned.AddComponent<ResourceReadCounter>();
             }
@@ -85,25 +81,9 @@ namespace MCPForUnityTests.Editor.Resources
             }
             finally
             {
-                try
-                {
-                    if (_ownedScene.IsValid() && _ownedScene.isLoaded)
-                        EditorSceneManager.CloseScene(_ownedScene, true);
-                }
-                finally
-                {
-                    try
-                    {
-                        if (_previousScene.IsValid() && _previousScene.isLoaded)
-                            SceneManager.SetActiveScene(_previousScene);
-                    }
-                    finally
-                    {
-                        Selection.objects = _previousSelection;
-                        _captured = false;
-                        _owned = null;
-                    }
-                }
+                Selection.objects = _previousSelection;
+                _captured = false;
+                _owned = null;
             }
         }
 
@@ -140,6 +120,7 @@ namespace MCPForUnityTests.Editor.Resources
         private GameObject AddPagingChild(string name = "Duplicate")
         {
             var child = new GameObject(name);
+            SceneManager.MoveGameObjectToScene(child, _ownedScene);
             child.transform.SetParent(_owned.transform, false);
             return child;
         }
@@ -355,6 +336,7 @@ namespace MCPForUnityTests.Editor.Resources
         public void PropertyPage_ReadsOnlyTheSelectedOwnedComponent()
         {
             var request = Parameters();
+            request["evaluate_getters"] = true;
             request["pageSize"] = 1;
             request["cursor"] = 1;
             var response = Json(GameObjectComponentsResource.HandleCommand(request));
@@ -399,6 +381,7 @@ namespace MCPForUnityTests.Editor.Resources
         public void SelectedComponentReadCallsOnlySelectedGetters(bool byId)
         {
             var request = Parameters();
+            request["evaluate_getters"] = true;
             request["componentName"] = typeof(ResourceReadCounter).FullName;
             request[byId ? "component_instance_id" : "component_index"] = byId ? _second.GetInstanceIDCompat() : 1;
             var response = Json(GameObjectComponentResource.HandleCommand(request));
@@ -457,6 +440,7 @@ namespace MCPForUnityTests.Editor.Resources
         public void ComponentFullName_IgnoresCaseAndRetainsFirstMatch()
         {
             var request = Parameters();
+            request["evaluate_getters"] = true;
             request["component_name"] = typeof(ResourceReadCounter).FullName.ToUpperInvariant();
             var response = Json(GameObjectComponentResource.HandleCommand(request));
             Assert.IsTrue(response.Value<bool>("success"));
@@ -469,6 +453,7 @@ namespace MCPForUnityTests.Editor.Resources
         public void ComponentDateMembers_PreserveWireOffsetsAndReadFreshValues()
         {
             var request = Parameters();
+            request["evaluate_getters"] = true;
             request["componentName"] = typeof(ResourceReadCounter).FullName;
             var values = new[]
             {

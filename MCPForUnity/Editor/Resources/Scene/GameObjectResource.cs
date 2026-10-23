@@ -147,6 +147,32 @@ namespace MCPForUnity.Editor.Resources.Scene
     ///
     /// URI: unity://scene/gameobject/{instanceID}/components
     /// </summary>
+    internal static class ComponentInspectionOptions
+    {
+        internal static bool Read(JObject parameters, out bool evaluateGetters)
+        {
+            evaluateGetters = false;
+            var camel = parameters["evaluateGetters"];
+            var snake = parameters["evaluate_getters"];
+            if (camel != null && snake != null && !JToken.DeepEquals(camel, snake))
+                return false;
+            JToken token = camel ?? snake;
+            if (token == null)
+                return true;
+            if (token.Type == JTokenType.Boolean)
+            {
+                evaluateGetters = (bool)token;
+                return true;
+            }
+            if (token.Type == JTokenType.String && ((string)token == "true" || (string)token == "false"))
+            {
+                evaluateGetters = (string)token == "true";
+                return true;
+            }
+            return false;
+        }
+    }
+
     [McpForUnityResource("get_gameobject_components")]
     public static class GameObjectComponentsResource
     {
@@ -163,6 +189,9 @@ namespace MCPForUnity.Editor.Resources.Scene
             {
                 return new ErrorResponse("'instanceID' parameter is required.");
             }
+
+            if (!ComponentInspectionOptions.Read(@params, out bool evaluateGetters))
+                return new ErrorResponse("evaluate_getters must be true or false with matching aliases.");
 
             // Pagination parameters
             int pageSize = CoercePaginationInt(@params["pageSize"] ?? @params["page_size"], 25);
@@ -192,7 +221,7 @@ namespace MCPForUnity.Editor.Resources.Scene
                 {
                     if (includeProperties)
                     {
-                        componentData.Add(GameObjectSerializer.GetComponentDataBounded(component, budget));
+                        componentData.Add(GameObjectSerializer.GetComponentDataBounded(component, budget, true, evaluateGetters));
                     }
                     else
                     {
@@ -265,6 +294,8 @@ namespace MCPForUnity.Editor.Resources.Scene
                     ).Response();
                 if (parameters == null)
                     return new ComponentSelection.Failure("invalid_selection", "Parameters cannot be null.").Response();
+                if (!ComponentInspectionOptions.Read(parameters, out bool evaluateGetters))
+                    return new ErrorResponse("evaluate_getters must be true or false with matching aliases.");
                 ComponentSelection.ValidateSelectors(parameters, out int? index, out int? componentId);
                 JToken target = ComponentSelection.Alias(parameters, "instanceID", "instance_id");
                 if (target != null && parameters["id"] != null && !JToken.DeepEquals(target, parameters["id"]))
@@ -294,7 +325,7 @@ namespace MCPForUnity.Editor.Resources.Scene
                     {
                         gameObjectID = targetId,
                         gameObjectName = go.name,
-                        component = GameObjectSerializer.GetComponentData(selection.Component),
+                        component = GameObjectSerializer.GetComponentData(selection.Component, true, evaluateGetters),
                         selection = description,
                     },
                 };
@@ -334,6 +365,8 @@ namespace MCPForUnity.Editor.Resources.Scene
                 return new ErrorResponse("'instanceID' parameter is required.");
             }
 
+            if (!ComponentInspectionOptions.Read(@params, out bool evaluateGetters))
+                return new ErrorResponse("evaluate_getters must be true or false with matching aliases.");
             string componentName = ParamCoercion.CoerceString(@params["componentName"] ?? @params["component_name"] ?? @params["component"], null);
             if (string.IsNullOrEmpty(componentName))
             {
@@ -380,7 +413,7 @@ namespace MCPForUnity.Editor.Resources.Scene
                     {
                         gameObjectID = instanceID,
                         gameObjectName = go.name,
-                        component = GameObjectSerializer.GetComponentData(targetComponent),
+                        component = GameObjectSerializer.GetComponentData(targetComponent, true, evaluateGetters),
                     },
                 };
             }
