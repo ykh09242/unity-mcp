@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import TypeVar
 
 from fastmcp import Context, FastMCP
-from fastmcp.tools import FunctionTool
+from fastmcp.tools import FunctionTool, Tool
 from core.telemetry_decorator import telemetry_tool
 from core.logging_decorator import log_execution
 from utils.module_discovery import discover_modules
-from services.registry import get_registered_tools, TOOL_GROUPS, DEFAULT_ENABLED_GROUPS
+from services.registry import get_registered_tools, TOOL_GROUPS
 from services.registry.action_contracts import ACTION_RULES, action_input_schema
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -32,7 +32,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
 
     On local servers, non-default tool groups are disabled at the server level
     so that new sessions only see the *core* tools (plus always-visible meta-tools).
-    Stateful clients can adjust their session's groups via ``manage_tools``.
+    Legacy clients and trusted project-bound modern scopes can adjust selection
+    via ``manage_tools``. UNITY_MCP_TOOL_PROFILE selects minimal/core/full defaults.
     Hosted remote servers use each authenticated user's Unity catalog instead;
     request middleware filters discovery and rejects disabled tool calls.
     A session override cannot grant access to a tool absent from that catalog.
@@ -50,6 +51,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         logger.warning("No MCP tools registered!")
         return
 
+    definitions = {}
+    groups = {}
     for tool_info in tools:
         func = tool_info["func"]
         tool_name = tool_info["name"]
@@ -66,31 +69,35 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         wrapped = log_execution(tool_name, "Tool")(func)
         wrapped = telemetry_tool(tool_name)(wrapped)
         # Keep the global declaration unchanged: each server owns its decorators.
+        factory = FunctionTool if tool_name in ACTION_RULES else Tool
+        registered = factory.from_function(
+            wrapped, name=tool_name, description=description, run_in_thread=True, **kwargs
+        )
         if tool_name in ACTION_RULES:
-            registered = FunctionTool.from_function(
-                wrapped, name=tool_name, description=description, run_in_thread=True, **kwargs
-            )
             registered.parameters = action_input_schema(tool_name, registered.parameters)
-            mcp.add_tool(registered)
-        else:
-            mcp.tool(name=tool_name, description=description, **kwargs)(wrapped)
+        mcp.add_tool(registered)
+        definitions[tool_name] = registered
+        groups[tool_name] = tool_info.get("group")
         logger.debug(f"Registered tool: {tool_name} - {description}")
 
     logger.info(f"Registered {len(tools)} MCP tools")
 
-    # Local transports start with the same focused essentials. Unity's catalog
-    # caps availability; only explicit client selection enables optional groups.
     from core.config import config as server_config
+    from services.tool_discovery import ToolDiscovery
 
-    if server_config.transport_mode.lower() == "http" and server_config.http_remote_hosted:
-        logger.info("Remote HTTP transport: tool availability follows each user's Unity catalog.")
-    else:
-        for group_name in sorted(set(TOOL_GROUPS) - DEFAULT_ENABLED_GROUPS):
-            mcp.disable(tags={f"group:{group_name}"}, components={"tool"})
-        logger.info(
-            "Default tool groups: %s. Use manage_tools for more.",
-            ", ".join(sorted(DEFAULT_ENABLED_GROUPS)),
-        )
+    discovery = ToolDiscovery(
+        mcp,
+        definitions,
+        groups,
+        hosted=server_config.transport_mode.lower() == "http" and server_config.http_remote_hosted,
+    )
+    mcp._tool_discovery = discovery
+    for group_name in sorted(set(TOOL_GROUPS) - discovery.default_groups):
+        mcp.disable(tags={f"group:{group_name}"}, components={"tool"})
+    mcp.add_transform(discovery)
+    logger.info(
+        "Tool discovery profile: %s. Use manage_tools for full guidance.", discovery.profile
+    )
 
 
 async def sync_tool_visibility_from_unity(

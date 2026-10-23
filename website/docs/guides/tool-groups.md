@@ -10,6 +10,22 @@ description: Select focused feature tools, synchronize Editor choices, and prese
 
 Tools are grouped so an assistant can discover the relevant operations without loading the entire catalog. Visibility is separate from consent and authorization to mutate a project.
 
+## Discovery profiles
+
+Set `UNITY_MCP_TOOL_PROFILE` in the server process environment before starting it:
+
+| Profile | Initial built-in selection | Suitable clients |
+|---|---|---|
+| `minimal` | Always-visible server helpers only | Clients that can select tools and refresh their inventory |
+| `core` | Essential tools and server helpers | Default for local HTTP and stdio |
+| `full` | Every registered group, including compatibility | Fixed-inventory clients and broad workflows; default for hosted HTTP |
+
+Unity availability and authorization cap every profile. `full` does not grant native permission or install optional packages. Profiles change the initial built-in selection, not schemas, operation budgets or project-size limits. Custom catalogs retain their own project scope. An invalid profile fails at startup instead of silently choosing a different inventory.
+
+`manage_tools(action="describe", tool="query_physics")` returns the complete declared description, input schema and output schema without selecting or calling it. `list_groups` reports the configured profile, its default groups and the tools actually visible after the Unity availability cap.
+
+A controlled Windows probe of the production built-in registry through the real MCP SDK measured **4 tools / 3,247 UTF-8 schema bytes** for `minimal`, **41 / 88,101** for `core` and **119 / 377,019** for `full`. This fixture excludes the optional custom-tool dispatcher and live Editor catalogs. Expanding either smaller profile produced exactly the same 119 descriptors as `full`; representative valid and invalid calls preserved results and validation. These are serialized bytes, not model tokens or a claim about model task success. Client-side context handling and custom catalogs affect actual usage.
+
 ## Start with the needed feature
 
 Local HTTP and stdio start with essential `core` tools. Ask for `manage_tools(action="list_groups")` to discover all registered names and the `enabled_tools` actually visible in each group. Consult the generated [tool catalog](../reference/tools/index.md) for action and parameter schemas.
@@ -29,7 +45,7 @@ The larger combined tools are split by function. Each feature exposes only its s
 
 Essentials include `gameobject_create`, `gameobject_edit`, `prefab_inspect`, `scene_lifecycle`, `scene_inspect` and `asset_inspect`. More specialized features live in the optional `scene`, `assets`, `prefabs`, `camera`, `graphics`, `physics` or `ui` groups. Other groups such as `animation`, `testing` and `profiling` remain available.
 
-With a stateful MCP handshake, enable just one tool when that is sufficient:
+With a stateful handshake or a supported project-bound modern scope, enable just one tool when that is sufficient:
 
 ```text
 manage_tools(action="activate", tool="query_physics")
@@ -38,7 +54,7 @@ manage_tools(action="activate", group="physics")
 manage_tools(action="reset")
 ```
 
-For activation or deactivation, specify exactly one `tool` or `group`. Selection affects only that session. Reset restores the configured initial selection and returns `visible_tools`, the resulting list after Unity availability is applied. Enabling a tool never installs a Unity package or bypasses Editor selection, authenticated catalogs or explicit consent.
+For activation or deactivation, specify exactly one `tool` or `group`. Legacy selection affects only that connection. Modern selection follows the trusted scope and resolved project described below. Reset restores the configured initial selection and returns `visible_tools`, the resulting list after Unity availability is applied. Enabling a tool never installs a Unity package or bypasses Editor selection, authenticated catalogs or explicit consent.
 
 ## Existing combined calls
 
@@ -76,15 +92,21 @@ The `testing` group includes [`manage_input`](../reference/tools/testing/manage_
 
 The `core` group includes [`manage_recording`](../reference/tools/core/manage_recording.md) for bounded silent MP4 capture. Query `capabilities`, start a job, then poll or stop it explicitly. Recording depends on a supported interactive Windows/macOS Editor and native codecs. Game View capture requires running unpaused Play Mode and the visible focused view. Linux and headless recording are unsupported.
 
-## Local sessionless clients
+## Modern client selection and inventory refresh
 
 Use the Editor controls to allow tools, then request `manage_tools(action="sync")` from the intended Unity instance. Refresh/reconnect the MCP client if it does not process tool-list notifications. Sync preserves the server discovery profile and cannot select an optional group.
 
-Sessionless `activate`, `deactivate` and `reset` return an explanatory failure because session selection cannot persist without a stateful handshake. Use a stateful client to change the selection. Editor controls remain the availability and consent boundary.
+Modern `activate`, `deactivate` and `reset` work only when the reviewed SDK provides a stable scope and routing resolves a specific project. Stdio uses its single-client server process. An SDK-authenticated principal uses that authenticated scope, additionally bound to the resolved Unity owner and project. Clients sharing that principal and project share its selection; a different owner, project or server has independent choices. Caller-supplied client names and IDs are never identity evidence.
+
+The existing HTTP API-key layer does not provide an SDK principal. Such modern HTTP connections receive an actionable refusal and can use the static `full` profile. `sync` only refreshes availability. Without a resolved project, modern changes also refuse instead of creating global choices. Legacy connection-scoped selection remains supported.
+
+The existing bounded session store owns modern preferences. Each scope stores a finite map of built-in overrides rather than an ever-growing action log. Active preferences renew their retention, idle preferences expire after 24 hours, reset removes them and server shutdown releases them. Expiring a preference does not cancel a running Unity operation. Storage admission failure preserves other clients' live selections.
+
+Refresh-capable clients should request `tools/list` after `tools/list_changed`. Repeating an already-applied modern selection does not emit another notification. Catalog publication retains its coalesced invalidation delivery. The server cannot confirm whether a host refreshed its model inventory. For a client that freezes its list at connection time, configure `UNITY_MCP_TOOL_PROFILE=full`, restart the server and reconnect after enabling the desired tools in Unity. Reconnecting alone does not preserve a legacy session selection.
 
 ## Hosted clients
 
-Hosted clients of either protocol see and can call built-in tools enabled in their authenticated Unity plugin's catalog, including optional and compatibility tools. Without a catalog, only server-side helpers are available. Unity pushes catalog changes; remote `sync` is unavailable. Selecting a group or individual tool cannot bypass Unity-disabled tools or another user's catalog.
+With the default `full` profile, hosted clients of either protocol see and can call built-in tools enabled in their authenticated Unity plugin's catalog, including optional and compatibility tools. An explicitly configured smaller profile further narrows that selection. Without a catalog, only server-side helpers are available. Unity pushes catalog changes; remote `sync` is unavailable. Selecting a group or individual tool cannot bypass Unity-disabled tools or another user's catalog.
 
 ## Missing tools versus denied operations
 

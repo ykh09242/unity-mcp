@@ -531,6 +531,13 @@ class UnityInstanceMiddleware(Middleware):
                 if options is not None
                 else await server.get_tool(name)
             )
+            if tool is None:
+                # A modern selection is project-bound and routing has not run yet.
+                # Validate the declared built-in schema without enabling execution;
+                # the SDK repeats lookup/authorization after routing below.
+                discovery = getattr(server, "_tool_discovery", None)
+                if discovery is not None:
+                    tool = discovery.definitions.get(name)
             if tool is not None:
                 supplied = dict(arguments or {})
                 selector = supplied.pop("unity_instance", None)

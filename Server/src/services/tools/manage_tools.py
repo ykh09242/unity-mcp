@@ -5,8 +5,8 @@ This tool lets the AI assistant (or user) discover available tool groups
 and selectively enable / disable them for the current session. Activating
 a group makes its tools appear in tool listings; deactivating hides them.
 
-Session visibility requires a stateful MCP handshake. Modern sessionless
-requests can inspect groups and sync the server's Unity-provided defaults.
+Legacy selection follows the connection. Modern selection requires a trusted
+client scope and resolved project; static discovery profiles work without one.
 Hosted remote availability follows the authenticated user's Unity catalog;
 session group activation cannot grant access to a Unity-disabled tool.
 """
@@ -37,7 +37,7 @@ logger = logging.getLogger("mcp-for-unity-server")
         "Actions: list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
-        "reset (restore defaults). "
+        "reset (restore configured profile), describe (full schema for one tool). "
         "Activating a group makes its tools appear; deactivating hides them. "
         "Use sync after toggling tools in the Unity Editor GUI."
     ),
@@ -52,7 +52,8 @@ logger = logging.getLogger("mcp-for-unity-server")
 async def manage_tools(
     ctx: Context,
     action: Annotated[
-        Literal["list_groups", "activate", "deactivate", "sync", "reset"], "Action to perform."
+        Literal["list_groups", "activate", "deactivate", "sync", "reset", "describe"],
+        "Action to perform.",
     ],
     group: Annotated[
         str | None,
@@ -60,13 +61,26 @@ async def manage_tools(
         "Valid groups: " + ", ".join(sorted(TOOL_GROUPS.keys())),
     ] = None,
     tool: Annotated[
-        str | None, "Single tool name for activate/deactivate. Discover names with list_groups."
+        str | None,
+        "Single tool name for activate/deactivate/describe. Discover names with list_groups.",
     ] = None,
 ) -> dict[str, Any]:
-    if action in ("activate", "deactivate", "reset") and is_sessionless(ctx):
+    from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
+
+    discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
+    modern = is_sessionless(ctx)
+    if action in ("activate", "deactivate", "reset") and modern:
+        if discovery is None or await discovery.scope_key(ctx) is None:
+            return {"error": UNSCOPED_GUIDANCE}
+    if action == "describe":
+        if group is not None or not tool:
+            return {"error": "describe requires a tool name and no group."}
+        definition = discovery.definitions.get(tool.strip()) if discovery is not None else None
+        if definition is None:
+            return {"error": "Unknown built-in tool. Use list_groups to discover names."}
         return {
-            "error": "This MCP protocol is sessionless, so tool group visibility cannot persist. "
-            "Use a client with a stateful MCP handshake, or sync the server defaults from Unity.",
+            "tool": definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
+            "note": "Description only; selection and permissions are unchanged.",
         }
     if action == "list_groups":
         return await _list_groups(ctx)
@@ -81,10 +95,15 @@ async def manage_tools(
                 "error": "Unknown or always-visible tool. Use list_groups to discover selectable tools."
             }
         operation = ctx.enable_components if action == "activate" else ctx.disable_components
-        await operation(names={tool}, components={"tool"})
+        if modern:
+            changed = await discovery.update(ctx, [tool], enabled=action == "activate")
+        else:
+            await operation(names={tool}, components={"tool"})
+            changed = True
         return {
             "activated_tool" if action == "activate" else "deactivated_tool": tool,
-            "message": "Session selection updated. Unity's enabled tools and project permissions still apply.",
+            "changed": changed,
+            "message": REFRESH_GUIDANCE,
         }
 
     if action in ("activate", "deactivate"):
@@ -97,21 +116,35 @@ async def manage_tools(
     if action == "activate":
         tag = f"group:{group}"
         logger.info("Activating tool group: %s", group)
-        await ctx.enable_components(tags={tag}, components={"tool"})
+        if modern:
+            changed = await discovery.update(
+                ctx, get_group_tool_names().get(group, []), enabled=True
+            )
+        else:
+            await ctx.enable_components(tags={tag}, components={"tool"})
+            changed = True
         return {
             "activated": group,
             "tools": get_group_tool_names().get(group, []),
-            "message": f"Group '{group}' is now visible. Its tools will appear in tool listings.",
+            "changed": changed,
+            "message": REFRESH_GUIDANCE,
         }
 
     if action == "deactivate":
         tag = f"group:{group}"
         logger.info("Deactivating tool group: %s", group)
-        await ctx.disable_components(tags={tag}, components={"tool"})
+        if modern:
+            changed = await discovery.update(
+                ctx, get_group_tool_names().get(group, []), enabled=False
+            )
+        else:
+            await ctx.disable_components(tags={tag}, components={"tool"})
+            changed = True
         return {
             "deactivated": group,
             "tools": get_group_tool_names().get(group, []),
-            "message": f"Group '{group}' is now hidden.",
+            "changed": changed,
+            "message": REFRESH_GUIDANCE,
         }
 
     if action == "sync":
@@ -154,11 +187,16 @@ async def manage_tools(
 
     if action == "reset":
         logger.info("Resetting tool visibility to defaults")
-        await ctx.reset_visibility()
+        if modern:
+            await discovery.update(ctx, reset=True)
+        else:
+            await ctx.reset_visibility()
         visible = await _visible_tools(ctx)
         return {
             "reset": True,
-            "default_groups": sorted(DEFAULT_ENABLED_GROUPS),
+            "default_groups": sorted(
+                discovery.default_groups if discovery else DEFAULT_ENABLED_GROUPS
+            ),
             "visible_tools": sorted(tool.name for tool in visible),
             "message": "Client selection restored to configured server defaults. Unity availability still applies.",
         }
@@ -181,6 +219,8 @@ async def _visible_tools(ctx: Context):
 
 async def _list_groups(ctx: Context) -> dict[str, Any]:
     """Build the list_groups response with group metadata and tool names."""
+    discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
+    defaults = discovery.default_groups if discovery else DEFAULT_ENABLED_GROUPS
     group_tools = get_group_tool_names()
     visible_names = {tool.name for tool in await _visible_tools(ctx)}
 
@@ -192,7 +232,7 @@ async def _list_groups(ctx: Context) -> dict[str, Any]:
                 "name": name,
                 "description": TOOL_GROUPS[name],
                 "enabled": currently_enabled,
-                "default_enabled": name in DEFAULT_ENABLED_GROUPS,
+                "default_enabled": name in defaults,
                 "tools": group_tools.get(name, []),
                 "enabled_tools": sorted(visible_names.intersection(group_tools.get(name, []))),
                 "tool_count": len(group_tools.get(name, [])),
@@ -200,9 +240,10 @@ async def _list_groups(ctx: Context) -> dict[str, Any]:
         )
     return {
         "groups": groups,
+        "profile": discovery.profile if discovery else "core",
         "note": (
             "A group is enabled when at least one of its registered tools is currently visible. "
-            "Use activate/deactivate with a stateful MCP handshake to toggle groups for this session. "
+            "Use activate/deactivate with a stateful handshake or trusted project-bound client scope. "
             "Tools with group=None (server meta-tools) are always visible."
         ),
     }
