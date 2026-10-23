@@ -9,7 +9,10 @@ keeps its existing behavior and limits.
 Default nested-value serialization reads fields without calling custom getters,
 JSON converters, serialization callbacks, `ShouldSerialize` methods, or custom
 equality functions. Arrays, standard lists and dictionaries with supported scalar
-keys keep their normal value representation. Custom collection implementations are
+keys keep their normal value representation. Binary arrays retain base64 wire
+encoding and the existing byte budget. Standard JSON token containers are traversed
+without dispatching virtual members on custom token subclasses; those subclasses
+are inspected as fields. Custom collection implementations are
 inspected as fields instead of executing their enumerators. Unity object references
 remain references; renderer materials and mesh-filter meshes use shared references
 and do not instantiate copies.

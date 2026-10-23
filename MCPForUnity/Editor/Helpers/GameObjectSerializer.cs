@@ -752,9 +752,10 @@ namespace MCPForUnity.Editor.Helpers
             budget.Value(name);
             try
             {
-                dict[name] = value is JToken token
-                    ? ConvertJTokenToPlainObject(BoundedResponseJson.Freeze(token, InspectionSerializer, budget))
-                    : BoundedResponseJson.ToPlain(value, InspectionSerializer, budget);
+                dict[name] =
+                    _evaluateGetters && value is JToken token
+                        ? ConvertJTokenToPlainObject(BoundedResponseJson.Freeze(token, InspectionSerializer, budget))
+                        : BoundedResponseJson.ToPlain(value, InspectionSerializer, budget);
             }
             catch (Exception e) when (!budget.Exceeded)
             {
@@ -852,7 +853,7 @@ namespace MCPForUnity.Editor.Helpers
         private static JsonSerializer SafeSerializer(bool includePrivate)
         {
             var serializer = JsonSerializer.Create(_outputSerializerSettings);
-            serializer.ContractResolver = new SafeComponentContractResolver(includePrivate);
+            serializer.ContractResolver = new SafeComponentContractResolver(includePrivate, _outputSerializerSettings.Converters);
             serializer.EqualityComparer = new InspectionReferenceEquality();
             return serializer;
         }
