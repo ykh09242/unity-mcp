@@ -49,7 +49,7 @@ def test_get_tests_pages_filters_errors_and_validation(tmp_path):
                     assert listed.annotations.read_only_hint is True
                     assert listed.annotations.destructive_hint is False
                     schema = listed.input_schema["properties"]
-                    assert set(schema) == {"mode", "name_pattern", "page_size", "cursor"}
+                    assert set(schema) == {"mode", "name_pattern", "page_size", "cursor", "timeout_seconds"}
                     collected = []
                     for cursor, count, next_cursor in ((0, 50, 50), (50, 50, 100), (100, 25, None), (125, 0, None)):
                         page = {"items": rows[cursor:cursor+50], "cursor": cursor,
@@ -67,13 +67,20 @@ def test_get_tests_pages_filters_errors_and_validation(tmp_path):
                         collected.extend(response["data"]["items"])
                         assert boundary.await_count == before + 1
                         assert boundary.call_args.args == ("Selected@hash", "get_tests",
-                            {"mode": "PlayMode", "filter": "Example", "page_size": 50, "cursor": cursor})
+                            {"mode": "PlayMode", "filter": "Example", "page_size": 50, "cursor": cursor, "timeout_seconds": 300})
                     assert collected == rows
                     boundary.return_value = {"success": True, "data": {"items": [], "cursor": 0,
                         "nextCursor": None, "totalCount": 0, "pageSize": 50, "hasMore": False}}
                     result = await client.call_tool("get_tests", {})
                     assert payload(result)["data"]["partial"] is False
-                    assert boundary.call_args.args == ("Selected@hash", "get_tests", {"page_size": 50, "cursor": 0})
+                    assert boundary.call_args.args == ("Selected@hash", "get_tests", {"page_size": 50, "cursor": 0, "timeout_seconds": 300})
+                    result = await client.call_tool("get_tests", {"timeout_seconds": 1800})
+                    assert not result.is_error
+                    assert boundary.call_args.args[2]["timeout_seconds"] == 1800
+                    for invalid in (0, -1, True, "900", 86401):
+                        before = boundary.await_count
+                        result = await client.call_tool("get_tests", {"timeout_seconds": invalid}, raise_on_error=False)
+                        assert result.is_error and boundary.await_count == before
                     error = {"success": False, "error": "discovery_failed", "message": "Failed to retrieve tests",
                         "hint": "retry", "data": {"reason": "native failure"}}
                     boundary.return_value = error

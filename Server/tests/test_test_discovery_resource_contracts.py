@@ -60,9 +60,9 @@ def test_test_discovery_resource_preserves_native_path_and_pagination(tmp_path):
             for protocol in ("2026-07-28", "legacy"):
                 async with Client(mcp, mode=protocol) as client:
                     for uri, command, params in (
-                        ("mcpforunity://tests", "get_tests", {}),
-                        ("mcpforunity://tests/EditMode", "get_tests_for_mode", {"mode": "EditMode"}),
-                        ("mcpforunity://tests/PlayMode", "get_tests_for_mode", {"mode": "PlayMode"}),
+                        ("mcpforunity://tests", "get_tests", {"timeout_seconds": 300}),
+                        ("mcpforunity://tests/EditMode", "get_tests_for_mode", {"mode": "EditMode", "timeout_seconds": 300}),
+                        ("mcpforunity://tests/PlayMode", "get_tests_for_mode", {"mode": "PlayMode", "timeout_seconds": 300}),
                     ):
                         row["mode"] = params.get("mode", "EditMode")
                         response = json.loads((await client.read_resource(uri))[0].text)

@@ -11,6 +11,7 @@ from services.tools.profiler_memory_analysis import (
     validate_memory_analysis,
 )
 from transport.unity_transport import send_with_unity_instance
+from transport.plugin_hub import extend_http_request_deadline
 from transport.legacy.unity_connection import async_send_command_with_retry
 
 SESSION_ACTIONS = [
@@ -153,8 +154,8 @@ async def manage_profiler(
     ] = None,
     timeout_seconds: Annotated[
         Optional[int],
-        Field(strict=True, ge=1, le=120),
-        "Bounded window deadline (default 30 seconds).",
+        Field(strict=True, ge=1, le=86400),
+        "Observation budget: snapshot 1..86400 (default 300), sampling window 1..120 (default 30).",
     ] = None,
     window_id: Annotated[
         Optional[str],
@@ -202,6 +203,17 @@ async def manage_profiler(
             "success": False,
             "message": f"Unknown action '{action}'. Valid actions: {', '.join(ALL_ACTIONS)}",
         }
+
+    if action_lower == "memory_take_snapshot":
+        if timeout_seconds is None:
+            timeout_seconds = 300
+        if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 86400:
+            return {
+                "success": False,
+                "message": "timeout_seconds must be an integer between 1 and 86400.",
+            }
+
+        extend_http_request_deadline(timeout_seconds + 5)
 
     if action_lower in WINDOW_ACTIONS:
         error = _window_error(

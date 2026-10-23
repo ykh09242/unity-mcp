@@ -50,3 +50,77 @@ validity, idle-session retention or permission leases.
 
 Readiness uses monotonic elapsed clocks. Native update and compilation subscriptions
 detach on completion, timeout, editor shutdown and assembly reload.
+
+## Test discovery and native startup
+
+`get_tests(timeout_seconds=1800)` allows a 30-minute total discovery observation
+budget, including semaphore admission and both EditMode and PlayMode. Its default
+is 300 seconds and accepted values are integers from 1 to 86,400. The server passes
+the budget to the built-in native service and preserves response overhead. A root
+accepted before expiry remains accepted if the main-thread continuation is delayed;
+an expired request cannot begin another mode. Disposal still cancels the request.
+Existing custom `ITestRunnerService` implementations keep their existing contract.
+
+`UNITY_MCP_TEST_DISCOVERY_TIMEOUT` configures direct native discovery and the
+first-page test resources (default 300, maximum 86,400). Set it on the process that
+owns that entry point. The `get_tests` tool exposes its own explicit budget.
+`UNITY_MCP_STDIO_START_TIMEOUT` configures native bridge startup (default 300,
+maximum 86,400). Invalid, zero or negative native settings use the default.
+Stopping or replacing a pending start cancels that wait; a late success or failure
+cannot overwrite the current start's state.
+
+## Captures
+
+`manage_profiler(action="memory_take_snapshot", timeout_seconds=1800)` permits a
+30-minute capture observation budget. The default is 300 seconds, with integer
+values from 1 to 86,400. Path validation and invocation consume that budget too.
+The same parameter on `window_start` retains its 1–120 second sampling-window
+range: those are bounded sample jobs, whose result is read separately.
+
+A timed-out memory snapshot can still be writing inside Unity. The response includes
+`snapshot_path` and `reason="outcome_unknown"`; inspect the file before retrying.
+Only the native completion callback owns output-folder cleanup. The observation
+timer is canceled when completion wins, so successful captures do not retain timers
+for the remainder of their budget.
+
+Composited screenshots allow 30 seconds for a rendered frame before using their
+existing camera-render fallback. Known batch mode still takes that fallback
+immediately. Native C# callers can supply a finite positive `timeoutSeconds` up to
+one day to `ScreenshotCapturer.Begin`; invalid values fail before creating a hidden
+GameObject or registering an update callback. This frame fallback is distinct from
+a command deadline. The outer transport/client deadline must also accommodate a
+caller-selected unusually long capture.
+
+## Local validation harness
+
+The harness uses a monotonic clock for boot readiness, license warmup, UTF polling,
+smoke processes and the overall watchdog. A system clock correction cannot create
+an immediate timeout or an unexpectedly extended run. Clean-EditMode recovery uses
+the remaining `--overall-timeout` budget instead of a separate 30-second cutoff,
+and cannot launch another test after that budget expires. Owned-process cleanup
+still has its own finite grace period. Successful observations return immediately.
+
+## Audit classification
+
+The audit covered server/CLI transports and tools, native Editor/runtime helpers,
+test watchdogs, the local harness and CI configuration. Numeric time values have
+different purposes; they are not a single global workload limit.
+
+| Family | Policy and reason |
+| --- | --- |
+| Refresh, discovery, snapshot and reload observation | Explicit/configurable finite budgets; elapsed time is shared across phases where the request owns them. |
+| Fast status probes and reconnect polling | Short attempts return retry advice or continue inside an enclosing budget; a probe is not a large task execution deadline. |
+| Async test/build/play jobs | Start/initialization, job execution and status-poll windows remain distinct; poll expiry does not cancel the resumable job. Existing per-job overrides remain available. |
+| Screenshot frame availability | Completion or camera fallback, with batch mode detected before waiting; invalid time values cannot leak callbacks. |
+| Authentication, credential leases and idle eviction | Security/freshness lifetimes stay bounded; increasing a job budget does not extend authorization. |
+| Cache TTL, debounce, progress and heartbeat intervals | Scheduling/freshness controls, not proof that work has failed. Stdio receive/handshake waits are separately configurable. |
+| Version, executable, keychain and network probes | Small bounded diagnostics; no project import/build executes inside them. External client/request deadlines can still be configured separately by their owners. |
+| Package/download and explicit network operations | Existing operation budgets and cancellation remain; a timeout does not authorize replaying an ambiguous write. |
+| Shutdown/drain/worker cleanup | Finite ownership and cancellation grace remain to prevent orphaned workers or an unresponsive exit. |
+| Test completion watchdogs | The Python watchdog multiplier controls infrastructure slack; deliberate timeout fixtures and performance thresholds retain their asserted values. |
+| CI job limits | Finite runner-level budgets remain; these bound the CI job rather than a user's Unity scene or build. |
+
+No finite timeout guarantees progress on a suspended machine. Configure the specific
+operation and its external client's request deadline for exceptionally large work,
+and use resumable job/status interfaces when available rather than an unlimited
+foreground request.

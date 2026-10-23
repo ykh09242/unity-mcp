@@ -1,7 +1,8 @@
 using System;
+using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
-using UnityEditor;
 
 namespace MCPForUnity.Editor.Services.Transport.Transports
 {
@@ -11,6 +12,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
     public class StdioTransportClient : IMcpTransportClient
     {
         private TransportState _state = TransportState.Disconnected("stdio");
+        private readonly Func<CancellationToken, Task<bool>> _startAndWait;
+        private readonly Action _stopBridge;
+        private CancellationTokenSource _startCancellation;
+
+        public StdioTransportClient()
+            : this(StartBridgeAndWaitAsync, StdioBridgeHost.Stop) { }
+
+        internal StdioTransportClient(Func<CancellationToken, Task<bool>> startAndWait, Action stopBridge)
+        {
+            _startAndWait = startAndWait ?? throw new ArgumentNullException(nameof(startAndWait));
+            _stopBridge = stopBridge ?? throw new ArgumentNullException(nameof(stopBridge));
+        }
 
         public bool IsConnected => StdioBridgeHost.IsRunning;
         public string TransportName => "stdio";
@@ -40,7 +53,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         // OS port-release delay after a domain reload (the same port can stay held for a few hundred
         // ms, longer on Windows/macOS), during which Start() defers binding to an editor-idle retry
         // or falls back to a new port once BusyPortFallbackWindowSeconds elapses.
-        internal const double ReadyWaitTimeoutSeconds = 5.0;
+        internal const double ReadyWaitTimeoutSeconds = 300.0;
         private const int ReadyPollIntervalMs = 100;
 
         // Pure predicate (unit-testable): keep polling while the bridge is not yet ready and the
@@ -49,41 +62,63 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         public async Task<bool> StartAsync()
         {
+            RetirePendingStart();
+            var cancellation = new CancellationTokenSource();
+            _startCancellation = cancellation;
             try
             {
-                StdioBridgeHost.StartAutoConnect();
-
-                // StartAutoConnect triggers the bind, but when the previous port is still held after a
-                // domain reload it defers binding to an editor-idle retry — so IsRunning can still be
-                // false right here. Wait (bounded) for the bridge to actually become ready before
-                // reporting success; otherwise callers immediately verify a bool that was never
-                // awaited and get a spurious "Bridge not running" (the Start Session race).
-                bool ready = await WaitForBridgeReadyAsync();
+                bool ready = await _startAndWait(cancellation.Token);
+                if (!ReferenceEquals(_startCancellation, cancellation) || cancellation.IsCancellationRequested)
+                    return false;
                 _state = ready
                     ? TransportState.Connected("stdio", port: StdioBridgeHost.GetCurrentPort())
-                    : TransportState.Disconnected("stdio", "Bridge not ready yet (port still releasing after reload).");
+                    : TransportState.Disconnected("stdio", "Bridge readiness budget expired; inspect the editor and retry.");
                 return ready;
             }
             catch (Exception ex)
             {
-                _state = TransportState.Disconnected("stdio", ex.Message);
+                if (ReferenceEquals(_startCancellation, cancellation))
+                    _state = TransportState.Disconnected("stdio", ex.Message);
                 return false;
+            }
+            finally
+            {
+                if (ReferenceEquals(_startCancellation, cancellation))
+                    _startCancellation = null;
+                cancellation.Dispose();
             }
         }
 
-        private static async Task<bool> WaitForBridgeReadyAsync()
+        private static async Task<bool> StartBridgeAndWaitAsync(CancellationToken cancellationToken)
         {
-            double start = EditorApplication.timeSinceStartup;
-            while (ShouldKeepWaitingForReady(StdioBridgeHost.IsRunning, EditorApplication.timeSinceStartup - start))
+            cancellationToken.ThrowIfCancellationRequested();
+            double budget = OperationTimeouts.EnvironmentSeconds("UNITY_MCP_STDIO_START_TIMEOUT", ReadyWaitTimeoutSeconds);
+            var elapsed = Stopwatch.StartNew();
+            StdioBridgeHost.StartAutoConnect();
+            while (!StdioBridgeHost.IsRunning)
             {
-                await Task.Delay(ReadyPollIntervalMs);
+                cancellationToken.ThrowIfCancellationRequested();
+                double remaining = budget - elapsed.Elapsed.TotalSeconds;
+                if (remaining <= 0)
+                    return false;
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(ReadyPollIntervalMs / 1000.0, remaining)), cancellationToken);
             }
-            return StdioBridgeHost.IsRunning;
+            cancellationToken.ThrowIfCancellationRequested();
+            return true;
+        }
+
+        private void RetirePendingStart()
+        {
+            var previous = _startCancellation;
+            _startCancellation = null;
+            // The suspended StartAsync owns disposal, even if its callback arrives late.
+            previous?.Cancel();
         }
 
         public Task StopAsync()
         {
-            StdioBridgeHost.Stop();
+            RetirePendingStart();
+            _stopBridge();
             _state = TransportState.Disconnected("stdio");
             return Task.CompletedTask;
         }

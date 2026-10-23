@@ -13,6 +13,98 @@ namespace MCPForUnityTests.Editor.Services
     public class TestRunnerServiceDiscoveryTests
     {
         [Test]
+        public async System.Threading.Tasks.Task QueuedDiscoveryExpiresWithoutConsumingTheActiveRetrieval()
+        {
+            Action<ITestAdaptor> callback = null;
+            int calls = 0;
+            using var service = new TestRunnerService(
+                (_, complete) =>
+                {
+                    calls++;
+                    callback = complete;
+                },
+                TimeSpan.FromSeconds(300)
+            );
+            var active = service.GetTestsAsync(TestMode.EditMode);
+            try
+            {
+                try
+                {
+                    await service.GetTestsAsync(TestMode.PlayMode, TimeSpan.FromMilliseconds(1));
+                    Assert.Fail("A queued discovery must honor its own observation budget.");
+                }
+                catch (TimeoutException) { }
+                Assert.AreEqual(1, calls);
+                Assert.IsFalse(active.IsCompleted);
+            }
+            finally
+            {
+                callback?.Invoke(null);
+                await active;
+            }
+        }
+
+        [Test]
+        public async System.Threading.Tasks.Task NativeResourceForwardsExplicitDiscoveryBudget()
+        {
+            var field = typeof(MCPServiceLocator).GetField("_testRunnerService", BindingFlags.Static | BindingFlags.NonPublic);
+            object previous = field.GetValue(null);
+            var recorder = new BudgetRecorder();
+            try
+            {
+                field.SetValue(null, recorder);
+                var result = await MCPForUnity.Editor.Resources.Tests.GetTests.HandleCommand(new Newtonsoft.Json.Linq.JObject { ["timeout_seconds"] = 1800 });
+                Assert.IsTrue(Newtonsoft.Json.Linq.JObject.FromObject(result).Value<bool>("success"));
+                Assert.AreEqual(1800, recorder.Budget.TotalSeconds);
+                Assert.AreEqual(1, recorder.Calls);
+            }
+            finally
+            {
+                field.SetValue(null, previous);
+            }
+        }
+
+        private sealed class BudgetRecorder : ITestRunnerService, IBudgetedTestDiscovery
+        {
+            internal TimeSpan Budget;
+            internal int Calls;
+
+            public System.Threading.Tasks.Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode) =>
+                throw new InvalidOperationException("The explicit budget was lost.");
+
+            public System.Threading.Tasks.Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode, TimeSpan budget)
+            {
+                Calls++;
+                Budget = budget;
+                return System.Threading.Tasks.Task.FromResult<IReadOnlyList<Dictionary<string, string>>>(Array.Empty<Dictionary<string, string>>());
+            }
+
+            public System.Threading.Tasks.Task<TestRunResult> RunTestsAsync(TestMode mode, TestFilterOptions filterOptions = null) =>
+                throw new NotSupportedException();
+        }
+
+        [TestCase(null, 300)]
+        [TestCase("1800", 1800)]
+        [TestCase("NaN", 300)]
+        public void DiscoveryBudgetCanAccommodateLargeTestAssemblies(string value, double expected)
+        {
+            const string name = "UNITY_MCP_TEST_DISCOVERY_TIMEOUT";
+            var previous = Environment.GetEnvironmentVariable(name);
+            try
+            {
+                Environment.SetEnvironmentVariable(name, value);
+                using var service = new TestRunnerService();
+                var budget = (TimeSpan)
+                    typeof(TestRunnerService).GetField("_retrievalTimeout", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(service);
+                Assert.AreEqual(expected, budget.TotalSeconds);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(name, previous);
+            }
+        }
+
+        [Test]
         public void EmptySuite_IsNotListedAsATest()
         {
             Assert.IsEmpty(Collect(Suite("EmptyRoot")));

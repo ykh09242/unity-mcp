@@ -22,6 +22,7 @@ Lists Unity tests without running them. Returns one page with totalCount, nextCu
 | `name_pattern` | `str \| None` | — | Case-insensitive substring of the test name or full name (not regex). |
 | `page_size` | `int` | — | Maximum tests per page (1..200). |
 | `cursor` | `int` | — | Zero-based offset; use the previous nextCursor. |
+| `timeout_seconds` | `int` | — | Total discovery observation budget in seconds, including both modes (default 300). |
 
 ## Returns
 
