@@ -102,6 +102,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 Url = imageApi ? "https://openrouter.ai/api/v1/images" : Endpoint,
                 ContentType = "application/json",
                 Body = ProviderHttp.SerializeRequest(body),
+                TimeoutSeconds = AssetGenJobCheckpoint.MaxDurationSeconds,
             };
             spec.Headers["Authorization"] = "Bearer " + apiKey;
 

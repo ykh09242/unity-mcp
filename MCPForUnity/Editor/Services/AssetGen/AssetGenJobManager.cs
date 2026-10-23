@@ -422,7 +422,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (!TryResolveKey(provider, job, out string apiKey))
                 return job;
 
-            IHttpTransport transport = TransportOverrideForTests ?? new UnityWebRequestTransport();
+            IHttpTransport transport = CreateJobTransport(job.JobId);
             var runner = new Runner
             {
                 Job = job,
@@ -468,7 +468,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (!TryResolveKey(provider, job, out string apiKey))
                 return job;
 
-            IHttpTransport transport = TransportOverrideForTests ?? new UnityWebRequestTransport();
+            IHttpTransport transport = CreateJobTransport(job.JobId);
             bool asSprite = req.AsSprite;
             bool transparent = req.Transparent;
             var runner = new Runner
@@ -524,7 +524,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (!TryResolveKey(provider, job, out string apiKey))
                 return job;
 
-            IHttpTransport transport = TransportOverrideForTests ?? new UnityWebRequestTransport();
+            IHttpTransport transport = CreateJobTransport(job.JobId);
             var runner = new Runner
             {
                 Job = job,
@@ -567,7 +567,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 return job;
             if (!TryResolveKey("sketchfab", job, out string apiKey))
                 return job;
-            var transport = TransportOverrideForTests ?? new UnityWebRequestTransport();
+            IHttpTransport transport = CreateJobTransport(job.JobId);
             var runner = new Runner
             {
                 Job = job,
@@ -875,6 +875,50 @@ namespace MCPForUnity.Editor.Services.AssetGen
             return Jobs.TryGetValue(jobId, out var j) && IsTerminal(j.State);
         }
 
+        private static IHttpTransport CreateJobTransport(string jobId) =>
+            new JobHttpTransport(jobId, _epoch, TransportOverrideForTests ?? new UnityWebRequestTransport());
+
+        // Look up the live owner for every send, including later uploads/refinement and recovery.
+        // The wrapper retains only identity, never the runner or its completed tasks and payloads.
+        private sealed class JobHttpTransport : IHttpTransport
+        {
+            private readonly string _jobId;
+            private readonly long _ownerEpoch;
+            private readonly IHttpTransport _inner;
+
+            internal JobHttpTransport(string jobId, long ownerEpoch, IHttpTransport inner)
+            {
+                _jobId = jobId;
+                _ownerEpoch = ownerEpoch;
+                _inner = inner;
+            }
+
+            public Task<HttpResult> SendAsync(HttpRequestSpec spec, CancellationToken ct)
+            {
+                if (spec == null)
+                    throw new ArgumentNullException(nameof(spec));
+                ct.ThrowIfCancellationRequested();
+                if (_ownerEpoch != _epoch || !Runners.TryGetValue(_jobId, out var runner))
+                    throw new OperationCanceledException();
+                Admit(runner);
+                if (spec.DownloadProvider != null)
+                    return _inner.SendAsync(spec, ct);
+
+                double remaining = runner.Checkpoint.Deadline - Now();
+                if (remaining <= 0)
+                    throw new RecoveryAbort("job_timeout");
+                bool read =
+                    string.IsNullOrEmpty(spec.Method)
+                    || string.Equals(spec.Method, "GET", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(spec.Method, "HEAD", StringComparison.OrdinalIgnoreCase);
+                // POST/PUT can upload large input, wait for a receipt, or synchronously generate.
+                // Poll/metadata reads keep the short default; adapters may explicitly override it.
+                double requested = spec.TimeoutSeconds ?? (read ? 120 : AssetGenJobCheckpoint.MaxDurationSeconds);
+                UnityWebRequestTransport.ResolveTimeoutSeconds(requested); // Reject invalid policy before clamping.
+                return _inner.SendAsync(spec.WithTimeout(Math.Min(requested, remaining)), ct);
+            }
+        }
+
         private sealed class RecoveryAbort : Exception
         {
             internal readonly string Code;
@@ -1001,7 +1045,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (!SecureKeyStore.Current.TryGet(r.Job.Provider, out string key) || string.IsNullOrEmpty(key))
                 throw new RecoveryAbort("reconnect_key_unavailable");
             Admit(r);
-            r.Transport = TransportOverrideForTests ?? new UnityWebRequestTransport();
+            r.Transport = CreateJobTransport(r.Job.JobId);
             if (r.Job.Kind == "model")
             {
                 r.ModelAdapter = AssetGenProviders.Model(r.Job.Provider);

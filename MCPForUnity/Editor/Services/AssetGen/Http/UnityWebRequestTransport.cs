@@ -13,6 +13,16 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
     /// </summary>
     public sealed class UnityWebRequestTransport : IHttpTransport
     {
+        internal static int ResolveTimeoutSeconds(double? requested)
+        {
+            double seconds = requested ?? 120;
+            if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds <= 0 || seconds > 86400)
+                throw new ArgumentOutOfRangeException(nameof(requested), "HTTP request wait must be greater than zero and at most 86400 seconds.");
+            // Unity uses whole seconds; rounding up avoids prematurely shortening the job budget.
+            // The enclosing job still owns its precise deadline and cancellation.
+            return (int)Math.Ceiling(seconds);
+        }
+
         public Task<HttpResult> SendAsync(HttpRequestSpec spec, CancellationToken ct)
         {
             if (spec == null)
@@ -26,6 +36,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             if (ct.IsCancellationRequested)
                 return Task.FromCanceled<HttpResult>(ct);
 
+            int timeout = ResolveTimeoutSeconds(spec.TimeoutSeconds);
             var tcs = new TaskCompletionSource<HttpResult>();
             var download = new BoundedDownloadHandler();
             UnityWebRequest request = null;
@@ -39,7 +50,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 request = new UnityWebRequest(spec.Url, spec.Method ?? UnityWebRequest.kHttpVerbGET);
                 request.downloadHandler = download;
                 downloadAttached = true;
-                request.timeout = 120;
+                request.timeout = timeout;
                 if (spec.Body != null)
                 {
                     upload = new UploadHandlerRaw(spec.Body);
