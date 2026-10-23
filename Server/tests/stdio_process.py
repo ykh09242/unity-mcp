@@ -1,5 +1,7 @@
 """Own the executing SDK subprocess PID, bypassing Windows venv redirectors."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 import sys
 from asyncio.subprocess import Process
@@ -33,6 +35,6 @@ async def owned_sdk_process(program: str, directory: Path) -> AsyncIterator[Proc
         if process.returncode is None:
             with suppress(ProcessLookupError):
                 process.kill()
-        await asyncio.wait_for(process.wait(), 5)
+        await asyncio.wait_for(process.wait(), watchdog_timeout())
         with suppress(BrokenPipeError, ConnectionResetError):
-            await asyncio.wait_for(process.stdin.wait_closed(), 5)
+            await asyncio.wait_for(process.stdin.wait_closed(), watchdog_timeout())

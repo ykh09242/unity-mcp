@@ -1,5 +1,7 @@
 """Authenticated catalog subscriptions use the real MCP HTTP transport."""
 
+from tests.timing import watchdog_timeout
+
 import json
 from dataclasses import dataclass, field
 
@@ -68,7 +70,7 @@ class LegacyChanges(MessageHandler):
 
 
 async def next_message(lines):
-    with anyio.fail_after(5):
+    with anyio.fail_after(watchdog_timeout()):
         async for line in lines:
             if line.startswith("data: "):
                 return json.loads(line[6:])
@@ -85,7 +87,7 @@ async def test_sdk_duplex_listen_releases_its_non_http_owner(monkeypatch):
         async with Client(server) as client:
             async with listen(client.session, tools_list_changed=True) as subscription:
                 runtime.publish()
-                with anyio.fail_after(3):
+                with anyio.fail_after(watchdog_timeout()):
                     event = await anext(aiter(subscription))
                 assert isinstance(event, ToolsListChanged)
         assert not runtime._leases
@@ -175,10 +177,10 @@ async def test_actual_plugin_commits_notify_modern_and_explicit_legacy_clients(c
                             if tool["name"] == "subscription_wire_tool"
                         )
                         assert list(tool["inputSchema"]["properties"]) == [parameter]
-                        with anyio.fail_after(5):
+                        with anyio.fail_after(watchdog_timeout()):
                             await legacy_changes.changed.wait()
                     # Then: legacy invalidation remains usable, and non-listening clients can refetch.
-                    with anyio.fail_after(5):
+                    with anyio.fail_after(watchdog_timeout()):
                         await legacy_changes.changed.wait()
                     assert any(
                         tool.name == "subscription_wire_tool" for tool in await legacy.list_tools()

@@ -1,5 +1,7 @@
 """Command capacity is enforced before a Unity payload or task is retained."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio  # noqa: ANYIO_OK -- exercise the hub's asyncio transport contract.
 import json
 import sys
@@ -125,7 +127,7 @@ async def reject_without_send(
         try:
             # Authentication and scheduler latency precede admission. Pending-Future and
             # send counts below prove refusal; this separate guard only detects runaway work.
-            async with asyncio.timeout(10):
+            async with asyncio.timeout(watchdog_timeout()):
                 result = await task
             assert result["success"] is False
             assert len(PluginHub._pending) == before_pending
@@ -311,7 +313,7 @@ async def test_all_completion_paths_release_admission(admission_hub, monkeypatch
             await PluginHub._evict_connection("a", "test-stale")
         elif cleanup == "shutdown":
             await PluginHub.shutdown()
-        result = await asyncio.wait_for(task, 3)
+        result = await asyncio.wait_for(task, watchdog_timeout())
         assert result["success"] is (cleanup == "result")
         if cleanup != "result":
             assert result["data"]["reason"] == "outcome_unknown"
@@ -378,7 +380,7 @@ async def test_readiness_probe_propagates_capacity_without_retry_wait(admission_
                 {},
                 user_id="alice",
             ),
-            0.3,
+            watchdog_timeout(),
         )
         assert result["data"]["reason"] == "command_capacity"
         assert socket.send_json.await_count == before
@@ -402,7 +404,9 @@ async def test_replacement_session_releases_old_user_payload_quota(admission_hub
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     try:
         await hub.on_receive(replacement, {"type": "register", "project_hash": "a"})
-        assert (await asyncio.wait_for(old, 0.3))["hint"] == "inspect_state_before_retry"
+        assert (await asyncio.wait_for(old, watchdog_timeout()))[
+            "hint"
+        ] == "inspect_state_before_retry"
         assert PluginHub._pending == {}
         new_session = await admission_hub.get_session_id_by_hash("a", user_id="alice")
         assert new_session != "a"
@@ -559,7 +563,9 @@ async def test_real_asgi_plugin_endpoint_enforces_capacity(admission_hub, monkey
     endpoint = asyncio.create_task(dispatch())
     command = None
     try:
-        assert (await asyncio.wait_for(outgoing.get(), 0.3))["type"] == "websocket.accept"
+        assert (await asyncio.wait_for(outgoing.get(), watchdog_timeout()))[
+            "type"
+        ] == "websocket.accept"
         assert json.loads((await outgoing.get())["text"])["type"] == "welcome"
         await incoming.put(
             {
@@ -567,11 +573,15 @@ async def test_real_asgi_plugin_endpoint_enforces_capacity(admission_hub, monkey
                 "text": json.dumps({"type": "register", "project_hash": "owned"}),
             }
         )
-        session_id = json.loads((await asyncio.wait_for(outgoing.get(), 0.3))["text"])["session_id"]
+        session_id = json.loads(
+            (await asyncio.wait_for(outgoing.get(), watchdog_timeout()))["text"]
+        )["session_id"]
         command = asyncio.create_task(PluginHub.send_command(session_id, "run_tests", {}))
-        execution = json.loads((await asyncio.wait_for(outgoing.get(), 0.3))["text"])
+        execution = json.loads((await asyncio.wait_for(outgoing.get(), watchdog_timeout()))["text"])
         assert execution["type"] == "execute"
-        result = await asyncio.wait_for(PluginHub.send_command(session_id, "run_tests", {}), 0.3)
+        result = await asyncio.wait_for(
+            PluginHub.send_command(session_id, "run_tests", {}), watchdog_timeout()
+        )
         assert result["data"]["reason"] == "command_capacity"
         assert outgoing.empty(), "Rejected command must not reach the ASGI WebSocket send"
         await incoming.put(
@@ -582,14 +592,14 @@ async def test_real_asgi_plugin_endpoint_enforces_capacity(admission_hub, monkey
                 ),
             }
         )
-        assert (await asyncio.wait_for(command, 0.3))["success"] is True
+        assert (await asyncio.wait_for(command, watchdog_timeout()))["success"] is True
         assert PluginHub._pending == {}
     finally:
         if command is not None:
             command.cancel()
             await asyncio.gather(command, return_exceptions=True)
         await incoming.put({"type": "websocket.disconnect", "code": 1001})
-        await asyncio.wait_for(endpoint, 0.3)
+        await asyncio.wait_for(endpoint, watchdog_timeout())
     assert PluginHub._pending == {}
     assert PluginHub._connections == {}
 
@@ -617,7 +627,7 @@ async def test_real_http_command_route_returns_capacity_without_unity_send(
                     headers={"X-Unity-MCP-Token": "owned-admission-control"},
                     json={"type": "run_tests", "unity_instance": "a", "params": {}},
                 ),
-                0.5,
+                watchdog_timeout(),
             )
         assert response.status_code == 200
         assert response.json()["data"]["reason"] == "command_capacity"

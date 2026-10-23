@@ -1,5 +1,7 @@
 """The synchronous adapter owns coroutines until a live loop accepts them."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio  # noqa: ANYIO_OK -- exercise the hub's asyncio loop boundary.
 from contextlib import closing
 import inspect
@@ -73,13 +75,15 @@ def test_stopped_loop_sync_call_rejects_without_waiting(monkeypatch: pytest.Monk
         try:
             # When a worker makes the synchronous call, it must reject, not hang.
             caller.start()
-            assert finished.wait(2), "A stopped loop left the synchronous caller blocked"
+            assert finished.wait(watchdog_timeout()), (
+                "A stopped loop left the synchronous caller blocked"
+            )
             assert len(failures) == 1
             assert inspect.getcoroutinestate(operation) == inspect.CORO_CLOSED
         finally:
             # Also unblock and clean up the unfixed implementation after a RED failure.
-            loop.run_until_complete(asyncio.wait_for(settled.wait(), timeout=2))
-            caller.join(2)
+            loop.run_until_complete(asyncio.wait_for(settled.wait(), timeout=watchdog_timeout()))
+            caller.join(watchdog_timeout())
             loop.close()
             assert not caller.is_alive()
 

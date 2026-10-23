@@ -1,5 +1,7 @@
 """Real ASGI plugin transport negotiation, ownership and retention regressions."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from concurrent.futures import CancelledError
 from contextlib import asynccontextmanager, nullcontext
@@ -127,7 +129,7 @@ def start_command(client, wire, session_id, *, owner=None, done=None):
 def barrier(client, wire, session_id):
     task, command_id = start_command(client, wire, session_id)
     wire.send_json({"type": "command_result", "id": command_id, "result": {"success": True}})
-    assert task.result(timeout=2) == {"success": True}
+    assert task.result(timeout=watchdog_timeout()) == {"success": True}
 
 
 def payload_and_frames(command_id, *, envelope_id=None):
@@ -186,7 +188,7 @@ def test_old_peer_gets_empty_features_and_unchanged_text_result(client):
         task, cid = start_command(client, wire, sid)
         result = {"success": True, "data": "ordinary"}
         wire.send_json({"type": "command_result", "id": cid, "result": result})
-        assert task.result(timeout=2) == result
+        assert task.result(timeout=watchdog_timeout()) == result
     assert PluginHub._raw_results == {}
 
 
@@ -229,7 +231,7 @@ def test_negotiated_large_result_completes_after_interleaved_control(client):
         assert not task.done()
         for chunk in chunks[1:]:
             wire.send_bytes(chunk)
-        assert task.result(timeout=2) == expected
+        assert task.result(timeout=watchdog_timeout()) == expected
         assert PluginHub._raw_results == {}
         assert PluginHub._large_results.retained_bytes == 0
 
@@ -247,7 +249,7 @@ def test_foreign_socket_cannot_allocate_or_finish_owner_result(client):
             assert PluginHub._raw_results == {}
             assert not task.done()
         owner.send_json({"type": "command_result", "id": cid, "result": {"success": True}})
-        assert task.result(timeout=2) == {"success": True}
+        assert task.result(timeout=watchdog_timeout()) == {"success": True}
 
 
 def test_cancellation_releases_partial_raw_bytes_and_ignores_late_chunks(client):
@@ -261,9 +263,9 @@ def test_cancellation_releases_partial_raw_bytes_and_ignores_late_chunks(client)
         barrier(client, wire, sid)
         assert PluginHub._raw_results
         task.cancel()
-        assert done.wait(2)
+        assert done.wait(watchdog_timeout())
         with pytest.raises(CancelledError):
-            task.result(timeout=2)
+            task.result(timeout=watchdog_timeout())
         for chunk in chunks[1:]:
             wire.send_bytes(chunk)
         barrier(client, wire, sid)
@@ -292,12 +294,12 @@ def test_malformed_active_large_transfer_closes_only_its_socket(client, kind):
                     wire.send_bytes(chunk)
             with pytest.raises(WebSocketDisconnect):
                 wire.receive_json()
-            assert task.result(timeout=2)["success"] is False
+            assert task.result(timeout=watchdog_timeout())["success"] is False
             assert not unrelated.done()
             healthy.send_json(
                 {"type": "command_result", "id": unrelated_id, "result": {"success": True}}
             )
-            assert unrelated.result(timeout=2) == {"success": True}
+            assert unrelated.result(timeout=watchdog_timeout()) == {"success": True}
     assert PluginHub._raw_results == {}
     assert PluginHub._large_results.retained_bytes == 0
 
@@ -335,7 +337,7 @@ def test_original_command_deadline_releases_partial_bytes_and_late_data_is_ignor
             original_guard.reschedule(asyncio.get_running_loop().time())
 
         client.portal.call(expire_original_deadline)
-        result = task.result(timeout=2)
+        result = task.result(timeout=watchdog_timeout())
         assert result["data"]["reason"] == "outcome_unknown"
         assert PluginHub._raw_results == {}
         assert PluginHub._large_results.retained_bytes == 0
@@ -352,7 +354,7 @@ def test_raw_allocation_counts_existing_retained_responses(client, monkeypatch, 
         first, cid = start_command(client, wire, sid, owner=ledger_owner)
         retained_result = {"success": True, "data": "retained" * 100}
         wire.send_json({"type": "command_result", "id": cid, "result": retained_result})
-        assert first.result(timeout=2) == retained_result
+        assert first.result(timeout=watchdog_timeout()) == retained_result
         retained_charge = PluginHub._retained_results[cid]["bytes"]
         ceiling = {
             "session": "MAX_RETAINED_RESULT_BYTES_PER_SESSION",
@@ -374,7 +376,7 @@ def test_raw_allocation_counts_existing_retained_responses(client, monkeypatch, 
             # Raw reservation includes owned bytes and conservative decoded Unicode.
             monkeypatch.setattr(PluginHub, ceiling, retained_charge + 5 * len(payload) + 4096 - 1)
             begin(second_wire, second_id, payload, chunks)
-            reply = second.result(timeout=2)
+            reply = second.result(timeout=watchdog_timeout())
             assert reply["success"] is False
             assert reply["data"]["reason"] == "result_capacity"
             assert PluginHub._raw_results == {}
@@ -404,7 +406,7 @@ def test_connection_cleanup_releases_partial_raw_and_cached_state(client, cleanu
             client.portal.call(PluginHub.shutdown)
         else:
             wire.close()
-    assert task.result(timeout=2)["success"] is False
+    assert task.result(timeout=watchdog_timeout())["success"] is False
     assert PluginHub._raw_results == {}
     assert PluginHub._large_results is None or PluginHub._large_results.retained_bytes == 0
     if PluginHub.is_configured():
@@ -452,7 +454,7 @@ def test_replacement_registration_invalidates_old_generation_raw_and_state(clien
             new_sid, _, _ = register(replacement, capabilities=FEATURES)
             assert new_sid != old_sid
             assert PluginHub._connections[new_sid].state.plugin_generation != old_generation
-            assert task.result(timeout=2)["success"] is False
+            assert task.result(timeout=watchdog_timeout())["success"] is False
             assert PluginHub._raw_results == {}
             assert cached(client) is None
             reset_state = state_message(sequence=1)

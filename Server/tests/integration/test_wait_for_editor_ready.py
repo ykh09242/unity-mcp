@@ -1,3 +1,4 @@
+from tests.timing import await_signal, watchdog_timeout
 import asyncio
 import os
 import pytest
@@ -101,7 +102,7 @@ async def test_blocked_state_request_is_cancelled_at_readiness_timeout(monkeypat
     # When: readiness is allowed twenty milliseconds, with a separate test watchdog.
     ready, elapsed = await asyncio.wait_for(
         mod.wait_for_editor_ready(DummyContext(), timeout_s=0.02),
-        timeout=1,
+        timeout=watchdog_timeout(),
     )
     # Then: the bounded wait returns its normal result and cleans up the request.
     assert ready is False
@@ -170,7 +171,7 @@ async def test_readiness_caller_cancellation_reaches_state_request(monkeypatch):
     monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", blocked_state)
     task = asyncio.create_task(mod.wait_for_editor_ready(DummyContext(), timeout_s=30))
     try:
-        await asyncio.wait_for(entered.wait(), timeout=1)
+        await await_signal(entered, "entered")
         # When: the caller cancels its own readiness request.
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

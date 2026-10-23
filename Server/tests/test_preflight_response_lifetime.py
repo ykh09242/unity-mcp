@@ -1,5 +1,7 @@
 """Canonical preflight observations use a separate response ownership scope."""
 
+from tests.timing import await_signal
+
 import asyncio
 import gc
 import importlib
@@ -306,10 +308,10 @@ async def test_cancel_discards_observations_without_closing_parent(polling, oute
 
     task = asyncio.create_task(caller())
     try:
-        await asyncio.wait_for(polling.blocked.wait(), 2)
+        await await_signal(polling.blocked, "polling.blocked")
         if outer_scope:
             scopes[0].cancel()
-            await asyncio.wait_for(done.wait(), 2)
+            await await_signal(done, "done")
             await task
         else:
             task.cancel()

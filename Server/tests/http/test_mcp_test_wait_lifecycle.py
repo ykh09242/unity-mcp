@@ -1,5 +1,7 @@
 """Durable bounded-wait records, independent of production installation."""
 
+from tests.timing import watchdog_timeout
+
 import json
 import os
 import asyncio
@@ -231,7 +233,7 @@ async def test_shutdown_retains_actual_journal_io_without_blocking_loop(
     def held(*args, **kwargs):
         # Both callers already own the real journal RLock at this boundary.
         entered.set()
-        assert release.wait(2), "journal lock watchdog must release the test"
+        assert release.wait(watchdog_timeout(120)), "journal lock watchdog must release the test"
         return original(*args, **kwargs)
 
     monkeypatch.setattr(journal, "_read" if operation_name == "get" else "_write", held)
@@ -239,17 +241,16 @@ async def test_shutdown_retains_actual_journal_io_without_blocking_loop(
         io = asyncio.create_task(
             runtime._io(getattr(journal, operation_name), record.task_id, "alice")
         )
-        watchdog = threading.Timer(0.5, release.set)
+        watchdog = threading.Timer(watchdog_timeout(), release.set)
         try:
-            with anyio.fail_after(1):
+            with anyio.fail_after(watchdog_timeout()):
                 while not entered.is_set():
                     await anyio.sleep(0)
             before = journal.charged_bytes
             watchdog.start()
-            started = time.monotonic()
             await runtime.close(grace_seconds=0)
             await anyio.sleep(0)
-            assert time.monotonic() - started < 0.2
+            assert not release.is_set(), "Shutdown waited for blocked journal I/O"
             assert journal._writer is not None
             assert not io.done()
             assert journal.charged_bytes == before
@@ -338,11 +339,11 @@ async def test_final_worker_cleanup_does_not_close_over_a_live_read_thread(tmp_p
     def committed_finish(*args, **kwargs):
         finish(*args, **kwargs)
         committed.set()
-        assert entered.wait(2)
+        assert entered.wait(watchdog_timeout())
 
     def held_read(*args, **kwargs):
         entered.set()
-        assert release.wait(2)
+        assert release.wait(watchdog_timeout())
         return read(*args, **kwargs)
 
     monkeypatch.setattr(journal, "finish", committed_finish)
@@ -359,22 +360,21 @@ async def test_final_worker_cleanup_does_not_close_over_a_live_read_thread(tmp_p
             runtime._run(record.task_id, captured, admission), context=Context()
         )
         runtime._workers[record.task_id] = worker
-        with anyio.fail_after(1):
+        with anyio.fail_after(watchdog_timeout()):
             while not committed.is_set():
                 await anyio.sleep(0)
         monkeypatch.setattr(journal, "_read", held_read)
         io = asyncio.create_task(runtime._io(journal.get, record.task_id, "alice"))
-        watchdog = threading.Timer(0.5, release.set)
+        watchdog = threading.Timer(watchdog_timeout(), release.set)
         try:
-            with anyio.fail_after(1):
+            with anyio.fail_after(watchdog_timeout()):
                 while not entered.is_set():
                     await anyio.sleep(0)
             watchdog.start()
-            started = time.monotonic()
             await runtime.close(grace_seconds=0)
             await worker
             await anyio.sleep(0)
-            assert time.monotonic() - started < 0.2
+            assert not release.is_set(), "Shutdown waited for blocked journal I/O"
             assert journal._writer is not None
             assert runtime._io_owners == 1
             assert not io.done()

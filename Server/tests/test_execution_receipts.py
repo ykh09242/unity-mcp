@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.timing import watchdog_timeout
+
 import hashlib
 import json
 import os
@@ -239,8 +241,8 @@ def test_ownership_operations_do_not_wait_for_a_blocked_journal_commit(opened, m
     original_write = store._files.write
 
     def blocked_write(receipt_id, raw):
-        journal_blocked.wait(timeout=2)
-        assert continue_journal.wait(timeout=5)
+        journal_blocked.wait(timeout=watchdog_timeout())
+        assert continue_journal.wait(timeout=watchdog_timeout())
         original_write(receipt_id, raw)
 
     def ownership_operations():
@@ -258,19 +260,19 @@ def test_ownership_operations_do_not_wait_for_a_blocked_journal_commit(opened, m
         journal_future = pool.submit(journal_call.extend_floor, frozenset({"run"}), grants=GRANTS)
         ownership_future = None
         try:
-            journal_blocked.wait(timeout=2)
+            journal_blocked.wait(timeout=watchdog_timeout())
 
             # When metadata I/O holds _lock, independent ownership still completes promptly.
             ownership_future = pool.submit(ownership_operations)
-            assert ownership_future.result(timeout=1) == (2, False)
+            assert ownership_future.result(timeout=watchdog_timeout()) == (2, False)
 
             # Then enter/acquire/release/count needed no journal completion to make progress.
             assert not journal_future.done()
         finally:
             continue_journal.set()
-            journal_future.result(timeout=3)
+            journal_future.result(timeout=watchdog_timeout())
             if ownership_future is not None:
-                ownership_future.result(timeout=3)
+                ownership_future.result(timeout=watchdog_timeout())
             monkeypatch.setattr(store._files, "write", original_write)
             stopped_worker.close()
             journal_call.finish("unknown")

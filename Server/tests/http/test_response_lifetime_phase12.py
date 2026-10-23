@@ -1,5 +1,7 @@
 """Real SDK delivery and suspended WebSocket frame lifetime regressions."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import gc
 import json
@@ -90,7 +92,7 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
                     },
                 },
             )
-            await asyncio.wait_for(init.run(), 2)
+            await asyncio.wait_for(init.run(), watchdog_timeout())
             start = next(msg for msg in init.sent if msg["type"] == "http.response.start")
             headers = [
                 (b"mcp-session-id", dict(start["headers"])[b"mcp-session-id"]),
@@ -103,7 +105,7 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
                 {"jsonrpc": "2.0", "method": "notifications/initialized"},
                 headers,
             )
-            await asyncio.wait_for(initialized.run(), 2)
+            await asyncio.wait_for(initialized.run(), watchdog_timeout())
             call = {
                 "jsonrpc": "2.0",
                 "id": 9,
@@ -112,13 +114,13 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
             }
             blocked = Wire(app, "POST", "/mcp", call, headers, blocked_id=9)
             blocked_task = asyncio.create_task(blocked.run())
-            await asyncio.wait_for(blocked.blocked.wait(), 2)
+            await await_signal(blocked.blocked, "blocked.blocked")
             charge = PluginHub._retained_results.total_bytes
             assert charge > 0 and len(_http_response_owners) == 1
             for _ in range(2):
                 stream = Wire(app, "GET", "/mcp", headers=headers)
                 stream_task = asyncio.create_task(stream.run())
-                await asyncio.wait_for(stream.changed.wait(), 2)
+                await await_signal(stream.changed, "stream.changed")
                 stream_start = next(
                     msg for msg in stream.sent if msg["type"] == "http.response.start"
                 )
@@ -127,14 +129,14 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
                     b"text/event-stream"
                 )
                 stream.disconnect.set()
-                await asyncio.wait_for(stream_task, 2)
+                await asyncio.wait_for(stream_task, watchdog_timeout())
                 assert not blocked_task.done() and not blocked.resume.is_set()
                 assert PluginHub._retained_results.total_bytes == charge, (
                     "An unrelated GET disconnect released a still-blocked POST result"
                 )
                 assert len(_http_response_owners) == 1
             second = Wire(app, "POST", "/mcp", {**call, "id": 10}, headers)
-            await asyncio.wait_for(second.run(), 2)
+            await asyncio.wait_for(second.run(), watchdog_timeout())
             assert b"result_capacity" in b"".join(msg.get("body", b"") for msg in second.sent)
             assert PluginHub._retained_results.total_bytes == charge
             if post_exit == "cancel":
@@ -142,13 +144,13 @@ async def test_standalone_get_disconnect_preserves_blocked_post_charge(
                 await asyncio.gather(blocked_task, return_exceptions=True)
             else:
                 blocked.resume.set()
-                await asyncio.wait_for(blocked_task, 2)
+                await asyncio.wait_for(blocked_task, watchdog_timeout())
             assert PluginHub._retained_results == {} and _http_response_owners == {}
             recovered = Wire(app, "POST", "/mcp", {**call, "id": 11}, headers)
-            await asyncio.wait_for(recovered.run(), 2)
+            await asyncio.wait_for(recovered.run(), watchdog_timeout())
             assert b"preview" in b"".join(msg.get("body", b"") for msg in recovered.sent)
             delete = Wire(app, "DELETE", "/mcp", headers=headers)
-            await asyncio.wait_for(delete.run(), 2)
+            await asyncio.wait_for(delete.run(), watchdog_timeout())
             assert (
                 next(msg for msg in delete.sent if msg["type"] == "http.response.start")["status"]
                 == 200
@@ -263,22 +265,24 @@ async def test_idle_dispatch_drops_raw_and_decoded_frames_after_handling(
     owner = ResponseOwner()
     command = None
     try:
-        await asyncio.wait_for(outbound.get(), 2)  # accept
-        await asyncio.wait_for(outbound.get(), 2)  # welcome
+        await asyncio.wait_for(outbound.get(), watchdog_timeout())  # accept
+        await asyncio.wait_for(outbound.get(), watchdog_timeout())  # welcome
         await inbound.put(
             {
                 "type": "websocket.receive",
                 "text": json.dumps({"type": "register", "project_hash": "inert"}),
             }
         )
-        registered = json.loads((await asyncio.wait_for(outbound.get(), 2))["text"])
+        registered = json.loads(
+            (await asyncio.wait_for(outbound.get(), watchdog_timeout()))["text"]
+        )
         session = registered["session_id"]
         token = response_owner.set(owner)
         try:
             command = asyncio.create_task(PluginHub.send_command(session, "run_tests", {}))
         finally:
             response_owner.reset(token)
-        sent = json.loads((await asyncio.wait_for(outbound.get(), 2))["text"])
+        sent = json.loads((await asyncio.wait_for(outbound.get(), watchdog_timeout()))["text"])
         payload = {
             "type": "command_result",
             "id": sent["id"],
@@ -297,9 +301,9 @@ async def test_idle_dispatch_drops_raw_and_decoded_frames_after_handling(
             {"type": "websocket.receive", "bytes" if raw_mode == "bytes" else "text": raw}
         )
         del raw, payload
-        await asyncio.wait_for(waiting.wait(), 2)
+        await await_signal(waiting, "waiting")
         if not invalid_result:
-            reply = await asyncio.wait_for(command, 2)
+            reply = await asyncio.wait_for(command, watchdog_timeout())
             assert len(reply["data"]["preview"]) == 1024 * 1024
             assert PluginHub._retained_results.total_bytes > 0
             del reply
@@ -361,14 +365,14 @@ async def test_exceptional_dispatch_drops_frame_locals_before_disconnect_cleanup
     )
     task = asyncio.create_task(hub.dispatch())
     try:
-        await asyncio.wait_for(cleanup_started.wait(), 2)
+        await await_signal(cleanup_started, "cleanup_started")
         frame = task.get_coro().cr_frame
         assert frame.f_locals.get("message") is None and frame.f_locals.get("data") is None, (
             "Dispatch exception path retains frame locals while disconnect cleanup is suspended"
         )
         finish_cleanup.set()
         with pytest.raises(RuntimeError, match="inert frame failure"):
-            await asyncio.wait_for(task, 2)
+            await asyncio.wait_for(task, watchdog_timeout())
     finally:
         finish_cleanup.set()
         if not task.done():

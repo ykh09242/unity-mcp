@@ -1,5 +1,7 @@
 """Catalog delivery owns lifecycle context, independent of finished SDK requests."""
 
+from tests.timing import await_signal
+
 import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -70,7 +72,7 @@ async def test_finished_request_released_while_real_notification_is_stalled(monk
                 meta={"probe_payload": "y" * (1024 * 1024)},
             )
             assert not result.is_error
-            await asyncio.wait_for(entered.wait(), 2)
+            await await_signal(entered, "entered")
             # Advance the SDK beyond the last request before observing production ownership.
             await client.list_tools()
             await asyncio.sleep(0)
@@ -80,7 +82,7 @@ async def test_finished_request_released_while_real_notification_is_stalled(monk
             assert requests[0]() is None
             assert len(notifier._tasks) == 1
             release.set()
-            await asyncio.wait_for(handler.received.wait(), 2)
+            await await_signal(handler.received, "handler.received")
     finally:
         release.set()
         await notifier.close()
@@ -115,7 +117,7 @@ async def test_delivery_preserves_lifecycle_context_and_isolates_each_worker(mon
                 notifier.publish([first, second])
             finally:
                 marker.reset(token)
-            await asyncio.wait_for(entered.wait(), 2)
+            await await_signal(entered, "entered")
             assert observed == ["lifecycle", "lifecycle"]
             assert marker.get() == "outside"
     finally:
@@ -148,7 +150,7 @@ async def test_reset_drains_old_context_and_close_releases_lifecycle_snapshot(mo
     try:
         async with sdk_connection() as first, sdk_connection() as second:
             notifier.publish([first])
-            await asyncio.wait_for(entered.wait(), 2)
+            await await_signal(entered, "entered")
             old_tasks = tuple(notifier._tasks)
             token = marker.set(new)
             try:
@@ -163,7 +165,7 @@ async def test_reset_drains_old_context_and_close_releases_lifecycle_snapshot(mo
             assert old_ref() is None
             entered.clear()
             notifier.publish([second])
-            await asyncio.wait_for(entered.wait(), 2)
+            await await_signal(entered, "entered")
             assert seen == ["old", "new"]
             del new
             await notifier.close()

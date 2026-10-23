@@ -1,5 +1,7 @@
 """Guarded local REST commands use a real registry/hub and inert native wire peers."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 import json
 from importlib import import_module
@@ -270,7 +272,7 @@ async def test_custom_pending_then_refused_poll_retains_prior_dispatch_and_job(
         )
 
     # When: replacing the connection before the poll reaches actual admission.
-    with anyio.fail_after(5):
+    with anyio.fail_after(watchdog_timeout()):
         async with anyio.create_task_group() as group:
             group.start_soon(request)
             try:
@@ -340,7 +342,7 @@ async def test_cancelled_pre_admission_request_does_not_leak_guard_or_send(
 
     monkeypatch.setattr(hub, "send_command", paused)
     # When: cancelling the caller while it owns that gated request.
-    with anyio.fail_after(5):
+    with anyio.fail_after(watchdog_timeout()):
         async with anyio.create_task_group() as group:
             group.start_soon(request)
             try:
@@ -401,7 +403,7 @@ async def test_total_deadline_retains_actual_execution_evidence(
 
         monkeypatch.setattr(hub, "send_command", before_admission)
     # When: the owned deadline expires before admission or after a real execute frame.
-    with anyio.fail_after(3):
+    with anyio.fail_after(watchdog_timeout()):
         response = await client.post("/api/context-command", json=payload(a.root))
     # Then: only prior execution permits outcome_unknown; all owned work is drained.
     assert response.status_code == 200, response.text
@@ -529,7 +531,7 @@ async def test_registered_catalog_refusal_preserves_actual_dispatch_evidence(
 
     monkeypatch.setattr(service, "_send_custom", changed)
     # When: a real catalog refuses either the first send or a later job poll.
-    with anyio.fail_after(5):
+    with anyio.fail_after(watchdog_timeout()):
         response = await client.post(
             "/api/context-command",
             json=payload(

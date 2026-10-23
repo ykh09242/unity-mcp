@@ -1,3 +1,4 @@
+from tests.timing import watchdog_timeout
 import asyncio
 import importlib
 import io
@@ -66,7 +67,7 @@ async def test_cancelled_fetch_holds_capacity_until_worker_exits(monkeypatch):
 
     def blocking_open(*args, **kwargs):
         started.set()
-        assert release.wait(3)
+        assert release.wait(watchdog_timeout())
         return Response()
 
     monkeypatch.setattr(docs, "urlopen", blocking_open)

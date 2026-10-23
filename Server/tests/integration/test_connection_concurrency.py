@@ -1,5 +1,7 @@
 """Real socket regressions for shared connection lifetime and replay safety."""
 
+from tests.timing import watchdog_timeout
+
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
@@ -68,7 +70,9 @@ def test_lifecycle_waits_for_completed_mutation_response(isolated_connection, mo
     def pause_after_response(*args, **kwargs):
         response = receive(*args, **kwargs)
         response_read.set()
-        assert release_response.wait(2), "Controller failed to release completed response"
+        assert release_response.wait(watchdog_timeout()), (
+            "Controller failed to release completed response"
+        )
         return response
 
     monkeypatch.setattr(conn, "receive_full_response", pause_after_response)
@@ -90,14 +94,14 @@ def test_lifecycle_waits_for_completed_mutation_response(isolated_connection, mo
     with ThreadPoolExecutor(max_workers=3) as executor:
         bridge = executor.submit(complete_mutation)
         mutation = executor.submit(conn.send_command, "manage_gameobject", {}, 0)
-        assert response_read.wait(2)
+        assert response_read.wait(watchdog_timeout())
         lifecycle = executor.submit(lifecycle_action)
-        assert action_started.wait(2)
+        assert action_started.wait(watchdog_timeout())
         closed_during_response = action_finished.wait(0.1)
         release_response.set()
-        result = mutation.result(timeout=2)
-        lifecycle.result(timeout=2)
-        bridge.result(timeout=2)
+        result = mutation.result(timeout=watchdog_timeout())
+        lifecycle.result(timeout=watchdog_timeout())
+        bridge.result(timeout=watchdog_timeout())
     assert result == {"success": True}
     assert not closed_during_response, (
         "Lifecycle changed the socket before response timeout restoration"
@@ -132,7 +136,7 @@ def test_closed_socket_reconnects_before_dispatching_mutation(isolated_connectio
         with ThreadPoolExecutor(max_workers=1) as executor:
             bridge = executor.submit(serve)
             result = conn.send_command("manage_gameobject", {"action": "modify"}, max_attempts=0)
-            bridge.result(timeout=2)
+            bridge.result(timeout=watchdog_timeout())
     assert result == {"success": True}
     assert commands == [
         {
@@ -156,7 +160,7 @@ def test_unity_error_does_not_reconnect_and_replay_mutation(isolated_connection,
         bridge = executor.submit(respond)
         with pytest.raises(Exception, match="Mutation rejected"):
             conn.send_command("manage_gameobject", {}, max_attempts=1)
-        bridge.result(timeout=2)
+        bridge.result(timeout=watchdog_timeout())
     assert reconnects == []
     assert conn.sock is not None, "Application rejection closed a healthy protocol connection"
 
@@ -180,7 +184,7 @@ def test_parallel_instance_resolution_shares_one_discovery_scan(monkeypatch):
         scans.append(1)
         if len(scans) == 1:
             scanning.set()
-            assert release_scan.wait(2)
+            assert release_scan.wait(watchdog_timeout())
             return [selected]
         # A parallel probe can fail while the first probe/Editor is busy.
         return []
@@ -188,7 +192,7 @@ def test_parallel_instance_resolution_shares_one_discovery_scan(monkeypatch):
     monkeypatch.setattr(uc.PortDiscovery, "discover_all_unity_instances", discover)
 
     def resolve():
-        started.wait(timeout=2)
+        started.wait(timeout=watchdog_timeout())
         try:
             return pool._resolve_instance_id(selected.id, pool.discover_all_instances())
         except ConnectionError as error:
@@ -196,12 +200,12 @@ def test_parallel_instance_resolution_shares_one_discovery_scan(monkeypatch):
 
     with ThreadPoolExecutor(max_workers=3) as executor:
         requests = [executor.submit(resolve) for _ in range(3)]
-        started.wait(timeout=2)
-        assert scanning.wait(2)
+        started.wait(timeout=watchdog_timeout())
+        assert scanning.wait(watchdog_timeout())
         # This interval represents controlled discovery latency, not polling the race.
         time.sleep(0.05)
         release_scan.set()
-        results = [request.result(timeout=2) for request in requests]
+        results = [request.result(timeout=watchdog_timeout()) for request in requests]
     assert len(scans) == 1, f"Parallel resolution performed {len(scans)} redundant scans"
     assert results == [selected] * 3
 
@@ -232,14 +236,14 @@ def test_rediscovered_port_update_expires_while_lifecycle_holds_lock(
     monkeypatch.setattr(uc.stdio_port_registry, "get_port", lambda instance_id=None: 6401)
 
     def hold_lifecycle_lock():
-        assert start_holder.wait(2)
+        assert start_holder.wait(watchdog_timeout())
         with conn._io_lock:
             holder_acquired.set()
-            assert release_holder.wait(2)
+            assert release_holder.wait(watchdog_timeout())
 
     def discover(**kwargs):
         start_holder.set()
-        assert holder_acquired.wait(2)
+        assert holder_acquired.wait(watchdog_timeout())
         return []
 
     monkeypatch.setattr(uc.stdio_port_registry, "get_instances", discover)
@@ -253,7 +257,7 @@ def test_rediscovered_port_update_expires_while_lifecycle_holds_lock(
             assert conn.port == 6400, "Expired call changed the port"
         finally:
             release_holder.set()
-            holder.result(timeout=2)
+            holder.result(timeout=watchdog_timeout())
 
 
 def test_lost_mutation_reply_does_not_dispatch_again(isolated_connection, monkeypatch):
@@ -268,7 +272,7 @@ def test_lost_mutation_reply_does_not_dispatch_again(isolated_connection, monkey
 
         bridge = executor.submit(drop_after_mutation)
         response = conn.send_command("manage_gameobject", {}, max_attempts=1)
-        bridge.result(timeout=2)
+        bridge.result(timeout=watchdog_timeout())
     assert response.success is False
     assert "Connection closed" in response.error
     assert response.hint == "inspect_state_before_retry"
@@ -300,7 +304,7 @@ def test_malformed_reply_discards_socket_then_next_call_connects_fresh(
     with ThreadPoolExecutor(max_workers=1) as executor:
         bridge = executor.submit(corrupt_response)
         response = conn.send_command("manage_gameobject", {"action": "modify"}, max_attempts=2)
-        bridge.result(timeout=2)
+        bridge.result(timeout=watchdog_timeout())
     assert response.success is False
     assert response.data == {"reason": "outcome_unknown", "command": "manage_gameobject"}
     assert response.hint == "inspect_state_before_retry"
@@ -328,7 +332,7 @@ def test_malformed_reply_discards_socket_then_next_call_connects_fresh(
         with ThreadPoolExecutor(max_workers=1) as executor:
             bridge = executor.submit(healthy_response)
             result = conn.send_command("get_editor_state", {}, max_attempts=0)
-            bridge.result(timeout=2)
+            bridge.result(timeout=watchdog_timeout())
     assert result == {"success": True}
     assert commands == [
         {

@@ -1,5 +1,7 @@
 """Local discovery must not stall unrelated MCP requests or persist cancelled choices."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import threading
 from types import SimpleNamespace
@@ -55,7 +57,7 @@ def gated_discovery(monkeypatch, target):
             # A baseline main-thread call returns immediately, so a failing test
             # never deadlocks its own event loop waiting for the release task.
             if thread != loop_thread:
-                assert release.wait(2), "Discovery worker was not released"
+                assert release.wait(watchdog_timeout()), "Discovery worker was not released"
             return target
         finally:
             loop.call_soon_threadsafe(completed.set)
@@ -81,7 +83,7 @@ async def test_local_selection_allows_other_requests_while_discovery_waits(
     )
     request = asyncio.create_task(operation)
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         assert len(threads) == 1 and threads[0] != threading.get_ident(), (
             "Local discovery ran on the MCP event loop"
         )
@@ -108,14 +110,14 @@ async def test_cancelled_autoselect_does_not_persist_late_discovery(
     started, completed, release, _ = gated_discovery(monkeypatch, target)
     request = asyncio.create_task(middleware._maybe_autoselect_instance(ctx))
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         assert not request.done(), "Discovery blocked the caller until after selection"
         request.cancel()
         with pytest.raises(asyncio.CancelledError):
             await request
     finally:
         release.set()
-        await asyncio.wait_for(completed.wait(), 2)
+        await await_signal(completed, "completed")
         if not request.done():
             await request
     assert ctx.state == {}, "Cancelled discovery persisted a session selection"
@@ -141,7 +143,7 @@ async def test_public_selection_keeps_event_loop_responsive(
     started, _, release, threads = gated_discovery(monkeypatch, target)
     request = asyncio.create_task(public_selection(ctx, selector))
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         assert len(threads) == 1 and threads[0] != threading.get_ident()
         assert not request.done()
         assert ctx.state == {}
@@ -165,14 +167,14 @@ async def test_cancelled_public_selection_does_not_persist_late_discovery(
     started, completed, release, _ = gated_discovery(monkeypatch, target)
     request = asyncio.create_task(public_selection(ctx, selector))
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         assert not request.done(), "Public discovery blocked the MCP event loop"
         request.cancel()
         with pytest.raises(asyncio.CancelledError):
             await request
     finally:
         release.set()
-        await asyncio.wait_for(completed.wait(), 2)
+        await await_signal(completed, "completed")
         if not request.done():
             await request
 
@@ -245,7 +247,7 @@ async def test_late_autoselect_preserves_explicit_public_tool_selection(
     monkeypatch.setattr(selection_tool, "is_sessionless", lambda _: False)
     automatic = asyncio.create_task(middleware._maybe_autoselect_instance(ctx))
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         result = await selection_tool.set_active_instance(ctx, other.id)
         explicit_selected.set()
         assert result["success"] and result["data"]["instance"] == other.id
@@ -281,7 +283,7 @@ async def test_auto_selection_state_read_and_write_cannot_overwrite_explicit_wri
     automatic = asyncio.create_task(middleware._maybe_autoselect_instance(ctx))
     explicit = None
     try:
-        await asyncio.wait_for(reading.wait(), 2)
+        await await_signal(reading, "reading")
         operation = (
             middleware.set_active_instance(ctx, "Other@cafebabe")
             if explicit_action == "set"
@@ -313,12 +315,14 @@ async def test_cancelled_state_read_releases_selection_lock(local_discovery, mon
     monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", lambda: [target])
     automatic = asyncio.create_task(middleware._maybe_autoselect_instance(ctx))
     try:
-        await asyncio.wait_for(reading.wait(), 2)
+        await await_signal(reading, "reading")
     finally:
         automatic.cancel()
         with pytest.raises(asyncio.CancelledError):
             await automatic
-    await asyncio.wait_for(middleware.set_active_instance(ctx, "Other@cafebabe"), 2)
+    await asyncio.wait_for(
+        middleware.set_active_instance(ctx, "Other@cafebabe"), watchdog_timeout()
+    )
     assert ctx.state[middleware._ACTIVE_INSTANCE_STATE_KEY] == "Other@cafebabe"
 
 
@@ -362,7 +366,7 @@ async def test_resource_reads_allow_other_requests_while_discovery_waits(
     }
     request = asyncio.create_task(operations[resource](ctx))
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         assert len(threads) == 1 and threads[0] != threading.get_ident(), (
             "Resource discovery ran on the MCP event loop"
         )
@@ -375,7 +379,7 @@ async def test_resource_reads_allow_other_requests_while_discovery_waits(
     finally:
         release.set()
         result = (await asyncio.gather(request, return_exceptions=True))[0]
-        await asyncio.wait_for(completed.wait(), 2)
+        await await_signal(completed, "completed")
     if cancelled:
         assert isinstance(result, asyncio.CancelledError)
         assert listed == [], "Cancelled resource read listed tools after project resolution"
@@ -505,7 +509,7 @@ async def test_custom_tool_entrypoints_allow_other_requests_while_discovery_wait
 
     request = asyncio.create_task(invoke())
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         assert len(threads) == 1 and threads[0] != threading.get_ident(), (
             "Custom tool entrypoint discovery ran on the MCP event loop"
         )
@@ -514,7 +518,7 @@ async def test_custom_tool_entrypoints_allow_other_requests_while_discovery_wait
     finally:
         release.set()
         result = await request
-        await asyncio.wait_for(completed.wait(), 2)
+        await await_signal(completed, "completed")
     assert result.success
     if entrypoint == "rest_list":
         assert dispatched == [(target.hash, threading.get_ident())]

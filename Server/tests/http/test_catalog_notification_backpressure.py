@@ -1,5 +1,7 @@
 """Slow legacy MCP readers cannot block Unity results or disconnect cleanup."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 import json
 from collections.abc import AsyncIterator
@@ -95,7 +97,7 @@ async def plugin_reader(registry: PluginRegistry, *, queue_catalog: bool):
         yield incoming, task
     finally:
         incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
-        done, _ = await asyncio.wait({task}, timeout=2)
+        done, _ = await asyncio.wait({task}, timeout=watchdog_timeout())
         if task not in done:
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -126,7 +128,7 @@ async def test_disconnect_finishes_while_sdk_notification_is_stalled(
             monkeypatch.setattr("transport.plugin_hub._active_mcp_sessions", WeakSet([connection]))
             # When the plugin disconnects and changes the catalog.
             incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
-            done, _ = await asyncio.wait({reader}, timeout=0.15)
+            done, _ = await asyncio.wait({reader}, timeout=watchdog_timeout())
             # Then routing cleanup and the shielded dispatch finally block complete.
             assert reader in done
             assert notification_hub._sessions == {}
@@ -145,7 +147,7 @@ async def test_healthy_sdk_connection_receives_change_despite_stalled_peer(
         notification = asyncio.create_task(PluginHub._notify_mcp_tool_list_changed())
         try:
             # When a catalog refresh is broadcast while one peer is stalled.
-            with anyio.fail_after(0.15):
+            with anyio.fail_after(watchdog_timeout()):
                 message = await streams[healthy].receive()
             # Then the independent healthy SDK output contains a valid notification.
             assert message.message.method == "notifications/tools/list_changed"
@@ -173,7 +175,7 @@ async def test_repeated_catalog_changes_coalesce_and_deliver_final_refresh(
         assert notifier._tasks == {task}
         assert len(notifier._deliveries) == 1
         assert output.statistics().tasks_waiting_send == 1
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             first = await output.receive()
             final = await output.receive()
         assert first.message.method == final.message.method == "notifications/tools/list_changed"
@@ -202,7 +204,7 @@ async def test_connection_teardown_drains_send_and_rejects_raced_refresh(
         close = asyncio.create_task(connection.exit_stack.aclose())
         try:
             # When a catalog change races with SDK teardown after its worker drained.
-            with anyio.fail_after(2):
+            with anyio.fail_after(watchdog_timeout()):
                 await closing.wait()
             await PluginHub._notify_mcp_tool_list_changed()
             # Then the closing connection cannot acquire another delivery worker.
@@ -228,7 +230,7 @@ async def test_shutdown_drains_stalled_delivery_and_rejects_late_refresh(
         # When shutdown races with more catalog refreshes.
         shutdown = asyncio.create_task(PluginHub.shutdown())
         refresh = asyncio.create_task(PluginHub._notify_mcp_tool_list_changed())
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             await asyncio.gather(shutdown, refresh)
         await PluginHub._notify_mcp_tool_list_changed()
         # Then shutdown has drained every worker and no late work survives it.

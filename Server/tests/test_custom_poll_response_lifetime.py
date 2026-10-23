@@ -1,5 +1,7 @@
 """Custom polling retains only the response actually returned to the client."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 import gc
 import weakref
@@ -165,7 +167,7 @@ async def test_cancelled_custom_poll_releases_results_before_parent_delivery(pol
     token = response_owner.set(owner)
     task = asyncio.create_task(execute(polling))
     try:
-        await asyncio.wait_for(polling.blocked.wait(), 2)
+        await await_signal(polling.blocked, "polling.blocked")
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -232,9 +234,9 @@ async def test_custom_poll_timeout_delivers_only_last_successful_observation(pol
     token = response_owner.set(owner)
     task = asyncio.create_task(execute(polling))
     try:
-        await asyncio.wait_for(polling.blocked.wait(), 2)
+        await await_signal(polling.blocked, "polling.blocked")
         now[0] = 2.0
-        result = await asyncio.wait_for(task, 2)
+        result = await asyncio.wait_for(task, watchdog_timeout())
         assert not result.success and "Timeout" in result.message
         assert result.data["data"]["value"] == 2
         assert len(polling.hub._retained_results) == len(owner.entries) == 1

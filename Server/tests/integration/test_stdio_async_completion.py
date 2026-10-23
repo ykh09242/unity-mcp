@@ -1,5 +1,7 @@
 """Async completion retains dispatched connection without event-loop rediscovery."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -132,7 +134,7 @@ def test_resync_flag_claim_is_atomic_without_waiting_for_socket_io():
         conn._io_lock.acquire()
         try:
             futures = [executor.submit(conn.claim_tool_resync) for _ in range(4)]
-            claims = [future.result(timeout=0.5) for future in futures]
+            claims = [future.result(timeout=watchdog_timeout()) for future in futures]
         finally:
             # Release before executor shutdown, including when a regressed
             # claim blocks on this lock and the future times out.
@@ -244,7 +246,7 @@ async def test_cancelled_worker_keeps_pending_resync_for_later_command(
 
     def send(*args, **kwargs):
         entered.set()
-        assert release.wait(2)
+        assert release.wait(watchdog_timeout())
         finished.set()
         return {"success": True}
 
@@ -254,13 +256,13 @@ async def test_cancelled_worker_keeps_pending_resync_for_later_command(
     )
     loop = asyncio.get_running_loop()
     try:
-        assert await loop.run_in_executor(None, entered.wait, 1)
+        assert await loop.run_in_executor(None, entered.wait, watchdog_timeout())
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
     finally:
         release.set()
-    assert await loop.run_in_executor(None, finished.wait, 1)
+    assert await loop.run_in_executor(None, finished.wait, watchdog_timeout())
     await asyncio.sleep(0)
     assert conn._needs_tool_resync is True
     resync.assert_not_awaited()

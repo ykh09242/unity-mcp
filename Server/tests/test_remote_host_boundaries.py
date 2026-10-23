@@ -272,6 +272,7 @@ def test_scanner_enumeration_budget_counts_hidden_entries(monkeypatch, tmp_path)
 
 @pytest.mark.asyncio
 async def test_scanner_cancellation_stops_worker_without_overlap(monkeypatch, tmp_path):
+    from tests.timing import watchdog_timeout
     import threading
     from core.config import config
     from services.state.external_changes_scanner import ExternalChangesScanner
@@ -284,19 +285,19 @@ async def test_scanner_cancellation_stops_worker_without_overlap(monkeypatch, tm
 
     def scan(roots):
         started.set()
-        assert scanner._active_stop.wait(timeout=2)
+        assert scanner._active_stop.wait(timeout=watchdog_timeout())
         exited.set()
         return None
 
     monkeypatch.setattr(scanner, "_scan_paths_max_mtime_ns", scan)
     task = asyncio.create_task(scanner.update_and_get_async("selected"))
-    assert await asyncio.to_thread(started.wait, 2)
+    assert await asyncio.to_thread(started.wait, watchdog_timeout())
     assert (await scanner.update_and_get_async("other"))["external_changes_dirty"] is False
     assert "other" not in scanner._states
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert await asyncio.to_thread(exited.wait, 2)
+    assert await asyncio.to_thread(exited.wait, watchdog_timeout())
 
 
 def test_manifest_read_and_retained_package_roots_are_bounded(monkeypatch, tmp_path):

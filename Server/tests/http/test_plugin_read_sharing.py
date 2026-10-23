@@ -1,5 +1,7 @@
 """In-flight HTTP reads keep connection identity, admission and delivery owners."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio  # noqa: ANYIO_OK -- exercise the Hub's existing event-loop contract.
 import time
 from collections import Counter
@@ -60,7 +62,7 @@ class Peer:
         self.application_state = self.client_state = WebSocketState.DISCONNECTED
 
     async def next_command(self):
-        return await asyncio.wait_for(self.commands.get(), 2)
+        return await asyncio.wait_for(self.commands.get(), watchdog_timeout())
 
     async def reply(self, command, result=None):
         if result is None:
@@ -427,7 +429,7 @@ async def test_readiness_capacity_refusal_has_no_retry_or_tool_dispatch(peer, mo
     # Given: actual Hub command admission has no available slot.
     monkeypatch.setattr(PluginHub, "MAX_PENDING_PER_SESSION", 0)
     # When: readiness is requested.
-    result = await asyncio.wait_for(read(peer), 0.3)
+    result = await asyncio.wait_for(read(peer), watchdog_timeout())
     # Then: refusal is immediate, without a probe/retry or tool dispatch.
     assert result["data"]["reason"] == "command_capacity"
     assert peer.sent == []
@@ -442,7 +444,9 @@ async def test_readiness_result_capacity_refusal_does_not_retry(peer, monkeypatc
     # When: an otherwise valid response exceeds the source budget.
     await peer.reply(probe)
     # Then: it returns the bounded capacity error rather than repeating ping.
-    assert (await asyncio.wait_for(caller, 0.3))["data"]["reason"] == "result_capacity"
+    assert (await asyncio.wait_for(caller, watchdog_timeout()))["data"][
+        "reason"
+    ] == "result_capacity"
     assert peer.counts() == {"ping": 1}
 
 
@@ -936,14 +940,14 @@ async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(
             },
         }
         init = Wire(app, "POST", "/mcp", initialize)
-        await asyncio.wait_for(init.run(), 2)
+        await asyncio.wait_for(init.run(), watchdog_timeout())
         start = next(value for value in init.sent if value["type"] == "http.response.start")
         session = dict(start["headers"])[b"mcp-session-id"]
         headers = [(b"mcp-session-id", session), (b"mcp-protocol-version", b"2025-03-26")]
         initialized = Wire(
             app, "POST", "/mcp", {"jsonrpc": "2.0", "method": "notifications/initialized"}, headers
         )
-        await asyncio.wait_for(initialized.run(), 2)
+        await asyncio.wait_for(initialized.run(), watchdog_timeout())
         requests = [
             Wire(
                 app,
@@ -968,7 +972,10 @@ async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(
             # When: one state source completes but both actual sends are blocked.
             await peer.reply(source, result)
             await asyncio.gather(
-                *(asyncio.wait_for(request.blocked.wait(), 2) for request in requests)
+                *(
+                    asyncio.wait_for(request.blocked.wait(), watchdog_timeout())
+                    for request in requests
+                )
             )
             assert len(PluginHub._retained_results) == (3 if large else 2)
             if large:

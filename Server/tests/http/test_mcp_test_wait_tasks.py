@@ -1,5 +1,7 @@
 """Isolated SDK Tasks composition; production main integration is deliberately absent."""
 
+from tests.timing import watchdog_timeout
+
 from typing import Literal
 import asyncio
 import json
@@ -308,7 +310,7 @@ async def test_isolated_authenticated_task_owner_result_and_per_request_opt_in(
         )
         assert ordinary_call["result"]["structuredContent"]["ordinary"] is True
         release.set()
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while extension._workers:
                 await anyio.sleep(0)
         _, completed = await wire(client, "tasks/get", {"taskId": task_id})
@@ -352,7 +354,7 @@ async def test_isolated_wait_cancel_is_intent_until_actual_cleanup(tmp_path, mon
         await wire(client, "tasks/cancel", {"taskId": task_id})
         assert len(extension.admission.active) == 1
         release.set()
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while extension._workers:
                 await anyio.sleep(0)
         assert extension.journal.get(task_id, "alice").status == "cancelled"
@@ -406,7 +408,7 @@ async def test_detached_wait_keeps_original_outer_deadline(tmp_path, monkeypatch
             {"name": "get_test_job", "arguments": {"job_id": "existing", "wait_timeout": 60}},
         )
         task_id = created["result"]["taskId"]
-        with anyio.fail_after(10):
+        with anyio.fail_after(watchdog_timeout()):
             while extension._workers:
                 await anyio.sleep(0)
         assert len(calls) == 1
@@ -445,7 +447,7 @@ async def test_sdk_client_claim_and_typed_task_name_encoding(tmp_path, monkeypat
 
         def claims(self):
             async def resolve(handle, ctx):
-                with anyio.fail_after(2):
+                with anyio.fail_after(watchdog_timeout()):
                     while True:
                         reply = await ctx.session.send_request(
                             GetWaitTaskRequest(params=TaskParams(taskId=handle.task_id)),
@@ -529,7 +531,7 @@ async def test_jsonrpc_failure_preserves_error_and_journal_capacity_falls_back(
         assert len(extension.admission.active) == 1
         assert len(calls) == 1
         release.set()
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while extension._workers:
                 await anyio.sleep(0)
         _, failed = await wire(client, "tasks/get", {"taskId": task_id})
@@ -611,7 +613,7 @@ async def test_fresh_authenticated_client_reads_exact_completed_result_after_reo
             {"name": "get_test_job", "arguments": {"job_id": "existing", "wait_timeout": 1}},
         )
         task_id = created["result"]["taskId"]
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while extension._workers:
                 await anyio.sleep(0)
     async with isolated_tasks(tmp_path, monkeypatch, execute) as (client, _, _):
@@ -640,7 +642,7 @@ async def test_shutdown_during_journal_creation_holds_admission_and_writer(tmp_p
 
         def held_create(operation):
             entered.set()
-            assert release.wait(2)
+            assert release.wait(watchdog_timeout())
             return original(operation)
 
         monkeypatch.setattr(extension.journal, "create", held_create)
@@ -652,7 +654,7 @@ async def test_shutdown_during_journal_creation_holds_admission_and_writer(tmp_p
             )
         )
         try:
-            with anyio.fail_after(1):
+            with anyio.fail_after(watchdog_timeout()):
                 while not entered.is_set():
                     await anyio.sleep(0)
             await extension.close(grace_seconds=0)
@@ -685,7 +687,7 @@ async def test_shutdown_retains_admitted_cancel_between_lookup_and_commit(tmp_pa
             {"name": "get_test_job", "arguments": {"job_id": "existing", "wait_timeout": 1}},
         )
         task_id = created["result"]["taskId"]
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while extension._workers:
                 await anyio.sleep(0)
         lookup = extension._lookup
@@ -699,7 +701,7 @@ async def test_shutdown_retains_admitted_cancel_between_lookup_and_commit(tmp_pa
         monkeypatch.setattr(extension, "_lookup", between_lookup_and_commit)
         request = asyncio.create_task(wire(client, "tasks/cancel", {"taskId": task_id}))
         try:
-            with anyio.fail_after(1):
+            with anyio.fail_after(watchdog_timeout()):
                 await entered.wait()
             await extension.close(grace_seconds=0)
             assert extension._io_owners == 0
@@ -760,7 +762,7 @@ async def test_task_result_delivery_is_held_through_shielded_asgi_send(tmp_path,
             {"name": "get_test_job", "arguments": {"job_id": "existing", "wait_timeout": 1}},
         )
         task_id = created["result"]["taskId"]
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while extension._workers:
                 await anyio.sleep(0)
         body = _body("tasks/get", {"taskId": task_id})
@@ -802,7 +804,7 @@ async def test_task_result_delivery_is_held_through_shielded_asgi_send(tmp_path,
 
         async with anyio.create_task_group() as group:
             group.start_soon(held_request)
-            with anyio.fail_after(2):
+            with anyio.fail_after(watchdog_timeout()):
                 await entered.wait()
             cancel.cancel()
             await anyio.wait_all_tasks_blocked()
@@ -812,7 +814,7 @@ async def test_task_result_delivery_is_held_through_shielded_asgi_send(tmp_path,
             assert refused["error"]["code"] == -32603
             assert "delivery capacity" in refused["error"]["message"]
             release.set()
-            with anyio.fail_after(2):
+            with anyio.fail_after(watchdog_timeout()):
                 await done.wait()
         assert not extension.delivery_admission.active
         _, healthy = await wire(client, "tasks/get", {"taskId": task_id})
@@ -831,7 +833,7 @@ async def test_request_cancel_cannot_abandon_journal_thread_or_its_admission(tmp
 
         def held_create(operation):
             entered.set()
-            assert release.wait(2), "test must release blocked journal writer"
+            assert release.wait(watchdog_timeout()), "test must release blocked journal writer"
             return original(operation)
 
         monkeypatch.setattr(extension.journal, "create", held_create)
@@ -843,7 +845,7 @@ async def test_request_cancel_cannot_abandon_journal_thread_or_its_admission(tmp
             )
         )
         try:
-            with anyio.fail_after(1):
+            with anyio.fail_after(watchdog_timeout()):
                 while not entered.is_set():
                     await anyio.sleep(0)
             request.cancel()
@@ -856,7 +858,7 @@ async def test_request_cancel_cannot_abandon_journal_thread_or_its_admission(tmp
             await request
         except asyncio.CancelledError:
             pass
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while extension._workers:
                 await anyio.sleep(0)
         assert not extension.admission.active
@@ -897,7 +899,7 @@ async def test_retired_noncooperative_wait_keeps_worker_and_writer_charges(tmp_p
         with pytest.raises(JournalUnavailable):
             WaitJournal(extension.journal.root)
         release.set()
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while extension._workers:
                 await anyio.sleep(0)
         assert not extension.admission.active

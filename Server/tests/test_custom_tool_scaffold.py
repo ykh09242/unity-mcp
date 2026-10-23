@@ -1,5 +1,7 @@
 """Fresh-file publication protects source, metadata and foreign replacements."""
 
+from tests.timing import watchdog_timeout
+
 import importlib
 import importlib.util
 import os
@@ -360,19 +362,19 @@ def test_concurrent_writer_is_busy_until_complete_publication(project, monkeypat
 
     def held_link(*args, **kwargs):
         admitted.set()
-        assert release.wait(5), "test failed to release publication"
+        assert release.wait(watchdog_timeout()), "test failed to release publication"
         return original(*args, **kwargs)
 
     monkeypatch.setattr(helper().os, "link", held_link)
     with ThreadPoolExecutor(max_workers=1) as executor:
         writer = executor.submit(invoke, project)
         try:
-            assert admitted.wait(5)
+            assert admitted.wait(watchdog_timeout())
             with pytest.raises(helper().ScaffoldError, match="busy"):
                 invoke(project)
         finally:
             release.set()
-        receipt = writer.result(timeout=5)
+        receipt = writer.result(timeout=watchdog_timeout())
     assert receipt.created and receipt.cleanup_complete
 
 

@@ -1,5 +1,7 @@
 """Actual SDK calls with only the native command boundary faked."""
 
+from tests.timing import await_signal
+
 import importlib
 import asyncio
 import json
@@ -219,7 +221,7 @@ async def test_abandoned_sdk_poll_never_requests_native_cancel(monkeypatch):
     app.tool(name="get_test_job")(poll.get_test_job)
     async with Client(app) as client:
         request = asyncio.create_task(client.call_tool("get_test_job", {"job_id": "job"}))
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         request.cancel()
         with pytest.raises(asyncio.CancelledError):
             await request

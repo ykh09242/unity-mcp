@@ -6,6 +6,8 @@ The routing case deliberately uses only Task1 APIs and is the causal baseline.
 
 from __future__ import annotations
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from contextlib import contextmanager
 import inspect
@@ -162,7 +164,7 @@ def wire_peer(respond=None, *, capabilities=_ABSENT, legacy=False, forged=False,
                 pass
             peer.close()
         listener.close()
-        thread.join(3)
+        thread.join(watchdog_timeout())
         assert not thread.is_alive(), "Owned peer did not close/join"
         assert not observed.failures, observed.failures
 
@@ -185,8 +187,8 @@ class RecordingContext:
         self.acknowledged.set()
 
 
-async def _wait_owned_event(event, timeout, *, task=None):
-    async with asyncio.timeout(timeout):
+async def _wait_owned_event(event, *, task=None):
+    async with asyncio.timeout(watchdog_timeout()):
         while not event.is_set():
             if task is not None and task.done():
                 task.result()
@@ -241,7 +243,7 @@ def _expected_business():
 
 async def _prepared_connection(environment, peer, *, legacy=False):
     connection = _connection(environment, peer, legacy=legacy)
-    assert await asyncio.wait_for(asyncio.to_thread(connection.connect), 3)
+    assert await asyncio.wait_for(asyncio.to_thread(connection.connect), watchdog_timeout())
     # This fixture owns bootstrap metadata. Consume its real reconnect claim before
     # the command, so unrelated background tool resync cannot create extra commands.
     assert connection.claim_tool_resync()
@@ -270,7 +272,7 @@ async def _route(environment, peer, ctx, *, deadline=None, require_api=True, con
             )
         )
         try:
-            return await asyncio.wait_for(asyncio.shield(ctx.command), 3)
+            return await asyncio.wait_for(asyncio.shield(ctx.command), watchdog_timeout())
         finally:
             if not ctx.command.done():
                 ctx.command.cancel()
@@ -366,12 +368,12 @@ async def test_disconnect_and_old_peer_reconnect_clear_accepted_capabilities(env
         assert hasattr(connection, "authenticated_session"), (
             "TASK3_API_PREREQUISITE: connection session ownership is absent"
         )
-        assert await asyncio.wait_for(asyncio.to_thread(connection.connect), 3)
+        assert await asyncio.wait_for(asyncio.to_thread(connection.connect), watchdog_timeout())
         session = connection.authenticated_session
         assert session.capabilities == frozenset({CAPABILITY})
         assert connection.session_generation == session.session_generation
     # When: the peer's joined real FIN reaches the actual stale-socket peek path.
-    async with asyncio.timeout(1):
+    async with asyncio.timeout(watchdog_timeout()):
         while not select.select([connection.sock], [], [], 0)[0]:
             await asyncio.sleep(0.001)
     connection._ensure_live_connection()
@@ -380,7 +382,7 @@ async def test_disconnect_and_old_peer_reconnect_clear_accepted_capabilities(env
     assert connection.session_generation is None
     with wire_peer(commands=0) as second:
         connection.port = second.port
-        assert await asyncio.wait_for(asyncio.to_thread(connection.connect), 3)
+        assert await asyncio.wait_for(asyncio.to_thread(connection.connect), watchdog_timeout())
         # Then: the new verified identity has no inherited optional authority.
         assert connection.authenticated_session.capabilities == frozenset()
         assert connection.authenticated_session.session_id == second.session
@@ -414,7 +416,7 @@ async def test_absent_optin_keeps_one_original_business_frame(environment, mode)
                     retry_on_reload=False,
                 )
             )
-            result = await asyncio.wait_for(ctx.command, 3)
+            result = await asyncio.wait_for(ctx.command, watchdog_timeout())
         connection.disconnect()
         # Then: no prelude/control/report changes old wire bytes or terminal result.
         assert peer.business == [_expected_business()]
@@ -434,7 +436,9 @@ async def test_routed_optin_reports_before_real_terminal_result(environment):
             assert set(prelude) == {"type", "version", "id"}
             assert prelude["version"] == 1
             _write(sock, _control(prelude["id"]))
-            assert ctx.acknowledged.wait(1), "Progress was not observed while command is pending"
+            assert ctx.acknowledged.wait(watchdog_timeout()), (
+                "Progress was not observed while command is pending"
+            )
         _write(sock, RESULT)
 
     with wire_peer(respond, capabilities=[CAPABILITY]) as peer:
@@ -492,20 +496,22 @@ async def test_optional_controls_cannot_replace_final_response(environment, bad)
         for frame in frames:
             _write(sock, frame)
         frames_written.set()
-        assert allow_terminal.wait(2), "Owner did not release its held terminal response"
+        assert allow_terminal.wait(watchdog_timeout()), (
+            "Owner did not release its held terminal response"
+        )
         _write(sock, RESULT)
 
     with wire_peer(respond, capabilities=[CAPABILITY]) as peer:
         route = asyncio.create_task(_route(environment, peer, ctx))
         try:
             # When: the real command stays pending while the foreground has time to deliver.
-            await _wait_owned_event(frames_written, 1, task=route)
+            await _wait_owned_event(frames_written, task=route)
             if route.done():
                 route.result()
             assert not route.done(), "Command completed before its terminal response existed"
             assert not ctx.command.done()
             if bad == "matched-positive":
-                assert await asyncio.wait_for(ctx.received.get(), 1) == 1
+                assert await asyncio.wait_for(ctx.received.get(), watchdog_timeout()) == 1
                 assert [(call[0], call[1]) for call in ctx.calls] == [(1, 2)]
                 assert ctx.calls[0][4] is True
             else:
@@ -518,7 +524,7 @@ async def test_optional_controls_cannot_replace_final_response(environment, bad)
             assert not ctx.command.done(), "Foreground command ended inside the observation window"
             # Then: only after the pre-terminal oracle may the original result finish the call.
             allow_terminal.set()
-            result = await asyncio.wait_for(asyncio.shield(route), 3)
+            result = await asyncio.wait_for(asyncio.shield(route), watchdog_timeout())
             assert result == {"settled": 2, "text": "2026-10-19T01:02:03Z"}
             assert len(ctx.calls) == (1 if bad == "matched-positive" else 0)
             assert peer.business == [_expected_business()]
@@ -595,7 +601,7 @@ async def test_controls_do_not_renew_original_command_deadline(environment):
         result = await _route(environment, peer, ctx, deadline=started + 0.5, connection=connection)
         # Then: optional traffic never becomes a fresh duration or work retry.
         ended = asyncio.get_running_loop().time()
-        await _wait_owned_event(owner_closed, 1)
+        await _wait_owned_event(owner_closed)
         view = result.model_dump() if hasattr(result, "model_dump") else result
         assert view["success"] is False
         assert view["data"]["reason"] == "outcome_unknown"
@@ -620,7 +626,7 @@ async def test_identical_next_command_cannot_inherit_previous_progress_owner(env
         else:
             previous_id.append(prelude["id"])
         _write(sock, _control(prelude["id"]))
-        assert contexts[index].acknowledged.wait(1)
+        assert contexts[index].acknowledged.wait(watchdog_timeout())
         _write(sock, RESULT)
 
     with wire_peer(respond, capabilities=[CAPABILITY], commands=2) as peer:
@@ -647,8 +653,8 @@ async def test_closed_foreground_cannot_deliver_a_later_wire_update(environment)
     def respond(sock, prelude, _peer, _index):
         assert prelude is not None
         _write(sock, _control(prelude["id"]))
-        assert ctx.acknowledged.wait(1)
-        assert resume.wait(2), "Owner did not release its owned peer"
+        assert ctx.acknowledged.wait(watchdog_timeout())
+        assert resume.wait(watchdog_timeout()), "Owner did not release its owned peer"
         _write(sock, _control(prelude["id"], completed=2))
         _write(sock, RESULT)
 
@@ -667,11 +673,11 @@ async def test_closed_foreground_cannot_deliver_a_later_wire_update(environment)
                         retry_on_reload=False,
                     )
                 )
-                assert await asyncio.wait_for(ctx.received.get(), 1) == 1
+                assert await asyncio.wait_for(ctx.received.get(), watchdog_timeout()) == 1
                 assert not ctx.command.done()
             # When: the foreground closes while its independently owned I/O later finishes.
             resume.set()
-            result = await asyncio.wait_for(asyncio.shield(ctx.command), 2)
+            result = await asyncio.wait_for(asyncio.shield(ctx.command), watchdog_timeout())
             # Then: the second frame does not resurrect the public callback or replay work.
             assert [call[0] for call in ctx.calls] == [1]
             assert result == {"settled": 2, "text": "2026-10-19T01:02:03Z"}

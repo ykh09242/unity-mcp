@@ -1,5 +1,7 @@
 """Server and registration lifetimes release their owned plugin resources."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio  # noqa: ANYIO_OK -- inspect hub-owned task lifetimes.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -59,7 +61,7 @@ async def test_server_shutdown_releases_plugin_commands_and_ping_tasks(lifecycle
             session_id = next(iter(PluginHub._connections))
             ping_task = PluginHub._ping_tasks[session_id]
             command = asyncio.create_task(PluginHub.send_command(session_id, "manage_scene", {}))
-            await asyncio.wait_for(sent.wait(), timeout=1)
+            await await_signal(sent, "sent")
         assert PluginHub._connections == {}
         assert PluginHub._ping_tasks == {}
         assert PluginHub._pending == {}
@@ -68,7 +70,7 @@ async def test_server_shutdown_releases_plugin_commands_and_ping_tasks(lifecycle
         assert await registry.list_sessions() == {}
         assert not PluginHub.is_configured()
         ws.close.assert_awaited_once()
-        done, _ = await asyncio.wait({command}, timeout=0.2)
+        done, _ = await asyncio.wait({command}, timeout=watchdog_timeout())
         assert command in done
         assert command.result()["hint"] == "inspect_state_before_retry"
     finally:
@@ -127,7 +129,7 @@ async def test_cancelled_startup_releases_configured_hub_and_pool(
             pytest.fail("Blocked startup must not yield")
 
     startup = asyncio.create_task(start())
-    await asyncio.wait_for(entered.wait(), timeout=1)
+    await await_signal(entered, "entered")
     startup.cancel()
     with pytest.raises(asyncio.CancelledError):
         await startup
@@ -153,7 +155,7 @@ async def test_cancelled_replacement_ack_still_closes_evicted_socket(lifecycle_s
     registration = asyncio.create_task(
         hub._handle_register(new, RegisterMessage(project_hash="same"))
     )
-    await asyncio.wait_for(entered.wait(), timeout=1)
+    await await_signal(entered, "entered")
     registration.cancel()
     try:
         with pytest.raises(asyncio.CancelledError):
@@ -197,7 +199,7 @@ async def test_level_cancelled_replacement_releases_evicted_socket_admission(
     old.close.side_effect = close_old
     new.send_json.side_effect = blocked_ack
     try:
-        with anyio.fail_after(1):
+        with anyio.fail_after(watchdog_timeout()):
             async with anyio.create_task_group() as group:
                 group.start_soon(register_replacement)
                 await ack_started.wait()
@@ -225,7 +227,7 @@ async def test_level_cancelled_socket_close_remains_bounded(
             stopped.set()
 
     ws.close.side_effect = blocked_close
-    with anyio.fail_after(1):
+    with anyio.fail_after(watchdog_timeout()):
         with anyio.CancelScope() as scope:
             scope.cancel()
             await PluginHub._close_websocket(ws)
@@ -251,7 +253,7 @@ async def test_shutdown_bounds_socket_close_and_is_idempotent(
     ws.close.side_effect = blocked_close
     monkeypatch.setattr(PluginHub, "CLOSE_TIMEOUT", 0.02)
     await hub._handle_register(ws, RegisterMessage(project_hash="bounded"))
-    await asyncio.wait_for(PluginHub.shutdown(), timeout=0.2)
+    await asyncio.wait_for(PluginHub.shutdown(), timeout=watchdog_timeout())
     assert stopped.is_set()
     assert not PluginHub.is_configured()
     assert await registry.list_sessions() == {}

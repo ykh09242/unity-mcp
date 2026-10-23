@@ -1,5 +1,7 @@
 """Negotiated gzip through the real plugin ASGI endpoint and shared budgets."""
 
+from tests.timing import watchdog_timeout
+
 import gzip
 import json
 
@@ -52,7 +54,7 @@ def test_real_negotiated_gzip_result_keeps_normal_payload_and_releases_raw_budge
         assert PluginHub._raw_results
         for chunk in chunks:
             wire.send_bytes(chunk)
-        assert task.result(timeout=2) == expected
+        assert task.result(timeout=watchdog_timeout()) == expected
         assert PluginHub._raw_results == {}
         assert PluginHub._large_results.retained_bytes == 0
 
@@ -67,7 +69,7 @@ def test_gzip_requires_both_negotiated_capabilities_before_allocation(client, ca
         wire.send_json(start)
         with pytest.raises(WebSocketDisconnect):
             wire.receive_json()
-        assert task.result(timeout=2)["success"] is False
+        assert task.result(timeout=watchdog_timeout())["success"] is False
     assert PluginHub._raw_results == {}
 
 
@@ -79,7 +81,7 @@ def test_gzip_working_and_decoded_peak_are_reserved_before_allocation(client, mo
         required = 5 * start["decoded_bytes"] + 4096 + GZIP_WORKING_BYTES
         monkeypatch.setattr(PluginHub, "MAX_RETAINED_RESULT_BYTES_PER_SESSION", required - 1)
         wire.send_json(start)
-        assert task.result(timeout=2)["data"]["reason"] == "result_capacity"
+        assert task.result(timeout=watchdog_timeout())["data"]["reason"] == "result_capacity"
         assert PluginHub._raw_results == {}
         for chunk in chunks:
             wire.send_bytes(chunk)
@@ -116,5 +118,5 @@ def test_bad_compressed_payload_closes_offender_and_releases_peak_charge(client,
             wire.send_bytes(chunk)
         with pytest.raises(WebSocketDisconnect):
             wire.receive_json()
-        assert task.result(timeout=2)["success"] is False
+        assert task.result(timeout=watchdog_timeout())["success"] is False
     assert PluginHub._raw_results == {}

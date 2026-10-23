@@ -1,5 +1,7 @@
 """Actual offline named baseline CLI, immutable evidence, and writer admission."""
 
+from tests.timing import watchdog_timeout
+
 from concurrent.futures import ThreadPoolExecutor
 import json
 from threading import Barrier
@@ -170,7 +172,7 @@ def test_concurrent_writers_never_lose_an_accepted_update(tmp_path, monkeypatch)
     original = baselines.update_registry
 
     def synchronized(selected, event, entry=None):
-        rendezvous.wait(timeout=10)
+        rendezvous.wait(timeout=watchdog_timeout())
         return original(selected, event, entry)
 
     monkeypatch.setattr(baselines, "update_registry", synchronized)

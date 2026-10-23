@@ -1,3 +1,4 @@
+from tests.timing import watchdog_timeout
 from transport.legacy.unity_connection import UnityConnection
 import sys
 import json
@@ -178,10 +179,10 @@ def test_zero_length_payload_heartbeat(monkeypatch, prefix_length):
                 peer.settimeout(2)
                 if prefix_length:
                     peer.sendall(greeting[:prefix_length])
-                    assert prefix_read.wait(2)
+                    assert prefix_read.wait(watchdog_timeout())
                 peer.sendall(wire[prefix_length:])
                 sent.set()
-                assert finished.wait(2)
+                assert finished.wait(watchdog_timeout())
         except Exception as exc:
             failures.append(exc)
         finally:
@@ -202,7 +203,7 @@ def test_zero_length_payload_heartbeat(monkeypatch, prefix_length):
             # of OS packet splitting and CPU contention, using actual TCP bytes.
             expected = prefix_length if self.first and prefix_length else len(wire) - prefix_length
             if not (self.first and prefix_length):
-                assert sent.wait(2)
+                assert sent.wait(watchdog_timeout())
             data = self.actual.recv(min(count, expected))
             if count >= expected:
                 while len(data) < expected:
@@ -231,7 +232,7 @@ def test_zero_length_payload_heartbeat(monkeypatch, prefix_length):
         conn.disconnect()
         finished.set()
         prefix_read.set()
-        thread.join(3)
+        thread.join(watchdog_timeout())
         assert not thread.is_alive()
         assert not failures
 

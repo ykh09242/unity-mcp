@@ -3,6 +3,8 @@
 Pass-through tool: NO API keys, NO file bytes. Unity transport fully mocked.
 """
 
+from tests.timing import await_signal
+
 import asyncio
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -425,7 +427,7 @@ class TestBlenderTimeouts:
                 patch.object(PluginHub, "_pending", {}),
             ):
                 task = asyncio.create_task(PluginHub.send_command("test-session", COMMAND, {}))
-                await asyncio.wait_for(started.wait(), 1)
+                await await_signal(started, "started")
                 task.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await task

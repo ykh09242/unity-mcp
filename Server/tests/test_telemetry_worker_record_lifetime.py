@@ -1,5 +1,7 @@
 """An idle telemetry worker must release the record whose send has finished."""
 
+from tests.timing import watchdog_timeout
+
 import gc
 import queue
 from pathlib import Path
@@ -102,7 +104,9 @@ def enqueue_payload(collector):
 
 
 def assert_finished_and_released(collector, state, references, sends):
-    assert collector._queue.twice_idle.wait(5), "Worker did not retry its idle queue twice"
+    assert collector._queue.twice_idle.wait(watchdog_timeout()), (
+        "Worker did not retry its idle queue twice"
+    )
     gc.collect()
     assert state["posts"] == sends
     assert state["created"] == 1
@@ -148,7 +152,7 @@ def test_worker_reuses_one_client_and_closes_it_on_shutdown(collector_factory):
     collector, state = collector_factory()
     enqueue_payload(collector)
     enqueue_payload(collector)
-    assert collector._queue.twice_idle.wait(5)
+    assert collector._queue.twice_idle.wait(watchdog_timeout())
     assert state["posts"] == 2
     assert state["created"] == 1
     assert state["closed"] == 0

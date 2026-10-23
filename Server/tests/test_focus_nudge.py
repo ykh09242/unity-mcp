@@ -1,5 +1,7 @@
 """Tests for focus_nudge utility — should_nudge() logic and nudge_unity_focus() gating."""
 
+from tests.timing import await_signal
+
 import asyncio
 import json
 import subprocess
@@ -474,7 +476,7 @@ async def test_overlapping_nudge_does_not_capture_or_restore_unity_as_original(o
     ):
         first = asyncio.create_task(nudge_unity_focus(force=True, unity_project_path=r"C:\Project"))
         try:
-            await asyncio.wait_for(first_wait_started.wait(), timeout=1)
+            await await_signal(first_wait_started, "first_wait_started")
             assert not await nudge_unity_focus(force=True, unity_project_path=other_project)
             capture.assert_called_once()
             assert focus.call_count == 1

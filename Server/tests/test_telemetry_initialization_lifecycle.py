@@ -1,5 +1,7 @@
 """Public telemetry initialization with owned storage and an inert HTTP boundary."""
 
+from tests.timing import watchdog_timeout
+
 import importlib
 import json
 from pathlib import Path
@@ -69,7 +71,7 @@ def test_canonical_config_opt_out_precedes_legacy_alias(
 def test_canonical_enabled_config_controls_actual_send(controlled_telemetry):
     telemetry, _, received, requests = controlled_telemetry
     telemetry.record_tool_usage("owned_tool", True, 1.0)
-    assert received.wait(timeout=1.0)
+    assert received.wait(timeout=watchdog_timeout())
     assert requests[0][0] == "https://owned.example/telemetry"
     assert requests[0][1]["data"]["tool_name"] == "owned_tool"
     assert telemetry.get_telemetry()._worker.is_alive()
@@ -79,7 +81,7 @@ def test_env_endpoint_overrides_canonical_config(controlled_telemetry, monkeypat
     telemetry, _, received, requests = controlled_telemetry
     monkeypatch.setenv("UNITY_MCP_TELEMETRY_ENDPOINT", "https://override.example/events")
     telemetry.record_resource_usage("owned_resource", True, 2.0)
-    assert received.wait(timeout=1.0)
+    assert received.wait(timeout=watchdog_timeout())
     assert requests[0][0] == "https://override.example/events"
 
 
@@ -172,7 +174,7 @@ def test_invalid_utf8_uuid_uses_in_memory_fallback(controlled_telemetry, tmp_pat
     milestones = {"first_startup": {"timestamp": 1.0, "data": {}}}
     (data_dir / "milestones.json").write_text(json.dumps(milestones), encoding="utf-8")
     telemetry.record_tool_usage("owned_tool", True, 1.0)
-    assert received.wait(timeout=1.0)
+    assert received.wait(timeout=watchdog_timeout())
     collector = telemetry.get_telemetry()
     assert str(uuid.UUID(collector._customer_uuid)) == collector._customer_uuid
     assert requests[0][1]["customer_uuid"] == collector._customer_uuid

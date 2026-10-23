@@ -1,5 +1,7 @@
 """Explicit stdio pool teardown releases discovery generation metadata."""
 
+from tests.timing import watchdog_timeout
+
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from unittest.mock import Mock
@@ -51,7 +53,7 @@ def test_pool_teardown_waits_for_existing_discovery_before_clearing_metadata(mon
 
     def discover():
         scanning.set()
-        assert release_scan.wait(2)
+        assert release_scan.wait(watchdog_timeout())
         return [instance()]
 
     def close():
@@ -61,13 +63,13 @@ def test_pool_teardown_waits_for_existing_discovery_before_clearing_metadata(mon
     monkeypatch.setattr(connections.PortDiscovery, "discover_all_unity_instances", discover)
     with ThreadPoolExecutor(max_workers=2) as executor:
         scan = executor.submit(pool.discover_all_instances)
-        assert scanning.wait(2)
+        assert scanning.wait(watchdog_timeout())
         teardown = executor.submit(close)
         try:
-            assert closing.wait(2)
+            assert closing.wait(watchdog_timeout())
             release_scan.set()
-            scan.result(timeout=2)
-            teardown.result(timeout=2)
+            scan.result(timeout=watchdog_timeout())
+            teardown.result(timeout=watchdog_timeout())
         finally:
             release_scan.set()
     assert pool._known_instances == {}
@@ -125,20 +127,20 @@ def test_retirement_never_interrupts_an_in_flight_command(populated_pool):
     def command():
         with connection._command_lock(None):
             entered.set()
-            assert release.wait(2)
+            assert release.wait(watchdog_timeout())
 
     pool.discover_all_instances(force_refresh=True)
     clock[0] += 61
     with ThreadPoolExecutor(max_workers=1) as executor:
         running = executor.submit(command)
-        assert entered.wait(2)
+        assert entered.wait(watchdog_timeout())
         try:
             pool.discover_all_instances(force_refresh=True)
             assert pool._connections[instance().id] is connection
             socket.close.assert_not_called()
         finally:
             release.set()
-        running.result(timeout=2)
+        running.result(timeout=watchdog_timeout())
     pool.discover_all_instances(force_refresh=True)
     assert pool._connections == {}
     socket.close.assert_called_once()

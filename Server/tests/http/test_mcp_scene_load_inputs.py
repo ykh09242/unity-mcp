@@ -1,5 +1,7 @@
 """Optional missing-target MRTR uses authenticated HTTP and the ordinary tool once."""
 
+from tests.timing import watchdog_timeout
+
 from contextlib import asynccontextmanager
 import copy
 import json
@@ -94,7 +96,7 @@ class ScenePeer(PluginStream):
     async def finish(self):
         self.release.set()
         try:
-            with anyio.fail_after(3):
+            with anyio.fail_after(watchdog_timeout()):
                 await self.reply_done.wait()
             await self.close()
         finally:
@@ -475,7 +477,7 @@ async def test_concurrent_and_later_retries_never_resend_the_load(flow_server):
         async with anyio.create_task_group() as requests:
             requests.start_soon(accept_original)
             try:
-                with anyio.fail_after(3):
+                with anyio.fail_after(watchdog_timeout()):
                     await peer.dispatched.wait()
                 # When: another retry races the active native operation.
                 concurrent = await request(
@@ -926,11 +928,11 @@ async def test_cancelled_accepted_request_remains_attempted_without_resending(fl
         try:
             async with anyio.create_task_group() as requests:
                 requests.start_soon(caller)
-                with anyio.fail_after(3):
+                with anyio.fail_after(watchdog_timeout()):
                     await peer.dispatched.wait()
                 # When: the HTTP caller abandons its already-dispatched request.
                 scopes[0].cancel()
-                with anyio.fail_after(3):
+                with anyio.fail_after(watchdog_timeout()):
                     await exited.wait()
             # Then: cancellation does not restore consent or claim native termination.
             replay = await request(
@@ -964,7 +966,7 @@ async def test_close_keeps_active_admission_until_the_real_ordinary_handler_exit
         async with anyio.create_task_group() as requests:
             requests.start_soon(caller)
             try:
-                with anyio.fail_after(3):
+                with anyio.fail_after(watchdog_timeout()):
                     await peer.dispatched.wait()
                 # When: the exact lifecycle close hook rejects additional input work.
                 server._scene_load_inputs.close()

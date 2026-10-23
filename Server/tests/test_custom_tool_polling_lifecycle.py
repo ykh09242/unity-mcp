@@ -1,5 +1,7 @@
 """Actual installed FastMCP/MCP memory transport cancellation reaches polling."""
 
+from tests.timing import await_signal
+
 import asyncio
 import importlib
 from types import SimpleNamespace
@@ -85,7 +87,7 @@ async def test_sdk_memory_lifecycle_releases_polling_after_cancellation(
         assert protocol_version is not None
         call = asyncio.create_task(client.call_tool("lifecycle_poll"))
         try:
-            await asyncio.wait_for(entered.wait(), timeout=3)
+            await await_signal(entered, "entered")
             assert service._active_polls == 1
             assert service._polls_by_session == {(None, "owned-hash"): 1}
             assert service._polls_by_user == {None: 1}
@@ -103,7 +105,7 @@ async def test_sdk_memory_lifecycle_releases_polling_after_cancellation(
             else:
                 await client.close()
             # Then: SDK cancellation reaches the real MCP entrypoint and service.
-            await asyncio.wait_for(handler_done.wait(), timeout=3)
+            await await_signal(handler_done, "handler_done")
             assert cancelled_phase == [phase]
             assert active_at_phase_exit == [1]
             assert service._active_polls == 0

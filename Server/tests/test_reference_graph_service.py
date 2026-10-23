@@ -1,5 +1,7 @@
 """Real scoped SQLite with fake transport and opaque credential lifetimes."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 from contextvars import ContextVar
 from contextlib import contextmanager
@@ -369,13 +371,13 @@ async def test_watcher_survives_malformed_csv_and_recovers_on_next_wake(setup, t
     entry.engine.reconcile = watched
     service.start(entry)
     try:
-        assert not await asyncio.wait_for(completed.get(), 5)
+        assert not await asyncio.wait_for(completed.get(), watchdog_timeout())
         task = entry.task
         assert task is not None and not task.done()
         assert entry.workspace.store.status()["errors"] == 1
         path.write_text("prefab\nOne", encoding="utf-8")
         entry.wake.set()
-        assert await asyncio.wait_for(completed.get(), 5)
+        assert await asyncio.wait_for(completed.get(), watchdog_timeout())
         assert entry.task is task and not task.done()
         assert entry.workspace.store.status()["queue_idle"]
     finally:
@@ -585,7 +587,7 @@ async def test_detached_worker_drops_request_context_pins_lease_and_drains_on_sh
             await service.execute(ctx, "sync", {})
     finally:
         REQUEST_MARKER.reset(token)
-    await asyncio.wait_for(sender.complete.wait(), 5)
+    await await_signal(sender.complete, "sender.complete")
     assert authority.owners == 1
     background = [call for call in sender.calls if call[0]["action"] == "changes"]
     assert background[0][1] is None
@@ -789,14 +791,14 @@ async def test_two_valid_credentials_share_worker_without_invalidating_active_re
 
         def held_read(**kwargs):
             entered.set()
-            release.wait(5)
+            release.wait(watchdog_timeout())
             return original(**kwargs)
 
         monkeypatch.setattr(entry.workspace.store, "declarations", held_read)
         pending = asyncio.create_task(service.execute(ctx, "declarations", {}))
     tasks = []
     try:
-        assert await asyncio.to_thread(entered.wait, 5)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         with bind_credential_lease(second):
             await service.execute(ctx, "status", {})
         replacement = next(iter(service.entries.values()))
@@ -843,18 +845,18 @@ async def test_idle_watch_releases_owner_and_disconnected_scope_parks_then_resum
             while entry.workspace.progress().get("phase") != "idle":
                 await asyncio.sleep(0.001)
 
-        await asyncio.wait_for(completed(), 2)
+        await asyncio.wait_for(completed(), watchdog_timeout())
 
         # A completed reconciliation must not retain a credential owner while polling.
         async def idle():
             while authority.owners:
                 await asyncio.sleep(0)
 
-        await asyncio.wait_for(idle(), 2)
+        await asyncio.wait_for(idle(), watchdog_timeout())
         disconnected = True
         entry.wake.set()
         task = entry.task
-        await asyncio.wait_for(asyncio.shield(task), 2)
+        await asyncio.wait_for(asyncio.shield(task), watchdog_timeout())
         await asyncio.sleep(0)
         assert failures == service.PARK_FAILURES
         assert authority.owners == 0
@@ -882,19 +884,19 @@ async def test_retirement_drain_does_not_block_other_users(setup, monkeypatch):
         old, _ = await service.resolve(ctx, "status")
 
     async def held(**_):
-        await drained_thread(lambda: (entered.set(), release.wait(5)))
+        await drained_thread(lambda: (entered.set(), release.wait(watchdog_timeout())))
 
     monkeypatch.setattr(old.engine, "reconcile", held)
     service.start(old)
     replacement = None
     try:
-        assert await asyncio.to_thread(entered.wait, 2)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         sender.identity = "restarted"
         with bind_credential_lease(alice):
             replacement = asyncio.create_task(service.resolve(ctx, "status"))
         await asyncio.sleep(0.02)
         with bind_credential_lease(bob):
-            other, _ = await asyncio.wait_for(service.resolve(ctx, "status"), 1)
+            other, _ = await asyncio.wait_for(service.resolve(ctx, "status"), watchdog_timeout())
         assert other.workspace.store.scope.user_id == "remote:bob"
         assert not replacement.done()
     finally:
@@ -918,13 +920,13 @@ async def test_request_cannot_borrow_other_valid_credential_after_revocation(set
 
         def held(**kwargs):
             entered.set()
-            release.wait(5)
+            release.wait(watchdog_timeout())
             return original(**kwargs)
 
         monkeypatch.setattr(entry.workspace.store, "declarations", held)
         request = asyncio.create_task(service.execute(ctx, "declarations", {}))
     try:
-        assert await asyncio.to_thread(entered.wait, 2)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         with bind_credential_lease(second):
             same, _ = await service.resolve(ctx, "status")
         assert same is entry
@@ -974,17 +976,17 @@ async def test_revoked_attempt_drains_before_live_credential_takes_over(setup, m
     monkeypatch.setattr(entry.engine, "reconcile", reconcile)
     service.start(entry)
     try:
-        await asyncio.wait_for(active.wait(), 2)
+        await await_signal(active, "active")
         with bind_credential_lease(second):
             same, _ = await service.resolve(ctx, "status")
         assert same is entry and entry.engine.worker == worker
         first_authority.revoked = True
         attempts[0].cancel()
-        await asyncio.wait_for(draining.wait(), 2)
+        await await_signal(draining, "draining")
         assert first_authority.owners == 1
         assert not resumed.is_set()
         release.set()
-        await asyncio.wait_for(resumed.wait(), 2)
+        await await_signal(resumed, "resumed")
         assert entry.engine.worker == worker
     finally:
         release.set()
@@ -1011,14 +1013,14 @@ async def test_idle_expiry_waits_for_active_large_attempt_and_preserves_durable_
     service.start(entry)
     task = entry.task
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         clock += 100 * service.IDLE_SECONDS
         entry.wake.set()
         await asyncio.sleep(0)
         assert not task.done()
         assert service.entries[entry.workspace.store.scope.key] is entry
         release.set()
-        await asyncio.wait_for(task, 2)
+        await asyncio.wait_for(task, watchdog_timeout())
         await asyncio.sleep(0)
         assert not service.entries
         assert entry.workspace.store.path.is_file()
@@ -1039,14 +1041,16 @@ async def test_database_open_for_one_scope_does_not_block_unrelated_scope(setup,
     def open_store(root, scope):
         if scope.instance_id.endswith("one"):
             opened.set()
-            release.wait(5)
+            release.wait(watchdog_timeout())
         return original(root, scope)
 
     monkeypatch.setattr(GraphStore, "open", open_store)
     pending = asyncio.create_task(service.resolve(ctx, "status"))
     try:
-        assert await asyncio.to_thread(opened.wait, 2)
-        other, _ = await asyncio.wait_for(service.resolve(Context(service, "two"), "status"), 1)
+        assert await asyncio.to_thread(opened.wait, watchdog_timeout())
+        other, _ = await asyncio.wait_for(
+            service.resolve(Context(service, "two"), "status"), watchdog_timeout()
+        )
         assert other.instance == "two"
         assert not pending.done()
     finally:
@@ -1066,21 +1070,21 @@ async def test_shutdown_drains_inflight_database_open_without_installing_entry(s
 
     def held(root, scope):
         entered.set()
-        release.wait(5)
+        release.wait(watchdog_timeout())
         return original(root, scope)
 
     monkeypatch.setattr(GraphStore, "open", held)
     opening = asyncio.create_task(service.resolve(ctx, "status"))
     closing = None
     try:
-        assert await asyncio.to_thread(entered.wait, 2)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         closing = asyncio.create_task(service.aclose())
         await asyncio.sleep(0)
         assert not closing.done()
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await opening
-        await asyncio.wait_for(closing, 2)
+        await asyncio.wait_for(closing, watchdog_timeout())
         assert not service.entries and not service.tasks and not service._coordination
     finally:
         release.set()
@@ -1114,8 +1118,8 @@ async def test_shutdown_cancels_active_native_collection_once_and_releases_datab
         service.start(entry)
         pending = entry.task
     try:
-        await asyncio.wait_for(entered.wait(), 2)
-        await asyncio.wait_for(service.aclose(), 2)
+        await await_signal(entered, "entered")
+        await asyncio.wait_for(service.aclose(), watchdog_timeout())
         assert attempt[0].cancelling() == 1
         assert pending.done()
         assert not service.tasks and not service.entries
@@ -1140,8 +1144,8 @@ async def test_shutdown_cancels_status_lookup_before_entry_exists(setup):
     service.send = held
     request = asyncio.create_task(service.execute(ctx, "status", {}))
     try:
-        await asyncio.wait_for(entered.wait(), 2)
-        await asyncio.wait_for(service.aclose(), 2)
+        await await_signal(entered, "entered")
+        await asyncio.wait_for(service.aclose(), watchdog_timeout())
         assert request.cancelled()
         assert not service._resolving and not service._resolve_tasks and not service._routes
         assert not service.entries and not service.tasks
@@ -1183,7 +1187,7 @@ async def test_actual_revocation_and_shutdown_drain_heartbeat_in_both_orders(
 
     def held_renew(worker):
         entered.set()
-        assert release.wait(5), "Synthetic heartbeat was not released"
+        assert release.wait(watchdog_timeout()), "Synthetic heartbeat was not released"
         return renew(worker)
 
     monkeypatch.setattr(entry.workspace, "renew", held_renew)
@@ -1196,8 +1200,8 @@ async def test_actual_revocation_and_shutdown_drain_heartbeat_in_both_orders(
     service.start(entry)
     closing = None
     try:
-        await asyncio.wait_for(collecting.wait(), 2)
-        assert await asyncio.to_thread(entered.wait, 2)
+        await await_signal(collecting, "collecting")
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         attempt = next(iter(authority._lease_records[lease.generation].owners.values()))
         if shutdown_first:
             closing = asyncio.create_task(service.aclose())
@@ -1209,7 +1213,7 @@ async def test_actual_revocation_and_shutdown_drain_heartbeat_in_both_orders(
                 await sleep(0)
             await sleep(0.01)
 
-        await asyncio.wait_for(cancelling(), 2)
+        await asyncio.wait_for(cancelling(), watchdog_timeout())
         if shutdown_first:
             await authority.invalidate_cache("synthetic-lifetime-key")
         else:
@@ -1218,7 +1222,7 @@ async def test_actual_revocation_and_shutdown_drain_heartbeat_in_both_orders(
         assert authority._lease_owners == 1
         assert not closing.done()
         release.set()
-        await asyncio.wait_for(closing, 2)
+        await asyncio.wait_for(closing, watchdog_timeout())
         assert authority._lease_owners == 0
         assert not service.tasks and not service.entries
         assert entry.workspace.acquire("after-overlap")
@@ -1245,7 +1249,7 @@ async def test_superseded_editor_cannot_install_after_newer_resolution(
     def held(root, scope):
         if not delay_status and scope.instance_id.startswith("original"):
             entered.set()
-            release.wait(5)
+            release.wait(watchdog_timeout())
         return original(root, scope)
 
     async def delayed(instance, params):
@@ -1261,9 +1265,9 @@ async def test_superseded_editor_cannot_install_after_newer_resolution(
     service.send = delayed
     old = asyncio.create_task(service.resolve(ctx, "status"))
     try:
-        assert await asyncio.to_thread(entered.wait, 2)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         sender.identity = "new"
-        current, _ = await asyncio.wait_for(service.resolve(ctx, "status"), 2)
+        current, _ = await asyncio.wait_for(service.resolve(ctx, "status"), watchdog_timeout())
         release.set()
         with pytest.raises(RevisionConflict, match="replacement Editor"):
             await old

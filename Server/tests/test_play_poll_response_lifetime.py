@@ -1,5 +1,7 @@
 """Play readiness keeps only its deliverable observation charged and reachable."""
 
+from tests.timing import await_signal
+
 import asyncio
 import gc
 import os
@@ -164,7 +166,7 @@ async def test_external_cancel_releases_before_parent_delivery(polling):
     token = response_owner.set(owner)
     task = asyncio.create_task(execute())
     try:
-        await asyncio.wait_for(polling.blocked.wait(), 2)
+        await await_signal(polling.blocked, "polling.blocked")
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -233,9 +235,9 @@ async def test_anyio_outer_cancellation_releases_play_results(polling):
     try:
         async with anyio.create_task_group() as group:
             group.start_soon(caller)
-            await asyncio.wait_for(polling.blocked.wait(), 2)
+            await await_signal(polling.blocked, "polling.blocked")
             scopes[0].cancel()
-            await asyncio.wait_for(done.wait(), 2)
+            await await_signal(done, "done")
         assert not owner.entries and not owner.released
         assert not polling.hub._retained_results and not polling.hub._pending
         gc.collect()

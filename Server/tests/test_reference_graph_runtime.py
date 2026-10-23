@@ -1,5 +1,7 @@
 """Runtime evidence stays scoped, replayable and distinct from static proof."""
 
+from tests.timing import await_signal
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -284,7 +286,7 @@ async def test_cancelled_poll_keeps_durable_cursor_for_retry(tmp_path, monkeypat
         native.captures[token] = page([event()], offset=1)
         native.block = True
         pending = asyncio.create_task(service.execute(ctx, "runtime_poll", {"id": identity}))
-        await asyncio.wait_for(native.reading.wait(), 5)
+        await await_signal(native.reading, "native.reading")
         pending.cancel()
         with pytest.raises(asyncio.CancelledError):
             await pending

@@ -1,5 +1,7 @@
 """Async commands wait without occupying workers needed by other Editors."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import gc
@@ -137,7 +139,7 @@ async def test_alias_waiters_share_actual_connection_admission(environment, sele
         # before the held Main response is released, even with only two workers.
         other = asyncio.create_task(request("other", "Other@cafebabe"))
         response, marker = await asyncio.wait_for(
-            asyncio.gather(other, asyncio.to_thread(lambda: "free")), 0.5
+            asyncio.gather(other, asyncio.to_thread(lambda: "free")), watchdog_timeout()
         )
         assert response == {"success": True, "tag": "other"}
         assert marker == "free"
@@ -277,7 +279,7 @@ async def test_executor_queued_command_aborts_before_dispatch(environment, monke
 
     def blocker():
         blocker_started.set()
-        assert release_blocker.wait(2)
+        assert release_blocker.wait(watchdog_timeout())
 
     def lookup(*args):
         # Selection worker queues unrelated work before returning. Consequently
@@ -296,7 +298,7 @@ async def test_executor_queued_command_aborts_before_dispatch(environment, monke
             with pytest.raises(asyncio.CancelledError):
                 await task
         else:
-            result = await asyncio.wait_for(task, 0.5)
+            result = await asyncio.wait_for(task, watchdog_timeout())
             assert result.success is False
             assert "deadline" in result.error.lower()
         assert main.tags == []
@@ -345,7 +347,7 @@ def test_connection_reused_across_loops_does_not_retain_closed_loops(environment
             assert all(response["success"] for response in responses)
         finally:
             main.release.set()
-            timer.join(2)
+            timer.join(watchdog_timeout())
 
     for index in range(3):
         asyncio.run(call(index))
@@ -377,7 +379,7 @@ async def test_cancelled_selection_never_dispatches_or_claims_resync(environment
 
     def lookup(*args):
         started.set()
-        assert release.wait(2)
+        assert release.wait(watchdog_timeout())
         finished.set()
         return conn
 

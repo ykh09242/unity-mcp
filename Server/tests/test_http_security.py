@@ -1,5 +1,7 @@
 """Run the real FastMCP surface independently of the legacy module stubs."""
 
+from tests.timing import watchdog_timeout
+
 import os
 import subprocess
 import sys
@@ -45,7 +47,8 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
         capture_output=True,
         text=True,
         # Four workers overlap isolated SDK subprocesses without multiplying by host CPUs.
-        # Keep each file's fixtures together and retain the existing total/request deadlines.
-        timeout=180,
+        # The suite watchdog is distinct from the request deadlines asserted inside.
+        # Operators can increase the shared multiplier for slow/oversubscribed hosts.
+        timeout=watchdog_timeout(900),
     )
     assert result.returncode == 0, result.stdout + result.stderr

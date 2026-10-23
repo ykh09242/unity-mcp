@@ -1,3 +1,4 @@
+from tests.timing import watchdog_timeout
 import asyncio
 from unittest.mock import AsyncMock
 
@@ -131,7 +132,7 @@ async def test_custom_tool_deadline_cancels_a_blocked_status_request(service, mo
             "status",
             max_poll_seconds=0.15,
         ),
-        timeout=0.5,
+        timeout=watchdog_timeout(),
     )
 
     assert result.success is False

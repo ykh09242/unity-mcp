@@ -1,5 +1,7 @@
 """A command's HTTP selection, readiness and I/O share one elapsed budget."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 
 import pytest
@@ -28,7 +30,7 @@ async def test_total_budget_bounds_lock_wait_before_dispatch(command_hub, monkey
             else PluginHub.send_command("session", "manage_scene", {})
         )
         started = asyncio.get_running_loop().time()
-        result = await asyncio.wait_for(pending, 0.4)
+        result = await asyncio.wait_for(pending, watchdog_timeout())
     assert asyncio.get_running_loop().time() - started < 0.25
     assert result["hint"] == "retry"
     assert result["data"]["reason"] == "command_deadline_exceeded"
@@ -164,8 +166,8 @@ async def test_expired_recovery_returns_while_owned_cleanup_finishes(
     task = asyncio.create_task(dispatch())
     shutdown = None
     try:
-        await asyncio.wait_for(entered.wait(), 0.4)
-        result = await asyncio.wait_for(asyncio.shield(task), 0.25)
+        await await_signal(entered, "entered")
+        result = await asyncio.wait_for(asyncio.shield(task), watchdog_timeout())
         assert result["hint"] == "retry"
         assert result["data"]["reason"] == "command_deadline_exceeded"
         assert result["data"]["phase"] == "recovery"
@@ -178,9 +180,9 @@ async def test_expired_recovery_returns_while_owned_cleanup_finishes(
         if held_registry:
             command_hub.registry._lock.release()
         release.set()
-        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 1)
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), watchdog_timeout())
         if shutdown is not None:
-            await asyncio.wait_for(shutdown, 1)
+            await asyncio.wait_for(shutdown, watchdog_timeout())
     assert not PluginHub._eviction_tasks
     assert PluginHub._connections == {}
     assert PluginHub._pending == {}

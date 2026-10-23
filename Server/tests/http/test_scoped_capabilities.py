@@ -1,5 +1,7 @@
 """Narrow readiness reads exercise the real SDK and HTTP command owner."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -163,7 +165,7 @@ async def test_scoped_selection_spends_the_same_bounded_read_budget(command_hub,
     async with Client(scoped_server(), mode="legacy", cache=False) as client:
         await client.call_tool("select_fixture")
         async with command_hub.registry._lock:
-            with anyio.fail_after(2):
+            with anyio.fail_after(watchdog_timeout()):
                 result = await client.read_resource(
                     "mcpforunity://capabilities/scoped?features=build"
                 )

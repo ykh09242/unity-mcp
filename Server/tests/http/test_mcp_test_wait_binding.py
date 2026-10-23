@@ -1,5 +1,7 @@
 """Production bounded-wait binding preserves the ordinary registered tool path."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 import json
 import secrets
@@ -73,7 +75,7 @@ async def bound_call(client, method, params, *, tasks=False, selector=None, head
 async def completed_wait(client, runtime, params):
     created = await bound_call(client, "tools/call", params, tasks=True)
     assert created["result"]["resultType"] == "task", created
-    with anyio.fail_after(3):
+    with anyio.fail_after(watchdog_timeout()):
         while runtime._workers:
             await anyio.sleep(0)
     result = await bound_call(
@@ -129,7 +131,7 @@ async def test_authenticated_production_tool_task_matches_whole_modern_ordinary_
         created = await bound_call(client, "tools/call", params, tasks=True)
         assert created["result"]["resultType"] == "task", created
         task_id = created["result"]["taskId"]
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while runtime._workers:
                 await anyio.sleep(0)
         task = await bound_call(client, "tasks/get", {"taskId": task_id}, tasks=True)
@@ -288,7 +290,7 @@ async def test_journal_admission_spends_original_inner_deadline_even_when_capaci
         def hold(operation):
             held_at.append(monotonic())
             entered.set()
-            assert release.wait(3)
+            assert release.wait(watchdog_timeout())
             if refuse:
                 raise JournalCapacity("Fixture physical reservation refusal")
             return create(operation)
@@ -304,7 +306,7 @@ async def test_journal_admission_spends_original_inner_deadline_even_when_capaci
             )
         )
         try:
-            assert await anyio.to_thread.run_sync(entered.wait, 2)
+            assert await anyio.to_thread.run_sync(entered.wait, watchdog_timeout())
             assert held_at[0] < captured[0].wait_deadline
             await anyio.sleep_until(captured[0].wait_deadline + 0.01)
             assert monotonic() >= captured[0].wait_deadline
@@ -315,7 +317,7 @@ async def test_journal_admission_spends_original_inner_deadline_even_when_capaci
             final = response["result"]
             assert final["resultType"] == "complete"
         else:
-            with anyio.fail_after(2):
+            with anyio.fail_after(watchdog_timeout()):
                 while runtime._workers:
                     await anyio.sleep(0)
             final = (
@@ -348,14 +350,14 @@ async def test_cancelled_task_wait_does_not_release_an_ordinary_shared_status_re
     async with bound_http(tmp_path, monkeypatch) as (client, runtime):
         params = {"name": "get_test_job", "arguments": {"job_id": "shared", "wait_timeout": 2}}
         created = await bound_call(client, "tools/call", params, tasks=True)
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             await dispatched.wait()
         ordinary = asyncio.create_task(bound_call(client, "tools/call", params))
         await anyio.wait_all_tasks_blocked()
         assert len(command_hub.sent) == 1
         task_id = created["result"]["taskId"]
         await bound_call(client, "tasks/cancel", {"taskId": task_id}, tasks=True)
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while runtime._workers:
                 await anyio.sleep(0)
         assert not ordinary.done()
@@ -723,7 +725,7 @@ async def test_actual_factory_hosted_waits_capture_current_tenant_and_project_an
                     client, "tools/call", params, tasks=True, selector=selector
                 )
                 assert created["result"]["resultType"] == "task", created
-                with anyio.fail_after(3):
+                with anyio.fail_after(watchdog_timeout()):
                     while runtime._workers:
                         await anyio.sleep(0)
                 result = await bound_call(
@@ -869,11 +871,11 @@ async def test_cancel_actual_detached_wait_does_not_cancel_native_test_and_next_
             tasks=True,
         )
         task_id = created["result"]["taskId"]
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             await dispatched.wait()
         cancelled = await bound_call(client, "tasks/cancel", {"taskId": task_id}, tasks=True)
         assert cancelled["result"]["resultType"] == "complete"
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while runtime._workers:
                 await anyio.sleep(0)
         status = await bound_call(client, "tasks/get", {"taskId": task_id}, tasks=True)
@@ -1008,7 +1010,7 @@ async def test_journal_delay_cannot_refresh_original_outer_deadline_or_dispatch_
 
         def hold(operation):
             entered.set()
-            assert release.wait(2)
+            assert release.wait(watchdog_timeout())
             return create(operation)
 
         runtime.capture = remember
@@ -1022,12 +1024,12 @@ async def test_journal_delay_cannot_refresh_original_outer_deadline_or_dispatch_
             )
         )
         try:
-            assert await anyio.to_thread.run_sync(entered.wait, 1)
+            assert await anyio.to_thread.run_sync(entered.wait, watchdog_timeout())
             await anyio.sleep_until(captured[0].outer_deadline + 0.01)
         finally:
             release.set()
         reply = await request
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             while runtime._workers or runtime._preparing:
                 await anyio.sleep(0)
         if reply["result"]["resultType"] == "task":

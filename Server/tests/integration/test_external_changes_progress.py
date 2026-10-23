@@ -1,5 +1,7 @@
 """Budgeted scans eventually cover all files and detect identity/content changes."""
 
+from tests.timing import watchdog_timeout
+
 import os
 import pytest
 from services.state import external_changes_scanner as module
@@ -112,14 +114,14 @@ def test_project_switch_during_manifest_read_releases_retired_cursor(
 
     def manifest(*args):
         entered.set()
-        assert release.wait(5)
+        assert release.wait(watchdog_timeout())
         return []
 
     monkeypatch.setattr(scanner, "_resolve_manifest_extra_roots", manifest)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(scanner.update_and_get, "owned")
-        assert entered.wait(5)
+        assert entered.wait(watchdog_timeout())
         scanner.set_project_root("owned", str(tmp_path / "Other"))
         release.set()
-        future.result(timeout=5)
+        future.result(timeout=watchdog_timeout())
     assert old.cursor is None or old.cursor.iterator.gi_frame is None

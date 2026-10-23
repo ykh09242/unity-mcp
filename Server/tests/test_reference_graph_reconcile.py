@@ -1,5 +1,7 @@
 """Exercise durable reconciliation against the native paging protocol."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from contextlib import contextmanager
 import base64
@@ -571,7 +573,7 @@ async def test_addressables_catalog_replay_handles_old_snapshot_without_loop(set
     assert not store.query(caller)["edges"]
     editor.assets[target[6:]]["keys"] = [{"scheme": "addressables", "value": "new"}]
     editor.events.append({"revision": len(editor.events) + 1, "kind": "addressables_catalog"})
-    assert await asyncio.wait_for(engine.reconcile(), 10)
+    assert await asyncio.wait_for(engine.reconcile(), watchdog_timeout())
     assert {edge["target"] for edge in store.query(caller)["edges"]} == {target}
 
 
@@ -623,11 +625,11 @@ async def test_cancel_waits_for_owned_thread_before_returning():
 
     def operation():
         started.set()
-        release.wait(5)
+        release.wait(watchdog_timeout())
         return "finished"
 
     task = asyncio.create_task(drained_thread(operation))
-    await asyncio.to_thread(started.wait, 2)
+    await asyncio.to_thread(started.wait, watchdog_timeout())
     task.cancel()
     await asyncio.sleep(0)
     assert not task.done()
@@ -664,13 +666,13 @@ async def test_cancellation_during_lease_acquisition_does_not_orphan_worker(setu
     def held_acquire(owner):
         result = original(owner)
         entered.set()
-        release.wait(5)
+        release.wait(watchdog_timeout())
         return result
 
     monkeypatch.setattr(workspace, "acquire", held_acquire)
     task = asyncio.create_task(engine.reconcile())
     try:
-        assert await asyncio.to_thread(entered.wait, 5)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         task.cancel()
     finally:
         release.set()

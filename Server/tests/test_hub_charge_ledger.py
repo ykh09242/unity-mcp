@@ -1,5 +1,7 @@
 """Actual Hub admission and assembler callbacks retain their ledger generation."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -200,20 +202,20 @@ async def test_actual_ownerless_send_cleanup_only_releases_captured_ledger(hub):
     websocket.send_json = send
     task = asyncio.create_task(cls.send_command("session", "owned", {}))
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await await_signal(started, "started")
         command_id = messages[0]["id"]
         old_ledger = cls._retained_results
         await endpoint._handle_command_result(
             websocket, CommandResultMessage(id=command_id, result={"success": True})
         )
-        await asyncio.wait_for(cleanup.wait(), 2)
+        await await_signal(cleanup, "cleanup")
         assert old_ledger.total_bytes > 0
         replacement = ChargeLedger(
             {command_id: {"bytes": 30, "user_id": "bob", "session_id": "replacement"}}
         )
         cls._retained_results = replacement
         finish.set()
-        assert (await asyncio.wait_for(task, 2))["success"]
+        assert (await asyncio.wait_for(task, watchdog_timeout()))["success"]
         assert old_ledger.total_bytes == 0 and replacement.total_bytes == 30
     finally:
         finish.set()

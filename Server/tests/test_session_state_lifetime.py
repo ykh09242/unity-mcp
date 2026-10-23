@@ -1,5 +1,7 @@
 """Session-state expiration must reclaim storage, not only hide expired reads."""
 
+from tests.timing import await_signal, watchdog_timeout
+
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -118,7 +120,7 @@ async def test_idle_maintenance_physically_expires_and_stops_with_lifespan(monke
         await store.put("old:key", {"value": "old"}, ttl=1)
         await store.put("live:key", {"value": "live"}, ttl=3600)
         started.set()
-        with anyio.fail_after(2):
+        with anyio.fail_after(watchdog_timeout()):
             await expired.wait()
         assert store.retained_entries == 1
         assert await store.get("live:key") == {"value": "live"}
@@ -189,7 +191,7 @@ async def test_real_http_sdk_shielded_teardown_joins_session_maintenance(monkeyp
     server = FastMCP("session-state-lifecycle", lifespan=lifespan, session_state_store=store)
     app = server.http_app()
     async with app.router.lifespan_context(app):
-        await asyncio.wait_for(started.wait(), timeout=2)
+        await await_signal(started, "started")
         await store.put("live:key", {"value": "live"}, ttl=3600)
         assert store.retained_entries == 1
     assert store.retained_entries == store.retained_bytes == 0

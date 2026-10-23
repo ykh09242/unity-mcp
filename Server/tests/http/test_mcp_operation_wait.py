@@ -1,5 +1,7 @@
 """Actual HTTP/SDK observation Tasks preserve owner, generation and native state."""
 
+from tests.timing import watchdog_timeout
+
 import asyncio
 from unittest.mock import AsyncMock, Mock
 
@@ -154,12 +156,12 @@ async def test_cancel_task_only_cancels_status_observation(command_hub, tmp_path
             },
             tasks=True,
         )
-        with anyio.fail_after(3):
+        with anyio.fail_after(watchdog_timeout()):
             await admitted.wait()
         await bound_call(
             client, "tasks/cancel", {"taskId": created["result"]["taskId"]}, tasks=True
         )
-        with anyio.fail_after(3):
+        with anyio.fail_after(watchdog_timeout()):
             while runtime._workers:
                 await anyio.sleep(0)
         task = await bound_call(

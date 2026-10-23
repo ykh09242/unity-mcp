@@ -1,5 +1,7 @@
 """Public plugin hub regressions using real WebSockets and inert ASGI I/O."""
 
+from tests.timing import await_signal
+
 import asyncio
 import importlib
 import json
@@ -118,7 +120,7 @@ async def test_stale_eviction_bounds_close_and_unregisters_before_io(hub_environ
         hub.send_command_for_instance("Other@bbbbbbbb", "owned_query", {}, retry_on_reload=False)
     )
     try:
-        await asyncio.wait_for(started.wait(), 0.5)
+        await await_signal(started, "started")
         assert await registry.list_sessions() == {}, (
             "Stale registry state must be removed before close I/O"
         )
@@ -143,7 +145,7 @@ async def test_cancelled_stale_close_does_not_retain_registry_entry(hub_environm
         hub.send_command_for_instance("Other@bbbbbbbb", "owned_query", {}, retry_on_reload=False)
     )
     try:
-        await asyncio.wait_for(started.wait(), 0.5)
+        await await_signal(started, "started")
         command.cancel()
         with pytest.raises(asyncio.CancelledError):
             await command
