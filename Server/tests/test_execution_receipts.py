@@ -56,7 +56,9 @@ def opened(tmp_path):
     clock, stores = Clock(), []
 
     def create(name="receipts"):
-        store = ExecutionReceiptStore(tmp_path / name, private_root=True, clock=clock)
+        store = ExecutionReceiptStore(
+            tmp_path / name, private_root=True, clock=clock, monotonic=clock
+        )
         stores.append(store)
         return store
 
@@ -1083,3 +1085,140 @@ def test_rest_native_unity_instance_parameter_is_not_removed_from_identity(opene
     second = identity(opts, {"unity_instance": "application-value-b"}, surface="/api/command")
     # Then REST exact native payload identity changes; only MCP's top selector is excluded.
     assert first.digest != second.digest
+
+
+@pytest.mark.parametrize("rollback", [0.1, 86400])
+def test_clock_catchup_restores_health_without_replacing_deduplication(opened, rollback):
+    create, wall = opened
+    store = create()
+    original = admit(store).finish("not_dispatched")
+    wall.value -= rollback
+    with pytest.raises(ReceiptUnavailable, match="receipt_clock_unavailable"):
+        admit(store)
+    assert not store.available
+    assert not store._poisoned
+    wall.value += rollback + 1
+    assert store.available
+    duplicate = admit(store)
+    assert isinstance(duplicate, ReceiptView)
+    assert duplicate.receipt_id == original.receipt_id
+    assert duplicate.expires_at == original.expires_at
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), None, True])
+def test_invalid_clock_sample_can_recover_without_clearing_storage(opened, invalid):
+    create, wall = opened
+    store = create()
+    original = admit(store).finish("not_dispatched")
+    wall.value = invalid
+    assert not store.available
+    wall.value = 1001
+    assert store.available
+    assert admit(store).receipt_id == original.receipt_id
+
+
+def test_persisted_future_time_refuses_reopen_until_clock_catches_up(opened, tmp_path):
+    create, wall = opened
+    store = create()
+    original = admit(store).finish("not_dispatched")
+    store.close()
+    root = tmp_path / "receipts"
+    before = {path.name: path.read_bytes() for path in root.iterdir()}
+    wall.value = 999
+    with pytest.raises(ReceiptUnavailable, match="receipt_clock_unavailable"):
+        create()
+    assert {path.name: path.read_bytes() for path in root.iterdir()} == before
+    wall.value = 1001
+    reopened = create()
+    assert reopened.store_id == store.store_id
+    assert admit(reopened).receipt_id == original.receipt_id
+
+
+def test_wall_catchup_cannot_clear_actual_storage_poison(opened, tmp_path):
+    create, wall = opened
+    store = create()
+    original = admit(store).finish("not_dispatched")
+    path = tmp_path / "receipts" / (original.receipt_id + ".json")
+    path.write_bytes(b"broken")
+    with pytest.raises(ReceiptUnavailable):
+        admit(store)
+    wall.value = 2000
+    assert not store.available and store._poisoned
+    with pytest.raises(ReceiptUnavailable):
+        admit(store)
+    store.close()
+    with pytest.raises(ReceiptUnavailable):
+        create()
+
+
+def test_monotonic_elapsed_controls_result_and_key_expiry_across_wall_adjustments(tmp_path):
+    wall, elapsed = Clock(), Clock(0)
+    store = ExecutionReceiptStore(
+        tmp_path / "clock-store", private_root=True, clock=wall, monotonic=elapsed
+    )
+    try:
+        invocation = admit(store, retain=True)
+        invocation.enter_handler()
+        original = invocation.finish("completed", result=b"retained")
+        wall.value += 10 * TTL_SECONDS
+        # A forward wall adjustment must not expire a key or result early.
+        duplicate = admit(store, retain=True)
+        assert duplicate.receipt_id == original.receipt_id and duplicate.result_available
+        # A stopped wall clock must not keep the result alive beyond elapsed TTL.
+        elapsed.value = ledger.RESULT_TTL_SECONDS
+        duplicate = admit(store, retain=True)
+        assert duplicate.receipt_id == original.receipt_id and not duplicate.result_available
+        assert duplicate.expires_at == original.expires_at
+        elapsed.value = TTL_SECONDS + 1
+        replacement = admit(store, retain=True)
+        assert isinstance(replacement, ReceiptInvocation)
+        assert replacement.receipt_id != original.receipt_id
+        replacement.finish("not_dispatched")
+    finally:
+        store.close()
+
+
+def test_monotonic_rollback_refuses_until_validated_catchup(tmp_path):
+    wall, elapsed = Clock(), Clock(10)
+    store = ExecutionReceiptStore(
+        tmp_path / "monotonic-store", private_root=True, clock=wall, monotonic=elapsed
+    )
+    try:
+        original = admit(store).finish("not_dispatched")
+        elapsed.value = 9
+        assert not store.available and not store._poisoned
+        with pytest.raises(ReceiptUnavailable, match="receipt_clock_unavailable"):
+            admit(store)
+        elapsed.value = 11
+        assert store.available
+        assert admit(store).receipt_id == original.receipt_id
+    finally:
+        store.close()
+
+
+def test_clock_recovery_keeps_expired_key_pinned_to_actual_worker(tmp_path):
+    wall, elapsed = Clock(), Clock(0)
+    store = ExecutionReceiptStore(
+        tmp_path / "owned-clock-store", private_root=True, clock=wall, monotonic=elapsed
+    )
+    invocation = admit(store)
+    worker = invocation.acquire_worker()
+    try:
+        invocation.enter_handler()
+        original = invocation.finish("unknown", cause="wrapper_cancelled")
+        wall.value -= 0.1
+        elapsed.value = TTL_SECONDS + 1
+        with pytest.raises(ReceiptUnavailable, match="receipt_clock_unavailable"):
+            admit(store)
+        wall.value = 1001
+        duplicate = admit(store)
+        assert isinstance(duplicate, ReceiptView) and duplicate.status == "unknown"
+        assert duplicate.receipt_id == original.receipt_id and store.active_count == 1
+        worker.close()
+        replacement = admit(store)
+        assert isinstance(replacement, ReceiptInvocation)
+        assert replacement.receipt_id != original.receipt_id
+        replacement.finish("not_dispatched")
+    finally:
+        worker.close()
+        store.close()

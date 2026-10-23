@@ -107,6 +107,25 @@ exception, parameter, request context, credential or transport object is executi
 Wait-Task interception forwards receipts onto ordinary invocation; scene asks and MRTR
 continuation legs refuse before handler effects. Ordinary explicit scene paths remain.
 
+## Clock health and recovery
+
+Within one open store, timestamps and expiry advance from its validated opening wall
+time using monotonic elapsed time. Later wall-clock adjustments cannot prematurely
+expire a key or extend result retention. A backward or invalid wall/monotonic sample
+temporarily refuses receipt-protected operations. Availability checks sample clock
+health without journal I/O; once valid samples catch up to the observed high-water
+marks, operations can resume with the same records and installation identity.
+
+Exclusive reopen still validates the wall clock against persisted record timestamps
+before recovery or pruning. A clock behind those timestamps refuses startup without
+altering the records; correct the clock and reopen that same private directory. Time
+spent outside a process has no portable monotonic evidence, so persisted wall-time
+expiry remains the restart boundary. Actual corruption or uncertain writes remain
+poisoned and require exclusive reconciliation; clock catch-up cannot clear them.
+Live workers continue to pin their keys, and credential authorization is unchanged.
+An interrupted completion remains non-replayable; exclusive restart classifies
+unobserved pending records as UNKNOWN.
+
 ## Bounds, expiry and privacy
 
 Status/key TTL is fixed two hours from admission; result TTL is ten minutes from observation,
