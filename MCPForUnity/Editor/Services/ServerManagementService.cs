@@ -117,19 +117,9 @@ namespace MCPForUnity.Editor.Services
             return true;
         }
 
-        private string ComputeShortHash(string input)
-        {
-            return _pidFileManager.ComputeShortHash(input);
-        }
-
         private bool TryGetStoredLocalServerPid(int expectedPort, out int pid)
         {
             return _pidFileManager.TryGetStoredPid(expectedPort, out pid);
-        }
-
-        private string GetStoredArgsHash()
-        {
-            return _pidFileManager.GetStoredArgsHash();
         }
 
         /// <summary>
