@@ -412,19 +412,22 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             keyField.tooltip =
                 $"Paste your {displayName} API key, then press Save. " + "The key is stored in your OS secure store and is never read back into this field.";
             fieldRow.Add(keyField);
+            var keyActions = new VisualElement();
+            keyActions.AddToClassList("provider-key-actions");
+            fieldRow.Add(keyActions);
 
             var saveButton = new Button { text = "Save", name = "provider-save-" + id };
             saveButton.AddToClassList("icon-button");
-            fieldRow.Add(saveButton);
+            keyActions.Add(saveButton);
 
             var clearButton = new Button { text = "Remove saved key" };
             clearButton.AddToClassList("icon-button");
-            fieldRow.Add(clearButton);
+            keyActions.Add(clearButton);
 
             var testButton = new Button { text = "Check key" };
             testButton.tooltip = "Check whether a key is stored. This does not contact the provider or validate authentication.";
             testButton.AddToClassList("icon-button");
-            fieldRow.Add(testButton);
+            keyActions.Add(testButton);
 
             row.Add(fieldRow);
 

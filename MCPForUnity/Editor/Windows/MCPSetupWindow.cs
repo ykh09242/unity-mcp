@@ -56,7 +56,7 @@ namespace MCPForUnity.Editor.Windows
         private readonly Dictionary<string, Label> clientResultLabels = new();
         private Func<IReadOnlyList<IMcpClientConfigurator>> getClients = () => McpClientRegistry.All;
         private Action<IMcpClientConfigurator> configureClient = client => MCPServiceLocator.Client.ConfigureClient(client);
-        private Action finishSetup;
+        private Action finishSetup = null;
 
         private DependencyCheckResult _dependencyResult;
         private Task<DependencyCheckResult> _dependencyTask;

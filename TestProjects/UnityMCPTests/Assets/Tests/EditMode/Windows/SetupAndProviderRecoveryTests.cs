@@ -390,7 +390,8 @@ namespace MCPForUnityTests.EditMode.Windows
                     var scroll = root.Q<ScrollView>("assetgen-panel");
                     var key = root.Q<TextField>("provider-key-fal");
                     Assert.IsTrue(key.worldBound.Overlaps(scroll.contentViewport.worldBound));
-                    Assert.Greater(key.worldBound.width, 120);
+                    Assert.GreaterOrEqual(key.worldBound.width, key.parent.worldBound.width * 0.9f);
+                    Assert.GreaterOrEqual(root.Q<Button>("provider-save-fal").worldBound.yMin, key.worldBound.yMax);
                     Assert.LessOrEqual(root.Q<Button>("provider-save-fal").worldBound.yMax, scroll.contentViewport.worldBound.yMax);
                     Assert.LessOrEqual(scroll.horizontalScroller.highValue, 1);
                     string path = System.IO.Path.Combine(directory, "credentials-500-" + theme + ".png");
