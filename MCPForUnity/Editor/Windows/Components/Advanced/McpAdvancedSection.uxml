@@ -6,6 +6,7 @@
             <ui:Label name="settings-user-scope" class="help-text section-intro" text="User scope: preferences and path overrides are shared across projects. Toggles save immediately; network and server changes apply to the next launch or reconnect. Output paths are resolved in the receiving project." />
             <ui:Foldout name="settings-diagnostics" text="Diagnostics" value="true" class="settings-group">
                 <ui:Label text="Inspect connection health and control diagnostic output." class="help-text group-description" />
+                <ui:Button name="diagnostics-open" text="Preview diagnostic bundle" class="action-button" />
                 <ui:VisualElement class="setting-row spaced-row">
                     <ui:Toggle name="debug-logs-toggle" class="field-toggle" text="Debug Logging" />
                 </ui:VisualElement>

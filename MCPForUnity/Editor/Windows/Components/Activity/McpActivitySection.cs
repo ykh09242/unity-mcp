@@ -42,6 +42,9 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
         private bool visible,
             disposed;
         internal int CaptureCount { get; private set; }
+        internal event Action DiagnosticsRequested;
+
+        internal Newtonsoft.Json.Linq.JObject CaptureDiagnosticSelection() => McpDiagnosticBundle.OperationSummary(Selected());
 
         internal McpActivitySection(
             VisualElement root,
@@ -83,6 +86,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             var selectionActions = new VisualElement();
             selectionActions.AddToClassList("activity-actions");
             root.Add(selectionActions);
+            selectionActions.Add(new Button(() => DiagnosticsRequested?.Invoke()) { text = "Diagnostic bundle", name = "activity-diagnostics" });
             selectedEvidence = new Button(() =>
             {
                 var row = Selected();
@@ -320,6 +324,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             disposed = true;
             visible = false;
             tick.Pause();
+            DiagnosticsRequested = null;
             snapshot = new List<OperationActivityRow>();
             matching.Clear();
             views.Clear();

@@ -42,6 +42,11 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             sourceEnabled;
         private readonly Func<string, JObject, CancellationToken, Task<JObject>> send;
         private readonly Func<string> connectionIdentity;
+        private JObject diagnosticGraph;
+        internal event Action DiagnosticsRequested;
+
+        internal JObject CaptureDiagnostics() => !disposed && IsCurrentIdentity() ? diagnosticGraph?.DeepClone() as JObject : null;
+
         private readonly List<Button> buttons = new();
         private readonly List<Button> sourceAccessButtons = new();
         private CancellationTokenSource pending;
@@ -95,6 +100,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 tooltip = "Stop this request wait. Accepted server work may continue.",
             };
             toolbar.Add(stopWaiting);
+            toolbar.Add(new Button(() => DiagnosticsRequested?.Invoke()) { text = "Diagnostic bundle", name = "graph-diagnostics" });
             waitStatus = Text(toolbar, "", "graph-wait-status");
             waitStatus.AddToClassList("graph-muted");
             waitClock = root
@@ -433,6 +439,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             StopWaiting();
             drafts.Clear();
             explorer.Clear();
+            diagnosticGraph = null;
             viewIdentity = null;
             identity.text = "Connection changed · refresh to verify this account";
             identity.tooltip = null;
@@ -657,6 +664,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 identity.tooltip = "Account: " + label["principal"] + "\nEditor: " + label["instance_id"] + "\nProject: " + label["project_id"];
             }
             var graph = data["graph_status"];
+            diagnosticGraph = McpDiagnosticBundle.GraphSummary(graph as JObject);
             long errors = graph?.Value<long?>("errors") ?? 0;
             string workerError = graph?.Value<string>("worker_error");
             bool failed = errors > 0 || !string.IsNullOrEmpty(workerError);
@@ -832,6 +840,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             visible = false;
             StopWaiting();
             drafts.Clear();
+            diagnosticGraph = null;
+            DiagnosticsRequested = null;
             EditorConfigurationCache.Instance.OnConfigurationChanged -= ConfigurationChanged;
             buttons.Clear();
             sourceAccessButtons.Clear();

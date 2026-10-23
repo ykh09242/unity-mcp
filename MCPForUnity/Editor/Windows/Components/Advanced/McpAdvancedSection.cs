@@ -17,6 +17,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
     public class McpAdvancedSection
     {
         // UI Elements
+        private Button diagnosticsButton;
         private TextField uvxPathOverride;
         private Button browseUvxButton;
         private Button clearUvxButton;
@@ -56,6 +57,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
         public event Action OnGitUrlChanged;
         public event Action OnHttpServerCommandUpdateRequested;
         public event Action OnTestConnectionRequested;
+        public event Action OnDiagnosticsRequested;
         public event Action OnPackageDeployed;
 
         public VisualElement Root { get; private set; }
@@ -70,6 +72,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
 
         private void CacheUIElements()
         {
+            diagnosticsButton = Root.Q<Button>("diagnostics-open");
             uvxPathOverride = Root.Q<TextField>("uv-path-override");
             browseUvxButton = Root.Q<Button>("browse-uv-button");
             clearUvxButton = Root.Q<Button>("clear-uv-button");
@@ -326,6 +329,8 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             deployButton.clicked += OnDeployClicked;
             deployRestoreButton.clicked += OnRestoreBackupClicked;
             testConnectionButton.clicked += () => OnTestConnectionRequested?.Invoke();
+            if (diagnosticsButton != null)
+                diagnosticsButton.clicked += () => OnDiagnosticsRequested?.Invoke();
         }
 
         public void UpdatePathOverrides()

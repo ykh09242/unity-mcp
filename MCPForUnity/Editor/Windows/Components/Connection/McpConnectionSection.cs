@@ -28,6 +28,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         }
 
         // UI Elements
+        private Button diagnosticsButton;
         private EnumField transportDropdown;
         private VisualElement transportMismatchWarning;
         private Label transportMismatchText;
@@ -81,6 +82,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         // Events
         public event Action OnManualConfigUpdateRequested;
         public event Action OnTransportChanged;
+        public event Action OnDiagnosticsRequested;
 
         public VisualElement Root { get; private set; }
 
@@ -99,6 +101,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private void CacheUIElements()
         {
+            diagnosticsButton = Root.Q<Button>("connection-diagnostics");
             connectionBlocker = Root.Q<Label>("connection-blocker");
             connectionFixButton = Root.Q<Button>("connection-fix");
             if (connectionFixButton != null)
@@ -203,6 +206,9 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private void RegisterCallbacks()
         {
+            if (diagnosticsButton != null)
+                diagnosticsButton.clicked += () => OnDiagnosticsRequested?.Invoke();
+
             transportDropdown.RegisterValueChangedCallback(evt =>
             {
                 autoStartGeneration++;
