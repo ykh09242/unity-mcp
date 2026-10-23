@@ -260,7 +260,12 @@ namespace MCPForUnityTests.EditMode.Windows
         }
 
         [UnityTest]
-        public IEnumerator FailedKeyDeletionPreservesPresenceAndSuccessfulRetryClearsIt()
+        public IEnumerator FailedKeyDeletionPreservesPresenceAndSuccessfulRetryClearsIt() => VerifyDeletion(false);
+
+        [UnityTest]
+        public IEnumerator SavedKeyRemovalKeepsEnvironmentOverrideActive() => VerifyDeletion(true);
+
+        private IEnumerator VerifyDeletion(bool environment)
         {
             var slot = typeof(SecureKeyStore).GetField("_current", Static);
             var previous = (ISecureKeyStore)slot.GetValue(null);
@@ -269,7 +274,7 @@ namespace MCPForUnityTests.EditMode.Windows
             var transport = new FakeHttpTransport { Handler = _ => throw new InvalidOperationException("No network allowed") };
             try
             {
-                SecureKeyStore.OverrideForTests(store);
+                SecureKeyStore.OverrideForTests(environment ? new EnvOverlayKeyStore(store, _ => "synthetic-override") : (ISecureKeyStore)store);
                 AssetGenModelCatalog.ResetForTests(true);
                 FalModelCatalog.TransportOverrideForTests = transport;
                 OpenRouterModelCatalog.TransportOverrideForTests = transport;
@@ -295,7 +300,10 @@ namespace MCPForUnityTests.EditMode.Windows
                 using (var submit = NavigationSubmitEvent.GetPooled())
                     remove.SendEvent(submit);
                 yield return null;
-                Assert.AreEqual("not set", row.Q<Label>(className: "provider-status").text);
+                Assert.AreEqual(
+                    environment ? "Saved key removed; environment override remains active" : "not set",
+                    row.Q<Label>(className: "provider-status").text
+                );
                 Assert.IsFalse(store.Present);
                 Assert.IsEmpty(transport.RecordedRequests);
             }

@@ -11,6 +11,10 @@ namespace MCPForUnity.Editor.Security
     internal sealed class LinuxSecretToolKeyStore : ISecureKeyStore
     {
         private const string Service = SecureKeyStoreConstants.ServiceName;
+        private readonly Func<ProcessStartInfo, int> deleteCommand;
+
+        internal LinuxSecretToolKeyStore(Func<ProcessStartInfo, int> deleteCommand = null) =>
+            this.deleteCommand = deleteCommand ?? (info => KeyStoreProcess.Run(info).code);
 
         internal static bool IsAvailable()
         {
@@ -80,17 +84,16 @@ namespace MCPForUnity.Editor.Security
         {
             if (string.IsNullOrEmpty(providerId))
                 return;
-            try
-            {
-                var psi = NewPsi();
-                psi.ArgumentList.Add("clear");
-                psi.ArgumentList.Add("service");
-                psi.ArgumentList.Add(Service);
-                psi.ArgumentList.Add("account");
-                psi.ArgumentList.Add(providerId);
-                KeyStoreProcess.Run(psi);
-            }
-            catch { /* best effort */ }
+            var psi = NewPsi();
+            psi.ArgumentList.Add("clear");
+            psi.ArgumentList.Add("service");
+            psi.ArgumentList.Add(Service);
+            psi.ArgumentList.Add("account");
+            psi.ArgumentList.Add(providerId);
+            if (deleteCommand(psi) != 0)
+                throw new InvalidOperationException(
+                    "Credential removal could not be confirmed. The key may already be absent or secret-service access unavailable."
+                );
         }
 
         private static ProcessStartInfo NewPsi(bool redirectIn = false)

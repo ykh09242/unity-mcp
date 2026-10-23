@@ -13,8 +13,13 @@ namespace MCPForUnity.Editor.Security
         private const int CRED_TYPE_GENERIC = 1;
         private const int CRED_PERSIST_LOCAL_MACHINE = 2;
         private readonly string targetNamespace;
+        private readonly Func<string, int> deleteCredential;
 
-        internal WindowsCredentialKeyStore(string targetNamespace = SecureKeyStoreConstants.ServiceName) => this.targetNamespace = targetNamespace;
+        internal WindowsCredentialKeyStore(string targetNamespace = SecureKeyStoreConstants.ServiceName, Func<string, int> deleteCredential = null)
+        {
+            this.targetNamespace = targetNamespace;
+            this.deleteCredential = deleteCredential ?? (target => CredDelete(target, CRED_TYPE_GENERIC, 0) ? 0 : Marshal.GetLastWin32Error());
+        }
 
         private string Target(string providerId) => targetNamespace + ":" + providerId;
 
@@ -110,7 +115,10 @@ namespace MCPForUnity.Editor.Security
         {
             if (string.IsNullOrEmpty(providerId))
                 return;
-            CredDelete(Target(providerId), CRED_TYPE_GENERIC, 0);
+            int error = deleteCredential(Target(providerId));
+            const int ErrorNotFound = 1168;
+            if (error != 0 && error != ErrorNotFound)
+                throw new InvalidOperationException("Credential removal could not be confirmed. Check secure-store access.");
         }
     }
 }
