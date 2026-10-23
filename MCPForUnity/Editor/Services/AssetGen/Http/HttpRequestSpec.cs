@@ -15,6 +15,21 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         public byte[] Body;
         public string ContentType;
 
+        /// <summary>
+        /// Optional finite request wait in seconds (greater than zero, at most 86400).
+        /// Ordinary API reads default to 120 seconds. Managed jobs clamp API requests to their
+        /// remaining execution budget; artifact downloads retain their separate streaming policy.
+        /// </summary>
+        public double? TimeoutSeconds;
+
+        internal HttpRequestSpec WithTimeout(double seconds)
+        {
+            // Retain the existing payload and headers; large upload buffers are not copied.
+            var request = (HttpRequestSpec)MemberwiseClone();
+            request.TimeoutSeconds = seconds;
+            return request;
+        }
+
         /// <summary>Non-null for untrusted artifact downloads; selects the provider's outbound policy.</summary>
         public string DownloadProvider;
         internal AssetOperationProgress DownloadProgress;

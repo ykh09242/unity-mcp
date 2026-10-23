@@ -188,3 +188,24 @@ No finite timeout guarantees progress on a suspended machine. Configure the spec
 operation and its external client's request deadline for exceptionally large work,
 and use resumable job/status interfaces when available rather than an unlimited
 foreground request.
+
+## Asset generation provider requests
+
+Managed generation requests use the remaining job deadline at the moment each HTTP
+request is sent, including requests after recovery. Generation POST/PUT requests,
+large input uploads and delayed submission receipts can use the remaining execution
+budget (currently up to two hours per job). GET/HEAD polling and metadata reads keep
+the 120-second default and are also capped by the remaining job time. Adapters can
+set `HttpRequestSpec.TimeoutSeconds` explicitly; it must be finite, positive and at
+most 86400 seconds. An explicit value cannot extend the enclosing job deadline.
+
+OpenRouter's synchronous image request carries the generation allowance even for
+direct adapter callers. The native HTTP transport rounds fractional seconds up to
+Unity's whole-second timeout; the job retains its precise deadline and cancellation.
+No retry is introduced. A lost submission response remains `outcome_unknown`, and
+recovery never automatically resends a potentially billable request. Cancellation
+or a timeout does not confirm that the remote provider stopped processing.
+
+Artifact downloads retain their separate streaming and outbound validation policy.
+Applying an API request budget creates a shallow request copy, preserving caller
+state without copying large input buffers or retaining completed job payloads.
