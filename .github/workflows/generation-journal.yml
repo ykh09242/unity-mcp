@@ -1,0 +1,44 @@
+name: Generation journal
+
+on:
+  pull_request:
+    branches: [main, beta]
+    paths:
+      - MCPForUnity/Editor/Services/AssetGen/AssetGenJob*.cs
+      - MCPForUnity/Editor/Helpers/ExclusiveFileLease.cs
+      - MCPForUnity/Editor/Helpers/Atomic*.cs
+      - MCPForUnity/Runtime/Helpers/SafePathUtility.cs
+      - tools/tests/fixtures/generation_journal/**
+      - .github/workflows/generation-journal.yml
+  push:
+    branches: [beta]
+    paths:
+      - MCPForUnity/Editor/Services/AssetGen/AssetGenJob*.cs
+      - MCPForUnity/Editor/Helpers/ExclusiveFileLease.cs
+      - MCPForUnity/Editor/Helpers/Atomic*.cs
+      - MCPForUnity/Runtime/Helpers/SafePathUtility.cs
+      - tools/tests/fixtures/generation_journal/**
+      - .github/workflows/generation-journal.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: Generation journal (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-26.04, macos-26-intel]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 9.0.x
+      - name: Verify instance lease and owned process interruption
+        run: dotnet run --project tools/tests/fixtures/generation_journal/JournalHarness.csproj -- "${{ runner.temp }}/generation-journal"

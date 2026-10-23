@@ -158,7 +158,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     PromptChars = ((string)Newtonsoft.Json.Linq.JObject.Parse(System.Text.Encoding.UTF8.GetString(spec.Body))["prompt"]).Length;
                     return Submit.Task;
                 }
-                if (spec.Url != "https://api.tripo3d.ai/v2/openapi/task/provider-id")
+                if (spec.Url != "https://openapi.tripo3d.ai/v3/tasks/provider-id")
                     throw new InvalidOperationException("Unexpected synthetic poll URL.");
                 Polls++;
                 return Task.FromResult(new HttpResult { Status = 200, Text = "{\"code\":0,\"data\":{\"status\":\"running\",\"progress\":50}}" });

@@ -280,6 +280,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 "receipt_not_resumable",
                 "reconnect_key_unavailable",
                 "checkpoint_invalid",
+                "checkpoint_clock_uncertain",
                 "checkpoint_write_failed",
                 "job_timeout",
                 "generation_failed",
@@ -300,6 +301,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 "saved_asset_missing" => "Saved output is missing; no replacement was written.",
                 "checkpoint_write_failed" => "Recovery checkpoint could not be stored; further work stopped.",
                 "checkpoint_invalid" => "Recovery metadata is invalid; no work was resumed.",
+                "checkpoint_clock_uncertain" => "The clock moved backwards across restart; the execution budget could not be verified and no work was resumed.",
                 "generation_failed" => "Generation failed. Provider diagnostic payloads are not retained across reload.",
                 _ => "Editor reload recovery is unavailable or the prior outcome is unknown. Inspect retained work before retrying.",
             };

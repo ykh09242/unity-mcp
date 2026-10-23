@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Services.AssetGen;
+using MCPForUnity.Editor.Services.AssetGen.Http;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -17,7 +18,15 @@ namespace MCPForUnityTests.Editor.AssetGen
         private static readonly BindingFlags PrivateStatic = BindingFlags.Static | BindingFlags.NonPublic;
 
         [SetUp]
-        public void SetUp() => AssetGenJobManager.ResetForTests();
+        public void SetUp()
+        {
+            AssetGenJobManager.ResetForTests();
+            // Legacy metadata fixtures remain independent of any real project journal.
+            AssetGenJobManager.TransportOverrideForTests = new FakeHttpTransport
+            {
+                Handler = _ => throw new AssertionException("Unexpected provider request in history fixture."),
+            };
+        }
 
         [TearDown]
         public void TearDown() => AssetGenJobManager.ResetForTests();
