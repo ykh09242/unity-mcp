@@ -7,6 +7,7 @@ No JSON is parsed here, so the caller can decode the normal result exactly once.
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import math
 import time
 from typing import Final
 from uuid import UUID
@@ -78,7 +79,11 @@ class LargeResultAssembler:
         clock: Callable[[], float] = time.monotonic,
         reserve_compressed: Callable[[str, str, int, int], bool] | None = None,
     ) -> None:
-        if not 0 < timeout_seconds <= 300 or not 0 < max_total_bytes <= 256 * 1024 * 1024:
+        if (
+            type(timeout_seconds) not in (int, float)
+            or not 0 < timeout_seconds <= 86400
+            or not 0 < max_total_bytes <= 256 * 1024 * 1024
+        ):
             raise LargeResultProtocolError("invalid_assembler_limits")
         self._pending = pending
         self._reserve = reserve
@@ -103,8 +108,14 @@ class LargeResultAssembler:
         *,
         encoding: str = "identity",
         decoded_bytes: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> bool:
-        """Reserve a pending transfer; ignore valid late/unowned results without allocation."""
+        """Reserve within the caller's remaining elapsed budget, never a peer-supplied value.
+
+        Standalone callers retain the configured finite default. An enclosing
+        command may include response grace beyond the public one-day work budget.
+        Progress does not extend either deadline. Ignore valid unowned results.
+        """
         if not _canonical_id(command_id):
             raise LargeResultProtocolError("invalid_result_id")
         if encoding not in {"identity", "gzip"}:
@@ -135,6 +146,18 @@ class LargeResultAssembler:
         if key in self._transfers:
             self.discard(owner, command_id)
             raise LargeResultProtocolError("duplicate_result_start", command_id)
+        remaining = self._timeout if timeout_seconds is None else timeout_seconds
+        if type(remaining) not in (int, float):
+            raise LargeResultProtocolError("invalid_result_timeout", command_id)
+        try:
+            deadline = self._clock() + remaining
+            valid = math.isfinite(remaining) and math.isfinite(deadline)
+        except OverflowError:
+            valid = False
+        if not valid:
+            raise LargeResultProtocolError("invalid_result_timeout", command_id)
+        if remaining <= 0:
+            raise LargeResultProtocolError("result_transfer_timeout", command_id)
         if self._retained_bytes + allocation_bytes > self._max_total:
             raise LargeResultProtocolError("result_capacity", command_id)
         if compressed:
@@ -145,9 +168,7 @@ class LargeResultAssembler:
         elif not self._reserve(owner, command_id, allocation_bytes):
             raise LargeResultProtocolError("result_capacity", command_id)
         try:
-            transfer = _Transfer(
-                bytearray(allocation_bytes), chunk_count, self._clock() + self._timeout, total_bytes
-            )
+            transfer = _Transfer(bytearray(allocation_bytes), chunk_count, deadline, total_bytes)
             if compressed:
                 transfer.decoder = GzipResultDecoder(transfer.payload)
         except MemoryError:

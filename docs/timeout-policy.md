@@ -83,6 +83,20 @@ validity, idle-session retention or permission leases.
 Readiness uses monotonic elapsed clocks. Native update and compilation subscriptions
 detach on completion, timeout, editor shutdown and assembly reload.
 
+## Large result transfers
+
+Negotiated chunked responses, including gzip responses, spend the admitted HTTP
+command's remaining elapsed budget. A request with time left beyond five minutes
+is no longer cut off by a separate 300-second assembler limit. Selection, native
+execution and earlier request phases still consume the enclosing budget; result
+arrival does not restart it. Peer-supplied timeouts and chunk progress cannot
+extend the admitted deadline.
+
+Existing result byte limits, socket-generation ownership and cancellation fences
+remain in effect. Expiry, cancellation or disconnect releases partial buffers;
+a timeout does not authorize replaying the original command. Standalone internal
+assembler callers retain a 300-second default and may configure up to one day.
+
 ## Test discovery and native startup
 
 `get_tests(timeout_seconds=1800)` allows a 30-minute total discovery observation

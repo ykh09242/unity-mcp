@@ -1521,6 +1521,8 @@ class PluginHub(WebSocketEndpoint):
                 "response_owner": response_owner.get(),
                 "result_ledger": result_ledger,
                 "receipt_owner": execution_owner.get(),
+                # Keep only the admitted scalar deadline, not its request/dispatch graph.
+                "result_deadline": budget.expires_at,
             }
             generation = getattr(websocket.state, "plugin_generation", None)
 
@@ -2559,6 +2561,15 @@ class PluginHub(WebSocketEndpoint):
                         websocket, COMPRESSION_CAPABILITY
                     ):
                         raise LargeResultProtocolError("compression_not_negotiated", start.id)
+                    entry = cls._pending.get(start.id)
+                    deadline = entry.get("result_deadline") if entry is not None else None
+                    # Convert clock domains once. The peer cannot extend the command
+                    # by advertising a timeout or by continuing to send chunks.
+                    remaining = (
+                        max(0.0, deadline - asyncio.get_running_loop().time())
+                        if deadline is not None
+                        else None
+                    )
                     assembler.begin(
                         generation,
                         start.id,
@@ -2566,6 +2577,7 @@ class PluginHub(WebSocketEndpoint):
                         start.chunk_count,
                         encoding=start.encoding,
                         decoded_bytes=start.decoded_bytes,
+                        timeout_seconds=remaining,
                     )
                     return
                 completed = assembler.feed(generation, data)
