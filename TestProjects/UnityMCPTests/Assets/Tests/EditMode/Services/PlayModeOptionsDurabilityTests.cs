@@ -60,6 +60,9 @@ namespace MCPForUnityTests.Editor.Services
         [TearDown]
         public void TearDown()
         {
+            PlayModeOptionsGuard.SettingsBoundaryForTests = null;
+            PlayModeOptionsGuard.FlushForTests = null;
+            PlayModeOptionsGuard.DeleteMarkerForTests = null;
             if (!captured)
                 return;
             EditorSettings.enterPlayModeOptions = options;
@@ -171,6 +174,104 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsTrue(EditorSettings.enterPlayModeOptionsEnabled);
             Assert.AreEqual(EnterPlayModeOptions.DisableDomainReload, EditorSettings.enterPlayModeOptions);
             Assert.IsTrue(File.Exists(marker));
+        }
+
+        private sealed class InterruptedSettingsException : Exception { }
+
+        private static void Admit()
+        {
+            try
+            {
+                typeof(TestRunnerService)
+                    .GetMethod("EnsurePlayModeRunsWithoutDomainReload", Flags)
+                    .Invoke(null, new object[] { false, EnterPlayModeOptions.None });
+            }
+            catch (TargetInvocationException ex)
+            {
+                ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+            }
+        }
+
+        [TestCase("before-apply-enabled")]
+        [TestCase("after-apply-enabled")]
+        [TestCase("before-apply-options")]
+        [TestCase("after-apply-options")]
+        [TestCase("before-restore-options")]
+        [TestCase("after-restore-options")]
+        [TestCase("before-restore-enabled")]
+        [TestCase("after-restore-enabled")]
+        public void InterruptedSettingTransitionRestoresFromDisk(string boundary)
+        {
+            EditorSettings.enterPlayModeOptionsEnabled = false;
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.None;
+            if (boundary.Contains("restore"))
+                Admit();
+            PlayModeOptionsGuard.SettingsBoundaryForTests = current =>
+            {
+                if (current == boundary)
+                    throw new InterruptedSettingsException();
+            };
+            Assert.Throws<InterruptedSettingsException>(() =>
+            {
+                if (boundary.Contains("apply"))
+                    Admit();
+                else
+                    PlayModeOptionsGuard.Restore();
+            });
+            PlayModeOptionsGuard.SettingsBoundaryForTests = null;
+            ClearSession();
+            PlayModeOptionsGuard.Restore();
+            Assert.IsFalse(EditorSettings.enterPlayModeOptionsEnabled);
+            Assert.AreEqual(EnterPlayModeOptions.None, EditorSettings.enterPlayModeOptions);
+            Assert.IsFalse(PlayModeOptionsGuard.IsPending);
+        }
+
+        [Test]
+        public void UnjournaledMixedTupleIsPreservedAsConflict()
+        {
+            EditorSettings.enterPlayModeOptionsEnabled = false;
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.None;
+            PlayModeOptionsGuard.Save(false, EnterPlayModeOptions.None);
+            EditorSettings.enterPlayModeOptionsEnabled = true;
+            // Unity versions differ: this setter can also enable both option flags.
+            var externalOptions = EditorSettings.enterPlayModeOptions;
+            ClearSession();
+            PlayModeOptionsGuard.Restore();
+            Assert.IsTrue(EditorSettings.enterPlayModeOptionsEnabled);
+            Assert.AreEqual(externalOptions, EditorSettings.enterPlayModeOptions);
+            Assert.IsFalse(PlayModeOptionsGuard.IsPending);
+        }
+
+        [Test]
+        public void FlushFailurePreventsSettingsAdmission()
+        {
+            EditorSettings.enterPlayModeOptionsEnabled = false;
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.None;
+            PlayModeOptionsGuard.FlushForTests = stream => throw new IOException("Injected flush failure");
+            Assert.Throws<IOException>(Admit);
+            Assert.IsFalse(EditorSettings.enterPlayModeOptionsEnabled);
+            Assert.AreEqual(EnterPlayModeOptions.None, EditorSettings.enterPlayModeOptions);
+            Assert.IsFalse(File.Exists(marker));
+            Assert.IsFalse(PlayModeOptionsGuard.IsPending);
+            Assert.IsNotEmpty(Directory.GetFiles(ownedDirectory, "*.tmp"), "Unconfirmed staging evidence is retained.");
+        }
+
+        [Test]
+        public void DeleteFailureLeavesInactiveCompletionAcrossRestart()
+        {
+            EditorSettings.enterPlayModeOptionsEnabled = false;
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.None;
+            Admit();
+            PlayModeOptionsGuard.DeleteMarkerForTests = path => throw new IOException("Injected delete failure");
+            PlayModeOptionsGuard.Restore();
+            Assert.IsTrue(File.Exists(marker));
+            Assert.AreEqual("complete", (string)JObject.Parse(File.ReadAllText(marker))["Status"]);
+            Assert.IsFalse(EditorSettings.enterPlayModeOptionsEnabled);
+            ClearSession();
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableSceneReload;
+            PlayModeOptionsGuard.RestoreIfIdle();
+            Assert.AreEqual(EnterPlayModeOptions.DisableSceneReload, EditorSettings.enterPlayModeOptions);
+            Assert.IsFalse(PlayModeOptionsGuard.IsPending);
         }
 
         [Test]

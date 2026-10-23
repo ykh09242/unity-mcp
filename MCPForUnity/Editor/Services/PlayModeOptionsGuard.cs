@@ -19,6 +19,9 @@ namespace MCPForUnity.Editor.Services
         private const string KeyRecord = "MCPForUnity.PlayModeOptions.Record.v2";
         private const int MaximumRecordBytes = 4096;
         internal static string MarkerPathForTests;
+        internal static Action<string> SettingsBoundaryForTests;
+        internal static Action<FileStream> FlushForTests;
+        internal static Action<string> DeleteMarkerForTests;
         private static readonly string ProjectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
         private static readonly string Owner = AtomicAssetFile.Digest(
             Encoding.UTF8.GetBytes(ProjectRoot + "\n" + Environment.MachineName + "\n" + Environment.UserDomainName + "\n" + Environment.UserName)
@@ -51,6 +54,9 @@ namespace MCPForUnity.Editor.Services
 
             [JsonProperty(Required = Required.Always)]
             public string Status = "pending";
+
+            [JsonProperty(Required = Required.Always)]
+            public string Phase = "prepared";
         }
 
         static PlayModeOptionsGuard() => RestoreIfIdle();
@@ -63,7 +69,9 @@ namespace MCPForUnity.Editor.Services
                 Restore();
         }
 
-        internal static void Save(bool originalEnabled, EnterPlayModeOptions originalOptions)
+        internal static void Save(bool originalEnabled, EnterPlayModeOptions originalOptions) => Prepare(originalEnabled, originalOptions);
+
+        private static Record Prepare(bool originalEnabled, EnterPlayModeOptions originalOptions)
         {
             if (IsPending)
                 throw new IOException("A prior test run still owns its settings recovery record.");
@@ -78,6 +86,62 @@ namespace MCPForUnity.Editor.Services
             // A failure propagates to admission before EditorSettings is changed.
             Write(record);
             Cache(record);
+            return record;
+        }
+
+        internal static void Apply(bool originalEnabled, EnterPlayModeOptions originalOptions)
+        {
+            var record = Prepare(originalEnabled, originalOptions);
+            try
+            {
+                // Set nonzero options first: newer Editors also enable options in this setter.
+                // Enabling first can replace None with Unity's default combined options.
+                SetPhase(record, "apply-options");
+                SettingsBoundaryForTests?.Invoke("before-apply-options");
+                EditorSettings.enterPlayModeOptions = (EnterPlayModeOptions)record.AppliedOptions;
+                SettingsBoundaryForTests?.Invoke("after-apply-options");
+                SetPhase(record, "apply-enabled");
+                SettingsBoundaryForTests?.Invoke("before-apply-enabled");
+                EditorSettings.enterPlayModeOptionsEnabled = true;
+                SettingsBoundaryForTests?.Invoke("after-apply-enabled");
+                SetPhase(record, "active");
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                // A failed transition cannot admit tests; the prior durable phase still owns
+                // any completed setter. Retry conditional recovery without hiding admission failure.
+                Restore();
+                throw;
+            }
+        }
+
+        private static void SetPhase(Record record, string phase)
+        {
+            record.Phase = phase;
+            Write(record);
+            Cache(record);
+        }
+
+        private static bool OwnsCurrent(Record record, bool enabled, int options)
+        {
+            // Older Editors store these fields independently; newer Editors couple nonzero
+            // options and enabled. Both exact setter outcomes are allowed only in their phase.
+            bool expectedEnabled = enabled == record.OriginalEnabled || enabled;
+            switch (record.Phase)
+            {
+                case "prepared": // Same-process legacy Save callers may have applied both values.
+                case "active":
+                    return enabled && options == record.AppliedOptions;
+                case "apply-options":
+                case "apply-enabled":
+                    return expectedEnabled && options == record.AppliedOptions;
+                case "restore-options":
+                    return expectedEnabled && (options == record.OriginalOptions || options == record.AppliedOptions);
+                case "restore-enabled":
+                    return expectedEnabled && options == record.OriginalOptions;
+                default:
+                    return false;
+            }
         }
 
         internal static void Restore()
@@ -87,19 +151,33 @@ namespace MCPForUnity.Editor.Services
             bool enabled = EditorSettings.enterPlayModeOptionsEnabled;
             int options = (int)EditorSettings.enterPlayModeOptions;
             bool original = enabled == record.OriginalEnabled && options == record.OriginalOptions;
-            bool owned = enabled && options == record.AppliedOptions;
-            if (!original && !owned)
+            if (!original && !OwnsCurrent(record, enabled, options))
             {
                 Retire(record, "conflict");
                 McpLog.Warn("[PlayModeOptionsGuard] Settings changed after test admission; current values were preserved.");
                 return;
             }
-            if (owned)
+            try
             {
-                EditorSettings.enterPlayModeOptions = (EnterPlayModeOptions)record.OriginalOptions;
-                EditorSettings.enterPlayModeOptionsEnabled = record.OriginalEnabled;
+                if (!original)
+                {
+                    // Persist each setter's intent first. Both its before and after tuple are
+                    // recoverable if the process stops between the setter and the next record.
+                    SetPhase(record, "restore-options");
+                    SettingsBoundaryForTests?.Invoke("before-restore-options");
+                    EditorSettings.enterPlayModeOptions = (EnterPlayModeOptions)record.OriginalOptions;
+                    SettingsBoundaryForTests?.Invoke("after-restore-options");
+                    SetPhase(record, "restore-enabled");
+                    SettingsBoundaryForTests?.Invoke("before-restore-enabled");
+                    EditorSettings.enterPlayModeOptionsEnabled = record.OriginalEnabled;
+                    SettingsBoundaryForTests?.Invoke("after-restore-enabled");
+                }
+                Retire(record, "complete");
             }
-            Retire(record, "complete");
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                McpLog.Warn("[PlayModeOptionsGuard] Settings recovery remains pending because a transition could not be persisted: " + ex.Message);
+            }
         }
 
         internal static void Clear()
@@ -123,7 +201,10 @@ namespace MCPForUnity.Editor.Services
                 {
                     try
                     {
-                        File.Delete(MarkerPath);
+                        if (DeleteMarkerForTests == null)
+                            File.Delete(MarkerPath);
+                        else
+                            DeleteMarkerForTests(MarkerPath);
                     }
                     catch (IOException) { }
                     catch (UnauthorizedAccessException) { }
@@ -160,6 +241,14 @@ namespace MCPForUnity.Editor.Services
                 && (record.OriginalOptions & ~allowed) == 0
                 && record.AppliedOptions == (record.OriginalOptions | (int)EnterPlayModeOptions.DisableDomainReload)
                 && (record.Status == "pending" || record.Status == "complete" || record.Status == "conflict")
+                && (
+                    record.Phase == "prepared"
+                    || record.Phase == "apply-enabled"
+                    || record.Phase == "apply-options"
+                    || record.Phase == "active"
+                    || record.Phase == "restore-options"
+                    || record.Phase == "restore-enabled"
+                )
                 ? record
                 : null;
         }
@@ -240,7 +329,7 @@ namespace MCPForUnity.Editor.Services
             bool confirmed = false;
             try
             {
-                AtomicFilePublication.StageNew(stage, stream => stream.Write(bytes, 0, bytes.Length));
+                AtomicFilePublication.StageNewWithFlush(stage, stream => stream.Write(bytes, 0, bytes.Length), FlushForTests);
                 if (previous == null)
                     AtomicFilePublication.Create(stage, path);
                 else

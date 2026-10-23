@@ -636,13 +636,8 @@ namespace MCPForUnity.Editor.Services
                 return false;
             }
 
-            // Persist originals to SessionState so they survive domain reloads. If the run is
-            // interrupted (domain reload, crash), PlayModeOptionsGuard restores them on next load.
-            PlayModeOptionsGuard.Save(originalEnterPlayModeOptionsEnabled, originalEnterPlayModeOptions);
-
-            var desired = originalEnterPlayModeOptions | EnterPlayModeOptions.DisableDomainReload;
-            EditorSettings.enterPlayModeOptionsEnabled = true;
-            EditorSettings.enterPlayModeOptions = desired;
+            // Journal each setting transition before changing it, including restoration phases.
+            PlayModeOptionsGuard.Apply(originalEnterPlayModeOptionsEnabled, originalEnterPlayModeOptions);
             return true;
         }
 

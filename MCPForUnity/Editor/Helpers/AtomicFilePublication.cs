@@ -8,11 +8,16 @@ namespace MCPForUnity.Editor.Helpers
     /// <summary>Same-directory publication without Mono Unix's multi-rename replacement fallback.</summary>
     internal static class AtomicFilePublication
     {
-        internal static void StageNew(string path, Action<Stream> write)
+        internal static void StageNew(string path, Action<Stream> write) => StageNewWithFlush(path, write, null);
+
+        internal static void StageNewWithFlush(string path, Action<Stream> write, Action<FileStream> flushForTests)
         {
             using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             write(output);
-            output.Flush(true);
+            if (flushForTests == null)
+                output.Flush(true);
+            else
+                flushForTests(output);
         }
 
         internal static void Create(string stage, string target)
