@@ -71,6 +71,42 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.AreEqual("{}", root.Q<TextField>("graph-config").value);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task UnverifiedDraftCannotBeAdoptedByAnotherAccount(bool afterInvalidation)
+        {
+            var root = NewRoot();
+            string account = "one";
+            using var section = new McpReferenceGraphSection(root, (_, __, ___) => Task.FromResult(Sample()), () => account);
+            section.SetVisible(true);
+            if (afterInvalidation)
+            {
+                await section.Run("overview", new JObject());
+                section.SetVisible(false);
+                account = "two";
+                section.SetVisible(true);
+            }
+            var payload = root.Q<TextField>("graph-config");
+            Assert.IsFalse(payload.enabledSelf, "Unverified forms must not accept drafts.");
+            var kind = root.Q<DropdownField>("graph-kind");
+            kind.index = 1;
+            payload.SetValueWithoutNotify("{'path':'unverified/source'}");
+            var approval = (Toggle)typeof(McpReferenceGraphSection).GetField("reauthorize", Instance).GetValue(section);
+            var enabled = (Toggle)typeof(McpReferenceGraphSection).GetField("sourceEnabled", Instance).GetValue(section);
+            approval.SetValueWithoutNotify(true);
+            enabled.SetValueWithoutNotify(true);
+            section.SetVisible(false);
+            account = "three";
+            section.SetVisible(true);
+            await section.Run("overview", new JObject());
+            Assert.AreEqual("{}", payload.value, "No ownerless form may be adopted by a verified account.");
+            Assert.IsFalse(approval.value);
+            Assert.IsFalse(enabled.value);
+            Assert.IsTrue(payload.enabledSelf);
+            kind.index = 0;
+            Assert.AreEqual("{}", payload.value);
+        }
+
         [Test]
         public async Task StopWaitingAllowsAnotherRequestAndIgnoresLateCompletion()
         {

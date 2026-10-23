@@ -366,7 +366,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             root.Q<Button>("graph-next")?.SetEnabled(idle && nextAfter != null);
             root.Q<Button>("graph-copy")?.SetEnabled(idle && exportPage != null);
             foreach (var field in new VisualElement[] { kind, itemId, payload, expectedVersion, reauthorize, sourceEnabled, configurationRows })
-                field.SetEnabled(idle);
+                field.SetEnabled(idle && viewIdentity != null);
         }
 
         private static Label Text(VisualElement parent, string text, string name = null)
@@ -520,7 +520,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 Feedback(action, "Check the connection before retrying this request.");
                 return;
             }
-            if (viewIdentity != null && viewIdentity != before)
+            if (viewIdentity == null || viewIdentity != before)
                 Invalidate();
             if (action != "overview" && viewIdentity != before)
             {
