@@ -93,6 +93,7 @@ def opening(path, flags, *args, **kwargs):
         if Path(path) == root / "writer.lock" and phase == "lock_open": crash()
         for name in ("owner", "installation"):
             if Path(path) == root / (name + ".stage"):
+                if name == "installation" and phase.startswith("recovery_"): crash()
                 if phase == name + "_open": crash()
                 if phase == name + "_partial":
                     os.write(fd, b"u" if name == "owner" else b"a")
@@ -109,7 +110,9 @@ def sync(fd):
         if paths.get(fd) == root / (name + ".stage") and phase == name + "_flushed": crash()
     return result
 def replace(source, target):
+    if Path(target) == root / "installation" and phase == "recovery_before": crash()
     result = real_replace(source, target)
+    if Path(target) == root / "installation" and phase == "recovery_after": crash()
     for name in ("owner", "installation"):
         if Path(target) == root / name and phase == name + "_published": crash()
     return result
@@ -285,3 +288,28 @@ def test_concurrent_first_processes_keep_one_writer_and_identity(tmp_path, kind)
         assert identity(kind, store) == expected
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("kind", ["receipt", "wait"])
+@pytest.mark.parametrize("phase", ["recovery_before", "recovery_after"])
+def test_second_process_exit_during_recovery_preserves_complete_candidate(tmp_path, kind, phase):
+    root = tmp_path / "recovering-store"
+    root.mkdir(mode=0o700)
+    expected = "b" * 32
+    private_write(root / "owner", marker(kind))
+    private_write(root / "writer.lock", b"1")
+    private_write(root / "installation.stage", (expected + "\n").encode())
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", _CHILD, kind, str(root), phase],
+        cwd=tmp_path,
+        capture_output=True,
+        timeout=watchdog_timeout(),
+        check=False,
+    )
+    assert result.returncode == 73, result.stderr.decode(errors="replace")
+    for _ in range(2):
+        store = open_store(kind, root)
+        try:
+            assert identity(kind, store) == expected
+        finally:
+            store.close()

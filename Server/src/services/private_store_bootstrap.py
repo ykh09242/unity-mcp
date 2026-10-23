@@ -108,9 +108,12 @@ def finish_bootstrap(root, marker, record_pattern, limit, private) -> str:
         raw = _read(stage, 33, private) if stage.exists() else b""
         # A complete unpublished identity survives restart. A partial candidate
         # has never admitted a record and can be replaced only in this empty store.
-        if not re.fullmatch(rb"[0-9a-f]{32}\n", raw):
-            raw = (uuid4().hex + "\n").encode("ascii")
-        _publish(root, "installation", raw)
+        if re.fullmatch(rb"[0-9a-f]{32}\n", raw):
+            # Preserve the sole durable candidate even if recovery itself exits.
+            os.replace(stage, installation)
+            _sync_directory(root)
+        else:
+            _publish(root, "installation", (uuid4().hex + "\n").encode("ascii"))
     else:
         (root / "installation.stage").unlink(missing_ok=True)
     identity = _read(installation, 33, private)
