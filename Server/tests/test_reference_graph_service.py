@@ -1419,3 +1419,22 @@ def test_runner_shutdown_keeps_physical_writer_lease_until_thread_finishes(setup
     assert premature and not any(premature), "Lease release must follow physical completion"
     assert captured["entry"].workspace.acquire("after-runner")
     captured["entry"].workspace.release("after-runner")
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_completed_shutdown_can_be_observed_after_its_event_loop_closed(setup, monkeypatch, failed):
+    service, _, _ = setup
+
+    async def close():
+        if failed:
+            raise RuntimeError("retained close failure")
+
+    monkeypatch.setattr(service, "_close_owned", close)
+    for _ in range(2):
+        if failed:
+            with pytest.raises(RuntimeError, match="retained close failure"):
+                asyncio.run(service.aclose())
+        else:
+            assert asyncio.run(service.aclose()) is True
+        assert service._close_task.done()
+        assert service._close_task.get_loop().is_closed()

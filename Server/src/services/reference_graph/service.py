@@ -524,6 +524,11 @@ class ReferenceGraphService:
             )
             self._close_task.add_done_callback(self._observe_close)
         task = self._close_task
+        # A completed owner may belong to a previous lifespan's closed loop.
+        # Read its retained result without scheduling another callback there.
+        if task.done():
+            task.result()
+            return True
         timeout = configured_wait_timeout("UNITY_MCP_REFERENCE_GRAPH_SHUTDOWN_TIMEOUT_SECONDS", 10)
         # wait does not cancel its input when this observer expires or is cancelled.
         done, _ = await asyncio.wait({task}, timeout=timeout)
