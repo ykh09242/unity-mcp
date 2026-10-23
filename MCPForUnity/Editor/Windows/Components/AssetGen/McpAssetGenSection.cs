@@ -28,7 +28,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
     {
         // Fixed provider lists. Each Id is both the SecureKeyStore key and the
         // AssetGenPrefs enable-flag id. All model/marketplace providers below emit GLB.
-        // fal's key and enable toggle live on its 2D Images row; the 3D row only picks a model.
+        // Each provider has one credential/enablement row, shared across media categories.
         private static readonly (string Id, string Label)[] ModelProviders =
         {
             ("tripo", "Tripo"),
@@ -62,6 +62,10 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private readonly List<(VisualElement Container, string Kind, string Provider)> modelControls = new();
         private readonly Dictionary<string, string> searches = new();
         private readonly Dictionary<string, bool> providerCategoryStates = new();
+        private readonly Dictionary<string, Toggle> providerToggles = new();
+        private readonly Dictionary<string, Label> providerStatuses = new();
+        private readonly Dictionary<string, List<Label>> sharedStatuses = new();
+        private Foldout credentials;
 
         // Last failed compatibility check per kind/provider, kept so a catalog rebuild cannot hide it.
         private readonly Dictionary<string, (string Id, string Error)> verifyErrors = new();
@@ -310,34 +314,41 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private void BuildProviderRows()
         {
             if (providersContainer == null)
+                return;
+            if (credentials != null)
             {
+                // Keep unsaved masked input attached while refreshing non-secret state.
+                foreach (var entry in providerToggles)
+                    entry.Value.SetValueWithoutNotify(AssetGenPrefs.IsProviderEnabled(entry.Key));
+                foreach (var entry in providerStatuses)
+                    UpdateKeyStatus(entry.Value, entry.Key);
+                foreach (string id in sharedStatuses.Keys)
+                    RebuildIfSharedKey(id);
+                RebuildModelControls(null, null);
                 return;
             }
 
-            providersContainer.Clear();
-            modelEnableToggles.Clear();
-            modelControls.Clear();
+            credentials = (Foldout)AddCategoryPanel("Provider credentials");
+            credentials.name = "provider-credentials";
+            var hint = new Label(
+                "User scope · shared across projects. Type a key and select Save. Focus changes do not save. Presence does not verify authentication."
+            );
+            hint.AddToClassList("help-text");
+            credentials.Add(hint);
+            foreach (var provider in ModelProviders)
+            {
+                string label = provider.Id == "fal" ? "fal.ai" : provider.Label;
+                var toggle = AddProviderRow(credentials, provider.Id, label, provider.Id == "fal" ? "3D, 2D and sound" : "3D");
+                modelEnableToggles.Add((provider.Id, toggle));
+            }
+            AddProviderRow(credentials, "openrouter", "OpenRouter", "2D");
 
             var modelPanel = AddCategoryPanel("3D Models");
             foreach (var provider in ModelProviders)
-            {
-                if (provider.Id == "fal")
-                {
-                    AddSharedFalRow(modelPanel, "model", provider.Label);
-                    // No toggle of its own: the glTFast notice reads the 2D fal row's enable pref.
-                    modelEnableToggles.Add((provider.Id, null));
-                    continue;
-                }
-                var toggle = AddProviderRow(modelPanel, provider.Id, provider.Label, "model");
-                modelEnableToggles.Add((provider.Id, toggle));
-            }
-
+                AddModelSelectionRow(modelPanel, "model", provider.Id, provider.Label);
             var imagePanel = AddCategoryPanel("2D Images");
             foreach (var provider in ImageProviders)
-            {
-                AddProviderRow(imagePanel, provider.Id, provider.Label, "image");
-            }
-
+                AddModelSelectionRow(imagePanel, "image", provider.Id, provider.Label);
             var audioPanel = AddCategoryPanel("Sound (fal.ai)");
             AddSharedFalRow(audioPanel, "audio", "fal (audio)");
         }
@@ -360,9 +371,9 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             return panel;
         }
 
-        private Toggle AddProviderRow(VisualElement parent, string id, string displayName, string kind)
+        private Toggle AddProviderRow(VisualElement parent, string id, string displayName, string media)
         {
-            var row = new VisualElement();
+            var row = new VisualElement { name = "provider-credential-" + id };
             row.AddToClassList("provider-row");
 
             var statusLabel = new Label();
@@ -386,21 +397,25 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             header.Add(enableToggle);
 
             row.Add(header);
+            var usage = new Label("Used by: " + media + ". Enabled changes are saved immediately for future generation.");
+            usage.AddToClassList("help-text");
+            row.Add(usage);
+            providerToggles[id] = enableToggle;
+            providerStatuses[id] = statusLabel;
 
             // Masked key field with storage and presence-check actions.
             var fieldRow = new VisualElement();
             fieldRow.AddToClassList("provider-key-row");
 
-            var keyField = new TextField();
+            var keyField = new TextField("API key") { name = "provider-key-" + id };
             keyField.isPasswordField = true;
             keyField.maskChar = '*';
             keyField.AddToClassList("provider-key-field");
             keyField.tooltip =
-                $"Paste your {displayName} API key, then press Save (or click away). "
-                + "The key is stored in your OS secure store and is never read back into this field.";
+                $"Paste your {displayName} API key, then press Save. " + "The key is stored in your OS secure store and is never read back into this field.";
             fieldRow.Add(keyField);
 
-            var saveButton = new Button { text = "Save" };
+            var saveButton = new Button { text = "Save", name = "provider-save-" + id };
             saveButton.AddToClassList("icon-button");
             fieldRow.Add(saveButton);
 
@@ -428,7 +443,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 {
                     SecureKeyStore.Current.Set(id, text);
                     keyField.SetValueWithoutNotify(string.Empty);
-                    SetStatus(statusLabel, "saved ✓", true);
+                    UpdateKeyStatus(statusLabel, id);
                     RebuildIfSharedKey(id);
                 }
                 catch (Exception)
@@ -437,7 +452,6 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 }
             }
 
-            keyField.RegisterCallback<FocusOutEvent>(_ => SaveKeyFromField());
             saveButton.clicked += SaveKeyFromField;
 
             clearButton.clicked += () =>
@@ -472,8 +486,8 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             // provider) is a future enhancement and intentionally not performed here.
             testButton.clicked += () =>
             {
-                bool present = HasKey(id);
-                SetStatus(statusLabel, present ? "key present ✓" : "no key set", present);
+                UpdateKeyStatus(statusLabel, id);
+                RebuildIfSharedKey(id);
             };
 
             enableToggle.RegisterValueChangedCallback(evt =>
@@ -483,12 +497,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             });
 
             // Initial status reflects secure-store presence (existence only; never the value).
-            bool has = HasKey(id);
-            SetStatus(statusLabel, has ? "saved ✓" : "not set", has);
-
-            // "Which model" selector for this provider (skipped for providers with no catalog
-            // models, e.g. the Sketchfab marketplace).
-            AddModelDropdown(row, kind, id);
+            UpdateKeyStatus(statusLabel, id);
 
             parent.Add(row);
             return enableToggle;
@@ -672,49 +681,80 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             meta.AddToClassList("warning-banner-text");
         }
 
-        /// <summary>
-        /// fal audio / 3D row: no enable toggle and no key field — these kinds reuse the single fal
-        /// key owned by the Image "fal" row. Surfaces that key's presence and a model dropdown.
-        /// </summary>
-        private void AddSharedFalRow(VisualElement parent, string kind, string displayName)
-        {
-            var row = new VisualElement();
-            row.AddToClassList("provider-row");
+        private void AddSharedFalRow(VisualElement parent, string kind, string displayName) => AddModelSelectionRow(parent, kind, "fal", displayName);
 
-            // Header: name + shared-key status inline to its right. No key field — the fal key is
-            // owned by the 2D fal row.
+        private void AddModelSelectionRow(VisualElement parent, string kind, string id, string displayName)
+        {
+            var row = new VisualElement { name = "provider-model-" + kind + "-" + id };
+            row.AddToClassList("provider-row");
             var header = new VisualElement();
             header.AddToClassList("provider-header");
-
-            var nameLabel = new Label(displayName);
-            nameLabel.AddToClassList("provider-name");
-            header.Add(nameLabel);
-
-            bool hasFal = HasKey("fal");
-            var status = new Label(hasFal ? "key present ✓ (shared with 2D fal)" : "no fal key — set it in 2D Images");
+            var label = new Label(displayName);
+            label.AddToClassList("provider-name");
+            header.Add(label);
+            var status = new Label();
             status.AddToClassList("help-text");
             status.AddToClassList("provider-status");
-            SetStatus(status, status.text, hasFal);
+            UpdateKeyStatus(status, id);
             header.Add(status);
-
+            if (!sharedStatuses.TryGetValue(id, out var labels))
+                sharedStatuses[id] = labels = new List<Label>();
+            labels.Add(status);
+            var settings = new Button(() => FocusProviderCredentials(id)) { name = "provider-settings-" + kind + "-" + id, text = "Key & enablement" };
+            settings.AddToClassList("icon-button");
+            header.Add(settings);
             row.Add(header);
-
-            AddModelDropdown(row, kind, "fal");
-
+            AddModelDropdown(row, kind, id);
             parent.Add(row);
         }
 
-        /// <summary>
-        /// The fal key is shared with the audio and 3D rows, whose "key present" status is snapshotted at
-        /// build time. When the 2D fal key is saved/cleared, schedule a full rebuild so those rows
-        /// reflect it without a manual Refresh. Deferred so we don't destroy the element whose
-        /// callback is still running.
-        /// </summary>
+        internal void FocusProviderCredentials(string id)
+        {
+            if (credentials == null)
+                return;
+            credentials.value = true;
+            var key = Root.Q<TextField>("provider-key-" + id);
+            Root.schedule.Execute(() =>
+            {
+                if (key?.panel == null)
+                    return;
+                key.Focus();
+                for (var parent = key.parent; parent != null; parent = parent.parent)
+                    if (parent is ScrollView scroll)
+                    {
+                        scroll.ScrollTo(Root.Q("provider-credential-" + id) ?? key);
+                        break;
+                    }
+            });
+        }
+
+        private static void UpdateKeyStatus(Label label, string id)
+        {
+            try
+            {
+                var store = SecureKeyStore.Current;
+                bool present = store.Has(id);
+                bool environment = store is EnvOverlayKeyStore overlay && overlay.HasEnvironmentKey(id);
+                SetStatus(
+                    label,
+                    environment ? "Environment override active · authentication not checked"
+                        : present ? "Saved key present · authentication not checked"
+                        : "not set",
+                    present
+                );
+            }
+            catch (Exception)
+            {
+                SetStatus(label, "Key presence unavailable. Check secure-store access.", false);
+            }
+        }
+
+        // Refresh presence labels without rebuilding another provider's unsaved key field.
         private void RebuildIfSharedKey(string id)
         {
-            if (!string.Equals(id, "fal", StringComparison.OrdinalIgnoreCase))
-                return;
-            Root?.schedule.Execute(SyncFromPrefs);
+            if (sharedStatuses.TryGetValue(id, out var labels))
+                foreach (var label in labels)
+                    UpdateKeyStatus(label, id);
         }
 
         private static void UpdateModelMeta(Label label, ModelEntry m)
@@ -765,18 +805,6 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             label.text = text;
             label.EnableInClassList("status-success", ok);
             label.EnableInClassList("status-warning", !ok);
-        }
-
-        private static bool HasKey(string id)
-        {
-            try
-            {
-                return SecureKeyStore.Current.Has(id);
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         private static string NormalizeFormat(string format)

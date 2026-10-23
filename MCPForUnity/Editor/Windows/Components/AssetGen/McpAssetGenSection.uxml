@@ -4,6 +4,7 @@
         <ui:Label text="AI Asset Generation" class="section-title" />
         <ui:VisualElement class="section-content">
             <ui:Label name="assetgen-help" class="validation-description" text="Enter your own provider API keys. Generation is triggered via MCP tools / CLI, not here. Keys are stored in your OS secure store (Keychain / Credential Manager / libsecret), never in the project." />
+            <ui:Label name="generation-scope" class="help-text" text="User: provider, model and import defaults are shared across projects. Saved defaults affect future requests. Output paths are resolved within the receiving project." />
             <ui:VisualElement name="gltfast-notice" class="warning-banner">
                 <ui:Label class="warning-banner-text" text="GLB import needs the glTFast package — install it from the Dependencies tab." />
             </ui:VisualElement>
@@ -20,9 +21,8 @@
                         <ui:Label name="blender-status-label" class="help-text inline-status" />
                     </ui:VisualElement>
                     <ui:VisualElement class="setting-row">
-                        <ui:Label text="Addon Socket:" class="setting-label" />
-                        <ui:TextField name="blender-host" class="endpoint-host" />
-                        <ui:TextField name="blender-port" class="endpoint-port" />
+                        <ui:TextField label="Host" name="blender-host" class="endpoint-host labeled-endpoint" />
+                        <ui:TextField label="Port" name="blender-port" class="endpoint-port labeled-endpoint" />
                         <ui:Button name="blender-test-button" text="Test Connection" class="icon-button" />
                     </ui:VisualElement>
                     <ui:VisualElement class="override-row">

@@ -48,6 +48,9 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private VisualElement statusIndicator;
         private Label connectionStatusLabel;
         private Button connectionToggleButton;
+        private Label connectionBlocker;
+        private Button connectionFixButton;
+        private VisualElement blockedField;
 
         // API Key UI Elements (for remote-hosted mode)
         private VisualElement apiKeyRow;
@@ -96,6 +99,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private void CacheUIElements()
         {
+            connectionBlocker = Root.Q<Label>("connection-blocker");
+            connectionFixButton = Root.Q<Button>("connection-fix");
+            if (connectionFixButton != null)
+                connectionFixButton.clicked += FocusConnectionBlocker;
             transportDropdown = Root.Q<EnumField>("transport-dropdown");
             transportMismatchWarning = Root.Q<VisualElement>("transport-mismatch-warning");
             transportMismatchText = Root.Q<Label>("transport-mismatch-text");
@@ -420,6 +427,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 connectionToggleButton.style.display = showSessionToggle ? DisplayStyle.Flex : DisplayStyle.None;
             }
 
+            SetConnectionBlocker(null, null);
             if (isRunning)
             {
                 // Show instance name (project folder name) for better identification in multi-instance scenarios.
@@ -482,7 +490,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                     if (httpRemoteNeedsKey)
                     {
-                        connectionToggleButton.tooltip = "An API key is required for HTTP Remote. Enter one above.";
+                        connectionToggleButton.tooltip = "An API key is required for HTTP Remote. Enter a key in the connection settings.";
                     }
                     else if (blockedByRemoteUrlPolicy)
                     {
@@ -496,6 +504,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     {
                         connectionToggleButton.tooltip = string.Empty;
                     }
+                    SetConnectionBlocker(connectionToggleButton.tooltip, httpRemoteNeedsKey ? apiKeyField : httpUrlField);
                 }
 
                 unityPortField.SetEnabled(!isStdioResuming);
@@ -699,6 +708,37 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                         : localUrlError ?? $"HTTP Local requires a loopback URL ({HttpEndpointUtility.GetHttpLocalHostRequirementText()})."
                 )
                 : string.Empty;
+        }
+
+        private void SetConnectionBlocker(string reason, VisualElement target)
+        {
+            blockedField = string.IsNullOrEmpty(reason) ? null : target;
+            if (connectionBlocker != null)
+            {
+                connectionBlocker.text = reason ?? "";
+                connectionBlocker.EnableInClassList("hidden", string.IsNullOrEmpty(reason));
+            }
+            if (connectionFixButton != null)
+            {
+                connectionFixButton.text = target == apiKeyField ? "Enter API key" : "Review URL";
+                connectionFixButton.EnableInClassList("hidden", blockedField == null);
+            }
+        }
+
+        private void FocusConnectionBlocker()
+        {
+            if (blockedField == null)
+                return;
+            for (var parent = blockedField.parent; parent != null; parent = parent.parent)
+                if (parent is Foldout foldout)
+                    foldout.value = true;
+            blockedField.Focus();
+            for (var parent = blockedField.parent; parent != null; parent = parent.parent)
+                if (parent is ScrollView scroll)
+                {
+                    scroll.ScrollTo(blockedField);
+                    break;
+                }
         }
 
         private void RefreshHttpUi()

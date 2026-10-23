@@ -72,6 +72,7 @@
             <ui:VisualElement class="section">
                 <ui:Label text="Configure MCP Clients" class="section-title" />
                 <ui:VisualElement name="clients-list" class="setup-clients-list" />
+                <ui:Label name="clients-result" class="help-text" />
             </ui:VisualElement>
             <ui:VisualElement class="button-container">
                 <ui:Button name="back-button" text="Back" class="setup-button secondary-button" />

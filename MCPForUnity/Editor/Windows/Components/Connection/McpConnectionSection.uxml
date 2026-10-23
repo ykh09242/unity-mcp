@@ -11,7 +11,9 @@
                 </ui:VisualElement>
                 <ui:Button name="connection-toggle" text="Connect" class="action-button primary-button" />
             </ui:VisualElement>
-            <ui:Label text="Connect this Editor to the selected server." class="help-text section-intro" />
+            <ui:Label name="connection-blocker" class="help-text status-warning hidden" />
+            <ui:Button name="connection-fix" text="Review URL" class="action-button hidden" />
+            <ui:Label text="Session: this Editor. User: saved transport, URL and remote key are shared across projects. Reconnect to apply connection changes." class="help-text section-intro" />
             <ui:VisualElement class="setting-row">
                 <ui:Label text="Transport:" class="setting-label" />
                 <uie:EnumField name="transport-dropdown" class="setting-dropdown-inline" />

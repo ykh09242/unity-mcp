@@ -747,3 +747,10 @@
 .package-version-field { flex-direction: column; margin: 8px 0; }
 .package-version-field > .unity-base-field__label { min-width: 0; margin-bottom: 4px; }
 .package-actions { margin-top: 8px; }
+
+/* Labelled credentials and endpoint inputs wrap independently of action rows. */
+.provider-key-field { flex-direction: column; }
+.provider-key-field > .unity-base-field__label { min-width: 0; margin-bottom: 4px; }
+.labeled-endpoint { flex-direction: column; }
+.labeled-endpoint > .unity-base-field__label { min-width: 0; margin-bottom: 4px; }
+.endpoint-port.labeled-endpoint { width: 90px; }

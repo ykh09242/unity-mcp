@@ -3,6 +3,7 @@
     <ui:VisualElement name="advanced-section" class="section">
         <ui:Label text="Editor preferences" class="section-title" />
         <ui:VisualElement class="section-content">
+            <ui:Label name="settings-user-scope" class="help-text section-intro" text="User scope: preferences and path overrides are shared across projects. Toggles save immediately; network and server changes apply to the next launch or reconnect. Output paths are resolved in the receiving project." />
             <ui:Foldout name="settings-diagnostics" text="Diagnostics" value="true" class="settings-group">
                 <ui:Label text="Inspect connection health and control diagnostic output." class="help-text group-description" />
                 <ui:VisualElement class="setting-row spaced-row">
@@ -21,7 +22,7 @@
                 </ui:VisualElement>
             </ui:Foldout>
             <ui:Foldout name="settings-connection" text="Connection behavior" value="true" class="settings-group">
-                <ui:Label text="Startup and network access preferences for this Editor." class="help-text group-description" />
+                <ui:Label text="User startup and network access preferences. Current sessions keep their existing connection until reconnected." class="help-text group-description" />
                 <ui:VisualElement class="setting-row">
                     <ui:Toggle name="auto-start-on-load-toggle" class="field-toggle" text="Start HTTP on Editor Startup" />
                 </ui:VisualElement>
@@ -65,6 +66,7 @@
                 <ui:VisualElement class="setting-row">
                     <ui:Toggle name="dev-mode-force-refresh-toggle" class="field-toggle" text="Force Fresh Install" />
                 </ui:VisualElement>
+                <ui:Label name="settings-project-scope" text="Project: deployment source and targets belong to this project. Apply saves the source; Deploy changes the selected target." class="help-text" />
                 <ui:VisualElement class="override-row">
                     <ui:Label text="Package Source:" class="override-label" />
                 </ui:VisualElement>
