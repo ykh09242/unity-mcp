@@ -13,7 +13,7 @@ Receipts are disabled unless the operator sets a dedicated private
 The latter asserts the private inherited Windows ACL boundary. POSIX ownership and
 private modes are also checked. The directory has a stable store ID and OS single-writer
 lock; do not share it with another server, user or domain-job journal. Reviewed versions
-are FastMCP 4.1.1 and MCP/mcp_types 2.3.0. Explicit enablement refuses other versions.
+are FastMCP 4.1.3 and MCP/mcp_types 2.3.0. Explicit enablement refuses other versions.
 
 `get_execution_receipt(action="describe")` reports authenticated availability and store
 identity without Unity. A protected ordinary MCP call supplies:

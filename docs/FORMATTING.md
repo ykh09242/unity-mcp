@@ -9,7 +9,7 @@ working-tree changes. Formatting does not replace correctness lint, tests or com
 
 | Language | Formatter / settings | Convention |
 | --- | --- | --- |
-| Python | Ruff **0.17.1**, root `ruff.toml` | Python 3.11 syntax, 100 columns, 4 spaces, double quotes, LF |
+| Python | Ruff **0.17.2**, root `ruff.toml` | Python 3.11 syntax, 100 columns, 4 spaces, double quotes, LF |
 | C# | Local CSharpier **1.3.0**, `.config/dotnet-tools.json`, root `.editorconfig` | 160 columns, 4 spaces, Allman braces, LF; preserve compact comment-only catches |
 | JS / TS / JSX / TSX / CSS / HTML / JSON / YAML | Root `.editorconfig`, existing file conventions | 2 spaces, LF; JS uses single quotes and semicolons; JSON uses double quotes |
 | Shell / PowerShell | Root `.editorconfig`, existing file conventions | Shell 2 spaces; PowerShell 4 spaces; LF |
@@ -68,11 +68,11 @@ uv run --directory Server --locked --extra dev ruff --version
 dotnet tool run csharpier -- --version
 ```
 
-The server's development dependencies include exactly `ruff==0.17.1`. Run the formatter
+The server's development dependencies include exactly `ruff==0.17.2`. Run the formatter
 with that environment's Python. The runner tries that environment, then `ruff` on PATH,
-then uv's cached pinned tool via `uv tool run --offline --from ruff==0.17.1 ruff`.
+then uv's cached pinned tool via `uv tool run --offline --from ruff==0.17.2 ruff`.
 It verifies the version before running. Standalone users can instead install the exact
-version with `uv tool install ruff==0.17.1`.
+version with `uv tool install ruff==0.17.2`.
 CSharpier is resolved through the repository's local dotnet tool manifest, with its version
 verified too. Checks and writes never fetch packages or restore the dotnet tool; uv may
 prepare its tool environment from the local cache. A missing tool produces a setup error
