@@ -48,8 +48,8 @@ def test_registered_menu_contract_schema_forwarding_and_no_execute_replay():
                          {'menuPath': 'Fixture/Owned', 'action': 'inspect'}, True),
                         ({'menu_path': 'Fixture/Owned', 'action': 'exists'},
                          {'menuPath': 'Fixture/Owned', 'action': 'exists'}, True),
-                        ({'menu_path': 'Window/General/Console', 'wait_for': 'console_window_open', 'timeout_ms': 25},
-                         {'menuPath': 'Window/General/Console', 'wait_for': 'console_window_open', 'timeout_ms': 25}, False),
+                        ({'menu_path': 'Window/General/Console', 'wait_for': 'console_window_open', 'timeout_ms': 60000},
+                         {'menuPath': 'Window/General/Console', 'wait_for': 'console_window_open', 'timeout_ms': 60000, 'timeout_seconds': 60}, False),
                     ]
                     for payload, expected, retries in cases:
                         before = len(sends)

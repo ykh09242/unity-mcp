@@ -165,7 +165,7 @@ namespace MCPForUnity.Editor.Tools
         {
             action = "execute";
             condition = "none";
-            timeout = 2000;
+            timeout = 300000;
             error = null;
             JToken suppliedAction = parameters?["action"];
             if (suppliedAction != null)
@@ -200,11 +200,11 @@ namespace MCPForUnity.Editor.Tools
                     || suppliedTimeout.Type != JTokenType.Integer
                     || !int.TryParse(suppliedTimeout.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out timeout)
                     || timeout < 1
-                    || timeout > 10000
+                    || timeout > 86400000
                 )
             )
             {
-                error = new ErrorResponse("Invalid timeout_ms: integer 1..10000 is permitted only with an allowlisted wait_for.");
+                error = new ErrorResponse("Invalid timeout_ms: integer 1..86400000 is permitted only with an allowlisted wait_for.");
                 return false;
             }
             return true;
@@ -384,6 +384,7 @@ namespace MCPForUnity.Editor.Tools
                 var completion = (JObject)_data["completion"];
                 completion["status"] = status;
                 completion["observed"] = observed;
+                completion["observed_within_budget"] = observed == true && Now() < _deadline;
                 completion["before"] = _before;
                 completion["elapsed_ms"] = Math.Max(0, (Now() - _started) * 1000);
                 Dispose();
@@ -403,18 +404,15 @@ namespace MCPForUnity.Editor.Tools
                     Finish(false, "cancelled", null, "observation_cancelled");
                     return;
                 }
-                if (Now() >= _deadline)
-                {
-                    Finish(false, "timeout", false, "postcondition_timeout");
-                    return;
-                }
                 try
                 {
                     bool? open = ConsoleOpen();
                     if (!open.HasValue)
                         Finish(false, "unavailable", null, "observation_unavailable");
                     else if (open.Value)
-                        Finish(true, _before ? "already_satisfied" : "observed", true);
+                        Finish(true, Now() >= _deadline ? "observed_after_deadline" : (_before ? "already_satisfied" : "observed"), true);
+                    else if (Now() >= _deadline)
+                        Finish(false, "timeout", false, "postcondition_timeout");
                 }
                 catch (Exception e)
                 {

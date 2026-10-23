@@ -1512,7 +1512,7 @@ Enter play mode.
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | --wait-until | choice: scene_loaded, first_frame | optional | nargs=1 | — | — | Wait for loaded active scene or subsequent simulation frame (not app async initialization). |
-| --timeout-seconds | integer range: [1..300] | optional | nargs=1 | 30 | — |  |
+| --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp editor play-status`

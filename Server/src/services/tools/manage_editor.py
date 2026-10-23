@@ -57,8 +57,10 @@ async def manage_editor(
         Literal["scene_loaded", "first_frame"] | None, "Optional bounded readiness wait for play"
     ] = None,
     timeout_seconds: Annotated[
-        int, Field(ge=1, le=300, strict=True), "Play readiness deadline in seconds"
-    ] = 30,
+        int,
+        Field(ge=1, le=86400, strict=True),
+        "Play readiness observation budget in seconds; expiry does not stop Play Mode",
+    ] = 300,
     job_id: Annotated[str | None, "Job ID for get_play_mode_job/cancel_play_mode_job"] = None,
     width: Annotated[
         int | None,
@@ -107,8 +109,11 @@ async def manage_editor(
         params = {k: v for k, v in params.items() if v is not None}
 
         if action == "play" and wait_until is not None:
-            if not 1 <= timeout_seconds <= 300:
-                return {"success": False, "error": "timeout_seconds must be between 1 and 300"}
+            if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 86400:
+                return {
+                    "success": False,
+                    "error": "timeout_seconds must be an integer between 1 and 86400",
+                }
             # Select the ID before dispatch so even a lost reload acknowledgement is recoverable.
             readiness_id = uuid4().hex
             params.update(
@@ -200,6 +205,8 @@ async def manage_editor(
                             "data": {
                                 "job_id": readiness_id,
                                 "status": "wait_timed_out",
+                                "observation_expired": True,
+                                "follow_up": "get_play_mode_job",
                                 "wait_until": wait_until,
                                 "timeout_seconds": timeout_seconds,
                                 "last_response": response,

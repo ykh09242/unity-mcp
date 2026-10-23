@@ -213,6 +213,32 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(admitted, (bool)result["success"], result.ToString());
         }
 
+        [TestCase(60000)]
+        [TestCase(86400000)]
+        public void LargeConsoleObservationBudgetsAreAdmittedAndKeepOneInvocation(int milliseconds)
+        {
+            Seam("_existsOverride", (Func<string, bool?>)(_ => true));
+            Seam("_enabledOverride", (Func<string, bool>)(_ => true));
+            Seam("_consoleOpenOverride", (Func<bool?>)(() => true));
+            int calls = 0;
+            Seam(
+                "_executeOverride",
+                (Func<string, bool>)(
+                    _ =>
+                    {
+                        calls++;
+                        return true;
+                    }
+                )
+            );
+            var request = Request(path: "Window/General/Console", condition: "console_window_open");
+            request["timeout_ms"] = milliseconds;
+            var result = ToJO(((Task<object>)ExecuteMenuItem.HandleCommand(request)).GetAwaiter().GetResult());
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(1, calls);
+            Assert.AreEqual("already_satisfied", result["data"]["completion"].Value<string>("status"));
+        }
+
         [UnityEngine.TestTools.UnityTest]
         public IEnumerator Dispatcher_InjectedTimeoutUnwrapsAndCleansObserver()
         {
@@ -222,7 +248,9 @@ namespace MCPForUnityTests.Editor.Tools
             Seam("_consoleOpenOverride", (Func<bool?>)(() => false));
             double now = 0;
             Seam("_clockOverride", (Func<double>)(() => now));
-            var task = Dispatch(Request(path: "Window/General/Console", condition: "console_window_open"));
+            var request = Request(path: "Window/General/Console", condition: "console_window_open");
+            request["timeout_ms"] = 2000;
+            var task = Dispatch(request);
             Assert.IsFalse(task.IsCompleted, "The actual dispatcher must await the observation.");
             now = 3;
             var waiting = System.Diagnostics.Stopwatch.StartNew();
@@ -254,7 +282,9 @@ namespace MCPForUnityTests.Editor.Tools
             Seam("_consoleOpenOverride", (Func<bool?>)(() => open));
             double now = 0;
             Seam("_clockOverride", (Func<double>)(() => now));
-            var task = Dispatch(Request(path: "Window/General/Console", condition: "console_window_open"));
+            var request = Request(path: "Window/General/Console", condition: "console_window_open");
+            request["timeout_ms"] = 2000;
+            var task = Dispatch(request);
             Assert.IsFalse(task.IsCompleted);
             now = 3;
             open = true;
@@ -272,7 +302,10 @@ namespace MCPForUnityTests.Editor.Tools
                     + typeof(ExecuteMenuItem).GetField("_activeObserverCount", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null)
             );
             var result = ToJO(task.GetAwaiter().GetResult());
-            Assert.AreEqual("postcondition_timeout", (string)result["data"]["reason"], result.ToString());
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("observed_after_deadline", (string)result["data"]["completion"]["status"]);
+            Assert.IsTrue((bool)result["data"]["completion"]["observed"]);
+            Assert.IsFalse((bool)result["data"]["completion"]["observed_within_budget"]);
             Assert.IsTrue((bool)result["data"]["invocation"]["accepted"]);
             Assert.AreEqual(0, (int)typeof(ExecuteMenuItem).GetField("_activeObserverCount", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null));
         }
