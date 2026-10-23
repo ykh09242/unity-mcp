@@ -133,7 +133,7 @@ namespace MCPForUnity.Editor.Tools
                 case "create":
                     return CreateShader(fullPath, relativePath, name, contents);
                 case "read":
-                    return ReadShader(fullPath, relativePath);
+                    return ReadShader(fullPath, relativePath, @params);
                 case "update":
                     return UpdateShader(fullPath, relativePath, name, contents);
                 case "delete":
@@ -212,30 +212,38 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object ReadShader(string fullPath, string relativePath)
+        private static object ReadShader(string fullPath, string relativePath, JObject parameters)
         {
             if (!File.Exists(fullPath))
-            {
                 return new ErrorResponse($"Shader not found at '{relativePath}'.");
-            }
-
             try
             {
-                string contents = ReadShaderContents(fullPath);
-
-                // Return both normal and encoded contents for larger files
-                //TODO: Consider a threshold for large files
-                bool isLarge = contents.Length > 10000; // If content is large, include encoded version
+                long offset = ReadInteger(parameters, "readOffset", 0, 0, long.MaxValue);
+                int limit = (int)ReadInteger(parameters, "readLimit", ShaderSourceReader.DefaultLimit, 4, ShaderSourceReader.MaximumLimit);
+                JToken encodingToken = parameters["readEncoding"];
+                string outputEncoding =
+                    encodingToken == null ? "legacy"
+                    : encodingToken.Type == JTokenType.String ? (string)encodingToken
+                    : null;
+                if (outputEncoding != "text" && outputEncoding != "base64" && outputEncoding != "legacy")
+                    throw new ArgumentException("readEncoding must be text, base64, or legacy.");
+                var page = ShaderSourceReader.Read(fullPath, offset, limit);
+                bool encoded = outputEncoding == "base64" || (outputEncoding == "legacy" && page.Text.Length > 10000);
                 var responseData = new
                 {
                     path = relativePath,
-                    contents = contents,
-                    // For large files, also include base64-encoded version
-                    encodedContents = isLarge ? EncodeBase64(contents) : null,
-                    contentsEncoded = isLarge,
+                    contents = outputEncoding == "base64" ? null : page.Text,
+                    encodedContents = encoded ? EncodeBase64(page.Text) : null,
+                    contentsEncoded = encoded,
+                    sourceEncoding = page.EncodingName,
+                    sourceSizeBytes = page.Size,
+                    readOffset = offset,
+                    readLimit = limit,
+                    returnedBytes = page.Next - offset,
+                    hasMore = page.Next < page.Size,
+                    nextOffset = page.Next < page.Size ? (long?)page.Next : null,
                 };
-
-                return new SuccessResponse($"Shader '{Path.GetFileName(relativePath)}' read successfully.", responseData);
+                return new SuccessResponse($"Shader '{Path.GetFileName(relativePath)}' page read successfully.", responseData);
             }
             catch (Exception e)
             {
@@ -243,36 +251,19 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static string ReadShaderContents(string fullPath)
+        private static long ReadInteger(JObject parameters, string key, long fallback, long minimum, long maximum)
         {
-            byte[] bytes = File.ReadAllBytes(fullPath);
-            System.Text.Encoding encoding = StrictUtf8;
-            int offset = 0;
-            // Match ReadAllText's Unicode BOM detection, with strict decoding for every encoding.
-            // UTF32 LE must precede UTF16 LE because their BOM prefixes overlap.
-            if (bytes.Length >= 4 && bytes[0] == 0xff && bytes[1] == 0xfe && bytes[2] == 0 && bytes[3] == 0)
-            {
-                encoding = new System.Text.UTF32Encoding(false, false, true);
-                offset = 4;
-            }
-            else if (bytes.Length >= 4 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0xfe && bytes[3] == 0xff)
-            {
-                encoding = new System.Text.UTF32Encoding(true, false, true);
-                offset = 4;
-            }
-            else if (bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf)
-                offset = 3;
-            else if (bytes.Length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe)
-            {
-                encoding = new System.Text.UnicodeEncoding(false, false, true);
-                offset = 2;
-            }
-            else if (bytes.Length >= 2 && bytes[0] == 0xfe && bytes[1] == 0xff)
-            {
-                encoding = new System.Text.UnicodeEncoding(true, false, true);
-                offset = 2;
-            }
-            return encoding.GetString(bytes, offset, bytes.Length - offset);
+            JToken value = parameters[key];
+            if (value == null)
+                return fallback;
+            if (
+                (value.Type != JTokenType.Integer && value.Type != JTokenType.String)
+                || !long.TryParse(value.ToString(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long parsed)
+                || parsed < minimum
+                || parsed > maximum
+            )
+                throw new ArgumentException($"{key} must be an integer from {minimum} to {maximum}.");
+            return parsed;
         }
 
         private static object UpdateShader(string fullPath, string relativePath, string name, string contents)

@@ -12,7 +12,7 @@ description: "Manages shader scripts in Unity (create, read, update, delete)."
 
 ## Description
 
-Manages shader scripts in Unity (create, read, update, delete). Read-only: read, inspect_graph. inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 4 MiB files; at most 100 results per collection per page). This is structural inspection, not package validation or graph editing. Modifying actions: create, update, delete.
+Manages shader scripts in Unity (create, read, update, delete). Read-only: read, inspect_graph. read returns a bounded source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 4 MiB files; at most 100 results per collection per page). This is structural inspection, not package validation or graph editing. Modifying actions: create, update, delete.
 
 ## Parameters
 
@@ -24,6 +24,9 @@ Manages shader scripts in Unity (create, read, update, delete). Read-only: read,
 | `contents` | `str \| None` | — | Shader code for 'create'/'update' |
 | `page_size` | `int \| str \| None` | — | inspect_graph page size, 1-100 (default 50). |
 | `page_number` | `int \| str \| None` | — | inspect_graph page number, 1-based. |
+| `read_offset` | `int \| str \| None` | — | read source byte offset after the BOM (default 0). |
+| `read_limit` | `int \| str \| None` | — | read page byte limit, 4-1048576 (default 65536). |
+| `read_encoding` | `Literal['text', 'base64'] \| None` | — | read output encoding; Base64 represents UTF-8 text. |
 
 ## Returns
 

@@ -192,7 +192,14 @@ def test_shader_supported_path_forms_keep_name_and_directory(controlled_http, pa
     _, _, requests = controlled_http
     result = CliRunner().invoke(cli, ["shader", "read", path])
     assert result.exit_code == 0, result.output
-    assert requests[0]["params"] == {"action": "read", "name": "Fixture", "path": "Assets/Shaders"}
+    assert requests[0]["params"] == {
+        "action": "read",
+        "name": "Fixture",
+        "path": "Assets/Shaders",
+        "readOffset": 0,
+        "readLimit": 65536,
+        "readEncoding": "text",
+    }
 
 
 @pytest.mark.parametrize(

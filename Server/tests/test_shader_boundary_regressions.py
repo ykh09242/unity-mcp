@@ -215,3 +215,112 @@ def test_shader_false_encoding_control_keeps_payload_unchanged(shader_route, fla
     sender.return_value = {"success": True, "message": "Done", "data": copy.deepcopy(data)}
     result = inline(shader_tool.manage_shader(None, action="read", name="Owned"))
     assert result == {"success": True, "message": "Done", "data": data}
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"read_offset": -1},
+        {"read_offset": True},
+        {"read_offset": 1.5},
+        {"read_offset": 9223372036854775808},
+        {"read_limit": 3},
+        {"read_limit": 1048577},
+        {"read_encoding": "invalid"},
+    ],
+)
+def test_shader_read_options_reject_before_instance_discovery(shader_route, options):
+    instance, sender = shader_route
+    result = inline(shader_tool.manage_shader(None, action="read", name="Owned", **options))
+    assert result["success"] is False
+    instance.assert_not_called()
+    sender.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_shader_pages_at_registered_sdk(shader_route, mode):
+    from fastmcp import Client
+    from fastmcp.exceptions import ToolError
+
+    instance, sender = shader_route
+    server = FastMCP("shader-source-pages")
+    server.tool(shader_tool.manage_shader)
+    async with Client(server, mode=mode) as client:
+        for options in (
+            {"read_offset": True},
+            {"read_offset": 1.5},
+            {"read_limit": 3},
+            {"read_limit": 1048577},
+        ):
+            instance.reset_mock()
+            sender.reset_mock()
+            try:
+                response = await client.call_tool(
+                    "manage_shader", {"action": "read", "name": "Owned", **options}
+                )
+                assert response.structured_content["success"] is False
+            except ToolError:
+                pass
+            instance.assert_not_called()
+            sender.assert_not_called()
+        text = "한글 😀"
+        encoded = base64.b64encode(text.encode()).decode()
+        sender.return_value = {
+            "success": True,
+            "data": {
+                "contents": None,
+                "encodedContents": encoded,
+                "contentsEncoded": True,
+                "hasMore": True,
+                "nextOffset": 65536,
+            },
+        }
+        response = await client.call_tool(
+            "manage_shader",
+            {
+                "action": "read",
+                "name": "Owned",
+                "read_offset": "4096",
+                "read_limit": "65536",
+                "read_encoding": "base64",
+            },
+        )
+        assert response.structured_content["data"] == sender.return_value["data"]
+        assert sender.call_args.args[3] == {
+            "action": "read",
+            "name": "Owned",
+            "path": "Assets/",
+            "readOffset": 4096,
+            "readLimit": 65536,
+            "readEncoding": "base64",
+        }
+
+
+def test_shader_cli_page_options_and_partial_notice(shader_http):
+    raw, requests = shader_http
+    raw.clear()
+    raw.update({"success": True, "data": {"contents": "page", "hasMore": True, "nextOffset": 8}})
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "text",
+            "shader",
+            "read",
+            "Assets/Owned.shader",
+            "--offset",
+            "4",
+            "--limit",
+            "4",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "page\n"
+    assert "--offset 8" in result.stderr
+    assert requests[0]["params"]["readOffset"] == 4
+    assert requests[0]["params"]["readLimit"] == 4
+    assert requests[0]["params"]["readEncoding"] == "text"
+    result = CliRunner().invoke(cli, ["shader", "read", "Assets/Owned.shader", "--limit", "3"])
+    assert result.exit_code != 0
+    assert len(requests) == 1
