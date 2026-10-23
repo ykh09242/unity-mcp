@@ -36,6 +36,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # uv retries individual dependency HTTP requests, never builds or test commands.
+  # Allow slower hosted package indexes without changing application deadlines.
+  UV_HTTP_RETRIES: "5"
+  UV_HTTP_CONNECT_TIMEOUT: "30"
+  UV_HTTP_TIMEOUT: "60"
+
 jobs:
   reference_graph:
     name: Reference graph (${{ matrix.os }}, Python ${{ matrix.python }})
@@ -58,7 +65,9 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
           cache-suffix: reference-graph-${{ matrix.python }}
-          cache-dependency-glob: Server/uv.lock
+          cache-dependency-glob: |
+            Server/pyproject.toml
+            Server/uv.lock
       - name: Install and exercise isolated reference graph
         working-directory: Server
         env:
