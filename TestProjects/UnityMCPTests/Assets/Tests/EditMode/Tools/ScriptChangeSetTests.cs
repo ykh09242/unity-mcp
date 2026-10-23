@@ -335,6 +335,23 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void RecoveryPublishesOriginalAtomicallyWhileExistingReaderKeepsCandidate()
+        {
+            byte[] original = Bytes("First");
+            string id = Prepare();
+            SetSeam("_continueForTests", (Func<int, bool>)(_ => false));
+            Command("apply_change_set", id);
+            byte[] candidate = Bytes("First");
+            using var reader = new FileStream(Path.Combine(folder, "First.cs"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            JObject recovered = Command("recover_change_set", id);
+            Assert.IsTrue(recovered.Value<bool>("success"), recovered.ToString());
+            CollectionAssert.AreEqual(original, Bytes("First"));
+            using var captured = new MemoryStream();
+            reader.CopyTo(captured);
+            CollectionAssert.AreEqual(candidate, captured.ToArray(), "Compensation must replace a complete file, never truncate the candidate inode.");
+        }
+
+        [Test]
         public void Prepare_DuplicateTargetsRefuseWithoutWriting()
         {
             // Given: two entries targeting the same physical source.

@@ -190,7 +190,7 @@ namespace MCPForUnity.Editor.Tools
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(relativePath);
                 fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
-                File.WriteAllText(fullPath, contents, StrictUtf8);
+                AtomicAssetFile.Create(fullPath, StrictUtf8.GetBytes(contents));
                 saved = true;
                 AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport);
                 imported = true;
@@ -290,8 +290,8 @@ namespace MCPForUnity.Editor.Tools
             bool imported = false;
             try
             {
-                StrictUtf8.GetByteCount(contents);
-                File.WriteAllText(fullPath, contents, StrictUtf8);
+                string expected = AtomicAssetFile.DigestFile(fullPath);
+                AtomicAssetFile.Replace(fullPath, StrictUtf8.GetBytes(contents), expected);
                 saved = true;
                 AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport);
                 imported = true;
