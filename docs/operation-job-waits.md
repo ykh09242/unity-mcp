@@ -49,3 +49,6 @@ server preserves completed results until expiry and marks interrupted observers
 failed; it never resumes or redispatches them. Foreign-owner and expired handles
 remain unavailable. Native operation permission, tool enablement and lifecycle
 checks remain with their existing owners.
+
+See [private store initialization and recovery](private-store-recovery.md) for
+interrupted first startup, stable installation identities and refusal of ambiguous state.

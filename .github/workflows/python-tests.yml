@@ -68,6 +68,14 @@ jobs:
           uv sync --python "${{ matrix.python }}" --locked --extra dev
           uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_reference_graph_store.py tests/test_reference_graph_analysis.py tests/test_reference_graph_semantics.py tests/test_reference_graph_provenance.py tests/test_reference_graph_queries.py tests/test_reference_graph_mutations.py tests/test_reference_graph_runtime.py tests/test_reference_graph_operations.py tests/test_reference_graph_external.py tests/test_reference_graph_workspace.py tests/test_reference_graph_reconcile.py tests/test_reference_graph_service.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-tests"
 
+      - name: Verify interrupted private-store initialization
+        working-directory: Server
+        env:
+          PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python == '3.15' && 'true' || 'false' }}
+          UNITY_MCP_LOG_DIR: ${{ runner.temp }}/private-store-logs
+        run: |
+          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_private_store_bootstrap.py tests/test_execution_receipts.py tests/http/test_mcp_test_wait_lifecycle.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/private-store-tests"
+
   server_bootstrap:
     name: Server Bootstrap (${{ matrix.os }})
     if: inputs.validation_profile != 'tools-only'
