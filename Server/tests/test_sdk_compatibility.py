@@ -23,9 +23,12 @@ def test_release_dependencies_are_exactly_the_reviewed_sdk_set():
 
 
 @pytest.mark.parametrize("package", ["fastmcp", "mcp", "mcp-types"])
-def test_both_optional_adapter_gates_refuse_an_unreviewed_dependency(monkeypatch, package):
+def test_all_optional_adapter_gates_refuse_an_unreviewed_dependency(monkeypatch, package):
     import transport.execution_receipts as receipts
     import transport.test_wait_binding as waits
+    import transport.scene_load_inputs as scenes
+    import transport.skills_extension as skills
+    from core.config import config
     from services.execution_receipt_identity import ReceiptUnavailable
 
     def changed(name):
@@ -33,10 +36,32 @@ def test_both_optional_adapter_gates_refuse_an_unreviewed_dependency(monkeypatch
 
     monkeypatch.setattr(receipts, "version", changed)
     monkeypatch.setattr(waits, "version", changed)
+    monkeypatch.setattr(scenes, "version", changed)
+    monkeypatch.setattr(skills.metadata, "version", changed)
+    monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.setenv("UNITY_MCP_SCENE_LOAD_INPUTS", "1")
     with pytest.raises(ReceiptUnavailable, match="execution_receipt_sdk_unsupported"):
         receipts.require_supported_sdk()
     with pytest.raises(RuntimeError, match="Unreviewed Tasks SDK"):
         waits._SdkResultKernel(FastMCP("unsupported"))
+    assert scenes.prepare_scene_load_inputs() is None
+    assert skills.install_skills(FastMCP("unsupported-skills")) is None
+
+
+def test_reviewed_sdk_keeps_scene_inputs_and_packaged_skills_available(monkeypatch):
+    from core.config import config
+    from transport.scene_load_inputs import prepare_scene_load_inputs
+    from transport.skills_extension import install_skills
+
+    monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.setenv("UNITY_MCP_SCENE_LOAD_INPUTS", "1")
+    scene_inputs = prepare_scene_load_inputs()
+    try:
+        assert scene_inputs is not None
+        assert install_skills(FastMCP("reviewed-skills")) is not None
+    finally:
+        if scene_inputs is not None:
+            scene_inputs.close()
 
 
 def test_sdk_report_distinguishes_reviewed_dependencies_from_enabled_features():

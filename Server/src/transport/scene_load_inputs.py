@@ -20,6 +20,7 @@ from mcp.shared.exceptions import MCPError
 from mcp_types import INVALID_PARAMS
 
 from core.config import config
+from core.sdk_compatibility import is_reviewed_sdk
 from models.response_limits import MAX_RESPONSE_BYTES, response_size
 from transport.local_auth_middleware import AUTHENTICATED_LOCAL_STATE
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
@@ -354,7 +355,7 @@ def prepare_scene_load_inputs() -> SceneLoadInputs | None:
     if config.transport_mode != "http" or os.environ.get("UNITY_MCP_SCENE_LOAD_INPUTS") != "1":
         return None
     try:
-        if version("mcp") != "2.3.0" or version("fastmcp") != "4.1.1":
+        if not is_reviewed_sdk(version):
             raise RuntimeError("Unreviewed MRTR SDK version")
         return SceneLoadInputs(remote_hosted=config.http_remote_hosted)
     except (ImportError, AttributeError, TypeError, ValueError, RuntimeError):

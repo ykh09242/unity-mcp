@@ -85,7 +85,7 @@ After an explicit coordinated measurement slot, an example selected-product diag
 Server/.venv/Scripts/python.exe tools/bench_transport.py --product-root . --product-revision 'caller-asserted-product-pin' --output reports/CS-20261006-mcp-usability/phase10/diagnostic/candidate-C1.json --samples 10 --warmup 3 --large-bytes 4194304 --work-ms 0 --concurrency 1 --diagnostic
 ```
 
-Use `--concurrency 2` for a separate concurrent diagnostic profile; natural gate/resource flags remain off. Revision labels remain caller assertions, with actual selected-product/common-harness fingerprints in both the capture and sidecar. Supported diagnostics require the source-reviewed MCP 2.3.0 and FastMCP 4.0.11, 4.1.0 or 4.1.1. Parameter-name/coroutine mismatch, wrapper stacking, unsupported versions or missing seam source fail clearly; installed seam file hashes and expected parameter names are retained. Every added class/instance patch is scoped and restored on success, failure or cancellation.
+Use `--concurrency 2` for a separate concurrent diagnostic profile; natural gate/resource flags remain off. Revision labels remain caller assertions, with actual selected-product/common-harness fingerprints in both the capture and sidecar. Supported diagnostics require the source-reviewed MCP 2.3.0 and FastMCP 4.0.11, 4.1.0, 4.1.1 or 4.1.3. Parameter-name/coroutine mismatch, wrapper stacking, unsupported versions or missing seam source fail clearly; installed seam file hashes and expected parameter names are retained. Every added class/instance patch is scoped and restored on success, failure or cancellation.
 
 | Diagnostic span | Actual observed boundary and limit |
 | --- | --- |

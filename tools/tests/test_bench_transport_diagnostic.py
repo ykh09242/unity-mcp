@@ -187,7 +187,7 @@ def test_overflow_is_bounded_and_does_not_mask_delegate_failure() -> None:
         trace.check()
 
 
-@pytest.mark.parametrize("fastmcp_version", ["4.0.11", "4.1.0", "4.1.1"])
+@pytest.mark.parametrize("fastmcp_version", ["4.0.11", "4.1.0", "4.1.1", "4.1.3"])
 def test_reviewed_sdk_versions_are_supported(monkeypatch, fastmcp_version) -> None:
     versions = {"mcp": "2.3.0", "fastmcp": fastmcp_version}
     monkeypatch.setattr("tools.bench_transport_diagnostic.importlib.metadata.version", versions.get)

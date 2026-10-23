@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import JsonValue
 
+from core.sdk_compatibility import is_reviewed_sdk
 from models.response_limits import MAX_RESPONSE_BYTES, response_size
 
 if TYPE_CHECKING:
@@ -133,7 +134,7 @@ def install_skills(
     No request-driven paths, package downloads or live guidance sources are consulted.
     """
     try:
-        if metadata.version("mcp") != "2.3.0" or metadata.version("fastmcp") != "4.1.1":
+        if not is_reviewed_sdk(metadata.version):
             return None
         # Optional API imports stay inside the refusal boundary.
         from fastmcp.resources import Resource
