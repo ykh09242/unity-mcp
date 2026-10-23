@@ -1,8 +1,8 @@
 namespace MCPForUnity.Editor.Services.Server
 {
     /// <summary>
-    /// Interface for platform-specific process termination.
-    /// Provides methods to terminate processes gracefully or forcefully.
+    /// Legacy process-termination injection seam retained for source compatibility.
+    /// ServerManagementService accepts this interface but does not use it to stop servers.
     /// </summary>
     public interface IProcessTerminator
     {

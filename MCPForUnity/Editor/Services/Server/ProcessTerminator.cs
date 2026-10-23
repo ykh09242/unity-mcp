@@ -6,8 +6,10 @@ using UnityEngine;
 namespace MCPForUnity.Editor.Services.Server
 {
     /// <summary>
-    /// Platform-specific process termination for stopping MCP server processes.
+    /// Legacy PID-only termination retained for external API compatibility.
+    /// Server management uses authenticated ownership-aware shutdown instead.
     /// </summary>
+    [Obsolete("PID-only termination cannot prove server ownership. Use ServerManagementService.StopManagedLocalHttpServer().")]
     public class ProcessTerminator : IProcessTerminator
     {
         private readonly IProcessDetector _processDetector;
