@@ -16,7 +16,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version: "26.10.0", package-manager-cache: false }
+        with: { node-version: "26.12.1", package-manager-cache: false }
       - name: Fetch + summarize stats (private to collaborators)
         env:
           # public stars/forks work with the default token; unique cloners/viewers
