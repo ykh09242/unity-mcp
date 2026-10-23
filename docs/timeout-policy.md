@@ -209,3 +209,24 @@ or a timeout does not confirm that the remote provider stopped processing.
 Artifact downloads retain their separate streaming and outbound validation policy.
 Applying an API request budget creates a shallow request copy, preserving caller
 state without copying large input buffers or retaining completed job payloads.
+
+## Scene View frame confirmation
+
+`capture_camera` with `capture_source="scene_view"` waits for the selected Scene
+View's repaint and reads pixels after its drawing callback returns. The next Editor
+update can also settle an observed frame if inspector delay callbacks are deferred. It does not
+sleep on the Editor thread or infer a completed frame from elapsed time. A supplied
+`view_target` uses immediate framing before that repaint. The displayed viewport,
+including its overlays, remains the capture source.
+
+`timeout_seconds` defaults to 300 and accepts integers from 1 through 86400. The
+same budget reaches the HTTP or stdio transport. Concurrent screenshot requests
+wait in turn before changing the shared viewport; queue time consumes that budget.
+Completion returns immediately. Expiry, cancellation, window closure or assembly
+reload removes observation hooks and prevents a later callback from writing a
+screenshot. Reload never replays the capture. The Tools panel awaits the result
+and cancels its pending capture when the panel detaches.
+
+Native callers should await the returned `Task<object>` for Scene View screenshots,
+as with composited Game View screenshots. Existing handler signatures remain
+available; `ExecuteSceneViewScreenshotAsync` provides an explicit cancellation API.

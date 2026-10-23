@@ -28,7 +28,7 @@ def mock_unity(monkeypatch):
     """Patch Unity transport layer and return captured call dict."""
     captured: dict[str, object] = {}
 
-    async def fake_send(send_fn, unity_instance, tool_name, params):
+    async def fake_send(send_fn, unity_instance, tool_name, params, **kwargs):
         captured["unity_instance"] = unity_instance
         captured["tool_name"] = tool_name
         captured["params"] = params
@@ -554,7 +554,7 @@ def test_non_dict_response_wrapped(monkeypatch):
         AsyncMock(return_value="unity-1"),
     )
 
-    async def fake_send(send_fn, unity_instance, tool_name, params):
+    async def fake_send(send_fn, unity_instance, tool_name, params, **kwargs):
         return "unexpected string response"
 
     monkeypatch.setattr(

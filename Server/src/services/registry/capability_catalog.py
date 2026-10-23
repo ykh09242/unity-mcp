@@ -222,7 +222,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "camera",
         "Camera Capture",
         "screenshot screenshot_multiview",
-        "screenshot_file_name screenshot_super_size camera include_image max_resolution capture_source batch view_target view_position view_rotation orbit_angles orbit_elevations orbit_distance orbit_fov output_folder",
+        "screenshot_file_name screenshot_super_size camera include_image max_resolution capture_source batch view_target view_position view_rotation orbit_angles orbit_elevations orbit_distance orbit_fov output_folder timeout_seconds",
     ),
     _feature(
         "gameobject_create",
@@ -423,10 +423,10 @@ LEGACY_TOOLS = frozenset(capability.source for capability in CAPABILITIES)
 NATIVE_HANDLERS = {
     "manage_physics": ("MCPForUnity.Editor.Tools.Physics.ManagePhysics", False),
     "manage_graphics": ("MCPForUnity.Editor.Tools.Graphics.ManageGraphics", True),
-    "manage_camera": ("MCPForUnity.Editor.Tools.Cameras.ManageCamera", False),
+    "manage_camera": ("MCPForUnity.Editor.Tools.Cameras.ManageCamera", True),
     "manage_gameobject": ("MCPForUnity.Editor.Tools.GameObjects.ManageGameObject", False),
     "manage_prefabs": ("MCPForUnity.Editor.Tools.Prefabs.ManagePrefabs", True),
-    "manage_scene": ("MCPForUnity.Editor.Tools.ManageScene", False),
+    "manage_scene": ("MCPForUnity.Editor.Tools.ManageScene", True),
     "manage_asset": ("MCPForUnity.Editor.Tools.ManageAsset", True),
     "manage_ui": ("MCPForUnity.Editor.Tools.ManageUI", False),
 }
