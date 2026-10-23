@@ -502,11 +502,14 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
     import main as main_module
 
     request_budgets = []
+    request_started, send_entered, release_reply = (asyncio.Event() for _ in range(3))
+    observed_deadlines = []
     original_request_budget = main_module._HttpRequestBudget
 
     def observe_request_budget(started_at, budget, scope):
         request_budget = original_request_budget(started_at, budget, scope)
         request_budgets.append((request_budget, budget.expires_at))
+        request_started.set()
         return request_budget
 
     monkeypatch.setattr(main_module, "_HttpRequestBudget", observe_request_budget)
@@ -524,28 +527,35 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
                 ],
             )
         }
-    monkeypatch.setattr(
-        PluginHub,
-        "COMMAND_TIMEOUT",
-        0.05 if case == "selection_lock" else 0.1 if case == "cumulative" else 0.02,
-    )
+    # Phase gates exercise expiry without racing subsecond client/runner scheduling.
+    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 300)
 
-    async def delayed_send(message):
+    async def controlled_send(message):
         command_hub.sent.append(message)
         if message["type"] == "execute":
-            await asyncio.sleep(0.06)
+            send_entered.set()
+            await release_reply.wait()
             await answer(command_hub, command_hub.websocket, message)
 
-    command_hub.websocket.send_json = delayed_send
-    release = None
+    command_hub.websocket.send_json = controlled_send
     await command_hub.registry._lock.acquire()
-    if case != "selection_lock":
 
-        async def release_selection():
-            await asyncio.sleep(0.06)
+    async def control_phases():
+        await await_signal(request_started, "REST request budget installed")
+        request_budget, _ = request_budgets[0]
+        observed_deadlines.append(request_budget.scope.when())
+        if case != "selection_lock":
             command_hub.registry._lock.release()
+            await await_signal(send_entered, "REST command dispatched")
+            observed_deadlines.append(request_budget.scope.when())
+        if case in {"selection_lock", "cumulative"}:
+            # Trigger the real timeout scope only after the phase under test is reached.
+            # The production command budget must still retain its original deadline.
+            request_budget.scope.reschedule(asyncio.get_running_loop().time())
+        else:
+            release_reply.set()
 
-        release = asyncio.create_task(release_selection())
+    controller = asyncio.create_task(control_phases())
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://deadline.invalid"
@@ -568,15 +578,15 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
                         else {},
                     },
                 ),
-                # This watchdog catches hangs, not the command's production deadline.
-                # Keep scheduling slack for oversubscribed CI workers; successful requests
-                # still finish immediately. Assert the actual budget below.
                 watchdog_timeout(),
             )
+            await controller
     finally:
-        if release is not None:
-            await release
-        elif command_hub.registry._lock.locked():
+        release_reply.set()
+        if not controller.done():
+            controller.cancel()
+        await asyncio.gather(controller, return_exceptions=True)
+        if command_hub.registry._lock.locked():
             command_hub.registry._lock.release()
     result = response.json()
     assert response.status_code == 200
@@ -589,10 +599,12 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
     # Verify the deadline installed at entry, and that dispatch never restarts it.
     assert original_expiry - request_budget.started_at == pytest.approx(expected_timeout)
     assert request_budget.budget.expires_at == original_expiry
-    assert request_budget.scope.when() == original_expiry
-    if case == "selection_lock":
+    assert observed_deadlines == [original_expiry] * (1 if case == "selection_lock" else 2)
+    if case in {"selection_lock", "cumulative"}:
         assert request_budget.scope.expired()
     else:
+        assert request_budget.scope.when() == original_expiry
+    if case != "selection_lock":
         assert request_budget.budget.active.expires_at == original_expiry
     if case in {"long", "custom_long"}:
         assert result["success"] is True
