@@ -238,6 +238,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     public static class ManageCameras
     {
         private static readonly string[] Actions = { "create_camera", "list_cameras", "set_target", "set_priority", "set_lens" };
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Cameras.ManageCamera.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Cameras.ManageCamera.HandleCommand);
     }
@@ -247,6 +249,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     public static class ManageCinemachine
     {
         private static readonly string[] Actions = { "ping", "ensure_brain", "get_brain_status", "set_body", "set_aim", "set_noise", "add_extension", "remove_extension", "set_blend", "force_camera", "release_override" };
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Cameras.ManageCamera.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Cameras.ManageCamera.HandleCommand);
     }
@@ -256,6 +260,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     public static class CaptureCamera
     {
         private static readonly string[] Actions = { "screenshot", "screenshot_multiview" };
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Cameras.ManageCamera.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.Cameras.ManageCamera.HandleCommand);
     }
@@ -377,6 +383,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "create", "load", "save", "close_scene", "set_active_scene", "move_to_scene" };
         internal static BatchActionValidation ValidateBatchAction(JObject parameters) =>
             ToolCapabilityDispatch.ValidateBatch(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.ValidateBatchAction);
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.HandleCommand);
     }
@@ -388,6 +396,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "get_hierarchy", "get_active", "get_build_settings", "get_loaded_scenes", "scene_view_frame" };
         internal static BatchActionValidation ValidateBatchAction(JObject parameters) =>
             ToolCapabilityDispatch.ValidateBatch(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.ValidateBatchAction);
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.HandleCommand);
     }
@@ -399,6 +409,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "validate" };
         internal static BatchActionValidation ValidateBatchAction(JObject parameters) =>
             ToolCapabilityDispatch.ValidateBatch(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.ValidateBatchAction);
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.HandleCommand);
     }
@@ -410,6 +422,8 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         private static readonly string[] Actions = { "validate_references" };
         internal static BatchActionValidation ValidateBatchAction(JObject parameters) =>
             ToolCapabilityDispatch.ValidateBatch(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.ValidateBatchAction);
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
+            ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>
             ToolCapabilityDispatch.Invoke(parameters, Actions, MCPForUnity.Editor.Tools.ManageScene.HandleCommand);
     }

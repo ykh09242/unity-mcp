@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers; // For Response class
 using MCPForUnity.Runtime.Helpers; // For ScreenshotUtility
@@ -19,6 +20,9 @@ namespace MCPForUnity.Editor.Tools
     [McpForUnityTool("manage_scene", AutoRegister = false, Group = "legacy")]
     public static class ManageScene
     {
+        // Framing a shared viewport is a mutation; queued captures must not overwrite one another's view target.
+        private static readonly SemaphoreSlim SceneCaptureGate = new(1, 1);
+
         // One native action catalogue is shared by preview and actual dispatch.
         private enum ActionKind
         {
@@ -88,6 +92,7 @@ namespace MCPForUnity.Editor.Tools
             // screenshot: camera selection, inline image, batch, view positioning
             public string camera { get; set; }
             public string captureSource { get; set; } // "game_view" (default) or "scene_view"
+            public JToken frameWaitTimeout { get; set; }
             public bool? includeImage { get; set; }
             public int? maxResolution { get; set; }
             public string outputFolder { get; set; } // optional override; null falls back to user pref / Assets/Screenshots
@@ -171,6 +176,7 @@ namespace MCPForUnity.Editor.Tools
                 // screenshot: camera selection, inline image, batch, view positioning
                 camera = (p["camera"])?.ToString(),
                 captureSource = toolParams.Get("capture_source"),
+                frameWaitTimeout = p["timeout_seconds"],
                 includeImage = ParamCoercion.CoerceBoolNullable(p["includeImage"] ?? p["include_image"]),
                 maxResolution = ParamCoercion.CoerceIntNullable(p["maxResolution"] ?? p["max_resolution"]),
                 outputFolder = (p["outputFolder"] ?? p["output_folder"])?.ToString(),
@@ -224,7 +230,16 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// Main handler for scene management actions.
         /// </summary>
-        public static object HandleCommand(JObject @params)
+        public static object HandleCommand(JObject @params) => HandleCommandCore(@params, CancellationToken.None);
+
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            object result = HandleCommandCore(parameters, cancellationToken);
+            return result as Task<object> ?? Task.FromResult(result);
+        }
+
+        private static object HandleCommandCore(JObject @params, CancellationToken cancellationToken)
         {
             try
             {
@@ -426,7 +441,7 @@ namespace MCPForUnity.Editor.Tools
                 case ActionKind.GetBuildSettings:
                     return GetBuildSettingsScenes();
                 case ActionKind.Screenshot:
-                    return CaptureScreenshot(cmd);
+                    return CaptureScreenshot(cmd, cancellationToken);
                 case ActionKind.SceneViewFrame:
                     return FrameSceneView(cmd);
 
@@ -479,6 +494,14 @@ namespace MCPForUnity.Editor.Tools
         {
             var cmd = new SceneCommand { fileName = fileName ?? string.Empty };
             return CaptureSceneViewScreenshot(cmd, cmd.fileName, 1, false, 0);
+        }
+
+        public static Task<object> ExecuteSceneViewScreenshotAsync(string fileName = null, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var cmd = new SceneCommand { fileName = fileName ?? string.Empty };
+            object result = CaptureSceneViewScreenshot(cmd, cmd.fileName, 1, false, 0, cancellationToken);
+            return result as Task<object> ?? Task.FromResult(result);
         }
 
         public static object ExecuteMultiviewScreenshot(int maxResolution = 480)
@@ -658,7 +681,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object CaptureScreenshot(SceneCommand cmd)
+        private static object CaptureScreenshot(SceneCommand cmd, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -700,7 +723,7 @@ namespace MCPForUnity.Editor.Tools
                             "capture_source='scene_view' does not support camera selection. Remove 'camera' or use capture_source='game_view'."
                         );
                     }
-                    return CaptureSceneViewScreenshot(cmd, fileName, resolvedSuperSize, includeImage, maxResolution);
+                    return CaptureSceneViewScreenshot(cmd, fileName, resolvedSuperSize, includeImage, maxResolution, cancellationToken);
                 }
 
                 // Batch capture (e.g., "surround" for 6 angles around the scene)
@@ -949,7 +972,14 @@ namespace MCPForUnity.Editor.Tools
             return new SuccessResponse(message, BuildScreenshotResponseData(result, cameraName, includeImage: true));
         }
 
-        private static object CaptureSceneViewScreenshot(SceneCommand cmd, string fileName, int resolvedSuperSize, bool includeImage, int maxResolution)
+        private static object CaptureSceneViewScreenshot(
+            SceneCommand cmd,
+            string fileName,
+            int resolvedSuperSize,
+            bool includeImage,
+            int maxResolution,
+            CancellationToken cancellationToken = default
+        )
         {
             if (Application.isBatchMode)
             {
@@ -962,8 +992,32 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("No active Scene View found. Open a Scene View window first, then retry screenshot with capture_source='scene_view'.");
             }
 
+            return CaptureSceneViewScreenshotAsync(cmd, fileName, resolvedSuperSize, includeImage, maxResolution, sceneView, cancellationToken);
+        }
+
+        private static async Task<object> CaptureSceneViewScreenshotAsync(
+            SceneCommand cmd,
+            string fileName,
+            int resolvedSuperSize,
+            bool includeImage,
+            int maxResolution,
+            SceneView sceneView,
+            CancellationToken cancellationToken
+        )
+        {
+            using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            bool entered = false;
+            void Cancel() => operation.Cancel();
+            AssemblyReloadEvents.beforeAssemblyReload += Cancel;
+            EditorApplication.quitting += Cancel;
             try
             {
+                operation.Token.ThrowIfCancellationRequested();
+                double frameWait = SceneViewRepaintWait.ReadTimeout(cmd.frameWaitTimeout);
+                double deadline = EditorApplication.timeSinceStartup + frameWait;
+                entered = await SceneCaptureGate.WaitAsync(TimeSpan.FromSeconds(frameWait), operation.Token);
+                if (!entered)
+                    throw new TimeoutException("Scene View capture remained busy within timeout_seconds. No screenshot was written.");
                 string sceneViewFolderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
                 ScreenshotCaptureResult result;
                 int viewportWidth;
@@ -978,14 +1032,20 @@ namespace MCPForUnity.Editor.Tools
                         sceneViewFolderOverride
                     );
                     EditorWindowScreenshotUtility.ValidateSceneViewViewport(sceneView);
+                    sceneView.Focus();
                     if (cmd.viewTarget != null && cmd.viewTarget.Type != JTokenType.Null)
                     {
-                        var frameResult = FrameSceneView(new SceneCommand { sceneViewTarget = cmd.viewTarget });
+                        var frameResult = FrameSceneView(new SceneCommand { sceneViewTarget = cmd.viewTarget }, instant: true);
                         if (frameResult is ErrorResponse)
                         {
                             return frameResult;
                         }
                     }
+                    double remaining = deadline - EditorApplication.timeSinceStartup;
+                    if (remaining <= 0)
+                        throw new TimeoutException("Scene View capture exceeded timeout_seconds before repaint. No screenshot was written.");
+                    await SceneViewRepaintWait.WaitAsync(sceneView, remaining, operation.Token);
+                    operation.Token.ThrowIfCancellationRequested();
                     result = EditorWindowScreenshotUtility.CaptureSceneViewViewportToProject(
                         sceneView,
                         fileName,
@@ -1036,9 +1096,20 @@ namespace MCPForUnity.Editor.Tools
 
                 return new SuccessResponse($"Scene View screenshot captured to '{result.ProjectRelativePath}' (scene view: {sceneViewName}).", data);
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception e)
             {
                 return new ErrorResponse($"Error capturing Scene View screenshot: {e.Message}");
+            }
+            finally
+            {
+                AssemblyReloadEvents.beforeAssemblyReload -= Cancel;
+                EditorApplication.quitting -= Cancel;
+                if (entered)
+                    SceneCaptureGate.Release();
             }
         }
 
@@ -1553,7 +1624,7 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         /// Frames the Scene View on a target GameObject or the entire scene.
         /// </summary>
-        private static object FrameSceneView(SceneCommand cmd)
+        private static object FrameSceneView(SceneCommand cmd, bool instant = false)
         {
             try
             {
@@ -1573,7 +1644,7 @@ namespace MCPForUnity.Editor.Tools
                     }
 
                     Bounds bounds = CalculateFrameBounds(target);
-                    sceneView.Frame(bounds, false);
+                    sceneView.Frame(bounds, instant);
                     return new SuccessResponse($"Scene View framed on '{target.name}'.", new { target = target.name });
                 }
                 else
@@ -1595,7 +1666,7 @@ namespace MCPForUnity.Editor.Tools
                     }
                     if (!hasAny)
                         allBounds = new Bounds(Vector3.zero, Vector3.one * 10f);
-                    sceneView.Frame(allBounds, false);
+                    sceneView.Frame(allBounds, instant);
                     return new SuccessResponse("Scene View framed on entire scene.");
                 }
             }

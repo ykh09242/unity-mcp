@@ -3,6 +3,7 @@ from typing import Annotated, Any, Literal
 from fastmcp import Context
 from fastmcp.server.server import ToolResult
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
@@ -170,6 +171,11 @@ async def manage_camera(
         "or absolute path inside the project. Overrides the user's Editor preference. "
         "If omitted, falls back to the Editor preference, then to the built-in default (Assets/Screenshots).",
     ] = None,
+    timeout_seconds: Annotated[
+        int,
+        Field(ge=1, le=86400, strict=True),
+        "Scene View repaint wait budget in seconds; returns as soon as a matching frame finishes.",
+    ] = 300,
 ) -> dict[str, Any] | ToolResult:
     """Unified camera management tool (Unity Camera + Cinemachine)."""
 
@@ -247,12 +253,22 @@ async def manage_camera(
         if capture_error:
             return {"success": False, "message": capture_error}
 
+    scene_capture = action_normalized in CAPTURE_ACTIONS and capture_source == "scene_view"
+    if scene_capture:
+        if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 86400:
+            return {
+                "success": False,
+                "message": "timeout_seconds must be an integer between 1 and 86400",
+            }
+        params_dict["timeout_seconds"] = timeout_seconds
+
     unity_instance = await get_unity_instance_from_context(ctx)
     result = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
         capability_command("manage_camera"),
         params_dict,
+        **({"retry_on_reload": False} if scene_capture else {}),
     )
 
     if not isinstance(result, dict):

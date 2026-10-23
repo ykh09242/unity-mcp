@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
-using System.Threading;
 using MCPForUnity.Runtime.Helpers;
 using UnityEditor;
 using UnityEngine;
@@ -16,9 +15,6 @@ namespace MCPForUnity.Editor.Helpers
     /// </summary>
     internal static class EditorWindowScreenshotUtility
     {
-        // Keep capture synchronous so callers can immediately return the screenshot payload.
-        // The short sleep gives Unity a chance to flush repaint work before GrabPixels reads the viewport.
-        private const int RepaintSettlingDelayMs = 75;
         private static readonly HashSet<string> WindowsReservedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "CON",
@@ -46,7 +42,7 @@ namespace MCPForUnity.Editor.Helpers
         };
 
         /// <summary>
-        /// Captures the active Scene View viewport to a PNG asset.
+        /// Captures the active Scene View viewport to a PNG asset after the caller has awaited its repaint.
         /// </summary>
         /// <param name="sceneView">Scene View window to capture.</param>
         /// <param name="fileName">Optional file name, defaulting to a timestamped PNG.</param>
@@ -77,10 +73,6 @@ namespace MCPForUnity.Editor.Helpers
             int effectiveSuperSize = NormalizeSceneViewSuperSize(superSize);
             ScreenshotUtility.ValidateMaxResolution(maxResolution);
             var result = preparedCapture ?? PrepareSceneViewCapture(fileName, effectiveSuperSize, ensureUniqueFileName, maxResolution, folderOverride);
-            ValidateSceneViewViewport(sceneView);
-
-            FocusAndRepaint(sceneView);
-
             Rect viewportRectPixels = ValidateSceneViewViewport(sceneView);
             viewportWidth = Mathf.RoundToInt(viewportRectPixels.width);
             viewportHeight = Mathf.RoundToInt(viewportRectPixels.height);
@@ -147,32 +139,6 @@ namespace MCPForUnity.Editor.Helpers
             Rect viewport = GetSceneViewViewportPixelRect(sceneView);
             validateDimensions?.Invoke(Mathf.RoundToInt(viewport.width), Mathf.RoundToInt(viewport.height));
             return CaptureViewRect(sceneView, viewport);
-        }
-
-        private static void FocusAndRepaint(SceneView sceneView)
-        {
-            try
-            {
-                sceneView.Focus();
-            }
-            catch (Exception ex)
-            {
-                McpLog.Debug($"[EditorWindowScreenshotUtility] SceneView focus failed: {ex.Message}");
-            }
-
-            try
-            {
-                sceneView.Repaint();
-                InvokeMethodIfExists(sceneView, "RepaintImmediately");
-                SceneView.RepaintAll();
-                UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
-                EditorApplication.QueuePlayerLoopUpdate();
-                Thread.Sleep(RepaintSettlingDelayMs);
-            }
-            catch (Exception ex)
-            {
-                McpLog.Debug($"[EditorWindowScreenshotUtility] SceneView repaint failed: {ex.Message}");
-            }
         }
 
         private static Rect GetSceneViewViewportPixelRect(SceneView sceneView)
@@ -325,25 +291,6 @@ namespace MCPForUnity.Editor.Helpers
             {
                 McpLog.Debug($"[EditorWindowScreenshotUtility] Failed to read rect property '{propertyName}': {ex.Message}");
                 return null;
-            }
-        }
-
-        private static void InvokeMethodIfExists(object instance, string methodName)
-        {
-            if (instance == null)
-                return;
-
-            MethodInfo method = instance.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (method == null || method.GetParameters().Length != 0)
-                return;
-
-            try
-            {
-                method.Invoke(instance, null);
-            }
-            catch (Exception ex)
-            {
-                McpLog.Debug($"[EditorWindowScreenshotUtility] Best-effort invoke of '{methodName}' failed: {ex.Message}");
             }
         }
 

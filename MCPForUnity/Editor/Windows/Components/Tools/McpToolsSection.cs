@@ -41,6 +41,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private IToolSettingsStatusSource statusSource;
         private bool statusAttached = true;
         private int statusRenderQueued;
+        private CancellationTokenSource sceneViewCapture;
         private TextField searchField;
         private DropdownField stateFilter;
         private Button recommendedButton;
@@ -129,6 +130,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             Root.RegisterCallback<DetachFromPanelEvent>(_ =>
             {
                 statusAttached = false;
+                sceneViewCapture?.Cancel();
                 UnbindStatusSource();
             });
             BindStatusSource();
@@ -1172,11 +1174,17 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             }
         }
 
-        private void OnSceneViewScreenshotClicked()
+        private async void OnSceneViewScreenshotClicked()
         {
+            if (sceneViewCapture != null)
+                return;
+            var operation = new CancellationTokenSource();
+            sceneViewCapture = operation;
             try
             {
-                var response = ManageScene.ExecuteSceneViewScreenshot();
+                var response = await ManageScene.ExecuteSceneViewScreenshotAsync(cancellationToken: operation.Token);
+                if (!statusAttached || operation.IsCancellationRequested)
+                    return;
                 if (response is SuccessResponse success && !string.IsNullOrWhiteSpace(success.Message))
                 {
                     McpLog.Info(success.Message);
@@ -1190,9 +1198,16 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                     McpLog.Info("Scene View screenshot capture requested.");
                 }
             }
+            catch (OperationCanceledException) { /* The owning panel closed before capture. */ }
             catch (Exception ex)
             {
                 McpLog.Error($"Failed to capture Scene View screenshot: {ex.Message}");
+            }
+            finally
+            {
+                if (ReferenceEquals(sceneViewCapture, operation))
+                    sceneViewCapture = null;
+                operation.Dispose();
             }
         }
 
