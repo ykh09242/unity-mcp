@@ -56,7 +56,7 @@ namespace MCPForUnityTests.EditMode.Windows
             section.SetVisible(false);
             section.SetVisible(true);
             Assert.AreEqual("{\"call\":\"Draft.Load\"}", root.Q<TextField>("graph-config").value);
-            var kind = root.Q<DropdownField>();
+            var kind = root.Q<DropdownField>("graph-kind");
             kind.index = 1;
             root.Q<TextField>("graph-config").value = "{\"path\":\"draft/source\"}";
             kind.index = 0;

@@ -38,3 +38,8 @@
 
 .graph-section .unity-toggle__text { white-space: normal; flex-shrink: 1; margin-left: 6px; }
 .graph-section .unity-toggle__input { flex-shrink: 1; }
+
+.graph-explorer { border-width: 1px; border-color: var(--mcp-border); border-radius: 5px; padding: 12px; margin-bottom: 16px; min-width: 0; }
+.graph-explorer .unity-base-field__label { min-width: 90px; width: 90px; }
+.graph-edge { padding: 10px; margin-bottom: 8px; border-left-width: 2px; border-left-color: var(--mcp-border); background-color: var(--mcp-surface); min-width: 0; }
+.graph-edge Button { align-self: flex-start; }

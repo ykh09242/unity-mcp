@@ -33,6 +33,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             issueCount,
             diskCount,
             updated;
+        private readonly McpReferenceExplorer explorer;
         private readonly DropdownField kind;
         private readonly TextField itemId,
             payload;
@@ -120,6 +121,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             diskCount = Metric(metrics, "Database");
             message = Text(root, "", "graph-message");
             message.AddToClassList("hidden");
+            explorer = new McpReferenceExplorer(root, Run);
             Text(root, "Collection sources").AddToClassList("graph-section-heading");
             providers = Box(root, "graph-providers");
             providers.name = "graph-providers";
@@ -285,6 +287,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             waitClock.Pause();
             waitStatus.text = "";
             cancellation?.Cancel();
+            explorer?.StopWaiting();
             if (!disposed)
             {
                 if (cancellation != null)
@@ -318,7 +321,9 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
 
         private void Feedback(string action, string text)
         {
-            if (action == "import_config")
+            if (McpReferenceExplorer.Handles(action))
+                explorer.Failed(text);
+            else if (action == "import_config")
                 FormFeedback(text);
             else
             {
@@ -359,6 +364,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private void UpdateControls()
         {
             bool idle = pending == null;
+            explorer?.SetAvailable(idle && viewIdentity != null);
             stopWaiting.SetEnabled(!idle);
             stopWaiting.EnableInClassList("hidden", idle);
             foreach (var button in buttons)
@@ -423,6 +429,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         {
             StopWaiting();
             drafts.Clear();
+            explorer.Clear();
             viewIdentity = null;
             identity.text = "Connection changed · refresh to verify this account";
             identity.tooltip = null;
@@ -533,7 +540,10 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             waitStatus.text = "Waiting 0s";
             waitClock.Resume();
             UpdateControls();
-            Feedback(action, "Working… Stop waiting or leave this tab to abandon the wait; accepted server work may continue.");
+            if (McpReferenceExplorer.Handles(action))
+                explorer.Waiting();
+            else
+                Feedback(action, "Working… Stop waiting or leave this tab to abandon the wait; accepted server work may continue.");
             try
             {
                 JObject data = await send(action, options, cancellation.Token);
@@ -547,7 +557,12 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 viewIdentity = before;
                 Render(data);
                 updated.text = "Updated " + DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-                if (action == "export_config")
+                if (McpReferenceExplorer.Handles(action))
+                {
+                    explorer.Receive(action, data);
+                    message.AddToClassList("hidden");
+                }
+                else if (action == "export_config")
                 {
                     exportKind = data.Value<string>("kind");
                     nextAfter = data.Value<string>("next_after");
