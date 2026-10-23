@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Reflection;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -13,6 +14,12 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class RefreshUnityTests
     {
+        [TestCase("timeout_seconds", "0")]
+        [TestCase("timeout_seconds", "-1")]
+        [TestCase("timeout_seconds", "86401")]
+        [TestCase("timeout_seconds", "true")]
+        [TestCase("timeout_seconds", "\"900\"")]
+        [TestCase("timeoutSeconds", "[]")]
         [TestCase("compile_id", "42")]
         [TestCase("compile_id", "\"not-an-id\"")]
         [TestCase("mode", "\"bogus\"")]
@@ -85,6 +92,46 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (!alreadyRunning)
                     TestRunStatus.MarkFinished();
+            }
+        }
+
+        [TestCase(0.5)]
+        [TestCase(900)]
+        [TestCase(7200)]
+        [TestCase(86400)]
+        public void ExplicitLargeAndRemainingBudgets_AreNotTruncated(double seconds)
+        {
+            Assert.AreEqual(seconds, OperationTimeouts.ReadSeconds(new JObject { ["timeout_seconds"] = seconds }, 300));
+            Assert.AreEqual(seconds, OperationTimeouts.ReadSeconds(new JObject { ["timeoutSeconds"] = seconds }, 300));
+        }
+
+        [Test]
+        public void InvalidShadowedTimeoutAlias_IsRejected()
+        {
+            Assert.Throws<ArgumentException>(() => OperationTimeouts.ReadSeconds(new JObject { ["timeout_seconds"] = 900, ["timeoutSeconds"] = true }, 300));
+            Assert.Throws<ArgumentException>(() => OperationTimeouts.ReadSeconds(new JObject { ["timeout_seconds"] = double.NaN }, 300));
+            Assert.Throws<ArgumentException>(() => OperationTimeouts.ReadSeconds(new JObject { ["timeout_seconds"] = double.PositiveInfinity }, 300));
+        }
+
+        [TestCase(null, 300)]
+        [TestCase("900", 900)]
+        [TestCase("NaN", 300)]
+        [TestCase("Infinity", 300)]
+        [TestCase("-1", 300)]
+        [TestCase("0", 300)]
+        [TestCase("1000000", 86400)]
+        public void EnvironmentBudget_IsFiniteAndConfigurable(string raw, double expected)
+        {
+            const string name = "UNITY_MCP_OWNED_TIMEOUT_TEST";
+            string previous = Environment.GetEnvironmentVariable(name);
+            try
+            {
+                Environment.SetEnvironmentVariable(name, raw);
+                Assert.AreEqual(expected, OperationTimeouts.EnvironmentSeconds(name, 300));
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(name, previous);
             }
         }
 

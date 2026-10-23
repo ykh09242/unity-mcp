@@ -768,6 +768,7 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
         # Keep the native compilation start barrier, but wait for asset refresh
         # readiness here so stable Play Mode and domain reload do not strand it.
         "wait_for_ready": compile and not no_wait,
+        "timeout_seconds": config.timeout,
     }
 
     if config.format != "json":

@@ -761,10 +761,10 @@ class TestServerConfigDefaults:
         assert config.command_total_timeout == 600.0
         assert config.buffer_size == 16 * 1024 * 1024
         assert config.require_framing is True
-        assert config.handshake_timeout == 1.0
+        assert config.handshake_timeout == 30.0
         assert config.framed_receive_timeout == 2.0
         assert config.max_heartbeat_frames == 16
-        assert config.heartbeat_timeout == 2.0
+        assert config.heartbeat_timeout == 30.0
 
     def test_timeout_env_overrides_are_honored(self, monkeypatch):
         """Valid env overrides for the stdio timeouts are applied."""
@@ -802,7 +802,7 @@ class TestServerConfigDefaults:
         assert config.max_retries == 5
         assert config.retry_delay == 0.25
         assert config.reload_retry_ms == 250
-        assert config.reload_max_retries == 40
+        assert config.reload_max_retries is None
         assert config.port_registry_ttl == 5.0
 
     def test_config_telemetry_defaults(self):

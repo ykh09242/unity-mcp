@@ -41,7 +41,7 @@ from services.command_progress import (
     ProgressSource,
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
-from transport.command_timeout import requested_command_timeout
+from transport.command_timeout import requested_command_timeout, configured_wait_timeout
 from transport.legacy.stdio_port_registry import stdio_port_registry
 from transport.legacy.stdio_auth import (
     StdioAuthentication,
@@ -1675,27 +1675,12 @@ def _send_command_with_retry(
         command_type,
     )
     if max_retries is None:
-        max_retries = getattr(config, "reload_max_retries", 40)
+        max_retries = getattr(config, "reload_max_retries", None)
     if retry_ms is None:
         retry_ms = getattr(config, "reload_retry_ms", 250)
-    # Default to 20s to handle domain reloads (which can take 10-20s after tests or script changes).
-    #
-    # NOTE: This wait can impact agentic workflows where domain reloads happen
-    # frequently (e.g., after test runs, script compilation). The 20s default
-    # balances handling slow reloads vs. avoiding unnecessary delays.
-    #
-    # TODO: Make this more deterministic by detecting Unity's actual reload state
-    # rather than blindly waiting up to 20s. See Issue #657.
-    #
-    # Configurable via: UNITY_MCP_RELOAD_MAX_WAIT_S (default: 20.0, max: 20.0)
-    try:
-        max_wait_s = float(os.environ.get("UNITY_MCP_RELOAD_MAX_WAIT_S", "20.0"))
-    except ValueError as e:
-        raw_val = os.environ.get("UNITY_MCP_RELOAD_MAX_WAIT_S", "20.0")
-        logger.warning("Invalid UNITY_MCP_RELOAD_MAX_WAIT_S=%r, using default 20.0: %s", raw_val, e)
-        max_wait_s = 20.0
-    # Clamp to [0, 20] to prevent misconfiguration from causing excessive waits
-    max_wait_s = max(0.0, min(max_wait_s, 20.0))
+    # Only explicit pre-dispatch reload refusals are replayed. A slow compilation
+    # can consume this configurable window, still bounded by the parent command.
+    max_wait_s = configured_wait_timeout("UNITY_MCP_RELOAD_MAX_WAIT_S", 300.0)
 
     deadline = _deadline if _deadline is not None else _command_deadline(command_type, params)
 
@@ -1725,7 +1710,7 @@ def _send_command_with_retry(
     while (
         retry_on_reload
         and _is_reloading_response(response, require_preflight=require_preflight)
-        and retries < max_retries
+        and (max_retries is None or retries < max_retries)
         and (deadline is None or time.monotonic() < deadline)
     ):
         if wait_started is None:

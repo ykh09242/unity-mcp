@@ -67,7 +67,11 @@ from transport.large_result_assembler import (
     LargeResultProtocolError,
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
-from transport.command_timeout import requested_command_timeout
+from transport.command_timeout import (
+    requested_command_timeout,
+    configured_wait_timeout,
+    MAX_COMMAND_TIMEOUT,
+)
 
 # Compatibility facade: all callers share the same ContextVar and evidence types.
 from transport.command_budget import (
@@ -131,20 +135,8 @@ class _EditorStatePublication:
 
 
 def _read_bounded_wait_env(name: str, default_s: float, max_s: float) -> float:
-    """Read a wait-seconds env override, clamped to [0, max_s].
-
-    The ceiling exists to keep a typo from stalling every command, but it must sit
-    well above the default so explicit overrides actually take effect (#1207).
-    """
-    raw = os.environ.get(name)
-    if raw is None:
-        return max(0.0, min(default_s, max_s))
-    try:
-        value = float(raw)
-    except ValueError as e:
-        logger.warning("Invalid %s=%r, using default %s: %s", name, raw, default_s, e)
-        value = default_s
-    return max(0.0, min(value, max_s))
+    """Read a finite observation window without accepting NaN or infinity."""
+    return configured_wait_timeout(name, default_s, max_s)
 
 
 # ---------- MCP session tracking ----------
@@ -3062,22 +3054,12 @@ class PluginHub(WebSocketEndpoint):
 
         registry = cls._registry
 
-        # Bound waiting for Unity sessions. Default to 20s to handle domain reloads
-        # (which can take 10-20s after test runs or script changes).
-        #
-        # NOTE: This wait can impact agentic workflows where domain reloads happen
-        # frequently (e.g., after test runs, script compilation). The 20s default
-        # balances handling slow reloads vs. avoiding unnecessary delays.
-        #
-        # TODO: Make this more deterministic by detecting Unity's actual reload state
-        # (e.g., via status file, heartbeat, or explicit "reloading" signal from Unity)
-        # rather than blindly waiting up to 20s. See Issue #657.
-        #
-        # Configurable via: UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S (default: 20.0, max: 120.0).
-        # The ceiling used to equal the default, which silently neutered the override for
-        # projects whose reloads/test boundaries legitimately exceed 20s (#1207).
+        # Explicitly selected projects may be compiling/importing large workloads.
+        # Unselected discovery retains its short window and ambiguity checks.
         max_wait_s = _read_bounded_wait_env(
-            "UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", default_s=20.0, max_s=120.0
+            "UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S",
+            default_s=300.0 if unity_instance else 20.0,
+            max_s=MAX_COMMAND_TIMEOUT,
         )
         if not retry_on_reload:
             max_wait_s = 0.0
@@ -3395,7 +3377,7 @@ class PluginHub(WebSocketEndpoint):
             and command_type != "ping"
         ):
             max_wait_s = _read_bounded_wait_env(
-                "UNITY_MCP_SESSION_READY_WAIT_SECONDS", default_s=6.0, max_s=120.0
+                "UNITY_MCP_SESSION_READY_WAIT_SECONDS", default_s=6.0, max_s=MAX_COMMAND_TIMEOUT
             )
             if max_wait_s > 0:
                 deadline = time.monotonic() + max_wait_s

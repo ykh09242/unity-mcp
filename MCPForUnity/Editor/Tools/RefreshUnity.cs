@@ -1,5 +1,5 @@
 using System;
-using System.Threading;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
@@ -17,18 +17,6 @@ namespace MCPForUnity.Editor.Tools
     public static class RefreshUnity
     {
         private const int DefaultWaitTimeoutSeconds = 300;
-
-        /// <summary>Backstop on the wait for compilation to begin. Not the normal
-        /// exit: RequestScriptCompilation records a pending request that the
-        /// editor drains into a pipeline run on a later tick whether or not any
-        /// source changed — "recompiles those scripts which require it" in the docs
-        /// describes per-assembly skipping inside that run, not a run that is skipped.
-        /// With nothing changed, 6000.3 still raises compilationStarted/Finished
-        /// (~100 ms, cached) and reloads the domain. The grace only bounds the cases
-        /// where the run never begins: the pipeline refusing to start on a setup
-        /// error, or play mode with "Recompile After Finished Playing" deferring it
-        /// until exit. Both are reported as <c>compile_started = false</c>.</summary>
-        private const int CompileStartGraceSeconds = 10;
 
         private static string ReadOption(JObject parameters, string name, string defaultValue, params string[] allowedValues)
         {
@@ -51,8 +39,10 @@ namespace MCPForUnity.Editor.Tools
             string scope;
             string compile;
             bool waitForReady;
+            double timeoutSeconds;
             try
             {
+                timeoutSeconds = OperationTimeouts.ReadSeconds(@params, DefaultWaitTimeoutSeconds);
                 mode = ReadOption(@params, "mode", "if_dirty", "if_dirty", "force");
                 scope = ReadOption(@params, "scope", "all", "assets", "scripts", "all");
                 compile = ReadOption(@params, "compile", "none", "none", "request");
@@ -67,6 +57,9 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse(error.Message);
             }
+
+            var elapsed = Stopwatch.StartNew();
+            TimeSpan Remaining() => TimeSpan.FromSeconds(Math.Max(0, timeoutSeconds - elapsed.Elapsed.TotalSeconds));
 
             string compileId = null;
             if (string.Equals(compile, "request", StringComparison.OrdinalIgnoreCase))
@@ -167,7 +160,7 @@ namespace MCPForUnity.Editor.Tools
             bool? compileStarted = null;
             if (compileRequested && waitForReady)
             {
-                compileStarted = await WaitForCompilationToStartAsync(compileCountBefore, TimeSpan.FromSeconds(CompileStartGraceSeconds)).ConfigureAwait(true);
+                compileStarted = await WaitForCompilationToStartAsync(compileCountBefore, Remaining()).ConfigureAwait(true);
             }
 
             // Unity 6+ fix: Skip wait_for_ready when compile was requested.
@@ -184,7 +177,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 try
                 {
-                    await WaitForUnityReadyAsync(TimeSpan.FromSeconds(DefaultWaitTimeoutSeconds)).ConfigureAwait(true);
+                    await WaitForUnityReadyAsync(Remaining()).ConfigureAwait(true);
                 }
                 catch (TimeoutException)
                 {
@@ -234,7 +227,7 @@ namespace MCPForUnity.Editor.Tools
         /// inside AssetDatabase.Refresh, before this is even armed, and the counter is
         /// the only thing that still sees it;</item>
         /// <item>the grace elapsed with neither — the pipeline declined or deferred
-        /// the request (see <see cref="CompileStartGraceSeconds"/>).</item>
+        /// the request within its remaining observation budget.</item>
         /// </list>
         /// The first two are also tested synchronously on entry, so the case where a
         /// reload is already imminent never leaves this command queued as a
@@ -277,14 +270,25 @@ namespace MCPForUnity.Editor.Tools
             // handler has already flipped GetActualIsCompiling() by the time this one
             // runs; the caller reads resulting_state = "compiling" inline.
             var tcs = new TaskCompletionSource<bool>();
-            var start = DateTime.UtcNow;
+            var elapsed = Stopwatch.StartNew();
             Action<object> onStarted = null;
             EditorApplication.CallbackFunction tick = null;
 
-            onStarted = _ =>
+            void Cleanup()
             {
                 CompilationPipeline.compilationStarted -= onStarted;
                 EditorApplication.update -= tick;
+                AssemblyReloadEvents.beforeAssemblyReload -= Stop;
+                EditorApplication.quitting -= Stop;
+            }
+            void Stop()
+            {
+                Cleanup();
+                tcs.TrySetCanceled();
+            }
+            onStarted = _ =>
+            {
+                Cleanup();
                 tcs.TrySetResult(true);
             };
 
@@ -292,18 +296,19 @@ namespace MCPForUnity.Editor.Tools
             // the request, so no reload is coming and inlining is harmless there too.
             tick = () =>
             {
-                if ((DateTime.UtcNow - start) <= grace)
+                if (elapsed.Elapsed < grace)
                 {
                     return;
                 }
 
-                CompilationPipeline.compilationStarted -= onStarted;
-                EditorApplication.update -= tick;
+                Cleanup();
                 tcs.TrySetResult(false);
             };
 
             CompilationPipeline.compilationStarted += onStarted;
             EditorApplication.update += tick;
+            AssemblyReloadEvents.beforeAssemblyReload += Stop;
+            EditorApplication.quitting += Stop;
             // Nudge Unity to pump once in case update is throttled.
             try
             {
@@ -316,7 +321,19 @@ namespace MCPForUnity.Editor.Tools
         private static Task WaitForUnityReadyAsync(TimeSpan timeout)
         {
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var start = DateTime.UtcNow;
+            var elapsed = Stopwatch.StartNew();
+
+            void Cleanup()
+            {
+                EditorApplication.update -= Tick;
+                AssemblyReloadEvents.beforeAssemblyReload -= Stop;
+                EditorApplication.quitting -= Stop;
+            }
+            void Stop()
+            {
+                Cleanup();
+                tcs.TrySetCanceled();
+            }
 
             void Tick()
             {
@@ -324,13 +341,13 @@ namespace MCPForUnity.Editor.Tools
                 {
                     if (tcs.Task.IsCompleted)
                     {
-                        EditorApplication.update -= Tick;
+                        Cleanup();
                         return;
                     }
 
-                    if ((DateTime.UtcNow - start) > timeout)
+                    if (elapsed.Elapsed >= timeout)
                     {
-                        EditorApplication.update -= Tick;
+                        Cleanup();
                         tcs.TrySetException(new TimeoutException());
                         return;
                     }
@@ -342,18 +359,20 @@ namespace MCPForUnity.Editor.Tools
                         && !EditorApplication.isPlayingOrWillChangePlaymode
                     )
                     {
-                        EditorApplication.update -= Tick;
+                        Cleanup();
                         tcs.TrySetResult(true);
                     }
                 }
                 catch (Exception ex)
                 {
-                    EditorApplication.update -= Tick;
+                    Cleanup();
                     tcs.TrySetException(ex);
                 }
             }
 
             EditorApplication.update += Tick;
+            AssemblyReloadEvents.beforeAssemblyReload += Stop;
+            EditorApplication.quitting += Stop;
             // Nudge Unity to pump once in case update is throttled.
             try
             {

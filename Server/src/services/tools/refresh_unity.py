@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 import uuid
@@ -10,12 +11,15 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
 from transport.plugin_hub import extend_http_request_deadline
+from transport.command_timeout import MAX_COMMAND_TIMEOUT, configured_wait_timeout
+from transport.command_budget import command_outcome_unknown
 import transport.legacy.unity_connection as _legacy_conn
 from services.state.external_changes_scanner import external_changes_scanner
 import services.resources.editor_state as editor_state
@@ -41,13 +45,19 @@ def _in_pytest() -> bool:
     return "PYTEST_CURRENT_TEST" in os.environ
 
 
-async def wait_for_editor_ready(ctx: Context, timeout_s: float = 30.0) -> tuple[bool, float]:
+async def wait_for_editor_ready(ctx: Context, timeout_s: float | None = None) -> tuple[bool, float]:
     """Poll editor_state until Unity is ready for tool calls.
 
     Returns (ready, elapsed_seconds).  Treats exceptions from
     get_editor_state as "not ready yet" so the loop survives transient
     connection errors during domain reload.
     """
+    if timeout_s is None:
+        timeout_s = configured_wait_timeout(
+            "UNITY_MCP_EDITOR_READY_TIMEOUT", REFRESH_READY_TIMEOUT_SECONDS
+        )
+    if not math.isfinite(timeout_s) or timeout_s <= 0:
+        return (False, 0.0)
     extend_http_request_deadline(timeout_s)
     if _in_pytest():
         return (True, 0.0)
@@ -166,7 +176,9 @@ async def _send_mutation(
         retry_on_reload=False,
     )
     if is_reloading_rejection(resp):
-        await wait_for_editor_ready(ctx)
+        ready, _ = await wait_for_editor_ready(ctx)
+        if not ready:
+            return resp
         resp = await unity_transport.send_with_unity_instance(
             _legacy_conn.async_send_command_with_retry,
             unity_instance,
@@ -272,13 +284,37 @@ async def refresh_unity(
         bool,
         "If true, wait until mcpforunity://editor/state reports data.advice.ready_for_tools true",
     ] = True,
+    timeout_seconds: Annotated[
+        float,
+        Field(strict=True, ge=1, le=MAX_COMMAND_TIMEOUT, allow_inf_nan=False),
+        "Total refresh/readiness observation budget in seconds; expiry does not undo native work",
+    ] = REFRESH_READY_TIMEOUT_SECONDS,
 ) -> MCPResponse | dict[str, Any]:
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not 1 <= timeout_seconds <= MAX_COMMAND_TIMEOUT
+        or not math.isfinite(timeout_seconds)
+    ):
+        return MCPResponse(
+            success=False, error="timeout_seconds must be a finite number from 1 to 86400."
+        )
+    deadline = time.monotonic() + timeout_seconds
+    extend_http_request_deadline(timeout_seconds + 5.0)
     unity_instance = await get_unity_instance_from_context(ctx)
     dirty_instance = unity_instance or await editor_state.infer_single_instance_id(ctx)
     dirty_snapshot = (
         external_changes_scanner.capture_dirty_state(dirty_instance) if dirty_instance else None
     )
 
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return MCPResponse(
+            success=False,
+            error="Refresh observation budget expired before dispatch.",
+            hint="retry",
+            data={"reason": "command_deadline_exceeded", "phase": "selection"},
+        )
     params: dict[str, Any] = {
         "mode": mode,
         "scope": scope,
@@ -287,6 +323,7 @@ async def refresh_unity(
         # wait on the server instead: the native wait cannot survive domain reload
         # and also waits for an otherwise-ready Play Mode session to end.
         "wait_for_ready": bool(wait_for_ready and compile == "request"),
+        "timeout_seconds": remaining,
     }
 
     compile_id = uuid.uuid4().hex if compile == "request" else None
@@ -314,13 +351,29 @@ async def refresh_unity(
     recovered_from_disconnect = False
     # Don't retry on reload - refresh_unity triggers compilation/reload,
     # so retrying would cause multiple reloads (issue #577)
-    response = await unity_transport.send_with_unity_instance(
-        _legacy_conn.async_send_command_with_retry,
-        unity_instance,
-        "refresh_unity",
-        params,
-        retry_on_reload=False,
-    )
+    try:
+        response = await asyncio.wait_for(
+            unity_transport.send_with_unity_instance(
+                _legacy_conn.async_send_command_with_retry,
+                unity_instance,
+                "refresh_unity",
+                params,
+                retry_on_reload=False,
+            ),
+            timeout=max(0.0, deadline - time.monotonic()),
+        )
+    except TimeoutError:
+        # Expiry bounds observation, not native side effects. Never replay the write.
+        return with_compilation(
+            MCPResponse(
+                **command_outcome_unknown(
+                    "refresh_unity",
+                    "observation deadline expired",
+                    cause="timeout",
+                    phase="dispatch",
+                )
+            )
+        )
 
     # A domain reload may lose the response after dispatch. Recover readiness
     # without replaying the refresh; execution remains unconfirmed in that case.
@@ -354,21 +407,21 @@ async def refresh_unity(
     # poll the canonical editor_state resource until ready or timeout.
     ready_confirmed = False
     if wait_for_ready:
-        ready_confirmed, _ = await wait_for_editor_ready(
-            ctx, timeout_s=REFRESH_READY_TIMEOUT_SECONDS
-        )
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            ready_confirmed, _ = await wait_for_editor_ready(ctx, timeout_s=remaining)
 
         # If we timed out without confirming readiness, log and return failure
         if not ready_confirmed:
             logger.warning(
                 "refresh_unity: Timed out after %ss waiting for editor to become ready",
-                REFRESH_READY_TIMEOUT_SECONDS,
+                timeout_seconds,
             )
             return with_compilation(
                 MCPResponse(
                     success=False,
-                    message=f"Refresh triggered but timed out after {REFRESH_READY_TIMEOUT_SECONDS:g}s waiting for editor readiness.",
-                    data={"timeout": True, "wait_seconds": REFRESH_READY_TIMEOUT_SECONDS},
+                    message=f"Refresh triggered but timed out after {timeout_seconds:g}s waiting for editor readiness.",
+                    data={"timeout": True, "wait_seconds": timeout_seconds},
                 )
             )
 
@@ -378,7 +431,12 @@ async def refresh_unity(
         and (recovered_from_disconnect or compilation["reason"] != "tracking_unsupported")
     ):
         try:
-            compilation = await read_compile_job(unity_instance, compile_id)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Compilation observation budget exhausted")
+            compilation = await asyncio.wait_for(
+                read_compile_job(unity_instance, compile_id), timeout=remaining
+            )
         except Exception:
             compilation = unknown_compile_job(compile_id, "observation_unavailable")
 

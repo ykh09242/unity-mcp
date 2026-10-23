@@ -231,7 +231,9 @@ async def _scenario(case):
             if case in ("dirty_assets_ready", "dirty_script_compiles"):
                 refresh_requests = [r for r in requests if r["command"] == "refresh_unity"]
                 assert len(refresh_requests) == 1
-                assert refresh_requests[0]["params"] == {
+                refresh_params = dict(refresh_requests[0]["params"])
+                assert 0 < refresh_params.pop("timeout_seconds") <= 300
+                assert refresh_params == {
                     "mode": "if_dirty",
                     "scope": "all",
                     "compile": "none",
