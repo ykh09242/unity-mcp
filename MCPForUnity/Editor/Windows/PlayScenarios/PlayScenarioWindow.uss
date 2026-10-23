@@ -20,20 +20,23 @@
     padding: 8px;
     min-width: 0;
 }
-.scenario-library {
-    width: 180px;
-    flex-shrink: 0;
-    margin-right: 8px;
-}
-.scenario-editor {
-    flex-grow: 3;
-    flex-basis: 0;
-    margin-right: 8px;
-}
-.scenario-results {
-    flex-grow: 2;
-    flex-basis: 0;
-}
+.scenario-library { min-width: 150px; }
+.scenario-editor { min-width: 280px; }
+.scenario-results { min-width: 280px; }
+.scenario-split { flex-grow: 1; min-width: 0; min-height: 0; }
+.scenario-tabs { display: none; }
+.scenario-compact .scenario-tabs { display: flex; }
+.scenario-tab { flex-grow: 1; min-height: 28px; }
+.scenario-tab-selected { border-bottom-width: 2px; border-bottom-color: var(--mcp-accent); -unity-font-style: bold; }
+.scenario-compact .scenario-panel { min-width: 0; flex-grow: 1; flex-shrink: 1; }
+.scenario-primary-actions { flex-shrink: 0; }
+.scenario-short .scenario-heading, .scenario-short .scenario-intro { display: none; }
+.scenario-short.play-scenarios { padding: 8px; }
+.scenario-short .scenario-message { min-height: 0; margin-top: 4px; }
+#scenarioEditorScroll, #scenarioAuthoring, #scenarioSteps { min-width: 0; }
+#scenarioEditorScroll .unity-base-field { min-width: 0; }
+.scenario-compact #scenarioEditorScroll .unity-base-field { flex-direction: column; }
+.scenario-compact #scenarioEditorScroll .unity-base-field__label { min-width: 0; margin-bottom: 3px; }
 .scenario-section-title {
     -unity-font-style: bold;
     font-size: 14px;

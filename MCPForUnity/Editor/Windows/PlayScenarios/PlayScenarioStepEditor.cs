@@ -35,11 +35,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private static readonly ConditionalWeakTable<PlayScenarioStep, StateValueDraft> StateValueDrafts =
             new ConditionalWeakTable<PlayScenarioStep, StateValueDraft>();
 
-        internal static void Render(ScrollView stepList, PlayScenarioDefinition draft, Action<Action> edit, Action<string, bool> setMessage) =>
+        internal static void Render(VisualElement stepList, PlayScenarioDefinition draft, Action<Action> edit, Action<string, bool> setMessage) =>
             Render(stepList, draft.Steps, "", edit, setMessage);
 
         internal static void Render(
-            ScrollView stepList,
+            VisualElement stepList,
             List<PlayScenarioStep> steps,
             string prefix,
             Action<Action> edit,
@@ -632,7 +632,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         }
 
         private static void DuplicateStep(
-            ScrollView stepList,
+            VisualElement stepList,
             List<PlayScenarioStep> steps,
             string prefix,
             int index,
@@ -649,7 +649,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         }
 
         private static void DeleteStep(
-            ScrollView stepList,
+            VisualElement stepList,
             List<PlayScenarioStep> steps,
             string prefix,
             int index,
@@ -663,7 +663,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         }
 
         private static void MoveStep(
-            ScrollView stepList,
+            VisualElement stepList,
             List<PlayScenarioStep> steps,
             string prefix,
             int index,

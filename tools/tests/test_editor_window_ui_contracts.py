@@ -128,6 +128,8 @@ def test_static_controller_bindings_have_markup_targets(relative: str) -> None:
             for element in ET.parse(WINDOWS / "EditorPrefs/EditorPrefItem.uxml").iter()
             if "name" in element.attrib
         }
+    # Controllers also create named controls at runtime; Unity tests cover their attachment.
+    names |= set(re.findall(r'\bname\s*=\s*"([^"\n]+)"', source))
     references = set(re.findall(r'\.Q<[^>]+>\("([^"\n]+)"\)', source))
     # Logos are inserted by CreateGUI, not authored in UXML.
     references -= {"header-logo", "setup-logo"}

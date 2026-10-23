@@ -143,7 +143,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         internal PlayScenarioSoakComparisonEditor(
             VisualElement parent,
             Func<string, string> choose,
-            Func<string, CancellationToken, PlayScenarioSoakComparisonSnapshot> read = null
+            Func<string, CancellationToken, PlayScenarioSoakComparisonSnapshot> read = null,
+            bool disposeOnDetach = true
         )
         {
             section = new Foldout { text = "Compare saved Player soaks", name = "playerSoakComparison" };
@@ -214,7 +215,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             content.Add(paging);
             rows = new VisualElement { name = "soakComparisonRows" };
             content.Add(rows);
-            section.RegisterCallback<DetachFromPanelEvent>(OnDetached);
+            // A responsive window owns disposal while moving this section between panes.
+            if (disposeOnDetach)
+                section.RegisterCallback<DetachFromPanelEvent>(OnDetached);
             parent.Add(section);
             Refresh();
         }

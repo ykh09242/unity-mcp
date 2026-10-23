@@ -65,7 +65,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             VisualElement parent,
             Action<string, bool> message,
             Func<string> chooseFile,
-            Func<string, CancellationToken, SessionSnapshot> read = null
+            Func<string, CancellationToken, SessionSnapshot> read = null,
+            bool disposeOnDetach = true
         )
         {
             this.message = message;
@@ -126,7 +127,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             section.Add(details);
             parent.Add(section);
             section.userData = worker;
-            section.RegisterCallback<DetachFromPanelEvent>(OnDetached);
+            // A responsive window owns disposal while moving this section between panes.
+            if (disposeOnDetach)
+                section.RegisterCallback<DetachFromPanelEvent>(OnDetached);
             previous.SetEnabled(false);
             next.SetEnabled(false);
         }

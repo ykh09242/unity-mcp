@@ -80,11 +80,25 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private bool draftValid;
         private PlayScenarioStore injectedStore;
         private ScrollView scenarioList;
-        private ScrollView stepList;
+        private VisualElement scenarioColumns;
+        private VisualElement libraryPane;
+        private VisualElement editorPane;
+        private VisualElement resultsPane;
+        private bool? compactScenarioLayout;
+
+        [SerializeField]
+        private string selectedScenarioPane = "edit";
+
+        [SerializeField]
+        private float scenarioLibraryWidth = 180;
+
+        [SerializeField]
+        private float scenarioEditorWidth = 420;
+        private VisualElement stepList;
         private ScrollView runResults;
         private VisualElement optionsContainer;
-        private ScrollView setupList;
-        private ScrollView cleanupList;
+        private VisualElement setupList;
+        private VisualElement cleanupList;
         private PlayScenarioHistoryEditor history;
         private PlayScenarioPlayerSessionEditor playerSessionEditor;
         private PlayScenarioSoakEditor playerSoakEditor;
@@ -136,7 +150,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private void OnEnable()
         {
             titleContent = new GUIContent("Play Scenarios");
-            minSize = new Vector2(850, 560);
+            minSize = new Vector2(500, 340);
             saveChangesMessage = "Save changes to this Play Scenario before closing?";
             draft = null;
             RestoreDraft();
@@ -150,6 +164,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private void OnDisable()
         {
+            RememberPaneWidths();
+            rootVisualElement.UnregisterCallback<GeometryChangedEvent>(OnScenarioGeometryChanged);
             playerSessionEditor?.Dispose();
             playerSoakEditor?.Dispose();
             playerSoakComparisonEditor?.Dispose();
@@ -174,7 +190,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         {
             StopPolling();
             RestoreDraft();
+            rootVisualElement.UnregisterCallback<GeometryChangedEvent>(OnScenarioGeometryChanged);
+            RememberPaneWidths();
             rootVisualElement.Clear();
+            compactScenarioLayout = null;
             renderedReportJson = null;
             rootVisualElement.AddToClassList("mcp-editor");
             rootVisualElement.AddToClassList("play-scenarios");
@@ -190,15 +209,33 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             var heading = new Label("Play Scenarios");
             heading.AddToClassList("scenario-heading");
             rootVisualElement.Add(heading);
-            rootVisualElement.Add(
-                Note("Save a repeatable menu → Start → game → Player flow. Configure scene assets and exact hierarchy paths or stable test IDs before running.")
+            var intro = Note(
+                "Save a repeatable menu → Start → game → Player flow. Configure scene assets and exact hierarchy paths or stable test IDs before running."
             );
+            intro.AddToClassList("scenario-intro");
+            rootVisualElement.Add(intro);
+            var tabs = Row();
+            tabs.AddToClassList("scenario-tabs");
+            foreach (var entry in new[] { (Id: "library", Title: "Library"), (Id: "edit", Title: "Edit"), (Id: "run", Title: "Run & results") })
+            {
+                string id = entry.Id;
+                var tab = ActionButton(entry.Title, "scenario-tab-" + id, () => SelectScenarioPane(id));
+                tab.AddToClassList("scenario-tab");
+                tabs.Add(tab);
+            }
+            rootVisualElement.Add(tabs);
             var columns = new VisualElement();
             columns.AddToClassList("scenario-columns");
             rootVisualElement.Add(columns);
             BuildSavedList(columns);
             BuildEditor(columns);
             BuildResults(columns);
+            scenarioColumns = columns;
+            libraryPane = columns.Q(className: "scenario-library");
+            editorPane = columns.Q(className: "scenario-editor");
+            resultsPane = columns.Q(className: "scenario-results");
+            rootVisualElement.RegisterCallback<GeometryChangedEvent>(OnScenarioGeometryChanged);
+            UpdateScenarioLayout(position.width, position.height);
             message = new Label { name = "scenarioMessage" };
             message.AddToClassList("scenario-message");
             rootVisualElement.Add(message);
@@ -208,6 +245,92 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 RefreshRunStatus();
             else
                 RenderReport();
+        }
+
+        private void OnScenarioGeometryChanged(GeometryChangedEvent evt) => UpdateScenarioLayout(evt.newRect.width, evt.newRect.height);
+
+        private void RememberPaneWidths()
+        {
+            if (compactScenarioLayout != false)
+                return;
+            if (libraryPane != null && libraryPane.resolvedStyle.width > 0)
+                scenarioLibraryWidth = libraryPane.resolvedStyle.width;
+            if (editorPane != null && editorPane.resolvedStyle.width > 0)
+                scenarioEditorWidth = editorPane.resolvedStyle.width;
+        }
+
+        private void UpdateScenarioLayout(float width, float height)
+        {
+            if (scenarioColumns == null || float.IsNaN(width) || width <= 0)
+                return;
+            rootVisualElement.EnableInClassList("scenario-short", height > 0 && height < 480);
+            bool compact = width < 1000;
+            if (compactScenarioLayout == compact)
+                return;
+            RememberPaneWidths();
+            var focused = rootVisualElement.focusController?.focusedElement as VisualElement;
+            if (focused != null)
+            {
+                if (libraryPane.Contains(focused))
+                    selectedScenarioPane = "library";
+                if (editorPane.Contains(focused))
+                    selectedScenarioPane = "edit";
+                if (resultsPane.Contains(focused))
+                    selectedScenarioPane = "run";
+            }
+            compactScenarioLayout = compact;
+            rootVisualElement.EnableInClassList("scenario-compact", compact);
+            libraryPane.RemoveFromHierarchy();
+            editorPane.RemoveFromHierarchy();
+            resultsPane.RemoveFromHierarchy();
+            scenarioColumns.Clear();
+            if (compact)
+            {
+                // SplitView writes fixed pane geometry inline; reset it before using the whole viewport.
+                foreach (var pane in new[] { libraryPane, editorPane, resultsPane })
+                {
+                    pane.style.width = StyleKeyword.Null;
+                    pane.style.flexBasis = StyleKeyword.Null;
+                    pane.style.flexGrow = 1;
+                    scenarioColumns.Add(pane);
+                }
+                SelectScenarioPane(selectedScenarioPane);
+            }
+            else
+            {
+                foreach (var pane in new[] { libraryPane, editorPane, resultsPane })
+                {
+                    pane.style.display = DisplayStyle.Flex;
+                    pane.style.width = StyleKeyword.Null;
+                    pane.style.flexBasis = StyleKeyword.Null;
+                    pane.style.flexGrow = 0;
+                }
+                float libraryWidth = Mathf.Clamp(scenarioLibraryWidth, 150, width - 650);
+                var split = new TwoPaneSplitView(0, libraryWidth, TwoPaneSplitViewOrientation.Horizontal);
+                split.AddToClassList("scenario-split");
+                var detail = new TwoPaneSplitView(0, Mathf.Clamp(scenarioEditorWidth, 280, width - libraryWidth - 320), TwoPaneSplitViewOrientation.Horizontal);
+                detail.AddToClassList("scenario-split");
+                split.Add(libraryPane);
+                split.Add(detail);
+                detail.Add(editorPane);
+                detail.Add(resultsPane);
+                scenarioColumns.Add(split);
+            }
+            if (focused != null && focused.panel != null && focused.resolvedStyle.display != DisplayStyle.None)
+                focused.Focus();
+        }
+
+        private void SelectScenarioPane(string id)
+        {
+            selectedScenarioPane = id == "library" || id == "run" ? id : "edit";
+            if (compactScenarioLayout == true)
+            {
+                libraryPane.style.display = selectedScenarioPane == "library" ? DisplayStyle.Flex : DisplayStyle.None;
+                editorPane.style.display = selectedScenarioPane == "edit" ? DisplayStyle.Flex : DisplayStyle.None;
+                resultsPane.style.display = selectedScenarioPane == "run" ? DisplayStyle.Flex : DisplayStyle.None;
+            }
+            foreach (string pane in new[] { "library", "edit", "run" })
+                rootVisualElement.Q<Button>("scenario-tab-" + pane)?.EnableInClassList("scenario-tab-selected", pane == selectedScenarioPane);
         }
 
         private void BuildSavedList(VisualElement columns)
@@ -226,7 +349,10 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private void BuildEditor(VisualElement columns)
         {
-            var panel = Panel("scenario-editor", "Definition");
+            var container = Panel("scenario-editor", "Definition");
+            var panel = new ScrollView { name = "scenarioEditorScroll" };
+            panel.AddToClassList("scenario-scroll");
+            container.Add(panel);
             nameField = new TextField("Name") { name = "scenarioName" };
             nameField.RegisterValueChangedCallback(evt => Edit(() => draft.Name = evt.newValue));
             panel.Add(nameField);
@@ -262,8 +388,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             preflightResult = new Label { name = "preflightResult" };
             preflightResult.AddToClassList("scenario-note");
             panel.Add(preflightResult);
-            var authoring = new ScrollView { name = "scenarioAuthoring" };
-            authoring.AddToClassList("scenario-scroll");
+            var authoring = new VisualElement { name = "scenarioAuthoring" };
+            authoring.style.flexShrink = 0;
             optionsContainer = new VisualElement();
             authoring.Add(optionsContainer);
             suiteEditor = new PlayScenarioSuiteEditor(
@@ -291,12 +417,12 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 }
             );
             setupList = BuildStage(authoring, "Setup", "setup");
-            stepList = new ScrollView { name = "scenarioSteps" };
+            stepList = new VisualElement { name = "scenarioSteps" };
             authoring.Add(new Label("Main steps"));
             authoring.Add(stepList);
             cleanupList = BuildStage(authoring, "Cleanup", "cleanup");
             panel.Add(authoring);
-            columns.Add(panel);
+            columns.Add(container);
         }
 
         private void BuildResults(VisualElement columns)
@@ -335,7 +461,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             buildPlayerButton.tooltip =
                 "Builds the clean saved scenario as a Windows x64 Mono test Player in an explicitly chosen empty folder. The executable is launched separately.";
             toolbar.Add(buildPlayerButton);
-            panel.Add(toolbar);
+            toolbar.AddToClassList("scenario-primary-actions");
+            rootVisualElement.Insert(rootVisualElement.IndexOf(columns), toolbar);
             panel.Add(
                 Note(
                     "Closing this window does not cancel a run. Use Cancel Run to stop it. Cleanup runs after completion, failure, timeout or cancellation when possible. Finishing leaves Play Mode unchanged."
@@ -351,27 +478,30 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             playerSessionEditor = new PlayScenarioPlayerSessionEditor(
                 panel,
                 SetMessage,
-                () => ChoosePlayerSessionFile != null ? ChoosePlayerSessionFile() : EditorUtility.OpenFilePanel("Open Player session.json", "", "json")
+                () => ChoosePlayerSessionFile != null ? ChoosePlayerSessionFile() : EditorUtility.OpenFilePanel("Open Player session.json", "", "json"),
+                disposeOnDetach: false
             );
             playerSoakEditor = new PlayScenarioSoakEditor(
                 panel,
                 SetMessage,
-                () => ChoosePlayerSoakFile != null ? ChoosePlayerSoakFile() : EditorUtility.OpenFilePanel("Open Player soak evidence", "", "json")
+                () => ChoosePlayerSoakFile != null ? ChoosePlayerSoakFile() : EditorUtility.OpenFilePanel("Open Player soak evidence", "", "json"),
+                disposeOnDetach: false
             );
             playerSoakComparisonEditor = new PlayScenarioSoakComparisonEditor(
                 panel,
                 side =>
                     ChoosePlayerSoakComparisonFile != null
                         ? ChoosePlayerSoakComparisonFile(side)
-                        : EditorUtility.OpenFilePanel("Open " + side.ToLowerInvariant() + " soak evidence", "", "json")
+                        : EditorUtility.OpenFilePanel("Open " + side.ToLowerInvariant() + " soak evidence", "", "json"),
+                disposeOnDetach: false
             );
             columns.Add(container);
         }
 
-        private ScrollView BuildStage(VisualElement parent, string title, string stage)
+        private VisualElement BuildStage(VisualElement parent, string title, string stage)
         {
             var section = new Foldout { text = title + " steps", name = stage + "Steps" };
-            var list = new ScrollView();
+            var list = new VisualElement();
             section.Add(
                 ActionButton(
                     "Add " + title + " Step",
