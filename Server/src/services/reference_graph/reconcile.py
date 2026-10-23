@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import csv
+import contextvars
+from functools import partial
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 import hashlib
@@ -31,7 +33,7 @@ from services.reference_graph.store import Edge, Observation, RevisionConflict, 
 from services.reference_graph.workspace import GraphWorkspace
 
 
-async def drained_task(task: asyncio.Task, *, _cancel_event: threading.Event | None = None):
+async def drained_task(task: asyncio.Future, *, _cancel_event: threading.Event | None = None):
     """Repeated caller cancellation cannot abandon an owned cleanup or thread."""
     cancelled = False
     while not task.done():
@@ -51,10 +53,14 @@ async def drained_task(task: asyncio.Task, *, _cancel_event: threading.Event | N
 
 async def drained_thread(function, *args, _cancel_event: threading.Event | None = None, **kwargs):
     """Cancellation must not abandon a thread that can still publish or read."""
-    return await drained_task(
-        asyncio.create_task(asyncio.to_thread(function, *args, **kwargs)),
-        _cancel_event=_cancel_event,
+    # Runner teardown cancels every Task, including asyncio.to_thread wrappers.
+    # Retain the executor Future itself: shielded caller cancellation cannot mark
+    # physical work complete before the underlying thread actually returns.
+    context = contextvars.copy_context()
+    future = asyncio.get_running_loop().run_in_executor(
+        None, partial(context.run, function, *args, **kwargs)
     )
+    return await drained_task(future, _cancel_event=_cancel_event)
 
 
 class Reconciler:

@@ -1277,3 +1277,164 @@ async def test_superseded_editor_cannot_install_after_newer_resolution(
         release.set()
         await asyncio.gather(old, return_exceptions=True)
         await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_observation_keeps_blocked_writer_owned(setup, monkeypatch):
+    service, _, ctx = setup
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_SHUTDOWN_TIMEOUT_SECONDS", "0.02")
+    entry, _ = await service.resolve(ctx, "status")
+    entered, release = threading.Event(), threading.Event()
+    original = entry.workspace.set_progress
+
+    def held(*args, **kwargs):
+        entered.set()
+        assert release.wait(watchdog_timeout()), "Owned writer must be released by the fixture"
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(entry.workspace, "set_progress", held)
+    service.start(entry)
+    closing = None
+    try:
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+        closing = asyncio.create_task(service.aclose())
+        done, _ = await asyncio.wait({closing}, timeout=watchdog_timeout())
+        assert closing in done, "A blocked writer must not hold the shutdown observation"
+        assert closing.result() is False
+        assert service.shutdown_status["state"] == "draining"
+        owner = service._close_task
+        assert service.tasks and not owner.done()
+        assert not entry.workspace.acquire("replacement"), (
+            "Observation expiry cannot release a live writer lease"
+        )
+        assert await service.aclose() is False
+        assert service._close_task is owner
+        release.set()
+        await asyncio.wait_for(asyncio.shield(owner), watchdog_timeout())
+        assert await service.aclose() is True
+        assert service.shutdown_status["state"] == "drained"
+        assert not service.tasks and not service.entries
+        assert entry.workspace.acquire("replacement")
+        entry.workspace.release("replacement")
+    finally:
+        release.set()
+        if closing is not None:
+            await asyncio.gather(closing, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_shutdown_observers_share_database_open_drain(setup, monkeypatch):
+    from services.reference_graph.store import GraphStore
+
+    service, _, ctx = setup
+    entered, release = threading.Event(), threading.Event()
+    original = GraphStore.open
+
+    def held(*args, **kwargs):
+        entered.set()
+        assert release.wait(watchdog_timeout())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(GraphStore, "open", held)
+    opening = asyncio.create_task(service.resolve(ctx, "status"))
+    observers = []
+    try:
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+        for _ in range(2):
+            observer = asyncio.create_task(service.aclose())
+            observers.append(observer)
+            await asyncio.sleep(0)
+            observer.cancel()
+            await asyncio.gather(observer, return_exceptions=True)
+        assert service.closed
+        owner = service._close_task
+        assert not owner.done() and not owner.cancelling()
+        assert service.shutdown_status["pending_resolutions"] == 1
+        release.set()
+        await asyncio.wait_for(asyncio.shield(owner), watchdog_timeout())
+        assert await service.aclose() is True
+        assert service._close_task is owner
+        assert not service.entries and not service._coordination
+    finally:
+        release.set()
+        await asyncio.gather(opening, *observers, return_exceptions=True)
+        await service.aclose()
+
+
+def test_runner_shutdown_keeps_physical_writer_lease_until_thread_finishes(setup, monkeypatch):
+    service, _, ctx = setup
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_SHUTDOWN_TIMEOUT_SECONDS", "0.01")
+    entered, release = threading.Event(), threading.Event()
+    main_returned, lease_released = threading.Event(), threading.Event()
+    captured, errors, premature = {}, [], []
+
+    async def run():
+        entry, _ = await service.resolve(ctx, "status")
+        captured["entry"] = entry
+        write, release_lease = entry.workspace.set_progress, entry.workspace.release
+
+        def held_write(*args, **kwargs):
+            entered.set()
+            assert release.wait(watchdog_timeout()), "The owned fixture must release its writer"
+            return write(*args, **kwargs)
+
+        def tracked_release(owner):
+            premature.append(not release.is_set())
+            release_lease(owner)
+            lease_released.set()
+
+        entry.workspace.set_progress = held_write
+        entry.workspace.release = tracked_release
+        service.start(entry)
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+        assert await service.aclose() is False
+        main_returned.set()
+        # Return normally: asyncio.run now cancels every pending Task, including
+        # any to_thread wrapper. No fixture drain runs before this real teardown.
+
+    def runner():
+        try:
+            asyncio.run(run())
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    held = None
+    try:
+        assert main_returned.wait(watchdog_timeout())
+        # Observe the real runner's cancellation pass while the physical writer
+        # remains held; this adjustable watchdog is not a production deadline.
+        lease_released.wait(watchdog_timeout(0.2))
+        entry = captured["entry"]
+        held = not entry.workspace.acquire("replacement")
+        if not held:
+            entry.workspace.release("replacement")
+    finally:
+        release.set()
+        thread.join(watchdog_timeout())
+    assert not thread.is_alive() and not errors, errors
+    assert held, "Runner teardown must not admit another writer while the old thread lives"
+    assert premature and not any(premature), "Lease release must follow physical completion"
+    assert captured["entry"].workspace.acquire("after-runner")
+    captured["entry"].workspace.release("after-runner")
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_completed_shutdown_can_be_observed_after_its_event_loop_closed(setup, monkeypatch, failed):
+    service, _, _ = setup
+
+    async def close():
+        if failed:
+            raise RuntimeError("retained close failure")
+
+    monkeypatch.setattr(service, "_close_owned", close)
+    for _ in range(2):
+        if failed:
+            with pytest.raises(RuntimeError, match="retained close failure"):
+                asyncio.run(service.aclose())
+        else:
+            assert asyncio.run(service.aclose()) is True
+        assert service._close_task.done()
+        assert service._close_task.get_loop().is_closed()
