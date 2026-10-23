@@ -210,8 +210,8 @@ namespace MCPForUnityTests.EditMode.Windows
                     using (var submit = NavigationSubmitEvent.GetPooled())
                         apply.SendEvent(submit);
                     yield return null;
-                    Assert.IsFalse(root.Q<Label>("graph-message").ClassListContains("hidden"));
-                    StringAssert.Contains("configuration fields", root.Q<Label>("graph-message").text);
+                    Assert.IsFalse(root.Q<Label>("graph-form-message").ClassListContains("hidden"));
+                    StringAssert.Contains("line", root.Q<Label>("graph-form-message").text);
                     root.Q<TextField>("graph-config").value = "{}";
                     root.Q<Foldout>("graph-transfer").value = false;
                     scroll.scrollOffset = Vector2.zero;
