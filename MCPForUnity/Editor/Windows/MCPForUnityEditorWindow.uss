@@ -182,3 +182,9 @@
 .compact-height .page-header { display: none; }
 .compact-height .compact-page-navigation { padding-top: 4px; padding-bottom: 4px; }
 .compact-height .graph-heading { display: none; }
+
+.activity-filters { flex-direction: row; flex-wrap: wrap; }
+.activity-filters .unity-base-field { flex-grow: 1; flex-basis: 200px; min-width: 0; margin-right: 8px; margin-bottom: 6px; }
+.activity-selected { border-left-color: var(--mcp-accent); }
+#activity-selected-summary { background-color: var(--mcp-surface); padding: 10px; }
+#activity-page { align-self: center; margin-right: 8px; margin-bottom: 4px; white-space: normal; }
