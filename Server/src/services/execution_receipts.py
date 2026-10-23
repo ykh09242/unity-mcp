@@ -269,10 +269,15 @@ class ExecutionReceiptStore:
         *,
         private_root: bool = False,
         clock: Callable[[], float] = time.time,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._lock = threading.RLock()
         self._owners_lock = threading.RLock()
         self._clock = clock
+        self._monotonic = monotonic
+        self._clock_lock = threading.Lock()
+        self._clock_origin: tuple[float, float] | None = None
+        self._last_monotonic: float | None = None
         self._last_wall = 0.0
         self._poisoned = False
         self._closed = False
@@ -333,7 +338,13 @@ class ExecutionReceiptStore:
     def available(self) -> bool:
         """Report admission health without waiting on journal I/O."""
         with self._owners_lock:
-            return not self._closed and not self._poisoned
+            if self._closed or self._poisoned:
+                return False
+        try:
+            self._now()
+        except ReceiptUnavailable:
+            return False
+        return True
 
     @property
     def local_owner(self) -> str:
@@ -390,12 +401,31 @@ class ExecutionReceiptStore:
             raise ReceiptUnavailable("receipt_store_unavailable")
 
     def _now(self) -> float:
-        now = self._clock()
-        if type(now) not in (int, float) or not math.isfinite(now) or now < self._last_wall:
-            self._poisoned = True
-            raise ReceiptUnavailable("receipt_clock_unavailable")
-        self._last_wall = float(now)
-        return float(now)
+        # This short clock-only lock never waits for metadata or journal I/O.
+        with self._clock_lock:
+            try:
+                wall, monotonic = self._clock(), self._monotonic()
+                if any(
+                    type(value) not in (int, float) or not math.isfinite(value)
+                    for value in (wall, monotonic)
+                ):
+                    raise ValueError("invalid clock sample")
+                if wall < self._last_wall or (
+                    self._last_monotonic is not None and monotonic < self._last_monotonic
+                ):
+                    raise ValueError("clock moved backward")
+                origin = self._clock_origin or (float(wall), float(monotonic))
+                now = origin[0] + (monotonic - origin[1])
+                if not math.isfinite(now):
+                    raise ValueError("invalid elapsed clock")
+            except Exception as error:
+                # Clock health can recover after validated catch-up. It must not
+                # clear storage poisoning or replace persisted deduplication keys.
+                raise ReceiptUnavailable("receipt_clock_unavailable") from error
+            self._clock_origin = origin
+            self._last_wall = float(wall)
+            self._last_monotonic = float(monotonic)
+            return float(now)
 
     @staticmethod
     def _key(record: ReceiptRecord) -> tuple[str, str, str] | None:
