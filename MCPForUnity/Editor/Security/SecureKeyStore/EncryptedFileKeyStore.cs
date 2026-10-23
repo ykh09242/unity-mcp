@@ -85,13 +85,8 @@ namespace MCPForUnity.Editor.Security
         {
             if (string.IsNullOrEmpty(providerId))
                 return;
-            try
-            {
-                string path = KeyFile(providerId);
-                if (File.Exists(path))
-                    File.Delete(path);
-            }
-            catch { /* best effort */ }
+            // File.Delete is already idempotent for a missing file; access failures must propagate.
+            File.Delete(KeyFile(providerId));
         }
 
         // ---------- crypto ----------

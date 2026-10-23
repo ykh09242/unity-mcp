@@ -2,12 +2,14 @@
     <ui:VisualElement class="pref-item">
         <ui:VisualElement class="key-section">
             <ui:Label name="key-label" class="key-label" />
+            <ui:Label name="pref-state" class="help-text" />
         </ui:VisualElement>
         <ui:VisualElement class="pref-row">
             <ui:TextField name="value-field" class="value-field" />
             <ui:DropdownField name="type-dropdown" class="type-dropdown" choices="String,Int,Float,Bool" index="0" />
             <ui:VisualElement class="action-buttons">
-                <ui:Button name="save-button" text="✓" class="save-button" tooltip="Save changes" />
+                <ui:Button name="save-button" text="Save" class="save-button" tooltip="Save changes" />
+                <ui:Button name="reset-button" text="Reset" tooltip="Remove the stored value and use the application default" />
             </ui:VisualElement>
         </ui:VisualElement>
     </ui:VisualElement>

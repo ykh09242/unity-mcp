@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Security
@@ -44,20 +45,32 @@ namespace MCPForUnity.Editor.Security
     internal sealed class EnvOverlayKeyStore : ISecureKeyStore
     {
         private readonly ISecureKeyStore _inner;
+        private readonly Func<string, string> environmentLookup;
 
-        public EnvOverlayKeyStore(ISecureKeyStore inner)
+        public EnvOverlayKeyStore(ISecureKeyStore inner, Func<string, string> environmentLookup = null)
         {
             _inner = inner;
+            this.environmentLookup = environmentLookup ?? Environment.GetEnvironmentVariable;
         }
+
+        private bool TryEnvironment(string providerId, out string key)
+        {
+            key = string.IsNullOrEmpty(providerId) ? null : environmentLookup(EnvKeyOverride.EnvVarName(providerId));
+            return !string.IsNullOrEmpty(key);
+        }
+
+        internal bool HasStoredKey(string providerId) => _inner.Has(providerId);
+
+        internal bool HasEnvironmentKey(string providerId) => TryEnvironment(providerId, out _);
 
         public bool TryGet(string providerId, out string apiKey)
         {
-            if (EnvKeyOverride.TryGet(providerId, out apiKey))
+            if (TryEnvironment(providerId, out apiKey))
                 return true;
             return _inner.TryGet(providerId, out apiKey);
         }
 
-        public bool Has(string providerId) => EnvKeyOverride.TryGet(providerId, out _) || _inner.Has(providerId);
+        public bool Has(string providerId) => HasEnvironmentKey(providerId) || HasStoredKey(providerId);
 
         public void Set(string providerId, string apiKey) => _inner.Set(providerId, apiKey);
 

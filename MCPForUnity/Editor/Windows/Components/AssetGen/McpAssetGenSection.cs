@@ -404,7 +404,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             saveButton.AddToClassList("icon-button");
             fieldRow.Add(saveButton);
 
-            var clearButton = new Button { text = "Clear" };
+            var clearButton = new Button { text = "Remove saved key" };
             clearButton.AddToClassList("icon-button");
             fieldRow.Add(clearButton);
 
@@ -431,10 +431,9 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                     SetStatus(statusLabel, "saved ✓", true);
                     RebuildIfSharedKey(id);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    McpLog.Warn($"Failed to store {id} key: {ex.Message}");
-                    SetStatus(statusLabel, "save failed", false);
+                    SetStatus(statusLabel, "Save failed. Check secure-store access and retry.", false);
                 }
             }
 
@@ -445,15 +444,27 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             {
                 try
                 {
-                    SecureKeyStore.Current.Delete(id);
+                    var store = SecureKeyStore.Current;
+                    store.Delete(id);
+                    if (store is EnvOverlayKeyStore overlay ? overlay.HasStoredKey(id) : store.Has(id))
+                    {
+                        SetStatus(statusLabel, "Removal failed: key is still stored. Check secure-store access and retry.", false);
+                        return;
+                    }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    McpLog.Warn($"Failed to delete {id} key: {ex.Message}");
+                    SetStatus(
+                        statusLabel,
+                        "Removal failed or unconfirmed. The key may already be absent or storage unavailable. Check secure-store access.",
+                        false
+                    );
+                    return;
                 }
 
                 keyField.SetValueWithoutNotify(string.Empty);
-                SetStatus(statusLabel, "not set", false);
+                bool environmentKey = SecureKeyStore.Current is EnvOverlayKeyStore env && env.HasEnvironmentKey(id);
+                SetStatus(statusLabel, environmentKey ? "Saved key removed; environment override remains active" : "not set", environmentKey);
                 RebuildIfSharedKey(id);
             };
 

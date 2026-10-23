@@ -34,6 +34,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
         private Button browseScreenshotsFolderButton;
         private Button clearScreenshotsFolderButton;
         private TextField deploySourcePath;
+        private bool deploymentDraftDirty;
         private Button browseDeploySourceButton;
         private Button clearDeploySourceButton;
         private Button deployButton;
@@ -293,24 +294,12 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 });
             }
 
-            deploySourcePath.RegisterValueChangedCallback(evt =>
+            deploySourcePath.RegisterValueChangedCallback(_ =>
             {
-                string path = evt.newValue?.Trim();
-                if (string.IsNullOrEmpty(path) || path == "Not set")
-                {
-                    return;
-                }
-
-                try
-                {
-                    MCPServiceLocator.Deployment.SetStoredSourcePath(path);
-                }
-                catch (Exception ex)
-                {
-                    EditorUtility.DisplayDialog("Invalid Source", ex.Message, "OK");
-                    UpdateDeploymentSection();
-                }
+                deploymentDraftDirty = true;
+                SetDeployStatus("Unsaved package source. Apply saves the path; Deploy checks the full package tree.");
             });
+            Root.Q<Button>("apply-deploy-source-button").clicked += () => ApplyDeploymentSource();
 
             if (screenshotsFolderOverride != null)
             {
@@ -558,7 +547,8 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             var deployService = MCPServiceLocator.Deployment;
 
             string sourcePath = deployService.GetStoredSourcePath();
-            deploySourcePath.value = sourcePath ?? string.Empty;
+            if (!deploymentDraftDirty)
+                deploySourcePath.SetValueWithoutNotify(sourcePath ?? string.Empty);
 
             deployTargetLabel.text = $"Target: {deployService.GetTargetDisplayPath()}";
 
@@ -628,29 +618,43 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 return;
             }
 
+            deploySourcePath.value = picked;
+            ApplyDeploymentSource();
+        }
+
+        private bool ApplyDeploymentSource()
+        {
             try
             {
-                MCPServiceLocator.Deployment.SetStoredSourcePath(picked);
-                SetDeployStatus($"Source set: {picked}");
+                MCPServiceLocator.Deployment.SetStoredSourcePath(deploySourcePath.value?.Trim());
+                deploymentDraftDirty = false;
+                UpdateDeploymentSection();
+                SetDeployStatus("Source path saved for this project. The full package tree is checked when you Deploy.");
+                return true;
             }
-            catch (Exception ex)
+            catch (ArgumentException ex)
             {
-                EditorUtility.DisplayDialog("Invalid Source", ex.Message, "OK");
-                SetDeployStatus("Source selection failed");
+                SetDeployStatus(ex.Message, true);
             }
-
-            UpdateDeploymentSection();
+            catch (Exception)
+            {
+                SetDeployStatus("Could not save the source path. Check folder access and try again.", true);
+            }
+            return false;
         }
 
         private void OnClearDeploySourceClicked()
         {
             MCPServiceLocator.Deployment.ClearStoredSourcePath();
+            deploymentDraftDirty = false;
             UpdateDeploymentSection();
             SetDeployStatus("Source cleared");
         }
 
         private void OnDeployClicked()
         {
+            if (deploymentDraftDirty && !ApplyDeploymentSource())
+                return;
             var result = MCPServiceLocator.Deployment.DeployFromStoredSource();
             SetDeployStatus(result.Message, !result.Success);
 

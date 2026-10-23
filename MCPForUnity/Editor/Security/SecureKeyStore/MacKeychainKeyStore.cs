@@ -11,6 +11,9 @@ namespace MCPForUnity.Editor.Security
     {
         private const string Security = "/usr/bin/security";
         private const string Service = SecureKeyStoreConstants.ServiceName;
+        private readonly Func<string[], int> deleteCommand;
+
+        internal MacKeychainKeyStore(Func<string[], int> deleteCommand = null) => this.deleteCommand = deleteCommand ?? (args => Run(args).code);
 
         public bool Has(string providerId) => TryGet(providerId, out _);
 
@@ -43,7 +46,8 @@ namespace MCPForUnity.Editor.Security
         {
             if (string.IsNullOrEmpty(providerId))
                 return;
-            Run("delete-generic-password", "-s", Service, "-a", providerId);
+            if (deleteCommand(new[] { "delete-generic-password", "-s", Service, "-a", providerId }) != 0)
+                throw new InvalidOperationException("Credential removal could not be confirmed. The key may already be absent or Keychain access unavailable.");
         }
 
         private static (int code, string stdout, string stderr) Run(params string[] args)
