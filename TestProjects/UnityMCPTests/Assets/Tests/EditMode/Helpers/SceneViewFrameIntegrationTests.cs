@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
@@ -18,6 +19,7 @@ namespace MCPForUnityTests.Editor.Helpers
     public class SceneViewFrameIntegrationTests
     {
         private SceneView view;
+        private SceneFrameCoverWindow cover;
         private int drawCount;
         private GameObject negative;
         private GameObject positive;
@@ -45,13 +47,32 @@ namespace MCPForUnityTests.Editor.Helpers
             positive = new GameObject("Scene frame positive") { hideFlags = HideFlags.HideAndDontSave };
             negative.transform.position = Vector3.left * 20;
             positive.transform.position = Vector3.right * 20;
-            view = ScriptableObject.CreateInstance<SceneView>();
-            view.titleContent = new GUIContent("Owned scene frame QA");
-            view.position = new Rect(80, 80, 640, 480);
-            view.Show();
+            cover = EditorWindow.CreateWindow<SceneFrameCoverWindow>("Owned capture cover");
+            cover.position = new Rect(80, 80, 640, 480);
+            view = EditorWindow.CreateWindow<SceneView>("Owned scene frame QA", typeof(SceneFrameCoverWindow));
             view.Focus();
             SceneView.duringSceneGui += DrawExpectedColor;
             yield return null;
+
+            var gate = (SemaphoreSlim)
+                typeof(MCPForUnity.Editor.Tools.ManageScene).GetField("SceneCaptureGate", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+            Assert.That(gate.Wait(0), Is.True);
+            Vector3 beforeCanceledGrant = view.pivot;
+            using var grantedCancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            Task<object> canceledGrant;
+            try
+            {
+                canceledGrant = Capture("canceled-grant.png", positive, grantedCancellation.Token);
+                Assert.That(canceledGrant.IsCompleted, Is.False);
+            }
+            finally
+            {
+                gate.Release();
+            }
+            grantedCancellation.Cancel();
+            yield return WaitFor(canceledGrant);
+            Assert.That(canceledGrant.IsCanceled, Is.True);
+            Assert.That(view.pivot, Is.EqualTo(beforeCanceledGrant), "Cancellation after a permit grant must not reframe the Editor.");
 
             using var activeCancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             Task<object> activeCanceled = Capture("canceled-active.png", negative, activeCancellation.Token);
@@ -88,6 +109,41 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.That(greenPixel.g, Is.GreaterThan(0.8f));
             Assert.That(greenPixel.r, Is.LessThan(0.2f));
 
+            cover.ShowTab();
+            cover.Focus();
+            yield return null;
+            Assert.That(IsSelectedTab(cover), Is.True);
+            Assert.That(IsSelectedTab(view), Is.False, "The Scene View must actually be hidden behind the owned cover tab.");
+            Task<object> hidden = Capture("hidden.png", negative, lifetime.Token);
+            yield return WaitFor(hidden);
+            JObject hiddenData = RequireCapture(hidden);
+            Color hiddenPixel = ReadCenter(hiddenData.Value<string>("fullPath"));
+            Assert.That(hiddenPixel.r, Is.GreaterThan(0.8f));
+            Assert.That(hiddenPixel.g, Is.LessThan(0.2f));
+            Assert.That(IsSelectedTab(view), Is.True);
+
+            Task<object> closedCapture = Capture("closed.png", positive, lifetime.Token);
+            Assert.That(closedCapture.IsCompleted, Is.False);
+            SceneView closedView = view;
+            view.Close();
+            yield return WaitFor(closedCapture);
+            Assert.That(closedCapture.IsFaulted || closedCapture.IsCanceled, Is.False);
+            Assert.That(JObject.FromObject(closedCapture.Result).Value<bool>("success"), Is.False);
+            Assert.That(File.Exists(Path.Combine(outputDirectory, "closed.png")), Is.False);
+            view = EditorWindow.CreateWindow<SceneView>("Reopened owned scene frame QA", typeof(SceneFrameCoverWindow));
+            Assert.That(ReferenceEquals(view, closedView), Is.False);
+            view.Focus();
+            yield return null;
+            Task<object> reopened = Capture("reopened.png", positive, lifetime.Token);
+            yield return WaitFor(reopened);
+            JObject reopenedData = RequireCapture(reopened);
+            Color reopenedPixel = ReadCenter(reopenedData.Value<string>("fullPath"));
+            Assert.That(reopenedPixel.g, Is.GreaterThan(0.8f));
+            Assert.That(reopenedPixel.r, Is.LessThan(0.2f));
+            Assert.That(Directory.GetFiles(outputDirectory, "*.png").Length, Is.EqualTo(4));
+            foreach (Delegate callback in EditorApplication.update?.GetInvocationList() ?? Array.Empty<Delegate>())
+                Assert.That(callback.Target?.GetType().Name, Is.Not.EqualTo("SceneViewRepaintWait"));
+
             var evidence = new JObject
             {
                 ["unity_version"] = Application.unityVersion,
@@ -98,10 +154,22 @@ namespace MCPForUnityTests.Editor.Helpers
                 ["green_pixel"] = new JArray(greenPixel.r, greenPixel.g, greenPixel.b),
                 ["active_cancellation"] = activeCanceled.IsCanceled,
                 ["queued_cancellation"] = canceledQueued.IsCanceled,
+                ["granted_cancellation"] = canceledGrant.IsCanceled,
+                ["hidden_tab"] = hiddenData["path"],
+                ["hidden_pixel"] = new JArray(hiddenPixel.r, hiddenPixel.g, hiddenPixel.b),
+                ["reopened_view"] = reopenedData["path"],
+                ["reopened_pixel"] = new JArray(reopenedPixel.r, reopenedPixel.g, reopenedPixel.b),
+                ["closed_capture_rejected"] = true,
+                ["exact_completed_files"] = 4,
             };
             File.WriteAllText(Path.Combine(projectRoot, outputFolder, "evidence.json"), evidence.ToString());
             TestContext.WriteLine("Scene frame evidence: " + outputFolder);
         }
+
+        public sealed class SceneFrameCoverWindow : EditorWindow { }
+
+        private static bool IsSelectedTab(EditorWindow window) =>
+            (bool)typeof(EditorWindow).GetMethod("IsSelectedTab", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, null);
 
         private Task<object> Capture(string name, GameObject target, CancellationToken token) =>
             CaptureCamera.HandleCommand(
@@ -187,6 +255,8 @@ namespace MCPForUnityTests.Editor.Helpers
             SceneView.duringSceneGui -= DrawExpectedColor;
             if (view != null)
                 view.Close();
+            if (cover != null)
+                cover.Close();
             if (negative != null)
                 UnityEngine.Object.DestroyImmediate(negative);
             if (positive != null)

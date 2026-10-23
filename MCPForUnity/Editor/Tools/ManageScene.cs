@@ -1018,6 +1018,7 @@ namespace MCPForUnity.Editor.Tools
                 entered = await SceneCaptureGate.WaitAsync(TimeSpan.FromSeconds(frameWait), operation.Token);
                 if (!entered)
                     throw new TimeoutException("Scene View capture remained busy within timeout_seconds. No screenshot was written.");
+                operation.Token.ThrowIfCancellationRequested();
                 string sceneViewFolderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
                 ScreenshotCaptureResult result;
                 int viewportWidth;
