@@ -42,6 +42,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private readonly IToolDiscoveryService _toolDiscoveryService;
         private readonly object _ownershipLock = new object();
+        private readonly Dictionary<CancellationTokenSource, Task> _cancellations = new Dictionary<CancellationTokenSource, Task>();
         private ClientWebSocket _socket;
         private CancellationTokenSource _lifecycleCts;
         private CancellationTokenSource _connectionCts;
@@ -271,11 +272,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             try
             {
-                try
-                {
-                    lifecycleCts.Cancel();
-                }
-                catch { }
+                await CancelOwnedAsync(loops.Cts).ConfigureAwait(false);
+                await CancelOwnedAsync(lifecycleCts).ConfigureAwait(false);
                 await Task.WhenAll(previous, StopCapturedConnectionLoopsAsync(loops)).ConfigureAwait(false);
                 if (socket != null)
                 {
@@ -387,9 +385,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 lifecycleCts = _lifecycleCts;
                 loops = CaptureConnectionLoops();
-                if (loops.Commands != null)
+                if (
+                    lifecycleCts != null
+                    || loops.Cts != null
+                    || loops.Commands != null
+                    || loops.Receive != null
+                    || loops.KeepAlive != null
+                    || loops.Registration != null
+                    || loops.ToolSettings != null
+                    || loops.Publisher != null
+                )
                 {
-                    previousSettlement = _forcedCommandSettlement;
+                    previousSettlement = Task.WhenAll(_forcedCommandSettlement, _stopSettlement);
                     settlement = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                     // Publish before cancellation callbacks can attempt a restart.
                     _forcedCommandSettlement = settlement.Task;
@@ -416,20 +423,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             try
             {
-                lifecycleCts?.Cancel();
-            }
-            catch { }
-            try
-            {
-                loops.Cts?.Cancel();
-            }
-            catch { }
-            if (settlement != null)
-                _ = SettleForcedCommandsAsync(previousSettlement, loops.Commands, settlement);
-            loops.Publisher?.Dispose();
-            loops.ToolSettings?.Dispose();
-            try
-            {
                 socket?.Abort();
             }
             catch { }
@@ -438,37 +431,23 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 socket?.Dispose();
             }
             catch { }
-            _ = DisposeForcedLifetimesAsync(settlement?.Task ?? Task.CompletedTask, loops, lifecycleCts);
+            if (settlement != null)
+                _ = Task.Run(() => CompleteForcedStopAsync(previousSettlement, loops, lifecycleCts, settlement));
         }
 
-        private static async Task DisposeForcedLifetimesAsync(Task commands, ConnectionLoops loops, CancellationTokenSource lifecycle)
+        private async Task CompleteForcedStopAsync(
+            Task previous,
+            ConnectionLoops loops,
+            CancellationTokenSource lifecycle,
+            TaskCompletionSource<bool> settlement
+        )
         {
             try
             {
-                await Task.WhenAll(
-                        commands,
-                        loops.Receive ?? Task.CompletedTask,
-                        loops.KeepAlive ?? Task.CompletedTask,
-                        loops.Registration ?? Task.CompletedTask,
-                        loops.ToolSettings?.Completion ?? Task.CompletedTask
-                    )
-                    .ConfigureAwait(false);
-            }
-            catch { }
-            finally
-            {
-                loops.Cts?.Dispose();
+                await CancelOwnedAsync(loops.Cts).ConfigureAwait(false);
+                await CancelOwnedAsync(lifecycle).ConfigureAwait(false);
+                await Task.WhenAll(previous, StopCapturedConnectionLoopsAsync(loops)).ConfigureAwait(false);
                 lifecycle?.Dispose();
-            }
-        }
-
-        private async Task SettleForcedCommandsAsync(Task previous, ConnectionCommandWork commands, TaskCompletionSource<bool> settlement)
-        {
-            try
-            {
-                await previous.ConfigureAwait(false);
-                // Cancellation has sealed the old queue; capture all accepted work now.
-                await commands.DrainAsync().ConfigureAwait(false);
                 lock (_ownershipLock)
                 {
                     if (ReferenceEquals(_forcedCommandSettlement, settlement.Task))
@@ -481,6 +460,38 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 settlement.TrySetException(ex);
                 _ = settlement.Task.Exception;
+            }
+        }
+
+        // CancellationTokenSource.Cancel runs user callbacks synchronously. Share its
+        // actual completion across overlapping stop/reconnect owners before disposing it.
+        private Task CancelOwnedAsync(CancellationTokenSource source)
+        {
+            if (source == null)
+                return Task.CompletedTask;
+            lock (_ownershipLock)
+            {
+                if (_cancellations.TryGetValue(source, out Task pending))
+                    return pending;
+                var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _cancellations.Add(source, completion.Task);
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        source.Cancel();
+                    }
+                    catch { }
+                    finally
+                    {
+                        lock (_ownershipLock)
+                        {
+                            _cancellations.Remove(source);
+                            completion.TrySetResult(true);
+                        }
+                    }
+                });
+                return completion.Task;
             }
         }
 
@@ -549,7 +560,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             lock (_ownershipLock)
             {
                 lifecycleCts = _lifecycleCts;
-                if (lifecycleCts == null || token.IsCancellationRequested)
+                if (lifecycleCts == null || token.IsCancellationRequested || ReferenceEquals(_stoppingLifecycle, lifecycleCts))
                     return false;
                 try
                 {
@@ -742,86 +753,57 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         }
 
         /// <summary>Stops only the connection loops captured by the owning operation.</summary>
-        private async Task StopCapturedConnectionLoopsAsync(ConnectionLoops loops, bool awaitTasks = true)
+        private Task StopCapturedConnectionLoopsAsync(ConnectionLoops loops) => Task.Run(() => DrainCapturedConnectionLoopsAsync(loops));
+
+        private async Task DrainCapturedConnectionLoopsAsync(ConnectionLoops loops)
         {
-            // Keep ownership of the loops being stopped across awaits. ForceStop or a
-            // replacement connection can change these fields before an old loop finishes.
-            var connectionCts = loops.Cts;
-            var receiveTask = loops.Receive;
-            var keepAliveTask = loops.KeepAlive;
-            if (connectionCts != null && !connectionCts.IsCancellationRequested)
-            {
-                try
-                {
-                    connectionCts.Cancel();
-                }
-                catch { }
-            }
+            // Keep the captured owners across awaits; a replacement may change fields.
+            await CancelOwnedAsync(loops.Cts).ConfigureAwait(false);
             loops.Publisher?.Dispose();
             loops.ToolSettings?.Dispose();
             if (loops.ToolSettings != null)
             {
-                if (awaitTasks)
-                {
-                    await loops.ToolSettings.Completion.ConfigureAwait(false);
-                    Interlocked.CompareExchange(ref _toolSettingsRegistration, null, loops.ToolSettings);
-                }
+                await loops.ToolSettings.Completion.ConfigureAwait(false);
+                Interlocked.CompareExchange(ref _toolSettingsRegistration, null, loops.ToolSettings);
             }
             if (loops.Publisher != null)
                 Interlocked.CompareExchange(ref _statePublisher, null, loops.Publisher);
-            if (awaitTasks && loops.Commands != null)
+            if (loops.Commands != null)
             {
                 await loops.Commands.DrainAsync().ConfigureAwait(false);
                 Interlocked.CompareExchange(ref _commandWork, null, loops.Commands);
             }
-            if (awaitTasks && loops.Registration != null)
+            if (loops.Registration != null)
             {
                 try
                 {
                     await loops.Registration.ConfigureAwait(false);
                 }
                 catch { }
-                _ = Interlocked.CompareExchange(ref _registrationTask, null, loops.Registration);
+                Interlocked.CompareExchange(ref _registrationTask, null, loops.Registration);
             }
-
-            if (receiveTask != null)
+            if (loops.Receive != null)
             {
-                if (awaitTasks)
+                try
                 {
-                    try
-                    {
-                        await receiveTask.ConfigureAwait(false);
-                    }
-                    catch { }
-                    _ = Interlocked.CompareExchange(ref _receiveTask, null, receiveTask);
+                    await loops.Receive.ConfigureAwait(false);
                 }
-                else if (receiveTask.IsCompleted)
-                {
-                    _ = Interlocked.CompareExchange(ref _receiveTask, null, receiveTask);
-                }
+                catch { }
+                Interlocked.CompareExchange(ref _receiveTask, null, loops.Receive);
             }
-
-            if (keepAliveTask != null)
+            if (loops.KeepAlive != null)
             {
-                if (awaitTasks)
+                try
                 {
-                    try
-                    {
-                        await keepAliveTask.ConfigureAwait(false);
-                    }
-                    catch { }
-                    _ = Interlocked.CompareExchange(ref _keepAliveTask, null, keepAliveTask);
+                    await loops.KeepAlive.ConfigureAwait(false);
                 }
-                else if (keepAliveTask.IsCompleted)
-                {
-                    _ = Interlocked.CompareExchange(ref _keepAliveTask, null, keepAliveTask);
-                }
+                catch { }
+                Interlocked.CompareExchange(ref _keepAliveTask, null, loops.KeepAlive);
             }
-
-            if (awaitTasks && connectionCts != null)
+            if (loops.Cts != null)
             {
-                connectionCts.Dispose();
-                Interlocked.CompareExchange(ref _connectionCts, null, connectionCts);
+                loops.Cts.Dispose();
+                Interlocked.CompareExchange(ref _connectionCts, null, loops.Cts);
             }
         }
 
@@ -1696,32 +1678,30 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
-        private async Task HandleSocketClosureAsync(string reason, CancellationToken connectionToken)
+        private Task HandleSocketClosureAsync(string reason, CancellationToken connectionToken)
         {
             CancellationTokenSource lifecycleCts;
             CancellationToken lifecycleToken;
-            ConnectionLoops loops;
             lock (_ownershipLock)
             {
                 var connectionCts = _connectionCts;
                 lifecycleCts = _lifecycleCts;
                 if (connectionToken.IsCancellationRequested || connectionCts == null || lifecycleCts == null || lifecycleCts.IsCancellationRequested)
-                    return;
+                    return Task.CompletedTask;
                 try
                 {
                     if (connectionCts.Token != connectionToken)
-                        return;
+                        return Task.CompletedTask;
                     lifecycleToken = lifecycleCts.Token;
                 }
                 catch (ObjectDisposedException)
                 {
-                    return;
+                    return Task.CompletedTask;
                 }
                 if (Interlocked.CompareExchange(ref _isReconnectingFlag, 1, 0) != 0)
-                    return;
+                    return Task.CompletedTask;
                 _isConnected = false;
                 _state = TransportState.Disconnected(TransportDisplayName, reason ?? "Connection closed");
-                loops = CaptureConnectionLoops();
             }
             // Capture stack trace for debugging disconnection triggers
             var stackTrace = new System.Diagnostics.StackTrace(true);
@@ -1729,17 +1709,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
             McpLog.Warn($"[WebSocket] Connection closed: {reason}");
 
-            await StopCapturedConnectionLoopsAsync(loops, awaitTasks: false).ConfigureAwait(false);
-
             if (lifecycleToken.IsCancellationRequested || !ReferenceEquals(_lifecycleCts, lifecycleCts))
             {
                 lock (_ownershipLock)
                     if (ReferenceEquals(_lifecycleCts, lifecycleCts))
                         Interlocked.Exchange(ref _isReconnectingFlag, 0);
-                return;
+                return Task.CompletedTask;
             }
 
+            // Never await the receive loop from its own closure callback. The reconnect
+            // worker observes an independently retained cancellation/drain operation.
             _ = Task.Run(() => AttemptReconnectAsync(lifecycleToken, lifecycleCts), CancellationToken.None);
+            return Task.CompletedTask;
         }
 
         private async Task AttemptReconnectAsync(CancellationToken token, CancellationTokenSource lifecycleCts)

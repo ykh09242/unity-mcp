@@ -248,6 +248,7 @@ The automatic reconnect worker waits for actual settlement before reconnecting;
 a manual caller can retry Start after cleanup finishes. No command is replayed.
 
 ForceStop, including the synchronous reload/shutdown path, aborts the owned socket
-but retains cancellation sources until their live tasks finish. This ownership is
+immediately. User cancellation callbacks run in retained background work; sources
+and replacement-execution fences remain owned until both callbacks and live tasks finish. This ownership is
 within the current managed domain; it does not make arbitrary third-party native
 work recoverable across an Editor process termination.

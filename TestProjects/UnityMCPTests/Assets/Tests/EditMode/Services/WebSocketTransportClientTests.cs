@@ -473,7 +473,7 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
-        public void HandleSocketClosureAsync_CanceledDuringLoopStop_ReportsDisconnected()
+        public async Task HandleSocketClosureAsync_CanceledDuringLoopStop_ReportsDisconnected()
         {
             using var client = new WebSocketTransportClient();
             using var lifecycle = new CancellationTokenSource();
@@ -486,7 +486,8 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 var closure = typeof(WebSocketTransportClient).GetMethod("HandleSocketClosureAsync", BindingFlags.Instance | BindingFlags.NonPublic);
-                ((Task)closure.Invoke(client, new object[] { "Server closed connection", connection.Token })).GetAwaiter().GetResult();
+                await (Task)closure.Invoke(client, new object[] { "Server closed connection", connection.Token });
+                await AwaitControlCondition(() => (int)GetField(client, "_isReconnectingFlag") == 0);
                 Assert.IsFalse(client.IsConnected);
                 Assert.IsFalse(client.State.IsConnected, "A reconnecting transport must not publish a connected state snapshot.");
                 Assert.AreEqual("Server closed connection", client.State.Error);
@@ -805,6 +806,141 @@ namespace MCPForUnityTests.Editor.Services
                 if (restart != null)
                     await NativeProgressProbe.AwaitOwned(restart);
                 await StopOwnedProgressClient(client);
+            }
+        }
+
+        [TestCase("force")]
+        [TestCase("disconnect")]
+        public async Task HeldCancellationCallback_RetainsOwnershipWithoutBlockingControl(string transition)
+        {
+            RequireOwnedProgressEditor();
+            using var budget = new ControlObservationBudget("0.05");
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            using var releaseCallback = new ManualResetEventSlim();
+            var callbackEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            const string child = "__tcr12_held_cancel_callback";
+            int calls = 0;
+            handlers.Set(
+                child,
+                MCPForUnity.Editor.Tools.HandlerInfo.Cooperative(
+                    child,
+                    async (_, token) =>
+                    {
+                        Interlocked.Increment(ref calls);
+                        using var registration = token.Register(() =>
+                        {
+                            callbackEntered.TrySetResult(true);
+                            releaseCallback.Wait();
+                        });
+                        entered.TrySetResult(true);
+                        return await release.Task;
+                    }
+                )
+            );
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            Task force = Task.CompletedTask;
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(false);
+                string id = Guid.NewGuid().ToString("D");
+                var command = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = child }) };
+                peer.Execute(id, "batch_execute", command, false);
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                var oldConnection = (CancellationTokenSource)GetField(client, "_connectionCts");
+                var oldSocket = (ClientWebSocket)GetField(client, "_socket");
+                var work = (ConnectionCommandWork)GetField(client, "_commandWork");
+                if (transition == "force")
+                    force = Task.Run(() => client.ForceStop());
+                else
+                    peer.DropConnection();
+                await NativeProgressProbe.AwaitOwned(callbackEntered.Task);
+                if (transition == "force")
+                {
+                    await NativeProgressProbe.AwaitOwned(force);
+                    Assert.AreNotEqual(WebSocketState.Open, oldSocket.State, "Abort must not wait for user callbacks.");
+                    await NativeProgressProbe.AwaitOwned(client.StopAsync());
+                }
+                else
+                    await AwaitControlCondition(() => client.State.Error?.Contains("execution_unsettled") == true);
+                StringAssert.Contains("execution_unsettled", client.State.Error);
+                Assert.IsFalse(work.DrainAsync().IsCompleted);
+                Assert.DoesNotThrow(() =>
+                {
+                    _ = oldConnection.Token;
+                });
+                if (transition == "force")
+                    Assert.IsFalse(await client.StartAsync());
+                Assert.AreEqual(1, peer.RegisteredCount);
+                Assert.AreEqual(1, calls);
+                releaseCallback.Set();
+                release.TrySetResult(new { complete = true });
+                await NativeProgressProbe.AwaitOwned(work.DrainAsync());
+                if (transition == "force")
+                {
+                    await client.StopAsync();
+                    Assert.IsTrue(await client.StartAsync());
+                }
+                await peer.WaitRegistered(2);
+                await peer.Barrier();
+                Assert.IsTrue(client.IsConnected);
+                Assert.AreEqual(1, calls, "An uncertain mutation cannot be replayed.");
+                string next = Guid.NewGuid().ToString("D");
+                peer.Execute(next, "batch_execute", command, false);
+                await peer.Result(next);
+                Assert.AreEqual(2, calls);
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                releaseCallback.Set();
+                release.TrySetResult(new { complete = true });
+                await NativeProgressProbe.AwaitOwned(force);
+                await StopOwnedProgressClient(client);
+            }
+        }
+
+        [Test]
+        public async Task ForceStop_BeforeCommandAdmission_RetainsHeldCancellationCallback()
+        {
+            using var budget = new ControlObservationBudget("0.05");
+            using var client = new WebSocketTransportClient();
+            using var lifecycle = new CancellationTokenSource();
+            using var release = new ManualResetEventSlim();
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = lifecycle.Token.Register(() =>
+            {
+                entered.TrySetResult(true);
+                release.Wait();
+            });
+            SetField(client, "_lifecycleCts", lifecycle);
+            Task force = Task.Run(() => client.ForceStop());
+            try
+            {
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                await NativeProgressProbe.AwaitOwned(force);
+                Task settlement = (Task)GetField(client, "_forcedCommandSettlement");
+                Assert.IsFalse(settlement.IsCompleted, "Callbacks retain ownership even before a command queue exists.");
+                await client.StopAsync();
+                StringAssert.Contains("execution_unsettled", client.State.Error);
+                Assert.DoesNotThrow(() =>
+                {
+                    _ = lifecycle.Token;
+                });
+                release.Set();
+                await NativeProgressProbe.AwaitOwned(settlement);
+                await client.StopAsync();
+                Assert.IsNull(client.State.Error);
+            }
+            finally
+            {
+                release.Set();
+                await NativeProgressProbe.AwaitOwned(force);
+                await client.StopAsync();
             }
         }
 
