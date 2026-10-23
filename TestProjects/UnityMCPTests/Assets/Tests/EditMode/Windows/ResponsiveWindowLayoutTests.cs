@@ -140,8 +140,7 @@ namespace MCPForUnityTests.EditMode.Windows
                                     workers.Add(worker);
                             });
                         Assert.GreaterOrEqual(workers.Count, 5, "Session, soak, comparison and baseline readers must exist.");
-                        var name = root.Q<TextField>("copyScenarioName");
-                        name.value = "retained-flow-copy";
+                        var name = root.Q<TextField>("scenarioName");
                         name.value = "responsive-draft";
                         var step = root.Q<TextField>("stepName0");
                         step.value = "Retained step draft";
