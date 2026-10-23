@@ -780,7 +780,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     await loops.Registration.ConfigureAwait(false);
                 }
                 catch { }
-                Interlocked.CompareExchange(ref _registrationTask, null, loops.Registration);
+                _ = Interlocked.CompareExchange(ref _registrationTask, null, loops.Registration);
             }
             if (loops.Receive != null)
             {
@@ -789,7 +789,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     await loops.Receive.ConfigureAwait(false);
                 }
                 catch { }
-                Interlocked.CompareExchange(ref _receiveTask, null, loops.Receive);
+                _ = Interlocked.CompareExchange(ref _receiveTask, null, loops.Receive);
             }
             if (loops.KeepAlive != null)
             {
@@ -798,7 +798,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     await loops.KeepAlive.ConfigureAwait(false);
                 }
                 catch { }
-                Interlocked.CompareExchange(ref _keepAliveTask, null, loops.KeepAlive);
+                _ = Interlocked.CompareExchange(ref _keepAliveTask, null, loops.KeepAlive);
             }
             if (loops.Cts != null)
             {
