@@ -1277,3 +1277,86 @@ async def test_superseded_editor_cannot_install_after_newer_resolution(
         release.set()
         await asyncio.gather(old, return_exceptions=True)
         await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_observation_keeps_blocked_writer_owned(setup, monkeypatch):
+    service, _, ctx = setup
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_SHUTDOWN_TIMEOUT_SECONDS", "0.02")
+    entry, _ = await service.resolve(ctx, "status")
+    entered, release = threading.Event(), threading.Event()
+    original = entry.workspace.set_progress
+
+    def held(*args, **kwargs):
+        entered.set()
+        assert release.wait(watchdog_timeout()), "Owned writer must be released by the fixture"
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(entry.workspace, "set_progress", held)
+    service.start(entry)
+    closing = None
+    try:
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+        closing = asyncio.create_task(service.aclose())
+        done, _ = await asyncio.wait({closing}, timeout=watchdog_timeout())
+        assert closing in done, "A blocked writer must not hold the shutdown observation"
+        assert closing.result() is False
+        assert service.shutdown_status["state"] == "draining"
+        owner = service._close_task
+        assert service.tasks and not owner.done()
+        assert not entry.workspace.acquire("replacement"), (
+            "Observation expiry cannot release a live writer lease"
+        )
+        assert await service.aclose() is False
+        assert service._close_task is owner
+        release.set()
+        await asyncio.wait_for(asyncio.shield(owner), watchdog_timeout())
+        assert await service.aclose() is True
+        assert service.shutdown_status["state"] == "drained"
+        assert not service.tasks and not service.entries
+        assert entry.workspace.acquire("replacement")
+        entry.workspace.release("replacement")
+    finally:
+        release.set()
+        if closing is not None:
+            await asyncio.gather(closing, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_shutdown_observers_share_database_open_drain(setup, monkeypatch):
+    from services.reference_graph.store import GraphStore
+
+    service, _, ctx = setup
+    entered, release = threading.Event(), threading.Event()
+    original = GraphStore.open
+
+    def held(*args, **kwargs):
+        entered.set()
+        assert release.wait(watchdog_timeout())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(GraphStore, "open", held)
+    opening = asyncio.create_task(service.resolve(ctx, "status"))
+    observers = []
+    try:
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+        for _ in range(2):
+            observer = asyncio.create_task(service.aclose())
+            observers.append(observer)
+            await asyncio.sleep(0)
+            observer.cancel()
+            await asyncio.gather(observer, return_exceptions=True)
+        assert service.closed
+        owner = service._close_task
+        assert not owner.done() and not owner.cancelling()
+        assert service.shutdown_status["pending_resolutions"] == 1
+        release.set()
+        await asyncio.wait_for(asyncio.shield(owner), watchdog_timeout())
+        assert await service.aclose() is True
+        assert service._close_task is owner
+        assert not service.entries and not service._coordination
+    finally:
+        release.set()
+        await asyncio.gather(opening, *observers, return_exceptions=True)
+        await service.aclose()

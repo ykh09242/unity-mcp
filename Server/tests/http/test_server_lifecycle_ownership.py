@@ -298,3 +298,133 @@ async def test_remote_shutdown_clears_all_tenants_without_unscoped_listing(
         assert await registry.list_sessions(user_id=user) == {}
         assert await registry.get_session_id_by_hash("shared", user_id=user) is None
         ws.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["graph", "state", "receipts", "scene"])
+async def test_cleanup_failure_still_releases_every_independent_owner(
+    lifecycle_state, monkeypatch, failure
+):
+    from contextlib import asynccontextmanager
+    from services.api_key_service import ApiKeyService
+
+    @asynccontextmanager
+    async def lifetime():
+        yield
+
+    def fail(name):
+        return RuntimeError(name + " cleanup") if failure == name else None
+
+    server = FastMCP("independent-cleanup")
+    graph = SimpleNamespace(aclose=AsyncMock(side_effect=fail("graph")))
+    state = SimpleNamespace(lifespan=lifetime, clear=Mock(side_effect=fail("state")))
+    receipts = SimpleNamespace(start=AsyncMock(), close=Mock(side_effect=fail("receipts")))
+    scene = SimpleNamespace(close=Mock(side_effect=fail("scene")))
+    validator = SimpleNamespace(aclose=AsyncMock())
+    pool = SimpleNamespace(disconnect_all=Mock())
+    server._reference_graph_service = graph
+    server._unity_session_state_store = state
+    server._execution_receipts = receipts
+    server._scene_load_inputs = scene
+    monkeypatch.setattr(ApiKeyService, "is_initialized", lambda: True)
+    monkeypatch.setattr(ApiKeyService, "get_instance", lambda: validator)
+    monkeypatch.setattr(main, "_unity_connection_pool", pool)
+    shutdown = AsyncMock()
+    monkeypatch.setattr(PluginHub, "shutdown", shutdown)
+    with pytest.raises(RuntimeError, match=failure + " cleanup"):
+        async with main.server_lifespan(server):
+            pass
+    graph.aclose.assert_awaited_once()
+    state.clear.assert_called_once()
+    receipts.close.assert_called_once()
+    scene.close.assert_called_once()
+    shutdown.assert_awaited_once()
+    pool.disconnect_all.assert_called_once()
+    validator.aclose.assert_awaited_once()
+    lifecycle_state.return_value.cancel.assert_called_once()
+    assert main._plugin_registry is None and main._unity_connection_pool is None
+
+
+@pytest.mark.asyncio
+async def test_repeated_shutdown_cancellation_cannot_abandon_independent_cleanup(
+    lifecycle_state, monkeypatch
+):
+    entered, release = asyncio.Event(), asyncio.Event()
+    server = FastMCP("cancel-cleanup")
+
+    async def close_graph():
+        entered.set()
+        await release.wait()
+
+    server._reference_graph_service = SimpleNamespace(aclose=close_graph)
+    server._scene_load_inputs = SimpleNamespace(close=Mock())
+    shutdown = AsyncMock()
+    monkeypatch.setattr(PluginHub, "shutdown", shutdown)
+
+    async def run():
+        async with main.server_lifespan(server):
+            pass
+
+    pending = asyncio.create_task(run())
+    try:
+        await await_signal(entered, "graph cleanup")
+        pending.cancel()
+        await asyncio.sleep(0)
+        pending.cancel()
+        await asyncio.sleep(0)
+        assert not pending.done(), "The caller must retain the actual cleanup after cancellation"
+    finally:
+        release.set()
+        await asyncio.gather(pending, return_exceptions=True)
+    assert pending.cancelled()
+    server._scene_load_inputs.close.assert_called_once()
+    shutdown.assert_awaited_once()
+    lifecycle_state.return_value.cancel.assert_called_once()
+    assert main._plugin_registry is None
+
+
+@pytest.mark.asyncio
+async def test_level_cancelled_server_lifespan_finishes_owned_cleanup(lifecycle_state, monkeypatch):
+    server = FastMCP("level-cancel-cleanup")
+    finished = anyio.Event()
+
+    async def close_graph():
+        await anyio.lowlevel.checkpoint()
+        finished.set()
+        return True
+
+    server._reference_graph_service = SimpleNamespace(aclose=close_graph)
+    shutdown = AsyncMock()
+    monkeypatch.setattr(PluginHub, "shutdown", shutdown)
+    with anyio.fail_after(watchdog_timeout()):
+        with anyio.CancelScope() as scope:
+            async with main.server_lifespan(server):
+                scope.cancel()
+                await anyio.sleep_forever()
+    assert finished.is_set()
+    shutdown.assert_awaited_once()
+    lifecycle_state.return_value.cancel.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_unsettled_graph_diagnostic_does_not_skip_server_cleanup(
+    lifecycle_state, monkeypatch, caplog
+):
+    server = FastMCP("pending-graph-cleanup")
+    graph = SimpleNamespace(
+        aclose=AsyncMock(return_value=False),
+        shutdown_status={
+            "state": "draining",
+            "pending_resolutions": 1,
+            "pending_drains": 2,
+        },
+    )
+    server._reference_graph_service = graph
+    shutdown = AsyncMock()
+    monkeypatch.setattr(PluginHub, "shutdown", shutdown)
+    async with main.server_lifespan(server):
+        pass
+    assert "owned work is still draining" in caplog.text
+    shutdown.assert_awaited_once()
+    lifecycle_state.return_value.cancel.assert_called_once()
+    assert main._plugin_registry is None

@@ -43,6 +43,7 @@ from services.custom_tool_service import (
 from core.server_build import RUNNING_SERVER
 from core.sdk_compatibility import runtime_sdk_report
 from services.execution_receipt_context import owned_to_thread
+from services.reference_graph.reconcile import drained_task
 from core.config import config
 from core.custom_instructions import (
     CustomInstructionsError,
@@ -74,6 +75,7 @@ from starlette.routing import WebSocketRoute
 from starlette.responses import JSONResponse
 import argparse
 import asyncio
+import contextvars
 import anyio
 from functools import partial
 import sys
@@ -81,7 +83,7 @@ import sys
 import logging
 import json
 import math
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 import os
 from pathlib import Path
 import threading
@@ -382,34 +384,64 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                     "plugin_registry": _plugin_registry,
                 }
     finally:
+        # The task owns every cleanup callback. Repeated asyncio cancellation and
+        # AnyIO level cancellation cannot skip the remaining independent owners.
+        with anyio.CancelScope(shield=True):
+            await drained_task(
+                asyncio.create_task(
+                    _shutdown_server_resources(
+                        server,
+                        api_key_service,
+                        telemetry_timers,
+                        _plugin_registry,
+                        _unity_connection_pool,
+                    ),
+                    context=contextvars.Context(),
+                )
+            )
+
+
+async def _shutdown_server_resources(
+    server, api_key_service, telemetry_timers, registry, pool
+) -> None:
+
+    def clear_globals():
+        global _plugin_registry, _unity_connection_pool
+        if _plugin_registry is registry:
+            _plugin_registry = None
+        if _unity_connection_pool is pool:
+            _unity_connection_pool = None
+
+    async def close_graph(graph):
+        if await graph.aclose() is False:
+            logger.warning(
+                "Reference graph shutdown observation ended; owned work is still draining: %s",
+                graph.shutdown_status,
+            )
+
+    # Register all owners before invoking any cleanup. ExitStack keeps unwinding
+    # if an earlier callback raises, without clearing a live graph worker's lease.
+    async with AsyncExitStack() as cleanup:
+        cleanup.callback(clear_globals)
+        if api_key_service is not None:
+            cleanup.push_async_callback(api_key_service.aclose)
+        if pool is not None:
+            cleanup.callback(pool.disconnect_all)
+        cleanup.push_async_callback(PluginHub.shutdown)
+        for timer in telemetry_timers:
+            cleanup.callback(timer.cancel)
+        for attribute, method in (
+            ("_scene_load_inputs", "close"),
+            ("_execution_receipts", "close"),
+            ("_unity_session_state_store", "clear"),
+        ):
+            owner = getattr(server, attribute, None)
+            if owner is not None:
+                cleanup.callback(getattr(owner, method))
         reference_graph = getattr(server, "_reference_graph_service", None)
         if reference_graph is not None:
-            await reference_graph.aclose()
-        state_store = getattr(server, "_unity_session_state_store", None)
-        if state_store is not None:
-            state_store.clear()
-        receipts = getattr(server, "_execution_receipts", None)
-        if receipts is not None:
-            receipts.close()
-        scene_inputs = getattr(server, "_scene_load_inputs", None)
-        if scene_inputs is not None:
-            scene_inputs.close()
-        for timer in telemetry_timers:
-            timer.cancel()
-        try:
-            await PluginHub.shutdown()
-        finally:
-            try:
-                if _unity_connection_pool:
-                    _unity_connection_pool.disconnect_all()
-            finally:
-                try:
-                    if api_key_service is not None:
-                        await api_key_service.aclose()
-                finally:
-                    _plugin_registry = None
-                    _unity_connection_pool = None
-        logger.info("Unity MCP (ykh09242) shut down")
+            cleanup.push_async_callback(close_graph, reference_graph)
+    logger.info("Unity MCP (ykh09242) server resources closed")
 
 
 def _build_instructions(project_scoped_tools: bool) -> str:

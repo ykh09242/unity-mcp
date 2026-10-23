@@ -39,6 +39,7 @@ from services.reference_graph.workspace import GraphWorkspace
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
+from transport.command_timeout import configured_wait_timeout
 
 
 class ScopeChanged(RevisionConflict):
@@ -153,6 +154,7 @@ class ReferenceGraphService:
         self.entries: dict[str, Entry] = {}
         self.tasks: set[asyncio.Task] = set()
         self.closed = False
+        self._close_task: asyncio.Task | None = None
         self.lock = asyncio.Lock()
         self._coordination: dict[str, tuple[asyncio.Lock, int]] = {}
         self._routes: dict[str, _Route] = {}
@@ -499,9 +501,44 @@ class ReferenceGraphService:
             entry.engine.clear_caches()
             entry.leases.clear()
 
-    async def aclose(self) -> None:
-        async with self.lock:
+    @property
+    def shutdown_status(self) -> dict:
+        task = self._close_task
+        state = "running"
+        if task is not None:
+            state = "draining"
+            if task.done():
+                state = "failed" if task.cancelled() or task.exception() is not None else "drained"
+        return {
+            "state": state,
+            "pending_resolutions": self._resolving,
+            "pending_drains": sum(not task.done() for task in self.tasks),
+        }
+
+    async def aclose(self) -> bool:
+        """Observe shutdown without abandoning the actual thread/database owners."""
+        if self._close_task is None:
             self.closed = True
+            self._close_task = asyncio.create_task(
+                self._close_owned(), context=contextvars.Context()
+            )
+            self._close_task.add_done_callback(self._observe_close)
+        task = self._close_task
+        timeout = configured_wait_timeout("UNITY_MCP_REFERENCE_GRAPH_SHUTDOWN_TIMEOUT_SECONDS", 10)
+        # wait does not cancel its input when this observer expires or is cancelled.
+        done, _ = await asyncio.wait({task}, timeout=timeout)
+        if task not in done:
+            return False
+        task.result()
+        return True
+
+    @staticmethod
+    def _observe_close(task: asyncio.Task) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    async def _close_owned(self) -> None:
+        async with self.lock:
             for entry in list(self.entries.values()):
                 self._retire(entry)
             for request in self._resolve_tasks:

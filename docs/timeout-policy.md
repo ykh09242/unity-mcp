@@ -252,3 +252,25 @@ immediately. User cancellation callbacks run in retained background work; source
 and replacement-execution fences remain owned until both callbacks and live tasks finish. This ownership is
 within the current managed domain; it does not make arbitrary third-party native
 work recoverable across an Editor process termination.
+
+## Server shutdown and reference graph workers
+
+Reference graph shutdown closes admission immediately and retains one actual drain
+task across repeated shutdown observations. `aclose()` returns true after actual
+settlement, or false while work remains owned. Cancelling an observer does not
+cancel that task. `shutdown_status` reports running, draining, drained or failed,
+with pending resolution/drain counts and no project paths or user identifiers.
+
+`UNITY_MCP_REFERENCE_GRAPH_SHUTDOWN_TIMEOUT_SECONDS` sets the observation budget:
+10 seconds by default, up to 86400 seconds; zero skips waiting. This limit does not
+end an active read, shorten a reconciliation, or release its database lease. A
+subsequent close observes the same owner. The normal lease expiry and write-owner
+validation remain in force, including after process termination.
+
+Server shutdown attempts every independent cleanup even if another cleanup raises
+or its caller is repeatedly cancelled. If graph draining exceeds the observation
+budget, the server logs its pending counts and continues closing unrelated owners.
+This does not claim the process exited: Python's executor may still wait for a
+blocked filesystem worker. Forcefully abandoning an in-process writer is unsafe.
+An external worker-process backend would require a separate publication/ownership
+protocol; this change retains the existing in-process execution and dependencies.
