@@ -11,6 +11,7 @@ using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -29,8 +30,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
     }
 
     /// <summary>
-    /// Snapshot of a generation/import job. Persisted to SessionState so a `status` query
-    /// still works after an unrelated domain reload. NEVER carries a key or secret.
+    /// Snapshot of a generation/import job. Safe continuation evidence survives domain reload
+    /// and full Editor restart through the bound durable journal. NEVER carries a key or secret.
     /// </summary>
     public sealed class AssetGenJob
     {
@@ -88,6 +89,54 @@ namespace MCPForUnity.Editor.Services.AssetGen
         internal static Func<double> ClockForTests = null;
         internal static Action<string> BeforeCheckpointWriteForTests = null;
 
+        private static AssetGenJobJournal _journal;
+        private static string _journalRootForTests;
+        private static string _journalOwnerForTests;
+        private static string _journalInstanceForTests;
+        private static Func<DateTimeOffset> _journalUtcForTests;
+        private static string _journalError;
+
+        // Existing fake-transport fixtures remain session-only unless they explicitly select an
+        // owned journal. Resetting the transport restores production persistence automatically.
+        private static bool JournalEnabled => _journalRootForTests != null || TransportOverrideForTests == null;
+
+        private static AssetGenJobJournal Journal
+        {
+            get
+            {
+                if (_journal != null)
+                    return _journal;
+                string project = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+                string owner =
+                    _journalOwnerForTests
+                    ?? AtomicAssetFile.Digest(
+                        Encoding.UTF8.GetBytes(project + "\n" + Environment.MachineName + "\n" + Environment.UserDomainName + "\n" + Environment.UserName)
+                    );
+                const string instanceKey = "MCPForUnity.AssetGen.JournalInstance";
+                string instance = _journalInstanceForTests ?? SessionState.GetString(instanceKey, "");
+                if (!AssetGenJobCheckpoint.Hex(instance, 32))
+                {
+                    instance = Guid.NewGuid().ToString("N");
+                    SessionState.SetString(instanceKey, instance);
+                }
+                string directory =
+                    _journalRootForTests
+                    ?? SafePathUtility.ResolveWithinRoot(project, Path.Combine("Library", "MCPForUnity", "AssetGen", owner.Substring(0, 32)));
+                return _journal = new AssetGenJobJournal(directory, owner, instance, _journalUtcForTests ?? (() => DateTimeOffset.UtcNow));
+            }
+        }
+
+        internal static void ConfigureDurableStoreForTests(string directory, string owner, string instance, Func<DateTimeOffset> utc)
+        {
+            _journal?.Dispose();
+            _journal = null;
+            _journalRootForTests = directory;
+            _journalOwnerForTests = owner;
+            _journalInstanceForTests = instance;
+            _journalUtcForTests = utc;
+            _journalError = null;
+        }
+
         private static readonly Dictionary<string, AssetGenJob> Jobs = new();
         private static readonly Dictionary<string, Runner> Runners = new();
         private static readonly Dictionary<string, AssetGenJobCheckpoint> Checkpoints = new();
@@ -105,11 +154,41 @@ namespace MCPForUnity.Editor.Services.AssetGen
         static AssetGenJobManager()
         {
             AssemblyReloadEvents.beforeAssemblyReload += PrepareForAssemblyReload;
+            EditorApplication.quitting += PrepareForAssemblyReload;
             RestoreJobs();
         }
 
         internal static void RestoreJobs()
         {
+            if (JournalEnabled)
+            {
+                try
+                {
+                    var records = Journal.Read(Now());
+                    if (records != null)
+                    {
+                        var durableIds = new HashSet<string>(records.Select(r => (string)r["JobId"]), StringComparer.Ordinal);
+                        string sessionIndex = SessionState.GetString(JobIndexKey, "");
+                        // Same-process legacy/history entries can coexist with new durable jobs.
+                        // Conflicting IDs still use verified disk evidence, never a stale session copy.
+                        string[] sessionOnly =
+                            Encoding.UTF8.GetByteCount(sessionIndex) <= AssetGenJobCheckpoint.MaxIndexBytes
+                                ? sessionIndex.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Where(id => !durableIds.Contains(id)).ToArray()
+                                : Array.Empty<string>();
+                        foreach (var record in records)
+                            SessionState.SetString(JobKeyPrefix + (string)record["JobId"], record.ToString(Formatting.None));
+                        SessionState.SetString(JobIndexKey, string.Join(",", records.Select(r => (string)r["JobId"]).Concat(sessionOnly)));
+                    }
+                    _journalError = null;
+                }
+                catch (Exception)
+                {
+                    _journalError =
+                        "Durable asset-generation recovery is unavailable or owned by another instance. Retained records must be verified before new work.";
+                    McpLog.Warn(_journalError);
+                    return;
+                }
+            }
             string index = SessionState.GetString(JobIndexKey, string.Empty);
             if (string.IsNullOrEmpty(index) || Encoding.UTF8.GetByteCount(index) > AssetGenJobCheckpoint.MaxIndexBytes)
                 return;
@@ -245,6 +324,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         private static void EnsureCapacity()
         {
+            if (JournalEnabled && _journalError != null)
+                throw new IOException(_journalError);
             if (Jobs.Values.Count(job => !IsTerminal(job.State)) >= AssetGenJobCheckpoint.MaxActive)
                 throw new InvalidOperationException("At most 64 active generation jobs are supported. Finish or cancel an existing job first.");
         }
@@ -270,6 +351,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 ObservePreparation(runner.PreparationTask);
             }
             Runners.Clear();
+            _journal?.Dispose();
+            _journal = null;
             OperationActivity.Invalidate();
         }
 
@@ -569,7 +652,16 @@ namespace MCPForUnity.Editor.Services.AssetGen
             };
         }
 
-        public static AssetGenJob GetJob(string jobId) => string.IsNullOrEmpty(jobId) ? null : (Jobs.TryGetValue(jobId, out var j) ? j : null);
+        public static AssetGenJob GetJob(string jobId)
+        {
+            if (string.IsNullOrEmpty(jobId))
+                return null;
+            if (Jobs.TryGetValue(jobId, out var job))
+                return job;
+            if (JournalEnabled && _journalError != null)
+                throw new IOException(_journalError);
+            return null;
+        }
 
         /// <summary>Most-recent-first snapshot of known jobs (for the GUI readout). Never contains keys.</summary>
         public static IReadOnlyList<AssetGenJob> RecentJobs(int max = 20)
@@ -1571,6 +1663,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 if (Encoding.UTF8.GetByteCount(index) > AssetGenJobCheckpoint.MaxIndexBytes)
                     throw new InvalidDataException("index_size_invalid");
                 BeforeCheckpointWriteForTests?.Invoke(checkpoint?.Phase ?? "terminal");
+                if (JournalEnabled)
+                    Journal.Save(record, JobOrder, Now(), true);
                 SessionState.SetString(JobKeyPrefix + job.JobId, record.ToString(Formatting.None));
                 SessionState.SetString(JobIndexKey, index);
                 _jobIndexDirty = false;
@@ -1596,6 +1690,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 JObject record = AssetGenJobCheckpoint.Project(job, checkpoint);
                 SessionState.SetString(JobKeyPrefix + job.JobId, record.ToString(Formatting.None));
                 WriteJobIndex();
+                if (JournalEnabled)
+                    Journal.Save(record, JobOrder, Now(), false);
             }
             catch { /* progress/terminal metadata is best-effort; side-effect admission always uses required writes */ }
             finally
@@ -1705,6 +1801,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
             SkipModelVerificationForTests = false;
             ClockForTests = null;
             BeforeCheckpointWriteForTests = null;
+            _journalRootForTests = null;
+            _journalOwnerForTests = null;
+            _journalInstanceForTests = null;
+            _journalUtcForTests = null;
+            _journalError = null;
             AssetGenModelCatalog.ResetForTests();
         }
     }

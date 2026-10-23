@@ -1,6 +1,6 @@
-# Generation recovery after an Editor domain reload
+# Generation recovery after an Editor reload or restart
 
-Generation jobs can continue from a recorded provider task after scripts reload in the same running Unity Editor. Keep polling the original local `job_id`; a restored job does not submit the original request again. The original 600-second budget includes reload time. Closing or crashing the Editor loses this session history; this is not restart recovery.
+Generation jobs can continue from a recorded provider task after scripts reload or the Editor restarts. Keep polling the original local `job_id`; a restored job does not submit the original request again. The execution budget assigned at admission includes reload time and time spent outside the Editor. Restarting never grants a fresh budget. If the wall clock moves backwards across restart, recovery reports `checkpoint_clock_uncertain` and does not resume unverifiable work.
 
 A single-phase task has one initial generation POST. Meshy text generation with textures has a preview POST and a separate refine POST. Each phase records intent before submission and its task ID after the response. A response can be lost before its receipt is recorded: that outcome remains unknown, and the job does not automatically submit that phase again. This is not an exactly-once payment guarantee.
 
@@ -38,6 +38,20 @@ Cancellation records the local terminal state immediately and prevents later pro
 
 ## Stored information and limits
 
-The session checkpoint contains bounded task receipts, continuation options, original timing and saved-file identity. It excludes provider keys, prompts/request bodies, input images, raw provider errors and signed download URLs. An explicitly retained sanitized output filename can derive from the prompt; it remains an artifact identifier. Persisted failure text is a fixed safe summary, so detailed in-memory provider diagnostics are not preserved after reload. Existing historical records are not retroactively claimed free of diagnostics.
+The checkpoint contains bounded task receipts, continuation options, original timing and saved-file identity. It excludes provider keys, prompts/request bodies, input images, raw provider errors and signed download URLs. An explicitly retained sanitized output filename can derive from the prompt; it remains an artifact identifier. Persisted failure text is a fixed safe summary, so detailed in-memory provider diagnostics are not preserved after reload. Existing historical records are not retroactively claimed free of diagnostics.
 
-There are at most 64 active jobs and 100 retained terminal records. Active jobs are not silently evicted. Recovery records are bounded (16 KiB checkpoint, 256 KiB record, 16 KiB index, JSON depth 16); invalid or unsupported records cannot trigger a request/import. Failure to store a required checkpoint stops further side-effect admission.
+There are at most 64 active jobs and 100 retained terminal records. Active jobs are not silently evicted. Recovery records are bounded (16 KiB checkpoint, 1 MiB record, 16 KiB index, JSON depth 16); invalid or unsupported records cannot trigger a request/import. Failure to store a required checkpoint stops further side-effect admission.
+
+## Durable journal and instance ownership
+
+Validated continuation records live under `Library/MCPForUnity/AssetGen/<owner-prefix>/`. The owner derives from the project, machine and user; records verify the complete owner identity. The shorter directory prefix avoids inflating paths on Windows Editors. No private absolute path or user name is stored in the journal. A process instance identifier survives domain reload in SessionState and changes after a full restart.
+
+An exclusive lock prevents two cooperating instances from resuming the same journal. Windows uses exclusive file sharing; Linux and macOS additionally require a nonblocking OS file lock, with no unlocked fallback. The OS releases the handle after process termination. These are local ownership controls, not protection against a process deliberately deleting live journal files. Do not remove the live journal directory while the Editor owns it. See the [Linux](https://man7.org/linux/man-pages/man2/flock.2.html) and [macOS](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html) file-lock contracts.
+
+Index and record publication uses adjacent flushed files and atomic replacement. The index is published before the first job record, so an interrupted initial write remains visible as unavailable evidence. No submission, file write or import is admitted until its required checkpoint succeeds. Unknown owners, damaged records and replaced evidence are retained. A damaged index blocks new admission until the retained work is verified. Individual damaged records do not hide other confirmed jobs.
+
+Progress-only updates stay in SessionState; they do not rewrite an unchanged continuation checkpoint. The existing active-job and terminal-history bounds remain unchanged. Only verified evicted terminal records are removed; generated assets are never removed by retention. Legacy same-process history remains readable, while only validated job identities become durable records.
+
+## Verification scope
+
+Native Unity fixtures exercise receipt-based continuation without duplicate POSTs, ambiguous submission/import states, elapsed budgets, cancellation, corrupted and foreign records, storage failure, long project paths and existing task/memory lifetimes. The standalone `generation_journal` harness compiles the production journal, checkpoint validation, publication and lease sources. It verifies real competing processes and kills only its newly created writer at six persisted phases before restarting recovery. Its Unity-facing DTOs are stubs; it does not force-crash a user's Editor or claim power-loss transaction guarantees. The same harness runs on Windows, Linux and macOS CI without additional runtime packages or drivers.

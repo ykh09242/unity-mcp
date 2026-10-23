@@ -33,6 +33,11 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void SetUp()
         {
             AssetGenJobManager.ResetForTests();
+            // This fixture fabricates runners and owns no provider or persistent journal.
+            AssetGenJobManager.TransportOverrideForTests = new FakeHttpTransport
+            {
+                Handler = _ => throw new AssertionException("Unexpected provider request in task-lifetime fixture."),
+            };
             _ownsFolder = false;
             _folder = "Assets/__McpConsumedTaskLifetimeTests_" + Guid.NewGuid().ToString("N");
             string absolute = AssetGenPaths.ToAbsolute(_folder);

@@ -102,7 +102,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsTrue(Alive(_payload), "Payload must remain available until the poll result is consumed.");
             AssetGenJobManager.TryAdvanceForTests(_job.JobId);
             AssetGenJobManager.TryAdvanceForTests(_job.JobId);
-            Assert.AreEqual(AssetGenJobState.Importing, _job.State);
+            // Large results prepare off-thread; the next update may still be waiting for that worker.
         }
 
         private AssetGenJob ObserveImport(AssetGenJob job, string path)
@@ -126,8 +126,14 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void ConsumedInlineResult_ReleasesProviderPayloadBeforeImport(bool imageApi)
         {
             PrepareForImport(imageApi);
-            Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(_job.JobId));
-            Assert.AreEqual(AssetGenJobState.Done, _job.State);
+            Assert.IsTrue(
+                SpinWait.SpinUntil(
+                    () => AssetGenJobManager.TryAdvanceForTests(_job.JobId),
+                    TimeSpan.FromSeconds(OperationTimeouts.EnvironmentSeconds("UNITY_MCP_TEST_RUN_TIMEOUT", 300))
+                ),
+                "Artifact preparation did not settle within the test observation budget."
+            );
+            Assert.AreEqual(AssetGenJobState.Done, _job.State, _job.Error);
             Assert.AreEqual(1, _imports);
             Assert.IsFalse(_aliveDuringImport, "Adapter-owned inline bytes remain alive during import after delivery.");
             Assert.IsFalse(_adapterDuringImport, "Completed provider adapter remains rooted during import.");
