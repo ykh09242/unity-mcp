@@ -71,6 +71,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private readonly Dictionary<string, (string Id, string Error)> verifyErrors = new();
 
         public VisualElement Root { get; private set; }
+        public event Action OnDependenciesRequested;
 
         public McpAssetGenSection(VisualElement root)
         {
@@ -140,6 +141,9 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         {
             providersContainer = Root.Q<VisualElement>("assetgen-providers-container");
             gltfastNotice = Root.Q<VisualElement>("gltfast-notice");
+            var dependencies = Root.Q<Button>("assetgen-open-dependencies");
+            if (dependencies != null)
+                dependencies.clicked += () => OnDependenciesRequested?.Invoke();
             formatDropdown = Root.Q<DropdownField>("assetgen-format-dropdown");
             outputRootField = Root.Q<TextField>("assetgen-output-root");
             autoNormalizeToggle = Root.Q<Toggle>("assetgen-auto-normalize");

@@ -43,6 +43,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private readonly Func<string, JObject, CancellationToken, Task<JObject>> send;
         private readonly Func<string> connectionIdentity;
         private readonly List<Button> buttons = new();
+        private readonly List<Button> sourceAccessButtons = new();
         private CancellationTokenSource pending;
         private readonly Button stopWaiting;
         private readonly Label waitStatus,
@@ -369,6 +370,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             stopWaiting.EnableInClassList("hidden", idle);
             foreach (var button in buttons)
                 button.SetEnabled(idle && (button.name == "graph-refresh" || viewIdentity != null));
+            foreach (var button in sourceAccessButtons)
+                button.SetEnabled(idle && viewIdentity != null);
             root.Q<Button>("graph-next")?.SetEnabled(idle && nextAfter != null);
             root.Q<Button>("graph-copy")?.SetEnabled(idle && exportPage != null);
             foreach (var field in new VisualElement[] { kind, itemId, payload, expectedVersion, reauthorize, sourceEnabled, configurationRows })
@@ -441,6 +444,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             updated.text = "Updates on request";
             storage.text = message.text = "";
             providers.Clear();
+            sourceAccessButtons.Clear();
             configurationRows.Clear();
             nextAfter = exportKind = exportPage = null;
             RestoreDraft(null);
@@ -709,6 +713,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     }
             }
             providers.Clear();
+            sourceAccessButtons.Clear();
             Provider(
                 "Unity assets & scripts",
                 current ? "Current" : "Collecting",
@@ -753,12 +758,13 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                                     : "Refresh or retry collection to check this source."
                             )
                             : detail,
-                        issue
+                        issue,
+                        !addressables
                     );
                 }
         }
 
-        private void Provider(string title, string badge, string detail, bool issue)
+        private void Provider(string title, string badge, string detail, bool issue, bool sourceAccess = false)
         {
             var card = Box(providers, "graph-provider");
             var heading = Box(card, "graph-provider-heading");
@@ -767,6 +773,37 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             state.AddToClassList("graph-badge");
             state.EnableInClassList("graph-badge-warning", issue);
             Text(card, detail).AddToClassList("graph-muted");
+            if (issue && sourceAccess)
+            {
+                var button = new Button(ReviewSourceAccess) { text = "Review source access", name = "graph-review-source-access" };
+                card.Add(button);
+                sourceAccessButtons.Add(button);
+            }
+        }
+
+        private void ReviewSourceAccess()
+        {
+            if (disposed || !visible || pending != null)
+                return;
+            if (!IsCurrentIdentity())
+            {
+                Invalidate();
+                return;
+            }
+            root.Q<Foldout>("graph-transfer").value = true;
+            kind.value = "External sources";
+            root.schedule.Execute(() =>
+            {
+                if (disposed || !visible)
+                    return;
+                kind.Focus();
+                for (var parent = root.parent; parent != null; parent = parent.parent)
+                    if (parent is ScrollView scroll)
+                    {
+                        scroll.ScrollTo(kind);
+                        break;
+                    }
+            });
         }
 
         private static string Short(JToken value)
@@ -797,6 +834,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             drafts.Clear();
             EditorConfigurationCache.Instance.OnConfigurationChanged -= ConfigurationChanged;
             buttons.Clear();
+            sourceAccessButtons.Clear();
             root.Clear();
         }
     }

@@ -388,6 +388,7 @@ namespace MCPForUnity.Editor.Windows
                 var assetGenRoot = assetGenTree.Instantiate();
                 assetGenContainer.Add(assetGenRoot);
                 assetGenSection = new McpAssetGenSection(assetGenRoot);
+                assetGenSection.OnDependenciesRequested += () => navigation?.OpenSetting("com.unity.cloud.gltfast-version");
             }
             else
             {

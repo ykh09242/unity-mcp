@@ -188,3 +188,11 @@
 .activity-selected { border-left-color: var(--mcp-accent); }
 #activity-selected-summary { background-color: var(--mcp-surface); padding: 10px; }
 #activity-page { align-self: center; margin-right: 8px; margin-bottom: 4px; white-space: normal; }
+
+.settings-search-toggle { flex-shrink: 0; margin-left: 8px; min-height: 24px; }
+.settings-search-panel { padding: 8px 16px; border-bottom-width: 1px; border-bottom-color: var(--mcp-border); flex-shrink: 0; min-height: 0; }
+.settings-search-row { flex-direction: row; flex-wrap: wrap; }
+.settings-search-row .unity-text-field { flex-grow: 1; flex-basis: 220px; min-width: 0; margin-right: 8px; }
+.settings-search-results { max-height: 180px; min-height: 0; }
+.settings-search-result { white-space: normal; min-height: 28px; margin-bottom: 4px; -unity-text-align: middle-left; }
+.compact-height .settings-search-results { max-height: 120px; }

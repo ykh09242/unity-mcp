@@ -27,6 +27,7 @@ namespace MCPForUnity.Editor.Windows
         private readonly Label title;
         private readonly Label description;
         private readonly Action<string> navigate;
+        private readonly McpSettingsSearch settingsSearch;
         private int selected;
         private bool? compact;
         private bool disposed;
@@ -60,7 +61,10 @@ namespace MCPForUnity.Editor.Windows
             Select("clients");
             UpdateHeight(layout?.resolvedStyle.height ?? 0);
             UpdateLayout(layout?.resolvedStyle.width ?? 0);
+            settingsSearch = new McpSettingsSearch(root, navigate);
         }
+
+        internal bool OpenSetting(string target) => settingsSearch.Open(target);
 
         internal void Select(string id)
         {
@@ -182,6 +186,7 @@ namespace MCPForUnity.Editor.Windows
             if (disposed)
                 return;
             disposed = true;
+            settingsSearch.Dispose();
             pendingFocus?.Pause();
             pendingFocus = null;
             selector?.UnregisterValueChangedCallback(OnSelection);
