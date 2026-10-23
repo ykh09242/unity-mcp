@@ -36,6 +36,8 @@ namespace MCPForUnity.Editor.Windows
             new("Provider API keys and enablement", "assetgen", "provider-key-fal", "fal shared 2D 3D audio credentials"),
             new("Meshy API key", "assetgen", "provider-key-meshy", "3D credentials"),
             new("Tripo API key", "assetgen", "provider-key-tripo", "3D credentials"),
+            new("OpenRouter API key", "assetgen", "provider-key-openrouter", "2D image credentials"),
+            new("Sketchfab API key", "assetgen", "provider-key-sketchfab", "3D model credentials"),
             new("Blender host and port", "assetgen", "blender-host", "socket connection addon"),
             new("Generation import and output", "assetgen", "assetgen-output-root", "format normalize models path"),
             new("glTFast dependency", "deps", "com.unity.cloud.gltfast-version", "GLB 3D import compatible versions package"),
@@ -60,7 +62,9 @@ namespace MCPForUnity.Editor.Windows
                 return Array.Empty<Entry>();
             var words = query.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             return Entries
-                .Where(entry => words.All(word => (entry.Title + " " + entry.Terms).IndexOf(word, StringComparison.OrdinalIgnoreCase) >= 0))
+                .Where(entry =>
+                    words.All(word => (entry.Title + " " + entry.Terms + " " + PageName(entry.Page)).IndexOf(word, StringComparison.OrdinalIgnoreCase) >= 0)
+                )
                 .ToArray();
         }
 

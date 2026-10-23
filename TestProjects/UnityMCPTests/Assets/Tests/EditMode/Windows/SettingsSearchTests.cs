@@ -34,6 +34,10 @@ namespace MCPForUnityTests.EditMode.Windows
                 StringAssert.DoesNotContain("synthetic-secret-value", entry.ToString());
             Assert.Zero(((Array)find.Invoke(null, new object[] { "synthetic-secret-value" })).Length);
             Assert.Zero(((Array)find.Invoke(null, new object[] { "" })).Length);
+            Assert.Greater(((Array)find.Invoke(null, new object[] { "Advanced" })).Length, 0);
+            Assert.Greater(((Array)find.Invoke(null, new object[] { "Generation fal" })).Length, 0);
+            Assert.Greater(((Array)find.Invoke(null, new object[] { "OpenRouter" })).Length, 0);
+            Assert.Greater(((Array)find.Invoke(null, new object[] { "Sketchfab" })).Length, 0);
         }
 
         [Test]
@@ -160,9 +164,14 @@ namespace MCPForUnityTests.EditMode.Windows
                     var field = new TextField("API key") { name = "provider-key-fal", isPasswordField = true };
                     group.Add(field);
                     root.Q("assetgen-container").Add(group);
-                    using var navigation = new McpWindowNavigation(
+                    McpWindowNavigation navigation = null;
+                    using var navigationLifetime = navigation = new McpWindowNavigation(
                         root,
-                        id => root.Query<ScrollView>(className: "panel-scroll").ForEach(panel => panel.EnableInClassList("hidden", panel.name != id + "-panel"))
+                        id =>
+                        {
+                            navigation?.Select(id);
+                            root.Query<ScrollView>(className: "panel-scroll").ForEach(panel => panel.EnableInClassList("hidden", panel.name != id + "-panel"));
+                        }
                     );
                     foreach (var size in new[] { new Vector2(500, 340), new Vector2(500, 600), new Vector2(1100, 700) })
                     {
@@ -206,6 +215,7 @@ namespace MCPForUnityTests.EditMode.Windows
                         }
                         Assert.AreEqual(DisplayStyle.None, root.Q("settings-search-panel").resolvedStyle.display);
                         Assert.IsTrue(group.value);
+                        Assert.AreEqual("Generation", root.Q<Label>("page-title").text);
                         var focus = root.focusController.focusedElement as VisualElement;
                         Assert.IsTrue(focus == field || field.Contains(focus));
                     }
