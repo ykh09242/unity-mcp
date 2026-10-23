@@ -3,6 +3,7 @@
 from tests.timing import await_signal, watchdog_timeout
 
 import json
+import math
 import time
 from types import SimpleNamespace
 
@@ -460,41 +461,105 @@ async def test_stored_selection_registry_lock_cannot_block_capability_resource(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_exhausted", [False, True])
 async def test_stalled_cancel_has_explicit_grace_and_keeps_verified_partial_evidence(
-    command_hub, monkeypatch
+    command_hub, monkeypatch, cleanup_exhausted
 ):
-    # Given: one probe and its cancellation write both stall; four other sources complete.
+    # Given: four sources finish before one blocked probe is explicitly cancelled.
     import services.capabilities as capabilities
 
-    monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", 0.4)
-    monkeypatch.setattr(PluginHub, "CANCEL_TIMEOUT", 0.2)
+    query_timeout = watchdog_timeout()
+    cleanup_grace = 0.2
+    monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", query_timeout)
+    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", query_timeout)
+    monkeypatch.setattr(PluginHub, "CANCEL_TIMEOUT", cleanup_grace)
     await install_native_replies(command_hub, native_observations())
     reply = command_hub.websocket.send_json
+    read_source = capabilities._read_source
+    scopes = {}
+    probe_deadlines = set()
+    read_deadlines = set()
+    completed_sources = set()
+    expected_sources = set(native_observations()) - {"manage_recording"}
+    observed = anyio.Event()
+    recording_entered = anyio.Event()
+    cancellation_budgets = []
+
+    def observe_scope(deadline):
+        scope = anyio.move_on_at(deadline)
+        scopes[deadline] = scope
+        return scope
+
+    class ObservedAnyio:
+        move_on_at = staticmethod(observe_scope)
+
+        def __getattr__(self, name):
+            return getattr(anyio, name)
+
+    # Observe real scopes only in this module; transport and SDK timers stay real.
+    monkeypatch.setattr(capabilities, "anyio", ObservedAnyio())
+
+    async def observe_source(name, ctx, connection, user_id, deadline, observations):
+        probe_deadlines.add(deadline)
+        read_deadlines.add(capabilities._read_deadline.get())
+        await read_source(name, ctx, connection, user_id, deadline, observations)
+        if name in expected_sources:
+            assert observations[name].evidence.status == "observed"
+            completed_sources.add(name)
+            if completed_sources == expected_sources:
+                observed.set()
+
+    monkeypatch.setattr(capabilities, "_read_source", observe_source)
 
     async def stalled(message):
-        if message["type"] == "cancel" or (
-            message["type"] == "execute" and message["name"] == "manage_recording"
-        ):
+        if message["type"] == "cancel":
             command_hub.sent.append(message)
+            cancellation_budgets.append(anyio.current_effective_deadline() - anyio.current_time())
+            if cleanup_exhausted:
+                # A genuinely exhausted outer grace must still discard unverified evidence.
+                scopes[next(iter(read_deadlines)) + cleanup_grace].cancel()
+            await anyio.sleep_forever()
+        if message["type"] == "execute" and message["name"] == "manage_recording":
+            command_hub.sent.append(message)
+            recording_entered.set()
             await anyio.sleep_forever()
         await reply(message)
+
+    async def expire_probe():
+        await observed.wait()
+        await recording_entered.wait()
+        assert len(probe_deadlines) == len(read_deadlines) == 1
+        probe_deadline = next(iter(probe_deadlines))
+        read_deadline = next(iter(read_deadlines))
+        assert probe_deadline < read_deadline
+        assert read_deadline + cleanup_grace in scopes
+        scopes[probe_deadline].cancel()
 
     command_hub.websocket.send_json = stalled
     async with Client(capability_server(), mode="legacy") as client:
         await client.call_tool("select_fixture")
+        # When: the actual probe scope is cancelled after its prerequisites, then the
+        # real transport timeout bounds a cancellation write that never completes.
+        # SDK/runner scheduling must not consume a tiny fixture-wide success budget.
+        with anyio.fail_after(watchdog_timeout()):
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(expire_probe)
+                data = await read_capabilities(client)
 
-        # When: probe execution expires and the transport drains its bounded cancellation.
-        started = anyio.current_time()
-        data = await read_capabilities(client)
-        elapsed = anyio.current_time() - started
-
-    # Then: explicit cleanup time does not erase completed evidence before revalidation.
-    assert data["connection"]["status"] == "connected"
-    assert data["features"]["input"]["supported"] is True
+    # Then: keep evidence only after revalidation, and advertise the separate cleanup bound.
+    assert data["connection"]["status"] == ("unknown" if cleanup_exhausted else "connected")
+    assert data["features"]["input"]["supported"] is (None if cleanup_exhausted else True)
     assert data["features"]["recording"]["supported"] is None
-    assert data["limits"]["query_cleanup_grace_seconds"] == 0.2
-    assert data["limits"]["query_max_elapsed_seconds"] == pytest.approx(0.6)
-    assert elapsed < data["limits"]["query_max_elapsed_seconds"] + 0.15
+    if cleanup_exhausted:
+        assert data["connection"]["reason"] == "connection_changed_or_deadline"
+        assert data["target"]["instance_id"] is None
+    assert data["limits"]["query_cleanup_grace_seconds"] == cleanup_grace
+    assert data["limits"]["query_max_elapsed_seconds"] == pytest.approx(
+        query_timeout + cleanup_grace
+    )
+    assert len(cancellation_budgets) == 1
+    assert math.isfinite(cancellation_budgets[0])
+    assert cancellation_budgets[0] <= cleanup_grace
     assert PluginHub._pending == {}
 
 
