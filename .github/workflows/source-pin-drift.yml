@@ -1,0 +1,86 @@
+name: Immutable server source
+
+on:
+  push:
+    branches: [beta]
+    paths:
+      - Server/**
+      - MCPForUnity/package.json
+      - manifest.json
+      - release-source-inputs.json
+      - tools/check_source_pin_drift.py
+      - tools/check_release_evidence.py
+      - tools/tests/test_check_source_pin_drift.py
+      - .github/workflows/source-pin-drift.yml
+  pull_request:
+    branches: [beta, main]
+    paths:
+      - Server/**
+      - MCPForUnity/package.json
+      - manifest.json
+      - release-source-inputs.json
+      - tools/check_source_pin_drift.py
+      - tools/check_release_evidence.py
+      - tools/tests/test_check_source_pin_drift.py
+      - .github/workflows/source-pin-drift.yml
+  workflow_dispatch:
+    inputs:
+      require_current:
+        description: Fail when the immutable launcher differs from committed server inputs
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  source_pin:
+    name: Check immutable server source
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare committed server inputs
+        id: drift
+        env:
+          CHECK_REVISION: ${{ github.sha }}
+          BASELINE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
+          REQUIRE_CURRENT: ${{ inputs.require_current }}
+        shell: bash
+        run: |
+          args=(--revision "$CHECK_REVISION")
+          if [[ -n "$BASELINE_REVISION" && "$BASELINE_REVISION" != '0000000000000000000000000000000000000000' ]]; then
+            args+=(--baseline "$BASELINE_REVISION")
+          fi
+          if [[ "$REQUIRE_CURRENT" == 'true' ]]; then
+            args+=(--require-current)
+          fi
+          python3 tools/check_source_pin_drift.py "${args[@]}" > "$RUNNER_TEMP/source-pin-drift.json"
+      - name: Summarize source freshness
+        if: always() && steps.drift.outcome != 'skipped'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "source-pin-drift.json"
+          if path.is_file() and path.stat().st_size:
+              report = json.loads(path.read_text())
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+                  output.write("## Immutable server source\n\n")
+                  for key in ("state", "checked_commit", "server_commit", "pin_changed", "requires_current", "changed_path_count", "next_action"):
+                      output.write(f"- {key}: `{report[key]}`\n")
+          PY
+      - name: Preserve drift report
+        if: always() && steps.drift.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-pin-drift
+          path: ${{ runner.temp }}/source-pin-drift.json
+          if-no-files-found: warn
+          retention-days: 14

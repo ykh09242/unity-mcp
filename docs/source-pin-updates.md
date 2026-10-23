@@ -22,3 +22,19 @@ Before cleanup, the complete apply or rollback atomically retires the active jou
 Recovery of an active transaction validates every affected path and backup before restoring original bytes. It refuses to overwrite a subsequent user edit, leaving the journal for inspection. An abrupt stop during preparation can leave an unpublished `.work/.source-pins-*` directory; package files have not changed at that point. Recovery may retain empty directories created for new mirror files. No unrelated directory is recursively removed.
 
 After applying, review and commit the generated files as a work unit. `tools/check_release_evidence.py` validates the committed generated source-input record against package and manifest pins when present, while preserving compatibility with older commits without that record. Choose the actual package commit only after committing; the generated record does not invent that future commit identity or claim tests have passed.
+
+## Detecting launcher drift
+
+The launcher uses an immutable archive, so merging server changes does not automatically update what a newly installed client starts. Check committed server inputs without downloads or working-tree mutation:
+
+```sh
+python tools/check_source_pin_drift.py --revision HEAD
+python tools/check_source_pin_drift.py --revision HEAD --require-current
+python tools/check_source_pin_drift.py --revision HEAD --baseline <reviewed-base-commit>
+```
+
+The JSON report distinguishes `current`, `stale` and `unavailable`. It compares the entire committed `Server` tree, including new packaging files, while excluding `Server/tests/`, `Server/README.md`, `Server/DOCKER_OVERVIEW.md` and `Server/pyrightconfig.json`. Runtime resources under `Server/src` remain included even when they contain documentation. Pin-only README example changes are excluded so a refresh can point to a previously validated merged server commit instead of an impossible self-referential future commit. A changed tree that is later exactly restored is current. Uncommitted edits are intentionally outside this check.
+
+Ordinary server changes report stale pins as an advisory and exit zero; they may merge before the final reviewed pin refresh. `--require-current` makes stale inputs fail with exit one. Supplying `--baseline` automatically enforces that same rule when the selected source pin changes, so a refresh cannot silently leave additional server changes behind. Invalid/inconsistent metadata or unavailable local history fails with exit two, including in advisory mode. Provide full history and repair metadata before retrying; this tool never fetches missing objects. Output includes at most 100 relative paths but always compares and counts every changed input.
+
+The `Immutable server source` workflow runs on relevant beta pushes and pull requests with full history, read-only permissions, a JSON artifact and a check summary. It validates package, manifest and generated source-input agreement, then applies the baseline rule above. This reports drift without requiring a new launcher pin for every intermediate server PR. It does not publish packages or claim that the selected server commit passed tests. Before a release, run strict mode and inspect CI for the chosen immutable server commit; before merging a pin refresh, verify its archive startup and applicable PR CI. Existing release evidence checks remain separate.
