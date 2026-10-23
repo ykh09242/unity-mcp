@@ -7,9 +7,13 @@ import re
 import stat
 from itertools import islice
 from pathlib import Path
-from uuid import uuid4
 
 from services.execution_receipt_identity import HEX_ID, ReceiptUnavailable
+from services.private_store_bootstrap import (
+    StoreBootstrapError,
+    validate_bootstrap,
+    finish_bootstrap,
+)
 
 METADATA_BYTES = 8192
 MAX_RECORDS = 1024
@@ -41,6 +45,8 @@ class ReceiptFiles:
             self._open()
         except Exception as error:
             self.close()
+            if isinstance(error, StoreBootstrapError):
+                raise ReceiptUnavailable("receipt_bootstrap_" + str(error)) from error
             if isinstance(error, ReceiptUnavailable):
                 raise
             raise ReceiptUnavailable("receipt_store_unavailable") from error
@@ -72,13 +78,6 @@ class ReceiptFiles:
             finally:
                 os.close(descriptor)
 
-    def _create_bytes(self, path: Path, raw: bytes) -> None:
-        with self._create(path) as stream:
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-        self._sync_directory()
-
     def _open(self) -> None:
         for path in (self.root, *self.root.parents):
             if path.exists() and (
@@ -87,13 +86,7 @@ class ReceiptFiles:
                 raise ReceiptUnavailable("linked_receipt_root")
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._private(self.root, directory=True)
-        marker = self.root / "owner"
-        if not marker.exists():
-            if any(self.root.iterdir()):
-                raise ReceiptUnavailable("unrecognized_receipt_root")
-            self._create_bytes(marker, _MARKER)
-        if self._private(marker).st_size != len(_MARKER) or marker.read_bytes() != _MARKER:
-            raise ReceiptUnavailable("unrecognized_receipt_root")
+        validate_bootstrap(self.root, _MARKER, _ENTRY, _MAX_ENTRIES, self._private)
         lock = self.root / "writer.lock"
         if lock.exists():
             self._private(lock)
@@ -115,20 +108,10 @@ class ReceiptFiles:
 
             fcntl.flock(self.writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         self.locked = True
+        self.store_id = finish_bootstrap(self.root, _MARKER, _ENTRY, _MAX_ENTRIES, self._private)
         paths = list(islice(self.root.iterdir(), _MAX_ENTRIES + 1))
         if len(paths) > _MAX_ENTRIES:
             raise ReceiptUnavailable("receipt_directory_capacity")
-        installation = self.root / "installation"
-        if not installation.exists():
-            if any(_ENTRY.fullmatch(path.name) for path in paths):
-                raise ReceiptUnavailable("missing_receipt_store_identity")
-            self._create_bytes(installation, (uuid4().hex + "\n").encode("ascii"))
-        if self._private(installation).st_size != 33:
-            raise ReceiptUnavailable("invalid_receipt_store_identity")
-        identity = installation.read_bytes()
-        if not re.fullmatch(rb"[0-9a-f]{32}\n", identity):
-            raise ReceiptUnavailable("invalid_receipt_store_identity")
-        self.store_id = identity[:-1].decode("ascii")
         result_bytes = 0
         for path in paths:
             if path.name in {"owner", "installation", "writer.lock"}:

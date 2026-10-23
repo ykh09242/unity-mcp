@@ -20,6 +20,11 @@ from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from services.private_store_bootstrap import (
+    StoreBootstrapError,
+    validate_bootstrap,
+    finish_bootstrap,
+)
 
 from models.response_limits import (
     MAX_RESPONSE_BYTES,
@@ -191,6 +196,12 @@ class WaitJournal:
             self._open()
         except Exception as error:
             self.close()
+            if isinstance(error, StoreBootstrapError):
+                raise JournalUnavailable(
+                    "Wait journal bootstrap "
+                    + str(error)
+                    + "; preserve the directory for inspection"
+                ) from error
             if isinstance(error, JournalUnavailable):
                 raise
             raise JournalUnavailable("Wait journal cannot be opened") from error
@@ -205,21 +216,9 @@ class WaitJournal:
                 raise JournalUnavailable("Linked journal path is unsupported")
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._require_private(self.root, directory=True)
-        marker = self.root / "owner"
-        if not marker.exists():
-            if any(self.root.iterdir()):
-                raise JournalUnavailable("Journal directory is not private")
-            with self._create_private(marker) as stream:
-                stream.write(self._MARKER)
-                stream.flush()
-                os.fsync(stream.fileno())
-        if (
-            marker.is_symlink()
-            or marker.stat().st_size != len(self._MARKER)
-            or marker.read_bytes() != self._MARKER
-        ):
-            raise JournalUnavailable("Unrecognized journal directory")
-        self._require_private(marker)
+        validate_bootstrap(
+            self.root, self._MARKER, self._NAME, self.max_records * 2 + 3, self._require_private
+        )
         lock_path = self.root / "writer.lock"
         if lock_path.is_symlink():
             raise JournalUnavailable("Linked writer lock")
@@ -248,24 +247,12 @@ class WaitJournal:
             import fcntl  # pylint: disable=import-error  # POSIX-only standard library.
 
             fcntl.flock(self._writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.installation_id = finish_bootstrap(
+            self.root, self._MARKER, self._NAME, self.max_records * 2 + 3, self._require_private
+        )
         paths = list(islice(self.root.iterdir(), self.max_records * 2 + 4))
         if len(paths) > self.max_records * 2 + 3:
             raise JournalUnavailable("Journal directory exceeds file bound")
-        installation = self.root / "installation"
-        if not installation.exists():
-            if any(path.suffix in {".json", ".stage"} for path in paths):
-                raise JournalUnavailable("Existing wait records have no installation identity")
-            with self._create_private(installation) as stream:
-                stream.write((uuid4().hex + "\n").encode("ascii"))
-                stream.flush()
-                os.fsync(stream.fileno())
-        self._require_private(installation)
-        if installation.is_symlink() or installation.stat().st_size != 33:
-            raise JournalUnavailable("Invalid journal installation identity")
-        identity = installation.read_bytes()
-        if not re.fullmatch(rb"[0-9a-f]{32}\n", identity):
-            raise JournalUnavailable("Invalid journal installation identity")
-        self.installation_id = identity[:-1].decode("ascii")
         for path in paths:
             if path.name in {"owner", "writer.lock", "installation"}:
                 continue
