@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -110,7 +111,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         internal async Task<StdioAuthenticatedSession> AuthenticateSessionAsync(NetworkStream stream, CancellationToken cancel)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            deadline.CancelAfter(3000);
+            deadline.CancelAfter(TimeSpan.FromSeconds(OperationTimeouts.EnvironmentSeconds("UNITY_MCP_HANDSHAKE_TIMEOUT", 30, 300)));
             // Older Mono NetworkStream reads may not abort on token cancellation.
             using var abortRead = deadline.Token.Register(() => stream.Close());
             string challenge = RandomHex(32);

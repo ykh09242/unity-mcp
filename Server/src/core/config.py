@@ -89,10 +89,14 @@ class ServerConfig:
 
     # STDIO framing behaviour
     require_framing: bool = True
-    handshake_timeout: float = 1.0
+    handshake_timeout: float = field(
+        default_factory=lambda: min(_env_float("UNITY_MCP_HANDSHAKE_TIMEOUT", 30.0), 300.0)
+    )
     framed_receive_timeout: float = 2.0
     max_heartbeat_frames: int = 16
-    heartbeat_timeout: float = 2.0
+    heartbeat_timeout: float = field(
+        default_factory=lambda: _env_float("UNITY_MCP_HEARTBEAT_TIMEOUT", 30.0)
+    )
 
     # Logging settings
     log_level: str = "INFO"
@@ -103,9 +107,9 @@ class ServerConfig:
     retry_delay: float = 0.25
     # Backoff hint returned to clients when Unity is reloading (milliseconds)
     reload_retry_ms: int = 250
-    # Number of polite retries when Unity reports reloading
-    # 40 × 250ms ≈ 10s default window
-    reload_max_retries: int = 40
+    # Reload retries normally consume the finite time budget. Explicit retry-count
+    # overrides remain available for callers that deliberately want fewer attempts.
+    reload_max_retries: int | None = None
 
     # Port discovery cache
     port_registry_ttl: float = 5.0

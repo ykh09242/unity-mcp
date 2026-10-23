@@ -610,9 +610,9 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("lost_reply", [True, False])
+@pytest.mark.parametrize("reply", ["expired", "disconnected", "rejected"])
 async def test_sdk_refresh_deadline_recovery_uses_structured_outcome_without_replay(
-    command_hub, monkeypatch, lost_reply
+    command_hub, monkeypatch, reply
 ):
     import services.tools.refresh_unity as refresh_module
 
@@ -625,9 +625,14 @@ async def test_sdk_refresh_deadline_recovery_uses_structured_outcome_without_rep
         if message["type"] != "execute":
             return
         if message["name"] == "refresh_unity":
-            if lost_reply:
+            if reply == "expired":
                 return
-            result = {"success": False, "error": "native refresh rejected"}
+            result = {
+                "success": False,
+                "error": "Connection closed after dispatch"
+                if reply == "disconnected"
+                else "native refresh rejected",
+            }
         else:
             result = {"success": True, "data": {"compilation": {"is_compiling": False}}}
         await command_hub.endpoint._handle_command_result(
@@ -640,12 +645,24 @@ async def test_sdk_refresh_deadline_recovery_uses_structured_outcome_without_rep
         monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.05)
         monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", 0.02)
         result = await client.call_tool(
-            "refresh_unity", {"compile": "request"}, raise_on_error=False
+            "refresh_unity",
+            {"compile": "request", "timeout_seconds": 1 if reply == "expired" else 300},
+            raise_on_error=False,
         )
         payload = result.structured_content
         payload = payload.get("result", payload)
         assert len([m for m in command_hub.sent if m.get("name") == "refresh_unity"]) == 1
-        if lost_reply:
+        if reply == "expired":
+            # The explicit observation budget is exhausted. Readiness cannot be
+            # queried afterward to turn an unknown write into apparent success.
+            assert payload["success"] is False
+            assert payload["hint"] == "inspect_state_before_retry"
+            assert payload["data"]["reason"] == "outcome_unknown"
+            assert [m["name"] for m in command_hub.sent if m["type"] == "execute"] == [
+                "refresh_unity"
+            ]
+            assert all(m["id"] == command_hub.sent[0]["id"] for m in command_hub.sent)
+        elif reply == "disconnected":
             assert payload["success"] is True
             assert payload["data"]["recovered_from_disconnect"] is True
             assert "unconfirmed" in payload["message"]

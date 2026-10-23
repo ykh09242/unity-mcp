@@ -621,7 +621,7 @@ class UnityInstanceMiddleware(Middleware):
         if command == "refresh_unity" and params.get("wait_for_ready", True):
             from services.tools.refresh_unity import REFRESH_READY_TIMEOUT_SECONDS
 
-            timeout_s = max(timeout_s, REFRESH_READY_TIMEOUT_SECONDS)
+            timeout_s = max(timeout_s, REFRESH_READY_TIMEOUT_SECONDS + 5.0)
         started_at = asyncio.get_running_loop().time()
         budget = _CommandBudget(started_at + timeout_s)
         scope = asyncio.timeout_at(budget.expires_at)
