@@ -23,6 +23,7 @@ from models.response_limits import (
     response_size,
     response_limit_error,
 )
+from services.tools.response_work import needs_response_worker, response_work
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from transport.stdio_response_delivery import stdio_delivery
 from transport.test_job_tasks import CreateWaitTaskResult
@@ -178,7 +179,9 @@ class ResponseLimitMiddleware(Middleware):
 
     async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> ToolResult:
         result = await call_next(context)
-        return self.admit_tool_result(result)
+        return await response_work(
+            lambda: self.admit_tool_result(result), large=needs_response_worker(result)
+        )
 
     def admit_tool_result(self, result):
         """Share the existing ordinary projection/admission with detached waits."""
