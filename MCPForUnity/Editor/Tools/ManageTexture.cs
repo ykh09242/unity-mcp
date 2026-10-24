@@ -798,6 +798,8 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
+        // Generation helpers receive newly created RGBA32 textures. Pixel views stay local to each
+        // helper and are no longer used when the caller applies, encodes or destroys the texture.
         // --- Pattern Helpers ---
 
         private static void ApplyPatternToTexture(Texture2D texture, string pattern, List<Color32> palette, int patternSize)
@@ -809,6 +811,7 @@ namespace MCPForUnity.Editor.Tools
 
             int width = texture.width;
             int height = texture.height;
+            var pixels = texture.GetPixelData<Color32>(0);
             if (width > 0 && height > 0)
                 pattern = pattern.ToLower();
 
@@ -817,7 +820,7 @@ namespace MCPForUnity.Editor.Tools
                 for (int x = 0; x < width; x++)
                 {
                     Color32 color = GetPatternColor(x, y, pattern, palette, patternSize, width, height);
-                    texture.SetPixel(x, y, color);
+                    pixels[y * width + x] = color;
                 }
             }
         }
@@ -878,6 +881,7 @@ namespace MCPForUnity.Editor.Tools
         {
             int width = texture.width;
             int height = texture.height;
+            var pixels = texture.GetPixelData<Color32>(0);
             float radians = angle * Mathf.Deg2Rad;
             Vector2 dir = new Vector2(Mathf.Cos(radians), Mathf.Sin(radians));
             float denomX = Mathf.Max(1, width - 1);
@@ -893,7 +897,7 @@ namespace MCPForUnity.Editor.Tools
                     t = Mathf.Clamp01((t + 1f) / 2f);
 
                     Color32 color = LerpPalette(palette, t);
-                    texture.SetPixel(x, y, color);
+                    pixels[y * width + x] = color;
                 }
             }
         }
@@ -902,6 +906,7 @@ namespace MCPForUnity.Editor.Tools
         {
             int width = texture.width;
             int height = texture.height;
+            var pixels = texture.GetPixelData<Color32>(0);
             float cx = width / 2f;
             float cy = height / 2f;
             float maxDist = Mathf.Sqrt(cx * cx + cy * cy);
@@ -916,7 +921,7 @@ namespace MCPForUnity.Editor.Tools
                     float t = Mathf.Clamp01(dist / maxDist);
 
                     Color32 color = LerpPalette(palette, t);
-                    texture.SetPixel(x, y, color);
+                    pixels[y * width + x] = color;
                 }
             }
         }
@@ -948,6 +953,7 @@ namespace MCPForUnity.Editor.Tools
         {
             int width = texture.width;
             int height = texture.height;
+            var pixels = texture.GetPixelData<Color32>(0);
 
             // Random offset to ensure different patterns
             float offsetX = UnityEngine.Random.Range(0f, 1000f);
@@ -974,7 +980,7 @@ namespace MCPForUnity.Editor.Tools
 
                     float t = Mathf.Clamp01(noiseValue / maxValue);
                     Color32 color = LerpPalette(palette, t);
-                    texture.SetPixel(x, y, color);
+                    pixels[y * width + x] = color;
                 }
             }
         }
