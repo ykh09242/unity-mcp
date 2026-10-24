@@ -21,6 +21,7 @@ Validate a C# script and report diagnostics, the effective validation engine, an
 | `uri` | `str` | yes | URI of the script to validate under Assets/ directory, mcpforunity://path/Assets/... or file://... or Assets/... |
 | `level` | `Literal['basic', 'standard']` | — | basic checks structure; standard adds available compiler syntax and heuristic Unity rules. See returned validation capabilities. |
 | `include_diagnostics` | `bool` | — | Include full diagnostics and summary |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

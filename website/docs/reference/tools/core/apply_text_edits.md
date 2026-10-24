@@ -36,6 +36,7 @@ Apply small text edits to a C# script identified by URI.
 | `precondition_sha256` | `str \| None` | — | Optional SHA256 of the script to edit, used to prevent concurrent edits |
 | `strict` | `bool \| None` | — | Optional strict flag, used to enforce strict mode |
 | `options` | `dict[str, Any] \| None` | — | Optional options, used to pass additional options to the script editor |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

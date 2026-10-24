@@ -26,6 +26,7 @@ Creates and modifies ScriptableObject assets using Unity SerializedObject proper
 | `target` | `dict[str, Any] \| str \| None` | — | Target asset reference {guid\|path} (for modify). |
 | `patches` | `list[dict[str, Any]] \| str \| None` | — | Patch list (or JSON string) to apply. For object references: use {"ref": {"guid": "..."}} or {"value": {"guid": "..."}}. For Sprite sub-assets: include "spriteName" in the ref/value object. Single-sprite textures auto-resolve from guid/path alone. Unity preflights growth: 1,048,576 elements per growing array and 2,097,152 added serialized elements/fields per request, including nested copies. |
 | `dry_run` | `bool \| str \| None` | — | If true, validate patches without applying (modify only). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

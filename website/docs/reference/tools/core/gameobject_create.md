@@ -36,6 +36,7 @@ Create a GameObject with transform, components and optional prefab output.
 | `set_active` | `bool \| str \| None` | — | If True, sets the GameObject active (accepts true/false or 'true'/'false') |
 | `layer` | `str \| None` | — | Layer name |
 | `component_properties` | `dict[str, dict[str, Any]] \| str \| None` | — | Dictionary of component names to their properties to set. Works for both                                     'create' (applied to components already present on the new GameObject - add                                     them via components_to_add first) and 'modify'. For example:                                     `{"MyScript": {"otherObject": {"find": "Player", "method": "by_name"}}}` assigns GameObject                                     `{"MyScript": {"playerHealth": {"find": "Player", "component": "HealthComponent"}}}` assigns Component                                     Example set nested property:                                     - Access shared material: `{"MeshRenderer": {"sharedMaterial.color": [1, 0, 0, 1]}}` |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

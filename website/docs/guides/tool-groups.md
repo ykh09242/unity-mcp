@@ -24,7 +24,7 @@ Unity availability and authorization cap every profile. `full` does not grant na
 
 `manage_tools(action="describe", tool="query_physics")` returns the complete declared description, input schema and output schema without selecting or calling it. `list_groups` reports the configured profile, its default groups and the tools actually visible after the Unity availability cap.
 
-A controlled Windows probe of the production built-in registry through the real MCP SDK measured **4 tools / 3,247 UTF-8 schema bytes** for `minimal`, **41 / 88,101** for `core` and **119 / 377,019** for `full`. This fixture excludes the optional custom-tool dispatcher and live Editor catalogs. Expanding either smaller profile produced exactly the same 119 descriptors as `full`; representative valid and invalid calls preserved results and validation. These are serialized bytes, not model tokens or a claim about model task success. Client-side context handling and custom catalogs affect actual usage.
+A controlled Windows probe at the dependency-upgrade baseline, before common routing metadata was added, of the production built-in registry through the real MCP SDK measured **4 tools / 3,247 UTF-8 schema bytes** for `minimal`, **41 / 88,101** for `core` and **119 / 377,019** for `full`. This fixture excludes the optional custom-tool dispatcher and live Editor catalogs. Expanding either smaller profile produced exactly the same 119 descriptors as `full`; representative valid and invalid calls preserved results and validation. These are serialized bytes, not model tokens or a claim about model task success. Client-side context handling and custom catalogs affect actual usage.
 
 ## Start with the needed feature
 
@@ -55,6 +55,17 @@ manage_tools(action="reset")
 ```
 
 For activation or deactivation, specify exactly one `tool` or `group`. Legacy selection affects only that connection. Modern selection follows the trusted scope and resolved project described below. Reset restores the configured initial selection and returns `visible_tools`, the resulting list after Unity availability is applied. Enabling a tool never installs a Unity package or bypasses Editor selection, authenticated catalogs or explicit consent.
+
+## Target a Unity instance
+
+Routed built-in and custom tool schemas advertise the optional `unity_instance` argument. Use `Name@hash` or a hash prefix from `mcpforunity://instances`; stdio also supports integer ports. The server consumes this argument before validating/executing the native tool payload.
+
+```text
+read_console(action="get", unity_instance="Project@hash")
+manage_tools(action="activate", group="physics", unity_instance="Project@hash")
+```
+
+A per-call selector does not replace another connection's active instance. Without it, a legacy connection keeps its active selection, while modern automatic selection applies only to the current request when exactly one instance is available. Modern automatic calls do not accumulate persistent routing records. With multiple Editors, supply an explicit selector on each modern call. Receipt retrieval uses its receipt identity instead and does not advertise a Unity selector.
 
 ## Existing combined calls
 
@@ -100,9 +111,9 @@ Modern `activate`, `deactivate` and `reset` work only when the reviewed SDK prov
 
 The existing HTTP API-key layer does not provide an SDK principal. Such modern HTTP connections receive an actionable refusal and can use the static `full` profile. `sync` only refreshes availability. Without a resolved project, modern changes also refuse instead of creating global choices. Legacy connection-scoped selection remains supported.
 
-The existing bounded session store owns modern preferences. Each scope stores a finite map of built-in overrides rather than an ever-growing action log. Active preferences renew their retention, idle preferences expire after 24 hours, reset removes them and server shutdown releases them. Expiring a preference does not cancel a running Unity operation. Storage admission failure preserves other clients' live selections.
+The existing bounded session store owns modern preferences and legacy connection preferences. Each scope stores a finite map of built-in overrides rather than an ever-growing action log. Repeating a legacy selection leaves that map unchanged; later group or individual-tool choices take precedence for the affected tools. Active preferences renew their retention, idle preferences expire after 24 hours, reset removes them and server shutdown releases them. Expiring a preference does not cancel a running Unity operation. Storage admission failure preserves other clients' live selections.
 
-Refresh-capable clients should request `tools/list` after `tools/list_changed`. Repeating an already-applied modern selection does not emit another notification. Catalog publication retains its coalesced invalidation delivery. The server cannot confirm whether a host refreshed its model inventory. For a client that freezes its list at connection time, configure `UNITY_MCP_TOOL_PROFILE=full`, restart the server and reconnect after enabling the desired tools in Unity. Reconnecting alone does not preserve a legacy session selection.
+Refresh-capable clients should request `tools/list` after `tools/list_changed`. Repeating an already-applied selection does not emit another notification on either protocol. Catalog publication retains its coalesced invalidation delivery. The server cannot confirm whether a host refreshed its model inventory. For a client that freezes its list at connection time, configure `UNITY_MCP_TOOL_PROFILE=full`, restart the server and reconnect after enabling the desired tools in Unity. Reconnecting alone does not preserve a legacy session selection.
 
 ## Hosted clients
 

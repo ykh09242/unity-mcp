@@ -25,6 +25,7 @@ Record observed uGUI Button pointer clicks and scene changes during unpaused Edi
 | `duration_seconds` | `int \| None` | — | start wall-clock limit in seconds; default 300 |
 | `scene_scope` | `Literal['active', 'all_loaded'] \| MISSING` | — | start-only scene scope: active (default) or all_loaded |
 | `checkpoint_name` | `str \| None` | — | Explicit named screenshot checkpoint; required for checkpoint |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

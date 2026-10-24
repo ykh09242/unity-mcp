@@ -278,7 +278,10 @@ async def test_rich_custom_exact_refs_defaults_output_and_callable_parity(monkey
         CLIConfig(unity_instance=TARGET), descriptor["name"], protocol=mode
     )
     assert receipt.exit_code == 0
-    assert receipt.tool["inputSchema"] == descriptor["input_schema"]
+    from tests.tool_schema import native_input_schema
+
+    assert native_input_schema(receipt.tool["inputSchema"]) == descriptor["input_schema"]
+    assert "unity_instance" in receipt.tool["inputSchema"]["properties"]
     assert receipt.project_descriptor["input_schema"] == descriptor["input_schema"]
     assert sent.await_count == 0
     async with Client(server, mode=mode, cache=False) as client:

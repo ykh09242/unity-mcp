@@ -27,6 +27,7 @@ Inspect the visual tree or diagnose UI Toolkit layout and text. Inspection may l
 | `max_characters` | `int \| None` | — | get_visual_tree / diagnose shared copied UTF-16 string budget including metadata (default 65536). get_visual_tree per-string limit 8192/class limit 64; diagnose name/type limit 256 and whole physical paths. |
 | `max_pairs` | `int \| None` | — | diagnose physical sibling pairs examined before filters (default 2000); zero disables overlap and yields partial evidence. |
 | `max_findings` | `int \| None` | — | diagnose retained candidate findings (default 200); reaching the cap reports partial coverage. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

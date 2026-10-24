@@ -31,6 +31,7 @@ Apply forces, torque or explosions to rigidbodies.
 | `explosion_radius` | `float \| None` | — | Explosion radius. |
 | `explosion_force` | `float \| None` | — | Explosion force magnitude. |
 | `upwards_modifier` | `float \| None` | — | Explosion upwards modifier. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

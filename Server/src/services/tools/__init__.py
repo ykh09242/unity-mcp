@@ -12,6 +12,7 @@ from core.logging_decorator import log_execution
 from utils.module_discovery import discover_modules
 from services.registry import get_registered_tools, TOOL_GROUPS
 from services.registry.action_contracts import ACTION_RULES, action_input_schema
+from services.registry.routing_schema import with_unity_instance
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -75,6 +76,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         )
         if tool_name in ACTION_RULES:
             registered.parameters = action_input_schema(tool_name, registered.parameters)
+        if tool_name != "get_execution_receipt":
+            registered.parameters = with_unity_instance(registered.parameters)
         mcp.add_tool(registered)
         definitions[tool_name] = registered
         groups[tool_name] = tool_info.get("group")

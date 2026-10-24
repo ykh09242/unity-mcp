@@ -28,6 +28,7 @@ Add, remove, or set properties on components attached to GameObjects. Actions: a
 | `component_index` | `int \| None` | — | Zero-based index within GetComponents(requested type), including derived types; not the mixed components-resource list index. Legacy omission selects the first instance. strict_selection=true instead requires uniqueness. |
 | `strict_selection` | `bool` | — | Require one GameObject and, for remove/set_property, one component unless an index or component ID selects it. Default preserves legacy first match. |
 | `component_instance_id` | `int \| None` | — | Nonzero live component instanceID from the components resource. Requires the selected target and type to match; cannot be combined with component_index or add. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

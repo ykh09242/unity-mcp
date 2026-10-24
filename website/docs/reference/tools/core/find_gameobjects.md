@@ -26,6 +26,7 @@ Search GameObjects by name, tag, layer, component, path or ID; returns IDs only.
 | `scene_scope` | `Literal['legacy', 'active', 'all_loaded']` | — | Explicit scene selection; legacy preserves existing method-dependent scope |
 | `conditions` | `list[dict[str, Any]] \| None` | — | AND predicates with exactly search_method and search_term; max8 including top-level search |
 | `max_depth` | `int \| None` | — | Scoped inclusive depth: root0, default64, maximum128 |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

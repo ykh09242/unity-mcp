@@ -53,6 +53,7 @@ Cancellation closes local socket work and prevents later local stages once obser
 | `max_size` | `int \| None` | — | screenshot / compare_screenshot: max pixels on the longest side, 0..8192 (default 1000). |
 | `force` | `bool \| None` | — | sync_addon: overwrite even when the installed addon already matches. |
 | `timeout_seconds` | `int \| None` | — | Seconds to wait for Blender (default 180; big exports can be slow). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -32,6 +32,7 @@ dependency_bundle reports inspection, stage ('not_staged', 'partial', 'staged'),
 | `target_size` | `float \| None` | — | Largest default-pose mesh-bounds dimension in meters when Auto-Normalize Imported Models is enabled; finite zero/negative values preserve scale. Omitted defaults to 1. Normalized glTF may return a prefab variant. |
 | `animation_type` | `Literal['none', 'generic', 'humanoid', 'legacy'] \| None` | — | FBX/OBJ only: rig/animation import mode. 'generic' or 'humanoid' surface the model's AnimationClips; 'legacy' selects Unity's legacy Animation system (rarely needed); omitted or 'none' imports no rig. Ignored for glTF/GLB. |
 | `archive_model_path` | `str \| None` | — | ZIP only: exact case-sensitive relative model entry. Omit for deterministic FBX/OBJ-first selection; no basename search or fallback. At most 512 UTF-8 bytes and 32 segments. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

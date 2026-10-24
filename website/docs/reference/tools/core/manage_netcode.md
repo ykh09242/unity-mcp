@@ -22,6 +22,7 @@ Inspect local Netcode for GameObjects configuration without starting a network s
 | `scene_handle` | `int \| None` | — | Exact loaded scene handle for preflight. |
 | `expected_settings` | `NetcodeExpectedSettings \| None` | — | Supported NetworkConfig scalar expectations. |
 | `max_prefabs` | `int` | — | Maximum total inspected prefab registrations. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

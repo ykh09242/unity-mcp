@@ -35,6 +35,7 @@ Run ray, shape and overlap queries in 2D or 3D. Read-only inspection; results ca
 | `height` | `float \| None` | — | Capsule height for shapecast. |
 | `capsule_direction` | `int \| None` | — | Capsule direction: 0=X, 1=Y (default), 2=Z. |
 | `angle` | `float \| None` | — | Rotation angle for 2D shape casts. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

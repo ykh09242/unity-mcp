@@ -68,6 +68,7 @@ CAPTURE:
 | `orbit_fov` | `float \| str \| None` | — | Camera FOV in degrees for batch='orbit' (default 60). |
 | `output_folder` | `str \| None` | — | Optional folder for screenshot output. Project-relative (e.g. 'Assets/Screenshots' or 'Captures') or absolute path inside the project. Overrides the user's Editor preference. If omitted, falls back to the Editor preference, then to the built-in default (Assets/Screenshots). |
 | `timeout_seconds` | `int` | — | Scene View repaint wait budget in seconds; returns as soon as a matching frame finishes. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

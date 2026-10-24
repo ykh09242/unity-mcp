@@ -24,6 +24,7 @@ Polls an async Unity test job by job_id.
 | `wait_timeout` | `int \| None` | — | If set, wait up to this many seconds for tests to complete before returning. Reduces polling frequency and avoids client-side loop detection. Recommended: 30-60 seconds. Returns immediately if tests complete sooner. |
 | `page_size` | `int \| None` | — | Opt-in terminal detail page size; requires a detail flag. |
 | `cursor` | `str \| None` | — | Opaque next_cursor from a result page |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

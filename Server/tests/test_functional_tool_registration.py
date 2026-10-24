@@ -32,3 +32,28 @@ def test_features_register_once_after_sources_have_been_registered_with_sdk():
                 assert "ctx" not in tools["gameobject_create"].inputSchema["properties"]
         asyncio.run(scenario())
     """)
+
+
+def test_real_catalog_advertises_strict_routing_with_action_contracts():
+    run_sdk_regression("""
+        import asyncio, os
+        from fastmcp import Client, FastMCP
+        from jsonschema import Draft202012Validator
+        from services.tools import register_all_tools
+
+        async def scenario():
+            os.environ["UNITY_MCP_TOOL_PROFILE"] = "full"
+            server = FastMCP("routing-catalog")
+            register_all_tools(server)
+            async with Client(server) as client:
+                catalog = {tool.name: tool for tool in await client.list_tools()}
+                assert len(catalog) >= 100
+                for name, tool in catalog.items():
+                    assert ("unity_instance" in tool.input_schema.get("properties", {})) == (name != "get_execution_receipt"), name
+                validator = Draft202012Validator(catalog["read_console"].input_schema)
+                assert not list(validator.iter_errors({"action": "get", "unity_instance": "Project@hash"}))
+                assert list(validator.iter_errors({"action": "get", "unexpected": 1}))
+                assert list(validator.iter_errors({"action": "not-an-action", "unity_instance": "Project@hash"}))
+                assert list(validator.iter_errors({"action": "get", "unity_instance": True}))
+        asyncio.run(scenario())
+    """)

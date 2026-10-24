@@ -27,6 +27,7 @@ Manages shader scripts in Unity (create, read, update, delete). Read-only: read,
 | `read_offset` | `int \| str \| None` | — | read source byte offset after the BOM (default 0). |
 | `read_limit` | `int \| str \| None` | — | read page byte limit, 4-1048576 (default 65536). |
 | `read_encoding` | `Literal['text', 'base64'] \| None` | — | read output encoding; Base64 represents UTF-8 text. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

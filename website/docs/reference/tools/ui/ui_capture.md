@@ -31,6 +31,7 @@ Start, poll or cancel a bounded UI Toolkit render capture.
 | `max_resolution` | `int \| None` | — | Max resolution for inline base64 image, 1 to 8192 (default 640; 0 selects the default). For render_ui. |
 | `screenshot_file_name` | `str \| None` | — | Custom file name for the render output (default: auto-generated). For render_ui. |
 | `output_folder` | `str \| None` | — | Optional folder for the render output. Project-relative (e.g. 'Assets/Screenshots' or 'Captures') or absolute path inside the project. Overrides the user's Editor preference. If omitted, falls back to the Editor preference, then to the built-in default (Assets/Screenshots). For render_ui. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

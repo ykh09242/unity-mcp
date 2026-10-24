@@ -1338,13 +1338,18 @@ class CustomToolService:
             from services.custom_tool_schema_tool import SchemaTool, require_schema_listing_policy
 
             require_schema_listing_policy(self._mcp)
-            return SchemaTool(definition, wrapped)
-        return Tool.from_function(
-            wrapped,
-            name=definition.name,
-            description=definition.description,
-            **({"output_schema": None} if not definition.structured_output else {}),
-        )
+            registered = SchemaTool(definition, wrapped)
+        else:
+            registered = Tool.from_function(
+                wrapped,
+                name=definition.name,
+                description=definition.description,
+                **({"output_schema": None} if not definition.structured_output else {}),
+            )
+        from services.registry.routing_schema import with_unity_instance
+
+        registered.parameters = with_unity_instance(registered.parameters)
+        return registered
 
     def _build_global_tool_handler(self, definition: ToolDefinitionModel):
         expected_contract = self._wire_contract(definition)

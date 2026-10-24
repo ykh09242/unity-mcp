@@ -40,6 +40,7 @@ Slice 2D sprite sheets and build AnimationClips and an AnimatorController from t
 | `geometry` | `dict[str, JsonValue] \| None` | — | set_geometry: omitted fields stay unchanged. rect [x,y,width,height] in source pixels; pivot normalized [x,y]; border [left,bottom,right,top] in pixels; outlines 1-16 polygons of 3-256 centered source-pixel [x,y] points. Bounds are validated before writes; physics outlines are unchanged. |
 | `page_size` | `int \| None` | — | get_geometry uses 1-100 entries (default 50). get_info: how many entries of the 'slices' list to return (1-4096, default 512). A sheet sliced by hand can hold more slices than one response should carry. |
 | `cursor` | `int \| None` | — | get_geometry requires expected_revision on continuation. get_info: index to start the 'slices' page at. Pass back the 'next_cursor' from the previous response; next_cursor is null on the last page. The image is returned only on the first page. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -35,6 +35,7 @@ Actions:
 | `query` | `str \| None` | — | Single search query for lookup (class name, topic, or slug). |
 | `queries` | `str \| None` | — | Comma-separated search queries for batch lookup (e.g., 'Physics.Raycast,NavMeshAgent,Light2D'). |
 | `strict_version` | `bool` | — | Require the selected/explicit major.minor documentation version. Refuse unknown versions and unverifiable/different-version final URLs; disable unversioned 404 fallback. Does not govern package pkg_version or project assets. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -21,7 +21,9 @@ Get manage_script capabilities (supported ops, limits, and guards).
 
 ## Parameters
 
-_No parameters._
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -176,7 +176,10 @@ async def test_actual_plugin_commits_notify_modern_and_explicit_legacy_clients(c
                             for tool in _message(listing)["result"]["tools"]
                             if tool["name"] == "subscription_wire_tool"
                         )
-                        assert list(tool["inputSchema"]["properties"]) == [parameter]
+                        assert list(tool["inputSchema"]["properties"]) == [
+                            parameter,
+                            "unity_instance",
+                        ]
                         with anyio.fail_after(watchdog_timeout()):
                             await legacy_changes.changed.wait()
                     # Then: legacy invalidation remains usable, and non-listening clients can refetch.

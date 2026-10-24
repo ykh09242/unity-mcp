@@ -45,7 +45,7 @@ def test_dynamic_custom_tool_registers_and_executes_through_real_sdk():
                 tools = await client.list_tools()
                 tool = next((tool for tool in tools if tool.name == "custom_echo"), None)
                 assert tool is not None, "Parameterized custom tool disappeared during SDK registration"
-                assert set(tool.input_schema["properties"]) == {"count", "text"}
+                assert set(tool.input_schema["properties"]) == {"count", "text", "unity_instance"}
                 assert {branch["type"] for branch in tool.input_schema["properties"]["count"]["anyOf"]} == {"integer", "null"}
                 assert tool.input_schema["properties"]["count"]["default"] == 3
                 assert tool.input_schema["required"] == ["text"]

@@ -28,6 +28,7 @@ Inspect and explicitly author SpriteAtlas V2 Assets/*.spriteatlasv2 files. Actio
 | `build_target` | `str \| None` | — | pack: exact active BuildTarget name from capabilities; no platform switch. |
 | `offset` | `int \| None` | — | Packables page offset 0-256; continuation requires expected_revision. |
 | `page_size` | `int \| None` | — | Packables page size1-100, default50. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -23,6 +23,7 @@ Inspect prefab metadata or a bounded hierarchy page. Inspection may load assets 
 | `page_size` | `int \| None` | — | Page size 1-500. get_hierarchy defaults to 50; list_overrides defaults to 100. |
 | `cursor` | `str \| None` | — | get_hierarchy opaque cursor; keep identical page_size/max_depth. |
 | `max_depth` | `int` | — | get_hierarchy inclusive depth scope, root=0; default 64, maximum 128. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

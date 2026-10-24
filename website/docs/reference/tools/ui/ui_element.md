@@ -34,6 +34,7 @@ Change a visual element's text, classes, style or state.
 | `visible` | `bool \| None` | — | Set element visibility (display: flex/none). For modify_visual_element. |
 | `tooltip` | `str \| None` | — | Set element tooltip text. For modify_visual_element. |
 | `strict_style` | `bool` | — | Reject every requested mutation before application if any inline style is rejected. Only modify_visual_element; default false preserves lenient compatibility. Validation is not callback rollback. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

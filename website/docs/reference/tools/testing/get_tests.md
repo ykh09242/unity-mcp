@@ -23,6 +23,7 @@ Lists Unity tests without running them. Returns one page with totalCount, nextCu
 | `page_size` | `int` | — | Maximum tests per page (1..200). |
 | `cursor` | `int` | — | Zero-based offset; use the previous nextCursor. |
 | `timeout_seconds` | `int` | — | Total discovery observation budget in seconds, including both modes (default 300). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -315,7 +315,7 @@ async def test_old_http_toggles_preserve_omitted_metadata_and_ignore_unknown_cus
     async with Client(server, mode=mode) as client:
         tools = {tool.name: tool for tool in await client.list_tools()}
         assert set(tools) == {"known_custom", "run_tests", "set_active_instance"}
-        assert set(tools["known_custom"].input_schema["properties"]) == {"value"}
+        assert set(tools["known_custom"].input_schema["properties"]) == {"value", "unity_instance"}
     # Omission from an old-format reply is not an authoritative schema removal.
     monkeypatch.setattr(
         PluginHub,

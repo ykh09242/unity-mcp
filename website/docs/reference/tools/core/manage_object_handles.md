@@ -23,6 +23,7 @@ Capture or resolve the original loaded GameObject/Component reference for this E
 | `handle` | `str` | — |  |
 | `require_persistent` | `bool` | — | Unsupported legacy field: omit entirely. Any presence, including false, fails. |
 | `allow_asset_load` | `bool` | — | Unsupported legacy field: omit entirely. Any presence, including false, fails. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

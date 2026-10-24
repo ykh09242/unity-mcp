@@ -26,7 +26,7 @@ async def test_global_tool_keeps_parameter_annotations_through_wrappers():
 
     tool = next(tool for tool in await mcp.list_tools() if tool.name == "my_tool")
     schema = tool.parameters
-    assert set(schema["properties"]) == {"action", "count"}
+    assert set(schema["properties"]) == {"action", "count", "unity_instance"}
     assert schema["properties"]["action"]["type"] == "string"
     assert {item["type"] for item in schema["properties"]["count"]["anyOf"]} == {
         "integer",

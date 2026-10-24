@@ -19,6 +19,7 @@ Request cancellation of an owned native test job. Acceptance is intent; poll nat
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `job_id` | `str` | yes | Job ID returned by run_tests |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -47,6 +47,7 @@ UTILITY:
 | `name` | `str \| None` | — | Registry name for add_registry/remove_registry. |
 | `url` | `str \| None` | — | Registry URL for add_registry. |
 | `scopes` | `list[str] \| None` | — | Registry scopes for add_registry. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

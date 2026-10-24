@@ -44,6 +44,8 @@ from transport.plugin_hub import (
     http_request_budget,
 )
 from transport.tool_input_validation import validate_tool_arguments
+from transport.protocol import is_sessionless
+from transport.session_state_store import SessionStateCapacityError
 
 logger = logging.getLogger("mcp-for-unity-server")
 # Separate logger that propagates to root -> stderr so diagnostics show in console
@@ -127,7 +129,9 @@ class UnityInstanceMiddleware(Middleware):
         ``delete_state``.
         """
         async with self._selection_lock:
-            await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, None)
+            await ctx.set_state(
+                self._ACTIVE_INSTANCE_STATE_KEY, None, serializable=not is_sessionless(ctx)
+            )
 
     async def _select_if_unset(self, ctx, candidate: str) -> str:
         """Preserve an explicit choice made while automatic discovery awaited."""
@@ -135,7 +139,9 @@ class UnityInstanceMiddleware(Middleware):
             current = await self.get_active_instance(ctx)
             if current:
                 return current
-            await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, candidate)
+            await ctx.set_state(
+                self._ACTIVE_INSTANCE_STATE_KEY, candidate, serializable=not is_sessionless(ctx)
+            )
             return candidate
 
     async def _discover_instances(self, ctx) -> list:
@@ -287,9 +293,8 @@ class UnityInstanceMiddleware(Middleware):
         """
         Auto-select the sole Unity instance when no active instance is set.
 
-        Note: This method both *discovers* and *persists* the selection via
-        `set_active_instance` as a side-effect, since callers expect the selection
-        to stick for subsequent tool/resource calls in the same session.
+        Legacy selection follows the connection. Modern automatic selection lives
+        only for this request: its SDK connection ID changes on every call.
         """
         try:
             transport = (config.transport_mode or "stdio").lower()
@@ -320,6 +325,8 @@ class UnityInstanceMiddleware(Middleware):
                             len(ids),
                             ", ".join(ids),
                         )
+                except SessionStateCapacityError:
+                    raise
                 except (ConnectionError, ValueError, KeyError, TimeoutError, AttributeError) as exc:
                     logger.debug(
                         "PluginHub auto-select probe failed (%s); falling back to stdio",
@@ -360,6 +367,8 @@ class UnityInstanceMiddleware(Middleware):
                             len(ids),
                             ", ".join(ids),
                         )
+                except SessionStateCapacityError:
+                    raise
                 except (ConnectionError, ValueError, KeyError, TimeoutError, AttributeError) as exc:
                     logger.debug(
                         "Stdio auto-select probe failed (%s)",
@@ -374,6 +383,8 @@ class UnityInstanceMiddleware(Middleware):
                         type(exc).__name__,
                         exc_info=True,
                     )
+        except SessionStateCapacityError:
+            raise
         except Exception as exc:
             if isinstance(exc, (SystemExit, KeyboardInterrupt)):
                 raise
@@ -507,7 +518,13 @@ class UnityInstanceMiddleware(Middleware):
         try:
             async with foreground_progress(context.fastmcp_context):
                 return await self._call_tool_with_receipts(context, call_next)
-        except (ReceiptConflict, ReceiptInvalid, ReceiptNotFound, ReceiptUnavailable) as error:
+        except (
+            ReceiptConflict,
+            ReceiptInvalid,
+            ReceiptNotFound,
+            ReceiptUnavailable,
+            SessionStateCapacityError,
+        ) as error:
             raise ToolError(str(error)) from error
 
     async def _call_tool_with_receipts(self, context: MiddlewareContext, call_next):

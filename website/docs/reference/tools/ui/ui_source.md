@@ -30,6 +30,7 @@ Create, read or edit UXML/USS assets, link stylesheets or preview source patches
 | `page_size` | `int \| None` | — | Number of results per page: 1-1000 (default 50). For list. |
 | `page_number` | `int \| None` | — | Page number, 1-based (default 1). For list. |
 | `inventory_revision` | `str \| None` | — | list: reuse the returned inventory_revision with the same scope/filter to reject pages after asset changes, expiry or eviction. Omit for the latest cached inventory; oversized inventories remain complete but uncached. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -32,6 +32,7 @@ Inspect optional Unity Localization locale/table identities, shared keys, missin
 | `expected_revision` | `str \| None` | — | Exact current asset revision from inspection. |
 | `offset` | `int \| None` | — | Page offset. |
 | `limit` | `int \| None` | — | Discovery page size, default 50. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

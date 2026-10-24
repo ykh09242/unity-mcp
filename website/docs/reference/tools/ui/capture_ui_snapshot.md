@@ -23,6 +23,7 @@ Capture a bounded complete semantic scene UI snapshot for ugui or uitoolkit. Ret
 | `max_nodes` | `int` | — |  |
 | `identity_map` | `list[UiIdentityAssignment]` | — | Optional current-path to nonsecret item-ID map. At most max_nodes minus one entries and 65536 aggregate path/ID characters; duplicate paths/IDs refuse. Omit for semantic v2 capture; explicit null/empty refuse. Mapped v3 identities remain parent-scoped and require caller rebinding; they are not mutation handles. |
 | `component_type` | `Literal['auto', 'ui_document', 'panel_renderer']` | — | UI Toolkit only. Omit for compatible auto capture; explicit auto/ui_document/panel_renderer requires native resolved-kind evidence. Explicit null and unavailable components refuse. Noncanonical component IDs are not mutation handles. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

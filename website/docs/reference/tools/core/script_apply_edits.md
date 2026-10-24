@@ -77,6 +77,7 @@ Structured C# edits (methods/classes) with safer boundaries - prefer this over r
 | `options` | `dict[str, Any] \| None` | — | Options for the script edit |
 | `script_type` | `str` | — | Type of the script to edit |
 | `namespace` | `str \| None` | — | Namespace of the script to edit |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

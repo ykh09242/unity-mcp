@@ -43,7 +43,7 @@ def test_partition_preserves_every_existing_action_and_input_type():
                 assert admitted == set(signature.parameters) - {"ctx", "action"}, (source, admitted ^ (set(signature.parameters) - {"ctx", "action"}))
                 for profile in profiles:
                     schema = schemas[profile.name]
-                    assert set(schema["properties"]) == {"action", *profile.parameters}
+                    assert set(schema["properties"]) == {"action", "unity_instance", *profile.parameters}
                     for name in profile.parameters:
                         assert schema["properties"][name] == schemas[source]["properties"][name], (profile.name, name)
                     assert declared[profile.name]["unity_target"] == profile.name, profile.name

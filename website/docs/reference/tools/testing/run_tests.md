@@ -28,6 +28,7 @@ Starts a Unity test run asynchronously and returns a job_id immediately. Poll wi
 | `init_timeout` | `int \| None` | — | Initialization timeout in milliseconds (1..2147483647). PlayMode tests may need longer due to domain reload (default: 120000; native maximum: 3600000). |
 | `run_timeout_ms` | `int \| None` | — | Opt-in native job deadline in milliseconds, including queue/setup. Requires exact supported native control; wait timeout does not cancel Unity. |
 | `clear_stuck` | `bool` | — | Clear an orphaned running job instead of starting a run. Use when a job was lost to a domain reload and is blocking every subsequent run. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

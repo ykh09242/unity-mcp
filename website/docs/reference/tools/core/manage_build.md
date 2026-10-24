@@ -46,6 +46,7 @@ Manage Unity player builds — trigger builds, switch platforms, configure setti
 | `baseline_revision` | `str \| None` | — | compare_reports: optional observed baseline revision. |
 | `candidate_revision` | `str \| None` | — | compare_reports: optional observed candidate revision. |
 | `history_revision` | `str \| None` | — | report_history: optional 64-hex inventory revision for repeated pages. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -27,6 +27,7 @@ Enable or configure scene fog.
 | `fog_density` | `float \| None` | — | Fog density (Exponential modes). |
 | `fog_start` | `float \| None` | — | Fog start distance (Linear mode). |
 | `fog_end` | `float \| None` | — | Fog end distance (Linear mode). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 
