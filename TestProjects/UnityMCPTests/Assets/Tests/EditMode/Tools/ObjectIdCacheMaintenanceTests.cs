@@ -21,7 +21,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             private readonly object cache;
             private readonly Type type = typeof(UnityObjectIdCompat).Assembly.GetType("MCPForUnity.Runtime.Helpers.EditorObjectIdCache");
-            public readonly Action<int, ulong> Remember;
+            public readonly Action<ulong> Remember;
             public readonly Func<int, Object> Resolve;
             public readonly Action Update;
             public readonly Action Clear;
@@ -37,13 +37,57 @@ namespace MCPForUnityTests.Editor.Tools
                     new object[] { resolve, (Func<double>)(() => Now) },
                     null
                 );
-                Remember = (Action<int, ulong>)Delegate.CreateDelegate(typeof(Action<int, ulong>), cache, type.GetMethod("Remember"));
+                Remember = (Action<ulong>)Delegate.CreateDelegate(typeof(Action<ulong>), cache, type.GetMethod("Remember"));
                 Resolve = (Func<int, Object>)Delegate.CreateDelegate(typeof(Func<int, Object>), cache, type.GetMethod("Resolve"));
                 Update = (Action)Delegate.CreateDelegate(typeof(Action), cache, type.GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic));
                 Clear = (Action)Delegate.CreateDelegate(typeof(Action), cache, type.GetMethod("Clear"));
             }
 
             public void Dispose() => ((IDisposable)cache).Dispose();
+        }
+
+        [Test]
+        public void LookupAndMaintenancePreserveFullWidthIdentityIncludingSignedAndZeroHandles()
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            var seen = new List<ulong>();
+            ulong[] ids = { 0xFEDCBA9800000000UL, 0x12345678FFFFFFFFUL, 0xFFFFFFFF80000000UL, 0x876543217FFFFFFFUL };
+            int[] handles = { 0, -1, int.MinValue, int.MaxValue };
+            try
+            {
+                using (
+                    var probe = new Probe(id =>
+                    {
+                        seen.Add(id);
+                        return live;
+                    })
+                )
+                {
+                    foreach (ulong id in ids)
+                        probe.Remember(id);
+                    for (int i = 0; i < ids.Length; i++)
+                    {
+                        seen.Clear();
+                        Assert.AreSame(live, probe.Resolve(handles[i]));
+                        CollectionAssert.AreEqual(new[] { ids[i] }, seen);
+                    }
+                    probe.Remember(0xABCDEF01FFFFFFFFUL);
+                    seen.Clear();
+                    Assert.AreSame(live, probe.Resolve(-1));
+                    CollectionAssert.AreEqual(new[] { 0xABCDEF01FFFFFFFFUL }, seen);
+                    Assert.AreEqual(4, probe.Count);
+                    seen.Clear();
+                    probe.Now = 11;
+                    probe.Update();
+                    CollectionAssert.AreEquivalent(new[] { 0xFEDCBA9800000000UL, 0xABCDEF01FFFFFFFFUL, 0xFFFFFFFF80000000UL, 0x876543217FFFFFFFUL }, seen);
+                    Assert.AreEqual(4, probe.Count);
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
         }
 
         [Test]
@@ -59,7 +103,7 @@ namespace MCPForUnityTests.Editor.Tools
             )
             {
                 for (int i = 0; i < 10000; i++)
-                    probe.Remember(i, (ulong)i);
+                    probe.Remember((ulong)i);
                 probe.Now = 11;
                 probe.Update();
                 Assert.That(calls, Is.InRange(1, 128), "One Editor update must not resolve the entire large cache.");
@@ -87,7 +131,7 @@ namespace MCPForUnityTests.Editor.Tools
                     for (int i = 0; i < 1000; i++)
                     {
                         alive.Add((ulong)i);
-                        probe.Remember(i, (ulong)i);
+                        probe.Remember((ulong)i);
                     }
                     probe.Now = 11;
                     probe.Update();
@@ -99,10 +143,10 @@ namespace MCPForUnityTests.Editor.Tools
                     }
                     for (int i = 1; i < 1000; i += 2)
                         Assert.AreSame(live, probe.Resolve(i));
-                    probe.Remember(1, 2001);
-                    alive.Add(2001);
+                    probe.Remember(0x1234567800000001UL);
+                    alive.Add(0x1234567800000001UL);
                     for (int i = 1000; i < 1250; i++)
-                        probe.Remember(i, (ulong)i); // Add dead handles during the sweep.
+                        probe.Remember((ulong)i); // Add dead handles during the sweep.
                     for (int tick = 0; tick < 50; tick++)
                     {
                         probe.Now += 1;
@@ -112,7 +156,8 @@ namespace MCPForUnityTests.Editor.Tools
                     Assert.AreSame(live, probe.Resolve(1));
                     probe.Clear();
                     Assert.AreEqual(0, probe.Count);
-                    probe.Remember(-1, 2001);
+                    probe.Remember(0x12345678FFFFFFFFUL);
+                    alive.Add(0x12345678FFFFFFFFUL);
                     probe.Now += 11;
                     probe.Update();
                     Assert.AreSame(live, probe.Resolve(-1));
@@ -125,6 +170,78 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     Object.DestroyImmediate(live);
                 }
+            }
+        }
+
+        [Test]
+        public void PendingSweepDrainsASingletonAfterImmediateRemovalsAndCanRefill()
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            bool alive = true;
+            try
+            {
+                using (var probe = new Probe(_ => alive ? live : null))
+                {
+                    for (ulong id = 0; id < 1000; id++)
+                        probe.Remember(id);
+                    probe.Now = 11;
+                    probe.Update();
+                    alive = false;
+                    for (int handle = 0; handle < 999; handle++)
+                        Assert.IsNull(probe.Resolve(handle));
+                    Assert.AreEqual(1, probe.Count);
+                    probe.Update();
+                    Assert.AreEqual(0, probe.Count);
+                    probe.Remember(0xFFFFFFFFFFFFFFFFUL);
+                    probe.Now += 11;
+                    probe.Update();
+                    Assert.AreEqual(0, probe.Count);
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [Test]
+        public void NativeLookupFailureRetiresEarlierDeadRunAndPreservesRemainingLinks()
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            bool throwOnce = true;
+            try
+            {
+                using (
+                    var probe = new Probe(id =>
+                    {
+                        if (id == 2 && throwOnce)
+                        {
+                            throwOnce = false;
+                            throw new InvalidOperationException("Owned lookup failure");
+                        }
+                        return id < 2 ? null : live;
+                    })
+                )
+                {
+                    for (ulong id = 0; id < 260; id++)
+                        probe.Remember(id);
+                    probe.Now = 11;
+                    Assert.Throws<InvalidOperationException>(() => probe.Update());
+                    Assert.AreEqual(258, probe.Count);
+                    for (int tick = 0; tick < 4; tick++)
+                        probe.Update();
+                    probe.Now += 11;
+                    for (int tick = 0; tick < 4; tick++)
+                        probe.Update();
+                    Assert.AreEqual(258, probe.Count);
+                    Assert.AreSame(live, probe.Resolve(2));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
             }
         }
 
@@ -213,7 +330,7 @@ namespace MCPForUnityTests.Editor.Tools
             long retainedBefore = GC.GetTotalMemory(true);
             var entries = new Dictionary<int, ulong>();
             for (int i = 0; i < ids.Length; i++)
-                entries.Add(i, ids[i]);
+                entries.Add(unchecked((int)ids[i]), ids[i]);
             long retained = GC.GetTotalMemory(true) - retainedBefore;
             long before = GC.GetAllocatedBytesForCurrentThread();
             long start = Stopwatch.GetTimestamp();
@@ -226,7 +343,7 @@ namespace MCPForUnityTests.Editor.Tools
             // Count GC.Alloc events on a separate identical pass so recorder setup does not affect timings.
             entries.Clear();
             for (int i = 0; i < ids.Length; i++)
-                entries.Add(i, ids[i]);
+                entries.Add(unchecked((int)ids[i]), ids[i]);
             int events = ManagedAllocation.Count(() =>
             {
                 foreach (int handle in new List<int>(entries.Keys))
@@ -251,7 +368,7 @@ namespace MCPForUnityTests.Editor.Tools
             )
             {
                 for (int i = 0; i < ids.Length; i++)
-                    probe.Remember(i, ids[i]);
+                    probe.Remember(ids[i]);
                 long retained = GC.GetTotalMemory(true) - retainedBefore;
                 probe.Now = 11;
                 long before = GC.GetAllocatedBytesForCurrentThread();
@@ -278,7 +395,7 @@ namespace MCPForUnityTests.Editor.Tools
                 );
                 probe.Clear();
                 for (int i = 0; i < ids.Length; i++)
-                    probe.Remember(i, ids[i]);
+                    probe.Remember(ids[i]);
                 probe.Now += 11;
                 calls = 0;
                 int events = ManagedAllocation.Count(() =>

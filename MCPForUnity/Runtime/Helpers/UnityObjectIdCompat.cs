@@ -48,7 +48,7 @@ namespace MCPForUnity.Runtime.Helpers
             ulong full = EntityId.ToULong(obj.GetEntityId());
             int truncated = (int)full;
 #if UNITY_EDITOR && UNITY_6000_6_OR_NEWER
-            _fullIdCache.Remember(truncated, full);
+            _fullIdCache.Remember(full);
 #endif
             return truncated;
 #else
@@ -86,7 +86,8 @@ namespace MCPForUnity.Runtime.Helpers
     {
         private struct Entry
         {
-            public ulong Full;
+            // The dictionary key already contains the low 32 bits of the full ID.
+            public uint Upper;
             public int Previous;
             public int Next;
         }
@@ -113,12 +114,17 @@ namespace MCPForUnity.Runtime.Helpers
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
         }
 
-        public void Remember(int handle, ulong full)
+        public void Remember(ulong full)
         {
+            int handle = unchecked((int)full);
+            uint upper = (uint)(full >> 32);
             if (entries.TryGetValue(handle, out Entry existing))
             {
-                existing.Full = full;
-                entries[handle] = existing;
+                if (existing.Upper != upper)
+                {
+                    existing.Upper = upper;
+                    entries[handle] = existing;
+                }
             }
             else if (entries.Count == 0)
             {
@@ -126,7 +132,7 @@ namespace MCPForUnity.Runtime.Helpers
                     handle,
                     new Entry
                     {
-                        Full = full,
+                        Upper = upper,
                         Previous = handle,
                         Next = handle,
                     }
@@ -147,7 +153,7 @@ namespace MCPForUnity.Runtime.Helpers
                     handle,
                     new Entry
                     {
-                        Full = full,
+                        Upper = upper,
                         Previous = last,
                         Next = first,
                     }
@@ -164,7 +170,7 @@ namespace MCPForUnity.Runtime.Helpers
         {
             if (!entries.TryGetValue(handle, out Entry entry))
                 return null;
-            Object value = resolve(entry.Full);
+            Object value = resolve(((ulong)entry.Upper << 32) | unchecked((uint)handle));
             if (value == null)
                 Remove(handle, entry);
             return value;
@@ -178,12 +184,48 @@ namespace MCPForUnity.Runtime.Helpers
                     return;
                 BeginSweep();
             }
-            for (int inspected = 0; inspected < LookupsPerUpdate && remaining > 0; inspected++)
+            int deadStart = 0;
+            int deadCount = 0;
+            Entry deadFirst = default;
+            Entry deadLast = default;
+            try
             {
-                int handle = cursor;
-                cursor = entries[handle].Next;
-                remaining--;
-                Resolve(handle);
+                for (int inspected = 0; inspected < LookupsPerUpdate && remaining > 0; inspected++)
+                {
+                    int handle = cursor;
+                    Entry entry = entries[handle];
+                    cursor = entry.Next;
+                    remaining--;
+                    if (resolve(((ulong)entry.Upper << 32) | unchecked((uint)handle)) == null)
+                    {
+                        if (deadCount == 0)
+                        {
+                            deadStart = handle;
+                            deadFirst = entry;
+                        }
+                        deadLast = entry;
+                        deadCount++;
+                        // Public lookups may have removed most of the original sweep
+                        // between updates. Do not circle a wholly dead remaining ring.
+                        if (deadCount == entries.Count)
+                        {
+                            RemoveRun(deadStart, deadFirst, deadLast, deadCount);
+                            deadCount = 0;
+                        }
+                    }
+                    else if (deadCount > 0)
+                    {
+                        RemoveRun(deadStart, deadFirst, deadLast, deadCount);
+                        deadCount = 0;
+                    }
+                }
+            }
+            finally
+            {
+                // Keep links coherent throughout native resolution and retire each run
+                // before returning, including when a native lookup throws.
+                if (deadCount > 0)
+                    RemoveRun(deadStart, deadFirst, deadLast, deadCount);
             }
             if (remaining == 0)
                 nextPrune = clock() + 10;
@@ -205,7 +247,8 @@ namespace MCPForUnity.Runtime.Helpers
         {
             if (entries.Count == 1)
             {
-                Clear();
+                entries.Remove(handle);
+                StopMaintenance();
                 return;
             }
             Entry previous = entries[entry.Previous];
@@ -221,9 +264,47 @@ namespace MCPForUnity.Runtime.Helpers
             entries.Remove(handle);
         }
 
+        private void RemoveRun(int start, Entry head, Entry tail, int count)
+        {
+            if (count == 1)
+            {
+                Remove(start, head);
+                return;
+            }
+            int handle = start;
+            for (int removed = 0; removed < count; removed++)
+            {
+                int next = entries[handle].Next;
+                entries.Remove(handle);
+                if (first == handle)
+                    first = tail.Next;
+                if (cursor == handle)
+                    cursor = tail.Next;
+                handle = next;
+            }
+            if (entries.Count == 0)
+            {
+                // Remove already cleared the occupied slots. Avoid clearing the entire
+                // retained capacity on the final bounded update of a large sweep.
+                StopMaintenance();
+                return;
+            }
+            Entry previous = entries[head.Previous];
+            previous.Next = tail.Next;
+            entries[head.Previous] = previous;
+            Entry nextEntry = entries[tail.Next];
+            nextEntry.Previous = head.Previous;
+            entries[tail.Next] = nextEntry;
+        }
+
         public void Clear()
         {
             entries.Clear();
+            StopMaintenance();
+        }
+
+        private void StopMaintenance()
+        {
             first = 0;
             cursor = 0;
             remaining = 0;
