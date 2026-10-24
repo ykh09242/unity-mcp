@@ -822,28 +822,52 @@ namespace MCPForUnity.Editor.Windows
             section.SetEnabled(!dependencyActionInFlight);
             section.AddToClassList("section");
 
-            var title = new Label("Optional Dependencies");
+            var title = new Label("Optional packages");
             title.AddToClassList("section-title");
             section.Add(title);
 
             var content = new VisualElement();
             content.AddToClassList("section-content");
 
-            var serverVersions = new Label(ServerVersionDiagnostics.Describe(expectedServerSource, DateTime.UtcNow)) { name = "stdio-server-versions" };
+            var diagnostics = new Foldout
+            {
+                text = "Server source and version details",
+                value = false,
+                name = "dependencies-diagnostics",
+            };
+            diagnostics.AddToClassList("settings-group");
+            var serverVersions = new Label { name = "stdio-server-versions", enableRichText = false };
             serverVersions.AddToClassList("help-text");
-            content.Add(serverVersions);
-            var refresh = new Button(RefreshDependencies) { text = "Refresh package state", name = "dependencies-refresh" };
+            diagnostics.Add(serverVersions);
+            var refresh = new Button(RefreshDependencies)
+            {
+                text = "Refresh",
+                name = "dependencies-refresh",
+                tooltip = "Reload this project's package state after Package Manager changes. Edited version choices are kept.",
+            };
             refresh.AddToClassList("tool-action-button");
-            content.Add(refresh);
-            var snapshotNote = new Label(
-                "Project scope. Registered packages are the last state reported by Unity; refresh after Package Manager changes. Edited version choices are kept."
-            );
-            snapshotNote.AddToClassList("help-text");
-            content.Add(snapshotNote);
+            var refreshRow = new VisualElement();
+            refreshRow.AddToClassList("tool-actions");
+            refreshRow.Add(refresh);
+            content.Add(refreshRow);
             var operationStatus = new Label(dependencyOperationStatus) { name = "dependencies-operation-status" };
             operationStatus.AddToClassList("help-text");
+            operationStatus.style.display = string.IsNullOrWhiteSpace(dependencyOperationStatus) ? DisplayStyle.None : DisplayStyle.Flex;
             content.Add(operationStatus);
-            serverVersions.schedule.Execute(() => serverVersions.text = ServerVersionDiagnostics.Describe(expectedServerSource, DateTime.UtcNow)).Every(1000);
+            var diagnosticsRefresh = serverVersions
+                .schedule.Execute(() => serverVersions.text = ServerVersionDiagnostics.Describe(expectedServerSource, DateTime.UtcNow))
+                .Every(1000);
+            diagnosticsRefresh.Pause();
+            diagnostics.RegisterValueChangedCallback(evt =>
+            {
+                if (evt.newValue)
+                {
+                    serverVersions.text = ServerVersionDiagnostics.Describe(expectedServerSource, DateTime.UtcNow);
+                    diagnosticsRefresh.Resume();
+                }
+                else
+                    diagnosticsRefresh.Pause();
+            });
 
             // Install All / Uninstall All buttons
             var bulkRow = new VisualElement();
@@ -942,7 +966,6 @@ namespace MCPForUnity.Editor.Windows
             bulk.Add(bulkHelp);
             bulk.Add(bulkRow);
             bulk.Add(bulkValidation);
-            content.Add(bulk);
 
             // Roslyn — for execute_code modern C# support
             // Check if Roslyn types are actually loaded (covers NuGet, Plugins folder, etc.)
@@ -1042,6 +1065,8 @@ namespace MCPForUnity.Editor.Windows
             );
 
             refreshDependencyBulkState();
+            content.Add(bulk);
+            content.Add(diagnostics);
             section.Add(content);
             container.Add(section);
         }
@@ -1318,7 +1343,10 @@ namespace MCPForUnity.Editor.Windows
             {
                 var label = window?.dependencySection?.Q<Label>("dependencies-operation-status");
                 if (label != null)
+                {
                     label.text = message;
+                    label.style.display = string.IsNullOrWhiteSpace(message) ? DisplayStyle.None : DisplayStyle.Flex;
+                }
             }
         }
 

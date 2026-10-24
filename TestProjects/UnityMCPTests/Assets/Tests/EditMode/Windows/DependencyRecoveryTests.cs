@@ -103,6 +103,82 @@ namespace MCPForUnityTests.EditMode.Windows
         }
 
         [Test]
+        public void DiagnosticsDisclosureKeepsDraftWithoutReloadingPackageState()
+        {
+            int registeredReads = 0;
+            int declaredReads = 0;
+            Set(
+                "readDependencyRegistered",
+                (Func<Dictionary<string, string>>)(
+                    () =>
+                    {
+                        registeredReads++;
+                        return new Dictionary<string, string>(registered);
+                    }
+                )
+            );
+            Set(
+                "readDependencyDeclared",
+                (Func<Dictionary<string, string>>)(
+                    () =>
+                    {
+                        declaredReads++;
+                        return new Dictionary<string, string>(declared);
+                    }
+                )
+            );
+            Build();
+            Selection.value = Id + "@3.0.0";
+            var originalField = Selection;
+            var diagnostics = Root.Q<Foldout>("dependencies-diagnostics");
+            Assert.IsFalse(diagnostics.value);
+            Assert.IsEmpty(Root.Q<Label>("stdio-server-versions").text);
+
+            diagnostics.value = true;
+            Assert.IsNotEmpty(Root.Q<Label>("stdio-server-versions").text);
+            diagnostics.value = false;
+            diagnostics.value = true;
+
+            Assert.AreSame(originalField, Selection);
+            Assert.AreEqual(Id + "@3.0.0", Selection.value);
+            Assert.AreEqual(1, registeredReads);
+            Assert.AreEqual(1, declaredReads);
+            Assert.AreEqual(0, searches);
+        }
+
+        [Test]
+        public void OperationFeedbackReappearsAfterAnInitiallyEmptyLayout()
+        {
+            var flags = BindingFlags.Static | BindingFlags.NonPublic;
+            var field = typeof(MCPForUnityEditorWindow).GetField("dependencyOperationStatus", flags);
+            string previous = (string)field.GetValue(null);
+            var update = typeof(MCPForUnityEditorWindow).GetMethod("SetDependencyOperationStatus", flags);
+            var windows = (HashSet<MCPForUnityEditorWindow>)typeof(MCPForUnityEditorWindow).GetField("OpenWindows", flags).GetValue(null);
+            bool registeredHere = windows.Add(controller);
+            try
+            {
+                update.Invoke(null, new object[] { string.Empty });
+                Build();
+                var label = Root.Q<Label>("dependencies-operation-status");
+                Assert.AreEqual(DisplayStyle.None, label.style.display.value);
+
+                update.Invoke(null, new object[] { "Synthetic package recovery feedback" });
+                Assert.AreEqual(DisplayStyle.Flex, label.style.display.value);
+                Assert.AreEqual("Synthetic package recovery feedback", label.text);
+
+                update.Invoke(null, new object[] { string.Empty });
+                Assert.AreEqual(DisplayStyle.None, label.style.display.value);
+                Assert.AreEqual(0, searches);
+            }
+            finally
+            {
+                update.Invoke(null, new object[] { previous });
+                if (registeredHere)
+                    windows.Remove(controller);
+            }
+        }
+
+        [Test]
         public void CompatibleLookupIsExplicitAndNeverSelectsOrInstallsAutomatically()
         {
             Build();
